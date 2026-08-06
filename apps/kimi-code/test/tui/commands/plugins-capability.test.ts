@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { log } from '@moonshot-ai/kimi-code-sdk';
+import { resetCapabilitiesCache, setCapabilities, type Component } from '@moonshot-ai/pi-tui';
 
 import { __pluginsCommandInternals } from '#/tui/commands/plugins';
+import { NoticeMessageComponent } from '#/tui/components/messages/status-message';
 
 const {
   isCapabilityEntry,
@@ -20,7 +22,9 @@ function fakeHost(overrides: {
   }>;
 }) {
   const statuses: string[] = [];
+  const notices: { title: string; detail?: string }[] = [];
   const renders: number[] = [];
+  const transcriptEntries: Component[] = [];
   const installCapability = vi.fn(() => Promise.resolve());
   const getCapability =
     overrides.capabilityStatus ??
@@ -46,10 +50,19 @@ function fakeHost(overrides: {
     showError: (text: string) => {
       statuses.push(text);
     },
+    showNotice: (title: string, detail?: string) => {
+      notices.push({ title, detail });
+      transcriptEntries.push(new NoticeMessageComponent(title, detail));
+    },
     restoreEditor: () => undefined,
-    state: { ui: { requestRender: () => renders.push(1) } },
+    state: {
+      ui: { requestRender: () => renders.push(1) },
+      transcriptContainer: {
+        addChild: (entry: Component) => transcriptEntries.push(entry),
+      },
+    },
   };
-  return { host: host as never, statuses, renders, installCapability };
+  return { host: host as never, statuses, notices, renders, transcriptEntries, installCapability };
 }
 
 function fakePanel() {
@@ -67,11 +80,32 @@ function fakePanel() {
   };
 }
 
+function visibleLines(entries: readonly Component[], width = 100): string[] {
+  return entries
+    .flatMap((entry) => entry.render(width))
+    .map((line) =>
+      line
+        .replaceAll(/\u001B]8;;[^\u001B]*\u001B\\/g, '')
+        .replaceAll(/\u001B\[[0-9;]*m/g, '')
+        .trimEnd(),
+    );
+}
+
+function unwrappedVisibleText(entries: readonly Component[]): string {
+  return visibleLines(entries)
+    .join('\n')
+    .replaceAll(/\s+/g, '');
+}
+
 describe('plugins command capability surface', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(log, 'info').mockImplementation(() => undefined);
     vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    resetCapabilitiesCache();
   });
 
   it('routes built-in entries through capabilities only on v2', () => {
@@ -201,8 +235,9 @@ describe('plugins command capability surface', () => {
     expect(statuses.some((s) => s.includes('is installed'))).toBe(true);
   });
 
-  it('shows browser extension steps after WebBridge installation succeeds', async () => {
-    const { host, statuses } = fakeHost({ engineV2: true });
+  it('renders visible clickable store URLs after WebBridge installs in a hyperlink-capable terminal', async () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+    const { host, statuses, notices, transcriptEntries } = fakeHost({ engineV2: true });
 
     await installCapabilityFromPanel(
       host,
@@ -214,18 +249,66 @@ describe('plugins command capability surface', () => {
       } as never,
     );
 
-    expect(statuses).toContain('Kimi WebBridge is installed.');
-    expect(statuses).toContain(
-      [
-        'Two steps left to use Kimi WebBridge.',
-        '1. Install the browser extension (skip this if you already have it installed)',
-        '   Install from the Chrome Web Store:   https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc?authuser=0&hl=zh-CN',
-        '   Install from the Edge Add-ons Store: https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg',
-        '   Manual installation guide: https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension',
-        '2. Run /new or /reload to apply it.',
-      ].join('\n'),
-    );
+    expect(notices).toContainEqual({ title: 'Kimi WebBridge is installed.', detail: undefined });
     expect(statuses).not.toContain('Run /new or /reload to apply plugin changes.');
+    const rendered = transcriptEntries.flatMap((entry) => entry.render(100)).join('\n');
+    expect(rendered).toContain(
+      '\u001B]8;;https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc\u001B\\',
+    );
+    expect(rendered).toContain('Chrome Web Store');
+    expect(rendered).toContain('Edge Add-ons Store');
+    expect(rendered).toContain('Manual installation guide');
+    expect(rendered).toContain('/reload');
+    expect(unwrappedVisibleText(transcriptEntries)).toContain(
+      'ChromeWebStore:https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc',
+    );
+  });
+
+  it('renders full store URLs after WebBridge installs in a terminal without hyperlinks', async () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+    const { host, transcriptEntries } = fakeHost({ engineV2: true });
+
+    await installCapabilityFromPanel(
+      host,
+      fakePanel().panel,
+      {
+        id: 'kimi-webbridge',
+        displayName: 'Kimi WebBridge',
+        source: 'capability:kimi-webbridge',
+      } as never,
+    );
+
+    const rendered = transcriptEntries.flatMap((entry) => entry.render(100)).join('\n');
+    expect(rendered).not.toContain('\u001B]8;;');
+    expect(unwrappedVisibleText(transcriptEntries)).toContain(
+      'https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc',
+    );
+  });
+
+  it('separates the WebBridge install result from its setup steps with one blank line', async () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+    const { host, transcriptEntries } = fakeHost({ engineV2: true });
+
+    await installCapabilityFromPanel(
+      host,
+      fakePanel().panel,
+      {
+        id: 'kimi-webbridge',
+        displayName: 'Kimi WebBridge',
+        source: 'capability:kimi-webbridge',
+      } as never,
+    );
+
+    const lines = visibleLines(transcriptEntries, 180);
+    const installed = lines.findIndex((line) => line.includes('Kimi WebBridge is installed.'));
+    const intro = lines.findIndex((line) =>
+      line.includes('Two steps left to use Kimi WebBridge:'),
+    );
+    const firstStep = lines.findIndex((line) =>
+      line.includes('1. Install the browser extension:'),
+    );
+    expect(lines.slice(installed + 1, intro)).toEqual(['']);
+    expect(firstStep).toBe(intro + 1);
   });
 
   it('shows the engine error when a background capability install fails', async () => {
