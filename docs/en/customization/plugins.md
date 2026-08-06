@@ -89,7 +89,7 @@ All official plugins share the same installation and upgrade flow:
 
 1. Run `/plugins` and press `Tab` to select **Official**
 2. Find the plugin you want and press `Enter` to install
-3. The plugin activates as soon as installation completes
+3. After installation completes, run `/reload` or `/new` to activate it
 
 ::: info Note
 Kimi WebBridge installs in two parts: after the steps above, you also need to [install the browser extension](#install-the-browser-extension) before it works.

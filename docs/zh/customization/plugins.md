@@ -89,7 +89,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 
 1. 运行 `/plugins`，tab键选择 **Official**
 2. 找到要安装的插件，按 `Enter` 安装
-3. 安装完成后 plugin 立即激活
+3. 安装完成后运行 `/reload` 或 `/new` 激活
 
 ::: info 说明
 Kimi WebBridge 分两步安装：完成上述步骤后，还需要[安装浏览器扩展](#install-the-browser-extension)才能使用。
