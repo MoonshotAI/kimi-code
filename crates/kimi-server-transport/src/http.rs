@@ -184,6 +184,25 @@ pub fn router(state: HttpState) -> Router {
             get(session_detail_v1).post(session_update).delete(session_delete),
         )
         .route("/api/v1/sessions/{id}/status", get(session_runtime_status))
+        .route("/api/v1/sessions/{id}/profile", post(session_profile))
+        .route("/api/v1/sessions/{id}/goal", get(session_goal))
+        .route("/api/v1/sessions/{id}/warnings", get(session_warnings))
+        .route("/api/v1/sessions/{id}/messages", get(session_messages))
+        .route("/api/v1/sessions/{id}/compact", post(session_compact))
+        .route("/api/v1/sessions/{id}/undo", post(session_undo))
+        .route("/api/v1/sessions/{id}/restore", post(session_restore))
+        .route("/api/v1/sessions/{id}/prompts/steer", post(session_steer))
+        .route("/api/v1/sessions/{id}/prompts/{prompt_id}/abort", post(session_prompt_abort))
+        .route("/api/v1/sessions/{id}/abort", post(session_abort_session))
+        .route("/api/v1/sessions/{id}/tasks", get(session_tasks))
+        .route("/api/v1/sessions/{id}/tasks/{task_id}", get(session_task))
+        .route("/api/v1/sessions/{id}/tasks/{task_id}/cancel", post(session_task_cancel))
+        .route("/api/v1/sessions/{id}/skills/{skill_name}/activate", post(session_skill_activate))
+        .route("/api/v1/sessions/{id}/approvals/{approval_id}", post(session_approval_resolve_v1))
+        .route("/api/v1/sessions/{id}/fs:grep", post(fs_action_grep))
+        .route("/api/v1/sessions/{id}/fs:git_status", post(fs_git_status))
+        .route("/api/v1/sessions/{id}/fs:diff", post(fs_git_diff))
+        .route("/api/v1/oauth/logout", post(oauth_logout))
         .route("/api/v1/sessions/{id}/prompt", post(session_prompt))
         .route("/api/v1/sessions/{id}/prompts", post(session_prompt_async))
         .route("/api/v1/sessions/{id}/cancel", post(session_cancel))
@@ -216,6 +235,129 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/v1/ws", get(ws_upgrade))
         .layer(middleware)
         .with_state(state)
+}
+
+/// Rewrite `{x}:{action}` path segments into `{x}/{action}` so the
+/// frontend's colon-suffixed routes (`/sessions/{id}:compact`,
+/// `/tasks/{task_id}:cancel`, `/skills/{name}:activate`, …) hit the
+/// slash-form routes — axum cannot express a path parameter followed by a
+/// literal in one segment. Only known action suffixes are rewritten; the
+/// literal colon routes (`fs:grep`, `fs:git_status`, `fs:diff`, `fs:home`)
+/// stay untouched. Returns the rewritten path (unchanged when nothing
+/// matches).
+fn rewrite_path(uri: &axum::http::Uri) -> String {
+    /// Colon-suffixed actions the frontend sends (rewritten to slash form).
+    const COLON_ACTIONS: &[&str] = &[
+        "compact", "undo", "restore", "abort", "steer", "activate", "cancel", "download",
+    ];
+    let path = uri.path();
+    if !path.contains(':') {
+        return path.to_string();
+    }
+    // Expand `{x}:{action}` → `{x}` + `{action}` per segment when the
+    // trailing `:word` is a known action.
+    let mut parts: Vec<String> = Vec::new();
+    for segment in path.split('/') {
+        if let Some((base, action)) = segment.rsplit_once(':') {
+            if !base.is_empty() && COLON_ACTIONS.contains(&action) {
+                parts.push(base.to_string());
+                parts.push(action.to_string());
+                continue;
+            }
+        }
+        parts.push(segment.to_string());
+    }
+    parts.join("/")
+}
+
+/// A tower `Service` that rewrites colon-suffixed path segments **before**
+/// axum's router matches — `Router::layer` runs after matching (a `{id}`
+/// segment would greedily capture `sess-1:compact`), so the rewrite must
+/// wrap the router itself.
+#[derive(Clone)]
+pub struct ColonRewrite<S> {
+    inner: S,
+}
+
+/// Wrap a router (or any service) with the colon-action rewrite.
+pub fn colon_rewrite<S>(inner: S) -> ColonRewrite<S> {
+    ColonRewrite { inner }
+}
+
+impl<S, B> tower::Service<axum::http::Request<B>> for ColonRewrite<S>
+where
+    S: tower::Service<axum::http::Request<B>>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: axum::http::Request<B>) -> Self::Future {
+        let uri = req.uri().clone();
+        let new_path = rewrite_path(&uri);
+        let mut req = req;
+        if new_path != uri.path() {
+            let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
+            *req.uri_mut() = axum::http::Uri::try_from(format!("{new_path}{query}"))
+                .unwrap_or_else(|_| uri.clone());
+        }
+        self.inner.call(req)
+    }
+}
+
+/// Make-service: yields a fresh [`ColonRewrite`] wrapping the router per
+/// connection. axum's `serve` demands `for<'a> Service<IncomingStream<'a, L>>`,
+/// which `tower::service_fn` cannot express — hence the explicit impl.
+pub struct ColonMake<L, S> {
+    router: S,
+    _marker: std::marker::PhantomData<L>,
+}
+
+impl<L, S> Clone for ColonMake<L, S>
+where
+    S: Clone,
+{
+    fn clone(&self) -> Self {
+        Self { router: self.router.clone(), _marker: std::marker::PhantomData }
+    }
+}
+
+impl<'a, L, S> tower::Service<axum::serve::IncomingStream<'a, L>> for ColonMake<L, S>
+where
+    L: axum::serve::Listener,
+    S: Clone,
+{
+    type Response = ColonRewrite<S>;
+    type Error = std::convert::Infallible;
+    type Future = std::future::Ready<Result<ColonRewrite<S>, std::convert::Infallible>>;
+
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, _conn: axum::serve::IncomingStream<'a, L>) -> Self::Future {
+        std::future::ready(Ok(ColonRewrite { inner: self.router.clone() }))
+    }
+}
+
+/// Build the make-service that serves `router` with the colon rewrite applied
+/// per connection (axum's `serve` needs a `Service<IncomingStream>` make —
+/// the rewritten router itself is the per-request service).
+pub fn colon_make_service<S>(router: S) -> ColonMake<tokio::net::TcpListener, S>
+where
+    S: Clone + Send + 'static,
+{
+    ColonMake { router, _marker: std::marker::PhantomData }
 }
 
 /// Bearer-credential guard for the REST surface (mirrors kap-server's auth
@@ -270,7 +412,7 @@ pub async fn serve(
     let state = HttpState::new(processor).with_shutdown(Arc::new(tokio::sync::Mutex::new(
         Some(shutdown_tx),
     )));
-    axum::serve(listener, router(state))
+    axum::serve(listener, colon_make_service(router(state)))
         .with_graceful_shutdown(async move {
             let _ = shutdown_rx.await;
         })
@@ -285,7 +427,7 @@ pub async fn serve_with_events(
     events: tokio::sync::broadcast::Sender<serde_json::Value>,
     listener: tokio::net::TcpListener,
 ) -> anyhow::Result<()> {
-    axum::serve(listener, router(HttpState::with_events(processor, events))).await?;
+    axum::serve(listener, colon_make_service(router(HttpState::with_events(processor, events)))).await?;
     Ok(())
 }
 
@@ -298,7 +440,7 @@ pub async fn serve_web(
     listener: tokio::net::TcpListener,
 ) -> anyhow::Result<()> {
     let state = HttpState::with_events(processor, events);
-    axum::serve(listener, router_with_assets(state, assets_dir)).await?;
+    axum::serve(listener, colon_make_service(router_with_assets(state, assets_dir))).await?;
     Ok(())
 }
 
@@ -690,6 +832,313 @@ async fn session_snapshot_v1(State(state): State<HttpState>, Path(id): Path<Stri
     Json(ok(snapshot))
 }
 
+/// `POST /api/v1/sessions/{id}/profile` — update the session's title /
+/// metadata / agent config (model, thinking, plan/swarm mode, permission)
+/// and return the updated `WireSession` (kimi-web profile route).
+async fn session_profile(State(state): State<HttpState>, Path(id): Path<String>, Json(body): Json<Value>) -> Json<Value> {
+    if let Some(title) = body.get("title").and_then(|v| v.as_str()) {
+        let r = state.rpc(kimi_protocol::methods::SESSION_RENAME, json!({ "session_id": id, "title": title })).await;
+        if r["code"].as_i64() != Some(0) {
+            return Json(r);
+        }
+    }
+    if let Some(meta) = body.get("metadata").and_then(|m| m.as_object()) {
+        let r = state.rpc(kimi_protocol::methods::SESSION_UPDATE_METADATA, json!({ "session_id": id, "metadata": meta })).await;
+        if r["code"].as_i64() != Some(0) {
+            return Json(r);
+        }
+    }
+    if let Some(ac) = body.get("agent_config") {
+        if let Some(model) = ac.get("model").and_then(|v| v.as_str()) {
+            let r = state.rpc(kimi_protocol::methods::SESSION_SET_MODEL, json!({ "session_id": id, "model": model })).await;
+            if r["code"].as_i64() != Some(0) {
+                return Json(r);
+            }
+        }
+        if let Some(thinking) = ac.get("thinking").and_then(|v| v.as_str()) {
+            let r = state.rpc(kimi_protocol::methods::SESSION_SET_THINKING, json!({ "session_id": id, "effort": thinking })).await;
+            if r["code"].as_i64() != Some(0) {
+                return Json(r);
+            }
+        }
+        if let Some(plan) = ac.get("plan_mode").and_then(|v| v.as_bool()) {
+            let r = state.rpc(kimi_protocol::methods::SESSION_SET_PLAN_MODE, json!({ "session_id": id, "enabled": plan })).await;
+            if r["code"].as_i64() != Some(0) {
+                return Json(r);
+            }
+        }
+        if let Some(swarm) = ac.get("swarm_mode").and_then(|v| v.as_bool()) {
+            let r = state.rpc(kimi_protocol::methods::SESSION_SET_SWARM_MODE, json!({ "session_id": id, "enabled": swarm, "trigger": "task" })).await;
+            if r["code"].as_i64() != Some(0) {
+                return Json(r);
+            }
+        }
+        if let Some(mode) = ac.get("permission_mode").and_then(|v| v.as_str()) {
+            let r = state.rpc(kimi_protocol::methods::PERMISSION_SET_MODE, json!({ "session_id": id, "mode": mode })).await;
+            if r["code"].as_i64() != Some(0) {
+                return Json(r);
+            }
+        }
+    }
+    // Return the updated session record.
+    match session_detail_rpc(&state, &id).await {
+        Some((entry, status, context)) => {
+            let busy = state.v1.is_busy(&id);
+            Json(ok(v1::wire_session(&entry, &status, &context, busy)))
+        }
+        None => Json(err(-40401, "session not found")),
+    }
+}
+
+/// `GET /api/v1/sessions/{id}/goal` — the active goal snapshot (camelCase,
+/// same shape as the `goal.updated` event), or `null` when none.
+async fn session_goal(State(state): State<HttpState>, Path(id): Path<String>) -> Json<Value> {
+    let body = state.rpc(kimi_protocol::methods::SESSION_GOAL_GET, json!({ "session_id": id })).await;
+    if body["code"].as_i64() != Some(0) {
+        return Json(body);
+    }
+    Json(ok(body["data"]["goal"].clone()))
+}
+
+/// `GET /api/v1/sessions/{id}/warnings` — session-level warnings
+/// (`{ warnings: [{ code, message, severity }] }`).
+async fn session_warnings(State(state): State<HttpState>, Path(id): Path<String>) -> Json<Value> {
+    let body = state.rpc(kimi_protocol::methods::SESSION_GET_WARNINGS, json!({ "session_id": id })).await;
+    if body["code"].as_i64() != Some(0) {
+        return Json(body);
+    }
+    Json(ok(json!({ "warnings": body["data"]["warnings"] })))
+}
+
+/// `GET /api/v1/sessions/{id}/messages` — the session messages as a v1
+/// `{ items, has_more }` page of `WireMessage` (from the engine context).
+async fn session_messages(State(state): State<HttpState>, Path(id): Path<String>, Query(query): Query<Value>) -> Json<Value> {
+    let context = state.rpc(kimi_protocol::methods::SESSION_GET_CONTEXT, json!({ "session_id": id })).await;
+    if context["code"].as_i64() != Some(0) {
+        return Json(context);
+    }
+    let page_size = query.get("page_size").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+    let messages: Vec<Value> = context["data"]["history"]
+        .as_array()
+        .map(|msgs| {
+            msgs.iter()
+                .enumerate()
+                .map(|(i, m)| v1::wire_message_from_context(m, &id, i))
+                .collect()
+        })
+        .unwrap_or_default();
+    let page: Vec<Value> = if messages.len() > page_size {
+        messages[messages.len() - page_size..].to_vec()
+    } else {
+        messages
+    };
+    Json(ok(v1::wire_page(page)))
+}
+
+/// `POST /api/v1/sessions/{id}:compact` — request history compaction.
+async fn session_compact(State(state): State<HttpState>, Path(id): Path<String>, Json(body): Json<Value>) -> Json<Value> {
+    let mut params = json!({ "session_id": id });
+    if let Some(instruction) = body.get("instruction").and_then(|v| v.as_str()) {
+        params["instruction"] = json!(instruction);
+    }
+    Json(state.rpc(kimi_protocol::methods::SESSION_COMPACT, params).await)
+}
+
+/// `POST /api/v1/sessions/{id}:undo` — remove the last `count` turns.
+async fn session_undo(State(state): State<HttpState>, Path(id): Path<String>, Json(body): Json<Value>) -> Json<Value> {
+    let count = body.get("count").and_then(|v| v.as_u64()).unwrap_or(1);
+    Json(state.rpc(kimi_protocol::methods::SESSION_UNDO_HISTORY, json!({ "session_id": id, "count": count })).await)
+}
+
+/// `POST /api/v1/sessions/{id}:restore` — clear the archived flag and return
+/// the restored `WireSession`.
+async fn session_restore(State(state): State<HttpState>, Path(id): Path<String>) -> Json<Value> {
+    let r = state.rpc(
+        kimi_protocol::methods::SESSION_UPDATE_METADATA,
+        json!({ "session_id": id, "metadata": { "archived": false } }),
+    ).await;
+    if r["code"].as_i64() != Some(0) {
+        return Json(r);
+    }
+    match session_detail_rpc(&state, &id).await {
+        Some((entry, status, context)) => {
+            let busy = state.v1.is_busy(&id);
+            Json(ok(v1::wire_session(&entry, &status, &context, busy)))
+        }
+        None => Json(err(-40401, "session not found")),
+    }
+}
+
+/// `POST /api/v1/sessions/{id}/prompts:steer` — steer queued prompts into the
+/// active turn (`{ prompt_ids }` → `{ steered, prompt_ids }`).
+async fn session_steer(State(state): State<HttpState>, Path(id): Path<String>, Json(body): Json<Value>) -> Json<Value> {
+    let prompt_ids = body.get("prompt_ids").cloned().unwrap_or(json!([]));
+    let r = state.rpc(kimi_protocol::methods::SESSION_STEER, json!({ "session_id": id, "prompt_ids": prompt_ids })).await;
+    if r["code"].as_i64() != Some(0) {
+        return Json(r);
+    }
+    Json(ok(json!({ "steered": true, "prompt_ids": body.get("prompt_ids").cloned().unwrap_or(json!([])) })))
+}
+
+/// `POST /api/v1/sessions/{id}/prompts/{prompt_id}:abort` — cancel the running
+/// turn (`{ aborted }`; the prompt id is accepted for wire parity — the
+/// engine cancels the active turn).
+async fn session_prompt_abort(State(state): State<HttpState>, Path((id, _prompt_id)): Path<(String, String)>) -> Json<Value> {
+    let r = state.rpc(kimi_protocol::methods::SESSION_CANCEL, json!({ "session_id": id })).await;
+    if r["code"].as_i64() != Some(0) {
+        return Json(r);
+    }
+    Json(ok(json!({ "aborted": true, "at_seq": 0 })))
+}
+
+/// `POST /api/v1/sessions/{id}:abort` — cancel whatever is running in the
+/// session.
+async fn session_abort_session(State(state): State<HttpState>, Path(id): Path<String>) -> Json<Value> {
+    let r = state.rpc(kimi_protocol::methods::SESSION_CANCEL, json!({ "session_id": id })).await;
+    if r["code"].as_i64() != Some(0) {
+        return Json(r);
+    }
+    Json(ok(json!({ "aborted": true })))
+}
+
+/// `GET /api/v1/sessions/{id}/tasks` — background tasks (`{ items }`).
+async fn session_tasks(State(state): State<HttpState>, Path(id): Path<String>) -> Json<Value> {
+    let r = state.rpc(kimi_protocol::methods::BG_LIST, Value::Null).await;
+    if r["code"].as_i64() != Some(0) {
+        return Json(r);
+    }
+    // The engine's bg tasks carry an optional `session_id`; scope to the
+    // session when present, else surface everything (TS parity is per-session).
+    let items = r["data"].as_array().cloned().unwrap_or_default();
+    let scoped: Vec<Value> = items
+        .into_iter()
+        .filter(|t| {
+            t.get("session_id")
+                .and_then(|s| s.as_str())
+                .map(|s| s == id)
+                .unwrap_or(true)
+        })
+        .collect();
+    Json(ok(json!({ "items": scoped })))
+}
+
+/// `GET /api/v1/sessions/{id}/tasks/{task_id}` — one background task.
+async fn session_task(State(state): State<HttpState>, Path((id, task_id)): Path<(String, String)>) -> Json<Value> {
+    let r = state.rpc(kimi_protocol::methods::BG_GET, json!({ "task_id": task_id })).await;
+    if r["code"].as_i64() != Some(0) {
+        return Json(r);
+    }
+    if r["data"].is_null() {
+        return Json(err(-40406, "task not found"));
+    }
+    Json(ok(r["data"].clone()))
+}
+
+/// `POST /api/v1/sessions/{id}/tasks/{task_id}:cancel` — stop a task.
+async fn session_task_cancel(State(state): State<HttpState>, Path((_id, task_id)): Path<(String, String)>) -> Json<Value> {
+    let r = state.rpc(kimi_protocol::methods::BG_STOP, json!({ "task_id": task_id })).await;
+    if r["code"].as_i64() != Some(0) {
+        return Json(r);
+    }
+    Json(ok(json!({ "cancelled": true })))
+}
+
+/// `POST /api/v1/sessions/{id}/skills/{skill_name}:activate` — activate a
+/// skill (`{ args? }` → `{ activated, skill_name }`).
+async fn session_skill_activate(State(state): State<HttpState>, Path((id, skill_name)): Path<(String, String)>, Json(body): Json<Value>) -> Json<Value> {
+    let args = body.get("args").cloned().unwrap_or(json!({}));
+    let r = state.rpc(
+        kimi_protocol::methods::SESSION_ACTIVATE_SKILL,
+        json!({ "session_id": id, "name": skill_name, "args": args }),
+    ).await;
+    if r["code"].as_i64() != Some(0) {
+        return Json(r);
+    }
+    Json(ok(json!({ "activated": true, "skill_name": skill_name })))
+}
+
+/// `POST /api/v1/sessions/{id}/approvals/{approval_id}` — resolve a pending
+/// approval (no `/resolve` suffix; the v1 body uses `approved|rejected`
+/// decisions, mapped onto the engine's `allow|deny`).
+async fn session_approval_resolve_v1(
+    State(state): State<HttpState>,
+    Path((_id, approval_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    let mut params = json!({ "id": approval_id });
+    if let Some(decision) = body.get("decision").and_then(|v| v.as_str()) {
+        let engine_decision = match decision {
+            "approved" => "allow",
+            "rejected" => "deny",
+            other => other,
+        };
+        params["decision"] = json!(engine_decision);
+    }
+    if let Some(reason) = body.get("feedback").and_then(|v| v.as_str()) {
+        params["reason"] = json!(reason);
+    }
+    let r = state.rpc(kimi_protocol::methods::SESSION_APPROVAL_RESOLVE, params).await;
+    if r["code"].as_i64() != Some(0) {
+        return Json(r);
+    }
+    Json(ok(json!({ "resolved": true, "resolved_at": v1::iso_now() })))
+}
+
+/// `POST /api/v1/oauth/logout` — sign out of the kimi OAuth provider
+/// (`{ logged_out }`; removes `providers.kimi` from the engine config).
+async fn oauth_logout(State(state): State<HttpState>) -> Json<Value> {
+    let r = state.rpc(
+        kimi_protocol::methods::CONFIG_SET,
+        json!({ "patch": { "providers": { "kimi": null } } }),
+    ).await;
+    if r["code"].as_i64() != Some(0) {
+        return Json(r);
+    }
+    Json(ok(json!({ "logged_out": true })))
+}
+
+/// `POST /api/v1/sessions/{id}/fs:grep` — search session workspace files
+/// (`{ pattern, regex?, case_sensitive? }` → grep result).
+async fn fs_action_grep(State(state): State<HttpState>, Path(id): Path<String>, Json(body): Json<Value>) -> Json<Value> {
+    let mut params = json!({ "session_id": id, "action": "grep" });
+    if let Some(h) = session_workdir(&state, &id).await {
+        params["homedir"] = json!(h);
+        params["path"] = json!(h);
+    }
+    if let Some(pattern) = body.get("pattern").and_then(|v| v.as_str()) {
+        params["query"] = json!(pattern);
+    }
+    if let Some(regex) = body.get("regex").and_then(|v| v.as_bool()) {
+        params["regex"] = json!(regex);
+    }
+    if let Some(cs) = body.get("case_sensitive").and_then(|v| v.as_bool()) {
+        params["case_sensitive"] = json!(cs);
+    }
+    Json(state.rpc(kimi_protocol::methods::SESSION_FS, params).await)
+}
+
+/// `POST /api/v1/sessions/{id}/fs:git_status` — git status of the session
+/// workspace (`{ paths? }` → `{ branch, ahead, behind, entries, … }`).
+async fn fs_git_status(State(state): State<HttpState>, Path(id): Path<String>, Json(_body): Json<Value>) -> Json<Value> {
+    let Some(cwd) = session_workdir(&state, &id).await else {
+        return Json(err(-40401, "session not found"));
+    };
+    Json(state.rpc(kimi_protocol::methods::GIT_STATUS, json!({ "cwd": cwd })).await)
+}
+
+/// `POST /api/v1/sessions/{id}/fs:diff` — git diff of one workspace file
+/// (`{ path }` → `{ path, diff }`).
+async fn fs_git_diff(State(state): State<HttpState>, Path(id): Path<String>, Json(body): Json<Value>) -> Json<Value> {
+    let Some(cwd) = session_workdir(&state, &id).await else {
+        return Json(err(-40401, "session not found"));
+    };
+    let path = body.get("path").and_then(|v| v.as_str()).unwrap_or_default();
+    if path.is_empty() {
+        return Json(err(-32602, "fs:diff requires a path"));
+    }
+    Json(state.rpc(kimi_protocol::methods::GIT_DIFF, json!({ "cwd": cwd, "path": path })).await)
+}
+
 /// `GET /api/v1/sessions/{id}/transcript` — turn-granular transcript rebuilt
 /// from the engine context messages (kap-server transcript projection).
 async fn session_transcript(State(state): State<HttpState>, Path(id): Path<String>) -> Json<Value> {
@@ -1020,6 +1469,38 @@ mod tests {
     use super::*;
     use kimi_server::processor::Processor;
     use kimi_server::request_processors::HealthProcessor;
+
+    /// `{x}:{action}` path segments are rewritten to `{x}/{action}` so the
+    /// frontend's colon-suffixed routes hit the slash-form handlers.
+    #[test]
+    fn colon_actions_rewrite_to_slash() {
+        let cases = [
+            (
+                "/api/v1/sessions/sess-1:compact",
+                "/api/v1/sessions/sess-1/compact",
+            ),
+            (
+                "/api/v1/sessions/sess-1/prompts:steer",
+                "/api/v1/sessions/sess-1/prompts/steer",
+            ),
+            (
+                "/api/v1/sessions/sess-1/tasks/t-1:cancel",
+                "/api/v1/sessions/sess-1/tasks/t-1/cancel",
+            ),
+            (
+                "/api/v1/sessions/sess-1/skills/skill-x:activate",
+                "/api/v1/sessions/sess-1/skills/skill-x/activate",
+            ),
+            // Plain routes are untouched.
+            ("/api/v1/sessions/sess-1/fs:grep", "/api/v1/sessions/sess-1/fs:grep"),
+            ("/api/v1/sessions/sess-1/prompt", "/api/v1/sessions/sess-1/prompt"),
+        ];
+        for (input, expected) in cases {
+            let uri = axum::http::Uri::try_from(input).expect("uri");
+            let rewritten = rewrite_path(&uri);
+            assert_eq!(rewritten, *expected, "rewrite {input}");
+        }
+    }
 
     /// A processor with just the health method (no store/env needed).
     fn health_processor() -> Arc<MessageProcessor> {

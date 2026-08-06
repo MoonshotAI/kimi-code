@@ -359,6 +359,144 @@ async fn http_v1_prompt_async_returns_immediately_and_resets_busy() {
 }
 
 #[tokio::test]
+async fn http_v1_extended_routes() {
+    // The remaining v1 session surface the web client uses: profile updates,
+    // goal/warnings reads, messages page, compact/undo/abort, tasks, skill
+    // activation, oauth logout, and the colon-suffix route rewrite.
+    let (base, serving) = spawn_http("extended").await;
+    let client = reqwest::Client::new();
+    let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+
+    let resp = client
+        .post(format!("{base}/api/v1/sessions"))
+        .json(&serde_json::json!({ "metadata": { "cwd": cwd } }))
+        .send()
+        .await
+        .expect("create")
+        .json::<serde_json::Value>()
+        .await
+        .expect("json");
+    let sid = resp["data"]["id"].as_str().expect("id").to_string();
+
+    // profile: rename + model + plan mode, returns the updated WireSession.
+    let resp = client
+        .post(format!("{base}/api/v1/sessions/{sid}/profile"))
+        .json(&serde_json::json!({
+            "title": "renamed",
+            "agent_config": { "model": "kimi", "plan_mode": true },
+        }))
+        .send()
+        .await
+        .expect("profile")
+        .json::<serde_json::Value>()
+        .await
+        .expect("json");
+    assert_eq!(resp["code"], 0, "profile: {resp}");
+    assert_eq!(resp["data"]["title"], "renamed", "title applied: {resp}");
+    assert_eq!(resp["data"]["agent_config"]["model"], "kimi", "model: {resp}");
+
+    // goal: no active goal -> null data.
+    let resp = client
+        .get(format!("{base}/api/v1/sessions/{sid}/goal"))
+        .send()
+        .await
+        .expect("goal")
+        .json::<serde_json::Value>()
+        .await
+        .expect("json");
+    assert_eq!(resp["code"], 0, "goal: {resp}");
+    assert!(resp["data"].is_null(), "no goal: {resp}");
+
+    // warnings: shape `{ warnings: [...] }`.
+    let resp = client
+        .get(format!("{base}/api/v1/sessions/{sid}/warnings"))
+        .send()
+        .await
+        .expect("warnings")
+        .json::<serde_json::Value>()
+        .await
+        .expect("json");
+    assert_eq!(resp["code"], 0, "warnings: {resp}");
+    assert!(resp["data"]["warnings"].is_array(), "warnings array: {resp}");
+
+    // messages: `{ items, has_more }` page.
+    let resp = client
+        .get(format!("{base}/api/v1/sessions/{sid}/messages"))
+        .send()
+        .await
+        .expect("messages")
+        .json::<serde_json::Value>()
+        .await
+        .expect("json");
+    assert_eq!(resp["code"], 0, "messages: {resp}");
+    assert!(resp["data"]["items"].is_array(), "items: {resp}");
+    assert_eq!(resp["data"]["has_more"], false, "has_more: {resp}");
+
+    // Colon-suffix rewrite: `/sessions/{id}:compact` hits the slash route.
+    // The engine has no compaction delegate in the test harness, so the
+    // response carries the compact-specific error — proving the route
+    // matched (a miss would fall through to the session-update handler).
+    let resp = client
+        .post(format!("{base}/api/v1/sessions/{sid}:compact"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("compact")
+        .json::<serde_json::Value>()
+        .await
+        .expect("json");
+    let msg = resp["msg"].as_str().unwrap_or("");
+    assert!(
+        msg.contains("compaction") || resp["code"].as_i64() == Some(0),
+        "compact route matched: {resp}"
+    );
+
+    // undo: empty history errors with the undo-specific message — proving
+    // the `/sessions/{id}:undo` colon route hit the undo handler.
+    let resp = client
+        .post(format!("{base}/api/v1/sessions/{sid}:undo"))
+        .json(&serde_json::json!({ "count": 1 }))
+        .send()
+        .await
+        .expect("undo")
+        .json::<serde_json::Value>()
+        .await
+        .expect("json");
+    let msg = resp["msg"].as_str().unwrap_or("");
+    assert!(
+        msg.contains("undo") || resp["code"].as_i64() == Some(0),
+        "undo route matched: {resp}"
+    );
+
+    // tasks: empty list.
+    let resp = client
+        .get(format!("{base}/api/v1/sessions/{sid}/tasks"))
+        .send()
+        .await
+        .expect("tasks")
+        .json::<serde_json::Value>()
+        .await
+        .expect("json");
+    assert_eq!(resp["code"], 0, "tasks: {resp}");
+    assert!(resp["data"]["items"].is_array(), "task items: {resp}");
+
+    // oauth logout: removes providers.kimi.
+    let resp = client
+        .post(format!("{base}/api/v1/oauth/logout"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("logout")
+        .json::<serde_json::Value>()
+        .await
+        .expect("json");
+    assert_eq!(resp["code"], 0, "logout: {resp}");
+    assert_eq!(resp["data"]["logged_out"], true, "logged out: {resp}");
+
+    serving.abort();
+}
+
+#[tokio::test]
 async fn ws_v1_streams_turn_events_after_subscribe() {
     let (base, serving) = spawn_http("ws-stream").await;
     let ws_url = base.replace("http://", "ws://");

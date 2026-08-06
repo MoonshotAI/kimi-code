@@ -270,7 +270,7 @@ async fn run_web(
         Some(dir) => kimi_server_transport::http::router_with_assets(state, dir),
         None => kimi_server_transport::http::router(state),
     };
-    axum::serve(listener, router)
+    axum::serve(listener, kimi_server_transport::http::colon_make_service(router))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
@@ -436,8 +436,9 @@ enum Commands {
         /// Enable plan mode before prompting.
         #[arg(long)]
         plan: bool,
-        /// Resume the most recently updated session instead of a fresh one.
-        #[arg(long = "continue")]
+        /// Resume the most recently updated session instead of a fresh one
+        /// (mutually exclusive with `-S <id>`/`-r <id>`).
+        #[arg(long = "continue", conflicts_with = "session")]
         continue_: bool,
         /// Output format: `text` (default) or `stream-json` (JSONL).
         #[arg(long, value_enum, default_value_t = PrintOutputFormat::Text)]
@@ -1655,6 +1656,16 @@ async fn main() -> anyhow::Result<()> {
     };
     match command {
         Commands::Print { prompt, verbose, json, goal, model, plan, continue_, output_format, yolo, auto } => {
+            // TS `validateOptions` parity: empty prompt/model are rejected
+            // before anything is sent to the engine.
+            if prompt.trim().is_empty() {
+                eprintln!("error: Prompt cannot be empty.");
+                std::process::exit(1);
+            }
+            if model.as_deref().is_some_and(|m| m.trim().is_empty()) {
+                eprintln!("error: Model cannot be empty.");
+                std::process::exit(1);
+            }
             let stream_json = output_format == PrintOutputFormat::StreamJson;
             if json && stream_json {
                 eprintln!("error: --json and --output-format stream-json are mutually exclusive");

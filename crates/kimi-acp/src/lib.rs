@@ -59,8 +59,22 @@ where
         // ACP ordering: session/update notifications precede their response.
         let mut preamble: Vec<serde_json::Value> = Vec::new();
         match method.as_str() {
+            "session/new" | "session/resume" => {
+                // Advertise the slash-command palette right after the session
+                // is created/attached (TS adapter parity).
+                preamble.push(commands_update(
+                    &session_id,
+                    slash_commands(&harness, &session_id).await,
+                ));
+            }
             "session/load" => {
-                preamble = replay_updates(&harness, &session_id).await;
+                // History replay first, then the palette.
+                let mut updates = replay_updates(&harness, &session_id).await;
+                updates.push(commands_update(
+                    &session_id,
+                    slash_commands(&harness, &session_id).await,
+                ));
+                preamble = updates;
             }
             "session/prompt" => {
                 // Streamed chunks (llm.delta) become chunk-granular
@@ -123,6 +137,67 @@ fn session_update(session_id: &str, kind: &str, text: String) -> serde_json::Val
             },
         },
     })
+}
+
+/// ACP builtin slash commands advertised via `available_commands_update`
+/// (TS `acp-adapter/src/builtin-commands.ts` parity).
+const BUILTIN_COMMANDS: &[(&str, &str)] = &[
+    ("compact", "Compact the conversation context"),
+    ("status", "Show current session status"),
+    ("usage", "Show session token usage"),
+    ("mcp", "Show MCP server status"),
+    ("tasks", "List background tasks"),
+    ("help", "Show available ACP commands"),
+];
+
+/// An ACP `session/update` notification carrying the slash-command palette
+/// (TS `availableCommandsUpdateNotification` parity).
+fn commands_update(session_id: &str, commands: Vec<serde_json::Value>) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+            "sessionId": session_id,
+            "update": {
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": commands,
+            },
+        },
+    })
+}
+
+/// The session-scoped slash-command palette: builtins + user-activatable
+/// skills as `skill:<name>` entries (TS `buildSkillSlashCommands` parity —
+/// builtin-sourced skills keep their bare name, everything else is
+/// namespaced so the `session/prompt` interceptor can route it).
+async fn slash_commands(harness: &Harness, session_id: &str) -> Vec<serde_json::Value> {
+    let mut commands: Vec<serde_json::Value> = BUILTIN_COMMANDS
+        .iter()
+        .map(|(name, description)| serde_json::json!({ "name": name, "description": description }))
+        .collect();
+    let body = harness
+        .client()
+        .call(
+            kimi_protocol::methods::SESSION_LIST_SKILLS,
+            serde_json::json!({ "session_id": session_id }),
+        )
+        .await;
+    if let Some(skills) = body["result"]["skills"].as_array() {
+        for skill in skills {
+            let Some(name) = skill["name"].as_str() else { continue };
+            let source = skill["source"].as_str().unwrap_or("");
+            let command_name = if source == "builtin" {
+                name.to_string()
+            } else {
+                format!("skill:{name}")
+            };
+            commands.push(serde_json::json!({
+                "name": command_name,
+                "description": skill["description"].as_str().unwrap_or(""),
+            }));
+        }
+    }
+    commands
 }
 
 /// Replay the persisted context as `session/update` notifications —
@@ -364,6 +439,42 @@ async fn handle(
             if session_id.is_empty() || prompt.is_empty() {
                 return error(-32602, "session/prompt requires sessionId and prompt");
             }
+            // `/skill:<name> [args]` interception (TS parity): route to skill
+            // activation instead of forwarding the raw slash text to the
+            // model (the palette advertised skills as `skill:<name>`).
+            if let Some(rest) = prompt.strip_prefix("/skill:") {
+                let (name, args_text) = match rest.split_once(char::is_whitespace) {
+                    Some((n, a)) => (n, a.trim()),
+                    None => (rest, ""),
+                };
+                if !name.is_empty() {
+                    let body = harness
+                        .client()
+                        .call(
+                            kimi_protocol::methods::SESSION_ACTIVATE_SKILL,
+                            serde_json::json!({
+                                "session_id": session_id,
+                                "name": name,
+                                "args": { "args": args_text },
+                            }),
+                        )
+                        .await;
+                    if let Some(e) = body.get("error") {
+                        return error(-32603, e["message"].as_str().unwrap_or("skill activation failed"));
+                    }
+                    // The skill turn renders into the session context; return
+                    // its final assistant text like a normal prompt result.
+                    let ctx = harness.client().session_get_context(session_id).await;
+                    let text = kimi_ui::last_assistant_text(&ctx["result"]).unwrap_or_default();
+                    return result(serde_json::json!({
+                        "stopReason": "end_turn",
+                        "messages": [{
+                            "role": "assistant",
+                            "content": [{ "type": "text", "text": text }],
+                        }],
+                    }));
+                }
+            }
             match harness.run_prompt_stream(session_id, prompt).await {
                 Ok((text, deltas)) => {
                     // The serve layer turns `_deltas` into session/update
@@ -490,7 +601,19 @@ mod tests {
                 Ok(Ok(_)) => {
                     buf.push(byte[0]);
                     if byte[0] == b'\n' {
-                        break;
+                        // A line is complete: the wire response carries an
+                        // `id`; preamble notifications (session/update) do
+                        // not — skip them and keep reading for the response.
+                        if !buf.is_empty() {
+                            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&buf) {
+                                if value.get("id").is_some() {
+                                    drop(client_side);
+                                    let _ = server.await;
+                                    return Some(value);
+                                }
+                            }
+                            buf.clear();
+                        }
                     }
                 }
                 Err(_) => {}
@@ -728,16 +851,17 @@ mod tests {
         session.save().await.expect("save");
 
         // session/load replays the history as user_message_chunk
-        // notifications BEFORE the response (ACP ordering). The imported
-        // message carries two text parts (the wrapper + the content), so
-        // two notifications precede the response.
+        // notifications BEFORE the response (ACP ordering), then advertises
+        // the slash-command palette. The imported message carries two text
+        // parts (the wrapper + the content), so two replay notifications +
+        // the palette + the response precede.
         let lines = round_trip_n(
             harness,
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session/load\",\"params\":{\"sessionId\":\"acp-replay\"}}\n",
-            3,
+            4,
         )
         .await;
-        assert_eq!(lines.len(), 3, "2 notifications + response: {lines:?}");
+        assert_eq!(lines.len(), 4, "2 replay + palette + response: {lines:?}");
         for line in &lines[..2] {
             assert_eq!(line["method"], "session/update", "line: {line:?}");
             assert_eq!(line["params"]["sessionId"], "acp-replay");
@@ -755,8 +879,22 @@ mod tests {
             texts.iter().any(|t| t.contains("hello from import")),
             "imported content replayed: {texts:?}"
         );
-        assert!(lines[2].get("id").is_some(), "line 2 is the response: {lines:?}");
-        assert_eq!(lines[2]["result"]["sessionId"], "acp-replay");
+        // The palette notification advertises the builtin commands.
+        assert_eq!(
+            lines[2]["params"]["update"]["sessionUpdate"],
+            "available_commands_update",
+            "palette: {lines:?}"
+        );
+        let palette = lines[2]["params"]["update"]["availableCommands"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            palette.iter().any(|c| c["name"] == "compact"),
+            "builtin advertised: {palette:?}"
+        );
+        assert!(lines[3].get("id").is_some(), "line 3 is the response: {lines:?}");
+        assert_eq!(lines[3]["result"]["sessionId"], "acp-replay");
     }
 
     #[tokio::test]

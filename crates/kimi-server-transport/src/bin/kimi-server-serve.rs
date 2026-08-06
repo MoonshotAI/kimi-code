@@ -112,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
             }
             None => kimi_server_transport::http::router(state),
         };
-        axum::serve(listener, router).await?;
+        axum::serve(listener, kimi_server_transport::http::colon_make_service(router)).await?;
         return Ok(());
     }
 

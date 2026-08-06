@@ -549,6 +549,26 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - **验证**：kimi-tui 33 全绿（29 基线 + history 4 + bottom_pane 补全扩展）；`cargo check --workspace` 0 errors
 - **待办**：分片 B 审批面板化（DisplayBlock diff/shell/file 预览 + approve-for-session 记忆）；工具调用卡片（结构化 tool 条目/结果折叠）；补全弹窗；媒体渲染
 
+**2026-08-06 CLI 续补（G-3 批次 2 + ACP 增补）**：
+- **选项冲突校验补全 ✅**（TS `validateOptions` parity）：`print` 空 prompt / 空 `--model` 报错（"Prompt/Model cannot be empty."）；`print --continue` 与全局 `-S <id>` clap `conflicts_with` 互斥；新增 2 集成测试 → cli.rs 44 全绿
+- **ACP skills 命令广告 + `/skill:` 拦截 ✅**（kimi-acp，TS `acp-adapter` parity）：
+  - `available_commands_update` 通知（`session/update` 结构）在 `session/new`/`load`/`resume` 后推送：builtin 6 命令（compact/status/usage/mcp/tasks/help，对齐 TS `builtin-commands.ts`）+ 会话 skills（`skill:<name>` 命名，builtin source 保留裸名，对齐 `buildSkillSlashCommands`）
+  - `session/prompt` 拦截 `/skill:<name> [args]` → `session/activate_skill`（不再把斜杠文本喂给模型），返回技能轮最终助手文本
+  - 测试基建：`round_trip` 跳过无 `id` 的 preamble 通知行、返回响应行；`session_load_replays_updates` 适配 4 行（2 replay + palette + 响应）并断言 palette 含 builtin——kimi-acp 8 全绿
+- **验证**：cli 集成 44 + kimi-acp 8 + workspace 0 errors
+
+**2026-08-06 G-2 收尾批次：剩余 v1 路由补齐（前端功能面完整）**：
+- **新增 18 个 v1 路由**（kimi-web daemon 客户端剩余端点，映射现有 processor RPC）：
+  - `POST /sessions/{id}/profile`（title/metadata/agent_config：model/thinking/plan/swarm/permission → 返回 WireSession）
+  - `GET /sessions/{id}/goal`（SESSION_GOAL_GET，null 保持）、`/warnings`（{warnings}）、`/messages`（WireMessage 分页，复用 wire_message_from_context）
+  - `:compact`（SESSION_COMPACT）、`:undo`（UNDO_HISTORY）、`:restore`（UPDATE_METADATA archived=false）、`/prompts:steer`、`/prompts/{pid}:abort` + `:abort`（CANCEL）
+  - `/tasks`（BG_LIST 按 session 过滤）、`/tasks/{tid}`（BG_GET）、`/tasks/{tid}:cancel`（BG_STOP）
+  - `/skills/{name}:activate`（ACTIVATE_SKILL）、`/approvals/{aid}`（无 resolve 后缀 + approved/rejected→allow/deny 决策转换）、`/oauth/logout`（config 删 providers.kimi）
+  - `/fs:grep`（引擎 fs.rs 加 `grep`→Grep 工具动作，query→pattern）、`/fs:git_status`、`/fs:diff`（git/status、git/diff，cwd 从 session workdir 解析）
+- **冒号路由 axum 适配**：axum 0.8 不支持 `{id}:compact`（参数+字面量同段）且 `Router::layer` 在路由匹配后执行（`{id}` 贪婪捕获 `sess-1:compact`）→ 新增 `ColonRewrite`/`ColonMake` tower Service（`rewrite_path` 白名单动作表 compact/undo/restore/abort/steer/activate/cancel/download，字面量 `fs:grep` 等不动）包装 router 在**匹配前**重写 `{x}:{action}`→`{x}/{action}`；serve/serve_web/kimi-cli run_web/kimi-server-serve 统一接入
+- **测试**：`colon_actions_rewrite_to_slash` 单测（5 重写 + 2 不动）+ `http_v1_extended_routes` e2e（profile 应用/goal null/warnings/messages 页/冒号 compact+undo 路由命中/tasks 空/logout）→ transport 24 全绿（14 lib + 6 e2e + 4 remote + 2 ws）
+- **待办**：① `KIMI_WEB_RUST_SERVER=1 kimi web` 浏览器人工验证（SPA+WS+token 全链路）② kimi-inspect `/api/v1/debug` 面（另立任务）③ `:children`/`:btw`/terminals/files 上传（次要，随用随补）
+
 **2026-08-06 G-2 批次 1：v1 契约投影 + WS v1 门面（kimi-web 前端零改动连 Rust server 的最小可验证链路）**：
 - **背景**：浏览器 daemon 客户端（`apps/kimi-web/src/api/daemon/`）按 kap-server v1 wire 契约编写（`WireSession` 形状、`{items,has_more}` 分页、`/prompts` 复数路由、`event.*` WS 协议 + `server_hello/client_hello/subscribe` 握手），而原 `http.rs` 是"RPC 直通投影"（codex 风格路径/形状 + JSON-RPC WS）——两边路径、响应形状、WS 协议全不一致，mapper 直接 TypeError / WS 帧互认垃圾。
 - **新增 `crates/kimi-server-transport/src/v1.rs`（v1 契约投影模块）**：

@@ -715,6 +715,30 @@ fn print_json_and_stream_json_are_mutually_exclusive() {
 }
 
 #[test]
+fn print_rejects_empty_prompt_and_model() {
+    let home = temp_dir("print-empty");
+    let out = run(&home, &["print", ""]);
+    assert!(!out.status.success(), "empty prompt must fail");
+    assert!(stderr(&out).contains("cannot be empty"), "stderr: {}", stderr(&out));
+    let out = run(&home, &["print", "--model", "", "hi"]);
+    assert!(!out.status.success(), "empty model must fail");
+    assert!(stderr(&out).contains("cannot be empty"), "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn print_continue_conflicts_with_session_flag() {
+    // TS parity: `--continue` and `-S <id>` are mutually exclusive.
+    let home = temp_dir("print-continue-conflict");
+    let out = run(&home, &["print", "--continue", "-S", "some-session", "hi"]);
+    assert!(!out.status.success(), "conflict must fail");
+    assert!(
+        stderr(&out).contains("cannot be used with"),
+        "stderr: {}",
+        stderr(&out)
+    );
+}
+
+#[test]
 fn chat_undo_and_fork_offline() {
     // /undo (empty history errors cleanly) + /fork (creates a new session)
     // are pure state ops — no LLM needed.

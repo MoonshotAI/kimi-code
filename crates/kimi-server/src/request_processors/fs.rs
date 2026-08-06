@@ -34,6 +34,7 @@ impl Processor for FsProcessor {
                     "read" => "Read",
                     "list" => "Glob",
                     "search" => "FsSearch",
+                    "grep" => "Grep",
                     other => {
                         return Err(JsonRpcError::internal_error(format!(
                             "fs: unsupported action {other}"
@@ -46,12 +47,12 @@ impl Processor for FsProcessor {
                 if let Some(limit) = input.limit {
                     args.insert("limit".to_string(), serde_json::json!(limit));
                 }
-                // The Glob tool requires a `pattern` argument and treats
+                // The Glob/Grep tools require a `pattern` argument and treat
                 // `path` as the search-root directory (must be a real dir).
                 // The wire surface carries the pattern as `query` for the
-                // list action; mapping it here fixes a refusal inherited from
-                // main.rs, where pattern was never set.
-                if tool_name == "Glob" {
+                // list/grep actions; mapping it here fixes a refusal inherited
+                // from main.rs, where pattern was never set.
+                if tool_name == "Glob" || tool_name == "Grep" {
                     match input.query.clone() {
                         Some(q) => {
                             args.insert("pattern".to_string(), serde_json::Value::String(q));
