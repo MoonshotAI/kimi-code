@@ -69,6 +69,9 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
           skillDir: skill.dir,
         }),
       },
+      // Attachments ride the same user message, after the skill prompt, so
+      // the activated turn sees them exactly like a prompt with uploads.
+      ...(input.content ?? []),
     ];
 
     const turn = await this.recordActivation(
