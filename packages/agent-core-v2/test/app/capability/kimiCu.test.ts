@@ -601,6 +601,58 @@ describe('kimi-cu entry', () => {
     expect(doctorResults).toEqual([]);
   });
 
+  it('refreshes the Windows plugin when installation starts fully ready', async () => {
+    const plugins = fakePlugins([{ id: 'kimi-cu-win', enabled: true, state: 'ok' }]);
+    const doctorResults = [
+      {
+        code: 0,
+        stdout: 'version=0.2.14\r\nmcp=true\r\nhelper=embedded\r\nagent=running\r\n',
+        stderr: '',
+      },
+      {
+        code: 0,
+        stdout: 'version=0.2.14\r\nmcp=true\r\nhelper=embedded\r\nagent=running\r\n',
+        stderr: '',
+      },
+    ];
+    const hostProcess = {
+      _serviceBrand: undefined,
+      spawn: (_command: string, args: readonly string[] = []) => {
+        if (args.some((arg) => arg.includes('Get-FileHash'))) {
+          return Promise.resolve(fakeProc(0, 'PowerShell 5.1'));
+        }
+        if (args.some((arg) => arg.includes('setup_windows.ps1'))) {
+          return Promise.resolve(fakeProc(0));
+        }
+        const result = doctorResults.shift();
+        return Promise.resolve(
+          fakeProc(result?.code ?? 1, result?.stdout ?? '', result?.stderr ?? 'unexpected doctor'),
+        );
+      },
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(
+      makeCtx({
+        platform: 'win32',
+        arch: 'x64',
+        plugins: plugins.service,
+        hostProcess,
+        fetchImpl: (() =>
+          Promise.resolve(
+            new Response("Write-Host 'official setup'", {
+              headers: { 'content-length': '27' },
+            }),
+          )) as typeof fetch,
+      }),
+    );
+
+    await entry.install(() => undefined);
+
+    expect(plugins.installs).toEqual([
+      'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+    ]);
+    expect(doctorResults).toEqual([]);
+  });
+
   it('explains how to recover when Windows plugin files are still in use', async () => {
     const busy = Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
     const plugins = fakePlugins([], () => {

@@ -640,7 +640,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     const before = await detect();
     const stepStates = new Map(before.steps.map((step) => [step.id, step.state]));
     const readyBefore = before.steps.every((step) => step.state === 'ok');
-    const installPlugin = stepStates.get('plugin') !== 'ok';
+    const installPlugin = stepStates.get('plugin') !== 'ok' || readyBefore;
     const installRuntime = stepStates.get('runtime') !== 'ok' || readyBefore;
     const installPowerShell = installRuntime ? await installerPowerShell() : undefined;
 
