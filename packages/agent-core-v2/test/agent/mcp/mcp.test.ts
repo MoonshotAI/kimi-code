@@ -234,11 +234,13 @@ describe('AgentMcpService', () => {
   function createService(
     manager: FakeMcpManager,
     ready: Promise<void> = Promise.resolve(),
+    isBaselineServer: (name: string) => boolean = () => true,
   ): IAgentMcpService {
     ix.stub(ISessionMcpHandle, {
       _serviceBrand: undefined,
       ready,
       connectionManager: manager as unknown as McpConnectionManager,
+      isBaselineServer,
     } satisfies ISessionMcpHandle);
     ix.stub(ISessionContext, { sessionDir: '/tmp/kimi-code-mcp-test' });
     ix.set(IAgentMcpService, new SyncDescriptor(AgentMcpService));
@@ -312,6 +314,51 @@ describe('AgentMcpService', () => {
         type: 'tool.list.updated',
         reason: 'mcp.connected',
         serverName: 'local server',
+      }),
+    );
+  });
+
+  it('ignores status changes from servers outside the session baseline', async () => {
+    const manager = new FakeMcpManager();
+    const lateClient = fakeMcpClient();
+    manager.setResolved('late server', lateClient, await discoverTools(lateClient));
+    const baseClient = fakeMcpClient();
+    manager.setResolved('base server', baseClient, await discoverTools(baseClient));
+    createService(manager, Promise.resolve(), (name) => name === 'base server');
+
+    const mcpToolNames = () =>
+      ix
+        .get(IAgentToolRegistryService)
+        .list()
+        .filter((tool) => tool.source === 'mcp')
+        .map((tool) => tool.name);
+
+    manager.connect('late server');
+
+    expect(mcpToolNames()).toEqual([]);
+    expect(
+      events.filter(
+        (event) => event.type === 'mcp.server.status' || event.type === 'tool.list.updated',
+      ),
+    ).toEqual([]);
+
+    manager.connect('base server');
+
+    expect(mcpToolNames().toSorted()).toEqual([
+      'mcp__base_server__echo',
+      'mcp__base_server__noop',
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'mcp.server.status',
+        server: expect.objectContaining({ name: 'base server', status: 'connected' }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.list.updated',
+        reason: 'mcp.connected',
+        serverName: 'base server',
       }),
     );
   });

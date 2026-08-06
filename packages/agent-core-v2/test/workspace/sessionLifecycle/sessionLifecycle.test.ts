@@ -391,6 +391,7 @@ function workspaceMcpServiceStub(ready: Promise<void> = Promise.resolve()): IWor
       get connectionManager(): McpConnectionManager {
         throw new Error('not implemented');
       },
+      isBaselineServer: () => true,
     }),
     sessionOverlay: () => {
       throw new Error('not implemented');
@@ -1175,6 +1176,7 @@ describe('SessionLifecycleService', () => {
       _serviceBrand: undefined,
       ready,
       connectionManager: {} as unknown as McpConnectionManager,
+      isBaselineServer: () => true,
     };
     const shutdown = vi.fn(() => Promise.resolve());
     const sessionOverlay = vi.fn(

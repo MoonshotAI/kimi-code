@@ -44,10 +44,14 @@
  * the same keep-live-sessions-stable philosophy as the MCP tombstone. New
  * agents (new sessions, new subagents) snapshot the then-current state. The
  * Workspace-scope catalog still re-pulls its plugin source on plugin reload
- * (new agents and runtime skill lookups read it) and its change event still
- * drives `refreshSystemPrompt`, but the rebuild reuses the frozen values, so
- * the prompt only moves when non-plugin inputs change (AGENTS.md, the
- * `[tools]` section, session tool policy, compaction). A side effect of the
+ * (new agents and runtime skill lookups read it), but its change event no
+ * longer drives `refreshSystemPrompt`: with the plugin-derived inputs
+ * frozen, such a rebuild could never pick up new content and would only
+ * churn `${now}`, rewriting the prompt and invalidating the provider's
+ * prompt cache on every plugin mutation. The prompt only moves when
+ * non-plugin inputs change (AGENTS.md, the
+ * `[tools]` section, session tool policy, compaction, the builtin-source
+ * config toggle). A side effect of the
  * freeze: skills added mid-session to file-backed sources, and builtin-source
  * config toggles, no longer ride an unrelated refresh into a live agent's
  * prompt. `refreshSystemPrompt` never rejects: a
@@ -119,10 +123,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { subagentDisplayModel } from '#/session/subagent/configSection';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import {
-  BUILTIN_SKILL_SOURCE_ID,
-  PLUGIN_SKILL_SOURCE_ID,
-} from '#/app/skillCatalog/skillSource';
+import { BUILTIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -293,7 +294,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
     this._register(
       this.skillCatalog.onDidChange((sourceId) => {
-        if (sourceId === PLUGIN_SKILL_SOURCE_ID || sourceId === BUILTIN_SKILL_SOURCE_ID) {
+        // Only the builtin source drives a rebuild: plugin-derived prompt
+        // inputs are frozen for the agent's lifetime, so rebuilding on a
+        // plugin-source change could never pick up new content — it would
+        // only churn `${now}` and invalidate the provider's prompt cache.
+        if (sourceId === BUILTIN_SKILL_SOURCE_ID) {
           void this.refreshSystemPrompt();
         }
       }),

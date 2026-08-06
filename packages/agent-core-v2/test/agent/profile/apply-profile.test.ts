@@ -333,6 +333,48 @@ describe('AgentProfileService.applyProfile', () => {
     change.dispose();
   });
 
+  it('does not rebuild the system prompt when the plugin skill source changes', async () => {
+    let renders = 0;
+    const countingProfile: ResolvedAgentProfile = normalizeAgentProfile({
+      name: 'counting-profile',
+      systemPrompt: () => `render:${++renders}`,
+      tools: [],
+    });
+    const change = new Emitter<string>();
+    const { profile: svc } = buildContext(skillCatalogWithChange(change));
+    await svc.applyProfile(countingProfile);
+    expect(svc.data().systemPrompt).toBe('render:1');
+
+    change.fire(PLUGIN_SKILL_SOURCE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Plugin-derived inputs are frozen for the agent's lifetime, so a plugin
+    // source change must not trigger a rebuild at all — a rebuild would only
+    // churn `${now}` and invalidate the provider's prompt cache.
+    expect(svc.data().systemPrompt).toBe('render:1');
+    change.dispose();
+  });
+
+  it('rebuilds the system prompt when the builtin skill source changes', async () => {
+    let renders = 0;
+    const countingProfile: ResolvedAgentProfile = normalizeAgentProfile({
+      name: 'counting-profile',
+      systemPrompt: () => `render:${++renders}`,
+      tools: [],
+    });
+    const change = new Emitter<string>();
+    const { profile: svc } = buildContext(skillCatalogWithChange(change));
+    await svc.applyProfile(countingProfile);
+    expect(svc.data().systemPrompt).toBe('render:1');
+
+    change.fire(BUILTIN_SKILL_SOURCE_ID);
+
+    await vi.waitFor(() => {
+      expect(svc.data().systemPrompt).toBe('render:2');
+    });
+    change.dispose();
+  });
+
   it('skips plugin sections beyond the aggregate byte budget and warns once', async () => {
     const large = 'x'.repeat(48 * 1024);
     const sections = {

@@ -19,6 +19,7 @@ import type {
   PluginAgentRoot,
   PluginCommandDef,
   PluginInfo,
+  PluginMutationSummary,
   PluginSummary,
   PluginUpdateStatus,
   ReloadSummary,
@@ -70,6 +71,11 @@ export interface IPluginService {
   // empty snapshot from the fallback.
   hasLoadedSnapshot(): boolean;
   readonly onDidReload: Event<ReloadSummary>;
+  // Fires only after a mutation (install / enable / disable / remove) has
+  // reloaded and notified — unlike `onDidReload`, an explicit
+  // `reloadPlugins()` does not raise it, so live-session consumers can tell
+  // "the plugin set changed under you" apart from a deliberate reload.
+  readonly onDidMutate: Event<PluginMutationSummary>;
 }
 
 export const IPluginService: ServiceIdentifier<IPluginService> =
