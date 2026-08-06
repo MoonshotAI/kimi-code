@@ -40,6 +40,42 @@ pub enum TranscriptKind {
     Error,
 }
 
+/// A structured transcript entry: a plain line, or a tool-call card (the
+/// chatwidget component-tree step — TS `tool-call.ts` parity).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TranscriptEntry {
+    /// A role-styled line (user/assistant/status/…).
+    Line(TranscriptLine),
+    /// A structured tool call with args + optional result (collapsible).
+    ToolCall(ToolCallEntry),
+}
+
+/// One tool invocation in the transcript: starts on `session.tool.started`,
+/// gains its result on `session.tool.settled`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCallEntry {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    /// The tool arguments JSON.
+    pub args: String,
+    /// The settled result text (None while running).
+    pub result: Option<String>,
+    pub is_error: bool,
+    /// Long results start collapsed (`[+]`; Ctrl-O toggles).
+    pub collapsed: bool,
+}
+
+/// Convenience push for the common plain-line case (`transcript.push_line`).
+pub trait TranscriptVec {
+    fn push_line(&mut self, line: TranscriptLine);
+}
+
+impl TranscriptVec for Vec<TranscriptEntry> {
+    fn push_line(&mut self, line: TranscriptLine) {
+        self.push(TranscriptEntry::Line(line));
+    }
+}
+
 /// A single transcript line: text plus the role it renders as.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TranscriptLine {
@@ -144,15 +180,21 @@ pub fn completion_for_input(input: &str) -> Option<CompletionState> {
     }
 }
 
-/// Toggle the most recent tool-result line (Ctrl-O) — the tool-call card
-/// expand/collapse. Any tool line that holds a result (long text, multiline,
-/// or already collapsed) participates; short started-lines stay put.
-pub fn toggle_last_tool_collapse(transcript: &mut [TranscriptLine]) {
-    if let Some(entry) = transcript.iter_mut().rev().find(|e| {
-        e.kind == TranscriptKind::Tool
-            && (e.collapsed || e.text.contains('\n') || tool_result_collapsed(&e.text))
+/// Toggle the most recent tool-result card (Ctrl-O) — expand/collapse. Cards
+/// with a long argument preview or an already-collapsed state participate;
+/// short running cards stay put.
+pub fn toggle_last_tool_collapse(transcript: &mut [TranscriptEntry]) {
+    if let Some(entry) = transcript.iter_mut().rev().find(|e| match e {
+        TranscriptEntry::ToolCall(tc) => {
+            tc.collapsed
+                || tc.args.chars().count() > 120
+                || tc.result.as_ref().is_some_and(|r| r.chars().count() > 120)
+        }
+        _ => false,
     }) {
-        entry.collapsed = !entry.collapsed;
+        if let TranscriptEntry::ToolCall(tc) = entry {
+            tc.collapsed = !tc.collapsed;
+        }
     }
 }
 
@@ -268,7 +310,7 @@ fn interrupt_action(code: KeyCode, modifiers: event::KeyModifiers) -> Option<Int
 pub struct App {
     harness: Harness,
     /// Transcript lines rendered in the chat panel.
-    transcript: Vec<TranscriptLine>,
+    transcript: Vec<TranscriptEntry>,
     /// The user's current input line.
     input: String,
     /// Char index of the input cursor (editing position).
@@ -305,6 +347,11 @@ pub struct App {
 }
 
 impl App {
+    /// Push a plain line onto the transcript (the common case).
+    fn push_line(&mut self, line: TranscriptLine) {
+        self.transcript.push(TranscriptEntry::Line(line));
+    }
+
     /// Create the app around an engine harness (embedded or remote).
     pub fn new(harness: Harness, session_id: Option<&str>) -> Self {
         Self {
@@ -377,7 +424,7 @@ impl App {
         let swarm = status["result"]["swarm_mode"].as_bool().unwrap_or(false);
         self.status = format!("plan={} swarm={}", if plan { "on" } else { "off" }, if swarm { "on" } else { "off" });
         self.session = Some(session);
-        self.transcript.push(TranscriptLine::status(format!("session {} ready — type /help", self.session_id)));
+        self.push_line(TranscriptLine::status(format!("session {} ready — type /help", self.session_id)));
         // Preload model aliases for `/model` Tab completion (best-effort).
         if let Ok((aliases, _)) = self.harness.list_models().await {
             self.model_aliases = aliases;
@@ -537,26 +584,26 @@ impl App {
                 "/quit" | "/exit" => return Ok(true),
                 "/help" => {
                     self.transcript
-                        .push(TranscriptLine::status(format!("commands: {}", SLASH_COMMANDS.join(" "))));
+                        .push_line(TranscriptLine::status(format!("commands: {}", SLASH_COMMANDS.join(" "))));
                 }
                 "/approvals" => {
                     let items = self.harness.approvals(Some(&self.session_id)).await?;
                     if items.is_empty() {
-                        self.transcript.push(TranscriptLine::status("no pending approvals"));
+                        self.push_line(TranscriptLine::status("no pending approvals"));
                     }
                     for item in items.iter().take(10) {
                         let id = item["id"].as_str().unwrap_or("?");
                         let tool = item["tool_name"].as_str().unwrap_or("?");
                         let rule = item["approval_rule"].as_str().unwrap_or("?");
-                        self.transcript.push(TranscriptLine::status(format!("{id}  {tool}  ({rule})")));
+                        self.push_line(TranscriptLine::status(format!("{id}  {tool}  ({rule})")));
                     }
                 }
                 "/approve" => {
                     if rest.is_empty() {
-                        self.transcript.push(TranscriptLine::status("usage: /approve <approval-id>"));
+                        self.push_line(TranscriptLine::status("usage: /approve <approval-id>"));
                     } else {
                         let resolved = self.harness.resolve_approval(rest, true, None).await?;
-                        self.transcript.push(TranscriptLine::status(if resolved {
+                        self.push_line(TranscriptLine::status(if resolved {
                             "approval allowed"
                         } else {
                             "approval not found"
@@ -565,10 +612,10 @@ impl App {
                 }
                 "/deny" => {
                     if rest.is_empty() {
-                        self.transcript.push(TranscriptLine::status("usage: /deny <approval-id>"));
+                        self.push_line(TranscriptLine::status("usage: /deny <approval-id>"));
                     } else {
                         let resolved = self.harness.resolve_approval(rest, false, Some("denied by user")).await?;
-                        self.transcript.push(TranscriptLine::status(if resolved {
+                        self.push_line(TranscriptLine::status(if resolved {
                             "approval denied"
                         } else {
                             "approval not found"
@@ -578,17 +625,17 @@ impl App {
                 "/status" => {
                     let status = self.session.as_mut().expect("session").get_status().await;
                     let summary = format_status(&status["result"]);
-                    self.transcript.push(TranscriptLine::status(summary));
+                    self.push_line(TranscriptLine::status(summary));
                 }
                 "/info" => {
                     match self.harness.core_version().await {
-                        Ok(v) => self.transcript.push(TranscriptLine::status(format!(
+                        Ok(v) => self.push_line(TranscriptLine::status(format!(
                             "kimi {} — session {}",
                             v, self.session_id
                         ))),
                         Err(e) => self
                             .transcript
-                            .push(TranscriptLine::error(format!("info failed: {e}"))),
+                            .push_line(TranscriptLine::error(format!("info failed: {e}"))),
                     }
                 }
                 "/session" => {
@@ -597,12 +644,12 @@ impl App {
                         Some("set") if parts.len() >= 2 => {
                             let title = parts[1..].join(" ");
                             match self.harness.rename_session(&self.session_id, &title).await {
-                                Ok(()) => self.transcript.push(TranscriptLine::status(format!(
+                                Ok(()) => self.push_line(TranscriptLine::status(format!(
                                     "session {title}",
                                 ))),
                                 Err(e) => self
                                     .transcript
-                                    .push(TranscriptLine::error(format!("rename failed: {e}"))),
+                                    .push_line(TranscriptLine::error(format!("rename failed: {e}"))),
                             }
                         }
                         _ => {
@@ -611,7 +658,7 @@ impl App {
                             } else {
                                 "usage: /session [set <title>]".to_string()
                             };
-                            self.transcript.push(TranscriptLine::status(msg));
+                            self.push_line(TranscriptLine::status(msg));
                         }
                     }
                 }
@@ -623,7 +670,7 @@ impl App {
                                 Ok(plugins) => {
                                     if plugins.is_empty() {
                                         self.transcript
-                                            .push(TranscriptLine::status("no plugins installed"));
+                                            .push_line(TranscriptLine::status("no plugins installed"));
                                     } else {
                                         let lines: Vec<String> = plugins
                                             .iter()
@@ -633,7 +680,7 @@ impl App {
                                                 format!("{id} {}", if enabled { "[on]" } else { "[off]" })
                                             })
                                             .collect();
-                                        self.transcript.push(TranscriptLine::status(format!(
+                                        self.push_line(TranscriptLine::status(format!(
                                             "plugins ({}): {}",
                                             lines.len(),
                                             lines.join(", ")
@@ -642,7 +689,7 @@ impl App {
                                 }
                                 Err(e) => self
                                     .transcript
-                                    .push(TranscriptLine::error(format!("plugins failed: {e}"))),
+                                    .push_line(TranscriptLine::error(format!("plugins failed: {e}"))),
                             }
                         }
                         Some(action) => {
@@ -669,10 +716,10 @@ impl App {
                                 _ => Err(anyhow::anyhow!("usage: /plugins [list|enable|disable|remove|reload|install <source>]")),
                             };
                             match result {
-                                Ok(msg) => self.transcript.push(TranscriptLine::status(msg)),
+                                Ok(msg) => self.push_line(TranscriptLine::status(msg)),
                                 Err(e) => self
                                     .transcript
-                                    .push(TranscriptLine::error(format!("plugins: {e}"))),
+                                    .push_line(TranscriptLine::error(format!("plugins: {e}"))),
                             }
                         }
                     }
@@ -680,13 +727,13 @@ impl App {
                 "/config" => {
                     let config = self.harness.config().await;
                     match config {
-                        Ok(cfg) => self.transcript.push(TranscriptLine::status(format!(
+                        Ok(cfg) => self.push_line(TranscriptLine::status(format!(
                             "config: {}",
                             serde_json::to_string_pretty(&cfg).unwrap_or_default()
                         ))),
                         Err(e) => self
                             .transcript
-                            .push(TranscriptLine::error(format!("config failed: {e}"))),
+                            .push_line(TranscriptLine::error(format!("config failed: {e}"))),
                     }
                 }
                 "/skills" => {
@@ -706,7 +753,7 @@ impl App {
                                 })
                                 .unwrap_or_default();
                             if entries.is_empty() {
-                                self.transcript.push(TranscriptLine::status("no skills registered"));
+                                self.push_line(TranscriptLine::status("no skills registered"));
                             } else {
                                 match crate::picker::select(
                                     terminal,
@@ -720,25 +767,25 @@ impl App {
                                             .find(|(n, _)| *n == name)
                                             .map(|(_, d)| d.clone())
                                             .unwrap_or_default();
-                                        self.transcript.push(TranscriptLine::status(format!(
+                                        self.push_line(TranscriptLine::status(format!(
                                             "{name}: {desc}"
                                         )));
                                     }
                                     None => self
                                         .transcript
-                                        .push(TranscriptLine::status("skill selection cancelled")),
+                                        .push_line(TranscriptLine::status("skill selection cancelled")),
                                 }
                             }
                         }
                         Err(e) => self
                             .transcript
-                            .push(TranscriptLine::error(format!("skills failed: {e}"))),
+                            .push_line(TranscriptLine::error(format!("skills failed: {e}"))),
                     }
                 }
                 "/plan" => {
                     let enabled = rest == "on" || rest.is_empty();
                     self.session.as_mut().expect("session").set_plan_mode(enabled).await?;
-                    self.transcript.push(TranscriptLine::status(format!(
+                    self.push_line(TranscriptLine::status(format!(
                         "plan mode {}",
                         if enabled { "on" } else { "off" }
                     )));
@@ -747,7 +794,7 @@ impl App {
                 "/swarm" => {
                     let enabled = rest == "on" || rest.is_empty();
                     self.session.as_mut().expect("session").set_swarm_mode(enabled, None).await?;
-                    self.transcript.push(TranscriptLine::status(format!(
+                    self.push_line(TranscriptLine::status(format!(
                         "swarm mode {}",
                         if enabled { "on" } else { "off" }
                     )));
@@ -755,10 +802,10 @@ impl App {
                 }
                 "/thinking" => {
                     if rest.is_empty() {
-                        self.transcript.push(TranscriptLine::status("usage: /thinking <low|medium|high>"));
+                        self.push_line(TranscriptLine::status("usage: /thinking <low|medium|high>"));
                     } else {
                         self.session.as_mut().expect("session").set_thinking(Some(rest)).await?;
-                        self.transcript.push(TranscriptLine::status(format!("thinking effort set to {rest}")));
+                        self.push_line(TranscriptLine::status(format!("thinking effort set to {rest}")));
                     }
                 }
                 "/permission" => {
@@ -772,17 +819,17 @@ impl App {
                             Some(mode) => {
                                 self.session.as_mut().expect("session").set_permission(&mode).await?;
                                 self.transcript
-                                    .push(TranscriptLine::status(format!("permission mode: {mode}")));
+                                    .push_line(TranscriptLine::status(format!("permission mode: {mode}")));
                             }
                             None => self
                                 .transcript
-                                .push(TranscriptLine::status("permission selection cancelled")),
+                                .push_line(TranscriptLine::status("permission selection cancelled")),
                         }
                     } else {
                         let mode = rest;
                         self.session.as_mut().expect("session").set_permission(mode).await?;
                         self.transcript
-                            .push(TranscriptLine::status(format!("permission mode: {mode}")));
+                            .push_line(TranscriptLine::status(format!("permission mode: {mode}")));
                     }
                 }
                 "/yolo" => {
@@ -793,7 +840,7 @@ impl App {
                         .expect("session")
                         .set_permission(if on { "yolo" } else { "manual" })
                         .await?;
-                    self.transcript.push(TranscriptLine::status(format!(
+                    self.push_line(TranscriptLine::status(format!(
                         "yolo mode {}",
                         if on { "on" } else { "off" }
                     )));
@@ -806,7 +853,7 @@ impl App {
                         .expect("session")
                         .set_permission(if on { "auto" } else { "manual" })
                         .await?;
-                    self.transcript.push(TranscriptLine::status(format!(
+                    self.push_line(TranscriptLine::status(format!(
                         "auto mode {}",
                         if on { "on" } else { "off" }
                     )));
@@ -818,16 +865,16 @@ impl App {
                 "/init" => {
                     self.session.as_mut().expect("session").init().await?;
                     self.transcript
-                        .push(TranscriptLine::status("session initialized (agents.md)"));
+                        .push_line(TranscriptLine::status("session initialized (agents.md)"));
                 }
                 "/title" => {
                     if rest.is_empty() {
                         self.transcript
-                            .push(TranscriptLine::status("usage: /title <title>"));
+                            .push_line(TranscriptLine::status("usage: /title <title>"));
                     } else {
                         self.session.as_mut().expect("session").rename(rest).await?;
                         self.transcript
-                            .push(TranscriptLine::status(format!("session title: {rest}")));
+                            .push_line(TranscriptLine::status(format!("session title: {rest}")));
                     }
                 }
                 "/mcp" => {
@@ -845,9 +892,9 @@ impl App {
                                 .collect();
                             if names.is_empty() {
                                 self.transcript
-                                    .push(TranscriptLine::status("no MCP servers configured"));
+                                    .push_line(TranscriptLine::status("no MCP servers configured"));
                             } else {
-                                self.transcript.push(TranscriptLine::status(format!(
+                                self.push_line(TranscriptLine::status(format!(
                                     "MCP servers: {}",
                                     names.join(", ")
                                 )));
@@ -855,7 +902,7 @@ impl App {
                         }
                         Err(e) => self
                             .transcript
-                            .push(TranscriptLine::error(format!("mcp failed: {e}"))),
+                            .push_line(TranscriptLine::error(format!("mcp failed: {e}"))),
                     }
                 }
                 "/tasks" => {
@@ -866,14 +913,14 @@ impl App {
                         .cloned()
                         .unwrap_or_default();
                     if list.is_empty() {
-                        self.transcript.push(TranscriptLine::status("no background tasks"));
+                        self.push_line(TranscriptLine::status("no background tasks"));
                     } else {
                         for t in list.iter().take(10) {
                             let id = t["id"].as_str().unwrap_or("?");
                             let label = t["label"].as_str().unwrap_or("");
                             let state = t["state"].as_str().unwrap_or("?");
                             self.transcript
-                                .push(TranscriptLine::status(format!("{id}  {label}  [{state}]")));
+                                .push_line(TranscriptLine::status(format!("{id}  {label}  [{state}]")));
                         }
                     }
                 }
@@ -884,7 +931,7 @@ impl App {
                     } else {
                         crate::theme::Theme::light()
                     };
-                    self.transcript.push(TranscriptLine::status(format!(
+                    self.push_line(TranscriptLine::status(format!(
                         "theme: {}",
                         if self.dark_mode { "dark" } else { "light" }
                     )));
@@ -893,22 +940,22 @@ impl App {
                     match self.harness.core_version().await {
                         Ok(v) => self
                             .transcript
-                            .push(TranscriptLine::status(format!("kimi version: {v}"))),
+                            .push_line(TranscriptLine::status(format!("kimi version: {v}"))),
                         Err(e) => self
                             .transcript
-                            .push(TranscriptLine::error(format!("version failed: {e}"))),
+                            .push_line(TranscriptLine::error(format!("version failed: {e}"))),
                     }
                 }
                 "/models" => {
                     let (aliases, default_model) = self.harness.list_models().await?;
                     if aliases.is_empty() {
-                        self.transcript.push(TranscriptLine::status("no model aliases configured"));
+                        self.push_line(TranscriptLine::status("no model aliases configured"));
                     }
                     for alias in aliases.iter().take(20) {
-                        self.transcript.push(TranscriptLine::status(alias.clone()));
+                        self.push_line(TranscriptLine::status(alias.clone()));
                     }
                     if let Some(default_model) = default_model {
-                        self.transcript.push(TranscriptLine::status(format!("default: {default_model}")));
+                        self.push_line(TranscriptLine::status(format!("default: {default_model}")));
                     }
                 }
                 "/model" => {
@@ -922,7 +969,7 @@ impl App {
                             .map(|alias| (alias.clone(), String::new()))
                             .collect();
                         if items.is_empty() {
-                            self.transcript.push(TranscriptLine::status(
+                            self.push_line(TranscriptLine::status(
                                 "no model aliases configured",
                             ));
                         } else {
@@ -930,36 +977,36 @@ impl App {
                                 Some(model) => {
                                     self.session.as_mut().expect("session").set_model(&model).await?;
                                     self.transcript
-                                        .push(TranscriptLine::status(format!("model set to {model}")));
+                                        .push_line(TranscriptLine::status(format!("model set to {model}")));
                                 }
                                 None => self
                                     .transcript
-                                    .push(TranscriptLine::status("model selection cancelled")),
+                                    .push_line(TranscriptLine::status("model selection cancelled")),
                             }
                         }
                     } else {
                         self.session.as_mut().expect("session").set_model(rest).await?;
-                        self.transcript.push(TranscriptLine::status(format!("model set to {rest}")));
+                        self.push_line(TranscriptLine::status(format!("model set to {rest}")));
                     }
                 }
                 "/reload" => {
                     // Re-load the persisted session state into the live agent
                     // (create already happened; load restores context + goal).
                     match self.session.as_mut().expect("session").load().await {
-                        Ok(()) => self.transcript.push(TranscriptLine::status("session reloaded")),
-                        Err(e) => self.transcript.push(TranscriptLine::error(format!("reload failed: {e}"))),
+                        Ok(()) => self.push_line(TranscriptLine::status("session reloaded")),
+                        Err(e) => self.push_line(TranscriptLine::error(format!("reload failed: {e}"))),
                     }
                 }
                 "/resume" => {
                     if rest.is_empty() {
-                        self.transcript.push(TranscriptLine::status("usage: /resume <session-id>"));
+                        self.push_line(TranscriptLine::status("usage: /resume <session-id>"));
                     } else {
                         let mut new_session = self.harness.create_session(rest).await?;
                         // Restore the persisted state of the resumed session.
                         let _ = new_session.load().await;
                         self.session = Some(new_session);
                         self.session_id = rest.to_string();
-                        self.transcript.push(TranscriptLine::status(format!("switched to session {rest}")));
+                        self.push_line(TranscriptLine::status(format!("switched to session {rest}")));
                     }
                 }
                 "/goal" => {
@@ -972,47 +1019,47 @@ impl App {
                     let session = self.session.as_mut().expect("session");
                     match cmd {
                         "" => {
-                            self.transcript.push(TranscriptLine::status(
+                            self.push_line(TranscriptLine::status(
                                 "usage: /goal <objective> | status|pause|resume|cancel|replace|next",
                             ));
                         }
                         "status" => {
                             let goal = session.goal().await?;
                             let status = goal["result"]["goal"]["status"].as_str().unwrap_or("none");
-                            self.transcript.push(TranscriptLine::status(format!("goal status: {status}")));
+                            self.push_line(TranscriptLine::status(format!("goal status: {status}")));
                         }
                         "pause" => {
                             session.pause_goal(Some(objective)).await?;
-                            self.transcript.push(TranscriptLine::status("goal paused"));
+                            self.push_line(TranscriptLine::status("goal paused"));
                         }
                         "resume" => {
                             session.resume_goal(Some(objective)).await?;
-                            self.transcript.push(TranscriptLine::status("goal resumed"));
+                            self.push_line(TranscriptLine::status("goal resumed"));
                         }
                         "cancel" => {
                             session.cancel_goal().await?;
-                            self.transcript.push(TranscriptLine::status("goal cancelled"));
+                            self.push_line(TranscriptLine::status("goal cancelled"));
                         }
                         "replace" => {
                             if objective.is_empty() {
-                                self.transcript.push(TranscriptLine::status("usage: /goal replace <objective>"));
+                                self.push_line(TranscriptLine::status("usage: /goal replace <objective>"));
                             } else {
                                 let snapshot = session.create_goal(objective).await?;
-                                self.transcript.push(TranscriptLine::status(format!(
+                                self.push_line(TranscriptLine::status(format!(
                                     "goal replaced: {}",
                                     snapshot["objective"]
                                 )));
                             }
                         }
                         "next" => {
-                            self.transcript.push(TranscriptLine::status(
+                            self.push_line(TranscriptLine::status(
                                 "goal queueing is not supported in the Rust TUI — use a plain objective",
                             ));
                         }
                         _ => {
                             // A bare objective creates a goal (TS parity).
                             let snapshot = session.create_goal(rest).await?;
-                            self.transcript.push(TranscriptLine::status(format!(
+                            self.push_line(TranscriptLine::status(format!(
                                 "goal created: {}",
                                 snapshot["objective"]
                             )));
@@ -1021,59 +1068,59 @@ impl App {
                 }
                 "/goal-cancel" => {
                     self.session.as_mut().expect("session").cancel_goal().await?;
-                    self.transcript.push(TranscriptLine::status("goal cancelled"));
+                    self.push_line(TranscriptLine::status("goal cancelled"));
                 }
                 "/goal-pause" => {
                     self.session.as_mut().expect("session").pause_goal(Some(rest)).await?;
-                    self.transcript.push(TranscriptLine::status("goal paused"));
+                    self.push_line(TranscriptLine::status("goal paused"));
                 }
                 "/goal-resume" => {
                     self.session.as_mut().expect("session").resume_goal(Some(rest)).await?;
-                    self.transcript.push(TranscriptLine::status("goal resumed"));
+                    self.push_line(TranscriptLine::status("goal resumed"));
                 }
                 "/add-dir" => {
                     if rest.is_empty() {
-                        self.transcript.push(TranscriptLine::status("usage: /add-dir <path>"));
+                        self.push_line(TranscriptLine::status("usage: /add-dir <path>"));
                     } else {
                         match self.session.as_mut().expect("session").add_additional_dir(rest).await {
-                            Ok(_) => self.transcript.push(TranscriptLine::status(format!("added dir {rest}"))),
-                            Err(e) => self.transcript.push(TranscriptLine::error(format!("add-dir failed: {e}"))),
+                            Ok(_) => self.push_line(TranscriptLine::status(format!("added dir {rest}"))),
+                            Err(e) => self.push_line(TranscriptLine::error(format!("add-dir failed: {e}"))),
                         }
                     }
                 }
                 "/clear" => {
                     self.session.as_mut().expect("session").clear_context().await?;
-                    self.transcript.push(TranscriptLine::status("context cleared"));
+                    self.push_line(TranscriptLine::status("context cleared"));
                 }
                 "/compact" => {
                     match self.session.as_mut().expect("session").compact().await {
-                        Ok(_) => self.transcript.push(TranscriptLine::status("context compacted")),
-                        Err(e) => self.transcript.push(TranscriptLine::error(format!("compact failed: {e}"))),
+                        Ok(_) => self.push_line(TranscriptLine::status("context compacted")),
+                        Err(e) => self.push_line(TranscriptLine::error(format!("compact failed: {e}"))),
                     }
                 }
                 "/usage" => {
                     let usage = self.session.as_mut().expect("session").get_usage().await?;
                     let summary = format_usage(&usage["result"]);
-                    self.transcript.push(TranscriptLine::status(summary));
+                    self.push_line(TranscriptLine::status(summary));
                 }
                 "/undo" => {
                     let undone = self.session.as_mut().expect("session").undo_history(1).await?;
-                    self.transcript.push(TranscriptLine::status(format!(
+                    self.push_line(TranscriptLine::status(format!(
                         "undo: {}",
                         serde_json::to_string(&undone).unwrap_or_default()
                     )));
                 }
                 "/fork" => {
                     if rest.is_empty() {
-                        self.transcript.push(TranscriptLine::status("usage: /fork <new-session-id>"));
+                        self.push_line(TranscriptLine::status("usage: /fork <new-session-id>"));
                     } else {
                         self.session.as_mut().expect("session").fork(rest, None, None).await?;
-                        self.transcript.push(TranscriptLine::status(format!("forked to {rest}")));
+                        self.push_line(TranscriptLine::status(format!("forked to {rest}")));
                     }
                 }
                 "/steer" => {
                     if rest.is_empty() {
-                        self.transcript.push(TranscriptLine::status("usage: /steer <text>"));
+                        self.push_line(TranscriptLine::status("usage: /steer <text>"));
                     } else {
                         let queued = self
                             .session
@@ -1081,12 +1128,12 @@ impl App {
                             .expect("session")
                             .steer(serde_json::json!([{ "type": "text", "text": rest }]))
                             .await?;
-                        self.transcript.push(TranscriptLine::status(format!("steer queued: {queued}")));
+                        self.push_line(TranscriptLine::status(format!("steer queued: {queued}")));
                     }
                 }
                 "/import" => {
                     if rest.is_empty() {
-                        self.transcript.push(TranscriptLine::status("usage: /import <text>"));
+                        self.push_line(TranscriptLine::status("usage: /import <text>"));
                     } else {
                         self.session
                             .as_mut()
@@ -1094,12 +1141,12 @@ impl App {
                             .import_context(rest, "tui")
                             .await?;
                         self.transcript
-                            .push(TranscriptLine::status(format!("imported {} chars", rest.chars().count())));
+                            .push_line(TranscriptLine::status(format!("imported {} chars", rest.chars().count())));
                     }
                 }
                 "/goal-status" => {
                     let goal = self.session.as_mut().expect("session").goal().await?;
-                    self.transcript.push(TranscriptLine::status(format!(
+                    self.push_line(TranscriptLine::status(format!(
                         "goal: {}",
                         serde_json::to_string(&goal["goal"]).unwrap_or_default()
                     )));
@@ -1115,7 +1162,7 @@ impl App {
                         })
                         .collect();
                     if items.is_empty() {
-                        self.transcript.push(TranscriptLine::status("no sessions"));
+                        self.push_line(TranscriptLine::status("no sessions"));
                     } else {
                         match crate::picker::select(
                             terminal,
@@ -1126,7 +1173,7 @@ impl App {
                             Some(id) => self.switch_to_session(&id).await?,
                             None => self
                                 .transcript
-                                .push(TranscriptLine::status("session selection cancelled")),
+                                .push_line(TranscriptLine::status("session selection cancelled")),
                         }
                     }
                 }
@@ -1135,43 +1182,43 @@ impl App {
                         Ok(zip) => {
                             let path = format!("{}.zip", self.session_id);
                             match std::fs::write(&path, &zip) {
-                                Ok(()) => self.transcript.push(TranscriptLine::status(format!(
+                                Ok(()) => self.push_line(TranscriptLine::status(format!(
                                     "exported to {path} ({} bytes)",
                                     zip.len()
                                 ))),
-                                Err(e) => self.transcript.push(TranscriptLine::error(format!("write failed: {e}"))),
+                                Err(e) => self.push_line(TranscriptLine::error(format!("write failed: {e}"))),
                             }
                         }
-                        Err(e) => self.transcript.push(TranscriptLine::error(format!("export failed: {e}"))),
+                        Err(e) => self.push_line(TranscriptLine::error(format!("export failed: {e}"))),
                     }
                 }
                 "/archive" => {
                     let Some(session) = self.session.as_mut() else {
-                        self.transcript.push(TranscriptLine::error("archive: no active session"));
+                        self.push_line(TranscriptLine::error("archive: no active session"));
                         return Ok(false);
                     };
                     match session.archive().await {
                         Ok(true) => self
                             .transcript
-                            .push(TranscriptLine::status("session archived")),
+                            .push_line(TranscriptLine::status("session archived")),
                         Ok(false) => self
                             .transcript
-                            .push(TranscriptLine::error("archive: session not found")),
+                            .push_line(TranscriptLine::error("archive: session not found")),
                         Err(e) => self
                             .transcript
-                            .push(TranscriptLine::error(format!("archive failed: {e}"))),
+                            .push_line(TranscriptLine::error(format!("archive failed: {e}"))),
                     }
                 }
                 other => self
                     .transcript
-                    .push(TranscriptLine::error(format!("unknown command {other} — try /help"))),
+                    .push_line(TranscriptLine::error(format!("unknown command {other} — try /help"))),
             }
             return Ok(false);
         }
         // A real prompt: run it and render the transcript, pumping engine
         // events into the panel while the turn runs. The prompt future lives
         // in a block so its `&mut session` borrow ends before we read back.
-        self.transcript.push(TranscriptLine::user(line));
+        self.push_line(TranscriptLine::user(line));
         let prompt_result = {
             // Clone the session out so the prompt future (which borrows it
             // mutably) can coexist with `self.pump_one_event` in the select.
@@ -1188,7 +1235,7 @@ impl App {
         };
         if let Some(result) = prompt_result {
             if let Some(error) = result.get("error") {
-                self.transcript.push(TranscriptLine::error(format!(
+                self.push_line(TranscriptLine::error(format!(
                     "error: {}",
                     error["message"].as_str().unwrap_or("unknown")
                 )));
@@ -1258,18 +1305,70 @@ impl App {
             }
         }
         let line = kimi_ui::render_event(&event).unwrap_or_else(|| event.to_string());
-        // Tool progress reads differently from transcript/status. A settled
-        // tool with a long result line starts collapsed (`[+]` — Ctrl-O to
-        // expand), the tool-call card pattern.
+        // Tool progress is structured into tool-call cards (started/settled
+        // update one ToolCallEntry by id); everything else is a status line.
         let is_tool = r#type.starts_with("session.tool.");
-        let long_result = is_tool && r#type == "session.tool.settled" && tool_result_collapsed(&line);
-        self.transcript.push(if long_result {
-            TranscriptLine::tool_collapsed(line)
-        } else if is_tool {
-            TranscriptLine::tool(line)
-        } else {
-            TranscriptLine::status(line)
+        if is_tool {
+            self.handle_tool_event(&event);
+            return;
+        }
+        self.transcript.push_line(TranscriptLine::status(line));
+    }
+
+    /// Update the transcript's tool-call cards from tool started/settled
+    /// events (TS `tool-call.ts` parity: one card per tool invocation,
+    /// gaining its result when the tool settles).
+    fn handle_tool_event(&mut self, event: &serde_json::Value) {
+        let r#type = event["type"].as_str().unwrap_or("");
+        let tool_call_id = event["tool_call_id"].as_str().unwrap_or("").to_string();
+        let tool_name = event["tool_name"].as_str().unwrap_or("?").to_string();
+        let find_index = self.transcript.iter().position(|e| match e {
+            TranscriptEntry::ToolCall(tc) => tc.tool_call_id == tool_call_id,
+            _ => false,
         });
+        if r#type == "session.tool.started" {
+            let args = serde_json::to_string(&event["arguments"]).unwrap_or_default();
+            let collapsed = args.chars().count() > 120;
+            match find_index.and_then(|i| self.transcript.get_mut(i)) {
+                Some(TranscriptEntry::ToolCall(existing)) => {
+                    existing.tool_name = tool_name;
+                    existing.args = args;
+                    existing.result = None;
+                    existing.is_error = false;
+                    existing.collapsed = collapsed;
+                }
+                _ => {
+                    self.transcript.push(TranscriptEntry::ToolCall(ToolCallEntry {
+                        tool_call_id,
+                        tool_name,
+                        args,
+                        result: None,
+                        is_error: false,
+                        collapsed,
+                    }));
+                }
+            }
+        } else if r#type == "session.tool.settled" {
+            let result = event["content"].as_str().unwrap_or("").to_string();
+            let is_error = event["is_error"].as_bool().unwrap_or(false);
+            match find_index.and_then(|i| self.transcript.get_mut(i)) {
+                Some(TranscriptEntry::ToolCall(existing)) => {
+                    existing.result = Some(result);
+                    existing.is_error = is_error;
+                }
+                _ => {
+                    // A settled event without a matching started (replay edge).
+                    self.transcript.push(TranscriptEntry::ToolCall(ToolCallEntry {
+                        tool_call_id,
+                        tool_name,
+                        args: String::new(),
+                        result: Some(result),
+                        is_error,
+                        collapsed: false,
+                    }));
+                }
+            }
+        }
     }
 
     /// Fetch pending approvals after an `approval.requested` event and queue
@@ -1289,7 +1388,7 @@ impl App {
                 }
                 if added > 0 {
                     if let Some(head) = self.pending_approvals.last() {
-                        self.transcript.push(TranscriptLine::status(format!(
+                        self.push_line(TranscriptLine::status(format!(
                             "approval requested: {} ({rule}) {args} — y/n, v=details, s=for-session",
                             head.tool,
                             rule = head.rule,
@@ -1300,7 +1399,7 @@ impl App {
             }
             _ => {
                 self.transcript
-                    .push(TranscriptLine::status("approval requested — run /approvals to inspect"));
+                    .push_line(TranscriptLine::status("approval requested — run /approvals to inspect"));
             }
         }
     }
@@ -1340,7 +1439,7 @@ impl App {
             if interrupt_action(key.code, key.modifiers) == Some(InterruptAction::CancelTurn) {
                 let mut session = self.session.clone().expect("session");
                 session.cancel().await;
-                self.transcript.push(TranscriptLine::status("turn cancelled"));
+                self.push_line(TranscriptLine::status("turn cancelled"));
                 return Ok(());
             }
             if !self.pending_approvals.is_empty() {
@@ -1368,7 +1467,7 @@ impl App {
         let _ = session.load().await;
         self.session = Some(session);
         self.transcript
-            .push(TranscriptLine::status(format!("session: {id}")));
+            .push_line(TranscriptLine::status(format!("session: {id}")));
         self.refresh_status().await;
         Ok(())
     }
@@ -1388,10 +1487,10 @@ impl App {
         self.pending_approvals.remove(0);
         if resolved {
             let action = if allow { "allowed" } else { "denied" };
-            self.transcript.push(TranscriptLine::status(format!("{} {}", pending.tool, action)));
+            self.push_line(TranscriptLine::status(format!("{} {}", pending.tool, action)));
         } else {
             self.transcript
-                .push(TranscriptLine::status(format!("{} no longer pending", pending.tool)));
+                .push_line(TranscriptLine::status(format!("{} no longer pending", pending.tool)));
         }
         Ok(())
     }
@@ -1424,14 +1523,14 @@ impl App {
             .await
             .unwrap_or(false);
         self.pending_approvals.remove(0);
-        self.transcript.push(TranscriptLine::status(format!(
+        self.push_line(TranscriptLine::status(format!(
             "{} approved for session ({} will auto-approve)",
             pending.tool,
             pending.rule,
         )));
         if !resolved {
             self.transcript
-                .push(TranscriptLine::status(format!("{} no longer pending", pending.tool)));
+                .push_line(TranscriptLine::status(format!("{} no longer pending", pending.tool)));
         }
         Ok(())
     }
@@ -1573,16 +1672,16 @@ mod tests {
         let mut transcript = Vec::new();
         crate::streaming::append_thinking(&mut transcript, "let me ");
         crate::streaming::append_thinking(&mut transcript, "think");
-        assert_eq!(transcript, vec![TranscriptLine::thinking("let me think")]);
+        assert_eq!(transcript, vec![TranscriptEntry::Line(TranscriptLine::thinking("let me think"))]);
         // Text streaming after thinking starts a separate assistant line.
         crate::streaming::append_stream(&mut transcript, "answer");
-        assert_eq!(transcript[1], TranscriptLine::streaming("answer"));
+        assert_eq!(transcript[1], TranscriptEntry::Line(TranscriptLine::streaming("answer")));
         // Only TRAILING thinking lines are dropped at turn close: reasoning
         // above the visible answer stays, trailing reasoning goes.
         crate::streaming::drop_trailing_thinking(&mut transcript);
         assert_eq!(
             transcript,
-            vec![TranscriptLine::thinking("let me think"), TranscriptLine::streaming("answer")],
+            vec![TranscriptEntry::Line(TranscriptLine::thinking("let me think")), TranscriptEntry::Line(TranscriptLine::streaming("answer"))],
             "non-trailing thinking survives"
         );
         transcript.pop(); // the assistant line closes via finish_stream
@@ -1592,7 +1691,7 @@ mod tests {
 
     #[test]
     fn thinking_renders_dimmed() {
-        let lines = crate::chatwidget::styled_lines(&[TranscriptLine::thinking("reasoning")], crate::theme::Theme::dark());
+        let lines = crate::chatwidget::styled_lines(&[TranscriptEntry::Line(TranscriptLine::thinking("reasoning"))], crate::theme::Theme::dark());
         assert_eq!(lines[0].spans[0].content, "reasoning");
         assert_eq!(lines[0].spans[0].style.fg, Some(Color::DarkGray));
         assert!(lines[0].spans[0].style.add_modifier.contains(Modifier::ITALIC));
@@ -1606,29 +1705,56 @@ mod tests {
         crate::streaming::append_stream(&mut transcript, "world");
         assert_eq!(
             transcript,
-            vec![TranscriptLine::streaming("hello world")],
+            vec![TranscriptEntry::Line(TranscriptLine::streaming("hello world"))],
             "deltas append to the streaming line"
         );
         // A non-streaming line in between (e.g. a tool event) starts a new
         // streaming line instead of corrupting the previous message.
-        transcript.push(TranscriptLine::tool("Bash started"));
+        transcript.push(TranscriptEntry::Line(TranscriptLine::tool("Bash started")));
         crate::streaming::append_stream(&mut transcript, "step 2");
-        assert_eq!(transcript[2], TranscriptLine::streaming("step 2"));
+        assert_eq!(transcript[2], TranscriptEntry::Line(TranscriptLine::streaming("step 2")));
 
         // finish_stream replaces the trailing streaming line with the final
         // transcript, and reports the replacement.
         assert!(crate::streaming::finish_stream(&mut transcript, "final text".to_string()));
-        assert_eq!(transcript[2], TranscriptLine::assistant("final text"));
+        assert_eq!(transcript[2], TranscriptEntry::Line(TranscriptLine::assistant("final text")));
         // With no streaming line it appends a fresh assistant line.
         assert!(!crate::streaming::finish_stream(&mut transcript, "another".to_string()));
-        assert_eq!(transcript.last(), Some(&TranscriptLine::assistant("another")));
+        assert_eq!(transcript.last(), Some(&TranscriptEntry::Line(TranscriptLine::assistant("another"))));
     }
 
     #[test]
     fn streaming_renders_distinct() {
-        let lines = crate::chatwidget::styled_lines(&[TranscriptLine::streaming("growing")], crate::theme::Theme::dark());
+        let lines = crate::chatwidget::styled_lines(&[TranscriptEntry::Line(TranscriptLine::streaming("growing"))], crate::theme::Theme::dark());
         let text: String = lines[0].spans.iter().map(|s| s.content.clone()).collect();
         assert_eq!(text, "growing");
+    }
+
+    #[tokio::test]
+    async fn tool_events_build_structured_cards() {
+        // started -> card; settled -> result lands on the same card.
+        let mut app = App::new(kimi_sdk::Harness::embedded().expect("harness"), Some("s-tool"));
+        app.handle_tool_event(&serde_json::json!({
+            "type": "session.tool.started",
+            "tool_call_id": "t1",
+            "tool_name": "Bash",
+            "arguments": { "command": "ls" },
+        }));
+        app.handle_tool_event(&serde_json::json!({
+            "type": "session.tool.settled",
+            "tool_call_id": "t1",
+            "content": "file1\nfile2",
+            "is_error": false,
+        }));
+        assert_eq!(app.transcript.len(), 1, "one card, not two lines");
+        match &app.transcript[0] {
+            TranscriptEntry::ToolCall(tc) => {
+                assert_eq!(tc.tool_name, "Bash");
+                assert_eq!(tc.result.as_deref(), Some("file1\nfile2"));
+                assert!(!tc.is_error);
+            }
+            _ => panic!("expected a ToolCall card"),
+        }
     }
 
     #[test]
@@ -1638,23 +1764,27 @@ mod tests {
         let long = format!("tool Bash -> ok: {}", "x".repeat(200));
         assert!(tool_result_collapsed(&long), "long result collapses");
 
-        // Toggle flips the most recent collapsed tool line only.
+        // Toggle flips the most recent ToolCall card (long args or collapsed).
         let mut transcript = vec![
-            TranscriptLine::tool("tool Bash started"),
-            TranscriptLine::tool_collapsed(&long),
-            TranscriptLine::tool("tool Read -> ok: fine"),
+            TranscriptEntry::ToolCall(ToolCallEntry {
+                tool_call_id: "t1".into(),
+                tool_name: "Bash".into(),
+                args: "{}".into(),
+                result: Some(long),
+                is_error: false,
+                collapsed: true,
+            }),
+            TranscriptEntry::Line(TranscriptLine::status("other")),
         ];
-        assert!(transcript[1].collapsed, "long result starts collapsed");
+        assert!(matches!(&transcript[0], TranscriptEntry::ToolCall(tc) if tc.collapsed));
         toggle_last_tool_collapse(&mut transcript);
-        assert!(!transcript[1].collapsed, "expanded after toggle");
-        assert!(!transcript[0].collapsed && !transcript[2].collapsed, "others untouched");
+        assert!(matches!(&transcript[0], TranscriptEntry::ToolCall(tc) if !tc.collapsed));
         toggle_last_tool_collapse(&mut transcript);
-        assert!(transcript[1].collapsed, "collapsed again");
+        assert!(matches!(&transcript[0], TranscriptEntry::ToolCall(tc) if tc.collapsed));
 
-        // No collapsed tool lines -> no-op.
-        let mut plain = vec![TranscriptLine::tool("tool Read -> ok: fine")];
+        // No ToolCall cards -> no-op.
+        let mut plain = vec![TranscriptEntry::Line(TranscriptLine::status("x"))];
         toggle_last_tool_collapse(&mut plain);
-        assert_eq!(plain[0].collapsed, false);
     }
 
     #[test]
@@ -1765,11 +1895,11 @@ mod tests {
     #[test]
     fn transcript_lines_render_by_kind() {
         let transcript = vec![
-            TranscriptLine::user("hi"),
-            TranscriptLine::assistant("hello"),
-            TranscriptLine::tool("Read started"),
-            TranscriptLine::status("plan mode on"),
-            TranscriptLine::error("boom"),
+            TranscriptEntry::Line(TranscriptLine::user("hi")),
+            TranscriptEntry::Line(TranscriptLine::assistant("hello")),
+            TranscriptEntry::Line(TranscriptLine::tool("Read started")),
+            TranscriptEntry::Line(TranscriptLine::status("plan mode on")),
+            TranscriptEntry::Line(TranscriptLine::error("boom")),
         ];
         let lines = crate::chatwidget::styled_lines(&transcript, crate::theme::Theme::dark());
         assert_eq!(lines.len(), 5);
@@ -1840,9 +1970,9 @@ mod tests {
         use ratatui::backend::TestBackend;
 
         let transcript = vec![
-            TranscriptLine::user("hi"),
-            TranscriptLine::assistant("hello there"),
-            TranscriptLine::tool("Read started"),
+            TranscriptEntry::Line(TranscriptLine::user("hi")),
+            TranscriptEntry::Line(TranscriptLine::assistant("hello there")),
+            TranscriptEntry::Line(TranscriptLine::tool("Read started")),
         ];
         let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
         terminal

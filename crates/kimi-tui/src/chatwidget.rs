@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as RenderLine, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::{TranscriptKind, TranscriptLine};
+use crate::app::{TranscriptEntry, TranscriptKind, TranscriptLine, ToolCallEntry};
 use crate::theme::Theme;
 
 /// Draw the two-pane chat layout: a scrollable transcript on top and the
@@ -17,7 +17,7 @@ use crate::theme::Theme;
 /// is drawn over the bottom of the chat pane.
 pub fn render_frame(
     frame: &mut ratatui::Frame<'_>,
-    transcript: &[TranscriptLine],
+    transcript: &[TranscriptEntry],
     input: &str,
     cursor: usize,
     session_id: &str,
@@ -95,59 +95,78 @@ pub fn max_scroll(total: usize, pane_height: u16) -> usize {
 /// Assistant (and live-streaming) text is markdown-rendered; everything else
 /// stays plain. Colors come from the resolved theme palette.
 pub fn styled_lines(
-    transcript: &[TranscriptLine],
+    transcript: &[TranscriptEntry],
     theme: Theme,
 ) -> Vec<RenderLine<'static>> {    let mut out = Vec::new();
     for entry in transcript {
-        match entry.kind {
-            TranscriptKind::Assistant | TranscriptKind::Streaming => {
-                out.extend(crate::markdown::render_markdown_themed(&entry.text, theme));
-            }
-            TranscriptKind::User => out.push(RenderLine::from(Span::styled(
-                format!("▶ {}", entry.text),
-                Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
-            ))),
-            // Reasoning is transient and dimmer than the visible stream.
-            TranscriptKind::Thinking => out.push(RenderLine::from(Span::styled(
-                entry.text.clone(),
-                Style::default().fg(theme.thinking).add_modifier(Modifier::ITALIC),
-            ))),
-            TranscriptKind::Tool => {
-                // AskUserQuestion lines are surfaced as a question prompt
-                // (❓) rather than a plain tool progress line, so the user
-                // sees at a glance that the model is waiting for an answer.
-                let is_question = entry.text.contains("AskUserQuestion");
-                let prefix = if is_question { "❓" } else { "⚙" };
-                if entry.collapsed {
-                    // Collapsed long result: single-line preview + expand
-                    // marker (Ctrl-O toggles).
-                    let preview: String = entry.text.chars().take(120).collect();
-                    out.push(RenderLine::from(Span::styled(
-                        format!("  {prefix} {preview} [+]"),
-                        Style::default().fg(if is_question { theme.status } else { theme.tool }),
-                    )));
-                } else {
-                    // Expanded (or short): every line prefixed, the first
-                    // with the tool marker.
-                    for (i, line) in entry.text.lines().enumerate() {
+        match entry {
+            TranscriptEntry::ToolCall(tc) => {
+                // Tool-call card: `⚙ name(args)` header, then the result when
+                // settled (collapsed -> preview + `[+]`).
+                let header = format!("⚙ {}({})", tc.tool_name, preview(&tc.args, 60));
+                out.push(RenderLine::from(Span::styled(
+                    header,
+                    Style::default().fg(theme.tool),
+                )));
+                if let Some(result) = &tc.result {
+                    if tc.collapsed {
                         out.push(RenderLine::from(Span::styled(
-                            format!("  {} {line}", if i == 0 { prefix } else { " " }),
-                            Style::default().fg(if is_question { theme.status } else { theme.tool }),
+                            format!("  -> {} [+]", preview(result, 100)),
+                            Style::default().fg(if tc.is_error { theme.error } else { theme.status }),
                         )));
+                    } else {
+                        for (i, line) in result.lines().enumerate() {
+                            out.push(RenderLine::from(Span::styled(
+                                format!("  {} {line}", if i == 0 { "->" } else { " " }),
+                                Style::default().fg(if tc.is_error { theme.error } else { theme.status }),
+                            )));
+                        }
                     }
                 }
             }
-            TranscriptKind::Status => out.push(RenderLine::from(Span::styled(
-                entry.text.clone(),
-                Style::default().fg(theme.status),
-            ))),
-            TranscriptKind::Error => out.push(RenderLine::from(Span::styled(
-                entry.text.clone(),
-                Style::default().fg(theme.error),
-            ))),
+            TranscriptEntry::Line(line) => match line.kind {
+                TranscriptKind::Assistant | TranscriptKind::Streaming => {
+                    out.extend(crate::markdown::render_markdown_themed(&line.text, theme));
+                }
+                TranscriptKind::User => out.push(RenderLine::from(Span::styled(
+                    format!("▶ {}", line.text),
+                    Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
+                ))),
+                // Reasoning is transient and dimmer than the visible stream.
+                TranscriptKind::Thinking => out.push(RenderLine::from(Span::styled(
+                    line.text.clone(),
+                    Style::default().fg(theme.thinking).add_modifier(Modifier::ITALIC),
+                ))),
+                TranscriptKind::Tool => {
+                    let is_question = line.text.contains("AskUserQuestion");
+                    out.push(RenderLine::from(Span::styled(
+                        format!("  {} {}", if is_question { "❓" } else { "⚙" }, line.text),
+                        Style::default().fg(if is_question { theme.status } else { theme.tool }),
+                    )));
+                }
+                TranscriptKind::Status => out.push(RenderLine::from(Span::styled(
+                    line.text.clone(),
+                    Style::default().fg(theme.status),
+                ))),
+                TranscriptKind::Error => out.push(RenderLine::from(Span::styled(
+                    line.text.clone(),
+                    Style::default().fg(theme.error),
+                ))),
+            },
         }
     }
     out
+}
+
+/// Bounded single-line preview (`…` when truncated).
+fn preview(text: &str, max: usize) -> String {
+    let text = text.replace('\n', " ");
+    if text.chars().count() <= max {
+        text
+    } else {
+        let cut: String = text.chars().take(max).collect();
+        format!("{cut}…")
+    }
 }
 
 #[cfg(test)]
@@ -158,22 +177,35 @@ mod tests {
 
     #[test]
     fn collapsed_tool_lines_show_expand_marker() {
-        let transcript = vec![
-            TranscriptLine::tool_collapsed("tool Bash -> ok: very long result output"),
-        ];
+        let transcript = vec![TranscriptEntry::ToolCall(crate::app::ToolCallEntry {
+            tool_call_id: "t1".into(),
+            tool_name: "Bash".into(),
+            args: "{}".into(),
+            result: Some("very long result output".repeat(20)),
+            is_error: false,
+            collapsed: true,
+        })];
         let lines = styled_lines(&transcript, Theme::dark());
-        assert_eq!(lines.len(), 1, "collapsed renders one line");
-        let text = lines[0].to_string();
-        assert!(text.contains("[+]"), "expand marker: {text}");
-        assert!(text.contains("…") || text.chars().count() <= 140, "preview bounded: {text}");
+        // Header + collapsed result preview with the expand marker.
+        let all: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(all.contains("[+]"), "expand marker: {all}");
+        assert!(all.contains("⚙ Bash"), "tool header: {all}");
     }
 
     #[test]
-    fn expanded_tool_lines_render_multiple_rows() {
-        let transcript = vec![TranscriptLine::tool("line1\nline2\nline3")];
+    fn expanded_tool_result_renders_multiple_rows() {
+        let transcript = vec![TranscriptEntry::ToolCall(crate::app::ToolCallEntry {
+            tool_call_id: "t1".into(),
+            tool_name: "Bash".into(),
+            args: "{}".into(),
+            result: Some("line1\nline2\nline3".into()),
+            is_error: false,
+            collapsed: false,
+        })];
         let lines = styled_lines(&transcript, Theme::dark());
-        assert_eq!(lines.len(), 3, "one row per text line");
-        assert!(lines[0].to_string().contains("line1"));
-        assert!(lines[2].to_string().contains("line3"));
+        // Header + one row per result line.
+        assert_eq!(lines.len(), 4, "header + 3 result rows: {lines:?}");
+        assert!(lines[1].to_string().contains("line1"));
+        assert!(lines[3].to_string().contains("line3"));
     }
 }

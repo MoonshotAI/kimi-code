@@ -581,6 +581,15 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
   - 弹窗描述列：`COMMAND_DESCRIPTIONS` 表（45 命令描述）+ `CompletionState.matches` 改 `(name, desc)` + chatwidget 渲染第二列暗色描述（TS AutocompleteItem parity）
 - **测试**：bottom_pane goal 参数集补全（pause/cancel/status）+ completion 描述非空断言 → kimi-tui 39 全绿；workspace 0 errors
 
+**2026-08-06 G-4 分片 G：chatwidget 组件树——结构化 TranscriptEntry ✅**：
+- **transcript 从线性 `Vec<TranscriptLine>` 升级为 `Vec<TranscriptEntry>`**：`Line(TranscriptLine)`（角色行）+ `ToolCall(ToolCallEntry)`（结构化工具卡片：tool_call_id/tool_name/args/result/is_error/collapsed）——TS `tool-call.ts` 组件树的基础
+- **工具事件结构化**：`handle_tool_event`（started → 按 id upsert 卡片；settled → 结果落卡；settled 无 started 的 replay 边缘兜底）
+- **渲染**：chatwidget `styled_lines` 匹配枚举——ToolCall 卡片 `⚙ name(args)` header + 结果（折叠 `-> preview [+]` / 展开逐行）；Line 保持角色渲染
+- **toggle**：`toggle_last_tool_collapse` 按 ToolCall 卡片（collapsed/长 args/长 result 参与，Ctrl-O 双向）
+- **历史渲染**：history.rs 的 assistant `tool_calls` → 结构化 ToolCall 卡片（不再 `Bash(…)` 文本行）
+- **测试**：`tool_events_build_structured_cards`（started+settled → 单卡片含结果）+ tool toggle/chatwidget 卡片渲染重写 → kimi-tui **40** 全绿；workspace 0 errors
+- **注**：此重构为 chatwidget 组件树的骨架——后续可挂审批卡片/媒体块/子代理块（TS tool-call.ts 的 header/elapsed/subagent 等富结构留待继续）
+
 **2026-08-06 CLI 续补（G-3 批次 2 + ACP 增补）**：
 - **选项冲突校验补全 ✅**（TS `validateOptions` parity）：`print` 空 prompt / 空 `--model` 报错（"Prompt/Model cannot be empty."）；`print --continue` 与全局 `-S <id>` clap `conflicts_with` 互斥；新增 2 集成测试 → cli.rs 44 全绿
 - **ACP skills 命令广告 + `/skill:` 拦截 ✅**（kimi-acp，TS `acp-adapter` parity）：

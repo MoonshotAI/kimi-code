@@ -3,7 +3,7 @@
 //! `hydrateFromReplay` parity). Pure function over the wire shape, so it is
 //! unit-testable without a running engine.
 
-use crate::app::TranscriptLine;
+use crate::app::{TranscriptEntry, TranscriptKind, TranscriptLine, ToolCallEntry};
 
 /// Join the text parts of an engine message's `content` array
 /// (`[{"type":"text","text":…}, …]`).
@@ -27,14 +27,14 @@ fn text_content(message: &serde_json::Value) -> String {
 }
 
 /// Render the engine context data (`session/get_context` → `data()`:
-/// `{ history: […], token_count }`) as transcript lines. User prompts become
-/// `▶` lines, assistant text becomes assistant lines (prefixed by a tool
-/// line per `tool_calls`), tool messages become `⚙` lines. Empty text and
-/// system framing are skipped.
-pub fn render_history(data: &serde_json::Value) -> Vec<TranscriptLine> {
-    let mut lines = Vec::new();
+/// `{ history: […], token_count }`) as transcript entries. User prompts
+/// become `▶` lines, assistant text becomes assistant lines, and assistant
+/// `tool_calls` / `tool` messages become structured `ToolCall` cards (TS
+/// `session-replay` parity). Empty text and system framing are skipped.
+pub fn render_history(data: &serde_json::Value) -> Vec<TranscriptEntry> {
+    let mut entries = Vec::new();
     let Some(history) = data.get("history").and_then(|h| h.as_array()) else {
-        return lines;
+        return entries;
     };
     for message in history {
         let role = message["role"].as_str().unwrap_or("");
@@ -42,7 +42,7 @@ pub fn render_history(data: &serde_json::Value) -> Vec<TranscriptLine> {
             "user" => {
                 let text = text_content(message);
                 if !text.is_empty() {
-                    lines.push(TranscriptLine::user(text));
+                    entries.push(TranscriptEntry::Line(TranscriptLine::user(text)));
                 }
             }
             "assistant" => {
@@ -50,31 +50,51 @@ pub fn render_history(data: &serde_json::Value) -> Vec<TranscriptLine> {
                 // order the turn produced them in.
                 if let Some(calls) = message["tool_calls"].as_array() {
                     for call in calls {
-                        let name = call["name"].as_str().unwrap_or("tool");
-                        lines.push(TranscriptLine::tool(format!("{name}(…)")));
+                        let tool_call_id = call["id"].as_str().unwrap_or("").to_string();
+                        let tool_name = call["name"].as_str().unwrap_or("tool").to_string();
+                        let args = serde_json::to_string(&call["arguments"]).unwrap_or_default();
+                        let collapsed = args.chars().count() > 120;
+                        entries.push(TranscriptEntry::ToolCall(ToolCallEntry {
+                            tool_call_id,
+                            tool_name,
+                            args,
+                            result: None,
+                            is_error: false,
+                            collapsed,
+                        }));
                     }
                 }
                 let text = text_content(message);
                 if !text.is_empty() {
-                    lines.push(TranscriptLine::assistant(text));
+                    entries.push(TranscriptEntry::Line(TranscriptLine::assistant(text)));
                 }
             }
             "tool" => {
+                // A tool-result message renders as a tool line (the matching
+                // ToolCall card carries the full result when it exists).
                 let text = text_content(message);
                 if !text.is_empty() {
-                    lines.push(TranscriptLine::tool(text));
+                    entries.push(TranscriptEntry::Line(TranscriptLine::tool(text)));
                 }
             }
             _ => {}
         }
     }
-    lines
+    entries
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::TranscriptKind;
+    use crate::app::{TranscriptEntry, TranscriptKind, TranscriptLine};
+
+    /// Unwrap a plain Line entry (test helper).
+    fn line(entry: &TranscriptEntry) -> &TranscriptLine {
+        match entry {
+            TranscriptEntry::Line(l) => l,
+            TranscriptEntry::ToolCall(_) => panic!("expected a Line entry"),
+        }
+    }
 
     #[test]
     fn renders_user_and_assistant_in_order() {
@@ -88,12 +108,12 @@ mod tests {
         });
         let lines = render_history(&data);
         assert_eq!(lines.len(), 3, "three visible messages: {lines:?}");
-        assert_eq!(lines[0].kind, TranscriptKind::User);
-        assert_eq!(lines[0].text, "hi");
-        assert_eq!(lines[1].kind, TranscriptKind::Assistant);
-        assert_eq!(lines[1].text, "hello");
-        assert_eq!(lines[2].kind, TranscriptKind::User);
-        assert_eq!(lines[2].text, "again");
+        assert_eq!(line(&lines[0]).kind, TranscriptKind::User);
+        assert_eq!(line(&lines[0]).text, "hi");
+        assert_eq!(line(&lines[1]).kind, TranscriptKind::Assistant);
+        assert_eq!(line(&lines[1]).text, "hello");
+        assert_eq!(line(&lines[2]).kind, TranscriptKind::User);
+        assert_eq!(line(&lines[2]).text, "again");
     }
 
     #[test]
@@ -111,9 +131,9 @@ mod tests {
         });
         let lines = render_history(&data);
         assert_eq!(lines.len(), 3, "user + tool + assistant: {lines:?}");
-        assert_eq!(lines[1].kind, TranscriptKind::Tool);
-        assert_eq!(lines[1].text, "Bash(…)");
-        assert_eq!(lines[2].text, "done");
+        // Assistant tool_calls now render as structured ToolCall cards.
+        assert!(matches!(lines[1], TranscriptEntry::ToolCall(_)), "tool card: {lines:?}");
+        assert_eq!(line(&lines[2]).text, "done");
     }
 
     #[test]
@@ -126,8 +146,8 @@ mod tests {
         });
         let lines = render_history(&data);
         assert_eq!(lines.len(), 2);
-        assert_eq!(lines[1].kind, TranscriptKind::Tool);
-        assert_eq!(lines[1].text, "ok");
+        assert_eq!(line(&lines[1]).kind, TranscriptKind::Tool);
+        assert_eq!(line(&lines[1]).text, "ok");
     }
 
     #[test]
