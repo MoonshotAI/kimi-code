@@ -166,6 +166,7 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/v1/meta", get(meta))
         .route("/api/v1/shutdown", post(shutdown))
         .route("/api/v1/oauth/login", post(oauth_login_start).get(oauth_login_poll).delete(oauth_login_cancel))
+        .route("/api/v1/connections", get(connections))
         .route("/api/v1/config", get(config_get).post(config_set))
         .route("/api/v1/sessions", get(sessions_list).post(sessions_create))
         .route(
@@ -385,6 +386,14 @@ async fn oauth_login_cancel(State(state): State<HttpState>) -> Json<Value> {
     let mut guard = state.oauth_flow.lock().await;
     let cancelled = guard.take().is_some();
     Json(ok(json!({ "cancelled": cancelled, "status": "cancelled" })))
+}
+
+/// `GET /api/v1/connections` — active WebSocket clients (count via the event
+/// broadcast's receiver count; per-connection details are tracked by the WS
+/// layer, out of scope here).
+async fn connections(State(state): State<HttpState>) -> Json<Value> {
+    let count = state.events.as_ref().map(|e| e.receiver_count()).unwrap_or(0);
+    Json(ok(json!({ "connections": [], "count": count })))
 }
 
 /// `GET /api/v1/config` — the engine's parsed config.
