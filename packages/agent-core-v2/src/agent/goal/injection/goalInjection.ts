@@ -13,11 +13,11 @@ export interface GoalInjectionOptions {
 export class GoalInjection extends Service {
   constructor(
     private readonly options: GoalInjectionOptions,
-    @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
   ) {
     super();
     this._register(
-      dynamicInjector.register('goal', ({ isNewTurn }) => (isNewTurn ? this.reminder() : undefined)),
+      injector.register('goal', ({ isNewTurn }) => (isNewTurn ? this.reminder() : undefined)),
     );
   }
 

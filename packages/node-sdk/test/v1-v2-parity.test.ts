@@ -16,6 +16,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  IAgentContextInjectorService,
+  IAgentLifecycleService,
   ISessionApprovalService,
   ISessionQuestionService,
   getLiveSessionById,
@@ -167,6 +169,16 @@ function scrubHomePrefixes(value: unknown, home: HomePair): unknown {
  * the comparison still covers everything not listed here. Keep empty unless a
  * gap is genuinely accepted; remove entries as gaps close.
  */
+function stripOriginDisclosure(history: readonly unknown[]): readonly unknown[] {
+  return history.map((message) => {
+    const record = message as { readonly origin?: { readonly disclosure?: unknown } };
+    if (record.origin?.disclosure === undefined) return message;
+    const origin = { ...record.origin };
+    delete origin.disclosure;
+    return { ...record, origin };
+  });
+}
+
 const KNOWN_DIFFS = {
   // v2's flag registry is per-domain and already carries flags v1 does not
   // have (minidb backend, subagent); v1-only flags would be the symmetric
@@ -245,10 +257,14 @@ const KNOWN_DIFFS = {
   // provider-MEASURED prefix. In-memory appends (e.g. importContext) count
   // identically on both engines via the shared `estimateTokensForMessages`,
   // but once the provider reports measured usage the counts diverge by
-  // design. Histories compare in full; the count compares only in the
-  // pre-LLM state where both sides still estimate.
+  // design. Histories compare in full except for `origin.disclosure` — v2
+  // records typed reminder-render state there (swarm mode, once-reminder
+  // ids) and v1 has no such field; the count compares only in the pre-LLM
+  // state where both sides still estimate.
   getContext: (context: { readonly history: readonly unknown[] }): unknown =>
-    context.history.length === 0 ? context : { history: context.history },
+    context.history.length === 0
+      ? context
+      : { history: stripOriginDisclosure(context.history) },
   // Plan ids are random per engine (hero slugs) and the plan path embeds
   // both the per-home session dir and the id, so the comparison covers the
   // content and the path LAYOUT (id scrubbed); the id itself is asserted
@@ -4235,10 +4251,9 @@ describe('v1↔v2 event & interaction parity', () => {
 // Residual surface parity (exportSession / startBtw / swarm mode / listSkills)
 //
 // The last migrated methods, driven through `SDKRpcClient` / `SDKRpcClientV2`
-// directly like the other session batches. No provider calls: export reads
-// persisted state, btw/swarm are context-only, and the `swarm()` case uses the
-// model-less prompt failure path (its turn start/end is what drives the
-// task-trigger auto-exit on both engines).
+// directly like the other session batches. Reminder assertions force the v2
+// context-injection boundary explicitly, so they test model-facing
+// materialization without contacting a provider.
 // ---------------------------------------------------------------------------
 
 /** Poll a condition until it holds or the budget runs out (engine-async settle). */
@@ -4377,10 +4392,23 @@ describe('v1↔v2 residual surface parity', () => {
             key === 'origin' ? undefined : value,
           ),
         );
-      expect(stripOrigins(v2Context)).toEqual(stripOrigins(v1Context));
+      // v2 queues the side-question reminder until its next injection
+      // boundary; v1 materializes it while forking. The inherited context is
+      // already identical before that boundary.
+      expect(v2Context.history).toHaveLength(1);
+      expect(v1Context.history).toHaveLength(2);
+      const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
+      const v2Child = v2Session?.accessor.get(IAgentLifecycleService).get(v2ChildId);
+      expect(v2Child).toBeDefined();
+      await v2Child!.accessor.get(IAgentContextInjectorService).injectAfterCompaction();
+      const [v1Materialized, v2Materialized] = await Promise.all([
+        pair.v1.withInteractiveAgent(v1ChildId, () => pair.v1.getContext({ sessionId })),
+        pair.v2.withInteractiveAgent(v2ChildId, () => pair.v2.getContext({ sessionId })),
+      ]);
+      expect(stripOrigins(v2Materialized)).toEqual(stripOrigins(v1Materialized));
       // Non-vacuous: the inherited import plus the side-question reminder
       // (byte-identical template on both engines).
-      const v1History = v1Context.history;
+      const v1History = v1Materialized.history;
       expect(v1History.length).toBeGreaterThanOrEqual(2);
       const reminder = v1History.at(-1);
       expect(JSON.stringify(reminder)).toContain('side-channel conversation');
@@ -4409,8 +4437,13 @@ describe('v1↔v2 residual surface parity', () => {
       expect(v1Active.swarmMode).toBe(true);
       expect(v2Active.swarmMode).toBe(true);
       const project = KNOWN_DIFFS.getContext;
-      const [v1Entered, v2Entered] = await historyOnBoth();
-      expect(project(v2Entered)).toEqual(project(v1Entered));
+      const [v1Entered] = await historyOnBoth();
+      const v2Session = getLiveSessionById(pair.v2.engineAccessor, input.sessionId);
+      const v2Agent = v2Session?.accessor.get(IAgentLifecycleService).get('main');
+      expect(v2Agent).toBeDefined();
+      await v2Agent!.accessor.get(IAgentContextInjectorService).injectAfterCompaction();
+      const v2Materialized = await pair.v2.getContext(input);
+      expect(project(v2Materialized)).toEqual(project(v1Entered));
       expect(v1Entered.history).toHaveLength(1);
       expect(JSON.stringify(v1Entered.history[0])).toContain('<system-reminder>');
 
@@ -4432,8 +4465,12 @@ describe('v1↔v2 residual surface parity', () => {
       expect(v1Inactive.swarmMode).toBe(false);
       expect(v2Inactive.swarmMode).toBe(false);
       const [v1Exited, v2Exited] = await historyOnBoth();
-      expect(project(v2Exited)).toEqual(project(v1Exited));
       expect(v1Exited.history).toHaveLength(0);
+      expect(v2Exited.history).toHaveLength(1);
+      await v2Agent!.accessor.get(IAgentContextInjectorService).injectAfterCompaction();
+      const v2ExitMaterialized = await pair.v2.getContext(input);
+      expect(v2ExitMaterialized.history).toHaveLength(2);
+      expect(JSON.stringify(v2ExitMaterialized.history.at(-1))).toContain('Swarm Mode has ended.');
 
       // Exit is idempotent too: a second exit is a silent no-op on both.
       await Promise.all([
@@ -4442,7 +4479,7 @@ describe('v1↔v2 residual surface parity', () => {
       ]);
       const [v1Idle, v2Idle] = await historyOnBoth();
       expect(v1Idle.history).toHaveLength(0);
-      expect(v2Idle.history).toHaveLength(0);
+      expect(v2Idle.history).toHaveLength(2);
 
       // The `tool` trigger injects no reminder on either engine.
       await Promise.all([
@@ -4454,7 +4491,7 @@ describe('v1↔v2 residual surface parity', () => {
       expect(v2Tool.swarmMode).toBe(true);
       const [v1ToolHistory, v2ToolHistory] = await historyOnBoth();
       expect(v1ToolHistory.history).toHaveLength(0);
-      expect(v2ToolHistory.history).toHaveLength(0);
+      expect(v2ToolHistory.history).toHaveLength(2);
       await Promise.all([
         pair.v1.setSwarmMode({ ...input, enabled: false }),
         pair.v2.setSwarmMode({ ...input, enabled: false }),

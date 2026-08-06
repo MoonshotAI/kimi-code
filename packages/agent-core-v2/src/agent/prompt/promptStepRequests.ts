@@ -5,8 +5,9 @@
  * `PromptStepRequest` / `SteerStepRequest` carry an already-built user
  * `ContextMessage` (image-compression captions pre-split), apply the image
  * format gate as the last funnel before the history, and materialize it
- * at pop time — caption reminders first, message second, mirroring the old
- * `appendPrompt` ordering. `PromptStepRequest` uses `newTurn`, seeding the
+ * at pop time — caption reminders are appended before the host message,
+ * preserving the prompt-owned undo boundary.
+ * `PromptStepRequest` uses `newTurn`, seeding the
  * `turn.prompt` record from its message. `SteerStepRequest` uses
  * `activeOrNewTurn`, is mergeable, and survives turn boundaries; it records
  * the `turn.steer` wire op on materialization and unregisters itself from the

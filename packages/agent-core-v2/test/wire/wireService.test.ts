@@ -25,6 +25,7 @@ import {
   type WireModelContributionRecord,
 } from '#/wire/wireContribution';
 import { CycleError } from '#/wire/wireService';
+import '#/agent/interruptionReminder/interruptionReminderOps';
 
 import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from './stubs';
 
@@ -315,6 +316,28 @@ describe('WireService', () => {
         code: 'wire.unknown_record',
         details: { type: 'no.such.op', index: 1 },
       });
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+
+  it('replays legacy interruption records without reporting them', async () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await restoreTestAgentWire(
+        wire,
+        log,
+        testWireScope(SCOPE, KEY),
+        [
+          { type: 'store.counter.add', by: 2 },
+          { type: 'interruptionReminder.recorded', turnId: 0 },
+          { type: 'store.counter.add', by: 3 },
+        ],
+      );
+
+      expect(wire.getModel(CounterModel)).toEqual({ value: 5 });
+      expect(unexpected).toEqual([]);
     } finally {
       resetUnexpectedErrorHandler();
     }

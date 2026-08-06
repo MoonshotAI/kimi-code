@@ -12,7 +12,7 @@ import {
 } from '../../../harness';
 
 type InjectableDynamicInjector = {
-  inject(): Promise<void>;
+  inject(boundary: undefined, isNewTurn: boolean): Promise<void>;
 };
 
 async function enterPlan(
@@ -28,7 +28,7 @@ async function enterPlan(
 }
 
 async function injectDynamic(injector: InjectableDynamicInjector): Promise<void> {
-  await injector.inject();
+  await injector.inject(undefined, false);
 }
 
 function appendAssistantTurn(

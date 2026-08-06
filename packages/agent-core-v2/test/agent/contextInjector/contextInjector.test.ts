@@ -14,7 +14,10 @@ import {
   createServices,
   type TestInstantiationService,
 } from '#/_base/di/test';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import {
+  IAgentContextInjectorService,
+  type SyncContextInjectionProvider,
+} from '#/agent/contextInjector/contextInjector';
 import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -26,6 +29,7 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
+import { registerLogServices } from '../../_base/log/stubs';
 import { registerContextMemoryServices, type StubContextMemory } from '../contextMemory/stubs';
 import {
   runWillBeginStepHooks,
@@ -34,8 +38,12 @@ import {
   stubWire,
 } from '../loop/stubs';
 
-function injector(ix: TestInstantiationService): IAgentContextInjectorService {
-  return ix.get(IAgentContextInjectorService);
+type InjectableContextInjector = IAgentContextInjectorService & {
+  inject(boundary: undefined, isNewTurn: boolean): Promise<void>;
+};
+
+function injector(ix: TestInstantiationService): InjectableContextInjector {
+  return ix.get(IAgentContextInjectorService) as InjectableContextInjector;
 }
 
 function userMessage(text: string): ContextMessage {
@@ -72,7 +80,7 @@ describe('AgentContextInjectorService', () => {
     disposables = new DisposableStore();
     loop = stubLoopWithHooks();
     ix = createServices(disposables, {
-      base: [registerContextMemoryServices],
+      base: [registerContextMemoryServices, registerLogServices],
       strict: true,
       additionalServices: (reg) => {
         reg.defineInstance(IAgentLoopService, loop);
@@ -89,8 +97,8 @@ describe('AgentContextInjectorService', () => {
     disposables.dispose();
   });
 
-  async function runInjectionStep(): Promise<void> {
-    await runWillBeginStepHooks(loop);
+  async function runInjectionStep(firstStepOfTurn = false): Promise<void> {
+    await runWillBeginStepHooks(loop, firstStepOfTurn);
   }
 
   function spliceContext(
@@ -315,7 +323,7 @@ describe('AgentContextInjectorService', () => {
       return isNewTurn ? 'per-turn reminder' : undefined;
     });
 
-    await runInjectionStep();
+    await runInjectionStep(true);
     await runInjectionStep();
     spliceContext(0, 1, [compactionSummary('Compacted summary.')]);
     await injector(ix).injectAfterCompaction();
@@ -325,5 +333,149 @@ describe('AgentContextInjectorService', () => {
       { kind: 'compaction_summary' },
       { kind: 'injection', variant: 'per_turn_test' },
     ]);
+  });
+
+  it('keeps the first step marked as a new turn when compaction lands in between', async () => {
+    const seen: boolean[] = [];
+    injector(ix).register('per_turn_test', ({ isNewTurn }) => {
+      seen.push(isNewTurn);
+      return undefined;
+    });
+
+    ix.get(IEventBus).publish({
+      type: 'turn.started',
+      turnId: 0,
+      origin: { kind: 'user' },
+    });
+    await injector(ix).injectAfterCompaction();
+    await runInjectionStep(true);
+
+    expect(seen).toEqual([true, true]);
+  });
+
+  it('delivers one new-turn injection when compaction fires inside the step hook chain', async () => {
+    const seen: boolean[] = [];
+    injector(ix).register('per_turn_test', ({ isNewTurn }) => {
+      seen.push(isNewTurn);
+      return undefined;
+    });
+    loop.hooks.onWillBeginStep.register('test-compaction', async (_ctx, next) => {
+      await injector(ix).injectAfterCompaction();
+      await next();
+    });
+
+    await runInjectionStep(true);
+
+    expect(seen).toEqual([true, false]);
+  });
+
+  it('appends tagged raw messages verbatim with the injection origin stamped', async () => {
+    injector(ix).register('schema_test', () => ({
+      message: {
+        role: 'system',
+        content: [],
+        tools: [{ name: 'TestTool', description: 'test tool', parameters: { type: 'object' } }],
+      },
+    }));
+
+    await runInjectionStep();
+
+    const message = context.get().at(-1);
+    expect(message?.role).toBe('system');
+    expect(message?.tools).toEqual([
+      { name: 'TestTool', description: 'test tool', parameters: { type: 'object' } },
+    ]);
+    expect(message?.origin).toEqual({ kind: 'injection', variant: 'schema_test' });
+  });
+
+  it('stamps the disclosure on tagged raw messages returned through the result wrapper', async () => {
+    injector(ix).register('schema_test', () => ({
+      content: { message: { role: 'user', content: [{ type: 'text', text: 'raw' }] } },
+      disclosure: { kind: 'test_receipt', id: 'r1' },
+    }));
+
+    await runInjectionStep();
+
+    expect(context.get().at(-1)?.origin).toEqual({
+      kind: 'injection',
+      variant: 'schema_test',
+      disclosure: { kind: 'test_receipt', id: 'r1' },
+    });
+  });
+
+  it('skips tagged raw messages with neither content nor tools', async () => {
+    injector(ix).register('empty_raw_test', () => ({ message: { role: 'system', content: [] } }));
+
+    await runInjectionStep();
+
+    expect(context.get()).toHaveLength(0);
+  });
+
+  it('runs synchronous turn-start providers before the next prompt materializes', () => {
+    injector(ix).registerAtTurnStart('turn_start_test', () => 'turn-start reminder');
+
+    ix.get(IEventBus).publish({
+      type: 'turn.started',
+      turnId: 0,
+      origin: { kind: 'user' },
+    });
+
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('turn-start reminder');
+  });
+
+  it('skips a throwing step provider and still runs the rest', async () => {
+    injector(ix).register('step_throwing', () => {
+      throw new Error('boom');
+    });
+    injector(ix).register('step_surviving', () => 'surviving reminder');
+
+    await runInjectionStep();
+
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('surviving reminder');
+  });
+
+  it('skips a rejecting step provider and still runs the rest', async () => {
+    injector(ix).register('step_rejecting', () => Promise.reject(new Error('boom')));
+    injector(ix).register('step_surviving', () => 'surviving reminder');
+
+    await runInjectionStep();
+
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('surviving reminder');
+  });
+
+  it('skips a throwing turn-start provider and still runs the rest', () => {
+    injector(ix).registerAtTurnStart('turn_start_throwing', () => {
+      throw new Error('boom');
+    });
+    injector(ix).registerAtTurnStart('turn_start_surviving', () => 'surviving reminder');
+
+    ix.get(IEventBus).publish({
+      type: 'turn.started',
+      turnId: 0,
+      origin: { kind: 'user' },
+    });
+
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('surviving reminder');
+  });
+
+  it('skips a Promise-returning turn-start provider and still runs the rest', () => {
+    injector(ix).registerAtTurnStart(
+      'turn_start_async',
+      (() => Promise.resolve('async reminder')) as unknown as SyncContextInjectionProvider,
+    );
+    injector(ix).registerAtTurnStart('turn_start_surviving', () => 'surviving reminder');
+
+    ix.get(IEventBus).publish({
+      type: 'turn.started',
+      turnId: 0,
+      origin: { kind: 'user' },
+    });
+
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('surviving reminder');
   });
 });

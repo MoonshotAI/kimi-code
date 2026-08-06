@@ -71,10 +71,10 @@ function createInjectorStub(): IAgentContextInjectorService {
   } as unknown as IAgentContextInjectorService;
 }
 
-function createRemindersStub(): IAgentSystemReminderService {
+function createSystemReminderStub(): IAgentSystemReminderService {
   return {
     _serviceBrand: undefined,
-    appendSystemReminder: () => undefined,
+    appendSystemReminder: () => ({}),
   } as unknown as IAgentSystemReminderService;
 }
 
@@ -124,7 +124,7 @@ function buildHost(key: string): {
   } as unknown as IAgentUsageService);
   ix.stub(IAgentContextMemoryService, createContextStub());
   ix.stub(IAgentContextInjectorService, createInjectorStub());
-  ix.stub(IAgentSystemReminderService, createRemindersStub());
+  ix.stub(IAgentSystemReminderService, createSystemReminderStub());
   ix.stub(ITelemetryService, createTelemetryStub());
   ix.stub(IAgentToolExecutorService, createToolExecutorStub());
   ix.stub(IConfigService, createConfigStub());

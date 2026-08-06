@@ -29,6 +29,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
+import { IAgentToolSelectSchemasService } from '#/agent/toolSelect/toolSelectSchemas';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import '#/agent/tools/select-tools/selectToolsTool';
 
@@ -113,6 +114,7 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx = createTestAgent();
     ctx.get(IAgentToolSelectService);
     ctx.get(IAgentToolSelectAnnouncementsService);
+    ctx.get(IAgentToolSelectSchemasService);
     ctx.get(IAgentToolExecutorService);
     ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
     await ctx.rpc.setPermission({ mode: 'yolo' });

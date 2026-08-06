@@ -402,6 +402,7 @@ describe('goal tools', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId,
       step: 1,
+      firstStepOfTurn: true,
       signal: abortController.signal,
     });
   }

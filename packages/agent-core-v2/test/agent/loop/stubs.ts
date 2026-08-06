@@ -79,10 +79,14 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   };
   return stub;
 }
-export async function runWillBeginStepHooks(loop: IAgentLoopService): Promise<void> {
+export async function runWillBeginStepHooks(
+  loop: IAgentLoopService,
+  firstStepOfTurn = false,
+): Promise<void> {
   await loop.hooks.onWillBeginStep.run({
     turnId: 0,
     step: 0,
+    firstStepOfTurn,
     signal: new AbortController().signal,
   });
 }

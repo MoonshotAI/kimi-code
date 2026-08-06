@@ -24,16 +24,13 @@ import {
   type ContextInjectionContext,
   type ContextInjectionResult,
 } from '#/agent/contextInjector/contextInjector';
-import {
-  disclosureOfKind,
-  pickDisclosureBaseline,
-} from '#/agent/contextInjector/disclosureBaseline';
+import { pickDisclosureBaseline } from '#/agent/contextInjector/disclosureBaseline';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
-import { IAgentDateChangeService } from './dateChange';
+import { type DateInjectionDisclosure, IAgentDateChangeService } from './dateChange';
 
 const DATE_CHANGE_INJECTION_VARIANT = 'date_change';
 
@@ -46,7 +43,7 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IHostClock private readonly clock: IHostClock,
@@ -55,13 +52,16 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
     super();
     this.states.register(dateChangeSeedKey);
     this._register(
-      dynamicInjector.register(DATE_CHANGE_INJECTION_VARIANT, (ctx) => this.reminder(ctx)),
+      injector.register<DateInjectionDisclosure>(
+        DATE_CHANGE_INJECTION_VARIANT,
+        (ctx) => this.reminder(ctx),
+      ),
     );
   }
 
   private reminder({
     lastDisclosure,
-  }: ContextInjectionContext): ContextInjectionResult | undefined {
+  }: ContextInjectionContext<DateInjectionDisclosure>): ContextInjectionResult<DateInjectionDisclosure> | undefined {
     const profileData = this.profile.data();
     const environment = profileData.environmentDisclosure;
     if (
@@ -74,7 +74,7 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
     const renderGeneration = profileData.renderGeneration ?? 0;
     const current = currentDateDisclosure(this.clock);
     const baseline = pickDisclosureBaseline<DateDisclosure>(
-      disclosureOfKind(lastDisclosure, 'date'),
+      lastDisclosure,
       this.dateFromProfile(),
       this.states.get(dateChangeSeedKey),
     );

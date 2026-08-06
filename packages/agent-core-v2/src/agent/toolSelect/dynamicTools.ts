@@ -14,9 +14,10 @@
  *     first real user prompt it finds regardless of origin: schema messages
  *     survive only when the cut lands before them.
  *   - loadable-tools announcements: `<tools_added>/<tools_removed>` system
- *     reminders (origin `{kind: 'system_trigger', name: 'loadable-tools'}`) —
- *     undo removes them (they are not `injection`-origin), and the next
- *     turn-boundary diff self-heals by re-announcing the folded delta.
+ *     reminders (origin `{kind: 'injection', variant: 'loadable-tools'}`;
+ *     legacy journals used `{kind: 'system_trigger', name: 'loadable-tools'}`
+ *     and both are folded) — the next turn-boundary diff self-heals by
+ *     re-announcing the folded delta whenever the ledger drifts.
  *
  * The loaded-tool ledger is the history itself: there is deliberately no
  * separate persisted ledger, so undo/compaction/resume all self-heal by
@@ -29,17 +30,16 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 
 export const DYNAMIC_TOOL_SCHEMA_VARIANT = 'dynamic_tool_schema';
 
-export const LOADABLE_TOOLS_TRIGGER = 'loadable-tools';
+export const LOADABLE_TOOLS_VARIANT = 'loadable-tools';
 
 export function isDynamicToolSchemaMessage(message: ContextMessage): boolean {
   return message.tools !== undefined && message.tools.length > 0;
 }
 
 export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
-  return (
-    message.origin?.kind === 'system_trigger' &&
-    message.origin.name === LOADABLE_TOOLS_TRIGGER
-  );
+  const origin = message.origin;
+  if (origin?.kind === 'injection') return origin.variant === LOADABLE_TOOLS_VARIANT;
+  return origin?.kind === 'system_trigger' && origin.name === LOADABLE_TOOLS_VARIANT;
 }
 
 export function stripDynamicToolContext(

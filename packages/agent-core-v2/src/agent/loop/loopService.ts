@@ -620,6 +620,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             begun.step.signal,
             runtime.turnSignal,
             begun.step.number,
+            runtime.job !== undefined && begun.step.number === 1,
             begun.step.uuid,
             options.onStarted,
           );
@@ -804,11 +805,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     signal: AbortSignal,
     turnSignal: AbortSignal,
     currentStep: number,
+    firstStepOfTurn: boolean,
     stepUuid: string,
     onStarted: ((step: number) => void) | undefined,
   ): Promise<StepExecutionResult> {
     this.activeRequestTrace = undefined;
-    await this.hooks.onWillBeginStep.run({ turnId, step: currentStep, signal });
+    await this.hooks.onWillBeginStep.run({ turnId, step: currentStep, firstStepOfTurn, signal });
     const markStepStarted = this.beginStep(turnId, signal, currentStep, stepUuid, onStarted);
     const streamParts = this.createStreamPartHandler(turnId, markStepStarted);
     const request = this.llmRequester.start(
@@ -839,6 +841,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       turnId,
       signal,
       currentStep,
+      firstStepOfTurn,
       response.usage,
       finishReason,
     );
@@ -996,12 +999,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     turnId: number,
     signal: AbortSignal,
     currentStep: number,
+    firstStepOfTurn: boolean,
     usage: TokenUsage,
     finishReason: FinishReason,
   ): Promise<boolean> {
     const context: AfterStepContext = {
       turnId,
       step: currentStep,
+      firstStepOfTurn,
       signal,
       usage,
       finishReason,

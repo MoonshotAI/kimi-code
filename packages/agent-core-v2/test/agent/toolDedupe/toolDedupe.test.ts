@@ -167,7 +167,7 @@ function beforeStep(
   step: number,
   signal = new AbortController().signal,
 ): Promise<void> {
-  return h.loop.hooks.onWillBeginStep.run({ turnId, step, signal });
+  return h.loop.hooks.onWillBeginStep.run({ turnId, step, firstStepOfTurn: step === 1, signal });
 }
 
 function afterStep(
@@ -179,6 +179,7 @@ function afterStep(
   return h.loop.hooks.onDidFinishStep.run({
     turnId,
     step,
+    firstStepOfTurn: step === 1,
     signal,
     usage: ZERO_USAGE,
     finishReason: 'completed',

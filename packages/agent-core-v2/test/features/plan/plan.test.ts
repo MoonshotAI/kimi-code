@@ -72,7 +72,7 @@ function createPlanFileFakes(
 }
 
 type InjectableDynamicInjector = {
-  inject(): Promise<void>;
+  inject(boundary: undefined, isNewTurn: boolean): Promise<void>;
 };
 
 describe('Plan service', () => {
@@ -907,7 +907,7 @@ describe('Plan service', () => {
   }
 
   async function injectDynamic(): Promise<void> {
-    await injector.inject();
+    await injector.inject(undefined, false);
   }
 });
 

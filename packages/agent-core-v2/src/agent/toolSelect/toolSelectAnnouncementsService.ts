@@ -2,75 +2,37 @@
  * `toolSelect` domain — `IAgentToolSelectAnnouncementsService`
  * implementation.
  *
- * Appends v1-compatible loadable-tools diff announcements at turn boundaries
- * through `systemReminder`, hooks into `loop` before each step, reads
- * announcement text from `IAgentToolSelectService`, and observes compaction
- * boundaries from `event`. Turn boundaries need no state: every turn starts
- * at loop step 1, which always evaluates injection. The compaction-boundary
- * flag (`needsBoundaryInjection`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it. Bound at Agent scope.
+ * Registers v1-compatible loadable-tools diff announcements as a
+ * `contextInjector` provider (variant `loadable-tools`). The injector's
+ * `isNewTurn` covers exactly the old boundary set — every turn's first step
+ * and the post-compaction inject — so no local boundary state is needed.
+ * Reads announcement text from `IAgentToolSelectService`; the folded history
+ * itself remains the ledger, so undo/compaction/resume all self-heal by
+ * re-folding. Bound at Agent scope.
  */
 
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { IEventBus } from '#/app/event/eventBus';
+import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 
-import { LOADABLE_TOOLS_TRIGGER } from './dynamicTools';
+import { LOADABLE_TOOLS_VARIANT } from './dynamicTools';
 import { IAgentToolSelectService } from './toolSelect';
 import { IAgentToolSelectAnnouncementsService } from './toolSelectAnnouncements';
-
-export const toolSelectNeedsBoundaryInjectionKey = defineState<boolean>(
-  'toolSelect.needsBoundaryInjection',
-  () => false,
-);
 
 export class AgentToolSelectAnnouncementsService extends Service implements IAgentToolSelectAnnouncementsService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
     @IAgentToolSelectService toolSelect: IAgentToolSelectService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
-    @IEventBus eventBus: IEventBus,
-    @IAgentLoopService loopService: IAgentLoopService,
-    @IAgentStateService private readonly states: IAgentStateService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
   ) {
     super();
-    this.states.register(toolSelectNeedsBoundaryInjectionKey);
     this._register(
-      eventBus.subscribe('compaction.completed', () => {
-        this.needsBoundaryInjection = true;
-      }),
+      injector.register(LOADABLE_TOOLS_VARIANT, ({ isNewTurn }) =>
+        isNewTurn ? toolSelect.loadableToolsAnnouncement() : undefined,
+      ),
     );
-    this._register(
-      loopService.hooks.onWillBeginStep.register('toolSelectAnnouncements', async (ctx, next) => {
-        await next();
-        if (ctx.step !== 1 && !this.needsBoundaryInjection) return;
-        this.needsBoundaryInjection = false;
-        this.inject(toolSelect);
-      }),
-    );
-  }
-
-  private get needsBoundaryInjection(): boolean {
-    return this.states.get(toolSelectNeedsBoundaryInjectionKey);
-  }
-
-  private set needsBoundaryInjection(value: boolean) {
-    this.states.set(toolSelectNeedsBoundaryInjectionKey, value);
-  }
-
-  private inject(toolSelect: IAgentToolSelectService): void {
-    const announcement = toolSelect.loadableToolsAnnouncement();
-    if (announcement === undefined) return;
-    this.reminders.appendSystemReminder(announcement, {
-      kind: 'system_trigger',
-      name: LOADABLE_TOOLS_TRIGGER,
-    });
   }
 }
 

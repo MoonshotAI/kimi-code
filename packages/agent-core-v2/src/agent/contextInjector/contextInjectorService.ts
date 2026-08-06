@@ -1,103 +1,127 @@
 /**
  * `contextInjector` domain — `IAgentContextInjectorService` implementation.
  *
- * Injects registered context providers through `loop` and `systemReminder`,
- * tracks their positions in `contextMemory` through `eventBus`, and reconciles
- * those positions after `wire` restoration. Each provider call receives the
- * newest surviving injection of its own variant (`lastInjection`) and the
- * typed disclosure recorded on it (`lastDisclosure`), so providers never read
- * context layout or position indexes themselves. The plain-data `isNewTurn`
- * flag is registered into `agentState` (`IAgentStateService`) and read/written
- * through it; `entries` stays a plain instance field (its values hold provider
- * functions, not plain data). Bound at Agent scope.
+ * The reconcile scheduler for the registered context providers
+ * (present-tense state reminders). At each injection boundary (turn start,
+ * step, compaction follow-up) it reconciles the registered providers
+ * through `loop` hooks and routes their results into the conversation:
+ * strings become `<system-reminder>` messages through `systemReminder`,
+ * content parts append as bare user messages, and tagged raw messages
+ * (`{ message }`) append verbatim with the injection origin stamped — the
+ * form for structured payloads such as the dynamic-tool schema
+ * declaration's `tools` field. Past-tense one-off reminders (a cancelled
+ * goal, a discovered AGENTS.md, …) do NOT pass through this service:
+ * their producers append them at the event point through `systemReminder`,
+ * sharing the same `injection` origin vocabulary. A provider that throws
+ * or rejects at a step or compaction boundary is logged and skipped, so
+ * one bad provider can neither starve the rest nor fail the turn.
+ * Provider positions are never cached: each provider call derives them by
+ * scanning `contextMemory` for its own surviving injection messages, so
+ * splices, compaction folds, and `wire` restoration need no index
+ * bookkeeping. Each provider call receives the newest surviving injection
+ * of its own variant (`lastInjection`) and the typed disclosure recorded
+ * on it (`lastDisclosure`), so providers never read context layout or
+ * position indexes themselves. Turn-start providers run synchronously
+ * after `turn.started` — before the turn's first step request materializes
+ * its prompt — and must stay synchronous (a provider that throws or
+ * returns a Promise is logged and skipped, so one bad provider cannot
+ * starve the rest); they are also reconciled at every later step boundary
+ * as a fallback for facts that arrive after `turn.started` (for example, a
+ * queued turn cancelled while another turn is already running).
+ * `isNewTurn` is derived per boundary and never stored: the step hook
+ * reads it from the loop's own step counter
+ * (`BeforeStepContext.firstStepOfTurn`), and the compaction follow-up
+ * passes it explicitly, so interleaved triggers cannot consume or steal a
+ * shared flag. A compaction follow-up that lands inside a step hook chain
+ * (the auto-compaction path) doubles as that step's new-turn delivery —
+ * the enclosing step then injects with `isNewTurn: false`, so the upcoming
+ * request receives one new-turn injection, not two. `entries` stays a
+ * plain instance field (its values hold functions, not plain data).
+ * Bound at Agent scope.
  */
 
-import { toDisposable } from "#/_base/di/lifecycle";
+import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { Service } from "#/_base/di/service";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { ILogService } from '#/_base/log/log';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IWireService } from '#/wire/wire';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContent,
+  type ContextInjectionContext,
+  type ContextInjectionMessage,
   type ContextInjectionProvider,
   type ContextInjectionResult,
+  type SyncContextInjectionProvider,
 } from './contextInjector';
 
 interface ContextInjectionEntry {
-  readonly provider: ContextInjectionProvider;
+  readonly provider: ContextInjectionProvider<unknown>;
   readonly name: string;
-  readonly positions: number[];
+  readonly boundary: 'step' | 'turn-start';
 }
-
-export const contextInjectorIsNewTurnKey = defineState<boolean>(
-  'contextInjector.isNewTurn',
-  () => true,
-);
 
 export class AgentContextInjectorService extends Service implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
+  private enclosingStep: BeforeStepContext | undefined;
+  private newTurnDeliveredTo: BeforeStepContext | undefined;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentLoopService loopService: IAgentLoopService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
-    @IWireService wire: IWireService,
-    @IAgentStateService private readonly states: IAgentStateService,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
-    this.states.register(contextInjectorIsNewTurnKey);
     this._register(
-      loopService.hooks.onWillBeginStep.register('context-injector', async (_ctx, next) => {
-        await next();
-        await this.inject();
+      loopService.hooks.onWillBeginStep.register('context-injector', async (ctx, next) => {
+        this.enclosingStep = ctx;
+        try {
+          await next();
+        } finally {
+          this.enclosingStep = undefined;
+        }
+        await this.inject('step', ctx.firstStepOfTurn && this.newTurnDeliveredTo !== ctx);
       }),
     );
     this._register(
       this.eventBus.subscribe('turn.started', () => {
-        this.isNewTurn = true;
-      }),
-    );
-    this._register(
-      this.eventBus.subscribe('context.spliced', (e) => {
-        this.handleSplice(e);
-      }),
-    );
-    this._register(
-      wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
-        this.resyncPositions();
-        await next();
+        this.injectAtTurnStart();
       }),
     );
   }
 
-  private get isNewTurn(): boolean {
-    return this.states.get(contextInjectorIsNewTurnKey);
-  }
-
-  private set isNewTurn(value: boolean) {
-    this.states.set(contextInjectorIsNewTurnKey, value);
-  }
-
-  register(
+  register<D = unknown>(
     name: string,
-    provider: ContextInjectionProvider,
-  ) {
-    const positions = findInjections(this.context.get(), name);
+    provider: ContextInjectionProvider<D>,
+  ): IDisposable {
+    return this.registerProvider(name, provider, 'step');
+  }
+
+  registerAtTurnStart<D = unknown>(
+    name: string,
+    provider: SyncContextInjectionProvider<D>,
+  ): IDisposable {
+    return this.registerProvider(name, provider, 'turn-start');
+  }
+
+  private registerProvider<D>(
+    name: string,
+    provider: ContextInjectionProvider<D>,
+    boundary: ContextInjectionEntry['boundary'],
+  ): IDisposable {
     const entry: ContextInjectionEntry = {
-      provider,
+      provider: provider as ContextInjectionProvider<unknown>,
       name,
-      positions,
+      boundary,
     };
     this.entries.add(entry);
     return toDisposable(() => {
@@ -106,100 +130,135 @@ export class AgentContextInjectorService extends Service implements IAgentContex
   }
 
   async injectAfterCompaction(): Promise<void> {
-    this.isNewTurn = true;
-    await this.inject();
+    this.newTurnDeliveredTo = this.enclosingStep;
+    await this.inject(undefined, true);
   }
 
-  private async inject(): Promise<void> {
-    const isNewTurn = this.isNewTurn;
-    this.isNewTurn = false;
-    const history = this.context.get();
+  private async inject(
+    boundary: ContextInjectionEntry['boundary'] | undefined,
+    isNewTurn: boolean,
+  ): Promise<void> {
     for (const entry of this.entries) {
-      const injectedPositions: readonly number[] = [...entry.positions];
-      const lastInjectedAt = injectedPositions.at(-1) ?? null;
-      const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
-      const content = await entry.provider({
-        injectedPositions,
-        lastInjectedAt,
-        lastInjection,
-        lastDisclosure:
-          lastInjection?.origin?.kind === 'injection'
-            ? lastInjection.origin.disclosure
-            : undefined,
-        isNewTurn,
-      });
-      if (!this.entries.has(entry)) continue;
-      if (content === undefined) continue;
-      const result: ContextInjectionResult =
-        typeof content === 'object' && content !== null && !Array.isArray(content)
-          ? (content as ContextInjectionResult)
-          : { content: content as ContextInjectionContent };
-      const origin = {
-        kind: 'injection' as const,
-        variant: entry.name,
-        disclosure: result.disclosure,
-      };
-      if (typeof result.content === 'string') {
-        if (result.content.trim().length === 0) continue;
-        this.reminders.appendSystemReminder(result.content, origin);
+      if (boundary !== undefined && !shouldRunAtBoundary(entry, boundary)) continue;
+      let content: Awaited<ReturnType<ContextInjectionProvider>>;
+      try {
+        content = await entry.provider(this.providerContext(entry, isNewTurn));
+      } catch (error) {
+        this.log.error('context provider failed; skipping it', { name: entry.name, error });
         continue;
       }
-      if (result.content.length === 0) continue;
+      if (!this.entries.has(entry)) continue;
+      this.appendResult(entry, content);
+    }
+  }
+
+  private injectAtTurnStart(): void {
+    for (const entry of this.entries) {
+      if (entry.boundary !== 'turn-start') continue;
+      let content: ReturnType<ContextInjectionProvider>;
+      try {
+        content = entry.provider(this.providerContext(entry, true));
+      } catch (error) {
+        this.log.error('turn-start context provider failed; skipping it', {
+          name: entry.name,
+          error,
+        });
+        continue;
+      }
+      if (isThenable(content)) {
+        this.log.error('turn-start context provider returned a Promise; skipping it', {
+          name: entry.name,
+        });
+        continue;
+      }
+      if (!this.entries.has(entry)) continue;
+      this.appendResult(entry, content);
+    }
+  }
+
+  private providerContext(
+    entry: ContextInjectionEntry,
+    isNewTurn: boolean,
+  ): ContextInjectionContext<unknown> {
+    const injectedPositions = findInjections(this.context.get(), entry.name);
+    const lastInjectedAt = injectedPositions.at(-1) ?? null;
+    const lastInjection = lastInjectedAt === null
+      ? undefined
+      : this.context.get()[lastInjectedAt];
+    return {
+      injectedPositions,
+      lastInjectedAt,
+      lastInjection,
+      lastDisclosure:
+        lastInjection?.origin?.kind === 'injection'
+          ? lastInjection.origin.disclosure
+          : undefined,
+      isNewTurn,
+    };
+  }
+
+  private appendResult(
+    entry: ContextInjectionEntry,
+    content: ContextInjectionContent | ContextInjectionResult<unknown> | undefined,
+  ): void {
+    if (content === undefined) return;
+    const result: ContextInjectionResult<unknown> = isInjectionResult(content)
+      ? content
+      : { content };
+    const origin = {
+      kind: 'injection' as const,
+      variant: entry.name,
+      disclosure: result.disclosure,
+    };
+    const resolved = result.content;
+    if (typeof resolved === 'string') {
+      if (resolved.trim().length === 0) return;
+      this.reminders.appendSystemReminder(resolved, origin);
+      return;
+    }
+    if (isRawInjectionMessage(resolved)) {
+      const message = resolved.message;
+      if (
+        message.content.length === 0 &&
+        (message.tools === undefined || message.tools.length === 0)
+      ) {
+        return;
+      }
       this.context.append({
-        role: 'user',
-        content: [...result.content],
+        role: message.role,
+        content: [...message.content],
         toolCalls: [],
+        tools: message.tools,
         origin,
       });
+      return;
     }
-  }
-
-  private resyncPositions(): void {
-    const history = this.context.get();
-    for (const entry of this.entries) {
-      const found = findInjections(history, entry.name);
-      entry.positions.length = 0;
-      entry.positions.push(...found);
-    }
-  }
-
-  private handleSplice(splice: ContextSplice): void {
-    let insertedInjections: Map<string, number[]> | undefined;
-    splice.messages.forEach((message, offset) => {
-      if (message.origin?.kind !== 'injection') return;
-      insertedInjections ??= new Map();
-      const positions = insertedInjections.get(message.origin.variant);
-      if (positions === undefined) {
-        insertedInjections.set(message.origin.variant, [splice.start + offset]);
-      } else {
-        positions.push(splice.start + offset);
-      }
+    if (resolved.length === 0) return;
+    this.context.append({
+      role: 'user',
+      content: [...resolved],
+      toolCalls: [],
+      origin,
     });
-    if (insertedInjections === undefined && splice.deleteCount === 0) return;
-
-    const deletedEnd = splice.start + splice.deleteCount;
-    const delta = splice.messages.length - splice.deleteCount;
-    for (const entry of this.entries) {
-      const adopted = insertedInjections?.get(entry.name) ?? [];
-      const positions = entry.positions;
-      if (adopted.length === 0 && positions.length === 0) continue;
-      let lo = 0;
-      while (lo < positions.length && positions[lo]! < splice.start) lo++;
-      let hi = lo;
-      while (hi < positions.length && positions[hi]! < deletedEnd) hi++;
-      for (let index = hi; index < positions.length; index++) {
-        positions[index] = positions[index]! + delta;
-      }
-      positions.splice(lo, hi - lo, ...adopted);
-    }
   }
 }
 
-type ContextSplice = {
-  readonly start: number;
-  readonly deleteCount: number;
-  readonly messages: readonly ContextMessage[];
-};
+function isRawInjectionMessage(
+  content: Exclude<ContextInjectionContent, string>,
+): content is { readonly message: ContextInjectionMessage } {
+  return !Array.isArray(content);
+}
+
+function isInjectionResult(
+  content: ContextInjectionContent | ContextInjectionResult<unknown>,
+): content is ContextInjectionResult<unknown> {
+  return (
+    typeof content === 'object' &&
+    content !== null &&
+    !Array.isArray(content) &&
+    'content' in content
+  );
+}
 
 function findInjections(
   history: readonly ContextMessage[],
@@ -212,6 +271,20 @@ function findInjections(
     }
   });
   return positions;
+}
+
+function shouldRunAtBoundary(
+  entry: ContextInjectionEntry,
+  boundary: NonNullable<ContextInjectionEntry['boundary']>,
+): boolean {
+  if (entry.boundary === boundary) return true;
+  return boundary === 'step' && entry.boundary === 'turn-start';
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === 'object' && value !== null) || typeof value === 'function'
+  ) && 'then' in value && typeof value.then === 'function';
 }
 
 registerScopedService(

@@ -1,28 +1,44 @@
 /**
- * `interruptionReminder` domain (L4) — persists and restores pending
- * user-interruption reminders.
+ * `interruptionReminder` domain — checkpointed wire Model for user-cancelled
+ * interruption reminders.
  *
- * Projects the `loop` domain's `turn.cancel` fact into the set of turns whose
- * interruption reminder still has to reach the conversation, and owns the op
- * that records a reminder's delivery. Consumed by the Agent-scope
- * `interruptionReminderService`.
+ * Projects the durable `turn.cancel` fact into pending model-facing state,
+ * follows conversation undo through `contextMemory`'s checkpoint protocol, and
+ * clears the pending state when the injection is appended. Bound at Agent scope.
  */
 
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
+import {
+  defineCheckpointedModel,
+  type Checkpointed,
+} from '#/agent/contextMemory/conversationTime';
 
-export const InterruptionReminderModel = defineModel<readonly number[]>(
+export const INTERRUPTION_REMINDER_VARIANT = 'interruption';
+
+export type InterruptionReminderState = Checkpointed<readonly number[]>;
+
+export const InterruptionReminderModel = defineCheckpointedModel<readonly number[]>(
   'interruptionReminder',
   () => [],
   {
+    onAppendMessage: (current, message) =>
+      message.origin?.kind === 'injection' &&
+      message.origin.variant === INTERRUPTION_REMINDER_VARIANT &&
+      current.length > 0
+        ? []
+        : current,
     reducers: {
       'turn.cancel': (state, { turnId, target, reason }) => {
-        if (target !== 'active' || reason !== 'user_cancelled' || turnId === undefined) {
+        if (
+          turnId === undefined ||
+          target !== 'active' ||
+          reason !== 'user_cancelled' ||
+          state.current.includes(turnId)
+        ) {
           return state;
         }
-        if (state.includes(turnId)) return state;
-        return [...state, turnId].toSorted((a, b) => a - b);
+        return { ...state, current: [...state.current, turnId] };
       },
     },
   },
@@ -38,6 +54,9 @@ export const interruptionReminderRecorded = InterruptionReminderModel.defineOp(
   'interruptionReminder.recorded',
   {
     schema: z.object({ turnId: z.number().int().nonnegative() }),
-    apply: (state, { turnId }) => state.filter((pendingTurnId) => pendingTurnId !== turnId),
+    apply: (state, { turnId }) => ({
+      ...state,
+      current: state.current.filter((pendingTurnId) => pendingTurnId !== turnId),
+    }),
   },
 );
