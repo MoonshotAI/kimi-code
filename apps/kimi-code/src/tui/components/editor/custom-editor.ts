@@ -329,8 +329,9 @@ export class CustomEditor extends Editor {
     }
 
     // Clipboard reads are asynchronous. Queue every key received while a
-    // paste callback is in flight and replay it once the callback has at least
-    // inserted its placeholder, so Enter cannot submit a half-built draft.
+    // paste callback is in flight and replay it once the callback settles
+    // (placeholder insert + compression + daemon upload), so Enter cannot
+    // submit a half-built draft.
     if (this.pasteInFlight) {
       this.pasteInputQueue.push(normalized);
       return;

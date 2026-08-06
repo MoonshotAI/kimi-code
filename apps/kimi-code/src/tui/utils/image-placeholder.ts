@@ -220,7 +220,7 @@ export function rewriteMediaPlaceholders(
         out +=
           style === 'plain'
             ? formatMediaReference('video', path)
-            : formatMediaTag('video', path);
+            : buildMediaPathTag('video', path);
         videoAttachmentIds.push(id);
       } else {
         const path = materializeImageToCache(attachment);
@@ -228,7 +228,7 @@ export function rewriteMediaPlaceholders(
         out +=
           style === 'plain'
             ? formatMediaReference('image', path)
-            : formatMediaTag('image', path);
+            : buildMediaPathTag('image', path);
         imageAttachmentIds.push(id);
       }
       cursor = match.index + literal.length;
@@ -353,10 +353,6 @@ function captionForCompressedImage(att: ImageAttachment): string {
   });
 }
 
-function formatMediaTag(tag: 'image' | 'video', path: string): string {
-  return `<${tag} path="${escapeAttribute(path)}"></${tag}>`;
-}
-
 /**
  * Plain-text media reference for channels that XML-escape args (`/skill`).
  * Free of `& < > "` (UUID image names; boundary chars stripped from video
@@ -365,12 +361,4 @@ function formatMediaTag(tag: 'image' | 'video', path: string): string {
  */
 function formatMediaReference(kind: 'image' | 'video', path: string): string {
   return `Attached ${kind} file: ${path} (open it with ReadMediaFile)`;
-}
-
-function escapeAttribute(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('"', '&quot;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
 }

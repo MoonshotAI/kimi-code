@@ -116,6 +116,7 @@ import { ClipboardImageHintController } from './controllers/clipboard-image-hint
 import { EditorKeyboardController } from './controllers/editor-keyboard';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import { SessionReplayRenderer } from './controllers/session-replay';
+import { StagingLeaseTracker } from './controllers/staging-leases';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController } from './controllers/tasks-browser';
 import { installRainbowDance } from './easter-eggs/dance';
@@ -265,16 +266,6 @@ interface SendMessageOptions {
   readonly hasMedia?: boolean;
 }
 
-type StagingLeaseOrigin = 'user' | 'skill_activation' | 'plugin_command';
-
-interface StagingLease {
-  readonly imageAttachmentIds: readonly number[];
-  readonly paths: readonly string[];
-  readonly origin: StagingLeaseOrigin;
-  turnId: string | undefined;
-  released: boolean;
-}
-
 /** How long the one-shot "moved to background" footer hint stays visible. */
 const DETACH_HINT_DISPLAY_MS = 4_000;
 
@@ -285,10 +276,8 @@ export class KimiTUI {
   state: TUIState;
   /** In-flight lazy session creation (v2 engine), shared by concurrent first-use triggers. */
   private ensureSessionPromise: Promise<Session | undefined> | null = null;
-  private readonly stagingCleanups = new Set<Promise<void>>();
-  /** Staged media is owned by the turn that consumes it, not by the RPC call. */
-  private readonly stagingLeases = new Set<StagingLease>();
-  private readonly stagingLeasesByTurn = new Map<string, Set<StagingLease>>();
+  /** Staged prompt media lifecycle (daemon uploads + cache copies) — see StagingLeaseTracker. */
+  private readonly staging: StagingLeaseTracker;
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
@@ -370,6 +359,15 @@ export class KimiTUI {
 
   constructor(harness: KimiHarness, startupInput: KimiTUIStartupInput) {
     this.harness = harness;
+    this.staging = new StagingLeaseTracker({
+      takeFileIds: (ids) => this.imageStore.takeFileIds(ids),
+      deleteFiles: async (fileIds, paths) => {
+        await Promise.all([
+          ...fileIds.map((fileId) => this.harness.deleteFile(fileId).catch(() => undefined)),
+          ...paths.map((path) => unlink(path).catch(() => undefined)),
+        ]);
+      },
+    });
     const tuiOptions: KimiTUIOptions = {
       initialAppState: createInitialAppState(startupInput),
       startup: {
@@ -926,9 +924,9 @@ export class KimiTUI {
     try {
       await this.closeSession('shutting down');
       this.clearQueuedMessages();
-      this.releaseAllStagingLeases();
-      this.scheduleDeleteStagingFiles(this.imageStore.clear());
-      await this.drainStagingCleanups();
+      this.staging.releaseAll();
+      this.staging.deleteStaged(this.imageStore.clear());
+      await this.staging.drain();
       await this.harness.close();
     } finally {
       this.sessionEventHandler.stopAllMcpServerStatusSpinners();
@@ -1212,7 +1210,7 @@ export class KimiTUI {
     const item = this.shiftQueuedMessage();
     if (item === undefined) return;
     if (item.mode === 'bash') {
-      this.releaseQueuedMedia([item]);
+      this.staging.releaseQueued([item]);
       void this.runShellCommandFromInput(item.text);
     } else {
       this.sendQueuedMessage(session, item);
@@ -1330,7 +1328,7 @@ export class KimiTUI {
     if (this.state.queuedMessages.length === 0) return undefined;
     const last = this.state.queuedMessages.at(-1)!;
     this.state.queuedMessages = this.state.queuedMessages.slice(0, -1);
-    this.releaseQueuedMedia([last]);
+    this.staging.releaseQueued([last]);
     return last;
   }
 
@@ -1385,7 +1383,7 @@ export class KimiTUI {
 
   sendQueuedMessage(session: Session, item: QueuedMessage): void {
     if (item.mode === 'bash') {
-      this.releaseQueuedMedia([item]);
+      this.staging.releaseQueued([item]);
       void this.runShellCommandFromInput(item.text);
       return;
     }
@@ -1398,116 +1396,16 @@ export class KimiTUI {
     });
   }
 
-  private async deleteStagingFiles(
-    fileIds: readonly string[],
-    paths: readonly string[] = [],
-  ): Promise<void> {
-    await Promise.all(
-      [
-        ...fileIds.map((fileId) => this.harness.deleteFile(fileId).catch(() => undefined)),
-        ...paths.map((path) => unlink(path).catch(() => undefined)),
-      ],
-    );
-  }
-
-  private scheduleDeleteStagingFiles(
-    fileIds: readonly string[],
-    paths: readonly string[] = [],
-  ): void {
-    if (fileIds.length === 0 && paths.length === 0) return;
-    this.trackStagingCleanup(this.deleteStagingFiles(fileIds, paths));
-  }
-
-  private trackStagingCleanup(cleanup: Promise<void>): void {
-    let tracked!: Promise<void>;
-    tracked = cleanup.catch(() => undefined).finally(() => {
-      this.stagingCleanups.delete(tracked);
-    });
-    this.stagingCleanups.add(tracked);
-  }
-
-  private async drainStagingCleanups(): Promise<void> {
-    while (this.stagingCleanups.size > 0) {
-      await Promise.allSettled(this.stagingCleanups);
-    }
-  }
-
-  private createStagingLease(
-    imageAttachmentIds: readonly number[],
-    paths: readonly string[],
-    origin: StagingLeaseOrigin,
-  ): StagingLease | undefined {
-    if (imageAttachmentIds.length === 0 && paths.length === 0) return undefined;
-    const lease: StagingLease = {
-      imageAttachmentIds: [...imageAttachmentIds],
-      paths: [...paths],
-      origin,
-      turnId: undefined,
-      released: false,
-    };
-    this.stagingLeases.add(lease);
-    return lease;
-  }
-
-  private bindStagingLeaseToTurn(lease: StagingLease | undefined, turnId: string): void {
-    if (lease === undefined || lease.released || lease.turnId !== undefined) return;
-    lease.turnId = turnId;
-    let leases = this.stagingLeasesByTurn.get(turnId);
-    if (leases === undefined) {
-      leases = new Set<StagingLease>();
-      this.stagingLeasesByTurn.set(turnId, leases);
-    }
-    leases.add(lease);
-  }
-
   handleTurnStarted(event: TurnStartedEvent): void {
-    const kind = event.origin?.kind;
-    if (kind !== 'user' && kind !== 'skill_activation' && kind !== 'plugin_command') return;
-    const lease = [...this.stagingLeases].find(
-      (candidate) =>
-        !candidate.released && candidate.turnId === undefined && candidate.origin === kind,
-    );
-    this.bindStagingLeaseToTurn(lease, String(event.turnId));
+    this.staging.handleTurnStarted(event);
   }
 
   handleTurnEnded(event: TurnEndedEvent): void {
-    const turnId = String(event.turnId);
-    const leases = this.stagingLeasesByTurn.get(turnId);
-    if (leases === undefined) return;
-    for (const lease of leases) this.releaseStagingLease(lease);
-    this.stagingLeasesByTurn.delete(turnId);
-  }
-
-  private releaseStagingLease(lease: StagingLease | undefined): void {
-    if (lease === undefined || lease.released) return;
-    lease.released = true;
-    this.stagingLeases.delete(lease);
-    if (lease.turnId !== undefined) {
-      const leases = this.stagingLeasesByTurn.get(lease.turnId);
-      leases?.delete(lease);
-      if (leases?.size === 0) this.stagingLeasesByTurn.delete(lease.turnId);
-    }
-    const fileIds = lease.imageAttachmentIds.flatMap((id) =>
-      this.imageStore.takeFileIds([id]),
-    );
-    this.scheduleDeleteStagingFiles(fileIds, lease.paths);
-  }
-
-  private releaseAllStagingLeases(): void {
-    for (const lease of this.stagingLeases) this.releaseStagingLease(lease);
+    this.staging.handleTurnEnded(event);
   }
 
   releaseStagingMedia(imageAttachmentIds: readonly number[], paths: readonly string[]): void {
-    const fileIds = this.imageStore.takeFileIds(imageAttachmentIds);
-    this.scheduleDeleteStagingFiles(fileIds, paths);
-  }
-
-  private releaseQueuedMedia(items: readonly QueuedMessage[]): void {
-    const fileIds = items.flatMap((item) =>
-      this.imageStore.takeFileIds(item.imageAttachmentIds ?? []),
-    );
-    const paths = items.flatMap((item) => item.stagingPaths ?? []);
-    this.scheduleDeleteStagingFiles(fileIds, paths);
+    this.staging.releaseMedia(imageAttachmentIds, paths);
   }
 
   requestQueuedGoalPromotion(): void {
@@ -1527,10 +1425,20 @@ export class KimiTUI {
       content: input,
       imageAttachmentIds,
     });
+    // A goal-active steer is buffered into the running goal turn — no new
+    // turn.started will fire for handleTurnStarted to claim the lease — so
+    // bind it to that turn here. The turn context must be read BEFORE
+    // beginSessionRequest resets it, and only while a turn is actually live
+    // (finalizeTurn clears the id at turn end; a queued dispatch can land
+    // while the goal driver's next continuation turn is already streaming).
+    const runningTurnId =
+      this.state.appState.streamingPhase === 'idle' || this.state.appState.streamingPhase === 'shell'
+        ? undefined
+        : this.streamingUI.getTurnContext().turnId;
     this.beginSessionRequest();
 
     const sdkInput = options?.parts ?? input;
-    const stagingLease = this.createStagingLease(
+    const stagingLease = this.staging.create(
       imageAttachmentIds ?? [],
       options?.stagingPaths ?? [],
       'user',
@@ -1541,9 +1449,8 @@ export class KimiTUI {
     // the message. Steer instead: the engine buffers it into the running goal
     // turn, or launches a turn of its own if the loop just ended.
     if (this.state.appState.goal?.status === 'active') {
-      const currentTurnId = this.streamingUI.getTurnContext().turnId;
-      if (currentTurnId !== undefined) this.bindStagingLeaseToTurn(stagingLease, currentTurnId);
-      this.trackStagingCleanup(
+      if (runningTurnId !== undefined) this.staging.bindToTurn(stagingLease, runningTurnId);
+      this.staging.track(
         session
           .steer(sdkInput)
           .catch((error: unknown) => {
@@ -1553,19 +1460,19 @@ export class KimiTUI {
             // steer (e.g. the session is gone), which would leave the UI stuck
             // queueing input behind a request that never completes.
             this.failSessionRequest(`Failed to steer: ${message}`);
-            if (stagingLease?.turnId === undefined) this.releaseStagingLease(stagingLease);
+            if (stagingLease?.turnId === undefined) this.staging.release(stagingLease);
           })
           .then(() => undefined),
       );
       return;
     }
-    this.trackStagingCleanup(
+    this.staging.track(
       session
         .prompt(sdkInput)
         .catch((error: unknown) => {
           const message = formatErrorMessage(error);
           this.failSessionRequest(`Failed to send: ${message}`);
-          if (stagingLease?.turnId === undefined) this.releaseStagingLease(stagingLease);
+          if (stagingLease?.turnId === undefined) this.staging.release(stagingLease);
         })
         .then(() => undefined),
     );
@@ -1590,18 +1497,18 @@ export class KimiTUI {
       return;
     }
     this.beginSessionRequest();
-    const stagingLease = this.createStagingLease(
+    const stagingLease = this.staging.create(
       rewrite.imageAttachmentIds,
       rewrite.stagingPaths,
       'skill_activation',
     );
-    this.trackStagingCleanup(
+    this.staging.track(
       session
         .activateSkill(skillName, rewrite.text)
         .catch((error: unknown) => {
           const message = formatErrorMessage(error);
           this.failSessionRequest(`Skill "${skillName}" failed: ${message}`);
-          if (stagingLease?.turnId === undefined) this.releaseStagingLease(stagingLease);
+          if (stagingLease?.turnId === undefined) this.staging.release(stagingLease);
         })
         .then(() => undefined),
     );
@@ -1628,18 +1535,18 @@ export class KimiTUI {
       return;
     }
     this.beginSessionRequest();
-    const stagingLease = this.createStagingLease(
+    const stagingLease = this.staging.create(
       rewrite.imageAttachmentIds,
       rewrite.stagingPaths,
       'plugin_command',
     );
-    this.trackStagingCleanup(
+    this.staging.track(
       session
         .activatePluginCommand(pluginId, commandName, rewrite.text)
         .catch((error: unknown) => {
           const message = formatErrorMessage(error);
           this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
-          if (stagingLease?.turnId === undefined) this.releaseStagingLease(stagingLease);
+          if (stagingLease?.turnId === undefined) this.staging.release(stagingLease);
         })
         .then(() => undefined),
     );
@@ -1687,16 +1594,16 @@ export class KimiTUI {
 
     const imageAttachmentIds = input.flatMap((item) => item.imageAttachmentIds ?? []);
     const stagingPaths = input.flatMap((item) => item.stagingPaths ?? []);
-    const stagingLease = this.createStagingLease(imageAttachmentIds, stagingPaths, 'user');
+    const stagingLease = this.staging.create(imageAttachmentIds, stagingPaths, 'user');
     const currentTurnId = this.streamingUI.getTurnContext().turnId;
-    if (currentTurnId !== undefined) this.bindStagingLeaseToTurn(stagingLease, currentTurnId);
-    this.trackStagingCleanup(
+    if (currentTurnId !== undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
+    this.staging.track(
       session
         .steer(combineSteerInput(input))
         .catch((error: unknown) => {
           const message = formatErrorMessage(error);
           this.showError(`Failed to steer: ${message}`);
-          if (stagingLease?.turnId === undefined) this.releaseStagingLease(stagingLease);
+          if (stagingLease?.turnId === undefined) this.staging.release(stagingLease);
         })
         .then(() => undefined),
     );
@@ -1713,7 +1620,7 @@ export class KimiTUI {
   clearQueuedMessages(): void {
     const queued = this.state.queuedMessages;
     this.state.queuedMessages = [];
-    this.releaseQueuedMedia(queued);
+    this.staging.releaseQueued(queued);
   }
 
   shiftQueuedMessage(): QueuedMessage | undefined {
@@ -2064,7 +1971,7 @@ export class KimiTUI {
   async closeSession(reason: string): Promise<void> {
     const previous = this.unloadCurrentSession(reason);
     await previous?.close();
-    this.releaseAllStagingLeases();
+    this.staging.releaseAll();
   }
 
   private unloadCurrentSession(reason: string): Session | undefined {
@@ -2482,7 +2389,7 @@ export class KimiTUI {
     this.state.todoPanel.clear();
     this.state.todoPanelContainer.clear();
     const stagingFileIds = this.imageStore.clear();
-    this.scheduleDeleteStagingFiles(stagingFileIds);
+    this.staging.deleteStaged(stagingFileIds);
     this.renderWelcome();
     // No forced full render on session reset: let the differential renderer
     // converge on its own (a mass change above the viewport still makes the
@@ -2534,7 +2441,7 @@ export class KimiTUI {
     for (const entry of toRemove) {
       if (entry.kind === 'user' && entry.imageAttachmentIds !== undefined) {
         const stagingFileIds = this.imageStore.removeMany(entry.imageAttachmentIds);
-        this.scheduleDeleteStagingFiles(stagingFileIds);
+        this.staging.deleteStaged(stagingFileIds);
       }
     }
 
