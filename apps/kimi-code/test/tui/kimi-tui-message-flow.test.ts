@@ -1906,7 +1906,9 @@ command = "vim"
         'Post-create setup failed: permission setup failed',
       );
     });
-    expect(failedSession.onEvent).toHaveBeenCalledOnce();
+    // The pet reporter adds a second subscription, so assert "subscribed"
+    // rather than an exact call count.
+    expect(failedSession.onEvent).toHaveBeenCalled();
   });
 
   it('tracks Shift-Tab mode switches through the editor handler', async () => {
@@ -1961,7 +1963,9 @@ command = "vim"
     driver.sessionEventHandler.startSubscription();
     await Promise.resolve();
 
-    expect(session.onEvent).toHaveBeenCalledOnce();
+    // The pet reporter adds a second subscription, so assert "subscribed"
+    // rather than an exact call count.
+    expect(session.onEvent).toHaveBeenCalled();
     expect(session.listMcpServers).toHaveBeenCalledOnce();
     const subscribeOrder = session.onEvent.mock.invocationCallOrder[0];
     const snapshotOrder = session.listMcpServers.mock.invocationCallOrder[0];
@@ -1994,7 +1998,12 @@ command = "vim"
 
     driver.sessionEventHandler.startSubscription();
     await Promise.resolve();
-    eventListeners[0]?.({
+    // Multiple subscribers exist (the session-event handler, the pet
+    // reporter, ...); deliver to all of them like the real session would.
+    const emit = (event: Event): void => {
+      for (const listener of eventListeners) listener(event);
+    };
+    emit({
       type: 'mcp.server.status',
       agentId: 'main',
       sessionId: 'ses-1',
@@ -2005,7 +2014,7 @@ command = "vim"
       1,
     );
 
-    eventListeners[0]?.({
+    emit({
       type: 'mcp.server.status',
       agentId: 'main',
       sessionId: 'ses-1',
@@ -2015,7 +2024,7 @@ command = "vim"
         toolCount: 0,
       },
     } as Event);
-    eventListeners[0]?.({
+    emit({
       type: 'mcp.server.status',
       agentId: 'main',
       sessionId: 'ses-1',
@@ -2051,17 +2060,21 @@ command = "vim"
     const { driver } = await makeDriver(session);
 
     driver.sessionEventHandler.startSubscription();
-    eventListeners[0]?.({
-      type: 'mcp.server.status',
-      agentId: 'main',
-      sessionId: 'ses-1',
-      server: {
-        name: 'local-tools',
-        transport: 'stdio',
-        status: 'connected',
-        toolCount: 2,
-      },
-    } as Event);
+    // Deliver to every subscriber (session-event handler, pet reporter, ...),
+    // not just the first registered listener.
+    for (const listener of eventListeners) {
+      listener({
+        type: 'mcp.server.status',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        server: {
+          name: 'local-tools',
+          transport: 'stdio',
+          status: 'connected',
+          toolCount: 2,
+        },
+      } as Event);
+    }
     resolveSnapshot([
       {
         name: 'local-tools',

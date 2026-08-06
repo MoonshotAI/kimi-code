@@ -1,0 +1,1106 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+        -webkit-user-select: none;
+        user-select: none;
+        font-family:
+          -apple-system, 'PingFang SC', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      }
+      #bubble {
+        display: none;
+        /* anchored to the mascot's head (chip zone included), so the bubble
+           always floats directly above the pet regardless of window height */
+        position: absolute;
+        left: 50%;
+        bottom: 181px;
+        transform: translateX(-50%);
+        align-items: center;
+        gap: 8px;
+        width: fit-content;
+        /* follows the font-size-dependent text cap (set from JS); the default
+           matches the 13px base font */
+        max-width: var(--bubble-max-w, 335px);
+        margin: 0;
+        padding: 9px 11px 9px 15px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.98);
+        box-shadow:
+          0 10px 30px rgba(31, 35, 50, 0.14),
+          0 2px 8px rgba(31, 35, 50, 0.08);
+        animation: bubble-in 0.18s ease-out;
+      }
+      #bubble.visible {
+        display: flex;
+      }
+      #bubble-text {
+        min-width: 0;
+      }
+      #bubble-title {
+        display: none;
+        font-size: var(--bubble-title-size, 13px);
+        font-weight: 500;
+        line-height: 1.4;
+        color: #2b2f3a;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: var(--bubble-text-max-w, 220px);
+      }
+      #bubble-title.visible {
+        display: block;
+      }
+      #bubble-status {
+        font-size: var(--bubble-status-size, 11.5px);
+        line-height: 1.4;
+        color: #8a90a0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: var(--bubble-text-max-w, 220px);
+      }
+      #bubble-title:not(.visible) + #bubble-status {
+        font-size: var(--bubble-solo-size, 12.5px);
+        color: #3a3f4b;
+      }
+      /* action buttons on the right of the bubble (open / stop) */
+      #bubble-actions {
+        display: none;
+        gap: 4px;
+        margin-left: 2px;
+      }
+      #bubble-actions.visible {
+        display: flex;
+      }
+      #bubble-actions button {
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        background: #eef1f6;
+        color: #5a6274;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      }
+      #bubble-actions button:hover {
+        background: #e0e5ef;
+        color: #2b2f3a;
+      }
+      /* green check badge shown when the task completes */
+      #bubble-done-badge {
+        display: none;
+        width: 22px;
+        height: 22px;
+        margin-left: 2px;
+        border-radius: 50%;
+        background: #e6f6e9;
+        color: #34a853;
+        align-items: center;
+        justify-content: center;
+      }
+      #bubble-done-badge.visible {
+        display: flex;
+      }
+      #bubble.awaiting {
+        animation:
+          bubble-in 0.18s ease-out,
+          bubble-glow 1.4s ease-in-out infinite;
+      }
+      @keyframes bubble-in {
+        from {
+          opacity: 0;
+          transform: translateX(-50%) translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(-50%) translateY(0);
+        }
+      }
+      @keyframes bubble-glow {
+        0%,
+        100% {
+          box-shadow:
+            0 10px 30px rgba(31, 35, 50, 0.14),
+            0 2px 8px rgba(31, 35, 50, 0.08);
+        }
+        50% {
+          box-shadow:
+            0 10px 30px rgba(224, 175, 104, 0.45),
+            0 2px 10px rgba(224, 175, 104, 0.3);
+        }
+      }
+      /* little round chevron chip between the bubble and the mascot's head:
+         down-chevron collapses the bubble, up-chevron expands it again */
+      #bubble-chip {
+        display: none;
+        position: absolute;
+        left: 50%;
+        bottom: 158px;
+        transform: translateX(-50%);
+        width: 18px;
+        height: 18px;
+        margin: 0;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.98);
+        box-shadow: 0 4px 12px rgba(31, 35, 50, 0.16);
+        cursor: pointer;
+      }
+      #bubble-chip.visible {
+        display: block;
+      }
+      #bubble-chip::before {
+        content: '';
+        display: block;
+        width: 6px;
+        height: 6px;
+        margin: 4px auto 0;
+        border-right: 1.6px solid #8a90a0;
+        border-bottom: 1.6px solid #8a90a0;
+        transform: rotate(45deg);
+      }
+      #bubble-chip.expand::before {
+        margin: 7px auto 0;
+        transform: rotate(-135deg);
+      }
+      #pet {
+        position: absolute;
+        bottom: 0;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+      #stage {
+        position: relative;
+        width: 100%;
+        height: 100%;
+      }
+      /* right-click popup. It lives OUTSIDE #stage on purpose: UI chrome must
+         not scale with the pet — only its anchor point tracks the mascot's
+         head (bottom set from JS as 100 * scale). The 24px right offset keeps
+         the drop shadow inside the transparent window. */
+      #pet-menu {
+        display: none;
+        position: absolute;
+        right: 24px;
+        /* JS overrides this as 100 * scale whenever the scale changes */
+        bottom: 100px;
+        padding: 6px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.98);
+        color: #3a3f4b;
+        font-size: 12px;
+        line-height: 1;
+        white-space: nowrap;
+        box-shadow:
+          0 8px 24px rgba(31, 35, 50, 0.16),
+          0 2px 6px rgba(31, 35, 50, 0.08);
+        animation: menu-in 0.15s ease-out;
+        z-index: 10;
+      }
+      @keyframes menu-in {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      #pet-menu.visible {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .pet-menu-item {
+        padding: 7px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .pet-menu-item:hover {
+        background: #f0f2f7;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <div id="bubble">
+        <div id="bubble-text">
+          <div id="bubble-title"></div>
+          <div id="bubble-status"></div>
+        </div>
+        <div id="bubble-actions">
+          <button id="bubble-open" type="button" title="打开会话">
+            <svg viewBox="0 0 12 12" width="11" height="11">
+              <path
+                d="M7 2.5 3.5 6 7 9.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M3.8 6H10"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+          <button id="bubble-stop" type="button" title="终止当前任务">
+            <svg viewBox="0 0 12 12" width="9" height="9">
+              <rect x="1.5" y="1.5" width="9" height="9" rx="2" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+        <div id="bubble-done-badge" title="任务完成">
+          <svg viewBox="0 0 12 12" width="11" height="11">
+            <path
+              d="M2.5 6.5 5 9 9.5 3.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </div>
+      </div>
+      <div id="bubble-chip" title="收起"></div>
+      <canvas id="pet" width="300" height="312" style="width: 150px; height: 156px"></canvas>
+    </div>
+    <div id="pet-menu">
+      <div id="pet-menu-settings" class="pet-menu-item">设置</div>
+      <div id="pet-menu-close" class="pet-menu-item">关闭宠物</div>
+    </div>
+    <script>
+      const canvas = document.getElementById('pet');
+      const ctx = canvas.getContext('2d');
+      ctx.scale(2, 2);
+      const bubble = document.getElementById('bubble');
+      const bubbleChip = document.getElementById('bubble-chip');
+      const bubbleTitle = document.getElementById('bubble-title');
+      const bubbleStatus = document.getElementById('bubble-status');
+      const bubbleActions = document.getElementById('bubble-actions');
+      const bubbleDoneBadge = document.getElementById('bubble-done-badge');
+      // The chip toggles the bubble between collapsed and expanded.
+      let dismissedText = null;
+      bubbleChip.addEventListener('click', () => {
+        const text = bubbleSession.statusText ?? null;
+        dismissedText = dismissedText === text ? null : text;
+        renderBubble();
+      });
+
+      // Right-click popup: 设置 (opens the settings window) + 关闭宠物 (quits).
+      const petMenu = document.getElementById('pet-menu');
+      function setMenuVisible(visible) {
+        petMenu.classList.toggle('visible', visible);
+        requestResize();
+      }
+      document.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        // Always open (never toggle): some synthetic right-clicks deliver the
+        // event twice, and a toggle would open-then-close.
+        setMenuVisible(true);
+      });
+      document.addEventListener('click', (event) => {
+        if (!petMenu.contains(event.target)) {
+          setMenuVisible(false);
+        }
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') setMenuVisible(false);
+      });
+      document.getElementById('pet-menu-settings').addEventListener('click', () => {
+        setMenuVisible(false);
+        ipcRenderer?.send('pet:open-settings');
+      });
+      document.getElementById('pet-menu-close').addEventListener('click', () => {
+        ipcRenderer?.send('pet:quit');
+      });
+
+      // Display scale (settings window slider). Pet content scales via CSS
+      // zoom on #stage; the canvas backing store is resized to stay crisp on
+      // retina screens. The menu is UI chrome and stays at a fixed size —
+      // only its anchor follows the mascot's head.
+      let petScale = 1;
+      function applyScale(scale) {
+        petScale = scale;
+        document.getElementById('stage').style.zoom = scale;
+        canvas.width = Math.round(300 * scale);
+        canvas.height = Math.round(312 * scale);
+        ctx.setTransform(2 * scale, 0, 0, 2 * scale, 0, 0);
+        petMenu.style.bottom = `${Math.round(100 * scale)}px`;
+        requestResize();
+      }
+
+      // Bubble text size (settings window input). The title line uses the
+      // base size; the status line and the solo-status variant derive from
+      // it. Applied as CSS variables so the `:not(.visible)` selector keeps
+      // working, and re-measured for the window-fit resize below. The text
+      // width cap also grows with the font size, so the 20-character title
+      // limit — not the CSS max-width — is what ellipsizes.
+      let bubbleFontSize = 13;
+      function applyBubbleFontSize(size) {
+        bubbleFontSize = size;
+        const rootStyle = document.documentElement.style;
+        rootStyle.setProperty('--bubble-title-size', `${size}px`);
+        rootStyle.setProperty('--bubble-status-size', `${size - 1.5}px`);
+        rootStyle.setProperty('--bubble-solo-size', `${size - 0.5}px`);
+        rootStyle.setProperty('--bubble-text-max-w', `${bubbleTextMaxW()}px`);
+        rootStyle.setProperty(
+          '--bubble-max-w',
+          `${bubbleTextMaxW() + BUBBLE_PAD_X + BUBBLE_ACTIONS_W}px`,
+        );
+        renderBubble();
+      }
+
+      // Manual dragging. `-webkit-app-region: drag` is NOT used on purpose:
+      // right-clicking a drag region is treated like a titlebar click and
+      // never reaches the page, which would kill the contextmenu popup above.
+      // Pointer capture keeps the drag alive when the cursor leaves the window.
+      let hovered = false;
+      let dragging = false;
+      let dragDir = 0;
+      let lastDragX = 0;
+      let currentT = 0;
+      let hoverSince = 0;
+      let dragSince = 0;
+      document.body.addEventListener('pointerenter', () => {
+        hovered = true;
+        hoverSince = currentT;
+      });
+      document.body.addEventListener('pointerleave', () => {
+        hovered = false;
+      });
+      let dragStart = null;
+      // Session-count badge hit test: the badge is drawn at (132, 22) r12 in
+      // the canvas's 150x156 CSS-pixel space. Clicking it pages sessions.
+      function isOnSessionBadge(event) {
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return false;
+        const x = ((event.clientX - rect.left) / rect.width) * 150;
+        const y = ((event.clientY - rect.top) / rect.height) * 156;
+        return Math.hypot(x - 132, y - 22) <= 15;
+      }
+      document.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        if (event.target.closest?.('#bubble, #bubble-chip, #pet-menu')) return;
+        if (petState.sessionCount > 1 && isOnSessionBadge(event)) {
+          cycleSession(1);
+          return;
+        }
+        dragStart = { x: event.screenX, y: event.screenY };
+        dragging = true;
+        dragDir = 0;
+        lastDragX = event.screenX;
+        dragSince = currentT;
+        try {
+          event.target.setPointerCapture?.(event.pointerId);
+        } catch {}
+        ipcRenderer?.send('pet:drag-start', dragStart);
+      });
+      document.addEventListener('pointermove', (event) => {
+        if (dragStart === null) return;
+        const dx = event.screenX - lastDragX;
+        if (Math.abs(dx) > 0.5) {
+          dragDir = Math.sign(dx);
+          lastDragX = event.screenX;
+        }
+        ipcRenderer?.send('pet:drag-move', { x: event.screenX, y: event.screenY });
+      });
+      document.addEventListener('pointerup', () => {
+        if (dragStart === null) return;
+        dragStart = null;
+        dragging = false;
+        dragDir = 0;
+        ipcRenderer?.send('pet:drag-end');
+      });
+
+      // The mascot (body color, work rings, attention marker, celebration)
+      // always reflects the MOST URGENT session — it never follows manual
+      // bubble paging. `petState` is that top-ranked session's state.
+      let petState = { status: 'idle', statusText: undefined, sessionCount: 0 };
+      // Which session the BUBBLE shows. Equals the top session by default;
+      // swiping on the bubble or clicking the count badge pages through the
+      // rest of the ranked list without touching the mascot's status.
+      let bubbleSession = petState;
+      // Switchable session list from the main process (ranked: highest
+      // priority first — awaiting > failed > working > done > idle).
+      let sessionList = [];
+      let selectedSessionId = null;
+      let manualSelectUntil = 0;
+      let lastTopKey = null;
+      let skinImg = null;
+      let ipcRenderer = null;
+      // Task-complete celebration: plays once per transition into `done`
+      // (null while idle). `lastStatus` edges the trigger; it is seeded with
+      // the first received status so launching into an already-done session
+      // does not fire the animation.
+      let celebration = null;
+      let lastStatus = null;
+      // Window-relative cursor position relayed from the main process (global
+      // polling), so the eyes can follow the cursor even outside the window.
+      let cursorPos = null;
+      const gaze = { x: 0, y: 0 };
+
+      // Which session the bubble shows: the top-ranked one, unless the user
+      // has recently paged to another session that is still live. A NEW
+      // urgent session (awaiting/failed reaching the top) always preempts a
+      // manual selection; an urgent top the user already paged away from
+      // waits for the manual window to expire.
+      function pickDisplayedSession(fallback) {
+        if (sessionList.length === 0) return fallback;
+        const top = sessionList[0];
+        const topKey = `${top.sessionId}:${top.status}`;
+        const urgent =
+          (top.status === 'awaiting' || top.status === 'failed') && topKey !== lastTopKey;
+        lastTopKey = topKey;
+        const manual = sessionList.find((s) => s.sessionId === selectedSessionId);
+        if (manual !== undefined && !urgent && Date.now() < manualSelectUntil) {
+          return { ...manual, sessionCount: sessionList.length };
+        }
+        selectedSessionId = null;
+        return { ...top, sessionCount: sessionList.length };
+      }
+
+      // Page to the previous/next session bubble (dir = ±1), pinning the
+      // selection for a short manual-browsing window. Only the bubble
+      // changes — the mascot keeps showing the most urgent session.
+      function cycleSession(dir) {
+        if (sessionList.length < 2) return;
+        const currentId = selectedSessionId ?? sessionList[0].sessionId;
+        const current = Math.max(
+          0,
+          sessionList.findIndex((s) => s.sessionId === currentId),
+        );
+        const next = sessionList[(current + dir + sessionList.length) % sessionList.length];
+        selectedSessionId = next.sessionId;
+        manualSelectUntil = Date.now() + 10_000;
+        dismissedText = null; // always reveal the newly selected bubble
+        bubbleSession = { ...next, sessionCount: sessionList.length };
+        renderBubble();
+      }
+
+      // Smoothed gaze as a unit direction + magnitude (0..1), so both the
+      // horizontal head-turn and the vertical eye travel are driven by WHERE
+      // the cursor is, not by raw pixel offsets. Magnitude ramps over ~180px
+      // so a cursor sitting on the pet does not max the gaze out.
+      function updateGaze() {
+        let dirX = 0;
+        let dirY = 0;
+        let mag = 0;
+        if (cursorPos !== null) {
+          const w = window.innerWidth;
+          const h = window.innerHeight;
+          // Mascot eye line: horizontally centered, 76 * scale px above the
+          // window bottom (canvas is bottom-anchored, eyes sit mid-canvas).
+          const dx = cursorPos.x - w / 2;
+          const dy = cursorPos.y - (h - 76 * petScale);
+          const len = Math.hypot(dx, dy) || 1;
+          dirX = dx / len;
+          dirY = dy / len;
+          mag = Math.min(1, len / 180);
+        }
+        gaze.x += (dirX * mag - gaze.x) * 0.18;
+        gaze.y += (dirY * mag - gaze.y) * 0.18;
+      }
+
+      try {
+        ipcRenderer = require('electron').ipcRenderer;
+        ipcRenderer.on('pet:state', (_e, state) => {
+          sessionList = state.sessions ?? [];
+          // The mascot state always tracks the top-ranked (most urgent)
+          // session; the celebration edges on it too.
+          const prev = lastStatus ?? state.status;
+          if (prev !== 'done' && state.status === 'done') {
+            celebration = createCelebration(currentT);
+          }
+          lastStatus = state.status;
+          petState = {
+            status: state.status,
+            statusText: state.statusText,
+            title: state.title,
+            pid: state.pid,
+            termProgram: state.termProgram,
+            sessionCount: state.sessionCount,
+          };
+          bubbleSession = pickDisplayedSession(petState);
+          renderBubble();
+        });
+        ipcRenderer.on('pet:skin', (_e, skin) => {
+          const img = new Image();
+          img.onload = () => {
+            skinImg = img;
+          };
+          img.src = skin.dataUrl;
+        });
+        ipcRenderer.on('pet:settings', (_e, settings) => {
+          if (typeof settings.scale === 'number') applyScale(settings.scale);
+          if (typeof settings.bubbleFontSize === 'number') applyBubbleFontSize(settings.bubbleFontSize);
+        });
+        ipcRenderer.on('pet:cursor', (_e, point) => {
+          cursorPos = point;
+        });
+      } catch (err) {
+        // No IPC (e.g. opened as a plain file) — stay in procedural idle mode.
+      }
+
+      // The window hugs its content: mascot-only while no bubble is shown,
+      // growing to fit the bubble otherwise (the main process keeps the
+      // mascot's bottom-center anchored). Text width is measured directly so
+      // the request does not depend on layout timing.
+      const measureCtx = document.createElement('canvas').getContext('2d');
+      const FONT_FAMILY = '-apple-system, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif';
+      const bubbleTitleFont = () => `500 ${bubbleFontSize}px ${FONT_FAMILY}`;
+      const bubbleStatusFont = () => `${bubbleFontSize - 1.5}px ${FONT_FAMILY}`;
+      // The title is capped at 20 characters (see truncateTitle); the text
+      // width cap follows the font size so those 20 characters plus the
+      // ellipsis glyph actually fit — CJK glyphs are ~1em wide.
+      // pet-overlay.ts derives its max window width from the same constant.
+      const BUBBLE_TITLE_MAX_CHARS = 20;
+      const bubbleTextMaxW = () => bubbleFontSize * (BUBBLE_TITLE_MAX_CHARS + 1);
+      // Horizontal chrome around the text, matching the CSS exactly: bubble
+      // padding 15+11; the actions cluster is margin 2 + gap 8 + two 22px
+      // buttons with gap 4; the done badge is margin 2 + gap 8 + 22px.
+      const BUBBLE_PAD_X = 26;
+      const BUBBLE_ACTIONS_W = 58;
+      const BUBBLE_BADGE_W = 32;
+      const bubbleLineTitleH = () => bubbleFontSize + 6;
+      const bubbleLineStatusH = () => bubbleFontSize + 4;
+      const BUBBLE_PAD_Y = 18; // 9px padding top + bottom
+      const CHIP_H = 23; // 18px + margins around it
+      // Transparent slack around the bubble so its drop shadow stays inside
+      // the window instead of being sliced by the frame edge.
+      const SHADOW_SLACK_X = 48; // 24px per side
+      const MASCOT_H = 156;
+      const TOP_SLACK = 12;
+      // Menu anchor: its bottom edge sits this many (scaled) px above the
+      // window bottom, hovering next to the mascot's head.
+      const MENU_ANCHOR_BOTTOM = 100;
+      let lastSentSize = { width: 0, height: 0 };
+
+      function requestResize() {
+        const s = petScale;
+        let width = 170 * s;
+        let height = (MASCOT_H + 4) * s;
+        if (bubble.classList.contains('visible') && bubbleSession.statusText) {
+          const hasTitle = Boolean(bubbleSession.title);
+          const active = bubbleSession.status === 'working' || bubbleSession.status === 'awaiting';
+          const done = bubbleSession.status === 'done';
+          measureCtx.font = bubbleTitleFont();
+          const titleW = hasTitle ? measureCtx.measureText(truncateTitle(bubbleSession.title)).width : 0;
+          measureCtx.font = bubbleStatusFont();
+          const statusW = measureCtx.measureText(bubbleSession.statusText).width;
+          const textW = Math.min(Math.max(titleW, statusW), bubbleTextMaxW());
+          const sideW = active ? BUBBLE_ACTIONS_W : done ? BUBBLE_BADGE_W : 0;
+          const bubbleW = textW + BUBBLE_PAD_X + sideW;
+          const bubbleH =
+            (hasTitle ? bubbleLineTitleH() : 0) + bubbleLineStatusH() + BUBBLE_PAD_Y;
+          width = Math.max(width, (bubbleW + SHADOW_SLACK_X) * s);
+          // mascot + chip zone + bubble + top slack
+          height = Math.max(height, 4 + (MASCOT_H + CHIP_H) * s + bubbleH * s + TOP_SLACK);
+        }
+        if (petMenu.classList.contains('visible')) {
+          // Fixed-size chrome: measured in screen px, not scaled.
+          const menuW = petMenu.offsetWidth || 120;
+          const menuH = petMenu.offsetHeight || 70;
+          width = Math.max(width, menuW + SHADOW_SLACK_X);
+          height = Math.max(height, 4 + MENU_ANCHOR_BOTTOM * s + menuH + TOP_SLACK);
+        }
+        // The expand/collapse chip needs its zone even while the bubble itself
+        // is collapsed.
+        if (bubbleChip.classList.contains('visible')) {
+          height = Math.max(height, (MASCOT_H + CHIP_H + 6) * s);
+        }
+        width = Math.round(width);
+        height = Math.round(height);
+        if (width !== lastSentSize.width || height !== lastSentSize.height) {
+          lastSentSize = { width, height };
+          ipcRenderer?.send('pet:resize', { width, height });
+        }
+      }
+
+      // The bubble title (prompt summary) shows at most 20 characters per
+      // line; the rest collapses into an ellipsis.
+      function truncateTitle(title) {
+        return title.length > BUBBLE_TITLE_MAX_CHARS
+          ? `${title.slice(0, BUBBLE_TITLE_MAX_CHARS)}…`
+          : title;
+      }
+
+      function renderBubble() {
+        const text = bubbleSession.statusText;
+        const dismissed = Boolean(text) && text === dismissedText;
+        const visible = Boolean(text) && !dismissed;
+        bubble.classList.toggle('visible', visible);
+        bubbleChip.classList.toggle('visible', Boolean(text));
+        bubbleChip.classList.toggle('expand', dismissed);
+        bubbleChip.title = dismissed ? '展开' : '收起';
+        if (!visible) {
+          requestResize();
+          return;
+        }
+        const hasTitle = Boolean(bubbleSession.title);
+        bubbleTitle.classList.toggle('visible', hasTitle);
+        bubbleTitle.textContent = truncateTitle(bubbleSession.title ?? '');
+        bubbleStatus.textContent = text;
+        const active = bubbleSession.status === 'working' || bubbleSession.status === 'awaiting';
+        bubbleActions.classList.toggle('visible', active);
+        bubbleDoneBadge.classList.toggle('visible', bubbleSession.status === 'done');
+        bubble.className = `visible ${bubbleSession.status}`;
+        requestResize();
+      }
+
+      document.getElementById('bubble-open').addEventListener('click', () => {
+        ipcRenderer?.send('pet:open-session', { termProgram: bubbleSession.termProgram });
+      });
+      document.getElementById('bubble-stop').addEventListener('click', () => {
+        ipcRenderer?.send('pet:stop-session', { pid: bubbleSession.pid });
+      });
+
+      // Paging between session bubbles: a horizontal two-finger swipe (or a
+      // vertical scroll) on the bubble cycles to the previous/next session.
+      // Wheel events stream continuously during one gesture (plus a decaying
+      // momentum tail), so accumulate and step once per threshold, treat a
+      // 150ms gap as a new gesture, and cool down briefly between steps so
+      // one flick does not flip twice.
+      let wheelAccum = 0;
+      let lastWheelAt = 0;
+      let wheelCooldownUntil = 0;
+      bubble.addEventListener(
+        'wheel',
+        (event) => {
+          if (sessionList.length < 2) return;
+          event.preventDefault();
+          const now = Date.now();
+          if (now < wheelCooldownUntil) return;
+          if (now - lastWheelAt > 150) wheelAccum = 0;
+          lastWheelAt = now;
+          const delta =
+            Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+          wheelAccum += delta;
+          if (Math.abs(wheelAccum) >= 40) {
+            cycleSession(Math.sign(wheelAccum));
+            wheelAccum = 0;
+            wheelCooldownUntil = now + 300;
+          }
+        },
+        { passive: false },
+      );
+
+      // Codex pet atlas layout: 8 cols x 9 rows of 192x208 cells.
+      const SKIN_ROWS = [6, 8, 8, 4, 5, 8, 6, 6, 6]; // frames per row
+      const STATUS_ROW = { idle: 0, working: 7, awaiting: 6, done: 8, failed: 5 };
+      const CELL_W = 192;
+      const CELL_H = 208;
+
+      function drawSkin(t) {
+        const row = STATUS_ROW[petState.status] ?? 0;
+        const frames = SKIN_ROWS[row];
+        const frame = Math.floor(t * 8) % frames;
+        ctx.drawImage(
+          skinImg,
+          frame * CELL_W,
+          row * CELL_H,
+          CELL_W,
+          CELL_H,
+          15,
+          13,
+          120,
+          130,
+        );
+      }
+
+      // Built-in look: a replica of the Kimi mascot from the web UI (the SVG
+      // fallback of the Rive KimiMascot component) — a blue gradient ball with
+      // two white capsule eyes. Coordinates below are in the original SVG
+      // space (viewBox 5 0 240.776 240.776) and get scaled into the canvas by
+      // drawMascot.
+      const SVG_CX = 125.388;
+      const SVG_CY = 120.388;
+      const SVG_R = 120.388;
+      // Eye slant / turn is modeled as a pseudo-3D head rotation (the same
+      // idea as Live2D's Angle X): each eye is anchored at a base angle on an
+      // imaginary sphere around the head; gazing adds a yaw, and the eye's
+      // screen position (sin), width (cos foreshortening) and slant all
+      // follow from the projected angle. Turning right therefore moves the
+      // right eye outward with a slant while the left eye settles back to the
+      // center — and vice versa. Eyes sit perfectly straight at rest.
+      const EYE_ORBIT_R = 55; // eye orbit radius, SVG units
+      const HEAD_YAW_MAX = 0.45; // ~26°
+      const EYE_TILT_MAX = 0.21; // ~12°
+      const EYES = [
+        { cx: 128.7, cy: 83.9, w: 31, h: 57, dy: 0 },
+        { cx: 190.2, cy: 75.4, w: 27.5, h: 52, dy: 8.5 },
+      ];
+      // Base surface angle of each eye on the imaginary sphere (the eye group
+      // carries a -33.4 x-offset in the original SVG, accounted for here).
+      const EYE_BASE_ANGLES = EYES.map((eye) =>
+        Math.asin(Math.max(-1, Math.min(1, (eye.cx - 33.4 - SVG_CX) / EYE_ORBIT_R))),
+      );
+      // Vertical gaze: eyes travel up/down the face along the pitch arc, and
+      // foreshorten in height as they approach the top/bottom edge.
+      const HEAD_PITCH_MAX = 0.55; // ~31°
+      const EYE_PITCH_TRAVEL = 30; // SVG units at full pitch
+      const EYE_PITCH_SQUASH = 0.18;
+      const BODY_STOPS = {
+        normal: ['#117DFB', '#449BFF', '#77B6FF'],
+        awaiting: ['#E8950B', '#F5B82E', '#FCDA7E'],
+        failed: ['#C81E1E', '#F04438', '#F98A80'],
+      };
+
+      // Working effect: waves of three glowing tech-blue halos. One wave =
+      // three consecutive rings (small phase spacing) rising from the feet to
+      // above the head; once the whole wave has left the top there is a quiet
+      // beat before the next wave starts. Ring width follows the travel
+      // sinusoidally — narrowest at the two ends, widest at the middle. Each
+      // ring is drawn in two halves — the back arc goes behind the body and
+      // the front arc over it, so the rings visibly wrap around the ball.
+      const RING_COUNT = 3;
+      const RING_TRAVEL_S = 1.6; // one ring's rise time
+      const RING_WAVE_PAUSE_S = 1.0; // quiet beat between waves
+      const RING_WAVE_S = RING_TRAVEL_S + RING_WAVE_PAUSE_S;
+      const RING_SPACING = 0.08; // phase offset between consecutive rings
+      const RING_MIN_RX = 18;
+      const RING_MAX_RX = 72;
+      const RING_COLOR = '#54c8ff';
+
+      function workRingGeometry(t, cy, index) {
+        const base = Math.min(1, (t % RING_WAVE_S) / RING_TRAVEL_S);
+        const p = base + index * RING_SPACING;
+        const y = cy + 62 - p * 128;
+        const rx = RING_MIN_RX + (RING_MAX_RX - RING_MIN_RX) * Math.sin(p * Math.PI);
+        // fade in/out at the two ends of the travel; p > 1 means this ring of
+        // the wave has already left the top (wave pause) and stays invisible
+        const alpha = p > 1 ? 0 : Math.min(1, Math.min(p, 1 - p) * 6);
+        return { y, rx, ry: rx * 0.28, alpha };
+      }
+
+      function drawWorkRing(t, cy, half) {
+        if (petState.status !== 'working') return;
+        ctx.save();
+        ctx.strokeStyle = RING_COLOR;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.shadowColor = 'rgba(84, 200, 255, 0.8)';
+        ctx.shadowBlur = 9;
+        for (let i = 0; i < RING_COUNT; i++) {
+          const ring = workRingGeometry(t, cy, i);
+          if (ring.alpha <= 0) continue;
+          ctx.globalAlpha = ring.alpha * (half === 'back' ? 0.55 : 0.9);
+          ctx.beginPath();
+          if (half === 'back') {
+            ctx.ellipse(75, ring.y, ring.rx, ring.ry, 0, Math.PI, 2 * Math.PI);
+          } else {
+            ctx.ellipse(75, ring.y, ring.rx, ring.ry, 0, 0, Math.PI);
+          }
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function drawEyeCapsule(eye, projCx, heightScale, gazeDy, tilt, wScale) {
+        const h = eye.h * heightScale;
+        const w = eye.w * wScale;
+        ctx.save();
+        ctx.translate(projCx, eye.cy + eye.dy + gazeDy);
+        ctx.rotate(tilt);
+        ctx.beginPath();
+        ctx.roundRect(-w / 2, -h / 2, w, h, w / 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.restore();
+      }
+
+      function drawCrossEye(eye, projCx, gazeDy, tilt, wScale) {
+        ctx.save();
+        ctx.translate(projCx, eye.cy + eye.dy + gazeDy);
+        ctx.rotate(tilt);
+        ctx.strokeStyle = '#3c4257';
+        ctx.lineWidth = 7;
+        ctx.lineCap = 'round';
+        const r = 13 * wScale;
+        for (const [dx1, dy1, dx2, dy2] of [
+          [-r, -r, r, r],
+          [-r, r, r, -r],
+        ]) {
+          ctx.beginPath();
+          ctx.moveTo(dx1, dy1);
+          ctx.lineTo(dx2, dy2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function drawMascot(t) {
+        const status = petState.status;
+        // Interaction animations (hover hop / drag hop) take priority over
+        // status bobbing so the two never fight each other.
+        const interactive = dragging || hovered;
+        let bob = 0;
+        if (!interactive) {
+          if (status === 'idle') bob = Math.sin(t * 1.6) * 3;
+          else if (status === 'working') bob = Math.sin(t * 6) * 4;
+          else if (status === 'awaiting') bob = -Math.abs(Math.sin(t * 5)) * 12;
+          else if (status === 'done') bob = Math.sin(t * 4) * 5;
+          else if (status === 'failed') bob = 6;
+        }
+        const statusTilt = !interactive && status === 'working' ? Math.sin(t * 3) * 0.06 : 0;
+
+        // Hop arcs use a parabola (0→1→0, peak mid-flight) plus squash &
+        // stretch anchored at the feet; each interaction starts its phase
+        // from its own timestamp so the motion never pops mid-cycle.
+        let hop = 0;
+        let lean = 0;
+        let pushX = 0;
+        let squash = 1;
+        if (dragging) {
+          const phase = ((t - dragSince) * 3.0) % 1;
+          const arc = 4 * phase * (1 - phase);
+          hop = -15 * arc;
+          lean = dragDir * (0.05 + 0.14 * arc);
+          pushX = dragDir * 4 * arc;
+          squash = 1 - 0.07 * Math.cos(phase * 2 * Math.PI);
+        } else if (hovered) {
+          const phase = ((t - hoverSince) * 2.2) % 1;
+          const arc = 4 * phase * (1 - phase);
+          hop = -9 * arc;
+          squash = 1 - 0.05 * Math.cos(phase * 2 * Math.PI);
+        } else if (celebration !== null && t - celebration.startT < 0.95) {
+          // celebration: two joyful hops, same parabola family as above
+          const phase = ((t - celebration.startT) * 2.1) % 1;
+          const arc = 4 * phase * (1 - phase);
+          hop = -13 * arc;
+          squash = 1 - 0.06 * Math.cos(phase * 2 * Math.PI);
+        }
+
+        const cx = 75 + pushX;
+        const cy = 88 + bob + hop;
+        const scale = 118 / (SVG_R * 2);
+        const tilt = statusTilt + lean;
+        const blinking =
+          !interactive && t % 3.4 < 0.12 && (status === 'idle' || status === 'working');
+        const eyeScale = blinking ? 0.12 : 1;
+
+        const celebE =
+          celebration !== null && t - celebration.startT < CELE_TOTAL_S
+            ? t - celebration.startT
+            : -1;
+
+        // shadow: stays on the ground, shrinking and fading as the pet rises
+        const lift = bob + hop;
+        ctx.fillStyle = `rgba(0,0,0,${Math.max(0.07, 0.18 + lift * 0.005)})`;
+        ctx.beginPath();
+        ctx.ellipse(cx, 146, Math.max(18, 34 + lift * 0.55), 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        drawCelebration(t, cx, cy, 'back');
+
+        drawWorkRing(t, cy, 'back');
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        // squash & stretch around the feet (canvas-space body radius is ~46)
+        ctx.translate(0, 46);
+        ctx.scale(1 / Math.sqrt(squash), squash);
+        ctx.translate(0, -46);
+        ctx.rotate(tilt);
+        ctx.scale(scale, scale);
+        ctx.translate(-SVG_CX, -SVG_CY);
+
+        // body: base color + radial highlight (same stops as the web SVG)
+        const stops = BODY_STOPS[status] ?? BODY_STOPS.normal;
+        ctx.beginPath();
+        ctx.arc(SVG_CX, SVG_CY, SVG_R, 0, Math.PI * 2);
+        ctx.fillStyle = status === 'failed' ? '#F04438' : status === 'awaiting' ? '#F5B82E' : '#2389FF';
+        ctx.fill();
+        const gradient = ctx.createRadialGradient(SVG_CX, 105.735, 0, SVG_CX, 105.735, 121.866);
+        gradient.addColorStop(0, stops[0]);
+        gradient.addColorStop(0.759, stops[1]);
+        gradient.addColorStop(1, stops[2]);
+        ctx.beginPath();
+        ctx.arc(SVG_CX, SVG_CY, SVG_R, 0, Math.PI * 2);
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        // eyes (the web SVG applies translate(-33.4 0) to the eye group):
+        // pseudo-3D head turn — yaw drives the horizontal orbit / width,
+        // pitch drives vertical travel / height foreshortening. The slant
+        // follows the quadrant rule: only the gaze-side eye slants, and the
+        // slant direction comes from the vertical component — looking up
+        // tips the top outward, looking down tips it inward.
+        ctx.translate(-33.4, 0);
+        const yn = Math.max(-1, Math.min(1, gaze.x));
+        const pn = Math.max(-1, Math.min(1, gaze.y));
+        const yaw = HEAD_YAW_MAX * yn;
+        const pitch = HEAD_PITCH_MAX * pn;
+        const pitchDy = EYE_PITCH_TRAVEL * Math.sin(pitch);
+        const pitchHScale = 1 - EYE_PITCH_SQUASH * Math.abs(Math.sin(pitch));
+        const slant = -Math.sign(yn * pn) * EYE_TILT_MAX * Math.abs(yn * pn);
+        EYES.forEach((eye, i) => {
+          const a = EYE_BASE_ANGLES[i] + yaw;
+          const projCx = SVG_CX + 33.4 + EYE_ORBIT_R * Math.sin(a);
+          const wScale = 0.72 + 0.28 * Math.cos(a);
+          const isGazeSide = yn !== 0 && yn < 0 === (i === 0);
+          const tilt = isGazeSide ? slant : 0;
+          if (status === 'failed') drawCrossEye(eye, projCx, pitchDy, tilt, wScale);
+          else drawEyeCapsule(eye, projCx, eyeScale * pitchHScale, pitchDy, tilt, wScale);
+        });
+        ctx.restore();
+
+        drawWorkRing(t, cy, 'front');
+
+        drawCelebration(t, cx, cy, 'front');
+      }
+
+      // Task-complete celebration, played once per transition into `done`:
+      // two joyful hops plus a confetti toss from the head — paper slips
+      // with a 3D flip (width follows the flip cosine), lateral sway, drag +
+      // gravity fall, and a soft golden halo pulse at the start. The ball
+      // itself never deforms. Confetti is split into a back layer (behind
+      // the body) and a front layer for depth.
+      const CELE_TOTAL_S = 3.2;
+      const CELE_CONFETTI_COLORS = ['#4C8DFF', '#FFC94D', '#FF5C7A', '#34D399', '#A78BFA', '#FF9F43'];
+
+      function createCelebration(startT) {
+        const confetti = [];
+        // two waves: the main toss plus a delayed follow-up pop
+        for (let i = 0; i < 90; i++) {
+          const secondWave = i >= 60;
+          // upward cone, ~±65° around vertical
+          const ang = -Math.PI / 2 + (Math.random() - 0.5) * 2.3;
+          const speed = (secondWave ? 70 : 90) + Math.random() * 80;
+          confetti.push({
+            vx: Math.cos(ang) * speed,
+            vy: Math.sin(ang) * speed,
+            delay: secondWave ? 0.3 + Math.random() * 0.15 : Math.random() * 0.12,
+            life: 1.8 + Math.random() * 1.0,
+            w: 6 + Math.random() * 5,
+            h: 4 + Math.random() * 2.5,
+            color: CELE_CONFETTI_COLORS[i % CELE_CONFETTI_COLORS.length],
+            flipSpeed: 6 + Math.random() * 8,
+            flipPhase: Math.random() * Math.PI * 2,
+            swayAmp: 5 + Math.random() * 4,
+            swayFreq: 1.5 + Math.random() * 1.5,
+            swayPhase: Math.random() * Math.PI * 2,
+            front: i % 2 === 0,
+            // some pieces are round sequins that sparkle instead of flip
+            sequin: i % 5 === 0,
+          });
+        }
+        return { startT, confetti };
+      }
+
+      function drawCelebration(t, cx, cy, layer) {
+        if (celebration === null) return;
+        const e = t - celebration.startT;
+        if (e < 0) return;
+        if (e >= CELE_TOTAL_S) {
+          celebration = null;
+          return;
+        }
+        if (layer === 'back' && e < 0.7) {
+          // soft golden halo pulse behind the pet
+          const u = e / 0.7;
+          const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 60 + 70 * u);
+          glow.addColorStop(0, `rgba(255, 201, 77, ${0.45 * (1 - u)})`);
+          glow.addColorStop(1, 'rgba(255, 201, 77, 0)');
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 60 + 70 * u, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Confetti: closed-form drag (k) + gravity (g) from the head top,
+        // in canvas (y-down) coordinates: v(t) = g/k + (v0 - g/k)·e^-kt.
+        // Paper flutters — heavy drag, low terminal velocity.
+        const DRAG = 2.2;
+        const G_OVER_K = 52; // gravity ≈115 px/s² / drag
+        for (const p of celebration.confetti) {
+          if ((layer === 'front') !== p.front) continue;
+          const d = e - p.delay;
+          if (d < 0 || d >= p.life) continue;
+          const ek = Math.exp(-DRAG * d);
+          const travel = (1 - ek) / DRAG;
+          const x =
+            cx + p.vx * travel + p.swayAmp * Math.sin(Math.PI * 2 * p.swayFreq * d + p.swayPhase);
+          const y = cy - 44 + G_OVER_K * d + (p.vy - G_OVER_K) * travel;
+          const flip = Math.cos(p.flipSpeed * d + p.flipPhase);
+          const alpha = Math.min(1, (1 - d / p.life) / 0.25);
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.translate(x, y);
+          if (p.sequin) {
+            // round sequin: gentle pulse + fast sparkle, no paper flip
+            const sparkle = 0.65 + 0.35 * Math.sin(d * 26 + p.flipPhase);
+            ctx.globalAlpha = alpha * sparkle;
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(0, 0, p.w * 0.45 * (1 + 0.15 * Math.sin(d * 9 + p.swayPhase)), 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.rotate(Math.sin(p.flipSpeed * 0.5 * d + p.flipPhase) * 0.6);
+            ctx.scale(Math.max(0.15, Math.abs(flip)), 1);
+            ctx.fillStyle = p.color;
+            ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+          }
+          ctx.restore();
+        }
+      }
+
+      function drawBadge() {
+        if (petState.sessionCount > 1) {
+          ctx.fillStyle = 'rgba(40,40,60,0.85)';
+          ctx.beginPath();
+          ctx.arc(132, 22, 12, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 12px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(String(petState.sessionCount), 132, 23);
+          ctx.textBaseline = 'alphabetic';
+        }
+      }
+
+      function frame(now) {
+        const t = now / 1000;
+        currentT = t;
+        // The manual session selection expires on the renderer's own clock:
+        // the main process only sends `pet:state` when the payload changes,
+        // so an idle session set would never revert to the top session.
+        if (selectedSessionId !== null && Date.now() > manualSelectUntil) {
+          bubbleSession = pickDisplayedSession(petState);
+          renderBubble();
+        }
+        updateGaze();
+        ctx.clearRect(0, 0, 150, 156);
+        if (skinImg) {
+          // Skins animate via atlas frames (no bob), so the ring tracks a
+          // fixed body center here.
+          drawWorkRing(t, 88, 'back');
+          drawSkin(t);
+          drawWorkRing(t, 88, 'front');
+        } else {
+          drawMascot(t);
+        }
+        drawBadge();
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    </script>
+  </body>
+</html>

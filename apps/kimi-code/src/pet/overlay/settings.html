@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Kimi Pet 设置</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', sans-serif;
+        background: #f5f5f7;
+        color: #1d1d1f;
+        display: flex;
+        flex-direction: column;
+      }
+      /* Room for the hidden-inset traffic lights; the strip is the window drag
+         handle. Tall enough that the title clears the traffic-light buttons. */
+      #titlebar {
+        -webkit-app-region: drag;
+        height: 64px;
+        flex: none;
+        display: flex;
+        align-items: flex-end;
+        padding: 0 20px 10px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      main {
+        flex: 1;
+        padding: 4px 20px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .field {
+        background: #fff;
+        border-radius: 10px;
+        padding: 12px 14px 14px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      .field-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 8px;
+      }
+      .field-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: #1d1d1f;
+      }
+      .field-value {
+        font-size: 12px;
+        color: #86868b;
+        font-variant-numeric: tabular-nums;
+      }
+      input[type='range'] {
+        width: 100%;
+        height: 20px;
+        accent-color: #0a84ff;
+        cursor: pointer;
+      }
+      /* Sample bubble mirroring the real overlay bubble, so the font-size
+         slider's effect is visible right inside the settings window. */
+      #preview {
+        margin-top: 12px;
+        padding: 12px;
+        border-radius: 8px;
+        background: #f5f5f7;
+        display: flex;
+        justify-content: center;
+      }
+      #preview-bubble {
+        max-width: 100%;
+        padding: 9px 15px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.98);
+        box-shadow:
+          0 10px 30px rgba(31, 35, 50, 0.14),
+          0 2px 8px rgba(31, 35, 50, 0.08);
+      }
+      #preview-title {
+        font-weight: 500;
+        line-height: 1.4;
+        color: #2b2f3a;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #preview-status {
+        line-height: 1.4;
+        color: #8a90a0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      footer {
+        flex: none;
+        padding: 10px 20px 14px;
+        text-align: left;
+        font-size: 11px;
+        color: #aeaeb2;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="titlebar">Kimi Pet 设置</div>
+    <main>
+      <div class="field">
+        <div class="field-head">
+          <span class="field-label">宠物大小</span>
+          <span class="field-value" id="scale-value">100%</span>
+        </div>
+        <input id="scale" type="range" min="0.5" max="2" step="0.05" value="1" />
+      </div>
+      <div class="field">
+        <div class="field-head">
+          <span class="field-label">气泡字号</span>
+          <span class="field-value" id="font-value">13px</span>
+        </div>
+        <input id="font" type="range" min="9" max="20" step="0.5" value="13" />
+        <div id="preview">
+          <div id="preview-bubble">
+            <div id="preview-title">帮我总结一下代码改动</div>
+            <div id="preview-status">Bash: npm test</div>
+          </div>
+        </div>
+      </div>
+    </main>
+    <footer id="version"></footer>
+    <script>
+      const { ipcRenderer } = require('electron');
+
+      const scaleInput = document.getElementById('scale');
+      const scaleValue = document.getElementById('scale-value');
+      const fontInput = document.getElementById('font');
+      const fontValue = document.getElementById('font-value');
+      const versionEl = document.getElementById('version');
+      const previewTitle = document.getElementById('preview-title');
+      const previewStatus = document.getElementById('preview-status');
+
+      // Same derivation as the real bubble: the status line is 1.5px smaller
+      // than the title line.
+      function applyPreviewFont(size) {
+        previewTitle.style.fontSize = `${size}px`;
+        previewStatus.style.fontSize = `${size - 1.5}px`;
+      }
+      applyPreviewFont(Number(fontInput.value));
+
+      ipcRenderer.on('pet:settings-init', (_event, settings) => {
+        if (typeof settings.scale === 'number') {
+          scaleInput.value = String(settings.scale);
+          scaleValue.textContent = `${Math.round(settings.scale * 100)}%`;
+        }
+        if (typeof settings.bubbleFontSize === 'number') {
+          fontInput.value = String(settings.bubbleFontSize);
+          fontValue.textContent = `${settings.bubbleFontSize}px`;
+          applyPreviewFont(settings.bubbleFontSize);
+        }
+        versionEl.textContent = settings.version ? `v${settings.version}` : '';
+      });
+
+      // Live preview: every edit is applied to the pet immediately; the main
+      // process debounces persistence.
+      scaleInput.addEventListener('input', () => {
+        const scale = Number(scaleInput.value);
+        scaleValue.textContent = `${Math.round(scale * 100)}%`;
+        ipcRenderer.send('pet:update-settings', { scale });
+      });
+      fontInput.addEventListener('input', () => {
+        const bubbleFontSize = Number(fontInput.value);
+        fontValue.textContent = `${bubbleFontSize}px`;
+        applyPreviewFont(bubbleFontSize);
+        ipcRenderer.send('pet:update-settings', { bubbleFontSize });
+      });
+    </script>
+  </body>
+</html>

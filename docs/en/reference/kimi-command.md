@@ -133,7 +133,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), `pet` (launch the desktop pet), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -294,6 +294,32 @@ kimi vis 01HZ...XYZ
 
 # Bind a fixed port and host without opening a browser (e.g. on a remote host)
 kimi vis --host 0.0.0.0 --port 8123 --no-open
+```
+
+### `kimi pet`
+
+Launch an always-on-top desktop pet (it floats above other windows, including fullscreen ones) that mirrors the status of your running Kimi Code sessions. While the agent works, a bubble shows a short summary of the current action (e.g. `Bash: npm test`); when the agent waits for an approval request or an answer, the pet jumps to get your attention; task completion and failures are surfaced the same way. The pet runs as a detached background process — the command returns immediately and does not occupy your terminal.
+
+```sh
+kimi pet [options]
+```
+
+| Option | Description |
+| --- | --- |
+| `--stop` | Stop the desktop pet |
+| `--skin <name>` | Use a custom skin loaded from `pet/pets/<name>/` under the [data directory](../configuration/data-locations.md) (codex pet atlas format: `pet.json` + `spritesheet.webp`) |
+
+On first run, the Electron runtime (about 100 MB) is downloaded once and cached under `pet/electron/` in the data directory; later launches reuse the cache. Drag the pet to reposition it — the position is remembered — and right-click it to open Settings (pet size and bubble font size sliders, with the version in the lower-left corner) or to close the pet. When several sessions run at once, the pet reflects the most urgent one by priority: awaiting input > failed > working > done > idle. A count badge on the pet shows how many sessions are live; swipe horizontally on the bubble (or click the badge) to page through each session's bubble — the pet itself always tracks the highest-priority session.
+
+```sh
+# Launch the desktop pet
+kimi pet
+
+# Use a custom skin
+kimi pet --skin my-pet
+
+# Stop the desktop pet
+kimi pet --stop
 ```
 
 ### `kimi provider`

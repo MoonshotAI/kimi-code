@@ -50,7 +50,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "tsdown && node scripts/copy-native-assets.mjs && node scripts/check-web-assets.mjs",
+    "build": "tsdown && tsdown -c tsdown.pet.config.ts && node scripts/copy-native-assets.mjs && node scripts/check-web-assets.mjs",
     "prebuild": "node scripts/build-vis-asset.mjs",
     "catalog:update": "node scripts/update-catalog.mjs --out dist/built-in-catalog.json",
     "smoke": "node scripts/smoke.mjs",
@@ -82,6 +82,7 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
+    "@electron/get": "^4.0.0",
     "@moonshot-ai/acp-adapter": "workspace:^",
     "@moonshot-ai/acp-server": "workspace:^",
     "@moonshot-ai/agent-core-v2": "workspace:^",
@@ -99,6 +100,7 @@
     "chalk": "^5.4.1",
     "cli-highlight": "^2.1.11",
     "commander": "^13.1.0",
+    "extract-zip": "^2.0.1",
     "jimp": "^1.6.1",
     "pathe": "^2.0.3",
     "postject": "1.0.0-alpha.6",

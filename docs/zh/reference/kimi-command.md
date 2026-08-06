@@ -133,7 +133,7 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`pet`（启动桌面宠物）、`provider`（管理供应商）。
 
 ### `kimi login`
 
@@ -294,6 +294,32 @@ kimi vis 01HZ...XYZ
 
 # 绑定固定主机和端口且不打开浏览器（例如在远程主机上）
 kimi vis --host 0.0.0.0 --port 8123 --no-open
+```
+
+### `kimi pet`
+
+在桌面上启动一只置顶（始终浮在其他窗口之上，包括全屏窗口）的桌面宠物，实时反映正在运行的 Kimi Code 会话状态：执行过程中气泡显示当前动作简述（例如 `Bash: npm test`）；Agent 等待你确认审批请求或回答问题时，宠物会跳动提醒；任务完成或出错时同样通过气泡告知。宠物以后台进程独立运行，启动命令执行完立即返回，不占用终端。
+
+```sh
+kimi pet [options]
+```
+
+| 选项 | 说明 |
+| --- | --- |
+| `--stop` | 停止桌面宠物 |
+| `--skin <name>` | 使用自定义皮肤，从[数据目录](../configuration/data-locations.md)下的 `pet/pets/<name>/` 读取（兼容 codex pet 精灵图格式：`pet.json` + `spritesheet.webp`） |
+
+首次运行会自动下载 Electron 运行时（约 100 MB），缓存到数据目录下的 `pet/electron/`，之后启动直接复用。宠物窗口可以拖动，位置会被记住；右键点击宠物可打开「设置」（调节宠物大小、气泡字号，左下角显示版本号）或「关闭宠物」。多个会话同时运行时，宠物状态按优先级取最紧急的一个：等待确认 > 出错 > 执行中 > 完成 > 空闲；此时宠物身上会显示会话数角标，在气泡上横向滑动（或点击角标）可以切换查看各个会话的气泡，宠物本体状态始终以最高优先级的会话为准。
+
+```sh
+# 启动桌面宠物
+kimi pet
+
+# 使用自定义皮肤
+kimi pet --skin my-pet
+
+# 停止桌面宠物
+kimi pet --stop
 ```
 
 ### `kimi provider`

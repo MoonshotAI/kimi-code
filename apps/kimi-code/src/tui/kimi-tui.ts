@@ -28,6 +28,7 @@ import { resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
+import { PetReporter } from '#/pet/reporter';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
 import { openUrl } from '#/utils/open-url';
@@ -316,6 +317,7 @@ export class KimiTUI {
   private ensureSessionPromise: Promise<Session | undefined> | null = null;
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
+  private readonly petReporter = new PetReporter();
   private readonly reverseRpcDisposers: Array<() => void> = [];
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
@@ -1906,6 +1908,7 @@ export class KimiTUI {
     const previous = this.session;
     this.sessionEventUnsubscribe?.();
     this.sessionEventUnsubscribe = undefined;
+    this.petReporter.detachSession();
     this.clearReverseRpcPanels();
     previous?.setApprovalHandler(undefined);
     previous?.setQuestionHandler(undefined);
@@ -1926,12 +1929,33 @@ export class KimiTUI {
   }
 
   private registerSessionHandlers(session: Session): void {
-    session.setApprovalHandler(
-      createApprovalRequestHandler(this.approvalController, (request, response) => {
+    this.petReporter.attachSession(session, {
+      sessionId: session.id,
+      cwd: this.state.appState.workDir,
+    });
+    const approvalHandler = createApprovalRequestHandler(
+      this.approvalController,
+      (request, response) => {
         this.appendApprovalTranscriptEntry(request, response);
-      }),
+      },
     );
-    session.setQuestionHandler(createQuestionAskHandler(this.questionController));
+    session.setApprovalHandler(async (request) => {
+      this.petReporter.notifyInteractionPending('等待你的确认…');
+      try {
+        return await approvalHandler(request);
+      } finally {
+        this.petReporter.notifyInteractionResolved();
+      }
+    });
+    const questionHandler = createQuestionAskHandler(this.questionController);
+    session.setQuestionHandler(async (request) => {
+      this.petReporter.notifyInteractionPending('有问题等你回答…');
+      try {
+        return await questionHandler(request);
+      } finally {
+        this.petReporter.notifyInteractionResolved();
+      }
+    });
   }
 
   async fetchSessions(scope: 'cwd' | 'all' = this.state.sessionsScope): Promise<void> {

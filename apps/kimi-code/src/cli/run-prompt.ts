@@ -17,6 +17,7 @@ import {
 import { resolve } from 'pathe';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
+import { PetReporter } from '#/pet/reporter';
 
 import { resolveAgentProfileSelection } from './agent-selection';
 import { isKimiV2Enabled } from './experimental-v2';
@@ -144,6 +145,7 @@ export async function runPrompt(
     workDir,
   });
   let restorePromptSessionPermission = async (): Promise<void> => {};
+  let petReporter: PetReporter | undefined;
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
   const cleanupPromptRun = async (): Promise<void> => {
@@ -185,6 +187,9 @@ export async function runPrompt(
       );
     restorePromptSessionPermission = restorePermission;
 
+    petReporter = new PetReporter();
+    petReporter.attachSession(session, { sessionId: session.id, cwd: workDir });
+
     initializeCliTelemetry({
       harness,
       bootstrap: telemetryBootstrap,
@@ -218,6 +223,9 @@ export async function runPrompt(
       duration_ms: Date.now() - startedAt,
     });
   } finally {
+    // Deliberately not detaching the pet reporter: the final done/failed
+    // state file should outlive the process briefly so the pet can show the
+    // result; it expires via TTL shortly after.
     await cleanupPromptRun();
   }
 }
