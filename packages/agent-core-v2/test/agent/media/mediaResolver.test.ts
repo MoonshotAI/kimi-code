@@ -340,6 +340,23 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
+  it('uploads canonical session bytes after the transient upload is released', async () => {
+    // The daemon upload is gone (released after intake); the session media
+    // store's canonical copy still feeds the provider upload.
+    const mediaStore = stubMediaStore();
+    mediaStore.read = async () => ({ data: VIDEO_BYTES, name: `${FILE_ID}.mp4` });
+    const res = resolver(new Map(), undefined, mediaStore);
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
+
+    const out = await res.resolve(
+      [videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH))],
+      requester({ uploadVideo: upload }),
+    );
+
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(firstPart(out)).toEqual(msPart('prov-1'));
+  });
+
   it('tags when the bytes do not sniff as a video', async () => {
     const upload = vi.fn();
     const out = await resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: PNG_BYTES }]])).resolve(
@@ -418,6 +435,51 @@ describe('AgentMediaResolverService image strategy', () => {
       type: 'image_url',
       imageUrl: { url: `data:image/png;base64,${PNG_BYTES.toString('base64')}` },
     });
+  });
+
+  it('rethrows a cancelled image read instead of degrading to a tag', async () => {
+    const controller = new AbortController();
+    // The stream failure is deliberately NOT abort-shaped: the aborted signal
+    // alone must decide cancellation, mirroring the video upload rule.
+    const files: IFileService = {
+      _serviceBrand: undefined,
+      save: async () => {
+        throw new Error('unused');
+      },
+      delete: async () => {},
+      get: async (fileId): Promise<GetResult> => ({
+        meta: {
+          id: fileId,
+          name: 'pic.png',
+          media_type: 'image/png',
+          size: PNG_BYTES.length,
+          created_at: new Date(0).toISOString(),
+        },
+        stream: () =>
+          Readable.from(
+            (async function* () {
+              yield PNG_BYTES;
+              controller.abort();
+              throw new Error('socket closed');
+            })(),
+          ),
+      }),
+    };
+    const res = new AgentMediaResolverService(
+      files,
+      blobStore(),
+      telemetry,
+      new AgentStateService(),
+      stubMediaStore(),
+    );
+
+    await expect(
+      res.resolve(
+        [imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH))],
+        requester({}),
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
   });
 
   it('drops the part when the model cannot ingest images and the reference carries a path', async () => {

@@ -274,9 +274,11 @@ describe('AgentPromptService daemon media intake', () => {
     const sessionDir = await tmpSessionDir();
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
     const { prompt } = harness({ sessionDir, files });
+    const release = vi.fn(async () => undefined);
 
     const handle = await prompt.enqueue({
       id: 'prompt-media',
+      release,
       message: {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1') } }],
@@ -290,6 +292,10 @@ describe('AgentPromptService daemon media intake', () => {
     expect(handle.message.content).toEqual([
       { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
     ]);
+    // The staged-upload release fires exactly once, right after intake settles.
+    await vi.waitFor(() => {
+      expect(release).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('rewrites a client-cache tag+reference pair to the session media dir', async () => {
