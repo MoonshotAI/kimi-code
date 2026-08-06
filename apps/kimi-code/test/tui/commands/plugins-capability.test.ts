@@ -258,9 +258,8 @@ describe('plugins command capability surface', () => {
     expect(rendered).toContain('Chrome Web Store');
     expect(rendered).toContain('Edge Add-ons Store');
     expect(rendered).toContain('Manual installation guide');
-    expect(rendered).toContain('Finish setup:');
-    expect(rendered).not.toContain('/reload');
-    expect(rendered).not.toContain('/new');
+    expect(rendered).toContain('/reload');
+    expect(rendered).toContain('/new');
     expect(unwrappedVisibleText(transcriptEntries)).toContain(
       'ChromeWebStore:https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc',
     );
@@ -287,7 +286,7 @@ describe('plugins command capability surface', () => {
     );
   });
 
-  it('separates the WebBridge install result from its remaining setup with one blank line', async () => {
+  it('separates the WebBridge install result from its setup steps with one blank line', async () => {
     setCapabilities({ images: null, trueColor: true, hyperlinks: true });
     const { host, transcriptEntries } = fakeHost({ engineV2: true });
 
@@ -303,12 +302,14 @@ describe('plugins command capability surface', () => {
 
     const lines = visibleLines(transcriptEntries, 180);
     const installed = lines.findIndex((line) => line.includes('Kimi WebBridge is installed.'));
-    const intro = lines.findIndex((line) => line.includes('Finish setup:'));
-    const instruction = lines.findIndex((line) =>
-      line.includes('Install the browser extension (skip this if you already have it installed):'),
+    const intro = lines.findIndex((line) =>
+      line.includes('Two steps left to use Kimi WebBridge:'),
+    );
+    const firstStep = lines.findIndex((line) =>
+      line.includes('1. Install the browser extension:'),
     );
     expect(lines.slice(installed + 1, intro)).toEqual(['']);
-    expect(instruction).toBe(intro + 1);
+    expect(firstStep).toBe(intro + 1);
   });
 
   it('shows the engine error when a background capability install fails', async () => {

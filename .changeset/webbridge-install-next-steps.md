@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Show the remaining browser extension setup after installing Kimi WebBridge.
+Show browser extension links and activation steps after installing Kimi WebBridge.
