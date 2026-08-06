@@ -25,6 +25,7 @@ import {
 } from '#/tui/utils/transcript-window';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
+import { replayBackgroundProjection } from '#/tui/utils/message-replay';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
@@ -1310,5 +1311,61 @@ describe('KimiTUI resume message replay', () => {
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
     expect(transcript).not.toContain('final text 0');
     expect(transcript).toContain('final text 4');
+  });
+});
+
+describe('replayBackgroundProjection', () => {
+  function agentTask(overrides: Record<string, unknown> = {}): BackgroundTaskInfo {
+    return {
+      taskId: 'agent-task1',
+      kind: 'agent',
+      agentId: 'agent-1',
+      description: 'background job',
+      status: 'running',
+      startedAt: 1,
+      endedAt: null,
+      ...overrides,
+    } as BackgroundTaskInfo;
+  }
+
+  it('threads the persisted model (catalog-mapped) and concrete effort into the metadata', () => {
+    const projection = replayBackgroundProjection(
+      [agentTask({ model: 'k2-cheap', thinkingEffort: 'low' })],
+      {
+        'k2-cheap': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k2-cheap',
+          displayName: 'Kimi K2 Cheap',
+        },
+      } as never,
+    );
+    expect(projection.backgroundAgentMetadata.get('agent-1')).toMatchObject({
+      model: 'Kimi K2 Cheap',
+      effort: 'low',
+    });
+  });
+
+  it('falls back to the raw alias and drops boolean effort states', () => {
+    const projection = replayBackgroundProjection([
+      agentTask({ model: 'k2-cheap', thinkingEffort: 'on' }),
+      agentTask({
+        taskId: 'agent-task2',
+        agentId: 'agent-2',
+        model: 'k2-cheap',
+        thinkingEffort: 'off',
+      }),
+    ]);
+    expect(projection.backgroundAgentMetadata.get('agent-1')).toMatchObject({
+      model: 'k2-cheap',
+      effort: undefined,
+    });
+    expect(projection.backgroundAgentMetadata.get('agent-2')?.effort).toBeUndefined();
+  });
+
+  it('omits model and effort for records that predate the fields', () => {
+    const projection = replayBackgroundProjection([agentTask()]);
+    const meta = projection.backgroundAgentMetadata.get('agent-1');
+    expect(meta?.model).toBeUndefined();
+    expect(meta?.effort).toBeUndefined();
   });
 });

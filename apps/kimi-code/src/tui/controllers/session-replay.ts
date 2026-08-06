@@ -167,7 +167,7 @@ export class SessionReplayRenderer {
 
   private hydrateBackgroundState(agent: ResumedAgentState): void {
     const { state, sessionEventHandler } = this.host;
-    const projection = replayBackgroundProjection(agent.background);
+    const projection = replayBackgroundProjection(agent.background, state.appState.availableModels);
     sessionEventHandler.subAgentEventHandler.backgroundAgentMetadata = new Map(
       projection.backgroundAgentMetadata,
     );
