@@ -51,6 +51,13 @@ export interface AppState {
    */
   configDefaultPlanMode?: boolean;
   /**
+   * The current `defaultSwarmMode` value from config (false when absent),
+   * refreshed by `hydrateLazyConfigDefaults`. Tracks the config-driven
+   * swarm-mode default so the footer can show it before the first lazy
+   * session exists (the engine applies it at create time).
+   */
+  configDefaultSwarmMode?: boolean;
+  /**
    * Session-only thinking effort chosen (e.g. via the model picker's Alt+S)
    * while no session exists yet on the v2 engine. Applied to the first
    * lazy-created session and cleared once it exists; the engine's config

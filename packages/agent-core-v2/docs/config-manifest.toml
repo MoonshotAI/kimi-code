@@ -8,12 +8,13 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (25 sections · 3 overlay(s))
+# Index (26 sections · 3 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/app/skillCatalog/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/agent/plan/configSection.ts
+#   defaultSwarmMode         src/agent/swarm/configSection.ts
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/app/skillCatalog/configSection.ts
@@ -107,6 +108,14 @@ manual_tick = false
 # ##########################################################################
 
 default_plan_mode = false
+
+# ##########################################################################
+# defaultSwarmMode (config.toml: default_swarm_mode)
+#   owner: src/agent/swarm/configSection.ts
+#   scope: core
+# ##########################################################################
+
+default_swarm_mode = false
 
 # ##########################################################################
 # experimental

@@ -272,6 +272,7 @@ export * from '#/agent/goal/goalService';
 export * from '#/agent/goal/types';
 export * from '#/agent/tools/agent-swarm/agent-swarm';
 import '#/agent/tools/agent-swarm/agentSwarmTool';
+import '#/agent/swarm/configSection';
 export * from '#/agent/swarm/swarm';
 export * from '#/agent/swarm/swarmService';
 export * from '#/agent/usage/usage';

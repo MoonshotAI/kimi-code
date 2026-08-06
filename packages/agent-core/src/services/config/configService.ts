@@ -59,6 +59,7 @@ function toConfigResponse(config: KimiConfig): ConfigResponse {
     yolo: config.yolo,
     default_permission_mode: config.defaultPermissionMode,
     default_plan_mode: config.defaultPlanMode,
+    default_swarm_mode: config.defaultSwarmMode,
     permission: config.permission,
     hooks: config.hooks,
     services: config.services,

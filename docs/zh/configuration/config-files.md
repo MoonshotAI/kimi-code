@@ -26,6 +26,7 @@ TOML 字段名一律用下划线（snake_case），如 `default_model`、`max_co
 default_model = "kimi-code/k3"
 default_permission_mode = "manual"
 default_plan_mode = false
+default_swarm_mode = false
 merge_all_available_skills = true
 telemetry = true
 
@@ -100,6 +101,7 @@ timeout = 5
 | `default_model` | `string` | — | 默认模型别名，必须在 `models` 中定义 |
 | `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `manual`（逐次询问）、`yolo`（自动批准工具操作，Agent 仍可能提问）、`auto`（完全自主，Agent 自己做决定，不再提问） |
 | `default_plan_mode` | `boolean` | `false` | 新会话是否默认以 Plan 模式（先出计划再执行）启动 |
+| `default_swarm_mode` | `boolean` | `false` | 新会话是否默认以 Swarm 模式（并行子 Agent 编排，等同于 `/swarm on`）启动 |
 | `merge_all_available_skills` | `boolean` | `true` | 是否合并所有目录中的 Agent Skills |
 | `extra_skill_dirs` | `array<string>` | — | 额外 Skill 搜索目录，叠加到默认目录之上 |
 | `extra_agent_dirs` | `array<string>` | — | 额外自定义 Agent 搜索目录，叠加到默认目录之上 |
