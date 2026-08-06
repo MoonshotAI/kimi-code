@@ -44,6 +44,7 @@ function createState(): ExtendedState {
     activeSessionId: 'sess_1',
     permission: 'auto',
     thinking: 'high',
+    pendingThinkingBySession: {},
     planModeBySession: { sess_1: true },
     swarmModeBySession: {},
     sideChatMessagesByAgent: {},
@@ -66,6 +67,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
       nextOptimisticMsgId: () => 'msg_opt_btw',
       connectEventsIfNeeded: vi.fn(),
       getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
       resolveThinkingForPrompt: async () => undefined,
     });
 
@@ -102,6 +104,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
       nextOptimisticMsgId: () => 'msg_opt_btw',
       connectEventsIfNeeded: vi.fn(),
       getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
       resolveThinkingForPrompt: async () => undefined,
     });
 
@@ -129,6 +132,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
       nextOptimisticMsgId: () => 'msg_opt_btw',
       connectEventsIfNeeded: vi.fn(),
       getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
       resolveThinkingForPrompt: async (_sid, id) => (id === 'kimi-code' ? 'low' : undefined),
     });
 
@@ -157,6 +161,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
       nextOptimisticMsgId: () => 'msg_opt_btw',
       connectEventsIfNeeded: vi.fn(),
       getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
       resolveThinkingForPrompt: async () => 'high',
     });
     await sideChat.openSideChatOn('sess_1');
@@ -210,6 +215,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
       nextOptimisticMsgId: () => `msg_opt_btw_${++optimisticId}`,
       connectEventsIfNeeded: vi.fn(),
       getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
       resolveThinkingForPrompt: async () => 'high',
     });
     await sideChat.openSideChatOn('sess_1');

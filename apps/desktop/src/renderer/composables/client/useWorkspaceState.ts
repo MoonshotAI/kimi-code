@@ -40,6 +40,7 @@ import { pathRelativeTo } from '../../lib/pathRelativeTo';
 import { buildFullDiffTexts, type DiffFullTexts } from '../../lib/diffFullTexts';
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
+import { ackThinkingPending, markThinkingPending } from '../../lib/modelThinking';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
 import { track } from '../../lib/track';
 import { consumeSessionIntent } from '../../lib/session-intent';
@@ -250,7 +251,10 @@ export interface UseWorkspaceStateDeps {
   ) => void;
   nextOptimisticMsgId: () => string;
   getEventConn: () => KimiEventConnection | null;
-  syncSessionFromSnapshot: (sessionId: string) => Promise<SyncSessionResult>;
+  syncSessionFromSnapshot: (
+    sessionId: string,
+    opts?: { skipStatusRefresh?: boolean },
+  ) => Promise<SyncSessionResult>;
   reopenSession: (sessionId: string) => Promise<SyncSessionResult>;
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
@@ -421,10 +425,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  function refreshSessionSidecars(sessionId: string): void {
+  function refreshSessionSidecars(sessionId: string, opts?: { skipStatus?: boolean }): void {
     void taskPoller.loadTasksForSession(sessionId);
     void loadGitStatus(sessionId);
-    void refreshSessionStatus(sessionId);
+    if (opts?.skipStatus !== true) void refreshSessionStatus(sessionId);
     void refreshSessionGoal(sessionId);
     void refreshSessionPlans(sessionId);
     if (!Object.prototype.hasOwnProperty.call(modelProvider.skillsBySession.value, sessionId)) {
@@ -1389,6 +1393,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         ? { ...session, model: draftPick }
         : session;
     upsertSessionFront(created);
+    // Seed BEFORE selectSession: the thinking watcher re-resolves from the new
+    // session's own entry the moment the active session changes.
+    const sid = session.id;
+    if (draftThinking !== undefined) {
+      rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: draftThinking };
+      // The daemon hasn't seen this pick yet — shield it from stale folds.
+      markThinkingPending(rawState, sid);
+    }
     selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
     track('session_created', { kind: 'new', source: sessionSource });
     // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
@@ -1397,17 +1409,17 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // composer before the optimistic first turn lands. selectSession resolves,
     // then the caller adds the first turn synchronously (no await in between),
     // so the view goes loading → message with no empty-composer frame.
-    await selectSession(session.id, { skipTrack: true });
+    await selectSession(session.id, {
+      skipTrack: true,
+      // A /status fold here would only fold daemon defaults over the draft seeds.
+      skipStatusRefresh: true,
+    });
     // Carry any mode toggles the user staged in the empty composer into the
     // newly-created session, so the first action honors them. Write them to
     // this session's per-session maps by id (not via the activeSessionId-based
     // setters): if the user switches to another session while selectSession is
     // awaiting the snapshot, the setters would otherwise read the then-current
     // activeSessionId and pollute that session while this one loses the modes.
-    const sid = session.id;
-    if (draftThinking !== undefined) {
-      rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: draftThinking };
-    }
     if (draftModes.planMode) {
       rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
       savePlanModeToStorage();
@@ -1491,9 +1503,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // the draft (plan/swarm, plus permission via /auto|/yolo). Persist them
       // onto this new session's profile and await it before activating,
       // otherwise the first skill turn can start before applyAgentState and
-      // run at daemon defaults while the UI shows otherwise. Thinking is NOT
-      // persisted here — activateSkill resolves and persists it for this
-      // session's model (gated) immediately before activating. Goal mode is a
+      // run at daemon defaults while the UI shows otherwise. Goal mode is a
       // one-shot flag consumed per send, not a profile field, so there is
       // nothing to persist for it.
       const planMode = rawState.planModeBySession[sid] ?? false;
@@ -1503,16 +1513,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         (promptSession?.model && promptSession.model.length > 0
           ? promptSession.model
           : rawState.defaultModel) ?? undefined;
-      // No thinking in this patch: activateSkill itself resolves and persists
-      // the level for this session's model (single writer, gated) right before
-      // activating — a second write here would be a redundant profile update
-      // whose transient failure could false-veto a ready activation.
+      // Thinking must ride this patch: the chain-tail /status fold would
+      // otherwise overwrite the seeded pick with the daemon's model default.
+      const thinking = (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
       const persisted = await persistSessionProfile(
         {
           model,
           planMode,
           swarmMode,
           permissionMode: rawState.permission,
+          thinking,
         },
         sid,
       );
@@ -1520,7 +1530,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // effort is worse than not activating (the finally still re-arms below).
       // The session itself exists either way — return it regardless.
       if (!persisted) return sid;
-      await modelProvider.activateSkill(skillName, args, sid);
+      // The patch above already carried (and awaited) the thinking level —
+      // skip the redundant second write inside activateSkill.
+      await modelProvider.activateSkill(skillName, args, sid, { skipThinkingPersist: true });
       return sid;
     } catch (err) {
       pushOperationFailure('startSessionAndActivateSkill', err);
@@ -1701,6 +1713,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     opts?: {
       urlMode?: SessionUrlMode;
       skipTrack?: boolean;
+      skipStatusRefresh?: boolean;
       source?: SessionCreatedSource;
     },
   ): Promise<void> {
@@ -1767,7 +1780,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
       if (!messagesLoaded) {
         // First open: full snapshot → seed → subscribe(asOfSeq).
-        const result = await syncSessionFromSnapshot(sessionId);
+        const result = await syncSessionFromSnapshot(sessionId, {
+          skipStatusRefresh: opts?.skipStatusRefresh === true,
+        });
         if (result === 'not-found') return;
       } else {
         // Re-open: rebuild from a fresh snapshot rather than resuming from the
@@ -1779,7 +1794,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
       // Refresh sidecars AFTER the snapshot settles so status/usage updates
       // aren't overwritten by syncSessionFromSnapshot.
-      refreshSessionSidecars(sessionId);
+      refreshSessionSidecars(sessionId, { skipStatus: opts?.skipStatusRefresh === true });
     } catch (err) {
       pushOperationFailure('selectSession', err, { sessionId });
     } finally {
@@ -1808,6 +1823,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const localTurnToken = beginLocalTurn(sid);
     rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: true };
     const tempId = nextOptimisticMsgId();
+    // Captured up front so the goal-preflight failure path can release it too;
+    // re-captured right before the submit POST to pair with the level sent.
+    let thinkingToken = rawState.pendingThinkingBySession[sid];
     try {
       const api = getKimiWebApi();
       const content: import('../../api/types').AppMessageContent[] = [];
@@ -1862,6 +1880,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         try {
           await api.updateSession(sid, { goalObjective: text.trim() });
         } catch (err) {
+          // No thinking write ever reached the daemon — release the shield and
+          // re-fold the daemon's actual level.
+          if (ackThinkingPending(rawState, sid, thinkingToken)) void refreshSessionStatus(sid);
           pushOperationFailure('createGoal', err, { sessionId: sid });
           rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
           updateSessionMessages(sid, (msgs) =>
@@ -1871,20 +1892,25 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         }
       }
 
+      // Resolved against THIS prompt's session + model: the session's own
+      // daemon-reported level when declared, else the model's stored pick or
+      // catalog default — never the active-session rawState.thinking, which
+      // tracks whatever session the user is looking at now: a queue drain for
+      // a background session would otherwise submit the level of the session
+      // the user switched to since enqueueing.
+      const thinking = (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
+      // The token of the pending pick this prompt carries (undefined when clean).
+      thinkingToken = rawState.pendingThinkingBySession[sid];
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        // Resolved against THIS prompt's session + model: the session's own
-        // daemon-reported level when declared, else the model's stored pick or
-        // catalog default — never the active-session rawState.thinking, which
-        // tracks whatever session the user is looking at now: a queue drain for
-        // a background session would otherwise submit the level of the session
-        // the user switched to since enqueueing.
-        thinking: (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking,
+        thinking,
         permissionMode: rawState.permission,
         planMode,
         swarmMode,
       });
+      // The daemon consumed this prompt's thinking — ack the write it carried.
+      if (thinking !== undefined) ackThinkingPending(rawState, sid, thinkingToken);
 
       // Goal mode is a one-shot flag: consumed by this send, then cleared.
       if (goalMode) {
@@ -1933,6 +1959,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
             )
           : msgs,
       );
+      // A failed submit may never have reached the daemon: stop shielding the
+      // pick this prompt carried and re-fold the daemon's actual level.
+      if (ackThinkingPending(rawState, sid, thinkingToken)) void refreshSessionStatus(sid);
       pushOperationFailure('sendPrompt', err, { sessionId: sid });
       return isDaemonApiError(err) ? 'rejected' : 'uncertain';
     } finally {
@@ -2052,16 +2081,20 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         (promptSession?.model && promptSession.model.length > 0
           ? promptSession.model
           : rawState.defaultModel) ?? undefined;
+      // Resolved against this prompt's own session + model, same as a normal
+      // send (see submitPromptInternal).
+      const thinking = (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
+      const thinkingToken = rawState.pendingThinkingBySession[sid];
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        // Resolved against this prompt's own session + model, same as a normal
-        // send (see submitPromptInternal).
-        thinking: (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking,
+        thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,
       });
+      // Same ack as a normal send: the daemon consumed this prompt's thinking.
+      if (thinking !== undefined) ackThinkingPending(rawState, sid, thinkingToken);
 
       // Stamp the real prompt_id onto the optimistic echo. Unlike a normal send,
       // a steered prompt IS echoed back by the daemon as a messageCreated user

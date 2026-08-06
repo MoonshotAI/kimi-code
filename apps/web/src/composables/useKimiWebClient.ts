@@ -20,6 +20,7 @@ import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import { detectShellDanger } from '../lib/shellDanger';
 import { buildDiffLines, buildVerbatimDiffLines } from '../lib/diffLines';
 import type { DiffFullTexts } from '../lib/diffFullTexts';
+import { ackThinkingPending, foldDaemonThinkingLevel } from '../lib/modelThinking';
 import {
   loadPinnedSessions,
   loadUnread,
@@ -349,6 +350,10 @@ export interface ExtendedState extends KimiClientState {
    *  localStorage pick: a session keeps the level it actually ran with, so
    *  switching sessions never leaks one session's pick into another. */
   thinkingBySession: Record<string, ThinkingLevel>;
+  /** Write token of the latest thinking pick the daemon has not acknowledged
+   *  yet — while present, daemon reports are dropped (markThinkingPending /
+   *  foldDaemonThinkingLevel). */
+  pendingThinkingBySession: Record<string, number>;
   /** Plan-mode toggle per session. Bound to a session (not global) so toggling
    *  it in one session does not affect another. */
   planModeBySession: Record<string, boolean>;
@@ -438,6 +443,7 @@ const rawState: ExtendedState = reactive({
   // map below starts empty and is fed by /status folds.
   thinking: undefined,
   thinkingBySession: {},
+  pendingThinkingBySession: {},
   planModeBySession: loadModeMapFromStorage(PLAN_MODE_STORAGE_KEY),
   swarmModeBySession: loadModeMapFromStorage(SWARM_MODE_STORAGE_KEY),
   goalModeBySession: loadModeMapFromStorage(GOAL_MODE_STORAGE_KEY),
@@ -722,6 +728,7 @@ function forgetSession(sessionId: string): void {
   delete rawState.swarmModeBySession[sessionId];
   delete rawState.goalModeBySession[sessionId];
   delete rawState.thinkingBySession[sessionId];
+  delete rawState.pendingThinkingBySession[sessionId];
   savePlanModeToStorage();
   saveSwarmModeToStorage();
   saveGoalModeToStorage();
@@ -783,7 +790,7 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   // Fold the session's own thinking level too — per-session state wins over the
   // per-model storage pick (see thinkingBySession on ExtendedState).
   if (st.thinkingEffort.length > 0) {
-    rawState.thinkingBySession[sessionId] = st.thinkingEffort as ThinkingLevel;
+    foldDaemonThinkingLevel(rawState, sessionId, st.thinkingEffort as ThinkingLevel);
   }
 }
 
@@ -840,11 +847,21 @@ function persistSessionProfile(patch: {
 }, sessionId?: string): Promise<boolean> {
   const sid = sessionId ?? rawState.activeSessionId;
   if (!sid) return Promise.resolve(false);
+  // The token of the pending pick this patch carries, captured synchronously —
+  // only a completion still holding it may clear the mark.
+  const thinkingToken = patch.thinking !== undefined ? rawState.pendingThinkingBySession[sid] : undefined;
   // Promise.resolve wrap: tolerate a sync/undefined return (e.g. test mocks).
   return Promise.resolve(getKimiWebApi().updateSession(sid, patch))
-    .then(() => refreshSessionStatus(sid))
+    .then(() => {
+      ackThinkingPending(rawState, sid, thinkingToken);
+      return refreshSessionStatus(sid);
+    })
     .then(() => true)
     .catch((err) => {
+      // A failed write never reached the daemon: stop shielding it and re-fold
+      // the daemon's actual level (an earlier acked report may have been
+      // dropped while it was pending). A newer pick keeps its own shield.
+      if (ackThinkingPending(rawState, sid, thinkingToken)) void refreshSessionStatus(sid);
       // Local state already reflects the change; tell the user (and the log)
       // that the daemon did not persist it.
       pushOperationFailure('persistSessionProfile', err, { sessionId: sid });
@@ -999,7 +1016,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
       rawState.planModeBySession[event.sessionId] = event.planMode;
     }
     if (event.thinking !== undefined) {
-      rawState.thinkingBySession[event.sessionId] = event.thinking as ThinkingLevel;
+      foldDaemonThinkingLevel(rawState, event.sessionId, event.thinking as ThinkingLevel);
     }
   }
 
@@ -1813,7 +1830,10 @@ async function pullSessionWarnings(sessionId: string): Promise<void> {
   }
 }
 
-async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionResult> {
+async function syncSessionFromSnapshot(
+  sessionId: string,
+  opts?: { skipStatusRefresh?: boolean },
+): Promise<SyncSessionResult> {
   // A snapshot that races a local turn start must not overwrite that turn.
   const turnStartAtRequest = workspaceState.localTurnStartState(sessionId);
   try {
@@ -1971,7 +1991,7 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     // selectSession's sidecar refresh, and the volatile status frames that
     // would update it were exactly what the resync replaced. Re-read /status
     // so the ring converges on the live value.
-    if (snapUsagePlaceholder) void refreshSessionStatus(sessionId);
+    if (snapUsagePlaceholder && opts?.skipStatusRefresh !== true) void refreshSessionStatus(sessionId);
     void pullSessionWarnings(sessionId);
     return 'ok';
   } catch (err) {
@@ -2436,6 +2456,7 @@ const sideChat = useSideChat(rawState, {
   // modelProvider is defined further below; deferred like eventConn above.
   resolveThinkingForPrompt: (sessionId, modelId) =>
     modelProvider.resolveThinkingForPrompt(sessionId, modelId),
+  refreshSessionStatus,
 });
 
 const activeAppTasks = computed<AppTask[]>(() => {

@@ -11,6 +11,7 @@ import { computed, ref } from 'vue';
 import { getKimiWebApi } from '../../api';
 import type { AppApprovalRequest, AppMessage, KimiEventConnection, ThinkingLevel } from '../../api/types';
 import { createTurnsProjector } from './turnsProjector';
+import { ackThinkingPending } from '../../lib/modelThinking';
 import type { ChatTurn } from '../../types';
 import type { ExtendedState } from '../useKimiWebClient';
 
@@ -30,6 +31,8 @@ export interface UseSideChatDeps {
     sessionId: string | null,
     modelId: string | undefined,
   ) => Promise<ThinkingLevel | undefined>;
+  /** Re-read /status so a released thinking pick re-folds the daemon's level. */
+  refreshSessionStatus: (sessionId: string) => Promise<void>;
 }
 
 export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
@@ -39,6 +42,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     connectEventsIfNeeded,
     getEventConn,
     resolveThinkingForPrompt,
+    refreshSessionStatus,
   } = deps;
 
   const sideChatTargetBySession = ref<Record<string, { agentId: string }>>({});
@@ -269,6 +273,8 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       metadata: { 'kimiWeb.optimisticUserMessage': true },
     };
     appendSideChatMessage(agentId, userMsg);
+    // Set right before the submit POST; shared by the success ack and the catch.
+    let thinkingToken: number | undefined;
     try {
       // Carry the parent's current model, thinking, and permission so a BTW
       // first-turn reflects the same draft/runtime controls the UI shows — the
@@ -284,15 +290,19 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
         (promptSession?.model && promptSession.model.length > 0
           ? promptSession.model
           : rawState.defaultModel) ?? undefined;
+      const thinking = (await resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
+      thinkingToken = rawState.pendingThinkingBySession[sid];
       const result = await getKimiWebApi().submitPrompt(sid, {
         content: [{ type: 'text', text: trimmed }],
         agentId,
         model,
-        thinking: (await resolveThinkingForPrompt(sid, model)) ?? rawState.thinking,
+        thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,
       });
+      // Same ack as a main-thread send: the daemon consumed the thinking.
+      if (thinking !== undefined) ackThinkingPending(rawState, sid, thinkingToken);
       confirmSideChatUserMessage(
         agentId,
         tempId,
@@ -301,6 +311,9 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       );
       rememberSideChatUserMessageId(sid, result.userMessageId);
     } catch (err) {
+      // A failed submit may never have reached the daemon: stop shielding the
+      // pick this prompt carried and re-fold the daemon's actual level.
+      if (ackThinkingPending(rawState, sid, thinkingToken)) void refreshSessionStatus(sid);
       pushOperationFailure('sendSideChatPrompt', err, { sessionId: sid });
       removeSideChatUserMessage(agentId, tempId);
       rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: false };

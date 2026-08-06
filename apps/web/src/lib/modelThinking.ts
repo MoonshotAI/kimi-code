@@ -146,3 +146,49 @@ export function thinkingLevelForModelSwitch(
   if (!isSwitch || model === undefined) return currentLevel;
   return defaultThinkingLevelFor(model);
 }
+
+// Monotonic source for pending-write tokens: token (not level) equality
+// decides which completion acks which write — the same level can be written
+// twice with another level in between.
+let thinkingWriteSeq = 0;
+
+/**
+ * Mark a locally written pick as not yet acknowledged by the daemon, returning
+ * its write token. While pending, every daemon report is dropped
+ * (foldDaemonThinkingLevel) — a report cannot tell which write it reflects, so
+ * only the write's own completion acks (ackThinkingPending).
+ */
+export function markThinkingPending(
+  state: { pendingThinkingBySession: Record<string, number> },
+  sessionId: string,
+): number {
+  const token = ++thinkingWriteSeq;
+  state.pendingThinkingBySession[sessionId] = token;
+  return token;
+}
+
+/** Clear the pending mark for a completed write; a newer pick keeps its own
+ *  shield. Returns whether the mark was cleared. */
+export function ackThinkingPending(
+  state: { pendingThinkingBySession: Record<string, number> },
+  sessionId: string,
+  token: number | undefined,
+): boolean {
+  if (token === undefined || state.pendingThinkingBySession[sessionId] !== token) return false;
+  delete state.pendingThinkingBySession[sessionId];
+  return true;
+}
+
+/** Fold a daemon-reported level into the session's own entry — dropped while a
+ *  local pick is pending (markThinkingPending). */
+export function foldDaemonThinkingLevel(
+  state: {
+    thinkingBySession: Record<string, ThinkingLevel>;
+    pendingThinkingBySession: Record<string, number>;
+  },
+  sessionId: string,
+  daemonLevel: ThinkingLevel,
+): void {
+  if (state.pendingThinkingBySession[sessionId] !== undefined) return;
+  state.thinkingBySession[sessionId] = daemonLevel;
+}

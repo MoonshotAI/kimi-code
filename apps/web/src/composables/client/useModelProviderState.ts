@@ -12,8 +12,10 @@ import type { AddProviderInput, AppCatalogProvider, AppMessage, AppModel, AppPro
 import { logError, logWarn } from '../../lib/log';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
 import {
+  ackThinkingPending,
   defaultThinkingLevelFor,
   levelDeclaredBy,
+  markThinkingPending,
   thinkingLevelForModelSwitch,
   thinkingLevelToConfig,
 } from '../../lib/modelThinking';
@@ -214,12 +216,12 @@ export function useModelProviderState(
     // only an explicit pick is pushed to the session profile and the daemon
     // config — a derived catalog default must not masquerade as a user choice.
     rawState.thinking = level;
-    // Mirror the pick into the session's own entry so the per-session
-    // resolution (and any later /status fold) agrees with what the user just
-    // chose — the daemon profile write lands via persistSessionProfile.
+    // Mirror the pick into the session's own entry, marked pending until the
+    // daemon acks the profile write (persistSessionProfile).
     const sid = rawState.activeSessionId;
     if (level !== undefined && sid !== null && sid !== undefined) {
       rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: level };
+      markThinkingPending(rawState, sid);
     }
     return level;
   }
@@ -350,12 +352,14 @@ export function useModelProviderState(
     // Optimistic: show the chosen model immediately, but remember the previous
     // one so we can roll back if the switch never reaches the daemon.
     updateSession(sid, (s) => ({ ...s, model: modelId }));
+    let thinkingWriteToken: number | undefined;
     if (nextThinking !== prevThinking) {
       rawState.thinking = nextThinking;
-      // Keep the session's own entry in sync optimistically — the /status echo
-      // after the profile write folds the authoritative value back in.
+      // Keep the session's own entry in sync optimistically — marked pending
+      // until the daemon applies the switch below.
       if (nextThinking !== undefined) {
         rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: nextThinking };
+        thinkingWriteToken = markThinkingPending(rawState, sid);
       }
     }
     try {
@@ -374,6 +378,11 @@ export function useModelProviderState(
         if (prevThinking !== undefined) {
           rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: prevThinking };
         }
+        // Never resurrect the pre-attempt mark (its write may have settled —
+        // a dead token shields every later fold). Drop only THIS switch's
+        // mark; a newer pick keeps its shield. Then re-fold the daemon's
+        // actual level.
+        if (ackThinkingPending(rawState, sid, thinkingWriteToken)) void refreshSessionStatus(sid);
       }
       pushOperationFailure('setModel', err, { sessionId: sid });
       return false;
@@ -383,9 +392,11 @@ export function useModelProviderState(
     if (nextThinking !== prevThinking && nextThinking !== undefined) {
       persistGlobalThinking(nextThinking);
     }
-    // refreshSessionStatus folds the authoritative current model from /status
-    // back into the session (the profile echo can return ''). Best-effort: a
-    // failure here does not mean the switch failed, so it must not roll back.
+    // Ack this write, then echo /status back in (best-effort — a failure here
+    // does not mean the switch failed): the fold only lands once the shield is
+    // down, and it corrects any interim setModel-step status frame (the model
+    // default) the daemon emitted before setThinking.
+    ackThinkingPending(rawState, sid, thinkingWriteToken);
     await refreshSessionStatus(sid);
     return true;
   }
@@ -410,8 +421,15 @@ export function useModelProviderState(
    * `sessionId` overrides the active session — used when activating right after
    * creating a session, so a concurrent session switch can't redirect the
    * activation to the wrong session. No session at all is a no-op.
+   * `skipThinkingPersist` skips the pre-activation profile write when the
+   * caller already persisted (and awaited) the same level.
    */
-  async function activateSkill(skillName: string, args?: string, sessionId?: string): Promise<void> {
+  async function activateSkill(
+    skillName: string,
+    args?: string,
+    sessionId?: string,
+    opts?: { skipThinkingPersist?: boolean },
+  ): Promise<void> {
     const sid = sessionId ?? rawState.activeSessionId;
     if (!sid) return;
     const guarded = activity.value === 'idle' && !rawState.inFlightBySession[sid];
@@ -444,21 +462,23 @@ export function useModelProviderState(
     try {
       // Skill activation carries only name/args — the daemon runs the turn at
       // the SESSION PROFILE effort. Persist the level resolved for this
-      // session's own model first (awaited, mirroring the new-session skill
-      // path), so a profile that predates the per-model restore can't run the
-      // skill at a stale effort while the UI shows the restored level. When
-      // the persist fails (it surfaces the error itself), activating would
-      // launch the skill at exactly that stale effort — abort instead.
-      // Session models can be '' transiently (daemon profile echo) — treat
-      // that as "unset" and resolve through the configured default, same as
-      // the prompt/BTW/steer paths, before selecting the thinking level.
-      const rawModel = rawState.sessions.find((s) => s.id === sid)?.model;
-      const skillModel = (rawModel && rawModel.length > 0 ? rawModel : rawState.defaultModel) ?? undefined;
-      const persisted = await persistSessionProfile(
-        { thinking: (await resolveThinkingForPrompt(sid, skillModel)) ?? rawState.thinking },
-        sid,
-      );
-      if (!persisted) throw PROFILE_PERSIST_FAILED;
+      // session's own model first (awaited), so a profile that predates the
+      // per-model restore can't run the skill at a stale effort while the UI
+      // shows the restored level. When the persist fails (it surfaces the
+      // error itself), activating would launch the skill at exactly that
+      // stale effort — abort instead.
+      if (opts?.skipThinkingPersist !== true) {
+        // Session models can be '' transiently (daemon profile echo) — treat
+        // that as "unset" and resolve through the configured default, same as
+        // the prompt/BTW/steer paths, before selecting the thinking level.
+        const rawModel = rawState.sessions.find((s) => s.id === sid)?.model;
+        const skillModel = (rawModel && rawModel.length > 0 ? rawModel : rawState.defaultModel) ?? undefined;
+        const persisted = await persistSessionProfile(
+          { thinking: (await resolveThinkingForPrompt(sid, skillModel)) ?? rawState.thinking },
+          sid,
+        );
+        if (!persisted) throw PROFILE_PERSIST_FAILED;
+      }
       await getKimiWebApi().activateSkill(sid, skillName, args);
     } catch (err) {
       if (guarded) {

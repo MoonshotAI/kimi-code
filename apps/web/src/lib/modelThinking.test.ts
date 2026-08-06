@@ -1,18 +1,21 @@
 import { computed, nextTick, reactive } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppModel, AppSession } from '../api/types';
+import type { AppModel, AppSession, ThinkingLevel } from '../api/types';
 import {
   useModelProviderState,
   type UseModelProviderStateDeps,
 } from '../composables/client/useModelProviderState';
 import type { ExtendedState } from '../composables/useKimiWebClient';
 import {
+  ackThinkingPending,
   commitLevel,
   defaultThinkingLevelFor,
   effectiveThinkingLevel,
   effortLabel,
+  foldDaemonThinkingLevel,
   isThinkingOn,
   levelDeclaredBy,
+  markThinkingPending,
   modelThinkingAvailability,
   segmentsFor,
   thinkingLevelForModelSwitch,
@@ -55,6 +58,46 @@ describe('modelThinking', () => {
 
     it('marks models without thinking support as unsupported', () => {
       expect(modelThinkingAvailability(model({ capabilities: ['vision'] }))).toBe('unsupported');
+    });
+  });
+
+  describe('foldDaemonThinkingLevel + pending marks', () => {
+    function state() {
+      return {
+        thinkingBySession: {} as Record<string, ThinkingLevel>,
+        pendingThinkingBySession: {} as Record<string, number>,
+      };
+    }
+
+    it('applies the daemon level when no pick is pending', () => {
+      const s = state();
+      foldDaemonThinkingLevel(s, 's1', 'high');
+      expect(s.thinkingBySession['s1']).toBe('high');
+    });
+
+    it('drops every report while a pick is pending, even a matching echo', () => {
+      const s = state();
+      s.thinkingBySession['s1'] = 'max';
+      markThinkingPending(s, 's1');
+      foldDaemonThinkingLevel(s, 's1', 'high');
+      foldDaemonThinkingLevel(s, 's1', 'max');
+      expect(s.thinkingBySession['s1']).toBe('max');
+      expect(s.pendingThinkingBySession['s1']).toBeDefined();
+    });
+
+    it('acks only the completion of the latest write, then resumes folding', () => {
+      const s = state();
+      s.thinkingBySession['s1'] = 'max';
+      const stale = markThinkingPending(s, 's1');
+      const latest = markThinkingPending(s, 's1');
+      // A completion for the superseded write must not clear the shield.
+      expect(ackThinkingPending(s, 's1', stale)).toBe(false);
+      expect(s.pendingThinkingBySession['s1']).toBe(latest);
+      foldDaemonThinkingLevel(s, 's1', 'low');
+      expect(s.thinkingBySession['s1']).toBe('max');
+      expect(ackThinkingPending(s, 's1', latest)).toBe(true);
+      foldDaemonThinkingLevel(s, 's1', 'low');
+      expect(s.thinkingBySession['s1']).toBe('low');
     });
   });
 
@@ -280,6 +323,7 @@ describe('useModelProviderState thinking on model selection', () => {
       sessions: options.activeSession ? [options.activeSession] : [],
       thinking: 'off',
       thinkingBySession: {},
+      pendingThinkingBySession: {},
       defaultModel: options.defaultModel,
       inFlightBySession: {},
     } as ExtendedState;
@@ -371,6 +415,21 @@ describe('useModelProviderState thinking on model selection', () => {
     const persistOrder = persistSessionProfileMock.mock.invocationCallOrder[0]!;
     const activateOrder = apiMock.activateSkill.mock.invocationCallOrder[0]!;
     expect(persistOrder).toBeLessThan(activateOrder);
+  });
+
+  it('skips the thinking profile write when the caller already persisted it', async () => {
+    // The new-session skill path awaits a profile patch that already carries
+    // the level — a second write here would only add a transient-failure veto.
+    const state = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.id },
+      defaultModel: booleanAppModel.id,
+    });
+    const provider = createModelProvider(state);
+
+    await provider.activateSkill('gen-changesets', undefined, undefined, { skipThinkingPersist: true });
+
+    expect(persistSessionProfileMock).not.toHaveBeenCalled();
+    expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined);
   });
 
   it('does not activate the skill when the thinking profile update fails', async () => {
@@ -594,6 +653,46 @@ describe('useModelProviderState thinking on model selection', () => {
 
     expect(switched).toBe(false);
     expect(apiMock.setConfig).not.toHaveBeenCalled();
+  });
+
+  it('drops the pending mark when a model switch rolls back', async () => {
+    // The rolled-back value's earlier write may already have settled — its
+    // token must not be resurrected, or every later daemon fold is dropped.
+    apiMock.updateSession.mockRejectedValue(new Error('daemon unreachable'));
+    const state = createState({
+      activeSession: { id: 'session-1', model: booleanAppModel.id },
+      defaultModel: booleanAppModel.id,
+    });
+    const provider = createModelProvider(state);
+    provider.setThinking('low');
+
+    const switched = await provider.setModel(effortAppModel.id);
+
+    expect(switched).toBe(false);
+    expect(state.thinking).toBe('low');
+    expect(state.pendingThinkingBySession['session-1']).toBeUndefined();
+  });
+
+  it('keeps a newer pending pick when an older model switch rolls back', async () => {
+    let rejectSwitch!: (err: Error) => void;
+    apiMock.updateSession.mockReturnValueOnce(
+      new Promise((_, rej) => {
+        rejectSwitch = rej;
+      }),
+    );
+    const state = createState({
+      activeSession: { id: 'session-1', model: booleanAppModel.id },
+      defaultModel: booleanAppModel.id,
+    });
+    const provider = createModelProvider(state);
+
+    const switching = provider.setModel(effortAppModel.id);
+    // A newer pick lands while the switch is in flight — its own token.
+    provider.setThinking('low');
+    rejectSwitch(new Error('down'));
+    await switching;
+
+    expect(state.pendingThinkingBySession['session-1']).toBeDefined();
   });
 
   it('waits for the status fold when the session level has not landed', async () => {

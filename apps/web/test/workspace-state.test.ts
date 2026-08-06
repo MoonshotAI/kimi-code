@@ -9,6 +9,7 @@ import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask, Manag
 import { DaemonApiError } from '../src/api/errors';
 import { createInitialState, reduceAppEvent } from '@moonshot-ai/web-core/api';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
+import { foldDaemonThinkingLevel } from '../src/lib/modelThinking';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
 import { useWorkspaceState, forgetLocalTurnState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
@@ -82,6 +83,7 @@ function createState(): ExtendedState {
     permission: 'manual',
     thinking: 'high',
     thinkingBySession: {},
+    pendingThinkingBySession: {},
     planModeBySession: {},
     swarmModeBySession: {},
     goalModeBySession: {},
@@ -794,7 +796,9 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(apiMock.createSession).toHaveBeenCalledOnce();
     // The activation targets the freshly created session, so a concurrent
     // session switch can't redirect it.
-    expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
+    expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new', {
+      skipThinkingPersist: true,
+    });
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
   });
 
@@ -846,7 +850,9 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 
     await ws.startSessionAndActivateSkill('wd_1', 'write-goal', 'ship it');
 
-    expect(activateSkill).toHaveBeenCalledWith('write-goal', 'ship it', 'sess_new');
+    expect(activateSkill).toHaveBeenCalledWith('write-goal', 'ship it', 'sess_new', {
+      skipThinkingPersist: true,
+    });
   });
 
   it('awaits the profile POST before activating, so draft controls apply first', async () => {
@@ -877,7 +883,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     // Activation must NOT have started while /profile is still pending.
     await new Promise((r) => setTimeout(r, 0));
     expect(persistSessionProfile).toHaveBeenCalledWith(
-      { model: undefined, planMode: true, swarmMode: true, permissionMode: 'auto' },
+      { model: undefined, planMode: true, swarmMode: true, permissionMode: 'auto', thinking: 'high' },
       'sess_new',
     );
     expect(activateSkill).not.toHaveBeenCalled();
@@ -885,21 +891,27 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     resolveProfile(true);
     await pending;
 
-    expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
+    expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new', {
+      skipThinkingPersist: true,
+    });
   });
 
-  it('does not write thinking in the draft profile patch — activateSkill persists it once', async () => {
-    // activateSkill resolves and persists the level itself (gated) right
-    // before activating. Duplicating the write in THIS patch would be a
-    // redundant profile update whose transient failure could veto an
-    // otherwise-ready activation, so the draft patch must not carry it.
+  it('writes the seeded draft thinking in the profile patch so the /status fold cannot clobber it', async () => {
+    // The chain-tail /status fold would otherwise overwrite the seeded pick
+    // with the daemon's default — the pick must ride THIS patch.
     const activateSkill2 = vi.fn().mockResolvedValue(undefined);
     const persistSessionProfile2 = vi.fn().mockResolvedValue(true);
     const state2 = createState();
     state2.thinking = 'max';
+    const base = skillDeps(activateSkill2);
     const deps2: UseWorkspaceStateDeps = {
-      ...skillDeps(activateSkill2),
+      ...base,
       persistSessionProfile: persistSessionProfile2,
+      modelProvider: {
+        ...(base.modelProvider as unknown as Record<string, unknown>),
+        // Mirror the real gated read: the session's own seeded entry wins.
+        resolveThinkingForPrompt: async (sid: string) => state2.thinkingBySession[sid],
+      } as unknown as UseWorkspaceStateDeps['modelProvider'],
       // upsertSessionFront must actually land the new session in rawState.sessions
       // so startSessionAndActivateSkill can read its model.
       upsertSessionFront: vi.fn((s) => {
@@ -913,9 +925,64 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 
     expect(persistSessionProfile2).toHaveBeenCalledOnce();
     const patch = persistSessionProfile2.mock.calls[0]![0] as Record<string, unknown>;
-    expect(patch).toMatchObject({ model: 'kimi-code', planMode: true, swarmMode: false });
-    expect('thinking' in patch).toBe(false);
-    expect(activateSkill2).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
+    expect(patch).toMatchObject({ model: 'kimi-code', planMode: true, swarmMode: false, thinking: 'max' });
+    expect(activateSkill2).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new', {
+      skipThinkingPersist: true,
+    });
+  });
+
+  it('seeds the draft thinking pick before selectSession flips the active session', async () => {
+    // The thinking watcher re-resolves rawState.thinking from the new session's
+    // own entry the moment selection changes — a late seed flashes the default.
+    const activateSkill = vi.fn().mockResolvedValue(undefined);
+    const deps = skillDeps(activateSkill);
+    const state = createState();
+    state.thinking = 'max';
+    deps.upsertSessionFront = vi.fn((s) => {
+      state.sessions = [s, ...state.sessions.filter((x) => x.id !== s.id)];
+    });
+    let seededWhenSelected: string | undefined;
+    deps.syncSessionFromSnapshot = vi.fn(async (sessionId: string) => {
+      seededWhenSelected = state.thinkingBySession[sessionId];
+      return 'ok' as const;
+    });
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
+
+    expect(seededWhenSelected).toBe('max');
+    // A fresh-session /status fold would only report daemon defaults over the
+    // seeds — including the one fired inside the snapshot sync.
+    expect(deps.refreshSessionStatus).not.toHaveBeenCalled();
+    expect(deps.syncSessionFromSnapshot).toHaveBeenCalledWith('sess_new', { skipStatusRefresh: true });
+  });
+
+  it('shields the pending pick from daemon reports that predate the persist', async () => {
+    const activateSkill = vi.fn().mockResolvedValue(undefined);
+    let releasePersist!: (persisted: boolean) => void;
+    const persistSessionProfile = vi.fn(
+      () => new Promise<boolean>((r) => { releasePersist = r; }),
+    );
+    const deps = { ...skillDeps(activateSkill), persistSessionProfile };
+    const state = createState();
+    state.thinking = 'max';
+    const ws = useWorkspaceState(state, deps);
+
+    const pending = ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
+    // Reach the in-flight persist: the pick is seeded but unacknowledged.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(state.pendingThinkingBySession['sess_new']).toBeDefined();
+    // A stale daemon report must not fold over the unacknowledged pick.
+    foldDaemonThinkingLevel(state, 'sess_new', 'high');
+    expect(state.thinkingBySession['sess_new']).toBe('max');
+
+    releasePersist(true);
+    await pending;
+
+    expect(state.thinkingBySession['sess_new']).toBe('max');
+    expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new', {
+      skipThinkingPersist: true,
+    });
   });
 
   it('is a no-op for an unknown workspace', async () => {
