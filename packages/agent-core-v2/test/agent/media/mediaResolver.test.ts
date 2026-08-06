@@ -642,6 +642,151 @@ describe('AgentMediaResolverService image strategy', () => {
       { type: 'text', text: `<image path="${IMAGE_FALLBACK_PATH}"></image>` },
     ]);
   });
+
+  it('memoizes an inlined image across resolves without re-reading the bytes', async () => {
+    const files = new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]);
+    const base = fileService(files);
+    let gets = 0;
+    const counting: IFileService = {
+      ...base,
+      get: async (fileId) => {
+        gets++;
+        return base.get(fileId);
+      },
+    };
+    const res = new AgentMediaResolverService(
+      counting,
+      blobStore(),
+      telemetry,
+      new AgentStateService(),
+      stubMediaStore(),
+    );
+    const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH));
+    const expected = {
+      type: 'image_url',
+      imageUrl: { url: `data:image/png;base64,${PNG_BYTES.toString('base64')}` },
+    };
+
+    const first = await res.resolve([message], requester({}));
+    // The memo is requester-independent: a later step on another provider /
+    // protocol reuses the same inline part.
+    const second = await res.resolve(
+      [message],
+      requester({ providerType: 'other', protocol: 'anthropic' }),
+    );
+
+    expect(firstPart(first)).toEqual(expected);
+    expect(firstPart(second)).toEqual(expected);
+    expect(gets).toBe(1);
+  });
+
+  it('serves the memoized inline part after the transient upload is released', async () => {
+    const files = new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]);
+    const res = new AgentMediaResolverService(
+      fileService(files),
+      blobStore(),
+      telemetry,
+      new AgentStateService(),
+      stubMediaStore(),
+    );
+    const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH));
+
+    await res.resolve([message], requester({}));
+    files.delete(FILE_ID);
+    const out = await res.resolve([message], requester({}));
+
+    expect(firstPart(out)).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/png;base64,${PNG_BYTES.toString('base64')}` },
+    });
+  });
+
+  it('re-reads an oversized image instead of pinning its base64 in agent state', async () => {
+    const bigBytes = Buffer.concat([PNG_BYTES, Buffer.alloc(8 * 1024 * 1024)]);
+    const files = new Map([[FILE_ID, { name: 'pic.png', bytes: bigBytes }]]);
+    const base = fileService(files);
+    let gets = 0;
+    const counting: IFileService = {
+      ...base,
+      get: async (fileId) => {
+        gets++;
+        return base.get(fileId);
+      },
+    };
+    const res = new AgentMediaResolverService(
+      counting,
+      blobStore(),
+      telemetry,
+      new AgentStateService(),
+      stubMediaStore(),
+    );
+    const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH));
+
+    const first = await res.resolve([message], requester({}));
+    const second = await res.resolve([message], requester({}));
+
+    expect(firstPart(first)).toEqual(firstPart(second));
+    expect(gets).toBe(2);
+  });
+
+  it('does not populate the memo when the model cannot ingest images', async () => {
+    const files = new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]);
+    const base = fileService(files);
+    let gets = 0;
+    const counting: IFileService = {
+      ...base,
+      get: async (fileId) => {
+        gets++;
+        return base.get(fileId);
+      },
+    };
+    const res = new AgentMediaResolverService(
+      counting,
+      blobStore(),
+      telemetry,
+      new AgentStateService(),
+      stubMediaStore(),
+    );
+    const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH));
+
+    const degraded = await res.resolve([message], requester({ imageIn: false }));
+    const out = await res.resolve([message], requester({}));
+
+    expect(firstPart(degraded)).toEqual({
+      type: 'text',
+      text: `<image path="${IMAGE_FALLBACK_PATH}"></image>`,
+    });
+    expect(firstPart(out)).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/png;base64,${PNG_BYTES.toString('base64')}` },
+    });
+    expect(gets).toBe(1);
+  });
+
+  it('does not memoize a degrade, resolving inline once the bytes become readable', async () => {
+    const files = new Map<string, { name: string; bytes: Buffer }>();
+    const res = new AgentMediaResolverService(
+      fileService(files),
+      blobStore(),
+      telemetry,
+      new AgentStateService(),
+      stubMediaStore(),
+    );
+    const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH));
+
+    const degraded = await res.resolve([message], requester({}));
+    files.set(FILE_ID, { name: 'pic.png', bytes: PNG_BYTES });
+    const out = await res.resolve([message], requester({}));
+
+    expect(firstPart(degraded)).toEqual({
+      type: 'text',
+      text: `<image path="${IMAGE_FALLBACK_PATH}"></image>`,
+    });
+    expect(firstPart(out)).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/png;base64,${PNG_BYTES.toString('base64')}` },
+    });
+  });
 });
 
 describe('AgentMediaResolverService session-canonical display path', () => {

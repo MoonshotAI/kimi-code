@@ -27,8 +27,13 @@
  * fallback.
  *
  * Image: inlines the bytes as a base64 `data:` `image_url` part — kosong has
- * no image upload channel, so there is nothing to memoize or persist. The
- * bytes are sniffed (`detectFileType`) and gated against the provider-
+ * no image upload channel, so there is no provider reference to persist. The
+ * inline part depends only on the immutable upload bytes, not on the
+ * requester, so a successful inline is memoized per file id (size-bounded)
+ * and reused across steps, retries, and media-recovery reprojections instead
+ * of re-reading and re-encoding the same bytes on every request; the degrade
+ * forms are never memoized because they depend on the message's tag pairing.
+ * The bytes are sniffed (`detectFileType`) and gated against the provider-
  * accepted image formats (`isModelAcceptedImageMime`) as defense in depth —
  * the ingest edges already refuse unaccepted formats. A reference that
  * cannot be inlined (model without `image_in`, unreadable bytes, non-image
@@ -95,6 +100,12 @@ const VIDEO_UNAVAILABLE_TEXT =
   '[video omitted: the uploaded file is no longer available]';
 const IMAGE_UNAVAILABLE_TEXT =
   '[image omitted: the uploaded file is no longer available]';
+/**
+ * A memoized inline image keeps its base64 form alive in agent state for the
+ * agent's lifetime; skip the memo for outsized uploads so a rare huge paste
+ * is re-read from disk per request instead of pinning memory.
+ */
+const IMAGE_MEMO_MAX_BYTES = 8 * 1024 * 1024;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -142,6 +153,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       // carrying the same path); a bare or unclaimed reference gets the tag
       // synthesized from its path.
       const pairing = pairMediaPathTagRefs(message.content);
+      let sawVideoRef = false;
       for (const [index, part] of message.content.entries()) {
         if (part.type === 'text' && pairing.claimedTagIndices.has(index)) {
           content.push(await this.refreshClaimedTag(message.content, pairing, index));
@@ -152,6 +164,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
           content.push(part);
           continue;
         }
+        sawVideoRef ||= daemonPart.kind === 'video';
         const claimed = pairing.claimedPathByRefIndex.has(index);
         const resolved =
           daemonPart.kind === 'video'
@@ -159,7 +172,15 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
             : await this.resolveImagePart(daemonPart.ref, requester, signal, claimed);
         if (resolved !== undefined) content.push(resolved);
       }
-      out.push({ ...message, content: content.length > 0 ? content : [unavailableImageText()] });
+      // A message whose parts were all dropped keeps one kind-matching
+      // placeholder so its content never goes empty.
+      out.push({
+        ...message,
+        content:
+          content.length > 0
+            ? content
+            : [unavailableMediaText(sawVideoRef ? 'video' : 'image')],
+      });
       changed = true;
     }
     return changed ? out : messages;
@@ -186,7 +207,8 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   }
 
   // -------------------------------------------------------------------------
-  // Image strategy — inline-only; no provider upload, no memoization.
+  // Image strategy — inline-only; no provider upload; the inline part itself
+  // is memoized per file id, degrade forms are not.
   // -------------------------------------------------------------------------
 
   private async resolveImagePart(
@@ -195,8 +217,15 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     signal: AbortSignal | undefined,
     hasAdjacentPathTag: boolean,
   ): Promise<ContentPart | undefined> {
+    if (!requester.model.capabilities.image_in) {
+      return degradedImage(hasAdjacentPathTag, await this.displayPath(ref));
+    }
+    // Memo hit: the inline part is requester-independent, so a previous
+    // successful resolve is reused without touching the bytes again.
+    const cacheKey = `image\0${ref.fileId}`;
+    const memoed = this.resolved.get(cacheKey);
+    if (memoed !== undefined) return memoed;
     const path = await this.displayPath(ref);
-    if (!requester.model.capabilities.image_in) return degradedImage(hasAdjacentPathTag, path);
 
     let source: { readonly bytes: Buffer; readonly filename: string };
     try {
@@ -214,12 +243,14 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     if (fileType.kind !== 'image') return degradedImage(hasAdjacentPathTag, path);
     if (!isModelAcceptedImageMime(fileType.mimeType)) return degradedImage(hasAdjacentPathTag, path);
 
-    return {
+    const part: ContentPart = {
       type: 'image_url',
       imageUrl: {
         url: `data:${normalizeImageMime(fileType.mimeType)};base64,${source.bytes.toString('base64')}`,
       },
     };
+    if (source.bytes.length <= IMAGE_MEMO_MAX_BYTES) this.resolved.set(cacheKey, part);
+    return part;
   }
 
   // -------------------------------------------------------------------------
@@ -361,13 +392,13 @@ function hasDaemonFileMediaPart(message: Message): boolean {
 }
 
 function degradedImage(hasAdjacentPathTag: boolean, path: string | undefined): ContentPart | undefined {
-  if (path === undefined) return unavailableImageText();
+  if (path === undefined) return unavailableMediaText('image');
   if (hasAdjacentPathTag) return undefined;
   return { type: 'text', text: buildMediaPathTag('image', path) };
 }
 
-function unavailableImageText(): ContentPart {
-  return { type: 'text', text: IMAGE_UNAVAILABLE_TEXT };
+function unavailableMediaText(kind: 'image' | 'video'): ContentPart {
+  return { type: 'text', text: kind === 'video' ? VIDEO_UNAVAILABLE_TEXT : IMAGE_UNAVAILABLE_TEXT };
 }
 
 function videoTag(path: string | undefined): ContentPart {
