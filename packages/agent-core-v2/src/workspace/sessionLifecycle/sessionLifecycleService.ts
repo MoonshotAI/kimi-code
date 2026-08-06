@@ -109,6 +109,7 @@ import {
   type SessionLifecycleHookSlots,
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { drainSessionMetadataWrites } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { sessionSkillCatalogDataSeed } from '#/session/sessionSkillCatalog/skillCatalogData';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -427,6 +428,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
     this.sessions.delete(sessionId);
     await this.drainAgents(handle);
+    // Event-driven metadata writes (e.g. the outcome recorder) must settle
+    // before the scope — and for delete(), the session dir — goes away.
+    await drainSessionMetadataWrites();
     handle.dispose();
     this._onDidCloseSession.fire({ sessionId });
   }
@@ -443,6 +447,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     });
     await this.announceWillClose({ sessionId, handle, reason: 'archive' });
     this.sessions.delete(sessionId);
+    await drainSessionMetadataWrites();
     handle.dispose();
     this._onDidArchiveSession.fire({ sessionId });
   }
