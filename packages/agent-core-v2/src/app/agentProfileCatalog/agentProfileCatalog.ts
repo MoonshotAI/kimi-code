@@ -29,12 +29,13 @@
  * Profiles reach agents through the Contribution / Registry / Catalog
  * extension point: loaders (builtin code contributions via
  * `registerAgentProfile(...)`, plugin / user file scans at App scope,
- * workspace / extra / explicit file scans at Workspace scope) register
- * `AgentProfileContribution`s into the App-scope `IAgentProfileRegistry`,
- * keyed by source id; the Session-scope `ISessionAgentProfileCatalog`
- * projects the registry into the merged, name-deduped read view that
- * consumers (the `Agent` tool, the swarm scheduler, the per-agent profile
- * binding) resolve profiles through.
+ * workspace / extra / explicit file scans at Workspace scope) contribute
+ * `AgentProfileContribution` records to the collection, keyed by source id;
+ * the App-scope `IAgentProfileRegistry` fold projects them into its read
+ * surface, and the Session-scope `ISessionAgentProfileCatalog` projects the
+ * registry into the merged, name-deduped read view that consumers (the
+ * `Agent` tool, the swarm scheduler, the per-agent profile binding) resolve
+ * profiles through.
  */
 
 import type { ILogger } from '#/_base/log/log';

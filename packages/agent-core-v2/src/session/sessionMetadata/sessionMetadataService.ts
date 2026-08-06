@@ -23,11 +23,16 @@
  * derived store (no mirror flush, no query-store lock). First-time creation in
  * `load()` records too — a new session must appear in listings immediately
  * (the mirror's pending queue feeds the index's read-your-writes merge);
- * loading an *existing* document (session resume) stays silent.
+ * loading an *existing* document (session resume) stays silent. Queued writes
+ * are tracked in a module-level pending set, drained through
+ * `drainSessionMetadataWrites()` by hosts before the sessions root may be
+ * torn down (the query-store/mirror drain pattern); a patch still queued
+ * when the scope is disposed is dropped rather than written into a teardown.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
@@ -48,13 +53,21 @@ import {
 
 const META_KEY = 'state.json';
 
+const pendingWrites = new Set<Promise<void>>();
+
+export async function drainSessionMetadataWrites(): Promise<void> {
+  await Promise.all(pendingWrites);
+}
+
 export const sessionMetadataDataKey = defineState<SessionMeta | undefined>(
   'sessionMetadata.data',
   () => undefined,
 );
 
-export class SessionMetadata extends Disposable implements ISessionMetadata {
+export class SessionMetadata extends Service implements ISessionMetadata {
   declare readonly _serviceBrand: undefined;
+
+  private disposed = false;
   readonly ready: Promise<void>;
   readonly onDidChangeMetadata: Event<SessionMetadataChangedEvent>;
 
@@ -72,6 +85,11 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
   ) {
     super();
+    this._register({
+      dispose: () => {
+        this.disposed = true;
+      },
+    });
     this.states.register(sessionMetadataDataKey);
     this.scope = ctx.metaScope;
     this.onDidChangeMetadata = this._onDidChangeMetadata.event;
@@ -91,14 +109,23 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     return this.data;
   }
 
-  async update(patch: SessionMetaPatch): Promise<void> {
-    return this.enqueueUpdate(() => this.applyUpdate(patch));
+  async update(
+    patch: SessionMetaPatch,
+    opts?: { readonly touchUpdatedAt?: boolean },
+  ): Promise<void> {
+    return this.enqueueUpdate(() => this.applyUpdate(patch, opts));
   }
 
-  private async applyUpdate(patch: SessionMetaPatch): Promise<void> {
+  private async applyUpdate(
+    patch: SessionMetaPatch,
+    opts?: { readonly touchUpdatedAt?: boolean },
+  ): Promise<void> {
     await this.ready;
-    this.data = { ...this.data, ...patch, updatedAt: Date.now() };
+    if (this.disposed) return;
+    const updatedAt = opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now();
+    this.data = { ...this.data, ...patch, updatedAt };
     await this.store.set(this.scope, META_KEY, this.data);
+    if (this.disposed) return;
     this.mirrorToReadModel();
     this._onDidChangeMetadata.fire({
       changed: Object.keys(patch) as (keyof SessionMeta)[],
@@ -125,7 +152,10 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
 
   private enqueueUpdate(work: () => Promise<void>): Promise<void> {
     const run = this.updateQueue.then(work, work);
-    this.updateQueue = run.catch(() => {});
+    const tracked = run.catch(() => {});
+    this.updateQueue = tracked;
+    pendingWrites.add(tracked);
+    void tracked.finally(() => pendingWrites.delete(tracked));
     return run;
   }
 
@@ -141,6 +171,7 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
         updatedAt: this.data.updatedAt,
         archived: this.data.archived === true,
         custom: this.data.custom,
+        lastTurnReason: this.data.lastTurnReason,
       }),
     );
   }

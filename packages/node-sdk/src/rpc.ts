@@ -26,6 +26,7 @@ import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
+  AgentCommandInfo,
   BackgroundTaskInfo,
   ConfigDiagnostics,
   CreateSessionOptions,
@@ -126,6 +127,11 @@ export interface ActivateSkillRpcInput extends SessionIdRpcInput {
 export interface ActivatePluginCommandRpcInput extends SessionIdRpcInput {
   readonly pluginId: string;
   readonly commandName: string;
+  readonly args?: string | undefined;
+}
+
+export interface RunCommandRpcInput extends SessionIdRpcInput {
+  readonly name: string;
   readonly args?: string | undefined;
 }
 
@@ -848,6 +854,26 @@ export abstract class SDKRpcClientBase {
       commandName: input.commandName,
       args: input.args,
     });
+  }
+
+  /**
+   * Contributed commands of the session's interactive agent. The
+   * contributed-command seam exists only in the agent-core-v2 engine, so the
+   * base implementation reports the empty set and rejects runs with a coded
+   * error (same shape as `replaceConfigSections`); only the v2 client
+   * overrides these.
+   */
+  async listCommands(input: SessionIdRpcInput): Promise<readonly AgentCommandInfo[]> {
+    void input;
+    return [];
+  }
+
+  async runCommand(input: RunCommandRpcInput): Promise<void> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support contributed commands.',
+    );
   }
 
   onEvent(listener: (event: Event) => void): Unsubscribe {

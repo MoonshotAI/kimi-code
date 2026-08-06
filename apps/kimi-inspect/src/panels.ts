@@ -21,7 +21,7 @@ import { IAgentGoalService } from '@moonshot-ai/agent-core-v2/agent/goal/goal';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
-import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
+import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/agent/swarm/swarm';

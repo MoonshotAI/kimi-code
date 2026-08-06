@@ -1109,6 +1109,7 @@ export interface SessionWireFields {
   readonly updatedAt: number;
   readonly archived: boolean;
   readonly custom?: Record<string, unknown>;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export function toWireSession(
@@ -1125,7 +1126,11 @@ export function toWireSession(
     busy: facts.busy,
     main_turn_active: facts.mainTurnActive,
     pending_interaction: facts.pendingInteraction,
-    last_turn_reason: facts.lastTurnReason,
+    // Live facts win for warm sessions; only a cold session (no live handle)
+    // falls back to the persisted outcome — a warm session mid-turn must not
+    // report a stale earlier outcome.
+    last_turn_reason:
+      facts.lastTurnReason ?? (facts.live === false ? fields.lastTurnReason : undefined),
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
     metadata: buildWireMetadata(fields.custom, cwd),
@@ -1143,6 +1148,9 @@ export interface SessionFacts {
   readonly mainTurnActive: boolean;
   readonly pendingInteraction: SessionPendingInteraction;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+  /** False when no live handle exists (cold session); live warm sessions
+   *  always report their own outcome, never the persisted fallback. */
+  readonly live?: boolean;
 }
 
 /**
@@ -1159,9 +1167,10 @@ export function resolveSessionFacts(core: Scope, sessionId: string): SessionFact
       busy: false,
       mainTurnActive: false,
       pendingInteraction: 'none',
+      live: false,
     };
   }
-  return handle.accessor.get(ISessionActivityView).state();
+  return { ...handle.accessor.get(ISessionActivityView).state(), live: true };
 }
 
 /**

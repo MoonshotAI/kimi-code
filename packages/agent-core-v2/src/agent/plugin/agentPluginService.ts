@@ -10,8 +10,9 @@
  * through `log`. Bound at Agent scope.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -31,7 +32,7 @@ const SESSION_START_INJECTION_VARIANT = 'plugin_session_start';
 
 const MAIN_AGENT_ID = 'main';
 
-export class AgentPluginService extends Disposable implements IAgentPluginService {
+export class AgentPluginService extends Service implements IAgentPluginService {
   declare readonly _serviceBrand: undefined;
 
   constructor(

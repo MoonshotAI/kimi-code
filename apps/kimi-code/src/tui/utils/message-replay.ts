@@ -1,6 +1,7 @@
 import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
+  BackgroundTaskStatus,
   ContentPart,
   ContextMessage,
   PromptOrigin,
@@ -17,6 +18,7 @@ import type {
   TranscriptEntry,
 } from '#/tui/types';
 
+import { modelDisplayName } from '../components/dialogs/model-selector';
 import { mediaUrlPartToText } from './media-url';
 import { nextTranscriptId } from './transcript-id';
 
@@ -100,6 +102,7 @@ export function countActiveBackgroundTasks(tasks: ReadonlyMap<string, Background
 
 export function replayBackgroundProjection(
   background: readonly BackgroundTaskInfo[],
+  availableModels?: AppState['availableModels'],
 ): ReplayBackgroundProjection {
   const backgroundAgentMetadata = new Map<string, BackgroundAgentMetadata>();
   for (const info of background) {
@@ -110,6 +113,20 @@ export function replayBackgroundProjection(
       agentId,
       parentToolCallId: info.taskId,
       description: info.description,
+      // The persisted task record carries the spawn-time model/effort (v2);
+      // keep them across a resume so the terminal transcript entry can show
+      // them. Model maps through the catalog like the live path; boolean
+      // effort states carry no level and are dropped.
+      model:
+        info.model === undefined
+          ? undefined
+          : modelDisplayName(info.model, availableModels?.[info.model]),
+      effort:
+        info.thinkingEffort === undefined ||
+        info.thinkingEffort === 'off' ||
+        info.thinkingEffort === 'on'
+          ? undefined
+          : info.thinkingEffort,
     });
   }
   return { backgroundAgentMetadata };
@@ -204,10 +221,26 @@ export function contentPartsToText(content: readonly ContentPart[]): string {
   return content.map(contentPartToText).join('');
 }
 
+/**
+ * agent-core-v2's task domain persists the terminal notification under the
+ * 'task' spelling (v1 used 'background_task'); both reach replay verbatim.
+ */
+export interface TaskNotificationOrigin {
+  readonly kind: 'task';
+  readonly taskId: string;
+  readonly status: BackgroundTaskStatus;
+  readonly notificationId: string;
+}
+
+export type BackgroundTaskNotificationOrigin =
+  | Extract<PromptOrigin, { kind: 'background_task' }>
+  | TaskNotificationOrigin;
+
 export function backgroundOrigin(
   message: ContextMessage,
-): Extract<PromptOrigin, { kind: 'background_task' }> | undefined {
-  return message.origin?.kind === 'background_task' ? message.origin : undefined;
+): BackgroundTaskNotificationOrigin | undefined {
+  const origin = message.origin as BackgroundTaskNotificationOrigin | undefined;
+  return origin?.kind === 'background_task' || origin?.kind === 'task' ? origin : undefined;
 }
 
 export function skillActivationFromOrigin(

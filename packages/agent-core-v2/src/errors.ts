@@ -12,6 +12,7 @@ import { ProtocolErrors } from '#/kosong/protocol/errors';
 import { ConfigErrors } from '#/app/config/errors';
 import { CapabilityErrors } from '#/app/capability/errors';
 import { CronErrors } from '#/app/cron/errors';
+import { DebugErrors } from '#/debug/errors';
 import { FileErrors } from '#/app/file/fileService';
 import { FsErrors } from '#/workspace/workspaceFs/internal/errors';
 import { FullCompactionErrors } from '#/agent/fullCompaction/errors';
@@ -47,6 +48,7 @@ export { ProtocolErrors } from '#/kosong/protocol/errors';
 export { ConfigErrors } from '#/app/config/errors';
 export { CapabilityErrors } from '#/app/capability/errors';
 export { CronErrors } from '#/app/cron/errors';
+export { DebugErrors } from '#/debug/errors';
 export { FileErrors } from '#/app/file/fileService';
 export { FsErrors } from '#/workspace/workspaceFs/internal/errors';
 export { FullCompactionErrors } from '#/agent/fullCompaction/errors';
@@ -79,6 +81,7 @@ export const ErrorCodes = {
   ...ConfigErrors.codes,
   ...CapabilityErrors.codes,
   ...CronErrors.codes,
+  ...DebugErrors.codes,
   ...FileErrors.codes,
   ...FsErrors.codes,
   ...FullCompactionErrors.codes,

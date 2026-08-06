@@ -86,6 +86,34 @@ describe('McpConnectionManager', () => {
     }
   }, 20000);
 
+  it('markRemoved tombstones the entry: client closed, entry kept, reconnect rejected, re-connect revives', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      await cm.connectAll({ alpha: stdioConfig() });
+      expect(cm.get('alpha')?.status).toBe('connected');
+
+      const statuses: string[] = [];
+      cm.onStatusChange((entry) => statuses.push(`${entry.name}:${entry.status}`));
+
+      expect(await cm.markRemoved('alpha')).toBe(true);
+      const entry = cm.get('alpha');
+      expect(entry?.status).toBe('removed');
+      expect(entry?.toolCount).toBe(0);
+      expect(cm.resolved('alpha')).toBeUndefined();
+      expect(cm.list().map((e) => e.name)).toEqual(['alpha']);
+      expect(statuses).toContain('alpha:removed');
+      await expect(cm.reconnect('alpha')).rejects.toThrow('Unknown MCP server: alpha');
+
+      expect(await cm.markRemoved('missing')).toBe(false);
+
+      await cm.connect('alpha', stdioConfig());
+      expect(cm.get('alpha')?.status).toBe('connected');
+      expect(cm.resolved('alpha')).toBeDefined();
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
   it('marks HTTP servers failed when configured bearer token env var is missing', async () => {
     const cm = new McpConnectionManager({ envLookup: () => undefined });
     try {
