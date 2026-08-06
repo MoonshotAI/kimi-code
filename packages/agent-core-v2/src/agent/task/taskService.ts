@@ -40,8 +40,8 @@
 
 import { randomBytes } from 'node:crypto';
 import { join } from 'pathe';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import type { ContentPart } from '#/kosong/contract/message';
 
@@ -249,6 +249,7 @@ export const taskActiveTaskReminderPendingKey = defineState<boolean>(
   () => false,
 );
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
 

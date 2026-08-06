@@ -12,14 +12,15 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import type { ContentPart } from '#/kosong/contract/message';
 
 import type { ContextMessage, SkillActivationOrigin } from '#/agent/contextMemory/types';
 import { renderUserSlashSkillPrompt } from './prompt';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { Disposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { ErrorCodes, Error2 } from '#/errors';
 import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCatalog/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
@@ -30,7 +31,7 @@ import { IAgentSkillService, type SkillActivationInput } from './skill';
 import { skillActivate } from './skillOps';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 
-export class AgentSkillService extends Disposable implements IAgentSkillService {
+export class AgentSkillService extends Service implements IAgentSkillService {
   declare readonly _serviceBrand: undefined;
 
   constructor(

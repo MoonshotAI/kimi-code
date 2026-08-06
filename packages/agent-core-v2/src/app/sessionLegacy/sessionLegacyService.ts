@@ -11,11 +11,10 @@
 import type { GoalSnapshot } from '#/agent/goal/types';
 
 import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessionProtocol';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
   type IAgentScopeHandle,
   type ISessionScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -27,7 +26,7 @@ import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting'
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { IConfigService } from '#/app/config/config';

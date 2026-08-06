@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { LifecycleScope, type IAgentScopeHandle } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IConfigService } from '#/app/config/config';

@@ -19,12 +19,13 @@
  */
 
 import { createHash } from 'node:crypto';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import type { Tool as KosongTool } from '#/kosong/contract/tool';
 
-import { Disposable, type IDisposable } from "#/_base/di/lifecycle";
+import { type IDisposable } from "#/_base/di/lifecycle";
+import { Service } from "#/_base/di/service";
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
@@ -97,7 +98,7 @@ export const mcpDiscoveryWritesReadyKey = defineState<boolean>(
   () => false,
 );
 
-export class AgentMcpService extends Disposable implements IAgentMcpService {
+export class AgentMcpService extends Service implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
   private readonly mcpTools = new Map<string, McpToolRegistration>();
   private readonly pendingDiscoveries: Array<() => void> = [];

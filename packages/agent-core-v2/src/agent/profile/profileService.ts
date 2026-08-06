@@ -76,7 +76,8 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
@@ -209,6 +210,7 @@ export const profileEmittedPluginBudgetWarningsKey = defineState<Set<string>>(
   () => new Set(),
 );
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class AgentProfileService extends Disposable implements IAgentProfileService {
   declare readonly _serviceBrand: undefined;
 

@@ -16,17 +16,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { Error2, ErrorCodes, toErrorPayload } from '#/errors';
+import {
+  Error2,
+  ErrorCodes,
+  resetUnexpectedErrorHandler,
+  setUnexpectedErrorHandler,
+  toErrorPayload,
+} from '#/errors';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from '../../harness/snapshots';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
+import { createDecorator, type ProvideHandle } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { ConfigTarget, IConfigRegistry, IConfigService } from '#/app/config/config';
+import {
+  type ConfigSchema,
+  ConfigTarget,
+  IConfigRegistry,
+  IConfigService,
+  type RegisterSectionOptions,
+} from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
+import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import '#/app/cron/configSection';
 import type { CronConfig } from '#/app/cron/configSection';
@@ -544,9 +559,6 @@ describe('ConfigService env overlay (live)', () => {
   });
 
   it('deletes a scalar section on replace(undefined) — set(undefined) cannot', async () => {
-    // Contract the refresh host relies on: an explicit undefined in a refresh
-    // patch must DELETE the section. `set()` deep-merges, so an undefined
-    // scalar patch resolves back to the base value; only `replace()` deletes.
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(ILogService, stubLog());
@@ -814,15 +826,12 @@ describe('image config section', () => {
     const config = ix.get(IConfigService);
     await config.ready;
 
-    // A client echoing the env-overlaid section back (plus a genuine edit).
     await config.set(IMAGE_SECTION, { maxEdgePx: 1500, readByteBudget: 262144 });
 
-    // Runtime resolution still lets the env win…
     expect(config.get<ImageConfig>(IMAGE_SECTION)).toEqual({
       maxEdgePx: 1500,
       readByteBudget: 262144,
     });
-    // …but persistence drops the env-owned field and keeps the genuine edit.
     expect(config.inspect<ImageConfig>(IMAGE_SECTION).userValue).toEqual({
       readByteBudget: 262144,
     });
@@ -954,20 +963,17 @@ describe('loopControl config section', () => {
     const config = ix.get(IConfigService);
     await config.ready;
 
-    // A client echoing the env-overlaid section back (plus a genuine edit).
     await config.set(LOOP_CONTROL_SECTION, {
       maxStepsPerTurn: 7,
       maxAttemptsPerStep: 2,
       reservedContextSize: 5000,
     });
 
-    // Runtime resolution still lets the env win…
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
       maxStepsPerTurn: 7,
       maxAttemptsPerStep: 2,
       reservedContextSize: 5000,
     });
-    // …but persistence keeps the raw value and drops the env-only field.
     expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
       maxStepsPerTurn: 100,
       reservedContextSize: 5000,
@@ -1017,7 +1023,6 @@ describe('loopControl config section', () => {
 
     await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 50 });
 
-    // The invalid env value is ignored on both the read and the write path.
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(50);
     expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
       maxStepsPerTurn: 50,
@@ -1048,14 +1053,12 @@ describe('loopControl config section', () => {
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '7';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(7);
 
-    // A degraded env value falls back to the file, not to the previous override.
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = 'abc';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(100);
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '9';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(9);
 
-    // Unsetting falls back to the file as well, on both get() and getAll().
     delete env[LOOP_MAX_STEPS_PER_TURN_ENV];
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(100);
 
@@ -1086,9 +1089,6 @@ describe('loopControl config section', () => {
     const config = ix.get(IConfigService);
     await config.ready;
 
-    // The deprecated key no longer maps onto maxStepsPerTurn: the resolved
-    // section carries only the env override, and the raw user value is the
-    // un-normalized echo of the file (preserved, not applied).
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxStepsPerTurn: 7 });
     expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
       maxStepsPerRun: 100,
@@ -1164,8 +1164,6 @@ describe('loopControl config section', () => {
       config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7, reservedContextSize: 5000 }),
     ).rejects.toThrow();
 
-    // Nothing is persisted: the invalid value stays quarantined on disk and
-    // the accompanying valid edit is not written either.
     const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
     expect(onDisk).toContain('max_steps_per_turn = -1');
     expect(onDisk).not.toContain('reserved_context_size');
@@ -1452,20 +1450,17 @@ describe('task config section', () => {
       '[background]\nmax_running_tasks = 3\n',
     );
 
-    // A client echoing the env-overlaid section back (plus a genuine edit).
     await config.set('background', {
       keepAliveOnExit: true,
       maxRunningTasks: 8,
       killGracePeriodMs: 25,
     });
 
-    // Runtime resolution still lets the env win…
     expect(config.get<AgentTaskConfig>('background')).toEqual({
       keepAliveOnExit: true,
       maxRunningTasks: 8,
       killGracePeriodMs: 25,
     });
-    // …but persistence keeps the raw value and drops the env-only field.
     expect(config.inspect<AgentTaskConfig>('background').userValue).toEqual({
       maxRunningTasks: 3,
       killGracePeriodMs: 25,
@@ -1480,7 +1475,6 @@ describe('task config section', () => {
 
     await config.set('background', { keepAliveOnExit: true });
 
-    // The invalid env value is ignored on both the read and the write path.
     expect(config.get<AgentTaskConfig>('background')?.keepAliveOnExit).toBe(true);
     expect(config.inspect<AgentTaskConfig>('background').userValue).toEqual({
       keepAliveOnExit: true,
@@ -1707,12 +1701,9 @@ describe('subagent config section', () => {
     const env: Record<string, string> = { [SUBAGENT_TIMEOUT_ENV]: '7000' };
     const { config, disposables } = await createConfig(env, '[subagent]\ntimeout_ms = 5000\n');
 
-    // A client echoing the env-overlaid section back.
     await config.set(SUBAGENT_SECTION, { timeoutMs: 7000 });
 
-    // Runtime resolution still lets the env win…
     expect(resolveSubagentTimeoutMs(config)).toBe(7000);
-    // …but persistence keeps the raw value.
     expect(config.inspect<SubagentConfig>(SUBAGENT_SECTION).userValue).toEqual({
       timeoutMs: 5000,
     });
@@ -1724,9 +1715,6 @@ describe('subagent config section', () => {
     const env: Record<string, string> = { [SUBAGENT_TIMEOUT_ENV]: '7000' };
     const { config, disposables } = await createConfig(env);
 
-    // A client echoing the env-overlaid section back: nothing persistable
-    // remains, so the raw section is cleared instead of shadowing the default
-    // with an empty object.
     await config.set(SUBAGENT_SECTION, { timeoutMs: 7000 });
 
     expect(resolveSubagentTimeoutMs(config)).toBe(7000);
@@ -1757,8 +1745,6 @@ describe('subagent config section', () => {
     noModel.disposables.dispose();
 
     const withModel = await createConfig({}, '[secondary_model]\nmodel = "provider/secondary"\n');
-    // Pointer-only recipe: bind the pointed entry directly; thinking resolves
-    // naturally (no inheriting the caller's level).
     expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/secondary',
       thinking: undefined,
@@ -1775,14 +1761,11 @@ describe('subagent config section', () => {
       {},
       '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
     );
-    // Patch fields bind the synthesized derived entry; default_effort is the
-    // explicit subagent thinking.
     expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own)).toEqual({
       model: SECONDARY_DERIVED_MODEL_ID,
       thinking: 'low',
       displayModel: 'provider/secondary',
     });
-    // default_effort only applies together with the secondary model.
     expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
@@ -1875,14 +1858,12 @@ describe('subagent config section', () => {
   });
 
   it('passes through config-invalid failures that are not a missing bound alias', () => {
-    // A malformed [models.*] entry fails without details.model.
     const malformed = new Error2(
       ErrorCodes.CONFIG_INVALID,
       'Model "provider/secondary" must declare a wire protocol (config: models.<id>.protocol).',
     );
     expect(wrapSubagentModelError(malformed, 'provider/secondary', 'provider/main')).toBe(malformed);
 
-    // A missing alias that is not the bound model.
     const unrelated = new Error2(
       ErrorCodes.CONFIG_INVALID,
       'Model "provider/other" is not configured in config.toml.',
@@ -1925,7 +1906,6 @@ describe('secondaryModel config section', () => {
     expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/env-secondary');
     expect(resolveSecondaryModel(config, secondaryModelFlags())?.defaultEffort).toBe('high');
 
-    // Blank env values are ignored.
     env[SECONDARY_MODEL_ENV] = '  ';
     expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/secondary');
 
@@ -1939,7 +1919,6 @@ describe('secondaryModel config section', () => {
       '[secondary_model]\nmodel = "provider/raw-secondary"\n',
     );
 
-    // A client echoing the env-overlaid section back.
     await config.set(SECONDARY_MODEL_SECTION, { model: 'provider/env-secondary' });
 
     expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/env-secondary');
@@ -1958,16 +1937,12 @@ describe('secondaryModel config section', () => {
     const domains: string[] = [];
     config.onDidSectionChange((e) => domains.push(e.domain));
 
-    // Runtime set with patch fields: the derived entry appears in the
-    // effective models view AND the models section event fires — the
-    // persistence bridge re-hydrates the registry from that event.
     await config.set(SECONDARY_MODEL_SECTION, { model: 'k2', maxOutputSize: 8192 });
     const models = config.get<Record<string, unknown>>(MODELS_SECTION) ?? {};
     expect(models[SECONDARY_DERIVED_MODEL_ID]).toBeDefined();
     expect(domains).toContain(SECONDARY_MODEL_SECTION);
     expect(domains).toContain(MODELS_SECTION);
 
-    // Removing the patch retracts the derived entry and fires again.
     domains.length = 0;
     await config.replace(SECONDARY_MODEL_SECTION, { model: 'k2' });
     const after = config.get<Record<string, unknown>>(MODELS_SECTION) ?? {};
@@ -2078,12 +2053,9 @@ describe('mcp config section', () => {
     const env: Record<string, string> = { [MCP_STARTUP_TIMEOUT_ENV]: '7000' };
     const { config, disposables } = await createConfig(env, '[mcp]\nstartup_timeout_ms = 5000\n');
 
-    // A client echoing the env-overlaid section back.
     await config.set(MCP_SECTION, { startupTimeoutMs: 7000 });
 
-    // Runtime resolution still lets the env win…
     expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(7000);
-    // …but persistence keeps the raw value.
     expect(config.inspect<McpSection>(MCP_SECTION).userValue).toEqual({
       startupTimeoutMs: 5000,
     });
@@ -2160,6 +2132,179 @@ describe('nested env bindings', () => {
     });
 
     disposables.dispose();
+  });
+});
+
+describe('config section collection fold (D12)', () => {
+  const RUNTIME_SECTION = 'runtimeFoldDemo';
+  const RUNTIME_NOTE_ENV = 'RUNTIME_FOLD_DEMO_NOTE';
+
+  interface RuntimeFoldDemo {
+    enabled: boolean;
+    note?: string;
+  }
+
+  const RuntimeFoldDemoSchema: ConfigSchema<RuntimeFoldDemo> = {
+    parse(value: unknown): RuntimeFoldDemo {
+      const demo = value as RuntimeFoldDemo;
+      if (typeof demo?.enabled !== 'boolean') {
+        throw new Error('runtimeFoldDemo.enabled must be a boolean');
+      }
+      return demo;
+    },
+  };
+
+  interface IRuntimeSectionContributor {
+    readonly marker: string;
+  }
+  const IRuntimeSectionContributor = createDecorator<IRuntimeSectionContributor>(
+    'test-runtime-section-contributor',
+  );
+
+  class RuntimeSectionContributor extends Service implements IRuntimeSectionContributor {
+    readonly marker = 'runtime-section-contributor';
+    constructor(contribution: ConfigSectionContribution) {
+      super();
+      this.provide(ConfigSectionContribution, contribution);
+    }
+  }
+
+  function sectionContribution<T>(
+    domain: string,
+    schema: ConfigSchema<T>,
+    options: RegisterSectionOptions<T> = {},
+  ): ConfigSectionContribution {
+    return {
+      domain,
+      schema: schema as ConfigSchema<unknown>,
+      options: options as RegisterSectionOptions<unknown>,
+    };
+  }
+
+  function provideContribution(
+    ix: TestInstantiationService,
+    contribution: ConfigSectionContribution,
+  ): ProvideHandle {
+    const handle = ix.provide(
+      IRuntimeSectionContributor,
+      new SyncDescriptor(RuntimeSectionContributor, [contribution] as never),
+    );
+    ix.invokeFunction((accessor) => accessor.get(IRuntimeSectionContributor));
+    return handle;
+  }
+
+  function setupFold(env: Record<string, string>) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    return { disposables, ix, storage };
+  }
+
+  it('activates a runtime-provided section: defaults, env bindings and validation apply', async () => {
+    const env: Record<string, string> = {};
+    const { disposables, ix } = setupFold(env);
+    const registry = ix.get(IConfigRegistry);
+    const config = ix.get(IConfigService);
+    await config.ready;
+    expect(registry.getSection(RUNTIME_SECTION)).toBeUndefined();
+
+    provideContribution(
+      ix,
+      sectionContribution(RUNTIME_SECTION, RuntimeFoldDemoSchema, {
+        defaultValue: { enabled: true },
+        env: { note: RUNTIME_NOTE_ENV },
+      }),
+    );
+
+    expect(registry.getSection(RUNTIME_SECTION)).toBeDefined();
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({ enabled: true });
+    env[RUNTIME_NOTE_ENV] = 'from-env';
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({
+      enabled: true,
+      note: 'from-env',
+    });
+    delete env[RUNTIME_NOTE_ENV];
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({ enabled: true });
+
+    await config.set(RUNTIME_SECTION, { enabled: false }, ConfigTarget.Memory);
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({ enabled: false });
+    await expect(
+      config.set(RUNTIME_SECTION, { enabled: 'nope' }, ConfigTarget.Memory),
+    ).rejects.toThrow('enabled');
+
+    disposables.dispose();
+  });
+
+  it('withdraws the section when the provider dies; TOML values survive, builtins untouched', async () => {
+    const env: Record<string, string> = {};
+    const { disposables, ix, storage } = setupFold(env);
+    const config = ix.get(IConfigService);
+    await config.ready;
+    const registry = ix.get(IConfigRegistry);
+    const builtinSection = registry.getSection(DEFAULT_PERMISSION_MODE_SECTION);
+
+    const handle = provideContribution(
+      ix,
+      sectionContribution(RUNTIME_SECTION, RuntimeFoldDemoSchema, {
+        defaultValue: { enabled: true },
+      }),
+    );
+    await config.set(RUNTIME_SECTION, { enabled: false, note: 'kept' }, ConfigTarget.User);
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({
+      enabled: false,
+      note: 'kept',
+    });
+
+    handle.dispose();
+    await ix.cascade.whenIdle();
+
+    expect(registry.getSection(RUNTIME_SECTION)).toBeUndefined();
+    const persisted = await storage.read('', 'config.toml');
+    expect(new TextDecoder().decode(persisted)).toContain('runtime_fold_demo');
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({
+      enabled: false,
+      note: 'kept',
+    });
+    expect(registry.getSection(DEFAULT_PERMISSION_MODE_SECTION)).toBe(builtinSection);
+    expect(registry.validate(DEFAULT_PERMISSION_MODE_SECTION, 'auto')).toBe('auto');
+
+    disposables.dispose();
+  });
+
+  it('logs — never throws — a record colliding with a builtin section, and the builtin survives', async () => {
+    const env: Record<string, string> = {};
+    const { disposables, ix } = setupFold(env);
+    const config = ix.get(IConfigService);
+    await config.ready;
+    const registry = ix.get(IConfigRegistry);
+    const builtinSection = registry.getSection(DEFAULT_PERMISSION_MODE_SECTION);
+
+    const logged: unknown[] = [];
+    setUnexpectedErrorHandler((err) => logged.push(err));
+    try {
+      const handle = provideContribution(
+        ix,
+        sectionContribution(DEFAULT_PERMISSION_MODE_SECTION, { parse: () => 'rogue' }),
+      );
+      expect(logged).toHaveLength(1);
+      expect(String(logged[0])).toContain('already registered');
+      expect(registry.getSection(DEFAULT_PERMISSION_MODE_SECTION)).toBe(builtinSection);
+      expect(registry.validate(DEFAULT_PERMISSION_MODE_SECTION, 'auto')).toBe('auto');
+
+      handle.dispose();
+      await ix.cascade.whenIdle();
+
+      expect(registry.getSection(DEFAULT_PERMISSION_MODE_SECTION)).toBe(builtinSection);
+    } finally {
+      resetUnexpectedErrorHandler();
+      disposables.dispose();
+    }
   });
 });
 
@@ -2245,7 +2390,6 @@ describe('ConfigService thinking effort max migration', () => {
 });
 
 describe('ConfigService replaceSections', () => {
-  // Top-level keys must precede every [table] header in TOML.
   const SEED_TOML = [
     'default_model = "acme/m1"',
     '',
@@ -2301,9 +2445,6 @@ describe('ConfigService replaceSections', () => {
     expect(config.get(DEFAULT_MODEL_SECTION)).toBeUndefined();
     expect(config.get(THINKING_SECTION)).toEqual({});
     expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
-    // `stripThinkingEnv` maps a clear to `{}` (`{...undefined}`), so the user
-    // layer collapses to an empty object instead of disappearing — the
-    // long-standing `replace(domain, undefined)` behavior, unchanged here.
     expect(config.inspect(THINKING_SECTION).userValue).toEqual({});
 
     disposables.dispose();
@@ -2325,8 +2466,6 @@ describe('ConfigService replaceSections', () => {
       acme: { type: 'openai', apiKey: 'sk-acme-2' },
     });
 
-    // `replace(domain, null)` clears too, so JSON transports behave
-    // identically to in-process `replace(domain, undefined)` callers.
     await config.replace(DEFAULT_MODEL_SECTION, 'acme/m1');
     await config.replace(DEFAULT_MODEL_SECTION, null);
     expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
@@ -2357,9 +2496,6 @@ describe('ConfigService replaceSections', () => {
       [THINKING_SECTION]: undefined,
     });
 
-    // Every event — including the very first one — already observes the fully
-    // applied state; no listener can catch the write half-applied. (The
-    // cleared thinking section still resolves to its schema default `{}`.)
     expect(snapshotDuringFirstEvent).toEqual({
       providers: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
       models: { 'acme/m2': { provider: 'acme', model: 'm2', maxContextSize: 2000 } },
@@ -2396,9 +2532,6 @@ describe('ConfigService replaceSections', () => {
     const { config, disposables, store } = await createSectionsConfig();
     const setSpy = vi.spyOn(store, 'set');
 
-    // Providers is applied first in key order and validates fine; thinking
-    // then fails schema validation (`enabled` must be a boolean). The batch
-    // must reject with NO observable partial application.
     await expect(
       config.replaceSections({
         [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },

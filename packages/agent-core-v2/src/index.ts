@@ -10,7 +10,33 @@ export * from '#/_base/di/instantiation';
 export * from '#/_base/di/instantiationService';
 export * from '#/_base/di/lifecycle';
 export * from '#/_base/di/scope';
+export * from './app/scopes';
 export * from '#/_base/di/serviceCollection';
+export * from '#/_base/di/cascadeEngine';
+export * from '#/_base/di/dependencyGraph';
+export * from '#/_base/lifecycle/ledger';
+export {
+  collection,
+  isCollectionToken,
+  type CollectionChange,
+  type CollectionRecord,
+  type CollectionToken,
+  type CollectionView,
+} from '#/_base/di/collection';
+export {
+  FiberProtocolError,
+  FiberState,
+  ScopeUnits,
+  ServiceRecipeError,
+  setFiberEventResolver,
+  type ConfigSchema,
+  type Fiber,
+  type FiberHandle,
+  type FiberProvideOptions,
+  type RecipeStatics,
+  type ServiceRecipe,
+} from '#/_base/di/fiber';
+export { Service } from '#/_base/di/service';
 export * from './errors';
 
 export * from '#/_base/log/log';
@@ -20,6 +46,7 @@ export * from '#/_base/log/fileLog';
 export * from '#/_base/log/logService';
 export * from '#/wire/wire';
 export * from '#/wire/wireService';
+export * from '#/wire/wireContribution';
 export * from '#/wire/record';
 export * from '#/wire/migration/migration';
 export * from '#/session/sessionLog/sessionLogService';
@@ -64,6 +91,7 @@ import '#/app/task/taskService';
 export { TaskService } from '#/app/task/taskService';
 import '#/app/event/eventBusService';
 import '#/app/event/eventService';
+import '#/app/event/fiberEventResolver';
 export { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 export { IEventService, type DomainEvent as GlobalEvent } from '#/app/event/event';
 export * from '#/_base/state/stateRegistry';
@@ -102,6 +130,7 @@ export * from '#/session/sessionToolPolicy/sessionToolPolicy';
 export * from '#/session/sessionToolPolicy/sessionToolPolicyService';
 export * from '#/app/config/config';
 export * from '#/app/config/configService';
+export * from '#/app/config/configSectionContributions';
 import '#/app/kosongConfig/configSection';
 export * from '#/kosong/provider/provider';
 export * from '#/kosong/provider/providerService';
@@ -189,6 +218,16 @@ export * from '#/app/capability/capability';
 export * from '#/app/capability/capabilityService';
 export * from '#/app/capability/errors';
 export * from '#/app/capability/types';
+export * from '#/app/feature/featureManager';
+import '#/app/feature/featureManagerService';
+export * from '#/features/feature';
+export * from '#/features/featureAssembly';
+export * from '#/features/featureRegistry';
+import '#/features/featureAssemblyService';
+export * from '#/agent/command/agentCommand';
+export * from '#/agent/command/commandContribution';
+import '#/agent/command/agentCommandService';
+export * from '#/debug/index';
 export * from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 export * from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoaderService';
 
@@ -248,15 +287,16 @@ export * from '#/app/flag/flagService';
 
 export * from '#/agent/activityView/activityView';
 import '#/agent/activityView/activityViewService';
-import '#/agent/plan/profile/plan';
-export * from '#/agent/tools/plan/enter-plan-mode/enter-plan-mode';
-import '#/agent/tools/plan/enter-plan-mode/enterPlanModeTool';
-export * from '#/agent/tools/plan/exit-plan-mode/exit-plan-mode';
-import '#/agent/tools/plan/exit-plan-mode/exitPlanModeTool';
-import '#/agent/plan/configSection';
-export * from '#/agent/plan/plan';
-export * from '#/agent/plan/planOps';
-export * from '#/agent/plan/planService';
+import '#/features/plan/profile/plan';
+export * from '#/features/plan/tools/enter-plan-mode/enter-plan-mode';
+import '#/features/plan/tools/enter-plan-mode/enterPlanModeTool';
+export * from '#/features/plan/tools/exit-plan-mode/exit-plan-mode';
+import '#/features/plan/tools/exit-plan-mode/exitPlanModeTool';
+export * from '#/features/plan/configSection';
+export * from '#/features/plan/plan';
+export * from '#/features/plan/planOps';
+export * from '#/features/plan/planService';
+import '#/features/plan/planFeature';
 export * from '#/agent/tools/goal/create-goal/create-goal';
 import '#/agent/tools/goal/create-goal/createGoalTool';
 export * from '#/agent/tools/goal/get-goal/get-goal';
@@ -608,8 +648,8 @@ import '#/agent/toolRegistry/toolRegistry';
 import '#/agent/toolRegistry/toolRegistryService';
 export { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 export { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-export { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
-export type { AgentToolContribution, AgentToolContributionOptions } from '#/agent/toolRegistry/toolContribution';
+export { registerAgentToolService, AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
+export type { AgentToolContributionOptions } from '#/agent/toolRegistry/toolContribution';
 export * from '#/agent/userTool/userTool';
 export * from '#/agent/userTool/userToolOps';
 export * from '#/agent/userTool/userToolService';

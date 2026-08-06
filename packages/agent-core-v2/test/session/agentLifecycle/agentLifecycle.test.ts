@@ -11,7 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
-import { type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -23,6 +24,8 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import '#/agent/permissionMode/permissionModeOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
@@ -167,6 +170,7 @@ describe('AgentLifecycleService', () => {
     _clearAgentToolContributionsForTests();
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
+    ix.set(ISessionStateService, new SessionStateService());
     ix.set(IAgentStateService, new AgentStateService());
     ix.stub(IAppendLogStore, recordingAppendLog().store);
     stubBlobPassThrough(ix);
@@ -355,10 +359,6 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       seedInjected: () => {},
     });
-    // The session's MCP readiness arrives through the seeded
-    // `ISessionMcpHandle`; the default handle carries an OAuth-wired manager
-    // over the test atomic document store so the agent mirror's OAuth
-    // surface stays exercisable.
     ix.stub(ISessionMcpHandle, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -660,8 +660,6 @@ describe('AgentLifecycleService', () => {
     } satisfies ISessionMcpHandle);
 
     const svc = ix.get(IAgentLifecycleService);
-    // MCP connects in the background; the agent's LLM steps wait on the
-    // seeded readiness promise instead of agent creation.
     const handle = await svc.create({ agentId: 'main' });
     expect(handle.id).toBe('main');
 
@@ -687,8 +685,6 @@ describe('AgentLifecycleService', () => {
     expect(early).toBeDefined();
 
     const joined = svc.create({ agentId: 'main' });
-    // doCreate awaits the wire-log seal before registerAgent, so the mock is
-    // invoked a few microtasks after create() — wait for the actual call.
     await registerCalled;
     releaseRegister();
     const handle = await joined;

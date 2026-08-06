@@ -122,6 +122,19 @@ export const agentContextDataSchema = z.object({
   tokenCount: z.number(),
 });
 
+/** `AgentCommandInfo` (`agent-core-v2/agent/command/agentCommand.ts`). */
+export const agentCommandInfoSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  source: z.string(),
+});
+
+/** Same shape as `RunCommandPayload` in the engine. */
+export const runCommandPayloadSchema = z.object({
+  name: z.string(),
+  args: z.string().optional(),
+});
+
 /** `PlanData = null | { id, content, path }` — null is JSON-representable. */
 export const planDataSchema = z.union([
   z.null(),
@@ -209,4 +222,9 @@ export const agentRpcContract = {
   cancel: { input: z.tuple([cancelPayloadSchema]), output: noResult },
   setPermission: { input: z.tuple([setPermissionPayloadSchema]), output: noResult },
   getContext: { input: z.tuple([emptyPayloadSchema]), output: agentContextDataSchema },
+  listCommands: {
+    input: z.tuple([emptyPayloadSchema]),
+    output: z.array(agentCommandInfoSchema),
+  },
+  runCommand: { input: z.tuple([runCommandPayloadSchema]), output: noResult },
 } satisfies ServiceContract;

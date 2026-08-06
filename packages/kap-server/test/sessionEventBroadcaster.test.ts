@@ -1074,6 +1074,44 @@ describe('SessionEventBroadcaster', () => {
     expect(s1View.envelopes[0]!.volatile).toBeUndefined();
   });
 
+  it('broadcasts event.di.unit_changed through the global state as a volatile event', async () => {
+    // The engine's DI debug feed (agent-core-v2's IDebugCascadeService) has no
+    // owning session: it routes through the global state ('__global__'
+    // watermark) and fans out to every established connection; being volatile
+    // it is never journaled.
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+
+    eventBus.emit({
+      type: 'event.di.unit_changed',
+      payload: { scope: 'app', token: 'debugCascadeService', state: 'Active' },
+    });
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'event.di.unit_changed',
+      session_id: '__global__',
+      volatile: true,
+      payload: {
+        type: 'event.di.unit_changed',
+        scope: 'app',
+        token: 'debugCascadeService',
+        state: 'Active',
+        agentId: 'main',
+        sessionId: '__global__',
+      },
+    });
+    expect(globalView.deliveries).toEqual(['immediate']);
+
+    // A malformed payload is dropped, never forwarded.
+    eventBus.emit({
+      type: 'event.di.unit_changed',
+      payload: { scope: 'app', token: 'x', state: 'Exploded' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(globalView.envelopes).toHaveLength(1);
+  });
+
   describe('global fan-out to unsubscribed connections', () => {
     it('delivers event.session.created to a global-only target that never subscribed', async () => {
       sessions.set('s1', new FakeLifecycle());

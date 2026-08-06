@@ -15,9 +15,9 @@ import { join } from 'pathe';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
+import { LifecycleScope } from '#/app/scopes';
 import {
   _clearScopedRegistryForTests,
-  LifecycleScope,
   registerScopedService,
 } from '#/_base/di/scope';
 import { Emitter, Event } from '#/_base/event';
@@ -228,9 +228,6 @@ async function withSkillCatalogWorkspace(
 
 describe('WorkspaceSkillCatalogService', () => {
   beforeEach(() => {
-    // Keep the scoped registry limited to the catalog chain these tests
-    // exercise so unrelated OnScopeCreated registrations do not run; every
-    // other dependency arrives as a seeded stub via `createScopedTestHost`.
     _clearScopedRegistryForTests();
     registerScopedService(LifecycleScope.App, IBuiltinSkillSource, BuiltinSkillSource);
     registerScopedService(LifecycleScope.App, IUserFileSkillSource, UserFileSkillSource);
@@ -285,7 +282,6 @@ describe('WorkspaceSkillCatalogService', () => {
     const contributions = states.get(workspaceSkillCatalogContributionsKey);
     expect([...contributions.keys()]).toContain('workspace');
     expect(states.get(workspaceSkillCatalogMergedKey)).toBe(catalog.catalog);
-    // A class instance collapses to a marker in the JSON-safe snapshot.
     expect(states.snapshot()['workspaceSkillCatalog.merged']).toBe('(InMemorySkillCatalog)');
     host.dispose();
   });

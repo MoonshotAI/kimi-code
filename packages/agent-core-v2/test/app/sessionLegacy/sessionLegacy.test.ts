@@ -12,11 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { type IAgentScopeHandle, type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { IConfigService } from '#/app/config/config';
@@ -45,7 +46,6 @@ function accessor(
   };
 }
 
-/** Stub the index → handler → session-lifecycle chain for one live session. */
 function stubSessionChain(ix: TestInstantiationService, session: ISessionScopeHandle): void {
   const handler = {
     id: 'wd',
@@ -129,8 +129,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
       dispose: () => {},
     };
     const agents = {
-      // create is create-or-get for explicit ids: this session's main agent
-      // already exists, so return it as-is (same as whenReady).
       create: () => Promise.resolve(agent),
       whenReady: () => Promise.resolve(agent),
       list: () => [agent],
@@ -158,11 +156,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
   });
 
   it('reports an empty thinking level for a never-bound main agent', async () => {
-    // A fresh session's main agent is materialized unbound (no Profile / Model
-    // — see kap-server's ensureMainAgent). The wire model's initial
-    // thinkingLevel is the zero value 'off'; reporting it would make clients
-    // fold a level nobody chose into the session's real state, so the status
-    // edge must report '' (mirroring `model: undefined`) instead.
     const profile = {
       _serviceBrand: undefined,
       data: () => ({
@@ -185,8 +178,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
-        // Unbound: assembleStatus resolves the default model's context cap,
-        // which reads the `defaultModel` config section first.
         [IConfigService, { get: () => undefined }],
         [
           IAgentActivityView,
@@ -288,8 +279,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
 
     const status = await ix.get(ISessionLegacyService).status('session-capped');
 
-    // 120k in context against the 100k input cap (not the 200k window):
-    // usage would exceed the wire schema bound and is clamped to 1.
     expect(status).toMatchObject({
       max_context_tokens: 100_000,
       context_usage: 1,

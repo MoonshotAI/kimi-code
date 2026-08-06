@@ -261,7 +261,6 @@ describe('IModelsDevImportService', () => {
     await imports.importModelsDevProvider({ catalogId: 'openai' });
     expect(config.get('defaultModel')).toBe('openai/gpt-4.1');
 
-    // A later import never moves the seeded pointer.
     await imports.importModelsDevProvider({
       catalogId: 'gateway',
       baseUrl: 'https://gw.example/v1',

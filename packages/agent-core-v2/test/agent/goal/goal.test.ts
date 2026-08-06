@@ -64,9 +64,6 @@ import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubAgentSwarm } from './stubs';
 
-// The real AgentSwarmService self-wires executor listeners and pulls in the
-// swarm runtime; goal tests never exercise swarm behavior, so every test
-// agent here stubs it out to keep the wiring focused on the goal domain.
 function createTestAgent(
   ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]
 ): TestAgentContext {

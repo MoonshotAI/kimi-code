@@ -12,9 +12,10 @@
 
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 
-import { Disposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { BugIndicatingError, Error2, PluginErrors } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IProviderService } from '#/kosong/provider/provider';
@@ -47,7 +48,7 @@ const KIMI_CODE_BASE_URL_ENV = 'KIMI_CODE_BASE_URL';
 const KIMI_CODE_OAUTH_HOST_ENV = 'KIMI_CODE_OAUTH_HOST';
 const KIMI_OAUTH_HOST_ENV = 'KIMI_OAUTH_HOST';
 
-export class PluginService extends Disposable implements IPluginService {
+export class PluginService extends Service implements IPluginService {
   declare readonly _serviceBrand: undefined;
 
   private readonly homeDir: string;

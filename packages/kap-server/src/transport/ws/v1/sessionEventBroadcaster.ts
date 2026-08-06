@@ -75,6 +75,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type {
   ConfigWarningItem,
+  DiUnitChangedEvent,
   SessionCreatedEvent,
   SessionMetaUpdatedEvent,
   Event,
@@ -896,6 +897,24 @@ export class SessionEventBroadcaster {
       } as Event).catch((error: unknown) =>
         this.logDispatchError(GLOBAL_SESSION_ID, 'event.config.warning', error),
       );
+      return;
+    }
+    if (event.type === 'event.di.unit_changed') {
+      const payload = diUnitChangedPayload(event.payload);
+      if (payload === undefined) return;
+      // Engine DI unit state transitions (the debug-surface feed) have no
+      // owning session: route through the global state so the envelope carries
+      // the '__global__' watermark, and let `isGlobalEvent` fan out to every
+      // connection. `VOLATILE_EVENT_TYPES` keeps the churn unjournaled.
+      void this.dispatchGlobal({
+        type: 'event.di.unit_changed',
+        ...payload,
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.di.unit_changed', error),
+      );
+      return;
     }
   }
 
@@ -1327,13 +1346,14 @@ function legacyTaskEvent(event: DomainEvent, agentId: string, sessionId: string)
   return { ...event, type: legacyType, agentId, sessionId } as unknown as Event;
 }
 
-/** Session/workspace/config events are broadcast to every connection. */
+/** Session/workspace/config/di events are broadcast to every connection. */
 function isGlobalEvent(type: string): boolean {
   return (
     type === 'session.meta.updated' ||
     type.startsWith('event.session.') ||
     type.startsWith('event.workspace.') ||
-    type.startsWith('event.config.')
+    type.startsWith('event.config.') ||
+    type.startsWith('event.di.')
   );
 }
 
@@ -1580,6 +1600,37 @@ function sessionMetaUpdatedSessionId(payload: unknown): string | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
   const sessionId = (payload as { sessionId?: unknown }).sessionId;
   return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
+}
+
+const DI_UNIT_STATES: ReadonlySet<string> = new Set([
+  'Pending',
+  'Activating',
+  'Active',
+  'Unloading',
+  'Failed',
+]);
+
+/**
+ * Validate the `event.di.unit_changed` payload published on the core
+ * `IEventService` by agent-core-v2's `IDebugCascadeService` (the debug
+ * surface's unit state feed). Malformed payloads are dropped, never forwarded.
+ */
+function diUnitChangedPayload(
+  payload: unknown,
+): Pick<DiUnitChangedEvent, 'scope' | 'token' | 'state' | 'error'> | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = payload as Partial<DiUnitChangedEvent>;
+  if (typeof candidate.scope !== 'string' || candidate.scope.length === 0) return undefined;
+  if (typeof candidate.token !== 'string' || candidate.token.length === 0) return undefined;
+  if (typeof candidate.state !== 'string' || !DI_UNIT_STATES.has(candidate.state)) {
+    return undefined;
+  }
+  return {
+    scope: candidate.scope,
+    token: candidate.token,
+    state: candidate.state as DiUnitChangedEvent['state'],
+    error: typeof candidate.error === 'string' ? candidate.error : undefined,
+  };
 }
 
 /**

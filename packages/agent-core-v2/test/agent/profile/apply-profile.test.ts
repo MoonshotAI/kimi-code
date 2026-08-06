@@ -265,7 +265,6 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
     expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
 
-    // A reload-driven re-render applies the budget again but does not warn twice.
     sections.value = [...sections.value, { pluginId: 'third', content: 'small' }];
     change.fire(PLUGIN_SKILL_SOURCE_ID);
     await vi.waitFor(() => {

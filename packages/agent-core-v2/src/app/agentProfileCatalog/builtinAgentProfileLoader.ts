@@ -2,7 +2,7 @@
  * `agentProfileCatalog` domain — `IBuiltinAgentProfileLoader` contract.
  *
  * The builtin loader of the agent-profile extension point: owns the global
- * `builtin` contribution (priority 0) in the App-scope `IAgentProfileRegistry`
+ * `builtin` record (priority 0) of the `AgentProfileContribution` collection
  * — the code-defined profiles accumulated at module load via
  * `registerAgentProfile(...)`. Also exposes the static `get` / `getDefault` /
  * `list` read view for loader-time consumers that need the builtin default

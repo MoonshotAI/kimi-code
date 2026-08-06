@@ -2,11 +2,13 @@
  * Scenario: agent-profile loaders + session catalog — the Contribution /
  * Registry / Catalog extension point end to end. Exercises the real loader
  * services (builtin / user / plugin / workspace / extra / explicit), the
- * App-scope `AgentProfileRegistryService`, and the Session-scope
- * `SessionAgentProfileCatalogService` as directly-constructed instances (no DI
- * scope host) against real temp directories: source-priority merge, the
- * builtin-override rule, explicit fatal semantics, config / plugin-reload /
- * fs-watch driven reloads, and SYSTEM.md interplay. Run:
+ * App-scope `AgentProfileRegistryService` fold, and the Session-scope
+ * `SessionAgentProfileCatalogService` — the loaders and the fold are resolved
+ * through one DI container (the `this.provide` collection-contribution path
+ * requires container-constructed units) against real temp directories:
+ * source-priority merge, the builtin-override rule, explicit fatal semantics,
+ * config / plugin-reload / fs-watch driven reloads, and SYSTEM.md interplay.
+ * Run:
  * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
  * test/workspace/workspaceAgentProfileLoader/agentProfileLoader.test.ts`.
  */
@@ -18,40 +20,52 @@ import { join } from 'pathe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
-import type { ILogService } from '#/_base/log/log';
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import type { ServiceIdentifier } from '#/_base/di/instantiation';
+import { InstantiationService } from '#/_base/di/instantiationService';
+import { ServiceCollection } from '#/_base/di/serviceCollection';
+import { ILogService } from '#/_base/log/log';
 import { EXTRA_AGENT_DIRS_SECTION } from '#/workspace/workspaceAgentProfileLoader/configSection';
 import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
-import type { PluginAgentRoot } from '#/app/plugin/types';
+import type { PluginAgentRoot, ReloadSummary } from '#/app/plugin/types';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
   normalizeAgentProfile,
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
+import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
+import { AGENT_PROFILE_SOURCE_PRIORITY } from '#/app/agentProfileCatalog/agentProfileContribution';
 import {
   _clearAgentProfileContributionsForTests,
   registerAgentProfile,
 } from '#/app/agentProfileCatalog/contribution';
-import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import type { IConfigService } from '#/app/config/config';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoaderService';
-import type { ReloadSummary } from '#/app/plugin/types';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsWatchService } from '#/os/backends/node-local/hostFsWatchService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
+  IHostFsWatchService,
   type HostFsChange,
   type IHostFsWatchHandle,
-  type IHostFsWatchService,
 } from '#/os/interface/hostFsWatch';
 import { SessionAgentProfileCatalogService } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
 import type { ISessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ExplicitAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoaderService';
 import { ExtraAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoaderService';
 import { WorkspaceAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoaderService';
-import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
+import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
+import { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
+import { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
+import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 
@@ -209,12 +223,6 @@ function waitForEvent(event: Event<unknown>): Promise<void> {
   });
 }
 
-/**
- * Wraps a real `HostFileSystem` so `readdir` throws an injected
- * `os.fs.unavailable` whenever `shouldFail` accepts the path — the failure
- * class that propagates out of discovery and exercises the loader failure
- * policy (non-fatal warn / fatal reject).
- */
 function failingReaddirFs(
   hostFs: HostFileSystem,
   shouldFail: (path: string) => boolean,
@@ -241,12 +249,6 @@ interface StackOptions {
   readonly fsWatch?: IHostFsWatchService;
 }
 
-/**
- * Builds the whole loader stack as directly-constructed instances sharing one
- * registry, plus the session catalog projected over it. Loaders start their
- * first load in their constructors, so callers `await stack.ready()` (or the
- * individual `loader.ready`) before asserting.
- */
 function makeStack(fixture: Fixture, opts?: StackOptions) {
   const warnings: string[] = [];
   const log = logStub(warnings);
@@ -259,49 +261,34 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
   const hostFs = opts?.hostFs ?? new HostFileSystem();
   const workspaceContext = workspaceContextStub(fixture.workDir);
 
-  const registry = new AgentProfileRegistryService();
-  const builtinLoader = new BuiltinAgentProfileLoaderService(registry);
-  const userLoader = new UserAgentProfileLoaderService(
-    bootstrap,
-    hostFs,
-    log,
-    builtinLoader,
-    registry,
-    workspaceContext,
+  const container = new InstantiationService(
+    new ServiceCollection(
+      [ILogService, log],
+      [IConfigService, config],
+      [IBootstrapService, bootstrap],
+      [IHostFileSystem, hostFs],
+      [IHostFsWatchService, opts?.fsWatch ?? fsWatchStub()],
+      [IWorkspaceContext, workspaceContext],
+      [IPluginService, pluginStub(opts?.pluginAgentRoots ?? [], opts?.pluginReloadEmitter)],
+      [IAgentProfileRegistry, new SyncDescriptor(AgentProfileRegistryService)],
+      [IBuiltinAgentProfileLoader, new SyncDescriptor(BuiltinAgentProfileLoaderService)],
+      [IUserAgentProfileLoader, new SyncDescriptor(UserAgentProfileLoaderService)],
+      [IPluginAgentProfileLoader, new SyncDescriptor(PluginAgentProfileLoaderService)],
+      [IWorkspaceAgentProfileLoader, new SyncDescriptor(WorkspaceAgentProfileLoaderService)],
+      [IExtraAgentProfileLoader, new SyncDescriptor(ExtraAgentProfileLoaderService)],
+      [IExplicitAgentProfileLoader, new SyncDescriptor(ExplicitAgentProfileLoaderService)],
+    ),
+    true,
   );
-  const pluginLoader = new PluginAgentProfileLoaderService(
-    pluginStub(opts?.pluginAgentRoots ?? [], opts?.pluginReloadEmitter),
-    hostFs,
-    log,
-    userLoader,
-    registry,
-    workspaceContext,
-  );
-  const workspaceLoader = new WorkspaceAgentProfileLoaderService(
-    workspaceContext,
-    hostFs,
-    log,
-    userLoader,
-    opts?.fsWatch ?? fsWatchStub(),
-    registry,
-  );
-  const extraLoader = new ExtraAgentProfileLoaderService(
-    config,
-    workspaceContext,
-    bootstrap,
-    hostFs,
-    log,
-    userLoader,
-    registry,
-  );
-  const explicitLoader = new ExplicitAgentProfileLoaderService(
-    workspaceContext,
-    bootstrap,
-    hostFs,
-    log,
-    userLoader,
-    registry,
-  );
+  const get = <T>(id: ServiceIdentifier<T>): T =>
+    container.invokeFunction((accessor) => accessor.get(id));
+  const registry = get(IAgentProfileRegistry);
+  const builtinLoader = get(IBuiltinAgentProfileLoader);
+  const userLoader = get(IUserAgentProfileLoader);
+  const pluginLoader = get(IPluginAgentProfileLoader);
+  const workspaceLoader = get(IWorkspaceAgentProfileLoader);
+  const extraLoader = get(IExtraAgentProfileLoader);
+  const explicitLoader = get(IExplicitAgentProfileLoader);
   const seed: ISessionAgentProfileCatalogSeed = {
     _serviceBrand: undefined,
     workspaceKey: workspaceContext.workspaceId,
@@ -319,7 +306,6 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
     catalog,
     config,
     warnings,
-    /** Awaits every loader's latest load pass plus the catalog readiness. */
     async ready(): Promise<void> {
       await Promise.all([
         userLoader.ready,
@@ -331,18 +317,8 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
       await catalog.ready;
     },
     dispose(): void {
-      for (const disposable of [
-        catalog,
-        explicitLoader,
-        extraLoader,
-        workspaceLoader,
-        pluginLoader,
-        userLoader,
-        builtinLoader,
-        registry,
-      ]) {
-        disposable.dispose();
-      }
+      catalog.dispose();
+      container.dispose();
     },
   };
 }
@@ -364,8 +340,6 @@ async function withStack(
 
 describe('agent profile loaders + session catalog', () => {
   beforeEach(() => {
-    // The builtin loader snapshots the module-level contributions on
-    // construction; pin them to one known default profile per test.
     _clearAgentProfileContributionsForTests();
     const builtinDefault: AgentProfile = normalizeAgentProfile({
       name: DEFAULT_AGENT_PROFILE_NAME,
@@ -652,8 +626,6 @@ describe('agent profile loaders + session catalog', () => {
       await mkdir(join(fixture.homeDir, 'agents'), { recursive: true });
       const hostFs = failingReaddirFs(new HostFileSystem(), () => true);
       await withStack(fixture, { hostFs }, async (stack) => {
-        // A non-fatal first-load failure degrades to a warning; `ready` still
-        // resolves and nothing replaces the builtin contribution.
         await stack.ready();
 
         expect(stack.catalog.get(DEFAULT_AGENT_PROFILE_NAME)?.description).toBe('builtin default');
@@ -701,9 +673,6 @@ describe('agent profile loaders + session catalog', () => {
         expect(stack.catalog.get('exp-agent')?.description).toBe('explicit');
 
         await rm(explicitFile, { force: true });
-        // Mirror the production event-handler call style
-        // (`void loader.reload().catch(warn)`): a rejecting fatal reload must
-        // surface as a warning, never crash, and leave the stale contribution.
         void stack.explicitLoader
           .reload()
           .catch((error) =>
@@ -791,8 +760,6 @@ describe('agent profile loaders + session catalog', () => {
 
   it('rescans the workspace source when a project agent file changes on disk', async () => {
     await withFixture(async (fixture) => {
-      // Pre-create the candidate directory so the chokidar initial scan sees
-      // it; a file written afterwards is guaranteed a non-initial `add` event.
       await mkdir(join(fixture.workDir, '.kimi-code', 'agents'), { recursive: true });
       await withStack(fixture, { fsWatch: new HostFsWatchService() }, async (stack) => {
         await stack.ready();
@@ -808,7 +775,6 @@ describe('agent profile loaders + session catalog', () => {
         const timedOut = new Promise<never>((_resolve, reject) => {
           setTimeout(() => reject(new Error('watch-driven refresh timed out')), 10000);
         });
-        // Let the watcher finish its initial scan before the change lands.
         await new Promise((resolve) => setTimeout(resolve, 300));
         await writeAgent(
           join(fixture.workDir, '.kimi-code', 'agents'),
@@ -821,4 +787,48 @@ describe('agent profile loaders + session catalog', () => {
       });
     });
   }, 15000);
+
+  it('lands every loader’s provided record in the registry entries', async () => {
+    await withFixture(async (fixture) => {
+      await withStack(fixture, undefined, async (stack) => {
+        await stack.ready();
+
+        const bySourceId = new Map(stack.registry.entries().map((entry) => [entry.sourceId, entry]));
+        expect([...bySourceId.keys()].toSorted()).toEqual([
+          'builtin',
+          'explicit',
+          'extra',
+          'plugin',
+          'user',
+          'workspace',
+        ]);
+        expect(bySourceId.get('builtin')?.workspaceKey).toBeUndefined();
+        expect(bySourceId.get('builtin')?.priority).toBe(AGENT_PROFILE_SOURCE_PRIORITY.builtin);
+        for (const sourceId of ['explicit', 'extra', 'plugin', 'user', 'workspace'] as const) {
+          expect(bySourceId.get(sourceId)?.workspaceKey).toBe('wd_test');
+          expect(bySourceId.get(sourceId)?.priority).toBe(AGENT_PROFILE_SOURCE_PRIORITY[sourceId]);
+        }
+      });
+    });
+  });
+
+  it('withdraws a loader’s record (and re-projects the catalog) when the loader is disposed', async () => {
+    await withFixture(async (fixture) => {
+      await writeAgent(
+        join(fixture.homeDir, 'agents'),
+        'user-only.md',
+        agentMd('user-only', 'user agent'),
+      );
+      await withStack(fixture, undefined, async (stack) => {
+        await stack.ready();
+        expect(stack.catalog.get('user-only')).toBeDefined();
+
+        (stack.userLoader as unknown as { dispose(): void }).dispose();
+
+        expect(stack.registry.entries().some((entry) => entry.sourceId === 'user')).toBe(false);
+        expect(stack.catalog.get('user-only')).toBeUndefined();
+        expect(stack.catalog.get(DEFAULT_AGENT_PROFILE_NAME)?.description).toBe('builtin default');
+      });
+    });
+  });
 });

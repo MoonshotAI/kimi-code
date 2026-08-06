@@ -66,6 +66,7 @@ export interface IStateRegistry {
   inspect(): StateInspection;
 }
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class StateRegistry extends Disposable implements IStateRegistry {
   private readonly values = new Map<string, unknown>();
   private readonly keyEmitters = new Map<string, Emitter<unknown>>();

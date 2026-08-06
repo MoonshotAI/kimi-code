@@ -18,8 +18,9 @@
  * reason.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -32,7 +33,7 @@ import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md?raw';
 import { IAgentSwarmService, type SwarmModeTrigger } from './swarm';
 import { swarmEnter, swarmExit, SwarmModel } from './swarmOps';
 
-export class AgentSwarmService extends Disposable implements IAgentSwarmService {
+export class AgentSwarmService extends Service implements IAgentSwarmService {
   declare readonly _serviceBrand: undefined;
 
   constructor(

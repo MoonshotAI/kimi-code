@@ -17,9 +17,10 @@
  * Workspace scope.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
 import { TimeoutTimer } from '#/_base/utils/timer';
@@ -46,7 +47,7 @@ export const workspaceInstructionsCurrentKey = defineState<WorkspaceInstructions
 );
 
 export class WorkspaceInstructionsService
-  extends Disposable
+  extends Service
   implements IWorkspaceInstructionsService
 {
   declare readonly _serviceBrand: undefined;

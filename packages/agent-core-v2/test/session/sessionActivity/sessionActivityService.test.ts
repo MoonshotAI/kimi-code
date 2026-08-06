@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
 import {
   _clearScopedRegistryForTests,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
   type IAgentScopeHandle,
@@ -300,7 +300,6 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
       cause: 'interaction',
     });
 
-    // A question joining an already-pending approval does not change the slice.
     interactions.enqueue({ id: 'q1', kind: 'question', payload: {}, origin: { agentId: MAIN_AGENT_ID } });
     expect(changes).toHaveLength(1);
 

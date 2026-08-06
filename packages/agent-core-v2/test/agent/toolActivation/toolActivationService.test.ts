@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { type CollectionView } from '#/_base/di/collection';
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { createDecorator } from '#/_base/di/instantiation';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   createAppScope,
+  registerScopedService,
+  type ScopeSeed,
 } from '#/_base/di/scope';
 import { createServices } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
@@ -14,15 +20,40 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { AgentToolActivationService } from '#/agent/toolActivation/toolActivationService';
 import {
+  BuiltinToolAssemblyService,
+  IBuiltinToolAssemblyService,
+} from '#/agent/toolRegistry/builtinToolAssemblyService';
+import {
   _clearAgentToolContributionsForTests,
+  AgentToolContribution,
   getAgentToolContributions,
   registerAgentToolService,
-  type AgentToolContribution,
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
+import '#/agent/tools/agent-swarm/agentSwarmTool';
+import '#/agent/tools/agent/agentTool';
+import '#/agent/tools/ask-user-question/askUserQuestionTool';
+import '#/agent/tools/edit/editTool';
+import '#/agent/tools/fetch-url/fetchUrlTool';
+import '#/agent/tools/goal/create-goal/createGoalTool';
+import '#/agent/tools/goal/get-goal/getGoalTool';
+import '#/agent/tools/goal/set-goal-budget/setGoalBudgetTool';
+import '#/agent/tools/goal/update-goal/updateGoalTool';
+import '#/agent/tools/os/bash/bashTool';
+import '#/agent/tools/os/glob/globTool';
+import '#/agent/tools/os/grep/grepTool';
+import '#/agent/tools/os/read/readTool';
+import '#/agent/tools/os/write/writeTool';
+import '#/agent/tools/select-tools/selectToolsTool';
+import '#/agent/tools/skill/skillTool';
+import '#/agent/tools/task/task-list/taskListTool';
+import '#/agent/tools/task/task-output/taskOutputTool';
+import '#/agent/tools/task/task-stop/taskStopTool';
+import '#/agent/tools/todo-list/todoListTool';
+import '#/agent/tools/web-search/webSearchTool';
 
 class StubTool implements AgentTool {
   declare readonly _serviceBrand: undefined;
@@ -63,6 +94,40 @@ class GammaTool extends StubTool {
   }
 }
 
+class TestContributionAssembly extends Service {
+  constructor() {
+    super();
+    for (const record of getAgentToolContributions()) {
+      this.provide(AgentToolContribution, record);
+    }
+  }
+}
+
+const IDynamicToolProvider = createDecorator<DynamicToolProvider>(
+  'activationTestDynamicToolProvider',
+);
+class DynamicToolProvider extends Service {
+  declare readonly _serviceBrand: undefined;
+  constructor() {
+    super();
+    this.provide(AgentToolContribution, {
+      id: IGammaTool,
+      ctor: GammaTool,
+      options: { name: 'Gamma' },
+    });
+  }
+}
+
+const ICollectionProbe = createDecorator<CollectionProbe>('activationTestCollectionProbe');
+class CollectionProbe extends Service {
+  declare readonly _serviceBrand: undefined;
+  constructor(
+    @AgentToolContribution readonly view: CollectionView<AgentToolContribution>,
+  ) {
+    super();
+  }
+}
+
 describe('AgentToolActivationService', () => {
   let savedContributions: readonly AgentToolContribution[];
   let disposables: DisposableStore;
@@ -74,7 +139,7 @@ describe('AgentToolActivationService', () => {
 
   function createActivationHost() {
     disposables = new DisposableStore();
-    return createServices(disposables, {
+    const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
         reg.definePartialInstance(IAgentProfileService, {
@@ -97,6 +162,8 @@ describe('AgentToolActivationService', () => {
         reg.define(IGammaTool, GammaTool);
       },
     });
+    disposables.add(ix.createInstance(TestContributionAssembly));
+    return ix;
   }
 
   beforeEach(() => {
@@ -184,9 +251,6 @@ describe('AgentToolActivationService', () => {
     expect(gammaConstructions).toBe(0);
   });
 
-  // Phase-4 behavior contract: the workspace (os-level) veto outranks the
-  // profile — a workspace-disabled tool never activates, so it never lands
-  // in `registry.list()` (and therefore never reaches the model's schema).
   it('honors the workspace tool-policy veto before the profile', async () => {
     gateData.disabledTools = ['Beta'];
     registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
@@ -234,5 +298,140 @@ describe('AgentToolActivationService', () => {
 
     expect(registry.resolve('Alpha')).toBe(alpha);
     expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
+  });
+
+  describe('collection fold (scoped tree)', () => {
+    beforeEach(() => {
+      _clearScopedRegistryForTests();
+      registerScopedService(
+        LifecycleScope.App,
+        IBuiltinToolAssemblyService,
+        BuiltinToolAssemblyService,
+        ScopeActivation.OnScopeCreated,
+        'toolRegistry',
+      );
+      registerScopedService(
+        LifecycleScope.App,
+        ICollectionProbe,
+        CollectionProbe,
+        ScopeActivation.OnDemand,
+        'toolActivation',
+      );
+      registerScopedService(
+        LifecycleScope.Agent,
+        IAgentToolRegistryService,
+        AgentToolRegistryService,
+        ScopeActivation.OnScopeCreated,
+        'toolRegistry',
+      );
+      registerScopedService(
+        LifecycleScope.Agent,
+        IAgentToolActivationService,
+        AgentToolActivationService,
+        ScopeActivation.OnScopeCreated,
+        'toolActivation',
+      );
+      registerScopedService(
+        LifecycleScope.Agent,
+        IDynamicToolProvider,
+        DynamicToolProvider,
+        ScopeActivation.OnDemand,
+        'toolActivation',
+      );
+    });
+
+    function agentSeeds(extra: ScopeSeed = []): ScopeSeed {
+      return [
+        [IAgentProfileService, { data: () => profileData as ProfileData }],
+        [IEventBus, { subscribe: () => toDisposable(() => {}) }],
+        ...extra,
+      ];
+    }
+
+    function createScopeTree(agentExtra: ScopeSeed = []) {
+      const app = createAppScope();
+      const session = app.createChild(LifecycleScope.Session, 'session', {
+        extra: [
+          [
+            ISessionToolPolicyGate,
+            {
+              _serviceBrand: undefined,
+              get disabledTools() {
+                return gateData.disabledTools;
+              },
+              onDidChange: Event.None as Event<void>,
+            } satisfies ISessionToolPolicyGate,
+          ],
+        ],
+      });
+      const agent = session.createChild(LifecycleScope.Agent, 'agent', {
+        extra: agentSeeds(agentExtra),
+      });
+      return { app, session, agent };
+    }
+
+    it('activates the built-in records provided once at App scope, in every agent scope', async () => {
+      registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
+      registerAgentToolService(IBetaTool, BetaTool, { name: 'Beta' });
+      const { app, session, agent } = createScopeTree();
+      expect(alphaConstructions).toBe(0);
+
+      await agent.accessor.get(IAgentToolActivationService).activate();
+      const registry = agent.accessor.get(IAgentToolRegistryService);
+      expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
+      expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
+
+      const agent2 = session.createChild(LifecycleScope.Agent, 'agent-2', {
+        extra: agentSeeds(),
+      });
+      await agent2.accessor.get(IAgentToolActivationService).activate();
+      expect(agent2.accessor.get(IAgentToolRegistryService).resolve('Alpha')).toBeInstanceOf(
+        AlphaTool,
+      );
+      app.dispose();
+    });
+
+    it('folds a unit-provided record incrementally and withdraws it when the provider dies', async () => {
+      const { app, agent } = createScopeTree([[IGammaTool, new SyncDescriptor(GammaTool, [])]]);
+      const registry = agent.accessor.get(IAgentToolRegistryService);
+      const activation = agent.accessor.get(IAgentToolActivationService);
+
+      await activation.activate();
+      expect(registry.resolve('Gamma')).toBeUndefined();
+      expect(gammaConstructions).toBe(0);
+
+      const provider = agent.accessor.get(IDynamicToolProvider);
+      expect(registry.resolve('Gamma')).toBeInstanceOf(GammaTool);
+      expect(gammaConstructions).toBe(1);
+
+      provider.dispose();
+      expect(registry.resolve('Gamma')).toBeUndefined();
+      await activation.activate();
+      expect(registry.resolve('Gamma')).toBeUndefined();
+      app.dispose();
+    });
+
+    it('feeds every built-in contribution through the App-scope assembly unchanged', async () => {
+      expect(savedContributions).toHaveLength(21);
+      for (const contribution of savedContributions) {
+        registerAgentToolService(contribution.id, contribution.ctor, contribution.options);
+      }
+      profileData.activeToolNames = [];
+      const { app, agent } = createScopeTree();
+
+      const probe = app.accessor.get(ICollectionProbe);
+      expect(probe.view.items).toHaveLength(savedContributions.length);
+      const seenByName = new Map(probe.view.items.map((r) => [r.options.name, r] as const));
+      for (const contribution of savedContributions) {
+        const seen = seenByName.get(contribution.options.name);
+        expect(seen?.id).toBe(contribution.id);
+        expect(seen?.ctor).toBe(contribution.ctor);
+        expect(seen?.options).toBe(contribution.options);
+      }
+
+      await agent.accessor.get(IAgentToolActivationService).activate();
+      expect(agent.accessor.get(IAgentToolRegistryService).list()).toHaveLength(0);
+      app.dispose();
+    });
   });
 });

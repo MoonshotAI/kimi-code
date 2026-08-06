@@ -24,14 +24,22 @@
  * reported as warning diagnostics (the deprecated value is NOT applied, and
  * the file is never rewritten); env-var renames declared via a binding's
  * `deprecatedEnv` still resolve as a fallback, likewise with a warning.
- * Diagnostics changes are published through `onDidChangeDiagnostics`. Bound
- * at App scope.
+ * Diagnostics changes are published through `onDidChangeDiagnostics`.
+ * `ConfigRegistry` is also the
+ * fold of the `ConfigSectionContribution` collection token (D12): records
+ * provided by live units register sections incrementally through the same
+ * path as the module drain (identical = silent, conflict = logged), and a
+ * withdrawn record unregisters its section — the domain falls back to
+ * unknown-section semantics, its TOML user values preserved but no longer
+ * validated/effective. Bound at App scope.
  */
 
+import { type CollectionView } from '#/_base/di/collection';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
-import { BugIndicatingError } from '#/errors';
+import { BugIndicatingError, onUnexpectedError } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ILogService } from '#/_base/log/log';
 import {
@@ -61,7 +69,10 @@ import {
   IConfigService,
 } from './config';
 import { deepEqual, deepMerge, describeUnknownError, isPlainObject } from './configPure';
-import { getConfigSectionContributions } from './configSectionContributions';
+import {
+  ConfigSectionContribution,
+  getConfigSectionContributions,
+} from './configSectionContributions';
 import { getConfigOverlayContributions } from './configOverlayContributions';
 import { collectKeyDeprecations } from './deprecations';
 import { migrateThinkingEffortMaxToHigh } from './migrations';
@@ -176,24 +187,69 @@ function isSameSection(
   );
 }
 
-export class ConfigRegistry implements IConfigRegistry {
+export class ConfigRegistry extends Disposable implements IConfigRegistry {
   declare readonly _serviceBrand: undefined;
   private readonly sections = new Map<string, ConfigSection>();
   private readonly overlays: ConfigEffectiveOverlay[] = [];
-  private readonly _onDidRegisterSection = new Emitter<ConfigSectionRegisteredEvent>();
+  private readonly _onDidRegisterSection = this._register(
+    new Emitter<ConfigSectionRegisteredEvent>(),
+  );
   readonly onDidRegisterSection: Event<ConfigSectionRegisteredEvent> =
     this._onDidRegisterSection.event;
-  private readonly _onDidRegisterOverlay = new Emitter<ConfigOverlayRegisteredEvent>();
+  private readonly _onDidUnregisterSection = this._register(
+    new Emitter<ConfigSectionRegisteredEvent>(),
+  );
+  readonly onDidUnregisterSection: Event<ConfigSectionRegisteredEvent> =
+    this._onDidUnregisterSection.event;
+  private readonly _onDidRegisterOverlay = this._register(
+    new Emitter<ConfigOverlayRegisteredEvent>(),
+  );
   readonly onDidRegisterOverlay: Event<ConfigOverlayRegisteredEvent> =
     this._onDidRegisterOverlay.event;
+  private readonly foldDomains = new Set<string>();
 
-  constructor() {
+  constructor(
+    @ConfigSectionContribution view?: CollectionView<ConfigSectionContribution>,
+  ) {
+    super();
     for (const c of getConfigSectionContributions()) {
       this.registerSection(c.domain, c.schema, c.options);
     }
     for (const overlay of getConfigOverlayContributions()) {
       this.registerEffectiveOverlay(overlay);
     }
+    if (view === undefined) return;
+    for (const item of view.items) {
+      this.addContribution(item);
+    }
+    this._register(
+      view.onDidChange((change) => {
+        for (const contribution of change.removed) {
+          this.removeContribution(contribution);
+        }
+        for (const contribution of change.added) {
+          this.addContribution(contribution);
+        }
+      }),
+    );
+  }
+
+  private addContribution(contribution: ConfigSectionContribution): void {
+    const before = this.sections.get(contribution.domain);
+    try {
+      this.registerSection(contribution.domain, contribution.schema, contribution.options);
+    } catch (error) {
+      onUnexpectedError(error);
+      return;
+    }
+    if (before === undefined && this.sections.get(contribution.domain) !== undefined) {
+      this.foldDomains.add(contribution.domain);
+    }
+  }
+
+  private removeContribution(contribution: ConfigSectionContribution): void {
+    if (!this.foldDomains.delete(contribution.domain)) return;
+    this.unregisterSection(contribution.domain);
   }
 
   registerSection<T>(
@@ -229,6 +285,11 @@ export class ConfigRegistry implements IConfigRegistry {
     this._onDidRegisterSection.fire({ domain });
   }
 
+  unregisterSection(domain: string): void {
+    if (!this.sections.delete(domain)) return;
+    this._onDidUnregisterSection.fire({ domain });
+  }
+
   getSection(domain: string): ConfigSection | undefined {
     return this.sections.get(domain);
   }
@@ -261,6 +322,7 @@ export class ConfigRegistry implements IConfigRegistry {
   }
 }
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class ConfigService extends Disposable implements IConfigService {
   declare readonly _serviceBrand: undefined;
   private readonly _onDidChangeConfiguration = this._register(new Emitter<ConfigChangedEvent>());
@@ -295,6 +357,7 @@ export class ConfigService extends Disposable implements IConfigService {
     super();
     this.configKey = this.bootstrap.configKey;
     this._register(this.registry.onDidRegisterSection((e) => this.revalidateDomain(e.domain)));
+    this._register(this.registry.onDidUnregisterSection((e) => this.devalidateDomain(e.domain)));
     this._register(this.registry.onDidRegisterOverlay(() => this.reapplyOverlays()));
     const { configKey } = this;
     const { homeDir } = this.bootstrap;
@@ -398,8 +461,6 @@ export class ConfigService extends Disposable implements IConfigService {
     target: ConfigTarget = ConfigTarget.User,
   ): Promise<void> {
     await this.ready;
-    // `null` is the wire encoding of "clear this domain": JSON transports
-    // (klient memory/ipc, kap-server REST/WS) cannot carry `undefined`.
     const effectiveValue = value === null ? undefined : value;
     if (target === ConfigTarget.Memory) {
       if (effectiveValue === undefined) {
@@ -446,7 +507,6 @@ export class ConfigService extends Disposable implements IConfigService {
     await this.enqueueStateTransition(async () => {
       const staged: ResolvedConfig = { ...this.raw };
       for (const domain of domains) {
-        // Same `null`-means-clear encoding as `replace` (see above).
         const value = sections[domain] === null ? undefined : sections[domain];
         const stripped = this.stripEnv(domain, value);
         if (stripped === undefined) {
@@ -695,6 +755,26 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     this.commit('reload', [domain]);
     this.emitDiagnosticsIfChanged();
+  }
+
+  private devalidateDomain(domain: string): void {
+    if (this.registry.getSection(domain) !== undefined) return;
+
+    const snakeKey = camelToSnake(domain);
+    const rawSnakeValue = this.rawSnake[snakeKey];
+    if (rawSnakeValue === undefined) {
+      delete this.raw[domain];
+      delete this.validated[domain];
+      delete this.effective[domain];
+    } else {
+      const raw = transformTomlData({ [snakeKey]: rawSnakeValue }, this.registry)[domain];
+      this.raw[domain] = raw;
+      this.validated[domain] = raw;
+      this.effective[domain] = raw;
+    }
+
+    this.applyEnvOverlay(this.effective);
+    this.commit('reload', [domain]);
   }
 
   private async persist(domain: string): Promise<void> {

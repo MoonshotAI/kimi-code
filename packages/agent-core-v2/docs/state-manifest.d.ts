@@ -94,7 +94,7 @@
 //     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
 //     media.resolved                                  src/agent/media/videoResolverService.ts
 //     permissionMode.lastMode                         src/agent/permissionMode/injection/permissionModeInjection.ts
-//     plan.wasActive                                  src/agent/plan/injection/planModeInjection.ts
+//     plan.wasActive                                  src/features/plan/injection/planModeInjection.ts
 //     profile.activeToolNamesOverlay                  src/agent/profile/profileService.ts
 //     profile.agentsMdWarning                         src/agent/profile/profileService.ts
 //     profile.emittedPluginBudgetWarnings             src/agent/profile/profileService.ts
@@ -1124,8 +1124,6 @@ export interface AgentStateSnapshot {
   }>;
   // src/agent/permissionMode/injection/permissionModeInjection.ts
   'permissionMode.lastMode': 'manual' | 'yolo' | 'auto' | undefined;
-  // src/agent/plan/injection/planModeInjection.ts
-  'plan.wasActive': boolean;
   // src/agent/profile/profileService.ts
   'profile.activeToolNamesOverlay': readonly string[] | undefined;
   'profile.agentsMdWarning': string | undefined;
@@ -1210,6 +1208,8 @@ export interface AgentStateSnapshot {
     inputCacheCreation: number;
   } | undefined;
   'usage.currentTurnId': number | undefined;
+  // src/features/plan/injection/planModeInjection.ts
+  'plan.wasActive': boolean;
 }
 
 export type AgentStateKey = keyof AgentStateSnapshot;

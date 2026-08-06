@@ -13,7 +13,8 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import {
@@ -36,6 +37,7 @@ export interface IExtraFileSkillSource extends ISkillSource {
 export const IExtraFileSkillSource: ServiceIdentifier<IExtraFileSkillSource> =
   createDecorator<IExtraFileSkillSource>('extraFileSkillSource');
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillSource {
   declare readonly _serviceBrand: undefined;
 

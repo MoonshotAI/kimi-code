@@ -59,7 +59,8 @@ import { type QueryOptions } from '@moonshot-ai/minidb';
 import { ClusterDb } from '@moonshot-ai/minidb/cluster';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
@@ -107,6 +108,7 @@ export async function drainQueryStoreDisposals(): Promise<void> {
   await Promise.all(pendingDisposals);
 }
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class MiniDbQueryStore extends Disposable implements IQueryStore {
   declare readonly _serviceBrand: undefined;
 
