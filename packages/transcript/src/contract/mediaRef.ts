@@ -46,7 +46,7 @@ const KIMI_FILE_SCHEME = 'kimi-file://';
 const PATH_QUERY = '?path=';
 
 /** The daemon upload reference behind a `kimi-file://<fileId>[?path=…]` url. */
-export interface KimiFileRef {
+export interface DaemonFileRef {
   readonly fileId: string;
   readonly path?: string;
 }
@@ -56,7 +56,7 @@ export interface KimiFileRef {
  * mirror of the engine's `parseDaemonFileUrl`. An undecodable path is dropped
  * but the file id keeps parsing.
  */
-export function parseKimiFileRef(url: string): KimiFileRef | undefined {
+export function parseDaemonFileRef(url: string): DaemonFileRef | undefined {
   if (!url.startsWith(KIMI_FILE_SCHEME)) return undefined;
   const rest = url.slice(KIMI_FILE_SCHEME.length);
   const queryAt = rest.indexOf(PATH_QUERY);
@@ -77,8 +77,8 @@ export function parseKimiFileRef(url: string): KimiFileRef | undefined {
 }
 
 /** The daemon upload id behind a `kimi-file://<fileId>[?path=…]` url. */
-export function parseKimiFileRefFileId(url: string): string | undefined {
-  return parseKimiFileRef(url)?.fileId;
+export function parseDaemonFileRefFileId(url: string): string | undefined {
+  return parseDaemonFileRef(url)?.fileId;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +107,7 @@ export function daemonFileRefFromPairingPart(
   if (part.type !== 'image_url' && part.type !== 'video_url') return undefined;
   const url = part.type === 'image_url' ? part.imageUrl?.url : part.videoUrl?.url;
   if (typeof url !== 'string') return undefined;
-  const ref = parseKimiFileRef(url);
+  const ref = parseDaemonFileRef(url);
   if (ref === undefined) return undefined;
   return { kind: part.type === 'image_url' ? 'image' : 'video', fileId: ref.fileId, path: ref.path };
 }

@@ -1,5 +1,5 @@
 /**
- * `kosong/contract` mediaRef — media classification, daemon file references,
+ * `agent/media` mediaRef — media classification, daemon file references,
  * and media path tags.
  *
  *   - suffix / MIME / content-part classification (`mediaKindFor*` /
