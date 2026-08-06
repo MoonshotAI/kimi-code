@@ -145,10 +145,14 @@ pub struct CompletionState {
     pub selected: usize,
 }
 
+/// Tool output above this length starts collapsed in the transcript (`[+]`;
+/// Ctrl-O to expand) — the tool-call card fold threshold.
+pub const TOOL_COLLAPSE_THRESHOLD: usize = 120;
+
 /// A tool-result line with long output starts collapsed (`[+]`; Ctrl-O to
 /// expand) — the tool-call card fold. Short results stay expanded.
 pub fn tool_result_collapsed(text: &str) -> bool {
-    text.chars().count() > 120
+    text.chars().count() > TOOL_COLLAPSE_THRESHOLD
 }
 
 /// The approval-detail modal's text lines (pure, tested).
@@ -187,8 +191,8 @@ pub fn toggle_last_tool_collapse(transcript: &mut [TranscriptEntry]) {
     if let Some(entry) = transcript.iter_mut().rev().find(|e| match e {
         TranscriptEntry::ToolCall(tc) => {
             tc.collapsed
-                || tc.args.chars().count() > 120
-                || tc.result.as_ref().is_some_and(|r| r.chars().count() > 120)
+                || tc.args.chars().count() > TOOL_COLLAPSE_THRESHOLD
+                || tc.result.as_ref().is_some_and(|r| r.chars().count() > TOOL_COLLAPSE_THRESHOLD)
         }
         _ => false,
     }) {
@@ -1322,10 +1326,17 @@ impl App {
         let r#type = event["type"].as_str().unwrap_or("");
         let tool_call_id = event["tool_call_id"].as_str().unwrap_or("").to_string();
         let tool_name = event["tool_name"].as_str().unwrap_or("?").to_string();
-        let find_index = self.transcript.iter().position(|e| match e {
-            TranscriptEntry::ToolCall(tc) => tc.tool_call_id == tool_call_id,
-            _ => false,
-        });
+        // Empty ids never participate in upsert matching: a missing id would
+        // otherwise match the first empty-id card (misattribution across
+        // tools). Unmatched events just append a fresh card.
+        let find_index = if tool_call_id.is_empty() {
+            None
+        } else {
+            self.transcript.iter().position(|e| match e {
+                TranscriptEntry::ToolCall(tc) => tc.tool_call_id == tool_call_id,
+                _ => false,
+            })
+        };
         if r#type == "session.tool.started" {
             let args = serde_json::to_string(&event["arguments"]).unwrap_or_default();
             let collapsed = args.chars().count() > 120;
@@ -1754,6 +1765,53 @@ mod tests {
                 assert!(!tc.is_error);
             }
             _ => panic!("expected a ToolCall card"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_settled_without_started_appends_card() {
+        // Replay edge: a settled event with no prior started still shows a card.
+        let mut app = App::new(kimi_sdk::Harness::embedded().expect("harness"), Some("s-tool2"));
+        app.handle_tool_event(&serde_json::json!({
+            "type": "session.tool.settled",
+            "tool_call_id": "t9",
+            "tool_name": "Read",
+            "content": "file contents",
+            "is_error": true,
+        }));
+        assert_eq!(app.transcript.len(), 1);
+        match &app.transcript[0] {
+            TranscriptEntry::ToolCall(tc) => {
+                assert_eq!(tc.tool_name, "Read");
+                assert_eq!(tc.result.as_deref(), Some("file contents"));
+                assert!(tc.is_error);
+            }
+            _ => panic!("expected a ToolCall card"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_events_without_id_never_misattribute() {
+        // Two tools without ids: the second started must not overwrite the
+        // first card (empty ids never match for upsert).
+        let mut app = App::new(kimi_sdk::Harness::embedded().expect("harness"), Some("s-tool3"));
+        app.handle_tool_event(&serde_json::json!({
+            "type": "session.tool.started",
+            "tool_name": "Bash",
+            "arguments": { "command": "ls" },
+        }));
+        app.handle_tool_event(&serde_json::json!({
+            "type": "session.tool.started",
+            "tool_name": "Read",
+            "arguments": { "path": "/x" },
+        }));
+        assert_eq!(app.transcript.len(), 2, "two cards, no misattribution");
+        match (&app.transcript[0], &app.transcript[1]) {
+            (TranscriptEntry::ToolCall(a), TranscriptEntry::ToolCall(b)) => {
+                assert_eq!(a.tool_name, "Bash");
+                assert_eq!(b.tool_name, "Read");
+            }
+            _ => panic!("expected two ToolCall cards"),
         }
     }
 

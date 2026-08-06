@@ -53,7 +53,7 @@ pub fn render_history(data: &serde_json::Value) -> Vec<TranscriptEntry> {
                         let tool_call_id = call["id"].as_str().unwrap_or("").to_string();
                         let tool_name = call["name"].as_str().unwrap_or("tool").to_string();
                         let args = serde_json::to_string(&call["arguments"]).unwrap_or_default();
-                        let collapsed = args.chars().count() > 120;
+                        let collapsed = args.chars().count() > crate::app::TOOL_COLLAPSE_THRESHOLD;
                         entries.push(TranscriptEntry::ToolCall(ToolCallEntry {
                             tool_call_id,
                             tool_name,
