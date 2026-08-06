@@ -423,6 +423,28 @@ describe('AgentContextInjectorService', () => {
     expect(lastText(context)).toContain('turn-start reminder');
   });
 
+  it('skips a throwing step provider and still runs the rest', async () => {
+    injector(ix).register('step_throwing', () => {
+      throw new Error('boom');
+    });
+    injector(ix).register('step_surviving', () => 'surviving reminder');
+
+    await runInjectionStep();
+
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('surviving reminder');
+  });
+
+  it('skips a rejecting step provider and still runs the rest', async () => {
+    injector(ix).register('step_rejecting', () => Promise.reject(new Error('boom')));
+    injector(ix).register('step_surviving', () => 'surviving reminder');
+
+    await runInjectionStep();
+
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('surviving reminder');
+  });
+
   it('skips a throwing turn-start provider and still runs the rest', () => {
     injector(ix).registerAtTurnStart('turn_start_throwing', () => {
       throw new Error('boom');

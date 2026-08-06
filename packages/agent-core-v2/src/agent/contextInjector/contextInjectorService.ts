@@ -8,7 +8,10 @@
  * persisted once-reminders — then reconciles the registered context
  * providers (present-tense state) through `loop` and `systemReminder`. A
  * once-channel drain that throws or returns a Promise is logged and
- * skipped, so one bad channel cannot starve the providers. Provider
+ * skipped, so one bad channel cannot starve the providers. A provider that
+ * throws or rejects at a step or compaction boundary is likewise logged and
+ * skipped, so one bad provider can neither starve the rest nor fail the
+ * turn. Provider
  * positions are never cached: each provider call derives them by scanning
  * `contextMemory` for its own surviving injection messages, so splices,
  * compaction folds, and `wire` restoration need no index bookkeeping. Each
@@ -179,7 +182,13 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     this.isNewTurn = false;
     for (const entry of this.entries) {
       if (boundary !== undefined && !shouldRunAtBoundary(entry, boundary)) continue;
-      const content = await entry.provider(this.providerContext(entry, isNewTurn));
+      let content: Awaited<ReturnType<ContextInjectionProvider>>;
+      try {
+        content = await entry.provider(this.providerContext(entry, isNewTurn));
+      } catch (error) {
+        this.log.error('context provider failed; skipping it', { name: entry.name, error });
+        continue;
+      }
       if (!this.entries.has(entry)) continue;
       this.appendResult(entry, content);
     }
