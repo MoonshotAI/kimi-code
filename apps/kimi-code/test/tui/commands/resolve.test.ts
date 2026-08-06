@@ -46,6 +46,15 @@ describe('resolveSlashCommandInput', () => {
       args: 'list',
     });
     expect(resolve('/init')).toMatchObject({ kind: 'builtin', name: 'init', args: '' });
+    expect(resolve('/secondary-model')).toMatchObject({
+      kind: 'builtin',
+      name: 'secondary-model',
+      args: '',
+    });
+    expect(resolve('/secondary_model')).toEqual({
+      kind: 'message',
+      input: '/secondary_model',
+    });
     expect(resolve('/btw')).toMatchObject({
       kind: 'builtin',
       name: 'btw',
