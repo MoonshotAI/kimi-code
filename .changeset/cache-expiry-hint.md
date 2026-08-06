@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Show a cache-expiry reminder when resuming a long-idle session or submitting after a long idle stretch (v2 engine only).
+Show a cache-expiry reminder when resuming a long-idle session or submitting after a long idle stretch.
