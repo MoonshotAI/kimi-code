@@ -76,7 +76,7 @@ Official plugins are plugins and built-in product capabilities maintained by Kim
 
 - **[Kimi Datasource](#kimi-datasource)**: Query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language
 - **[Kimi WebBridge](#kimi-webbridge)**: Let AI drive your own browser to get web tasks done
-- **[Kimi Computer Use](#kimi-computer-use)**: Let AI operate your desktop apps (macOS only for now)
+- **[Kimi Computer Use](#kimi-computer-use)**: Let AI operate your desktop apps (macOS and Windows)
 
 ### Installation and Upgrade
 
@@ -174,9 +174,9 @@ Use this when you can't reach the stores:
 
 ### Kimi Computer Use <Badge type="tip" text="v0.5.4" />
 
-Kimi Computer Use lets AI operate your Mac desktop apps directly — clicking, dragging, scrolling, and typing — all silently in the background without taking over your mouse (a few popup actions may still bring an app to the foreground). macOS only for now.
+Kimi Computer Use lets AI operate your desktop apps directly, clicking, dragging, scrolling, and typing. The macOS version works silently in the background without taking over your mouse (a few popup actions may still bring an app to the foreground); see [the notes below](#notes-for-the-windows-version) for how the Windows version differs.
 
-#### Authorization
+#### Authorization (macOS)
 
 The first time you use Kimi Computer Use after installation, it shows an authorization window — just follow the prompts:
 
@@ -188,6 +188,15 @@ The first time you use Kimi Computer Use after installation, it shows an authori
 ![Kimi Computer Use authorization window](../../media/kimi-computer-use-auth.jpeg)
 
 </div>
+
+#### Notes for the Windows version
+
+The Windows version (WinCU) installs differently from the macOS one: run `/plugins install https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip` in Kimi Code, then restart after installation. A few things to know before using it:
+
+- **It may briefly take over your mouse and keyboard**: Unlike the macOS version, the Windows version cannot reliably inject input in the background; it may briefly activate the target window and use your real mouse and keyboard while performing actions
+- **System requirements**: Windows 10 version 1903 (Build 18362) or later, or Windows 11, x64; a real interactive desktop session is required, and Windows Server needs Desktop Experience
+- **No extra permissions needed**: Windows does not require the Accessibility and Screen Recording grants that macOS does
+- **Matching privilege level**: If the target app runs as administrator, KimiCU must run at the same privilege level
 
 #### What you can do
 

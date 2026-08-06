@@ -76,7 +76,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 
 - **[Kimi Datasource](#kimi-datasource)**：用自然语言查询金融行情、宏观经济、企业工商、学术文献和法律法规数据
 - **[Kimi WebBridge](#kimi-webbridge)**：让 AI 直接操控你自己的浏览器，完成各类网页操作
-- **[Kimi Computer Use](#kimi-computer-use)**：让 AI 操作你的桌面应用（当前仅限 macOS）
+- **[Kimi Computer Use](#kimi-computer-use)**：让 AI 操作你的桌面应用（macOS 和 Windows）
 
 ### 安装与升级
 
@@ -174,9 +174,9 @@ Kimi WebBridge 让 AI 直接操控你的浏览器，带着你的登录状态和 
 
 ### Kimi Computer Use <Badge type="tip" text="v0.5.4" />
 
-Kimi Computer Use 让 AI 直接操作你的 Mac 桌面应用，可以完成点击、拖拽、滚动、输入等操作，全程在后台静默运行，不抢占你的鼠标（少量弹窗操作仍会唤起前台 App）。目前仅支持 macOS。
+Kimi Computer Use 让 AI 直接操作你的桌面应用，可以完成点击、拖拽、滚动、输入等操作。macOS 版全程在后台静默运行，不抢占你的鼠标（少量弹窗操作仍会唤起前台 App）；Windows 版的差异见[下文注意事项](#windows-版注意事项)。
 
-#### 授权
+#### 授权（macOS）
 
 安装后首次使用时，Kimi Computer Use 会弹出授权窗口，按照提示操作即可：
 
@@ -188,6 +188,15 @@ Kimi Computer Use 让 AI 直接操作你的 Mac 桌面应用，可以完成点�
 ![Kimi Computer Use 授权窗口](../../media/kimi-computer-use-auth.jpeg)
 
 </div>
+
+#### Windows 版注意事项
+
+Windows 版（WinCU）的安装方式与 macOS 版不同：在 Kimi Code 中运行 `/plugins install https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip`，安装完成后重启即可。使用前注意以下几点：
+
+- **会短暂占用键鼠**：Windows 版无法像 macOS 版那样稳定地全程后台输入，执行操作时可能短暂激活目标窗口并使用你的鼠标键盘
+- **系统要求**：Windows 10 version 1903（Build 18362）或更新版本 / Windows 11，x64；需要真实交互式桌面会话，Windows Server 需要 Desktop Experience
+- **无需额外授权**：Windows 不需要 macOS 那样的**辅助功能**和**屏幕录制**权限
+- **权限对等**：目标应用以管理员权限运行时，KimiCU 也需要以同等权限运行
 
 #### 能做什么
 
