@@ -85,6 +85,16 @@ describe('SessionMetadata', () => {
     expect(next.updatedAt).toBeGreaterThanOrEqual(before);
   });
 
+  it('update with touchUpdatedAt:false keeps the previous updatedAt', async () => {
+    const meta = ix.get(ISessionMetadata);
+    const before = (await meta.read()).updatedAt;
+    await meta.update({ title: 'quiet' }, { touchUpdatedAt: false });
+
+    const next = await meta.read();
+    expect(next.title).toBe('quiet');
+    expect(next.updatedAt).toBe(before);
+  });
+
   it('setTitle / setArchived write through', async () => {
     const meta = ix.get(ISessionMetadata);
     await meta.setTitle('t');

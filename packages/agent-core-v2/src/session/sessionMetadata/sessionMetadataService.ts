@@ -106,17 +106,24 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     return this.data;
   }
 
-  async update(patch: SessionMetaPatch): Promise<void> {
-    return this.enqueueUpdate(() => this.applyUpdate(patch));
+  async update(
+    patch: SessionMetaPatch,
+    opts?: { readonly touchUpdatedAt?: boolean },
+  ): Promise<void> {
+    return this.enqueueUpdate(() => this.applyUpdate(patch, opts));
   }
 
-  private async applyUpdate(patch: SessionMetaPatch): Promise<void> {
+  private async applyUpdate(
+    patch: SessionMetaPatch,
+    opts?: { readonly touchUpdatedAt?: boolean },
+  ): Promise<void> {
     await this.ready;
     // The update queue outlives its callers: a patch queued before scope
     // disposal must not write (or recreate files) once the session is being
     // torn down.
     if (this.disposed) return;
-    this.data = { ...this.data, ...patch, updatedAt: Date.now() };
+    const updatedAt = opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now();
+    this.data = { ...this.data, ...patch, updatedAt };
     await this.store.set(this.scope, META_KEY, this.data);
     if (this.disposed) return;
     this.mirrorToReadModel();

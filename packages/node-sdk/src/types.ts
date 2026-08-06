@@ -284,7 +284,7 @@ export interface SessionSummary {
   readonly metadata?: JsonObject | undefined;
   readonly additionalDirs?: readonly string[];
   /** Terminal outcome of the session's latest main turn, when one ended. */
-  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed' | undefined;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export interface AddAdditionalDirResult {

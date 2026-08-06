@@ -3,9 +3,12 @@
  *
  * Persists the main agent's terminal turn outcomes through `ISessionMetadata`
  * (observed via `agentLifecycle` and the main agent's `eventBus`), so the
- * session index keeps reporting them across restarts. A new turn start clears
- * the stored outcome, and programmatic aborts — including scope-teardown
- * cancels — are deliberately never persisted. Bound at Session scope.
+ * session index keeps reporting them across restarts. Persisted on turn end
+ * (completed/failed, or a user's stop), cleared when a new turn starts, and
+ * backfilled from a cold resume's restored outcome — backfills never bump
+ * `updatedAt`, and programmatic aborts (including scope-teardown cancels)
+ * are deliberately never persisted. Writes are deduped against the last
+ * value this process persisted. Bound at Session scope.
  */
 
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
@@ -43,8 +46,6 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
       if (handle.id === MAIN_AGENT_ID) this.attachMain();
     }));
     this._register(this.agents.onDidDispose((agentId) => {
-      // A failed bootstrap still fired onDidCreate; drop the dead bus so a
-      // later main creation reattaches.
       if (agentId !== MAIN_AGENT_ID) return;
       this.mainSubscription?.dispose();
       this.mainSubscription = undefined;
@@ -83,32 +84,31 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
     );
     subscription.add(
       bus.subscribe('turn.started', () => {
-        if (this.lastPersisted !== undefined) this.write(undefined);
+        this.write(undefined);
       }),
     );
     subscription.add(
       bus.subscribe('agent.activity.updated', (event) => {
-        // The restored lastTurn (wire replay on cold resume) never gets a
-        // turn.ended fact, so backfill it into the metadata when nothing is
-        // persisted yet — otherwise pre-field sessions stay blank in cold
-        // listings even after a resume restored their outcome.
         if (this.lastPersisted !== undefined) return;
         const lastTurn = (event as { lastTurn?: { reason?: unknown } }).lastTurn;
         const reason = lastTurn?.reason;
-        // 'cancelled' is never backfilled: a restored cancel cannot be told
-        // apart from a programmatic abort, and those are never persisted.
-        if (reason === 'completed') this.write('completed');
-        else if (reason === 'failed' || reason === 'blocked') this.write('failed');
+        if (reason === 'completed') this.write('completed', { touchUpdatedAt: false });
+        else if (reason === 'failed' || reason === 'blocked') {
+          this.write('failed', { touchUpdatedAt: false });
+        }
       }),
     );
   }
 
-  private write(outcome: SessionTurnOutcome | undefined): void {
+  private write(
+    outcome: SessionTurnOutcome | undefined,
+    opts?: { readonly touchUpdatedAt?: boolean },
+  ): void {
     if (outcome === this.lastPersisted) return;
     this.adopted = true;
     const previous = this.lastPersisted;
     this.lastPersisted = outcome;
-    void this.metadata.update({ lastTurnReason: outcome }).catch(() => {
+    void this.metadata.update({ lastTurnReason: outcome }, opts).catch(() => {
       if (this.lastPersisted === outcome) this.lastPersisted = previous;
     });
   }
