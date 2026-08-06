@@ -102,6 +102,7 @@ async function dispatch(request: SearchWorkerCall): Promise<unknown> {
       const result: SearchWorkerOpenResult = {
         readOnly: core.db?.readOnly === true,
         lockToken: core.lockTokenView,
+        lifecycle: core.lifecycleState(),
       };
       return result;
     }
@@ -114,6 +115,7 @@ async function dispatch(request: SearchWorkerCall): Promise<unknown> {
       const result: SearchWorkerOpenResult = {
         readOnly: core.db?.readOnly === true,
         lockToken: core.lockTokenView,
+        lifecycle: core.lifecycleState(),
       };
       return result;
     }
@@ -122,6 +124,7 @@ async function dispatch(request: SearchWorkerCall): Promise<unknown> {
       const result: SearchWorkerOpenResult = {
         readOnly: core.db?.readOnly === true,
         lockToken: core.lockTokenView,
+        lifecycle: core.lifecycleState(),
       };
       return result;
     }

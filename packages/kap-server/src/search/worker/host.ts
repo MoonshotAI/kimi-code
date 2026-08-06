@@ -41,6 +41,8 @@ import { getTextBuildWorkerRuntimeState } from '@moonshot-ai/minidb/worker-runti
 
 import { GlobalSearchError } from '../contract';
 import type {
+  CoreIndexView,
+  CoreLifecycleReport,
   CoreSearchParams,
   CoreSearchResult,
   CoreStatus,
@@ -175,6 +177,13 @@ export class SearchWorkerHost {
   private exiting = false;
   private exitResolve: (() => void) | null = null;
   private orphanCheckScheduled = false;
+  /**
+   * The worker-side core's lifecycle as of the last RPC response that carried
+   * it (every response shape does: status/open/refresh/reindex directly,
+   * search via its index view). Feeds `lifecycleSnapshot` — the local,
+   * round-trip-free answer for the service's status surface.
+   */
+  private lastCoreLifecycle: CoreLifecycleReport | null = null;
 
   constructor(private readonly options: SearchWorkerHostOptions) {}
 
@@ -189,6 +198,41 @@ export class SearchWorkerHost {
   /** Test/diagnostic: the lock token the current/last worker reported. */
   get reportedLockToken(): string | undefined {
     return this.lockToken;
+  }
+
+  /**
+   * The aggregate search lifecycle from the host's LOCAL knowledge (stage 5):
+   * never spawns the worker, never waits on an RPC — the states a wedged or
+   * not-yet-running worker cannot answer for itself are exactly the ones this
+   * must report (stopped/opening/degraded-backoff/closing). A live worker's
+   * state comes from the cached last response (`lastCoreLifecycle`).
+   */
+  lifecycleSnapshot(): CoreLifecycleReport {
+    if (this.exiting) {
+      return this.worker !== null || this.spawnPromise !== null
+        ? { state: 'closing' }
+        : { state: 'stopped' };
+    }
+    if (this.spawnPromise !== null) return { state: 'opening' };
+    if (this.worker === null) {
+      if (this.lastFailure !== null) {
+        // Crash/spawn failure with a lazy restart pending on the next RPC
+        // (possibly still inside the backoff window): the index is unserved.
+        const wait = this.nextRetryAfter - Date.now();
+        return {
+          state: 'degraded',
+          detail:
+            wait > 0
+              ? `search worker restart backing off for ${wait}ms (last failure: ${this.lastFailure})`
+              : `search worker restart pending (last failure: ${this.lastFailure})`,
+        };
+      }
+      // Never spawned: the lazy spawn fires on the first RPC.
+      return { state: 'stopped' };
+    }
+    // The worker is up but no response has landed yet (its first open is
+    // still in flight): the core is opening.
+    return this.lastCoreLifecycle ?? { state: 'opening' };
   }
 
   // -- backend surface ------------------------------------------------------------
@@ -312,7 +356,9 @@ export class SearchWorkerHost {
   /**
    * Track the worker-published db.lock token and the read-only role from any
    * response carrying them; a read-only answer triggers the orphan-lock
-   * detector (see recoverOrphanedLock).
+   * detector (see recoverOrphanedLock). Also refreshes the cached core
+   * lifecycle (`lastCoreLifecycle`) — every response shape carries it:
+   * status/open/refresh/reindex directly, search via its index view.
    */
   private noteResult(result: unknown): void {
     if (result === null || typeof result !== 'object') return;
@@ -324,6 +370,19 @@ export class SearchWorkerHost {
       (result as { readOnly?: unknown }).readOnly === true ||
       (result as { index?: { readOnly?: unknown } }).index?.readOnly === true;
     if (readOnly) this.scheduleOrphanCheck();
+    const lifecycle = (result as { lifecycle?: CoreLifecycleReport }).lifecycle;
+    if (lifecycle !== undefined) {
+      this.lastCoreLifecycle = lifecycle;
+      return;
+    }
+    const index = (result as { index?: CoreIndexView }).index;
+    if (index !== undefined) {
+      // A search response arrived at all, so the worker is serving: the page
+      // view's building/ready maps directly; a degraded MESSAGE on a serving
+      // page keeps the lifecycle 'ready' (the message rides status()'s
+      // degraded field, same as the per-page surface).
+      this.lastCoreLifecycle = { state: index.state === 'building' ? 'building' : 'ready' };
+    }
   }
 
   // -- worker lifecycle --------------------------------------------------------------
@@ -433,6 +492,15 @@ export class SearchWorkerHost {
     }
     this.readyAt = Date.now();
     this.worker = worker;
+    // The failure that armed the backoff is consumed: a fresh worker starts
+    // with a clean slate so a LATER dirty exit records its own cause (the
+    // backoff counters themselves are kept for the exponential math).
+    this.lastFailure = null;
+    // The cached core lifecycle belonged to the PREVIOUS worker generation:
+    // the new core has not even opened its db yet, and its first open over a
+    // large corpus can take minutes — serving the dead worker's 'ready' from
+    // the snapshot in that window would misreport the index as servable.
+    this.lastCoreLifecycle = null;
     if (this.exiting) {
       // beginClose()/dispose() landed while the handshake was in flight; the
       // control message posted then found no worker and was dropped — forward
@@ -526,6 +594,9 @@ export class SearchWorkerHost {
     // token) so the replacement worker can acquire it — the pid in the lock
     // line is useless here because worker threads share the main process
     // pid and it stays alive.
+    // A bare kill leaves no 'error'-event message: record the exit itself so
+    // the backoff rejection and the lifecycle report can name the failure.
+    this.lastFailure ??= `worker exited with code ${code}`;
     this.reapPromise = this.reapLockFile(deadToken).finally(() => {
       this.reapPromise = null;
     });

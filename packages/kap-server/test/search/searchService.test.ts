@@ -2928,8 +2928,332 @@ describe('search worker host (stage 4)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// stage-1 performance baseline over a synthetic corpus
+// stage-5: aggregate lifecycle diagnostics
 // ---------------------------------------------------------------------------
+// The search side's explicit state machine (stopped → opening → ready →
+// building/degraded → closing) and the rules around it: status() keeps its
+// historical kick/await semantics and never throws, lifecycleReport() is the
+// non-intrusive local read, a corrupt rebuild is logged as its own outcome,
+// concurrent first calls spawn/open exactly once, a clean dispose releases
+// the lock, and a spawn failure never falls back to the inline host.
+
+describe('search lifecycle diagnostics (stage 5)', () => {
+  let home: string | undefined;
+  const services: GlobalSearchService[] = [];
+  const hosts: SearchWorkerHost[] = [];
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-kap-search-lifecycle-'));
+  });
+
+  afterEach(async () => {
+    for (const service of services.splice(0)) service.dispose();
+    for (const host of hosts.splice(0)) await host.dispose().catch(() => {});
+    await drainGlobalSearchDisposals();
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  function track(service: GlobalSearchService): GlobalSearchService {
+    services.push(service);
+    return service;
+  }
+
+  function hostOf(service: GlobalSearchService): SearchWorkerHost {
+    const backend = (service as unknown as { backend: SearchBackend }).backend;
+    if (!(backend instanceof SearchWorkerHost)) {
+      throw new Error('expected the worker backend');
+    }
+    return backend;
+  }
+
+  const lockPath = (): string => join(home!, 'search-index', 'db.lock');
+
+  async function waitForGone(path: string): Promise<void> {
+    await vi.waitFor(async () => {
+      await expect(stat(path)).rejects.toThrow();
+    });
+  }
+
+  it('walks stopped → ready → closing → stopped and never throws (inline)', async () => {
+    // No sessions and no index dir: the constructor's sync no-ops before
+    // touching the backend, so nothing has opened — and nothing gets created.
+    const service = track(makeInlineService(home!, staticIndex([])));
+    expect(service.lifecycleReport()).toEqual({ state: 'stopped' });
+    await expect(stat(join(home!, 'search-index'))).rejects.toThrow();
+
+    // status() keeps its historical semantics: it may kick the open, then
+    // reports the exact post-open lifecycle with real (zero) stats.
+    const status = await service.status();
+    expect(status).toMatchObject({ sessions: 0, documents: 0, lifecycle: { state: 'ready' } });
+    expect(service.lifecycleReport()).toEqual({ state: 'ready' });
+
+    service.dispose();
+    // DI disposal is synchronous; the async drain is still settling.
+    expect(service.lifecycleReport()).toEqual({ state: 'closing' });
+    await expect(service.status()).resolves.toMatchObject({ lifecycle: { state: 'closing' } });
+    await drainGlobalSearchDisposals();
+    expect(service.lifecycleReport()).toEqual({ state: 'stopped' });
+    await expect(service.status()).resolves.toMatchObject({ lifecycle: { state: 'stopped' } });
+  });
+
+  it('reports degraded instead of throwing when the open fails (inline)', async () => {
+    const s1 = summary('s1', 'open 失败', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 open-failure', T1)]);
+    const service = track(makeInlineService(home!, staticIndex([s1])));
+    // Patch before the constructor-kicked sync reaches the open (the patch
+    // lands synchronously, the sync only reaches openSearchDb after awaits).
+    const core = coreOf(service) as unknown as { openSearchDb(): Promise<unknown> };
+    core.openSearchDb = async () => {
+      throw new Error('disk gone');
+    };
+
+    // The constructor-kicked pass and the explicit retries all fail the open.
+    await settleSync(service).catch(() => {});
+    await expect(service.search({ query: '苹果' })).rejects.toMatchObject({
+      reason: 'index_unavailable',
+    });
+    expect(service.lifecycleReport().state).toBe('degraded');
+    expect(service.lifecycleReport().detail).toContain('disk gone');
+    const status = await service.status();
+    expect(status.lifecycle.state).toBe('degraded');
+    expect(status.degraded).toContain('disk gone');
+  });
+
+  it('logs the corruption rebuild as its own diagnostic outcome (inline)', { timeout: 30_000 }, async () => {
+    const s1 = summary('s1', 'corrupt 日志', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 corrupt-log', T1)]);
+    const first = track(makeInlineService(home!, staticIndex([s1])));
+    await first.reindex();
+    first.dispose();
+    await drainGlobalSearchDisposals();
+
+    // Corrupt the text-index definitions sidecar: its JSON.parse failure is a
+    // rebuildable corruption (SyntaxError), so the open throws, the probe
+    // confirms the lock is free, and the derived index is rebuilt from
+    // scratch — with the warn line this test asserts. (A corrupt db.snapshot
+    // would NOT exercise this path: resync-mode recovery skips bad frames and
+    // the intact WAL heals the open.)
+    await writeFile(join(home!, 'search-index', 'db.textindexes.json'), 'not json {{{', 'utf8');
+
+    const { log, warnings } = recordingLog();
+    const second = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeFlags(false));
+    track(second);
+    second.syncDebounceMs = 0;
+    await settleSync(second);
+    expect(warnings.some((line) => line.includes('corruption detected'))).toBe(true);
+    const page = await second.search({ query: '苹果' });
+    expect(page.items.length).toBe(1);
+    expect(page.indexState.state).toBe('ready');
+  });
+
+  it('a failing session index degrades search only — construction, search and status keep answering', async () => {
+    // The dependency direction pin (stage 5 work item 2): global search READS
+    // the session index, so a session-index failure surfaces inside search as
+    // a degraded note — it never propagates into construction or the answers.
+    const failing = makeSessionIndex(async () => {
+      throw new Error('metadata store down');
+    });
+    const service = track(makeInlineService(home!, failing));
+    // Every sync pass fails on listRecent — the failure is recorded, never
+    // propagated into construction or the request paths.
+    await settleSync(service).catch(() => {});
+    const page = await service.search({ query: 'anything' });
+    expect(page.items).toEqual([]);
+    expect(page.indexState.state).toBe('building');
+    const status = await service.status();
+    expect(status.degraded).toContain('metadata store down');
+  });
+
+  it('a restart attaches the published generation instead of rebuilding (inline)', async () => {
+    const s1 = summary('s1', '代际复用', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 generation-reuse', T1)]);
+    const first = track(makeInlineService(home!, staticIndex([s1])));
+    await first.reindex();
+    // Publish a persistent generation deterministically: the close-time
+    // best-effort publish is gated on a 4 MiB WAL-staleness rule that a tiny
+    // test corpus never crosses.
+    const firstCore = coreOf(first) as unknown as {
+      db: { buildGeneration(trigger: 'manual'): Promise<void> } | null;
+    };
+    await firstCore.db!.buildGeneration('manual');
+    first.dispose();
+    await drainGlobalSearchDisposals();
+
+    const second = track(makeInlineService(home!, staticIndex([s1])));
+    await settleSync(second);
+    const page = await second.search({ query: '苹果' });
+    expect(page.items.length).toBe(1);
+    // The open attached the published generation (and replayed at most the
+    // WAL delta past its checkpoint) — no full recovery ran.
+    const core = coreOf(second) as unknown as {
+      db: { lifecycleStatus(): { path: string[] } } | null;
+    };
+    const path = core.db!.lifecycleStatus().path;
+    expect(path).toContain('generation-load');
+    expect(path).not.toContain('full-rebuild');
+  });
+
+  it('concurrent cold calls open the index exactly once (inline)', async () => {
+    const s1 = summary('s1', '单次打开', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 single-open', T1)]);
+    const service = track(makeInlineService(home!, staticIndex([s1])));
+    const core = coreOf(service) as unknown as { openSearchDb(): Promise<unknown> };
+    const originalOpen = core.openSearchDb.bind(core);
+    let openCalls = 0;
+    core.openSearchDb = async () => {
+      openCalls++;
+      return originalOpen();
+    };
+
+    // Cold searches answer building pages and kick the coordinator; the
+    // single-flight open underneath must run exactly once.
+    const pages = await Promise.all([
+      service.search({ query: '苹果' }),
+      service.search({ query: '苹果' }),
+      service.search({ query: '苹果' }),
+    ]);
+    for (const page of pages) expect(page.indexState.state).toBe('building');
+    await settleSync(service);
+    expect(openCalls).toBe(1);
+    expect((await service.search({ query: '苹果' })).items.length).toBe(1);
+  });
+
+  it('concurrent first RPCs spawn exactly one worker', { timeout: 30_000 }, async () => {
+    let spawns = 0;
+    const host = new SearchWorkerHost({
+      dir: join(home!, 'search-index'),
+      log: noopLog,
+      workerFactory: ({ url, data, execArgv }) => {
+        spawns++;
+        return new Worker(url, { workerData: data, execArgv });
+      },
+    });
+    hosts.push(host);
+    await Promise.all([host.ensureOpen(), host.ensureOpen(), host.ensureOpen(), host.ensureOpen()]);
+    expect(spawns).toBe(1);
+    expect(host.lifecycleSnapshot().state).toBe('ready');
+  });
+
+  it('reports opening while the worker boots, ready after the sync, degraded after a crash', { timeout: 30_000 }, async () => {
+    const s1 = summary('s1', '生命周期', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 lifecycle', T1)]);
+    const service = track(makeService(home!, staticIndex([s1])));
+    // Let the constructor-kicked sync reach the worker spawn (a worker boot
+    // takes ~200ms, far longer than these flush rounds), then the local
+    // report must show the transitional state WITHOUT any RPC.
+    await flush();
+    expect(service.lifecycleReport().state).toBe('opening');
+    await settleSync(service);
+    expect(service.lifecycleReport().state).toBe('ready');
+    const status = await service.status();
+    expect(status.lifecycle.state).toBe('ready');
+    expect(status.sessions).toBe(1);
+
+    await hostOf(service).killWorkerForTest();
+    // Inside the backoff window the local report names the crash — no RPC
+    // needed, so the state is observable while the worker is down.
+    const down = service.lifecycleReport();
+    expect(down.state).toBe('degraded');
+    expect(down.detail).toContain('worker');
+
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await settleSync(service); // respawn after the backoff
+    expect(service.lifecycleReport().state).toBe('ready');
+    expect((await service.search({ query: '苹果' })).items.length).toBe(1);
+  });
+
+  it('does not serve a dead worker generation’s cached lifecycle after a respawn', { timeout: 30_000 }, async () => {
+    const s1 = summary('s1', '缓存失效', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 stale-cache', T1)]);
+    const service = track(makeService(home!, staticIndex([s1])));
+    await settleSync(service);
+    expect(service.lifecycleReport().state).toBe('ready');
+
+    await hostOf(service).killWorkerForTest();
+    await new Promise((resolve) => setTimeout(resolve, 700)); // out of backoff
+
+    // Drive a respawn, then pin the window between the handshake completing
+    // and the first RPC response landing: the new worker's core has not even
+    // opened the db yet, so the snapshot must report 'opening' — never the
+    // dead worker's cached 'ready'. The assertion runs synchronously right
+    // after the poll, so the response message cannot have been processed yet.
+    const host = hostOf(service);
+    const respawn = syncNow(service);
+    respawn.catch(() => {});
+    await vi.waitFor(
+      () => {
+        expect((host as unknown as { worker: unknown }).worker).not.toBeNull();
+      },
+      { interval: 5, timeout: 10_000 },
+    );
+    expect(service.lifecycleReport().state).toBe('opening');
+
+    await respawn;
+    await settleSync(service);
+    expect(service.lifecycleReport().state).toBe('ready');
+    expect((await service.search({ query: '苹果' })).items.length).toBe(1);
+  });
+
+  it('a clean dispose releases the search-index lock and the lifecycle settles at stopped', { timeout: 30_000 }, async () => {
+    const s1 = summary('s1', '退出顺序', T1);
+    await writeWire(home!, 's1', 'main', [userLine('苹果 shutdown', T1)]);
+    const service = track(makeService(home!, staticIndex([s1])));
+    await service.reindex();
+    await expect(stat(lockPath())).resolves.toBeDefined();
+
+    const host = hostOf(service);
+    host.beginClose();
+    expect(host.lifecycleSnapshot().state).toBe('closing');
+    service.dispose();
+    await drainGlobalSearchDisposals();
+    // The worker drained, closed the db (releasing the lock) and exited
+    // before the disposal promise resolved.
+    await waitForGone(lockPath());
+    expect(service.lifecycleReport()).toEqual({ state: 'stopped' });
+
+    // A fresh instance can take the write lock immediately — no stale-lock
+    // window after a clean shutdown.
+    const next = track(makeService(home!, staticIndex([s1])));
+    await next.reindex();
+    expect((await next.search({ query: '苹果' })).items.length).toBe(1);
+  });
+
+  it('a spawn failure never falls back to the inline host and reports degraded', { timeout: 30_000 }, async () => {
+    const service = track(makeService(home!, staticIndex([])));
+    // Swap in a host whose worker cannot spawn (no worker runtime in this
+    // environment): the search must degrade recognizably, never restore the
+    // index work onto the main thread.
+    const failingHost = new SearchWorkerHost({
+      dir: join(home!, 'search-index'),
+      log: noopLog,
+      workerFactory: () => {
+        throw new Error('threads unavailable');
+      },
+    });
+    hosts.push(failingHost);
+    (service as unknown as { backend: SearchBackend }).backend = failingHost;
+
+    const page = await service.search({ query: 'anything' });
+    expect(page.items).toEqual([]);
+    expect(page.source).toBe('index');
+    expect(page.indexState.state).toBe('building');
+    expect(page.indexState.degraded).toContain('threads unavailable');
+    // No inline db materialized: the index directory was never created.
+    await expect(stat(join(home!, 'search-index'))).rejects.toThrow();
+
+    expect(service.lifecycleReport().state).toBe('degraded');
+    // A second call inside the backoff window fails fast; status() still
+    // answers (never throws) with the degraded lifecycle.
+    const status = await service.status();
+    expect(status.lifecycle.state).toBe('degraded');
+    expect(status.degraded).toContain('worker');
+  });
+});
+
+
 // Numbers are logged as JSON for phase-to-phase comparison; only a loose
 // complexity budget is asserted (no tight absolute millisecond thresholds in
 // shared CI), so an accidental quadratic regression trips the test anywhere.

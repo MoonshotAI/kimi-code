@@ -6,7 +6,7 @@
 //
 // The per-frame interpretation (expiry drop, batch unrolling, value refs, dt
 // meta) lives in frameToOps so that open-time recovery and read-replica WAL
-// catch-up (catchUpWal) can never drift apart.
+// catch-up (catchUpWalAsync) can never drift apart.
 //
 // GENERATION PAIRING (stat-pairing — the LEGACY fallback path). MiniDb's
 // disk state is a compound document: a compaction rotation swaps db.snapshot
@@ -35,7 +35,7 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { scanFrameRefsFd, scanFrameRefsFdAsync, scanBatchOpRefs, TYPE_SET, TYPE_DEL, TYPE_BATCH, MAGIC } from './codec.js';
+import { scanFrameRefsFdAsync, scanBatchOpRefs, TYPE_SET, TYPE_DEL, TYPE_BATCH, MAGIC } from './codec.js';
 import type { FrameRef } from './codec.js';
 import { SNAPSHOT_FILE, WAL_FILE } from './generation.js';
 import { yieldToLoop } from './text-index/tokenize.js';
@@ -194,9 +194,12 @@ export const WAL_APPLY_SLICE_MS = 8;
 
 /** Cooperative slicing for the recovered-op apply loops: reports true when
  *  either budget (primitive ops, or wall-clock since the last yield) is
- *  exhausted and the loop should yieldToLoop(). Safe mid-apply: the store is
- *  not published until open() returns, so nothing observes a half-applied
- *  pass. */
+ *  exhausted and the loop should yieldToLoop(). Yielding mid-apply is safe on
+ *  both consumers: at open the store is not published until open() returns,
+ *  so nothing observes a half-applied pass; during replica catch-up
+ *  (catchUpWalAsync) concurrent readers can observe intermediate apply
+ *  states, which the replica's eventual-consistency contract permits (the
+ *  caller's watermark only advances once the whole delta has applied). */
 export function walApplySlicer(): () => boolean {
   let ops = 0;
   let sliceStart = performance.now();
@@ -485,7 +488,7 @@ async function recoverPass({
 }
 
 /** Continue a replica from a WAL watermark: strictly scan frames in
- *  [offset, EOF) of `walPath` and hand each to `apply(f, fd)` in order.
+ *  [offset, EOF) of `walPath` and hand each to `apply(f, fd, slice)` in order.
  *
  *  Returns the new continuation offset (end of the last fully-valid frame)
  *  and how many frames were applied. An invalid/partial frame anywhere stops
@@ -495,13 +498,24 @@ async function recoverPass({
  *  cannot be a clean frame-boundary continuation (negative, beyond EOF,
  *  pointing at bytes that start no frame, or the file is not the `anchor`
  *  inode — rotation swapped it in the microseconds between the caller's stat
- *  and this open): the caller must fully reopen. */
-export function catchUpWal(
+ *  and this open): the caller must fully reopen.
+ *
+ *  Cooperative (stage 5 follow-up of the open-path slicing): the frame scan
+ *  runs through the windowed async scanner and the apply loop yields between
+ *  primitive ops on the shared walApplySlicer budgets, so a replica that fell
+ *  far behind no longer blocks the host loop in one synchronous scan+apply.
+ *  `apply` receives the slicer and MUST await-yield when it fires — a BATCH
+ *  frame unrolls into thousands of primitive ops, so frame-granular yielding
+ *  could never bound a slice. Yielding mid-catch-up lets concurrent readers
+ *  observe intermediate apply states; that is the documented replica contract
+ *  (a replica is eventually consistent — the caller's watermark only advances
+ *  once the whole delta has applied). */
+export async function catchUpWalAsync(
   walPath: string,
   offset: number,
   anchor: { dev: number; ino: number },
-  apply: (f: FrameRef, fd: number) => void,
-): { offset: number; appliedFrames: number } | null {
+  apply: (f: FrameRef, fd: number, slice: () => boolean) => Promise<void>,
+): Promise<{ offset: number; appliedFrames: number } | null> {
   let fd: number;
   try {
     fd = fsSync.openSync(walPath, 'r');
@@ -514,7 +528,7 @@ export function catchUpWal(
     if (st.dev !== anchor.dev || st.ino !== anchor.ino) return null;
     const size = st.size;
     if (offset < 0 || offset > size) return null;
-    const r = scanFrameRefsFd(fd, { onCorrupt: 'strict', startOffset: offset });
+    const r = await scanFrameRefsFdAsync(fd, { onCorrupt: 'strict', startOffset: offset });
     if (r.frames.length === 0 && r.eofOffset < size) {
       // Bytes at `offset` start no valid frame. An append-only file grows
       // whole frames sequentially, so a torn tail is always a frame PREFIX
@@ -525,7 +539,8 @@ export function catchUpWal(
       if (!MAGIC.subarray(0, n).equals(head)) return null;
       return { offset, appliedFrames: 0 };
     }
-    for (const f of r.frames) apply(f, fd);
+    const slice = walApplySlicer();
+    for (const f of r.frames) await apply(f, fd, slice);
     return { offset: r.eofOffset, appliedFrames: r.frames.length };
   } finally {
     fsSync.closeSync(fd);

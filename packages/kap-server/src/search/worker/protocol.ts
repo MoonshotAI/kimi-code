@@ -16,6 +16,7 @@
 
 import type { GlobalSearchErrorReason } from '../contract.ts';
 import type {
+  CoreLifecycleReport,
   CoreSearchParams,
   CoreSearchResult,
   CoreStatus,
@@ -83,6 +84,12 @@ export type SearchWorkerRequest = SearchWorkerCall | SearchWorkerControlMessage;
 export interface SearchWorkerOpenResult {
   readonly readOnly: boolean;
   readonly lockToken?: string;
+  /**
+   * The core's lifecycle right after the call (stage 5): lets the host keep
+   * its cached aggregate state exact across worker (re)opens — an open that
+   * published a still-building text base reports 'building', not 'ready'.
+   */
+  readonly lifecycle: CoreLifecycleReport;
 }
 
 export interface SearchWorkerResultMap {

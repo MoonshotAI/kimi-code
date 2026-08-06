@@ -88,6 +88,7 @@ import { MAX_DOC_TEXT_CHARS, type MessageDoc, type TitleDoc } from './docs';
 import {
   SearchIndexCore,
   type CoreIndexView,
+  type CoreLifecycleReport,
   type CoreSearchParams,
   type CoreSearchResult,
   type CoreStatus,
@@ -212,6 +213,15 @@ export interface IGlobalSearchService {
   search(query: GlobalSearchQuery): Promise<GlobalSearchPage>;
   /** Full rebuild: wipe the index and rescan every wire file. */
   reindex(): Promise<{ sessions: number; documents: number }>;
+  /**
+   * Diagnostic status (the `/api/v1/debug` surface reflects it). Never
+   * throws: a backend that cannot answer (failed open, worker down) reports
+   * a degraded lifecycle instead of rejecting. `lifecycle` is the aggregate
+   * state machine (stage 5): stopped → opening → ready → building/degraded →
+   * closing. NOTE the historical contract: the call may kick/await the
+   * backend's open and read-only refresh — use `lifecycleReport()` for a
+   * non-intrusive local read.
+   */
   status(): Promise<{
     sessions: number;
     documents: number;
@@ -220,7 +230,14 @@ export interface IGlobalSearchService {
     generation: number;
     /** Last background refresh/sync/reindex failure, if serving stale. */
     degraded?: string;
+    lifecycle: CoreLifecycleReport;
   }>;
+  /**
+   * Synchronous local lifecycle report (stage 5): never kicks an open, never
+   * spawns the worker, never awaits. Answers the transitional states
+   * (stopped/opening/degraded-backoff/closing) that status() would block on.
+   */
+  lifecycleReport(): CoreLifecycleReport;
   /**
    * Wire the live-transcript source for the in-memory search route. Called
    * once from the composition root (start.ts) after `TranscriptService` is
@@ -301,6 +318,13 @@ export interface SearchBackend {
    * skip their remaining writes at the next gate check.
    */
   beginClose(): void;
+  /**
+   * Local, round-trip-free aggregate lifecycle (stage 5): the states a wedged
+   * or not-yet-started backend must be able to report without being asked
+   * (stopped/opening/degraded/closing). The full status() round trip refines
+   * the up states (ready/building) with exact stats.
+   */
+  lifecycleSnapshot(): CoreLifecycleReport;
   ensureOpen(): Promise<unknown>;
   search(params: CoreSearchParams): Promise<CoreSearchResult>;
   sync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncOutcome>;
@@ -329,6 +353,10 @@ export class InlineSearchBackend implements SearchBackend {
 
   beginClose(): void {
     this.core.beginClose();
+  }
+
+  lifecycleSnapshot(): CoreLifecycleReport {
+    return this.core.lifecycleState();
   }
 
   ensureOpen(): Promise<void> {
@@ -405,6 +433,8 @@ export class GlobalSearchService implements IGlobalSearchService {
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
   /** Last background sync/reindex/worker failure — surfaced as degraded. */
   private lastRefreshError: { at: number; message: string } | null = null;
+  /** Set when dispose()'s async drain finished — lifecycle 'stopped'. */
+  private drainSettled = false;
 
   constructor(
     @ISessionIndex private readonly sessionIndex: ISessionIndex,
@@ -471,6 +501,7 @@ export class GlobalSearchService implements IGlobalSearchService {
       await this.syncPromise?.catch(() => {});
       await this.refreshPromise?.catch(() => {});
       await this.backend.dispose();
+      this.drainSettled = true;
     })();
     pendingDisposals.add(pending);
     void pending.finally(() => pendingDisposals.delete(pending));
@@ -978,16 +1009,47 @@ export class GlobalSearchService implements IGlobalSearchService {
     lastIndexedAt: number | null;
     generation: number;
     degraded?: string;
+    lifecycle: CoreLifecycleReport;
   }> {
-    const status = await this.backend.status();
-    if (!status.readOnly) this.requestSync();
-    return {
-      sessions: status.sessions,
-      documents: status.documents,
-      lastIndexedAt: status.lastIndexedAt,
-      generation: status.generation,
-      degraded: this.lastRefreshError?.message ?? status.degraded,
-    };
+    const empty = { sessions: 0, documents: 0, lastIndexedAt: null, generation: 0 };
+    if (this.disposed) {
+      return {
+        ...empty,
+        lifecycle: { state: this.drainSettled ? 'stopped' : 'closing' },
+      };
+    }
+    try {
+      const status = await this.backend.status();
+      if (!status.readOnly) this.requestSync();
+      return {
+        sessions: status.sessions,
+        documents: status.documents,
+        lastIndexedAt: status.lastIndexedAt,
+        generation: status.generation,
+        degraded: this.lastRefreshError?.message ?? status.degraded,
+        lifecycle: status.lifecycle,
+      };
+    } catch (error) {
+      // A backend that cannot answer (failed open, worker down, wedged call
+      // reaped by the watchdog) reports degraded — this diagnostic surface
+      // never throws, exactly so the failure states stay observable.
+      const message = errorMessage(error);
+      return { ...empty, degraded: message, lifecycle: { state: 'degraded', detail: message } };
+    }
+  }
+
+  /**
+   * Synchronous LOCAL lifecycle report (stage 5): never kicks an open, never
+   * spawns the worker, never awaits — the view that still answers DURING a
+   * minutes-long first open (or while the worker backs off), where status()
+   * would block. The up states (ready/building) come from the backend's
+   * cached last response and may lag one RPC; status() is the exact,
+   * round-trip variant. Reflected on the `/api/v1/debug` surface like every
+   * Service method.
+   */
+  lifecycleReport(): CoreLifecycleReport {
+    if (this.disposed) return { state: this.drainSettled ? 'stopped' : 'closing' };
+    return this.backend.lifecycleSnapshot();
   }
 }
 

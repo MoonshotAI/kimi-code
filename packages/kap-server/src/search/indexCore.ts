@@ -305,6 +305,44 @@ export interface CoreSyncOutcome {
   readonly sessions: number;
   readonly documents: number;
   readonly lockToken?: string;
+  /** Post-pass lifecycle snapshot (stage 5) — keeps the host's cached
+   *  aggregate state exact on the sync-first path, where no search/status
+   *  response ever carries it. */
+  readonly lifecycle: CoreLifecycleReport;
+}
+
+/** The pass body's return — the wrapper adds the lock token and lifecycle. */
+type CoreSyncPassOutcome = Omit<CoreSyncOutcome, 'lockToken' | 'lifecycle'>;
+
+/**
+ * The aggregate lifecycle of the served index (stage 5): the diagnostic state
+ * machine behind the service's status surface —
+ * `stopped → opening → ready → building/degraded → closing`. Distinct from
+ * the per-page `CoreIndexView.state` (which answers "can this page serve hits
+ * now"): the lifecycle also covers the no-db phases and carries the failure
+ * detail, so logs/diagnostics can tell building, stale-serving, degraded,
+ * corrupt-rebuild and worker-unavailable apart.
+ */
+export type CoreLifecycleState =
+  /** Never opened, or fully closed. */
+  | 'stopped'
+  /** An open/reopen is in flight (generation load / WAL replay / rebuild). */
+  | 'opening'
+  /** A db is published but its text base is still (re)building. */
+  | 'building'
+  /** A published generation is serving (writer or read-only). A base that
+   *  keeps serving after a failed background refresh stays 'ready' — the
+   *  failure rides the `degraded` message field of the page/status surfaces. */
+  | 'ready'
+  /** No base is serving: the last open failed, or (worker host) the worker
+   *  is down/backing off. The detail carries the error. */
+  | 'degraded'
+  /** Close has started; in-flight ops are draining. */
+  | 'closing';
+
+export interface CoreLifecycleReport {
+  readonly state: CoreLifecycleState;
+  readonly detail?: string;
 }
 
 export interface CoreStatus {
@@ -315,6 +353,8 @@ export interface CoreStatus {
   readonly readOnly: boolean;
   readonly lockToken?: string;
   readonly degraded?: string;
+  /** Post-open/post-refresh lifecycle snapshot (stage 5). */
+  readonly lifecycle: CoreLifecycleReport;
 }
 
 // ---------------------------------------------------------------------------
@@ -528,6 +568,14 @@ export class SearchIndexCore {
         // caller's open fails; the next search retries from scratch.
         throw error;
       }
+      // The index is derived data — never repaired, only rebuilt. The rebuild
+      // destroys the previous index files, so the corruption that justified it
+      // must be visible in the logs (stage 5: 'corrupt' is a distinguishable
+      // diagnostic outcome, separate from building/degraded).
+      this.log.warn('global search: search-index corruption detected; rebuilding from scratch', {
+        dir: this.indexDir,
+        error: errorMessage(error),
+      });
       await rm(this.indexDir, { recursive: true, force: true });
       return MiniDb.open<SearchDoc>(opts);
     }
@@ -659,14 +707,14 @@ export class SearchIndexCore {
   // bumps the generation, invalidating older page tokens.
 
   async sync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncOutcome> {
-    let outcome: CoreSyncOutcome = { noop: true, sessions: 0, documents: 0 };
+    let outcome: CoreSyncPassOutcome = { noop: true, sessions: 0, documents: 0 };
     await this.tracked(async () => {
       outcome = await this.runSync(sessions);
     });
-    return { ...outcome, lockToken: this.lockToken };
+    return { ...outcome, lockToken: this.lockToken, lifecycle: this.lifecycleState() };
   }
 
-  private async runSync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncOutcome> {
+  private async runSync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncPassOutcome> {
     if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
     this.syncReplaced = false;
     await this.ensureOpen();
@@ -1245,6 +1293,29 @@ export class SearchIndexCore {
     await this.ensureOpen();
   }
 
+  /**
+   * Synchronous lifecycle snapshot (stage 5) — never kicks an open, never
+   * awaits: the diagnostic view of `stopped → opening → ready →
+   * building/degraded → closing`. 'degraded' means NO base is serving (the
+   * last open failed); a published base that keeps serving after a failed
+   * background refresh stays 'ready' — the failure rides the `degraded`
+   * message field of the page/status surfaces, same as the per-page
+   * `indexState` discipline.
+   */
+  lifecycleState(): CoreLifecycleReport {
+    if (this.disposed) return { state: this.db === null ? 'stopped' : 'closing' };
+    const db = this.db;
+    if (db === null) {
+      if (this.openPromise !== null) return { state: 'opening' };
+      if (this.openError !== null) return { state: 'degraded', detail: this.openError };
+      return { state: 'stopped' };
+    }
+    if (db.textIndexBuilding(TEXT_INDEX_NAME) || db.textIndexBuilding(TRI_INDEX_NAME)) {
+      return { state: 'building' };
+    }
+    return { state: 'ready' };
+  }
+
   async status(): Promise<CoreStatus> {
     await this.ensureOpen();
     if (this.db?.readOnly === true) {
@@ -1260,6 +1331,7 @@ export class SearchIndexCore {
       readOnly: this.db?.readOnly === true,
       lockToken: this.lockToken,
       degraded: this.lastRefreshError?.message,
+      lifecycle: this.lifecycleState(),
     };
   }
 

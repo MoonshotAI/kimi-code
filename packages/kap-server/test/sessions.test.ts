@@ -1465,4 +1465,45 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     const relisted = await getJson<PageWire>('/api/v1/sessions?include_archive=true');
     expect(relisted.body.data.items.map((s) => s.id)).toEqual([id]);
   });
+
+  it('serves session routes from the authoritative store when the read model cannot open', async () => {
+    // Break the read model at its root: a plain FILE where the query-store
+    // directory must be. Boot-time prepare fails; every later access retries
+    // and fails the same way for the whole server lifetime.
+    await (server as RunningServer).close();
+    server = undefined;
+    await rm(join(home as string, 'cache', 'query-store'), { recursive: true, force: true });
+    await writeFile(join(home as string, 'cache', 'query-store'), 'sabotage', 'utf8');
+
+    // The boot itself must survive the read-model failure (prepare's failure
+    // is logged, never propagated).
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    // The degradation is diagnosable through the debug surface.
+    const status = await getJson<{ state: string; reason?: string; degradedCount: number }>(
+      '/api/v1/debug/sessionIndex/status',
+    );
+    expect(status.body.data.state).toBe('degraded');
+    expect(status.body.data.degradedCount).toBeGreaterThan(0);
+
+    // Session lifecycle is untouched: create, list, point-lookup all answer
+    // from the authoritative metadata.
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    expect(created.body.code).toBe(0);
+    const id = created.body.data.id;
+    const listed = await getJson<PageWire>('/api/v1/sessions');
+    expect(listed.body.data.items.some((s) => s.id === id)).toBe(true);
+    const fetched = await getJson<{ id: string }>(`/api/v1/sessions/${id}`);
+    expect(fetched.body.data.id).toBe(id);
+  });
 });

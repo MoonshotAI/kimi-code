@@ -15,7 +15,7 @@ import { Store } from './store.js';
 import type { StoreRecord } from './store.js';
 import { WAL } from './wal.js';
 import { ValueReader } from './value-reader.js';
-import { catchUpWal } from './recovery.js';
+import { catchUpWalAsync } from './recovery.js';
 import { compact, shouldCompact } from './compaction.js';
 import { OpTracker } from './op-tracker.js';
 import { TEXT_INDEXES_FILE, SNAPSHOT_FILE, isPersistentFile, rootPostingsFile, textDictionaryFile, textDocsFile } from './generation.js';
@@ -114,6 +114,12 @@ export class MiniDb<V = unknown> {
    *  offset as advanced by the last successful catch-up (recoveryInfo's scan
    *  endpoint anchors the first call). */
   private walTail: { dev: number; ino: number; size: number } | null = null;
+  /** Catch-up serializer: the sliced async apply yields to the event loop, so
+   *  overlapping catch-ups would interleave op-by-op (the pre-async apply was
+   *  atomic per call by virtue of being synchronous). Chaining restores that
+   *  per-call atomicity; a caller queued behind another catch-up observes the
+   *  advanced watermark and no-ops or falls back to a full reopen. */
+  private catchUpChain: Promise<unknown> = Promise.resolve();
   readOnly = false;
   /* Non-private (package-internal): lifecycle.ts reads/writes this through its LifecycleHost view. */ lock: LockFile | null = null;
 
@@ -1149,8 +1155,8 @@ export class MiniDb<V = unknown> {
    *  derived-index maintenance applyOp performs on the write path — minus
    *  unique checks: the writer already validated, and intermediate frame
    *  states must apply literally (LWW). */
-  private applyRecoveredFrame(f: FrameRef, fd: number): void {
-    this.writePath.applyRecoveredFrame(f, fd);
+  private applyRecoveredFrameAsync(f: FrameRef, fd: number, slice: () => boolean): Promise<void> {
+    return this.writePath.applyRecoveredFrameAsync(f, fd, slice);
   }
 
   private applyRecoveredOp(op: RecoveredOp): void {
@@ -1387,13 +1393,34 @@ export class MiniDb<V = unknown> {
    *  rotated file and a shrunken one all return null, meaning: reopen from
    *  scratch. A partial/torn tail left by a writer mid-writev is NOT an
    *  error: the scan stops at the last fully-valid frame; call again later
-   *  and its CRC validates once the writev landed. */
+   *  and its CRC validates once the writev landed.
+   *
+   *  Cooperative: the scan runs through the windowed async scanner and the
+   *  apply yields between primitive ops on the walApplySlicer budgets, so a
+   *  replica that fell far behind does not block the host's event loop in
+   *  one synchronous scan+apply. Calls are serialized per instance (see
+   *  catchUpChain). */
   async catchUpFromWal(offset: number): Promise<{ offset: number; appliedFrames: number } | null> {
+    this.ensureOpen();
+    const run = this.catchUpChain.then(() => this.doCatchUpFromWal(offset));
+    // The chain itself must survive a caller's rejection (treated as "reopen
+    // from scratch" by every caller): swallow for the chain, not for the caller.
+    this.catchUpChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async doCatchUpFromWal(offset: number): Promise<{ offset: number; appliedFrames: number } | null> {
+    // Re-check on dequeue: the instance may have been closed while this call
+    // waited on the chain behind another catch-up (both production callers
+    // gate close externally; this is the library-contract backstop).
     this.ensureOpen();
     const ri = this.recoveryInfo;
     const anchor = this.walTail ?? (ri && ri.walIno ? { dev: ri.walDev, ino: ri.walIno, size: ri.walScanEnd } : null);
     if (!anchor || offset !== anchor.size) return null;
-    const res = catchUpWal(this.walPath, offset, anchor, (f, fd) => this.applyRecoveredFrame(f, fd));
+    const res = await catchUpWalAsync(this.walPath, offset, anchor, (f, fd, slice) => this.applyRecoveredFrameAsync(f, fd, slice));
     if (res) this.walTail = { dev: anchor.dev, ino: anchor.ino, size: res.offset };
     return res;
   }
