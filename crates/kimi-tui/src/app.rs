@@ -45,29 +45,36 @@ pub enum TranscriptKind {
 pub struct TranscriptLine {
     pub kind: TranscriptKind,
     pub text: String,
+    /// Long tool-result lines start collapsed (single-line preview + `[+]`);
+    /// Ctrl-O toggles the most recent collapsed tool line.
+    pub collapsed: bool,
 }
 
 impl TranscriptLine {
     pub fn user(text: impl Into<String>) -> Self {
-        Self { kind: TranscriptKind::User, text: text.into() }
+        Self { kind: TranscriptKind::User, text: text.into(), collapsed: false }
     }
     pub fn assistant(text: impl Into<String>) -> Self {
-        Self { kind: TranscriptKind::Assistant, text: text.into() }
+        Self { kind: TranscriptKind::Assistant, text: text.into(), collapsed: false }
     }
     pub fn streaming(text: impl Into<String>) -> Self {
-        Self { kind: TranscriptKind::Streaming, text: text.into() }
+        Self { kind: TranscriptKind::Streaming, text: text.into(), collapsed: false }
     }
     pub fn thinking(text: impl Into<String>) -> Self {
-        Self { kind: TranscriptKind::Thinking, text: text.into() }
+        Self { kind: TranscriptKind::Thinking, text: text.into(), collapsed: false }
     }
     pub fn tool(text: impl Into<String>) -> Self {
-        Self { kind: TranscriptKind::Tool, text: text.into() }
+        Self { kind: TranscriptKind::Tool, text: text.into(), collapsed: false }
+    }
+    /// A tool-result line that starts collapsed (long output).
+    pub fn tool_collapsed(text: impl Into<String>) -> Self {
+        Self { kind: TranscriptKind::Tool, text: text.into(), collapsed: true }
     }
     pub fn status(text: impl Into<String>) -> Self {
-        Self { kind: TranscriptKind::Status, text: text.into() }
+        Self { kind: TranscriptKind::Status, text: text.into(), collapsed: false }
     }
     pub fn error(text: impl Into<String>) -> Self {
-        Self { kind: TranscriptKind::Error, text: text.into() }
+        Self { kind: TranscriptKind::Error, text: text.into(), collapsed: false }
     }
 }
 /// State for an in-progress Tab completion cycle.
@@ -91,6 +98,24 @@ struct PendingApproval {
     args: String,
     /// The full tool arguments JSON (for the `v` detail view).
     arguments: String,
+}
+
+/// A tool-result line with long output starts collapsed (`[+]`; Ctrl-O to
+/// expand) — the tool-call card fold. Short results stay expanded.
+pub fn tool_result_collapsed(text: &str) -> bool {
+    text.chars().count() > 120
+}
+
+/// Toggle the most recent tool-result line (Ctrl-O) — the tool-call card
+/// expand/collapse. Any tool line that holds a result (long text, multiline,
+/// or already collapsed) participates; short started-lines stay put.
+pub fn toggle_last_tool_collapse(transcript: &mut [TranscriptLine]) {
+    if let Some(entry) = transcript.iter_mut().rev().find(|e| {
+        e.kind == TranscriptKind::Tool
+            && (e.collapsed || e.text.contains('\n') || tool_result_collapsed(&e.text))
+    }) {
+        entry.collapsed = !entry.collapsed;
+    }
 }
 
 /// Compact single-line preview of a tool's arguments (≤ 80 chars, char-safe).
@@ -352,6 +377,7 @@ impl App {
                                 self.input = input;
                                 self.cursor = cursor;
                             }
+                            'o' => self.toggle_last_tool_collapse(),
                             _ => {}
                         }
                     }
@@ -1107,9 +1133,14 @@ impl App {
             }
         }
         let line = kimi_ui::render_event(&event).unwrap_or_else(|| event.to_string());
-        // Tool progress reads differently from transcript/status.
+        // Tool progress reads differently from transcript/status. A settled
+        // tool with a long result line starts collapsed (`[+]` — Ctrl-O to
+        // expand), the tool-call card pattern.
         let is_tool = r#type.starts_with("session.tool.");
-        self.transcript.push(if is_tool {
+        let long_result = is_tool && r#type == "session.tool.settled" && tool_result_collapsed(&line);
+        self.transcript.push(if long_result {
+            TranscriptLine::tool_collapsed(line)
+        } else if is_tool {
             TranscriptLine::tool(line)
         } else {
             TranscriptLine::status(line)
@@ -1217,6 +1248,12 @@ impl App {
                 .push(TranscriptLine::status(format!("{} no longer pending", pending.tool)));
         }
         Ok(())
+    }
+
+    /// Toggle the most recent collapsed tool-result line (Ctrl-O) — the
+    /// tool-call card expand/collapse.
+    fn toggle_last_tool_collapse(&mut self) {
+        toggle_last_tool_collapse(&mut self.transcript);
     }
 
     /// Show the full arguments of the front pending approval (`v` key) — the
@@ -1412,6 +1449,32 @@ mod tests {
         let lines = crate::chatwidget::styled_lines(&[TranscriptLine::streaming("growing")], crate::theme::Theme::dark());
         let text: String = lines[0].spans.iter().map(|s| s.content.clone()).collect();
         assert_eq!(text, "growing");
+    }
+
+    #[test]
+    fn tool_result_collapse_and_toggle() {
+        // Short results stay expanded; long ones collapse.
+        assert!(!tool_result_collapsed("tool Read -> ok: short"));
+        let long = format!("tool Bash -> ok: {}", "x".repeat(200));
+        assert!(tool_result_collapsed(&long), "long result collapses");
+
+        // Toggle flips the most recent collapsed tool line only.
+        let mut transcript = vec![
+            TranscriptLine::tool("tool Bash started"),
+            TranscriptLine::tool_collapsed(&long),
+            TranscriptLine::tool("tool Read -> ok: fine"),
+        ];
+        assert!(transcript[1].collapsed, "long result starts collapsed");
+        toggle_last_tool_collapse(&mut transcript);
+        assert!(!transcript[1].collapsed, "expanded after toggle");
+        assert!(!transcript[0].collapsed && !transcript[2].collapsed, "others untouched");
+        toggle_last_tool_collapse(&mut transcript);
+        assert!(transcript[1].collapsed, "collapsed again");
+
+        // No collapsed tool lines -> no-op.
+        let mut plain = vec![TranscriptLine::tool("tool Read -> ok: fine")];
+        toggle_last_tool_collapse(&mut plain);
+        assert_eq!(plain[0].collapsed, false);
     }
 
     #[test]

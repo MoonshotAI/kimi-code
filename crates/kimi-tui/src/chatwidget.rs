@@ -58,8 +58,7 @@ pub fn max_scroll(total: usize, pane_height: u16) -> usize {
 pub fn styled_lines(
     transcript: &[TranscriptLine],
     theme: Theme,
-) -> Vec<RenderLine<'static>> {
-    let mut out = Vec::new();
+) -> Vec<RenderLine<'static>> {    let mut out = Vec::new();
     for entry in transcript {
         match entry.kind {
             TranscriptKind::Assistant | TranscriptKind::Streaming => {
@@ -79,10 +78,25 @@ pub fn styled_lines(
                 // (❓) rather than a plain tool progress line, so the user
                 // sees at a glance that the model is waiting for an answer.
                 let is_question = entry.text.contains("AskUserQuestion");
-                out.push(RenderLine::from(Span::styled(
-                    format!("  {} {}", if is_question { "❓" } else { "⚙" }, entry.text),
-                    Style::default().fg(if is_question { theme.status } else { theme.tool }),
-                )));
+                let prefix = if is_question { "❓" } else { "⚙" };
+                if entry.collapsed {
+                    // Collapsed long result: single-line preview + expand
+                    // marker (Ctrl-O toggles).
+                    let preview: String = entry.text.chars().take(120).collect();
+                    out.push(RenderLine::from(Span::styled(
+                        format!("  {prefix} {preview} [+]"),
+                        Style::default().fg(if is_question { theme.status } else { theme.tool }),
+                    )));
+                } else {
+                    // Expanded (or short): every line prefixed, the first
+                    // with the tool marker.
+                    for (i, line) in entry.text.lines().enumerate() {
+                        out.push(RenderLine::from(Span::styled(
+                            format!("  {} {line}", if i == 0 { prefix } else { " " }),
+                            Style::default().fg(if is_question { theme.status } else { theme.tool }),
+                        )));
+                    }
+                }
             }
             TranscriptKind::Status => out.push(RenderLine::from(Span::styled(
                 entry.text.clone(),
@@ -95,4 +109,32 @@ pub fn styled_lines(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::TranscriptLine;
+    use crate::theme::Theme;
+
+    #[test]
+    fn collapsed_tool_lines_show_expand_marker() {
+        let transcript = vec![
+            TranscriptLine::tool_collapsed("tool Bash -> ok: very long result output"),
+        ];
+        let lines = styled_lines(&transcript, Theme::dark());
+        assert_eq!(lines.len(), 1, "collapsed renders one line");
+        let text = lines[0].to_string();
+        assert!(text.contains("[+]"), "expand marker: {text}");
+        assert!(text.contains("…") || text.chars().count() <= 140, "preview bounded: {text}");
+    }
+
+    #[test]
+    fn expanded_tool_lines_render_multiple_rows() {
+        let transcript = vec![TranscriptLine::tool("line1\nline2\nline3")];
+        let lines = styled_lines(&transcript, Theme::dark());
+        assert_eq!(lines.len(), 3, "one row per text line");
+        assert!(lines[0].to_string().contains("line1"));
+        assert!(lines[2].to_string().contains("line3"));
+    }
 }

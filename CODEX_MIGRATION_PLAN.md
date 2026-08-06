@@ -554,6 +554,13 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
   - 测试：`auto_allow_rules_skip_queuing`（命中规则不入队、返回 auto-resolve id）+ `queues_approvals_with_dedup` 适配新签名 → kimi-tui **34** 全绿
 - **待办**：工具调用卡片（结构化 tool 条目/结果折叠 Ctrl-O）；补全弹窗；媒体渲染；审批面板视觉化（DisplayBlock diff/shell/file 全屏预览，当前为 transcript 行详情）
 
+**2026-08-06 G-4 分片 D：工具调用卡片（结果折叠 Ctrl-O）✅**：
+- `TranscriptLine` 增加 `collapsed` 字段 + `tool_collapsed` 构造（长工具结果行起始折叠）
+- `tool_result_collapsed` 判定（>120 字符）；`pump_one_event` 对 `session.tool.settled` 长结果行用折叠态
+- **Ctrl-O 双向 toggle**（`toggle_last_tool_collapse`：最后一个 Tool 结果行——折叠/多行/长文本参与，started 短行不动）
+- chatwidget `styled_lines`：折叠行单行预览 + `[+]` 标记；展开行逐行渲染（首行 `⚙` 前缀）
+- 测试：`tool_result_collapse_and_toggle`（短不折叠/长折叠/双向 toggle/无操作）+ chatwidget 2（折叠 `[+]` 单行 / 展开多行）→ kimi-tui **37** 全绿；workspace 0 errors
+
 **2026-08-06 CLI 续补（G-3 批次 2 + ACP 增补）**：
 - **选项冲突校验补全 ✅**（TS `validateOptions` parity）：`print` 空 prompt / 空 `--model` 报错（"Prompt/Model cannot be empty."）；`print --continue` 与全局 `-S <id>` clap `conflicts_with` 互斥；新增 2 集成测试 → cli.rs 44 全绿
 - **ACP skills 命令广告 + `/skill:` 拦截 ✅**（kimi-acp，TS `acp-adapter` parity）：
