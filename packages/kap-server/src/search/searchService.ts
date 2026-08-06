@@ -912,6 +912,18 @@ export class GlobalSearchService implements IGlobalSearchService {
     this.generation++;
     this.fingerprint = fingerprint;
     if (prev !== null) await prev.close().catch(() => {});
+    // The lifecycle read model answers from logs alone which database this
+    // surface serves and which path its open took (a published-generation
+    // attach vs a full recovery), and how expensive the open was.
+    const lifecycle = next.lifecycleStatus();
+    this.log.info('global search: index opened', {
+      dir: this.indexDir,
+      readOnly: next.readOnly,
+      state: lifecycle.state,
+      generation: next.getIndexGeneration()?.id ?? null,
+      openMs: Math.round(lifecycle.phases.openMs),
+      fullRecoveryMs: Math.round(lifecycle.phases.fullRecoveryMs),
+    });
   }
 
   /**

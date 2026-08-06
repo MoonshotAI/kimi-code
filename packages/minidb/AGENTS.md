@@ -14,6 +14,8 @@ On the fallback path the corpus-scale text rebuild is no longer awaited inside `
 
 A healthy writer also keeps a valid generation around at runtime — the per-write WAL-growth trigger (`MiniDb.maybeAutoGenerationBuild`, 4 MiB staleness rule, throttled with failure backoff) covers the started-from-empty window the open-time kick cannot, and `close()` publishes a missing/stale generation best-effort (`buildGeneration('close')`). Load-time integrity is per-file crc32 + definition hashes — a corrupt or definition-mismatched image rebuilds only the affected index from the loaded store.
 
+Open-time lifecycle telemetry — the `no-generation` / `generation-load` / `wal-catch-up` / `full-rebuild` / `ready` / `degraded` state machine plus per-phase wall-clock timings (image loads, postings crc, WAL scan/apply, full recovery, text rebuilds incl. their hosting mode) — lives in the `LifecycleTracker` (`src/lifecycle-status.ts`), fed by `lifecycle.ts` / `generation-loader.ts` / `recovery.ts` and read through `MiniDb.lifecycleStatus()`; `bench/open-lifecycle.ts` (`pnpm bench:open`) is the repeatable event-loop-delay / input-latency baseline over the four open paths (small corpus, large WAL delta, large full-text generation, corrupt generation).
+
 ## Maintenance and worker builds
 
 Heavy maintenance runs through the unified **maintenance scheduler** (`src/maintenance.ts` — one heavy task per database at a time, queue backpressure, disk free-space preflight, deadline/cancellation, shutdown drain-or-cancel, `MiniDb.maintenanceStatus()` read model; nested submissions from inside a task run inline via AsyncLocalStorage to avoid self-deadlock).

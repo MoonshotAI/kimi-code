@@ -144,6 +144,9 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   }
 
   private openFresh(): Promise<ClusterDb> {
+    // Answers "which database does a session-list read touch" from logs alone:
+    // the read model lives in this cluster, one MiniDb per shard directory.
+    this.log.info('minidb query-store opening', { dir: this.dir, shardCount: SHARD_COUNT });
     return ClusterDb.open({
       dir: this.dir,
       shardCount: SHARD_COUNT,

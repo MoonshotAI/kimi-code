@@ -14,6 +14,7 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { MiniDb } from '../src/index.js';
+import { TextIndex } from '../src/text-index/index.js';
 import { SkipList, cmpNumber, cmpString } from '../src/skiplist.js';
 import {
   GenerationCorruptError,
@@ -1040,6 +1041,123 @@ describe('generation availability triggers (wal-growth + close publish)', () => 
     db.genBuildKickFailureBackoffMs = 0;
     await db.set('after-backoff', { text: 'z'.repeat(1024) });
     await waitFor(() => db.getIndexGeneration() !== null, 'post-backoff generation build');
+    await db.close();
+  }, 60000);
+});
+
+describe('open lifecycle status (phase timings + state machine)', () => {
+  test('a healthy generation open reports generation-load with zero corpus work', async () => {
+    const dir = await openTmp('lifecycle-healthy');
+    let db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    await seedIndexedDb(db, 2000);
+    await db.rebuildGeneration();
+    const gen = db.getIndexGeneration()!;
+    await db.close();
+
+    // Hard proof that no full-corpus tokenization runs on the attach path:
+    // the staged builder (the only in-open corpus tokenizer besides the
+    // bounded rebuild) must not be entered at all.
+    const buildSpy = vi.spyOn(TextIndex.prototype, 'build');
+    try {
+      db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+      expect(buildSpy).not.toHaveBeenCalled();
+    } finally {
+      buildSpy.mockRestore();
+    }
+    expect(db.stats.generationLoads).toBe(1);
+    expect(db.stats.generationIndexRebuilds).toBe(0);
+    expect(db.stats.indexRebuildDecoded).toBe(0); // no value re-decode
+    expect(db.stats.textRebuildDurationMs).toBe(0); // no tokenization
+
+    const status = db.lifecycleStatus();
+    expect(status.state).toBe('ready');
+    expect(status.path).toEqual(['no-generation', 'generation-load', 'wal-catch-up', 'ready']);
+    expect(status.openedAt).not.toBeNull();
+    expect(status.phases.openMs).toBeGreaterThan(0);
+    expect(status.phases.generationCandidateLoadMs).toBeGreaterThan(0);
+    expect(status.phases.storeImageLoadMs).toBeGreaterThan(0);
+    expect(status.phases.postingsIntegrityCheckMs).toBeGreaterThan(0);
+    expect(status.phases.textImageLoadMs).toBeGreaterThan(0);
+    expect(status.phases.walScanMs).toBeGreaterThanOrEqual(0);
+    expect(status.phases.fullRecoveryMs).toBe(0);
+    expect(status.phases.textRebuildMs).toBe(0);
+    expect(status.textIndexes).toEqual({ ft: 'image', tri: 'image' });
+    expect(status.pendingTextIndexes).toEqual([]);
+    expect(db.recoveryInfo?.indexGeneration?.id).toBe(gen.id);
+    expect(db.recoveryInfo?.walDeltaAppliedOps).toBe(0);
+    assertSeededDb(db, 2000);
+    await db.close();
+  });
+
+  test('a corrupt generation falls back to full-rebuild (only then is the corpus re-tokenized)', async () => {
+    const dir = await openTmp('lifecycle-corrupt');
+    let db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    await seedIndexedDb(db, 2000);
+    await db.rebuildGeneration();
+    const gen = db.getIndexGeneration()!;
+    await db.close();
+
+    // Flip one byte inside the generation's store image: the manifest crc
+    // rejects the candidate and the open must fall back to the legacy full
+    // recovery — the ONLY path allowed to re-tokenize the corpus.
+    const storeImage = path.join(dir, 'generations', gen.id, 'store');
+    const raw = await fs.readFile(storeImage);
+    raw[Math.floor(raw.length / 2)]! ^= 0xff;
+    await fs.writeFile(storeImage, raw);
+
+    db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    expect(db.stats.generationLoads).toBe(0);
+    expect(db.stats.generationLoadFallbacks).toBe(1);
+    expect(db.stats.lastGenerationFallback).toContain(gen.id);
+    expect(db.recoveryInfo?.indexGeneration).toBeUndefined();
+    expect(db.stats.indexRebuildDecoded).toBeGreaterThan(0); // corpus re-decoded
+    expect(db.stats.textRebuildDurationMs).toBeGreaterThan(0); // corpus re-tokenized
+
+    const status = db.lifecycleStatus();
+    // 2000 docs < TEXT_BUILD_WORKER_MIN_DOCS: the rebuild stays in-open
+    // (staged), so the instance is fully ready when open() returns.
+    expect(status.state).toBe('ready');
+    expect(status.path).toEqual(['no-generation', 'generation-load', 'full-rebuild', 'ready']);
+    expect(status.phases.fullRecoveryMs).toBeGreaterThan(0);
+    expect(status.phases.walScanMs).toBeGreaterThan(0);
+    expect(status.phases.walApplyMs).toBeGreaterThan(0);
+    expect(status.phases.textRebuildMs).toBeGreaterThan(0);
+    expect(status.textIndexes).toEqual({ ft: 'staged', tri: 'staged' });
+    assertSeededDb(db, 2000);
+    await db.close();
+  });
+
+  test('a missing generation with a deferrable corpus reports degraded until the background text build commits', async () => {
+    const dir = await openTmp('lifecycle-degraded');
+    let db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    await seedIndexedDb(db, 5000); // >= TEXT_BUILD_WORKER_MIN_DOCS: deferrable
+    await db.rebuildGeneration();
+    await db.close();
+
+    // No candidate at all: the open starts from 'no-generation'.
+    await fs.rm(path.join(dir, 'generations'), { recursive: true, force: true });
+    await fs.rm(path.join(dir, 'CURRENT'), { force: true });
+
+    db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    expect(db.stats.generationLoads).toBe(0);
+    const building = db.lifecycleStatus();
+    expect(building.state).toBe('degraded');
+    expect(building.path).toEqual(['no-generation', 'full-rebuild', 'degraded']);
+    expect(building.pendingTextIndexes.sort()).toEqual(['ft', 'tri']);
+    expect(building.textIndexes).toEqual({ ft: 'deferred', tri: 'deferred' });
+    expect(db.textIndexBuilding('ft')).toBe(true);
+    expect(() => db.search('ft', 'hello')).toThrowError(/still building/);
+
+    await waitFor(() => db.lifecycleStatus().state === 'ready', 'deferred text builds');
+    const ready = db.lifecycleStatus();
+    expect(ready.path).toEqual(['no-generation', 'full-rebuild', 'degraded', 'ready']);
+    expect(ready.pendingTextIndexes).toEqual([]);
+    expect(['worker', 'inline']).toContain(ready.textIndexes['ft']);
+    expect(['worker', 'inline']).toContain(ready.textIndexes['tri']);
+    expect(ready.phases.textRebuildMs).toBeGreaterThan(0);
+    expect(db.stats.textDeferredBuilds).toBe(2);
+    expect(db.stats.textDeferredBuildErrors).toBe(0);
+    assertSeededDb(db, 5000);
     await db.close();
   }, 60000);
 });

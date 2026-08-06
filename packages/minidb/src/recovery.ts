@@ -44,6 +44,16 @@ import type { Store, ValueLoc, ValueRef } from './store.js';
 export type RecoveryMode = 'resync' | 'strict';
 export type ValueMode = 'memory' | 'disk';
 
+/** Optional wall-clock sink for the two recovery sub-phases (scan vs apply),
+ *  accumulated across every pass (generation-churn retries included). Fed by
+ *  the open-time lifecycle telemetry; recover() works unchanged without it. */
+export interface RecoveryPhaseTimings {
+  /** Async frame scanning of the snapshot and the WAL. */
+  walScanMs: number;
+  /** Applying the scanned frames to the store. */
+  walApplyMs: number;
+}
+
 export interface RecoveryInfo {
   snapshotFrames: number;
   walFrames: number;
@@ -272,6 +282,7 @@ export async function recover({
   maxGenerationRetries = 4,
   attachValueReader,
   signal,
+  timings,
 }: {
   dir: string;
   store: Store;
@@ -292,6 +303,8 @@ export async function recover({
   /** Cancellation for the async frame scans (stage 6): an aborted scan
    *  throws an 'AbortError' and leaves the pass's partial state discarded. */
   signal?: AbortSignal;
+  /** Optional scan/apply wall-clock sink (see RecoveryPhaseTimings). */
+  timings?: RecoveryPhaseTimings;
 }): Promise<RecoveryInfo> {
   const snapPath = path.join(dir, SNAPSHOT_FILE);
   const walPath = path.join(dir, WAL_FILE);
@@ -299,7 +312,7 @@ export async function recover({
   for (let attempt = 0; ; attempt++) {
     let pass: RecoverPassResult;
     try {
-      pass = await recoverPass({ snapPath, walPath, store, mode, truncate, valueMode, signal });
+      pass = await recoverPass({ snapPath, walPath, store, mode, truncate, valueMode, signal, timings });
     } catch (e) {
       // A cancelled scan may have applied a prefix of the pass's frames:
       // discard the partial application so the error never carries state
@@ -336,6 +349,7 @@ async function recoverPass({
   truncate,
   valueMode,
   signal,
+  timings,
 }: {
   snapPath: string;
   walPath: string;
@@ -344,6 +358,7 @@ async function recoverPass({
   truncate: boolean;
   valueMode: ValueMode;
   signal?: AbortSignal;
+  timings?: RecoveryPhaseTimings;
 }): Promise<RecoverPassResult> {
   let corruptBatches = 0;
   const countCorruptBatch = (): void => {
@@ -362,8 +377,12 @@ async function recoverPass({
       // Stage 6: the scan itself is async (sequential window reads, CRC
       // slices, periodic yields, abortable); only the in-memory apply below
       // runs on the event loop.
+      const snapScanT0 = performance.now();
       const r = await scanFrameRefsFdAsync(fd, { onCorrupt: mode, signal });
+      if (timings) timings.walScanMs += performance.now() - snapScanT0;
+      const snapApplyT0 = performance.now();
       await applyFrames(r.frames, 'snapshot', fd, store, valueMode, countCorruptBatch);
+      if (timings) timings.walApplyMs += performance.now() - snapApplyT0;
       snapshotFrames = r.frames.length;
       snapshotCorrupt = r.corruptRanges;
     } finally {
@@ -388,8 +407,12 @@ async function recoverPass({
       walScanned = { dev: st.dev, ino: st.ino, size: st.size };
       walSizeFloor = st.size;
       walBytes = st.size;
+      const walScanT0 = performance.now();
       const r = await scanFrameRefsFdAsync(fd, { onCorrupt: mode, signal });
+      if (timings) timings.walScanMs += performance.now() - walScanT0;
+      const walApplyT0 = performance.now();
       await applyFrames(r.frames, 'wal', fd, store, valueMode, countCorruptBatch);
+      if (timings) timings.walApplyMs += performance.now() - walApplyT0;
       walFrames = r.frames.length;
       walCorrupt = r.corruptRanges;
       walScanEnd = r.eofOffset;

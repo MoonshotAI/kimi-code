@@ -42,6 +42,7 @@ import { IndexManager } from './index-manager.js';
 import type { IndexInfo } from './index-manager.js';
 import { CompoundIndexManager } from './compound-index.js';
 import type { CompoundIndexInfo } from './compound-index.js';
+import type { LifecycleTracker } from './lifecycle-status.js';
 import { TextRegistry } from './text-registry.js';
 import type { TextIndexDef } from './text-registry.js';
 import type { TextIndex } from './text-index/index.js';
@@ -75,6 +76,8 @@ export interface GenerationLoaderDeps<V> {
   compound: CompoundIndexManager;
   textRegistry: TextRegistry<V>;
   stats: GenerationStats;
+  /** Per-open lifecycle telemetry (state machine + phase timings). */
+  lifecycle: LifecycleTracker;
   indexable: (v: unknown) => v is Record<string, unknown>;
   /** Live records (decoded values), for per-index rebuilds. */
   liveRecords: () => Generator<{ key: Buffer; value: V | undefined; dt: Record<string, number> | null }>;
@@ -163,6 +166,7 @@ export class GenerationLoader<V> {
     // Store image. Records expire-past at load time are dropped here AND
     // noted, so their loaded index entries can be reconciled below (the
     // image legitimately contains records whose TTL elapsed after the build).
+    const tStore = performance.now();
     const storeInfo = manifest.files[STORE_IMAGE_FILE];
     if (!storeInfo) throw new GenerationCorruptError('store image missing from manifest');
     const storePayload = await readGenerationFileChecked(path.join(genDir, STORE_IMAGE_FILE), 'MDGS', STORE_VERSION, storeInfo);
@@ -185,12 +189,15 @@ export class GenerationLoader<V> {
     if (manifest.counts && typeof manifest.counts.records === 'number' && manifest.counts.records !== imageCount) {
       throw new GenerationCorruptError(`store image record count mismatch (${imageCount} != ${manifest.counts.records})`);
     }
+    this.deps.lifecycle.time('storeImageLoadMs', performance.now() - tStore);
 
     // Derived-index images. Every failure here is LOCAL: a corrupt or missing
     // image rebuilds exactly the affected index(es) from the loaded store.
+    const tNonText = performance.now();
     await this.loadDtImage(genDir, manifest);
     await this.loadSecondaryImages(genDir, manifest);
     await this.loadCompoundImages(genDir, manifest);
+    this.deps.lifecycle.time('nonTextImageLoadMs', performance.now() - tNonText);
     await this.loadTextImages(genDir, manifest);
 
     // Reconcile the expired-at-load drops out of the loaded index states.
@@ -204,6 +211,7 @@ export class GenerationLoader<V> {
     // Replay the WAL delta past the checkpoint with the exact same per-frame
     // interpretation the legacy recovery uses (frameToOps), maintaining every
     // derived index incrementally (applyRecoveredOp).
+    this.deps.lifecycle.transition('wal-catch-up');
     const replay = await this.replayWalDelta(cp.walOffset, mode);
     // A rotation racing the load invalidates the coordinate system the
     // recoveryInfo below is anchored to (and, in disk mode, the value reader
@@ -258,32 +266,38 @@ export class GenerationLoader<V> {
    *  candidate loaded (the caller runs the legacy full recovery). */
   async tryLoadGeneration(mode: RecoveryMode): Promise<boolean> {
     const t0 = performance.now();
-    const candidates: string[] = [];
+    const lifecycle = this.deps.lifecycle;
     try {
-      const current = await readCurrent(this.deps.dir());
-      if (current) candidates.push(current);
-      for (const g of await listGenerations(this.deps.dir())) {
-        if (!g.tmp && g.id !== current && candidates.length < 3) candidates.push(g.id);
-      }
-    } catch (e) {
-      this.deps.stats.generationLoadFallbacks++;
-      this.deps.stats.lastGenerationFallback = `list: ${(e as Error).message}`;
-      return false;
-    }
-    for (const id of candidates) {
+      const candidates: string[] = [];
       try {
-        await this.loadOneGeneration(id, mode);
-        this.deps.stats.generationLoads++;
-        this.deps.stats.generationLoadDurationMs += performance.now() - t0;
-        return true;
+        const current = await readCurrent(this.deps.dir());
+        if (current) candidates.push(current);
+        for (const g of await listGenerations(this.deps.dir())) {
+          if (!g.tmp && g.id !== current && candidates.length < 3) candidates.push(g.id);
+        }
       } catch (e) {
-        if (!(e instanceof GenerationCorruptError) && (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
         this.deps.stats.generationLoadFallbacks++;
-        this.deps.stats.lastGenerationFallback = `${id}: ${(e as Error).message}`;
-        this.resetAfterFailedGenerationLoad();
+        this.deps.stats.lastGenerationFallback = `list: ${(e as Error).message}`;
+        return false;
       }
+      for (const id of candidates) {
+        try {
+          lifecycle.transition('generation-load');
+          await this.loadOneGeneration(id, mode);
+          this.deps.stats.generationLoads++;
+          this.deps.stats.generationLoadDurationMs += performance.now() - t0;
+          return true;
+        } catch (e) {
+          if (!(e instanceof GenerationCorruptError) && (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+          this.deps.stats.generationLoadFallbacks++;
+          this.deps.stats.lastGenerationFallback = `${id}: ${(e as Error).message}`;
+          this.resetAfterFailedGenerationLoad();
+        }
+      }
+      return false;
+    } finally {
+      lifecycle.time('generationCandidateLoadMs', performance.now() - t0);
     }
-    return false;
   }
 
   /** Load the dt image; rebuild the (cheap, metadata-only) dt index from the
@@ -401,6 +415,7 @@ export class GenerationLoader<V> {
       let attached = false;
       if (dictInfo && docsInfo && postingsInfo && manifest.indexDefs.text[def.name] === indexDefHash(TextRegistry.canonicalTextDef(def))) {
         try {
+          const tImage = performance.now();
           const dictPayload = await readGenerationFileChecked(path.join(genDir, textDictionaryFile(def.name)), 'MDTD', 1, dictInfo);
           const docsPayload = await readGenerationFileChecked(path.join(genDir, textDocsFile(def.name)), 'MDTC', 1, docsInfo);
           // The postings file carries the base every search reads: verify it
@@ -408,7 +423,9 @@ export class GenerationLoader<V> {
           // corrupt base is rebuilt at open instead of failing a query later
           // (its per-record CRCs would only trip on the first read).
           const postingsPath = path.join(genDir, textPostingsFile(def.name));
+          const tCrc = performance.now();
           verifyFileIntegritySync(postingsPath, postingsInfo);
+          this.deps.lifecycle.time('postingsIntegrityCheckMs', performance.now() - tCrc);
           const dict = new Map(readTextDictionaryImage(dictPayload).map((e) => [e.term, { off: e.off, len: e.len, df: e.df }]));
           const docs = readTextDocsImage(docsPayload);
           const docLens = new Map<number, number>();
@@ -428,6 +445,8 @@ export class GenerationLoader<V> {
           // Carry the integrity record forward: a later CLEAN fast-path build
           // re-publishes this unchanged file without re-reading it.
           ti.postingsFileInfo = { bytes: postingsInfo.bytes, crc32: postingsInfo.crc32 };
+          this.deps.lifecycle.time('textImageLoadMs', performance.now() - tImage);
+          this.deps.lifecycle.noteTextIndexSource(def.name, 'image');
           attached = true;
         } catch (e) {
           if (!(e instanceof GenerationCorruptError) && (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
@@ -441,6 +460,7 @@ export class GenerationLoader<V> {
         // The bounded build is discardable: on ANY failure the staged
         // rebuild below is the fallback (it reads the already-loaded store,
         // so opens always complete).
+        const tRebuild = performance.now();
         let hosted: 'worker' | 'inline' | null = null;
         try {
           hosted = await this.deps.boundedTextBuild(def.name, ti, def, manifest.checkpoint);
@@ -448,6 +468,8 @@ export class GenerationLoader<V> {
           /* fall through to the staged rebuild */
         }
         if (hosted === null) await ti.build(this.deps.textRecords());
+        this.deps.lifecycle.time('textRebuildMs', performance.now() - tRebuild);
+        this.deps.lifecycle.noteTextIndexSource(def.name, hosted ?? 'staged');
       }
     }
   }
@@ -469,7 +491,10 @@ export class GenerationLoader<V> {
     const fd = fsSync.openSync(this.deps.walPath(), 'r');
     try {
       const st = fsSync.fstatSync(fd);
+      const tScan = performance.now();
       const r = await scanFrameRefsFdAsync(fd, { onCorrupt: mode, startOffset });
+      this.deps.lifecycle.time('walScanMs', performance.now() - tScan);
+      const tApply = performance.now();
       let corruptBatches = 0;
       let appliedOps = 0;
       for (const f of r.frames) {
@@ -478,6 +503,7 @@ export class GenerationLoader<V> {
           appliedOps++;
         }
       }
+      this.deps.lifecycle.time('walApplyMs', performance.now() - tApply);
       let truncatedWal = false;
       const last = r.corruptRanges[r.corruptRanges.length - 1];
       if (last && last[1] === st.size && !this.deps.readOnly()) {

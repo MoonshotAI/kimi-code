@@ -76,6 +76,7 @@ import { TextRegistry } from './text-registry.js';
 import type { TextIndexDef } from './text-registry.js';
 import { ValueReader } from './value-reader.js';
 import type { RecoveryMode, RecoveryInfo, ValueMode, RecoveredOp } from './recovery.js';
+import type { LifecycleTracker } from './lifecycle-status.js';
 import { fsyncDir } from './compaction.js';
 import { defaultWorkerSlots } from './maintenance.js';
 import type { MaintenanceContext, MaintenanceScheduler } from './maintenance.js';
@@ -191,6 +192,9 @@ export interface GenerationBuilderDeps<V> {
   compound: CompoundIndexManager;
   textRegistry: TextRegistry<V>;
   stats: GenerationStats;
+  /** Per-open lifecycle telemetry, shared with the loader facet (the open
+   *  flow's state machine + phase timings; the build path does not feed it). */
+  lifecycle: LifecycleTracker;
   decode: (b: Buffer | undefined) => V | undefined;
   indexable: (v: unknown) => v is Record<string, unknown>;
   /** Live records (decoded values), for per-index rebuilds. */

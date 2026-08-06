@@ -39,6 +39,8 @@ import { openMiniDb, closeMiniDb, renewMiniDbLock, openOrRebuildMiniDb } from '.
 import { IndexAdmin } from './index-admin.js';
 import { ReadPath } from './read-path.js';
 import { createMiniDbStats } from './stats.js';
+import { LifecycleTracker } from './lifecycle-status.js';
+import type { MiniDbLifecycleStatus } from './lifecycle-status.js';
 import type { LifecycleHooks } from './lifecycle.js';
 import { TextRegistry } from './text-registry.js';
 import type { TextIndexDef } from './text-registry.js';
@@ -236,6 +238,10 @@ export class MiniDb<V = unknown> {
    *  this state the caller cannot assume a rejected write had no effect. */
   writeDisabled: unknown = null;
   readonly stats = createMiniDbStats();
+  /** Per-open lifecycle telemetry (the open() state machine + per-phase
+   *  wall-clock timings): driven by lifecycle.ts and the generation loader,
+   *  read through lifecycleStatus(). */
+  /* Non-private (package-internal): lifecycle.ts drives it through its LifecycleHost view. */ readonly lifecycle = new LifecycleTracker();
 
   /** The text-index registry facet (text-registry.ts): owns the live TextIndex
    *  map, the persisted definition list, and the staged-drop marks (declared
@@ -332,6 +338,7 @@ export class MiniDb<V = unknown> {
     compound: this.compound,
     textRegistry: this.textRegistry,
     stats: this.stats,
+    lifecycle: this.lifecycle,
     decode: (b) => this.decode(b),
     indexable: (v): v is Record<string, unknown> => this.indexable(v),
     liveRecords: () => this.liveRecords(),
@@ -561,7 +568,14 @@ export class MiniDb<V = unknown> {
         deferred.add(name);
       }
     }
+    const textRebuildMsBefore = this.stats.textRebuildDurationMs;
     await this.indexAdmin.rebuildAllIndexes({ skipTextIndex: (name) => deferred.has(name) });
+    this.lifecycle.time('textRebuildMs', this.stats.textRebuildDurationMs - textRebuildMsBefore);
+    // Every non-deferred text index was just rebuilt by the staged in-thread
+    // walk above (the full-recovery path leaves them empty).
+    for (const name of this.text.keys()) {
+      if (!deferred.has(name)) this.lifecycle.noteTextIndexSource(name, 'staged');
+    }
     if (deferred.size > 0) this.deferOpenTextBuilds([...deferred]);
   }
 
@@ -590,6 +604,7 @@ export class MiniDb<V = unknown> {
       ti.basePending = true;
       ti.beginRebase();
       armed.push({ name, ti, def });
+      this.lifecycle.markTextIndexPending(name);
     }
     if (armed.length === 0) return;
     // The checkpoint the build covers: the recovery scan endpoint (see the
@@ -644,6 +659,8 @@ export class MiniDb<V = unknown> {
           const output = scratchDir !== null ? { dir: scratchDir, postingsPath: path.join(scratchDir, rootPostingsFile(name)) } : null;
           let checkpoint = pin();
           let committed = false;
+          let hostedMode: 'worker' | 'inline' | null = null;
+          const tBuild = performance.now();
           for (let attempt = 1; attempt <= 3 && !committed; attempt++) {
             if (attempt > 1) checkpoint = repin(ti);
             try {
@@ -652,13 +669,16 @@ export class MiniDb<V = unknown> {
               // mid-task): no build will come — stop retrying.
               if (hosted === null) break;
               committed = true;
+              hostedMode = hosted;
             } catch {
               // Shutdown cancels the task: leave close() to finish teardown.
               if (ctx.signal.aborted) return;
             }
           }
-          if (committed) {
+          this.lifecycle.time('textRebuildMs', performance.now() - tBuild);
+          if (committed && hostedMode !== null) {
             this.stats.textDeferredBuilds++;
+            this.lifecycle.clearTextIndexPending(name, hostedMode);
           } else {
             // Every attempt failed: disarm and mark the base pending —
             // searches keep the typed building signal instead of silently
@@ -1374,6 +1394,16 @@ export class MiniDb<V = unknown> {
    *  internal scheduler — callers never see workers or file details. */
   maintenanceStatus(): MaintenanceTaskInfo[] {
     return this.maintenance.status();
+  }
+
+  /** The last open()'s lifecycle read model: which path served the open
+   *  ('generation-load' + 'wal-catch-up' vs 'full-rebuild'), whether the
+   *  instance is 'ready' or still 'degraded' (a deferred text-index base
+   *  build in flight), the per-phase wall-clock timings, and how every text
+   *  index's base was served (generation image vs worker/inline/staged
+   *  rebuild). Diagnostics only — the cumulative counters stay in `stats`. */
+  lifecycleStatus(): MiniDbLifecycleStatus {
+    return this.lifecycle.snapshot();
   }
 
   async close(): Promise<void> {
