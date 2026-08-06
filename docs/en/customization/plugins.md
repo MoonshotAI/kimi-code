@@ -4,7 +4,14 @@ Plugins package reusable Kimi Code CLI capabilities into installable units — t
 
 ## Installation and Management
 
-Run `/plugins` in the TUI to open the plugin manager. It is a single panel with four tabs — **Installed** (manage what you have), **Official** (Kimi-maintained marketplace plugins), **Curated** (third-party plugins from Kimi partners in the default marketplace), and **Custom** (install from a URL) — switched with `Tab` / `Shift-Tab`. Common keys:
+Run `/plugins` in the TUI to open the plugin manager. It is a single panel with four tabs, switched with `Tab` / `Shift-Tab`:
+
+- **Installed**: Manage installed plugins
+- **Official**: Kimi-maintained marketplace plugins
+- **Curated**: Third-party plugins from Kimi partners in the default marketplace
+- **Custom**: Install from a URL
+
+Common keys:
 
 | Key | Action |
 | --- | --- |
@@ -32,13 +39,6 @@ You can also use slash commands directly:
 | `/plugins reload` | Reload `installed.json` and all plugin manifests |
 | `/plugins mcp enable <id> <server>` | Enable an MCP server declared by a plugin |
 | `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin |
-
-The **Installed** tab lists your installed plugins and shows an update badge when a newer version is available in the marketplace; when a turn that used an outdated plugin ends, a one-time notice also points you to `/plugins` (each new marketplace version is announced once). The remaining tabs and install behaviors work like this:
-
-- **Official / Curated**: List Kimi-maintained and partner plugins respectively; see [Official plugins](#official-plugins) for details on each official capability. Non-official entries from a custom marketplace also appear under **Curated**, without being presented as Kimi partners
-- **Custom**: Installs from a URL
-- **Trust badges**: Each install shows a source badge: `kimi-official` (official address), `curated` (curated address), or `third-party` (everything else). Installing a third-party plugin (including Custom installs) first shows a confirmation prompt that defaults to cancelling, and only proceeds if you choose to trust the source
-- **WebBridge legacy migration**: When Kimi WebBridge is installed or updated, legacy standalone copies of its Skill are moved to `$KIMI_CODE_HOME/backups/kimi-webbridge-skills/` (backed up, not deleted) before the managed plugin takes over
 
 ### Installing from GitHub
 
