@@ -35,6 +35,7 @@ import type {
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
+  ListSessionsV2Input,
   ManagedUsageResult,
   ManagedUserInfoResult,
   OAuthLoginStartResult,
@@ -50,8 +51,9 @@ import type {
   SessionTranscriptQuery,
   UpdateProviderInput,
   UpdateProviderResult,
+  V2SessionsPage,
 } from '../types';
-import { DaemonHttpClient } from './http';
+import { DaemonHttpClient, type RestQuery } from './http';
 import { FileTooLargeError, isDaemonApiError } from '../errors';
 import type { AgentProjector } from './projector';
 
@@ -120,6 +122,7 @@ import type {
   WireSessionSnapshot,
   WireUpdateProviderRequest,
   WireUpdateProviderResult,
+  WireV2SessionsPage,
   WireWorkspace,
   WireLogoutResult,
   WireUsageResult,
@@ -355,6 +358,7 @@ export interface DaemonKimiWebApiOptions {
 
 export class DaemonKimiWebApi implements KimiWebApi {
   private readonly http: DaemonHttpClient;
+  private readonly httpV2: DaemonHttpClient;
   private readonly tracer: Tracer;
 
   constructor(private readonly opts: DaemonKimiWebApiOptions) {
@@ -364,6 +368,13 @@ export class DaemonKimiWebApi implements KimiWebApi {
       identity: opts.identity,
       tracer: this.tracer,
       credentialStore: opts.credentialStore,
+    });
+    this.httpV2 = new DaemonHttpClient({
+      origin: opts.origin,
+      identity: opts.identity,
+      tracer: this.tracer,
+      credentialStore: opts.credentialStore,
+      restBasePath: '/api/v2',
     });
   }
 
@@ -433,6 +444,30 @@ export class DaemonKimiWebApi implements KimiWebApi {
       items: data.items.map(toAppSession),
       hasMore: data.has_more,
     };
+  }
+
+  /**
+   * GET /api/v2/sessions — domain 分组的 session 列表查询（平铺会话列表的数据
+   * 来源）。v2 沿用 v1 的 envelope 与数字 code（40001 参数非法 / 40922
+   * page_token_mismatch——游标绑定首页全部查询条件，变了就从首页重查）。
+   * 实时增量不走这里 —— 文档约定列表页订阅 WS 的 session 变更事件，本接口
+   * 只作基线 seed 和翻页入口。
+   */
+  async listSessionsV2(input?: ListSessionsV2Input): Promise<V2SessionsPage> {
+    const query: RestQuery = {
+      sort: input?.sort,
+      page_size: input?.pageSize,
+      page_token: input?.pageToken,
+      'meta.updated_after': input?.updatedAfter,
+      'meta.archived':
+        input?.archived === undefined ? undefined : String(input.archived),
+      include: input?.include,
+      // 可重复参数（OR 语义）：数组经 RestQuery 序列化为重复 key。
+      'workspace.id': input?.workspaceIds,
+      'activity.status': input?.statuses,
+    };
+    const data = await this.httpV2.get<WireV2SessionsPage>('/sessions', query);
+    return { items: data.items, hasMore: data.has_more, nextPageToken: data.next_page_token };
   }
 
   async createSession(input: {

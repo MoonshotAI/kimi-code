@@ -34,6 +34,7 @@ export const STORAGE_KEYS = {
   openInDefaultTarget: 'kimi-web.open-in.default-target',
   sidebarCollapsed: 'kimi-web.sidebar-collapsed',
   sidebarWidth: 'kimi-web.sidebar-width',
+  sidebarViewMode: 'kimi-web.sidebar-view-mode',
   // Desktop-only custom keyboard shortcuts (docs/native-todos.md): action id →
   // canonical binding (null = unassigned; absent = default). lib/keymap.ts.
   shortcutOverrides: 'kimi-web.shortcut-overrides',
@@ -165,6 +166,21 @@ export function loadPinnedCollapsed(): boolean {
 
 export function savePinnedCollapsed(collapsed: boolean): void {
   safeSetJson(STORAGE_KEYS.pinnedCollapsed, collapsed);
+}
+
+export type SidebarViewMode = 'flat' | 'grouped';
+
+/**
+ * Sidebar session-list dimension: 'grouped' (by workspace — the default) or
+ * 'flat' (all sessions across workspaces, newest first). UI-only, no
+ * server-side source of truth — same rationale as collapsedWorkspaces.
+ */
+export function loadSidebarViewMode(): SidebarViewMode {
+  return safeGetString(STORAGE_KEYS.sidebarViewMode) === 'flat' ? 'flat' : 'grouped';
+}
+
+export function saveSidebarViewMode(mode: SidebarViewMode): void {
+  safeSetString(STORAGE_KEYS.sidebarViewMode, mode);
 }
 
 /**

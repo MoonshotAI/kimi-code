@@ -34,6 +34,7 @@ export const STORAGE_KEYS = {
   openInLastTarget: 'kimi-web.open-in.last-target',
   sidebarCollapsed: 'kimi-web.sidebar-collapsed',
   sidebarWidth: 'kimi-web.sidebar-width',
+  sidebarViewMode: 'kimi-web.sidebar-view-mode',
   // Desktop auto-update: version the user chose to skip (renderer-local).
   updateSkippedVersion: 'kimi-web.update-skipped-version',
   // deprecated cleanups (kept so the removals still fire for old users)
@@ -159,6 +160,21 @@ export function loadPinnedCollapsed(): boolean {
 
 export function savePinnedCollapsed(collapsed: boolean): void {
   safeSetJson(STORAGE_KEYS.pinnedCollapsed, collapsed);
+}
+
+export type SidebarViewMode = 'flat' | 'grouped';
+
+/**
+ * Sidebar session-list dimension: 'grouped' (by workspace — the default) or
+ * 'flat' (all sessions across workspaces, newest first). UI-only, no
+ * server-side source of truth — same rationale as collapsedWorkspaces.
+ */
+export function loadSidebarViewMode(): SidebarViewMode {
+  return safeGetString(STORAGE_KEYS.sidebarViewMode) === 'flat' ? 'flat' : 'grouped';
+}
+
+export function saveSidebarViewMode(mode: SidebarViewMode): void {
+  safeSetString(STORAGE_KEYS.sidebarViewMode, mode);
 }
 
 /**

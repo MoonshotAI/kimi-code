@@ -127,3 +127,13 @@ export function isFileTooLargeError(error: unknown): error is FileTooLargeError 
       typeof (error as { limit?: unknown }).limit === 'number')
   );
 }
+
+/** kap-server ErrorCode.PAGE_TOKEN_MISMATCH: the /api/v2/sessions opaque
+ *  cursor no longer matches the first page's query conditions (or is
+ *  corrupted / from an incompatible token version). Contract: discard the
+ *  cursor and restart from the first page. */
+export const V2_PAGE_TOKEN_MISMATCH_CODE = 40922;
+
+export function isPageTokenMismatchError(error: unknown): boolean {
+  return isDaemonApiError(error) && error.code === V2_PAGE_TOKEN_MISMATCH_CODE;
+}

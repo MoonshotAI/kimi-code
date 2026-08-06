@@ -57,9 +57,11 @@ export default defineConfig({
     port: webPort,
     strictPort: false,
     // Same-origin dev: the browser calls Vite, Vite forwards to the server.
-    // No CORS anywhere. The real server serves REST + WS all under /api/v1.
+    // No CORS anywhere. The real server serves REST + WS under /api/v1, plus
+    // the /api/v2 session-list query (no WS there).
     proxy: {
       '/api/v1': { target: serverTarget, changeOrigin: true, ws: true },
+      '/api/v2': { target: serverTarget, changeOrigin: true },
     },
   },
   // `vite preview` (the production build served locally) needs the same proxy —
@@ -69,6 +71,7 @@ export default defineConfig({
     port: Number(process.env.WEB_PREVIEW_PORT) || 4175,
     proxy: {
       '/api/v1': { target: serverTarget, changeOrigin: true, ws: true },
+      '/api/v2': { target: serverTarget, changeOrigin: true },
     },
   },
 });

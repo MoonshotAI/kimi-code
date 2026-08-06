@@ -120,6 +120,7 @@ import RiFlashlightLine from '~icons/ri/flashlight-line';
 import RiFolderFill from '~icons/ri/folder-fill';
 import RiGitForkLine from '~icons/ri/git-fork-line';
 import RiGitPullRequestLine from '~icons/ri/git-pull-request-line';
+import RiListSettingsLine from '~icons/ri/list-settings-line';
 import RiNodeTree from '~icons/ri/node-tree';
 import RiPushpinLine from '~icons/ri/pushpin-line';
 import RiSortDesc from '~icons/ri/sort-desc';
@@ -216,6 +217,7 @@ import RawFlashlightLine from '~icons/ri/flashlight-line?raw';
 import RawFolderFill from '~icons/ri/folder-fill?raw';
 import RawGitForkLine from '~icons/ri/git-fork-line?raw';
 import RawGitPullRequestLine from '~icons/ri/git-pull-request-line?raw';
+import RawListSettingsLine from '~icons/ri/list-settings-line?raw';
 import RawNodeTree from '~icons/ri/node-tree?raw';
 import RawPushpinLine from '~icons/ri/pushpin-line?raw';
 import RawSortDesc from '~icons/ri/sort-desc?raw';
@@ -267,6 +269,7 @@ export type IconName =
   | 'expand'
   | 'collapse'
   | 'list'
+  | 'list-settings'
   | 'tree-view'
   | 'sort'
   | 'grip'
@@ -375,6 +378,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   expand: entry(KimiExpand, RawKimiExpand),
   collapse: entry(KimiCollapse, RawKimiCollapse),
   list: entry(KimiList, RawKimiList),
+  'list-settings': entry(RiListSettingsLine, RawListSettingsLine),
   'tree-view': entry(RiNodeTree, RawNodeTree),
   sort: entry(RiSortDesc, RawSortDesc),
   grip: entry(KimiGrip, RawKimiGrip),
@@ -491,6 +495,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'expand',
       'collapse',
       'list',
+      'list-settings',
       'tree-view',
       'sort',
       'grip',

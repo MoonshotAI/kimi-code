@@ -1,9 +1,10 @@
 <!-- apps/web/src/components/PinnedSessionList.vue -->
 <!-- The pinned section above all workspace groups: every pinned session across
      workspaces, in the user's manual (drag) order. Rows are the shared
-     SessionRow; hover shows the source workspace + cwd; drag reorders within
-     the section only. State and persistence live in the client — this
-     component renders the list and forwards every intent back up. -->
+     SessionRow (always the flat-style variant — this section is itself a flat
+     list); drag reorders within the section only. State and persistence live
+     in the client — this component renders the list and forwards every intent
+     back up. -->
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -12,7 +13,7 @@ import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
 import { SESSION_ROW_DRAG_MIME } from '../lib/pinnedSessions';
 import { loadPinnedCollapsed, savePinnedCollapsed } from '../lib/storage';
 import SessionRow from './SessionRow.vue';
-import { Icon, IconButton, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, IconButton } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -60,13 +61,6 @@ function expand(): void {
   savePinnedCollapsed(false);
 }
 defineExpose({ expand });
-
-// Hover tooltip: source workspace + the session's cwd — the pinned section
-// mixes workspaces, so the row alone can't say where the session lives.
-function tooltipFor(s: Session): string {
-  if (s.workspaceName && s.cwd) return `${s.workspaceName} · ${s.cwd}`;
-  return s.workspaceName ?? s.cwd ?? '';
-}
 
 // Drag-to-reorder, scoped to this section — the workspace drag's vocabulary
 // (Sidebar.vue): track the dragged row + the insertion marker (top/bottom
@@ -214,22 +208,20 @@ function onContainerDragLeave(event: DragEvent): void {
         @dragover.stop="onDragOver($event, s.id)"
         @drop.stop="onDrop(s.id, $event)"
       >
-        <Tooltip :text="tooltipFor(s)">
-          <SessionRow
-            :session="s"
-            :active="s.id === activeId"
-            :approval-count="pendingBySession[s.id]?.approvals ?? 0"
-            :question-count="pendingBySession[s.id]?.questions ?? 0"
-            :unread="unreadBySession[s.id] ?? false"
-            @rename-state-change="renamingSessionId = $event ? s.id : null"
-            @select="emit('selectSession', $event)"
-            @rename="(id, title) => emit('renameSession', id, title)"
-            @archive="emit('archiveSession', $event)"
-            @fork="emit('forkSession', $event)"
-            @export="emit('exportSession', $event)"
-            @pin="emit('pinSession', $event)"
-          />
-        </Tooltip>
+        <SessionRow
+          :session="s"
+          :active="s.id === activeId"
+          :approval-count="pendingBySession[s.id]?.approvals ?? 0"
+          :question-count="pendingBySession[s.id]?.questions ?? 0"
+          :unread="unreadBySession[s.id] ?? false"
+          @rename-state-change="renamingSessionId = $event ? s.id : null"
+          @select="emit('selectSession', $event)"
+          @rename="(id, title) => emit('renameSession', id, title)"
+          @archive="emit('archiveSession', $event)"
+          @fork="emit('forkSession', $event)"
+          @export="emit('exportSession', $event)"
+          @pin="emit('pinSession', $event)"
+        />
       </div>
     </div>
   </div>

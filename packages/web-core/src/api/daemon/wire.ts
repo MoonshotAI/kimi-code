@@ -2,6 +2,8 @@
 // Daemon wire DTOs — ALL fields stay snake_case as they appear on the wire.
 // No camelCase conversions here; that is mappers.ts's job.
 
+import type { V2Session } from '../types';
+
 // ---------------------------------------------------------------------------
 // Envelope & Page
 // ---------------------------------------------------------------------------
@@ -17,6 +19,15 @@ export interface WireEnvelope<T> {
 export interface WirePage<T> {
   items: T[];
   has_more: boolean;
+}
+
+// GET /api/v2/sessions 的顶层分页结构。v2 是 opaque cursor 分页（next_page_token），
+// 与 v1 的 id 游标（before_id/after_id）不同；session 本体即 types.ts 的
+// V2Session（domain 结构，snake 字段原样，不再做 wire→app 大小写转换）。
+export interface WireV2SessionsPage {
+  items: V2Session[];
+  has_more: boolean;
+  next_page_token: string | null;
 }
 
 // ---------------------------------------------------------------------------

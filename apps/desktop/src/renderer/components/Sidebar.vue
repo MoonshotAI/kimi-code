@@ -3,7 +3,7 @@
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, onUpdated, ref } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { serverEndpointLabel } from '../api/config';
 import {
@@ -18,9 +18,13 @@ import { copyTextToClipboard } from '../lib/clipboard';
 import { logWarn } from '../lib/log';
 import {
   loadCollapsedWorkspaces,
+  loadSidebarViewMode,
   saveCollapsedWorkspaces,
   savePinnedCollapsed,
+  saveSidebarViewMode,
+  type SidebarViewMode,
 } from '../lib/storage';
+import { SESSION_ROW_DRAG_MIME } from '../lib/pinnedSessions';
 import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
 import {
   canDropWorkspaceFolders,
@@ -33,13 +37,14 @@ import UpdateIndicator from './UpdateIndicator.vue';
 import UserMenu from './UserMenu.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
+import SessionRow from './SessionRow.vue';
 import { isMacosDesktop, isWindowsDesktop } from '../lib/desktopFlag';
 import { useVibrancy } from '../composables/useVibrancy';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { SESSIONS_EXPAND_BATCH } from '../composables/client/useWorkspaceState';
 import { track } from '../lib/track';
 import type { SessionCreatedSource } from '../../shared/track-events';
-import { Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
+import { Icon, IconButton, Kbd, Menu, MenuItem, Pill, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -86,6 +91,16 @@ const props = withDefaults(
     /** Pinned sessions (across workspaces, manual order) — rendered in the
      *  pinned section above all workspace groups; empty hides the section. */
     pinnedSessions?: Session[];
+    /** Flat mode: every session across workspaces, newest first (pinned
+     *  excluded — they render in the pinned section). */
+    flatSessions?: Session[];
+    /** Flat mode: whether the session-list endpoint reports more pages. */
+    flatHasMore?: boolean;
+    /** Flat mode: true while the next page is being fetched. */
+    flatLoadingMore?: boolean;
+    /** True once the app's initial load() has settled — the flat seed waits
+     *  for it (seeding earlier races load()'s wholesale pool replace). */
+    initialized?: boolean;
     activeId: string;
     /** Backend engine generation from /meta — dev-only badge next to the brand. */
     backend?: 'v1' | 'v2';
@@ -106,6 +121,10 @@ const props = withDefaults(
     activeWorkspace: null,
     activeWorkspaceId: null,
     pinnedSessions: () => [],
+    flatSessions: () => [],
+    flatHasMore: false,
+    flatLoadingMore: false,
+    initialized: false,
     backend: 'v1',
     attentionBySession: () => ({}),
     pendingBySession: () => ({}),
@@ -139,6 +158,9 @@ const emit = defineEmits<{
   reorderWorkspaces: [ids: string[]];
   loadMoreSessions: [workspaceId: string];
   loadAllSessions: [];
+  /** Flat mode: seed the first page (idempotent) / fetch the next page. */
+  ensureFlatSessions: [];
+  loadMoreFlatSessions: [];
   openSettings: [];
   login: [];
   collapse: [];
@@ -366,6 +388,130 @@ function onPinnedSessionDragEnd(): void {
 function onDropPinnedSession(id: string): void {
   pinnedDragSession.value = null;
   emit('unpin', id);
+}
+
+// ---------------------------------------------------------------------------
+// View mode: flat list vs grouped by workspace
+// ---------------------------------------------------------------------------
+// 'grouped' (the default): the classic per-workspace grouping. 'flat': every
+// session across workspaces, newest first, fed by the v2 session query
+// (ensureFlatSessions/loadMoreFlatSessions). Persisted per device (lib/storage).
+const viewMode = ref<SidebarViewMode>(loadSidebarViewMode());
+
+function setViewMode(mode: SidebarViewMode): void {
+  if (viewMode.value === mode) return;
+  viewMode.value = mode;
+  saveSidebarViewMode(mode);
+  if (mode === 'flat') emit('ensureFlatSessions');
+}
+
+// Seed the flat list only once the app's initial load() has settled: seeding
+// earlier races load()'s wholesale pool replace, which would drop v2-only
+// page-1 rows while the flat cursor has already moved past them.
+watch(
+  () => props.initialized,
+  (ready) => {
+    if (ready && viewMode.value === 'flat') emit('ensureFlatSessions');
+  },
+  { immediate: true },
+);
+
+// The switcher is a dropdown anchored to the section-toggle button — same
+// positioning language as the workspace kebab menu (toggleWsMenu): right-
+// aligned under the trigger, flipping up when the bottom edge wouldn't fit.
+const viewMenuOpen = ref(false);
+const viewMenuStyle = ref<Record<string, string>>({});
+const viewMenuRef = ref<InstanceType<typeof Menu> | null>(null);
+
+function onViewMenuDocClick(e: MouseEvent): void {
+  const target = e.target as Element;
+  if (target.closest('.view-menu') || target.closest('.side-section-view')) return;
+  closeViewMenu();
+}
+
+async function toggleViewMenu(e: MouseEvent): Promise<void> {
+  if (viewMenuOpen.value) {
+    closeViewMenu();
+    return;
+  }
+  const btn = e.currentTarget as HTMLElement;
+  viewMenuOpen.value = true;
+  document.addEventListener('mousedown', onViewMenuDocClick);
+  window.addEventListener('resize', closeViewMenu);
+  await nextTick();
+  const menu = viewMenuRef.value?.el;
+  const r = btn.getBoundingClientRect();
+  const gap = 4;
+  const margin = 8;
+  const menuH = menu?.offsetHeight ?? 0;
+  const menuW = menu?.offsetWidth ?? 0;
+  let top = r.bottom + gap;
+  let flipped = false;
+  if (top + menuH > window.innerHeight - margin) {
+    top = Math.max(margin, r.top - menuH - gap);
+    flipped = true;
+  }
+  let left = r.right - menuW;
+  if (left < margin) left = margin;
+  // The pop animation grows out of the trigger corner — the origin and the
+  // nudge direction follow the upward flip.
+  viewMenuStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+    transformOrigin: flipped ? 'bottom right' : 'top right',
+    '--menu-pop-shift': flipped ? '2px' : '-2px',
+  };
+}
+
+function closeViewMenu(): void {
+  viewMenuOpen.value = false;
+  document.removeEventListener('mousedown', onViewMenuDocClick);
+  window.removeEventListener('resize', closeViewMenu);
+}
+
+function chooseViewMode(mode: SidebarViewMode): void {
+  setViewMode(mode);
+  closeViewMenu();
+}
+
+// Flat rows double as drag sources for the pinned section — the same marker
+// MIME as the grouped rows (WorkspaceGroup), so PinnedSessionList's
+// pin-at-drop-position works unchanged. Dragging is suspended while a row is
+// being renamed inline (text selection would otherwise start a row drag),
+// mirroring the pinned section's rename-state-change handling.
+const renamingFlatId = ref<string | null>(null);
+
+function onFlatSessionDragStart(id: string, event: DragEvent): void {
+  if (!event.dataTransfer) return;
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData(SESSION_ROW_DRAG_MIME, id);
+  event.dataTransfer.setData('text/plain', id);
+}
+
+// Drag-back-to-unpin in flat mode: the grouped mode's home-group rule can't
+// apply (the flat list holds every workspace's sessions), so the whole flat
+// list is the drop target — dropping anywhere unpins. Handlers sit on the
+// .sessions scroll container and are gated on flat mode, so the grouped
+// groups keep their own home-group handling (events bubble up harmlessly).
+const flatPinnedDropHover = ref(false);
+
+function onSessionsPinnedDragOver(event: DragEvent): void {
+  if (viewMode.value !== 'flat' || pinnedDragSession.value === null) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  flatPinnedDropHover.value = true;
+}
+
+function onSessionsPinnedDrop(event: DragEvent): void {
+  if (viewMode.value !== 'flat' || pinnedDragSession.value === null) return;
+  event.preventDefault();
+  flatPinnedDropHover.value = false;
+  onDropPinnedSession(pinnedDragSession.value.id);
+}
+
+function onSessionsPinnedDragLeave(event: DragEvent): void {
+  if ((event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) return;
+  flatPinnedDropHover.value = false;
 }
 
 function handleGhClick(wsId: string, e: MouseEvent): void {
@@ -705,8 +851,10 @@ onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onGhMenuDocClick, true);
   document.removeEventListener('mousedown', onWsMenuDocClick);
   document.removeEventListener('mousedown', onBackendMenuDocClick);
+  document.removeEventListener('mousedown', onViewMenuDocClick);
   window.removeEventListener('resize', closeWsMenu);
   window.removeEventListener('resize', closeBackendMenu);
+  window.removeEventListener('resize', closeViewMenu);
 });
 
 // Logo easter-egg: clicking the Kimi mark plays one quick blink. It's a one-shot
@@ -883,7 +1031,7 @@ onBeforeUnmount(() => {
            edge. Rendered only when at least one workspace exists (matching
            the old in-list v-else). -->
       <div
-        v-if="groups.length > 0"
+        v-if="viewMode === 'flat' || groups.length > 0"
         class="sessions-head"
         :class="{ 'sessions-head--scrolled': sessionsScrolled }"
       >
@@ -908,9 +1056,10 @@ onBeforeUnmount(() => {
           @reorder="(ids) => emit('reorderPinned', ids)"
         />
         <div class="side-section-label">
-          <span class="side-section-title">{{ t('sidebar.workspaces') }}</span>
+          <span class="side-section-title">{{ t('sidebar.sessionsHeader') }}</span>
           <div class="side-section-actions">
             <IconButton
+              v-if="viewMode === 'grouped'"
               class="side-section-toggle"
               size="sm"
               :label="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
@@ -919,63 +1068,142 @@ onBeforeUnmount(() => {
               <Icon v-if="allCollapsed" name="expand" />
               <Icon v-else name="collapse" />
             </IconButton>
+            <!-- View switcher: opens a dropdown picking flat / grouped. Fixed
+                 icon (does not follow the current view) with a hover tooltip;
+                 rightmost of the section actions; hover-revealed like the
+                 collapse-all button (product call: not always visible). -->
+            <Tooltip :text="t('sidebar.viewSwitcher')">
+              <IconButton
+                class="side-section-toggle side-section-view"
+                size="sm"
+                :label="t('sidebar.viewSwitcher')"
+                @click.stop="toggleViewMenu"
+              >
+                <Icon name="list-settings" />
+              </IconButton>
+            </Tooltip>
           </div>
         </div>
       </div>
 
-      <!-- Session list — grouped by workspace -->
-      <div ref="sessionsEl" class="sessions" :class="{ scrolling: sessionsScrolling }" @scroll="onSessionsScroll">
-        <!-- Empty state — only when no workspace is registered at all; empty
-             workspaces still render their group header (with the + button). -->
-        <div v-if="groups.length === 0" class="empty">
-          {{ t('workspace.noWorkspace') }}
-        </div>
+      <!-- Session list — grouped by workspace, or flat (all sessions, newest
+           first) depending on viewMode. The scroll container doubles as the
+           flat mode's drag-back-to-unpin target (grouped mode keeps that on
+           the home workspace group). -->
+      <div
+        ref="sessionsEl"
+        class="sessions"
+        :class="{
+          scrolling: sessionsScrolling,
+          'pinned-drag-active': viewMode === 'flat' && pinnedDragSession !== null,
+          'flat-pinned-drop-hover': flatPinnedDropHover,
+        }"
+        @scroll="onSessionsScroll"
+        @dragover="onSessionsPinnedDragOver"
+        @drop="onSessionsPinnedDrop"
+        @dragleave="onSessionsPinnedDragLeave"
+      >
+        <template v-if="viewMode === 'grouped'">
+          <!-- Empty state — only when no workspace is registered at all; empty
+               workspaces still render their group header (with the + button). -->
+          <div v-if="groups.length === 0" class="empty">
+            {{ t('workspace.noWorkspace') }}
+          </div>
 
+          <template v-else>
+            <div
+              v-for="g in groups"
+              :key="g.workspace.id"
+              class="ws-drop-target"
+              :class="{
+                'drop-before': dragOver?.id === g.workspace.id && dragOver.position === 'before',
+                'drop-after': dragOver?.id === g.workspace.id && dragOver.position === 'after',
+              }"
+              @dragover="onGroupDragOver($event, g.workspace.id)"
+              @drop="onGroupDrop(g.workspace.id)"
+            >
+              <WorkspaceGroup
+                :group="g"
+                :active-workspace-id="activeWorkspaceId"
+                :active-id="activeId"
+                :renaming-id="renamingId"
+                :rename-value="renameValue"
+                :rename-input-ref="getRenameInputRef()"
+                :pending-by-session="pendingBySession"
+                :unread-by-session="unreadBySession"
+                :ws-menu-open-id="wsMenuOpenId"
+                :dragging="draggingWsId === g.workspace.id"
+                :is-collapsed="isCollapsed"
+                :visible-limit="visibleLimit"
+                :pinned-drag-session="pinnedDragSession"
+                @group-click="handleGhClick"
+                @group-contextmenu="openGhMenu"
+                @toggle-ws-menu="toggleWsMenu"
+                @create-in-workspace="(id) => emit('createInWorkspace', id)"
+                @select-session="onSelectSession"
+                @rename-session="(id, title) => emit('rename', id, title)"
+                @archive-session="(id) => emit('archive', id)"
+                @fork-session="(id) => emit('fork', id)"
+                @export-session="(id) => emit('export', id)"
+                @pin-session="onPinSession"
+                @drop-pinned-session="onDropPinnedSession"
+                @expand="onExpand"
+                @collapse="onCollapse"
+                @confirm-rename="confirmRenameWorkspace"
+                @cancel-rename="cancelRenameWorkspace"
+                @update-rename-value="onUpdateRenameValue"
+                @ws-dragstart="onWsDragstart"
+                @ws-dragend="onWsDragend"
+              />
+            </div>
+          </template>
+        </template>
+
+        <!-- Flat mode: every session across workspaces, newest first. Rows are
+             the shared SessionRow with the cwd second line (the facade projects
+             cwdLabel); drag-to-pin reuses the grouped rows' marker MIME. -->
         <template v-else>
+          <SessionRow
+            v-for="s in flatSessions"
+            :key="s.id"
+            :session="s"
+            :active="s.id === activeId"
+            :approval-count="pendingBySession[s.id]?.approvals ?? 0"
+            :question-count="pendingBySession[s.id]?.questions ?? 0"
+            :unread="unreadBySession[s.id] ?? false"
+            :draggable="renamingFlatId !== s.id"
+            @dragstart="onFlatSessionDragStart(s.id, $event)"
+            @rename-state-change="renamingFlatId = $event ? s.id : null"
+            @select="onSelectSession"
+            @rename="(id, title) => emit('rename', id, title)"
+            @archive="(id) => emit('archive', id)"
+            @fork="(id) => emit('fork', id)"
+            @export="(id) => emit('export', id)"
+            @pin="onPinSession"
+          />
+          <!-- Empty state only once the endpoint reports no more pages —
+               while the first page is in flight the list is simply blank
+               (hasMore starts true), so there is no empty-state flash. And not
+               while pinned rows remain above: they ARE the visible history. -->
           <div
-            v-for="g in groups"
-            :key="g.workspace.id"
-            class="ws-drop-target"
-            :class="{
-              'drop-before': dragOver?.id === g.workspace.id && dragOver.position === 'before',
-              'drop-after': dragOver?.id === g.workspace.id && dragOver.position === 'after',
-            }"
-            @dragover="onGroupDragOver($event, g.workspace.id)"
-            @drop="onGroupDrop(g.workspace.id)"
+            v-if="flatSessions.length === 0 && !flatHasMore && pinnedSessions.length === 0"
+            class="empty"
           >
-            <WorkspaceGroup
-              :group="g"
-              :active-workspace-id="activeWorkspaceId"
-              :active-id="activeId"
-              :renaming-id="renamingId"
-              :rename-value="renameValue"
-              :rename-input-ref="getRenameInputRef()"
-              :pending-by-session="pendingBySession"
-              :unread-by-session="unreadBySession"
-              :ws-menu-open-id="wsMenuOpenId"
-              :dragging="draggingWsId === g.workspace.id"
-              :is-collapsed="isCollapsed"
-              :visible-limit="visibleLimit"
-              :pinned-drag-session="pinnedDragSession"
-              @group-click="handleGhClick"
-              @group-contextmenu="openGhMenu"
-              @toggle-ws-menu="toggleWsMenu"
-              @create-in-workspace="(id) => emit('createInWorkspace', id)"
-              @select-session="onSelectSession"
-              @rename-session="(id, title) => emit('rename', id, title)"
-              @archive-session="(id) => emit('archive', id)"
-              @fork-session="(id) => emit('fork', id)"
-              @export-session="(id) => emit('export', id)"
-              @pin-session="onPinSession"
-              @drop-pinned-session="onDropPinnedSession"
-              @expand="onExpand"
-              @collapse="onCollapse"
-              @confirm-rename="confirmRenameWorkspace"
-              @cancel-rename="cancelRenameWorkspace"
-              @update-rename-value="onUpdateRenameValue"
-              @ws-dragstart="onWsDragstart"
-              @ws-dragend="onWsDragend"
-            />
+            {{ t('sidebar.noSessions') }}
+          </div>
+          <!-- Manual paging: the next page loads only on an explicit click.
+               Centered, icon trailing — a quiet link-style button. -->
+          <div v-if="flatHasMore" class="show-more-row">
+            <button
+              class="show-more"
+              :disabled="flatLoadingMore"
+              @click.stop="emit('loadMoreFlatSessions')"
+            >
+              <span class="show-more-label">{{
+                flatLoadingMore ? t('sidebar.loadingMore') : t('sidebar.loadMore')
+              }}</span>
+              <Icon name="chevron-down" size="sm" />
+            </button>
           </div>
         </template>
       </div>
@@ -1043,6 +1271,34 @@ onBeforeUnmount(() => {
         <MenuItem danger @click="deleteWs(wsMenuTarget)">
           <Icon name="close" size="sm" />
           {{ t('sidebar.removeWorkspace') }}
+        </MenuItem>
+      </Menu>
+    </Transition>
+    <!-- View switcher dropdown (position:fixed, anchored to the section toggle):
+         a muted group label heads the options; each view keeps its own icon and
+         the current one carries a checkmark at the row's right edge. -->
+    <Transition name="menu-pop">
+      <Menu
+        v-if="viewMenuOpen"
+        ref="viewMenuRef"
+        class="view-menu"
+        :style="viewMenuStyle"
+        @click.stop
+      >
+        <div class="view-menu-label">{{ t('sidebar.viewGroup') }}</div>
+        <MenuItem @click="chooseViewMode('flat')">
+          <Icon name="list" size="sm" />
+          {{ t('sidebar.viewFlat') }}
+          <span class="view-menu-check">
+            <Icon v-if="viewMode === 'flat'" name="check" size="sm" />
+          </span>
+        </MenuItem>
+        <MenuItem @click="chooseViewMode('grouped')">
+          <Icon name="tree-view" size="sm" />
+          {{ t('sidebar.viewGrouped') }}
+          <span class="view-menu-check">
+            <Icon v-if="viewMode === 'grouped'" name="check" size="sm" />
+          </span>
         </MenuItem>
       </Menu>
     </Transition>
@@ -1464,6 +1720,10 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Breathing room between the pinned section and the list label below it. */
+.sessions-head .pinned + .side-section-label {
+  margin-top: var(--space-2);
+}
 .side-section-toggle {
   color: var(--faint);
   opacity: 0;
@@ -1491,6 +1751,47 @@ onBeforeUnmount(() => {
    will land. Inset shadows avoid layout shift. */
 .ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--color-accent); }
 .ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--color-accent); }
+
+/* Flat mode: the scroll container is the drag-back-to-unpin target (the whole
+   list — every workspace's sessions live here). The accent frame mirrors the
+   grouped mode's home-group affordance (1px while the drag is active, 2px on
+   hover); inset shadows avoid layout shift. */
+.sessions.pinned-drag-active { box-shadow: inset 0 0 0 1px var(--color-accent); }
+.sessions.flat-pinned-drop-hover { box-shadow: inset 0 0 0 2px var(--color-accent); }
+
+/* Flat mode's manual pager: a centered, content-width quiet button (icon
+   trails the label). */
+.show-more-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.show-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 6px var(--space-3);
+  min-width: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  cursor: pointer;
+}
+.show-more:hover { background: var(--sb-hover, var(--color-hover)); }
+.show-more:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.show-more-label {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Folder-drop affordance: covers the whole column while a folder drag hovers
    (desktop only — folderDropActive can never go true without the preload
@@ -1553,11 +1854,24 @@ onBeforeUnmount(() => {
    fixed positioning stays here (anchored to the ⋯ trigger / cursor). */
 .ws-menu,
 .gh-menu,
+.view-menu,
 .backend-menu {
   position: fixed;
   top: 0;
   left: 0;
   z-index: var(--z-dropdown);
+}
+/* View switcher dropdown: a muted group label heads the options; the current
+   view's checkmark sits at the row's right edge. */
+.view-menu-label {
+  padding: var(--space-1) var(--space-2) var(--space-05);
+  font-size: var(--text-xs);
+  color: var(--faint);
+  user-select: none;
+}
+.view-menu-check {
+  margin-left: auto;
+  display: inline-flex;
 }
 /* Menu enter/exit — pops out of the trigger corner (the composer model
    dropdown's language): fade + a slight scale, exit a touch faster. The

@@ -12,7 +12,7 @@ import { getKimiWebApi } from '../../api';
 import { i18n } from '../../i18n';
 import { useConfirmDialog } from '../useConfirmDialog';
 import { isDaemonApiError } from '../../api/errors';
-import { SERVER_AUTH_UNAUTHORIZED_CODE, isPlaceholderSessionUsage } from '@moonshot-ai/web-core/api';
+import { SERVER_AUTH_UNAUTHORIZED_CODE, isPageTokenMismatchError, isPlaceholderSessionUsage, toAppSessionFromV2 } from '@moonshot-ai/web-core/api';
 import type {
   AppConfig,
   AppInFlightTurn,
@@ -24,6 +24,7 @@ import type {
   FsEntry,
   KimiEventConnection,
   QuestionResponse,
+  V2SessionsPage,
 } from '../../api/types';
 import {
   loadPinnedSessions,
@@ -67,6 +68,8 @@ export const SESSIONS_INITIAL_PAGE_SIZE = 5;
 // the step. Same size as the first page, so expansion walks the list at a
 // steady pace.
 export const SESSIONS_EXPAND_BATCH = 5;
+// Flat list page size (v2 sessions query + the flat view's visible-window step).
+export const FLAT_SESSIONS_PAGE_SIZE = 50;
 const SESSION_NOT_FOUND_CODE = 40401;
 const PROMPT_NOT_FOUND_CODE = 40402;
 const WORKSPACE_NOT_FOUND_CODE = 40410;
@@ -702,18 +705,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * Replace the sessions list wholesale, preserving the live usage accumulated
    * from /status and the WS status stream: the list endpoint returns all-zero
    * placeholder usage for every session, and a blind replace would zero the
-   * context ring until the next refresh.
+   * context ring until the next refresh. The v2-only git domain (pullRequest,
+   * seeded by the flat list's include=git pages) is preserved the same way —
+   * v1 list frames never carry it.
    */
   function setSessionsPreservingLiveUsage(sessions: AppSession[]): void {
-    const liveUsageById = new Map(rawState.sessions.map((s) => [s.id, s.usage] as const));
+    const liveById = new Map(rawState.sessions.map((s) => [s.id, s] as const));
     setSessions(
       sessions.map((s) => {
-        const live = liveUsageById.get(s.id);
-        return live !== undefined &&
-          isPlaceholderSessionUsage(s.usage) &&
-          !isPlaceholderSessionUsage(live)
-          ? { ...s, usage: live }
-          : s;
+        const live = liveById.get(s.id);
+        if (live === undefined) return s;
+        const keepUsage =
+          isPlaceholderSessionUsage(s.usage) && !isPlaceholderSessionUsage(live.usage);
+        const pullRequest = s.pullRequest ?? live.pullRequest;
+        if (!keepUsage && pullRequest === s.pullRequest) return s;
+        return { ...s, usage: keepUsage ? live.usage : s.usage, pullRequest };
       }),
     );
   }
@@ -977,6 +983,134 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Flat session list (GET /api/v2/sessions)
+  // -------------------------------------------------------------------------
+  // The v2 paging below only pulls older sessions INTO the shared pool
+  // (rawState.sessions); the flat view itself is a facade computed over the
+  // pool, so WS live updates, newly created sessions and local archives need
+  // no extra wiring (per the v2 doc, the list endpoint is a baseline seed and
+  // increments ride the WS). The doc's page_token binds the first page's query
+  // params — a 409 page_token_mismatch means "drop the cursor, restart from
+  // page 1".
+
+  // One "show more" click pages past zero-fresh pages at most this many times
+  // (see loadMoreFlatSessions).
+  const FLAT_LOAD_MORE_MAX_PAGES = 5;
+
+  /** Upsert one v2 page into the shared pool: ids already loaded keep their
+   *  live data (title/usage/status ride the WS), only new ids are appended.
+   *  The git domain is v2-only (no v1 field conflicts), so it is ALSO patched
+   *  onto already-loaded sessions. Empty sessions (no last_prompt — the v1
+   *  exclude_empty semantics; the v2 surface has no such param) are skipped
+   *  on entry, so a locally-created empty session stays visible while a
+   *  never-prompted one from the server never appears.
+   *
+   *  Also advances the flat frontier — the oldest updated_at the contiguous
+   *  v2 walk has reached. The flat view only renders pool rows at/inside the
+   *  frontier (plus attention rows): rows the pool holds from other sources
+   *  carry no global-order guarantee until the walk covers them.
+   *
+   *  Returns the page's REVEALABLE row count (visible workspace + non-empty),
+   *  regardless of pool novelty — an overlapped page still reveals its rows
+   *  by extending the frontier over them. */
+  function upsertFlatSessionsPage(page: V2SessionsPage, opts?: { resetFrontier?: boolean }): number {
+    const existing = new Set(rawState.sessions.map((s) => s.id));
+    const fresh = page.items
+      .filter((s) => !existing.has(s.id) && (s.meta.last_prompt ?? '').length > 0)
+      .map(toAppSessionFromV2);
+    if (fresh.length > 0) setSessions([...rawState.sessions, ...fresh]);
+    for (const item of page.items) {
+      if (existing.has(item.id) && item.git !== undefined) {
+        const pr = item.git.pull_request;
+        updateSession(item.id, (s) => (s.pullRequest === pr ? s : { ...s, pullRequest: pr }));
+      }
+    }
+    if (page.items.length > 0) {
+      const pageOldest = Math.min(...page.items.map((s) => s.meta.updated_at));
+      rawState.flatSessionsFrontier =
+        opts?.resetFrontier === true || rawState.flatSessionsFrontier === null
+          ? pageOldest
+          : Math.min(rawState.flatSessionsFrontier, pageOldest);
+    }
+    rawState.flatSessionsNextPageToken = page.nextPageToken;
+    rawState.flatSessionsHasMore = page.hasMore;
+    const visibleWorkspaceIds = new Set(workspacesView.value.map((w) => w.id));
+    return page.items.filter(
+      (s) =>
+        (s.meta.last_prompt ?? '').length > 0 &&
+        visibleWorkspaceIds.has(
+          workspaceIdForSession({ workspaceId: s.workspace.id, cwd: s.workspace.cwd ?? '' }),
+        ),
+    ).length;
+  }
+
+  async function fetchFlatSessionsFirstPage(): Promise<void> {
+    const page = await getKimiWebApi().listSessionsV2({
+      pageSize: FLAT_SESSIONS_PAGE_SIZE,
+      include: 'git',
+    });
+    upsertFlatSessionsPage(page, { resetFrontier: true });
+    rawState.flatSessionsSeeded = true;
+  }
+
+  /** Seed the flat list (first page). Idempotent — later calls are no-ops. */
+  async function ensureFlatSessions(): Promise<void> {
+    if (rawState.flatSessionsSeeded || rawState.flatSessionsLoading) return;
+    rawState.flatSessionsLoading = true;
+    try {
+      await fetchFlatSessionsFirstPage();
+    } catch (err) {
+      pushOperationFailure('ensureFlatSessions', err);
+    } finally {
+      rawState.flatSessionsLoading = false;
+    }
+  }
+
+  /** Fetch the next flat-list page (the list bottom's "show more" button).
+   *  One click keeps paging until REVEALABLE rows land or the endpoint drains
+   *  (bounded): a page of only empty sessions (filtered on entry) or only
+   *  hidden-workspace sessions reveals nothing, and a button that visibly
+   *  does nothing reads as broken. The cursor always advances.
+   *  When the first-page seed never landed (its fetch failed — transient
+   *  error or an older server without v2), there is no cursor yet, so a
+   *  click retries the seed instead of dead-ending on the null token. */
+  async function loadMoreFlatSessions(): Promise<void> {
+    if (rawState.flatSessionsLoading || rawState.flatSessionsLoadingMore) return;
+    if (!rawState.flatSessionsHasMore) return;
+    rawState.flatSessionsLoadingMore = true;
+    try {
+      if (!rawState.flatSessionsSeeded) {
+        await fetchFlatSessionsFirstPage();
+        return;
+      }
+      if (rawState.flatSessionsNextPageToken === null) return;
+      for (let attempt = 0; attempt < FLAT_LOAD_MORE_MAX_PAGES; attempt += 1) {
+        const pageToken = rawState.flatSessionsNextPageToken;
+        if (pageToken === null || !rawState.flatSessionsHasMore) break;
+        let page: V2SessionsPage;
+        try {
+          page = await getKimiWebApi().listSessionsV2({
+            pageSize: FLAT_SESSIONS_PAGE_SIZE,
+            pageToken,
+            include: 'git',
+          });
+        } catch (err) {
+          if (!isPageTokenMismatchError(err)) throw err;
+          // 文档约定：游标失效（参数漂移/损坏/过期）→ 丢弃游标从首页重查。
+          rawState.flatSessionsNextPageToken = null;
+          await fetchFlatSessionsFirstPage();
+          break;
+        }
+        if (upsertFlatSessionsPage(page) > 0) break;
+      }
+    } catch (err) {
+      pushOperationFailure('loadMoreFlatSessions', err);
+    } finally {
+      rawState.flatSessionsLoadingMore = false;
+    }
+  }
+
   /** Archive backfill (local archive path only): restore the pre-archive
    *  loaded count while the server has more pages; re-anchor the paging
    *  cursor when the archived session was the cursor. */
@@ -1139,6 +1273,24 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const loadedSessions = await loadInitialSessionsByWorkspace();
       const sessions = loadedSessions ?? rawState.sessions;
       if (loadedSessions !== undefined) setSessionsPreservingLiveUsage(loadedSessions);
+
+      // A reload swaps the pool for per-workspace v1 first pages — the flat
+      // walk's seed/cursor/frontier described v2 pages whose rows are gone
+      // now, so resuming the stale cursor would skip live rows. Reset the
+      // paging state and re-seed when the flat view was seeded before (a
+      // never-seeded state — grouped-only user, or a v1-only server where
+      // the seed keeps failing — stays untouched and costs no v2 call).
+      if (!firstLoad && loadedSessions !== undefined && rawState.flatSessionsSeeded) {
+        rawState.flatSessionsSeeded = false;
+        rawState.flatSessionsNextPageToken = null;
+        rawState.flatSessionsHasMore = true;
+        rawState.flatSessionsFrontier = null;
+        try {
+          await fetchFlatSessionsFirstPage();
+        } catch (err) {
+          pushOperationFailure('ensureFlatSessions', err);
+        }
+      }
 
       // Pinned sessions can live outside the first pages (each workspace only
       // loads a few sessions + a recency window): pull every pinned id that is
@@ -3264,6 +3416,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     loadWorkspaces,
     loadMoreSessions,
     loadAllSessions,
+    ensureFlatSessions,
+    loadMoreFlatSessions,
     selectWorkspace,
     openWorkspace,
     upsertWorkspacePreserveOrder,

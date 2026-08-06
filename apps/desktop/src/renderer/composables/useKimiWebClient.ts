@@ -14,6 +14,8 @@ import {
 import { logError, logWarn } from '../lib/log';
 import { track } from '../lib/track';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
+import { basename } from '../lib/pathBasename';
+import { sessionRowStatus } from '../components/sessionRowStatus';
 import { workspaceRootKey } from '../lib/rootKey';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { mergeSnapshotSubagents } from '../lib/taskMerge';
@@ -56,6 +58,7 @@ import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
 import { createAuxiliaryTranscriptPool } from './client/useAuxiliaryTranscripts';
 import {
+  FLAT_SESSIONS_PAGE_SIZE,
   forgetLocalTurnState,
   SESSIONS_INITIAL_PAGE_SIZE,
   useWorkspaceState,
@@ -429,6 +432,22 @@ export interface ExtendedState extends KimiClientState {
   sessionsInitialCountByWorkspace: Record<string, number>;
   /** True once every session has been loaded (after a search-triggered full drain). */
   sessionsFullyLoaded: boolean;
+  /** Opaque cursor for the next flat-list page (GET /api/v2/sessions); null when
+   *  no next page is known (pre-seed or fully drained). */
+  flatSessionsNextPageToken: string | null;
+  /** Whether the v2 endpoint reports more flat-list pages. */
+  flatSessionsHasMore: boolean;
+  /** True while the first flat-list page is being fetched. */
+  flatSessionsLoading: boolean;
+  /** True while a follow-up flat-list page is being fetched. */
+  flatSessionsLoadingMore: boolean;
+  /** True once the flat list has fetched its first page this run (seeding is one-shot). */
+  flatSessionsSeeded: boolean;
+  /** The oldest updated_at (ms) the contiguous v2 walk has reached. The flat
+   *  view renders only pool rows at/inside this frontier (attention rows
+   *  excepted): rows pooled from other sources carry no global-order
+   *  guarantee until the walk covers them. null = not seeded yet. */
+  flatSessionsFrontier: number | null;
 }
 
 const rawState: ExtendedState = reactive({
@@ -480,6 +499,12 @@ const rawState: ExtendedState = reactive({
   sessionsCursorByWorkspace: {},
   sessionsInitialCountByWorkspace: {},
   sessionsFullyLoaded: false,
+  flatSessionsNextPageToken: null,
+  flatSessionsHasMore: true,
+  flatSessionsLoading: false,
+  flatSessionsLoadingMore: false,
+  flatSessionsSeeded: false,
+  flatSessionsFrontier: null,
 });
 
 const plansBySession = reactive<Record<string, Record<string, SessionPlan>>>({});
@@ -2462,6 +2487,11 @@ const sessions = computed<Session[]>(() => {
       busy: isMainTurnActive(s.id, s.mainTurnActive),
       pendingInteraction: s.pendingInteraction,
       lastTurnReason: s.lastTurnReason,
+      // App.vue's workspace-delete cleanup matches sessions by workspaceId /
+      // root — project both (they were read but never projected, so the match
+      // silently never hit).
+      workspaceId: workspaceIdForSession(s),
+      cwd: s.cwd,
     }));
 });
 
@@ -3083,6 +3113,114 @@ const sessionsForView = computed<Session[]>(() => {
 });
 
 /**
+ * Flat sidebar list: every session across workspaces, newest first — the "flat"
+ * counterpart of workspaceGroups. Data comes from the shared session pool; the
+ * v2 paging actions (ensureFlatSessions/loadMoreFlatSessions) only pull older
+ * sessions INTO the pool, so live WS updates, freshly created sessions and
+ * local archives show up here for free (the v2 doc: the list endpoint is a
+ * baseline seed, increments ride the WS). Pinned sessions are excluded — they
+ * render in the pinned section, and a session renders exactly once (same rule
+ * as the grouped list).
+ *
+ * The view paginates LOCALLY on top of the pool: the pool usually covers far
+ * more than one v2 page on first paint (the grouped mode's per-workspace first
+ * pages share the pool), so the flat list renders only the newest
+ * `flatVisibleCount` rows and each "load more" click grows the window by one
+ * page — revealing locally first, fetching only when the window outgrows the
+ * pool (see the loadMoreFlatSessions wrapper below).
+ */
+const flatVisibleCount = ref(FLAT_SESSIONS_PAGE_SIZE);
+
+const flatSessionsAll = computed<Session[]>(() => {
+  void sessionTimeClock.value;
+  const visibleWorkspaceIds = new Set(workspacesView.value.map((w) => w.id));
+  const nameByWorkspaceId = new Map(workspacesView.value.map((w) => [w.id, w.name]));
+  const pinnedSet = new Set(pinnedSessionIds.value);
+  const byUpdatedDesc = (a: AppSession, b: AppSession) =>
+    new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  // Attention-first ordering: anything with a status worth noticing (running,
+  // awaiting approval/answer, aborted, unread) floats to the top; each tier is
+  // updated_at desc. Clearing the status drops the session back to its time
+  // position. The predicate is the row's own status logic (sessionRowStatus).
+  // The rest tier only renders rows at/inside the v2 walk's frontier — pool
+  // rows from other sources (per-workspace v1 pages) carry no global-order
+  // guarantee beyond it: one workspace owning the newest 100 sessions would
+  // otherwise leave a hole at rows 51–100.
+  const frontier = rawState.flatSessionsFrontier;
+  const attention: AppSession[] = [];
+  const rest: AppSession[] = [];
+  for (const s of rawState.sessions) {
+    if (
+      s.parentSessionId ||
+      s.archived ||
+      pinnedSet.has(s.id) ||
+      !visibleWorkspaceIds.has(workspaceIdForSession(s))
+    ) {
+      continue;
+    }
+    const status = sessionRowStatus({
+      busy: isMainTurnActive(s.id, s.mainTurnActive),
+      unread: unreadBySession.value[s.id] ?? false,
+      renaming: false,
+      questionCount: pendingBySession.value[s.id]?.questions ?? 0,
+      approvalCount: pendingBySession.value[s.id]?.approvals ?? 0,
+      pendingInteraction: s.pendingInteraction,
+      lastTurnReason: s.lastTurnReason,
+    });
+    if (status.hasStatus) {
+      attention.push(s);
+      continue;
+    }
+    if (frontier !== null && new Date(s.updatedAt).getTime() < frontier) continue;
+    rest.push(s);
+  }
+  attention.sort(byUpdatedDesc);
+  rest.sort(byUpdatedDesc);
+  return [...attention, ...rest].map((s) => {
+    const workspaceId = workspaceIdForSession(s);
+    return {
+      id: s.id,
+      title: s.title,
+      time: formatTime(s.updatedAt),
+      busy: isMainTurnActive(s.id, s.mainTurnActive),
+      pendingInteraction: s.pendingInteraction,
+      lastTurnReason: s.lastTurnReason,
+      lastPrompt: s.lastPrompt,
+      updatedAt: s.updatedAt,
+      workspaceId,
+      workspaceName: nameByWorkspaceId.get(workspaceId),
+      // 平铺行第二行：只显示最终目录名（产品约定）；cwd 缺失时显示 '-'。
+      cwdLabel: s.cwd ? basename(s.cwd) : '-',
+      pullRequest: s.pullRequest,
+    };
+  });
+});
+
+/** The flat list's visible window: newest N rows of the pool. */
+const flatSessions = computed<Session[]>(() =>
+  flatSessionsAll.value.slice(0, flatVisibleCount.value),
+);
+
+/** More rows available, either on the server or already loaded past the window. */
+const flatListHasMore = computed(
+  () =>
+    rawState.flatSessionsHasMore || flatVisibleCount.value < flatSessionsAll.value.length,
+);
+
+/** One "load more" click: widen the window by one page (instant local reveal
+ *  when the pool covers it), and top the pool up only when the window
+ *  outgrows it. */
+function loadMoreFlatSessions(): void {
+  flatVisibleCount.value += FLAT_SESSIONS_PAGE_SIZE;
+  if (
+    flatVisibleCount.value > flatSessionsAll.value.length &&
+    rawState.flatSessionsHasMore
+  ) {
+    void workspaceState.loadMoreFlatSessions();
+  }
+}
+
+/**
  * Per-workspace groups for the 'all workspaces' scope. With `excludePinned`,
  * pinned sessions move OUT of their group into the pinned section above the
  * groups (counted per workspace so the group can note them instead of the
@@ -3167,7 +3305,11 @@ const pinnedSessions = computed<Session[]>(() => {
       workspaceId,
       workspaceName: nameByWorkspaceId.get(workspaceId),
       pinned: true,
-      cwd: s.cwd,
+      // The pinned section is itself a flat list, so its rows always take the
+      // flat-style layout (two lines, status on the right) regardless of the
+      // sidebar's view mode — SessionRow keys that off cwdLabel.
+      cwdLabel: s.cwd ? basename(s.cwd) : '-',
+      pullRequest: s.pullRequest,
     };
   });
 });
@@ -3435,6 +3577,9 @@ export function useKimiWebClient() {
     workspaceGroups,
     mobileWorkspaceGroups,
     pinnedSessions,
+    flatSessions,
+    flatSessionsHasMore: flatListHasMore,
+    flatSessionsLoadingMore: computed(() => rawState.flatSessionsLoadingMore),
     attentionBySession,
     pendingBySession,
     attentionByWorkspace,
@@ -3529,6 +3674,8 @@ export function useKimiWebClient() {
     loadWorkspaces: workspaceState.loadWorkspaces,
     loadMoreSessions: workspaceState.loadMoreSessions,
     loadAllSessions: workspaceState.loadAllSessions,
+    ensureFlatSessions: workspaceState.ensureFlatSessions,
+    loadMoreFlatSessions,
     selectWorkspace: workspaceState.selectWorkspace,
     openWorkspace: workspaceState.openWorkspace,
     openWorkspaceDraft: workspaceState.openWorkspaceDraft,

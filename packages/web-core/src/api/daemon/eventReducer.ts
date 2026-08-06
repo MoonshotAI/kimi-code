@@ -396,8 +396,10 @@ export function reduceAppEvent(
 
     // -------------------------------------------------------------------------
     case 'sessionUpdated': {
+      // v1 frames never carry the v2-only git domain — preserve a previously
+      // seeded pullRequest instead of dropping it on every session update.
       next.sessions = next.sessions.map((s) =>
-        s.id === event.session.id ? event.session : s,
+        s.id === event.session.id ? { ...event.session, pullRequest: s.pullRequest } : s,
       );
       break;
     }

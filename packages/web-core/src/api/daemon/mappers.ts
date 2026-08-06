@@ -27,6 +27,7 @@ import type {
   QuestionItem,
   QuestionOption,
   QuestionResponse,
+  V2Session,
 } from '../types';
 
 import type {
@@ -111,6 +112,48 @@ export function toAppSession(wire: WireSession): AppSession {
       typeof wire.metadata['parent_session_id'] === 'string'
         ? wire.metadata['parent_session_id']
         : undefined,
+  };
+}
+
+/**
+ * v2 session（domain 结构，见 types.ts 注释块）折回 AppSession。v2 列表不携带
+ * usage / model / message_count 等重字段（文档的 domain 设计），这里填
+ * placeholder 零值 usage（isPlaceholderSessionUsage 语义，后续会被 /status 的
+ * live 值替换）与空 model；标题按文档 fallback：title → last_prompt → id 前 12 位。
+ */
+export function toAppSessionFromV2(session: V2Session): AppSession {
+  const status = session.activity.status;
+  return {
+    id: session.id,
+    title: session.meta.title ?? session.meta.last_prompt ?? session.id.slice(0, 12),
+    createdAt: new Date(session.meta.created_at).toISOString(),
+    updatedAt: new Date(session.meta.updated_at).toISOString(),
+    // v2 `running` means ANY lease (background/sub-agent included) — the
+    // domain has no main-turn flag, so mainTurnActive stays unset here rather
+    // than falsely rendering a main-turn spinner for background-only sessions
+    // until a v1/status refresh corrects it. busy is the honest bit.
+    busy: status === 'running',
+    pendingInteraction:
+      status === 'approval' ? 'approval' : status === 'question' ? 'question' : undefined,
+    lastTurnReason: status === 'failed' ? 'failed' : undefined,
+    archived: session.meta.archived,
+    lastPrompt: session.meta.last_prompt ?? undefined,
+    cwd: session.workspace.cwd ?? '',
+    model: '',
+    pullRequest: session.git === undefined ? undefined : session.git.pull_request,
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      totalCostUsd: 0,
+      contextTokens: 0,
+      contextLimit: 0,
+      turnCount: 0,
+    },
+    messageCount: 0,
+    lastSeq: 0,
+    workspaceId: session.workspace.id.length > 0 ? session.workspace.id : undefined,
   };
 }
 

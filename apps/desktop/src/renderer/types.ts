@@ -45,8 +45,17 @@ export interface Session {
   workspaceName?: string;
   /** True when the session is pinned to the top pinned section. */
   pinned?: boolean;
-  /** Session working directory — shown in the pinned row's hover tooltip. */
+  /** Session working directory — projected on the `sessions` list so the
+      workspace-delete cleanup can match by root (App.vue confirmDeleteWorkspace).
+      Flat-style rows render `cwdLabel` instead. */
   cwd?: string;
+  /** Flat-style second line text: the cwd's final directory name, '-' when the
+      session has no cwd. Projected by the facade for the flat list and the
+      pinned section; absent in grouped rows, which stay single-line. */
+  cwdLabel?: string;
+  /** PR association (from the v2 sessions git domain) — the flat-style second
+      line shows it as a chip on the right. null/undefined = nothing to show. */
+  pullRequest?: { number: number; state: 'open' | 'closed' | 'merged'; url: string } | null;
 }
 
 export interface Workspace {

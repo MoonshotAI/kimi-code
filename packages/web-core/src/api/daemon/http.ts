@@ -25,6 +25,25 @@ export interface DaemonHttpClientOptions {
   identity?: ClientIdentity;
   tracer?: Tracer;
   credentialStore?: CredentialStore;
+  /** REST 路径前缀（默认 '/api/v1'）；v2 session 列表用 '/api/v2'。 */
+  restBasePath?: string;
+}
+
+/** Query param values: scalars, or arrays for repeated params (`?a=1&a=2`). */
+export type RestQueryValue = string | number | boolean | undefined;
+export type RestQuery = Record<string, RestQueryValue | readonly RestQueryValue[]>;
+
+function appendQuery(params: URLSearchParams, query: RestQuery): void {
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item !== undefined) params.append(key, String(item));
+      }
+    } else {
+      params.set(key, String(value));
+    }
+  }
 }
 
 /** AbortSignal.timeout with a fallback for older environments (jsdom). */
@@ -96,7 +115,7 @@ export class DaemonHttpClient {
     this.tracer = opts.tracer ?? noopTracer;
   }
 
-  async get<T>(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<T> {
+  async get<T>(path: string, query?: RestQuery): Promise<T> {
     return this.request<T>('GET', path, undefined, query);
   }
 
@@ -110,17 +129,13 @@ export class DaemonHttpClient {
    *  falls through to the caller's post-read size check. */
   async getBlob(
     path: string,
-    query?: Record<string, string | number | boolean | undefined>,
+    query?: RestQuery,
     opts?: { maxBytes?: number },
   ): Promise<Blob> {
-    let url = buildRestUrl(this.opts.origin, path);
+    let url = buildRestUrl(this.opts.origin, path, this.opts.restBasePath);
     if (query) {
       const params = new URLSearchParams();
-      for (const [key, value] of Object.entries(query)) {
-        if (value !== undefined) {
-          params.set(key, String(value));
-        }
-      }
+      appendQuery(params, query);
       const qs = params.toString();
       if (qs) url = `${url}?${qs}`;
     }
@@ -213,7 +228,7 @@ export class DaemonHttpClient {
     traceBody: Record<string, number>,
   ): Promise<{ blob: Blob; contentDisposition?: string }> {
     const method = 'POST';
-    const url = buildRestUrl(this.opts.origin, path);
+    const url = buildRestUrl(this.opts.origin, path, this.opts.restBasePath);
     const requestId = createRequestId();
     const headers: Record<string, string> = {
       'X-Request-Id': requestId,
@@ -362,7 +377,7 @@ export class DaemonHttpClient {
 
   /** Send multipart/form-data (FormData). Does NOT set Content-Type — browser sets it with boundary. */
   async postForm<T>(path: string, formData: FormData): Promise<T> {
-    const url = buildRestUrl(this.opts.origin, path);
+    const url = buildRestUrl(this.opts.origin, path, this.opts.restBasePath);
     const requestId = createRequestId();
     const headers: Record<string, string> = {
       'X-Request-Id': requestId,
@@ -452,18 +467,14 @@ export class DaemonHttpClient {
     method: string,
     path: string,
     body?: unknown,
-    query?: Record<string, string | number | boolean | undefined>,
+    query?: RestQuery,
     allowCodes: number[] = [],
   ): Promise<T> {
     // Build URL, appending query string (omit undefined values)
-    let url = buildRestUrl(this.opts.origin, path);
+    let url = buildRestUrl(this.opts.origin, path, this.opts.restBasePath);
     if (query) {
       const params = new URLSearchParams();
-      for (const [key, value] of Object.entries(query)) {
-        if (value !== undefined) {
-          params.set(key, String(value));
-        }
-      }
+      appendQuery(params, query);
       const qs = params.toString();
       if (qs) url = `${url}?${qs}`;
     }

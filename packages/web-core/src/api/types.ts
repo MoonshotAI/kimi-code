@@ -129,6 +129,88 @@ export interface AppSession {
    * from. Used to keep child sessions out of the main session list.
    */
   parentSessionId?: string;
+  /**
+   * PR association from the v2 sessions git domain (include=git). Only the v2
+   * list path sets this (seed/page upserts); v1 list/status paths leave it
+   * undefined. null = checked, no PR (or git unavailable — the doc's null
+   * degradation); undefined = never checked.
+   */
+  pullRequest?: { number: number; state: 'open' | 'closed' | 'merged'; url: string } | null;
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v2/sessions — domain-grouped session list query
+// ---------------------------------------------------------------------------
+// Contract: Session List Query API 接口说明（飞书 wiki，本地副本见仓库
+// .tmp/v2-sessions-api.md）。响应按 domain 分组（workspace/meta/activity 恒返，
+// git 仅 include=git 时返回 —— 平铺列表用不到，类型里暂不建模）。
+// 注意 v2 的字段命名保持 snake_case 原样（domain 结构即 wire 结构），不再走
+// mappers 的大小写转换；toAppSessionFromV2 负责折回 AppSession。
+
+export type V2SessionActivityStatus = 'running' | 'approval' | 'question' | 'failed' | 'idle';
+
+export interface V2SessionPullRequest {
+  number: number;
+  state: 'open' | 'closed' | 'merged';
+  url: string;
+}
+
+/** git domain — 仅在 include=git 时返回；非 git 目录 / gh 不可用 / 查询失败时
+ *  字段为 null（文档的降级约定：按 null 渲染，无需重试）。 */
+export interface V2SessionGit {
+  branch: string | null;
+  pull_request: V2SessionPullRequest | null;
+}
+
+export interface V2Session {
+  id: string;
+  workspace: {
+    id: string;
+    /** 工作目录绝对路径；文档明确要求假设 cwd 有不存在的场景。 */
+    cwd: string | null;
+  };
+  meta: {
+    /** null 时前端按 title → last_prompt → id 前 12 位 fallback。 */
+    title: string | null;
+    last_prompt: string | null;
+    /** Unix 毫秒。 */
+    created_at: number;
+    /** Unix 毫秒。 */
+    updated_at: number;
+    archived: boolean;
+  };
+  activity: {
+    status: V2SessionActivityStatus;
+  };
+  git?: V2SessionGit;
+}
+
+export type V2SessionsSort = 'meta.updated_at_desc' | 'meta.updated_at_asc' | 'meta.created_at_desc';
+
+export interface ListSessionsV2Input {
+  /** 按工作区过滤（OR 语义）；可传 workspace 别名（别名解析由服务端负责）。 */
+  workspaceIds?: string[];
+  /** 按状态过滤（OR 语义）。 */
+  statuses?: V2SessionActivityStatus[];
+  /** 只返回 updated_at >= 该值的 session（Unix 毫秒）。 */
+  updatedAfter?: number;
+  /** 默认 false（排除已归档）；true 只看已归档；'all' 全部。 */
+  archived?: boolean | 'all';
+  /** 默认 meta.updated_at_desc。 */
+  sort?: V2SessionsSort;
+  /** 按需开启的昂贵 domain，当前仅支持 'git'。 */
+  include?: 'git';
+  /** 默认 50，范围 1–100。 */
+  pageSize?: number;
+  /** 翻页游标；翻页时其余参数必须与首页一致，否则 409 page_token_mismatch。 */
+  pageToken?: string;
+}
+
+export interface V2SessionsPage {
+  items: V2Session[];
+  hasMore: boolean;
+  /** hasMore=false 时为 null。 */
+  nextPageToken: string | null;
 }
 
 /**
@@ -989,6 +1071,9 @@ export interface KimiWebApi {
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
   getMeta(): Promise<{ serverVersion: string; serverId: string; startedAt: string; capabilities: Record<string, boolean>; openInApps: string[]; dangerousBypassAuth: boolean; experimentalFlags: Record<string, boolean>; backend: 'v1' | 'v2' }>;
   listSessions(input?: PageRequest & { busy?: boolean; workspaceId?: string; includeArchive?: boolean; archivedOnly?: boolean; excludeEmpty?: boolean }): Promise<Page<AppSession>>;
+  /** GET /api/v2/sessions — domain 分组的 session 列表查询（契约见 types.ts 的
+      v2 注释块）。当前由 mock 实现（见 client.ts 的 V2_SESSIONS_SOURCE）。 */
+  listSessionsV2(input?: ListSessionsV2Input): Promise<V2SessionsPage>;
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
   /** Fetch one session by id (deep links beyond the first listSessions page). */
   getSession(sessionId: string): Promise<AppSession>;

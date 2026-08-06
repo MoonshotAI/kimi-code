@@ -12,6 +12,7 @@ import { copyTextToClipboard } from '../lib/clipboard';
 import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/web-core/lib';
 import SessionEmojiPicker from './SessionEmojiPicker.vue';
+import { sessionRowStatus } from './sessionRowStatus';
 
 const { t } = useI18n();
 
@@ -53,6 +54,31 @@ function formatFullTime(iso: string): string {
 const fullTime = computed(() =>
   props.session.updatedAt ? formatFullTime(props.session.updatedAt) : props.session.time,
 );
+
+// Flat-style variant, keyed off the facade projecting cwdLabel: used by the
+// sidebar's flat list AND always by the pinned section (itself a flat list,
+// regardless of view mode); only the grouped workspace rows leave cwdLabel
+// undefined. Differences: no leading status slot — the title is left-aligned —
+// and the first line's right side shows the session's status (pills, spinner,
+// unread dot) INSTEAD of the time. The time only renders when there is
+// nothing to report. The flag logic lives in sessionRowStatus.ts.
+const isFlat = computed(() => props.session.cwdLabel !== undefined);
+const rowStatus = computed(() =>
+  sessionRowStatus({
+    busy: props.session.busy,
+    unread: props.unread,
+    renaming: renaming.value,
+    questionCount: props.questionCount,
+    approvalCount: props.approvalCount,
+    pendingInteraction: props.session.pendingInteraction,
+    lastTurnReason: props.session.lastTurnReason,
+  }),
+);
+const showQuestionBadge = computed(() => rowStatus.value.showQuestionBadge);
+const showApprovalBadge = computed(() => rowStatus.value.showApprovalBadge);
+const showAbortedBadge = computed(() => rowStatus.value.showAbortedBadge);
+const showBusySpinner = computed(() => rowStatus.value.showBusySpinner);
+const flatHasStatus = computed(() => rowStatus.value.hasStatus);
 
 // Right-click menu — the row's only menu (there is no kebab button; the hover
 // actions are one-shot pin / archive buttons).
@@ -346,15 +372,25 @@ function startArchive(): void {
 
 // Expose closeMenu so the parent can close on outside-click.
 defineExpose({ closeMenu });
+
+// Flat-style second line: open the session's associated PR in a new tab /
+// the system browser (desktop routes window.open externally — the same
+// pattern as lib/upgrade.ts).
+function openPullRequest(): void {
+  const url = props.session.pullRequest?.url;
+  if (url) window.open(url, '_blank', 'noopener');
+}
 </script>
 
 <template>
-  <div class="se" :class="{ on: active }" @click="emit('select', session.id)" @contextmenu="onRowContextMenu">
+  <div class="se" :class="{ on: active, flat: isFlat }" @click="emit('select', session.id)" @contextmenu="onRowContextMenu">
     <div class="row">
       <!-- Leading status slot (in the gutter left of the title): a spinner
            while the session runs, otherwise an unread blue dot. Fixed width
-           so the title start never shifts. -->
-      <span class="lead" aria-hidden="true">
+           so the title start never shifts. Grouped rows only — the flat-style
+           rows (flat list, pinned section) drop the slot (left-aligned) and
+           move status right. -->
+      <span v-if="!isFlat" class="lead" aria-hidden="true">
         <Spinner v-if="session.busy" size="sm" />
         <span v-else-if="unread" class="unread-dot" />
       </span>
@@ -383,49 +419,59 @@ defineExpose({ closeMenu });
         >{{ emojiSplit.emoji }}</button>{{ displayText }}</span>
       </div>
 
-      <!-- Pending tags — coloured per kind, shown even when the row isn't
-           active. "Answer" = an askUserQuestion is waiting; "Approve" = a
-           permission request is waiting. The list-level interaction fact is
-           the fallback for sessions whose detailed pending lists aren't loaded. -->
-      <Tooltip :text="t('workspace.awaitingAnswerTitle')">
-        <Badge
-          v-if="!renaming && (questionCount > 0 || session.pendingInteraction === 'question')"
-          variant="info"
-          size="sm"
-        >
-          {{ t('workspace.awaitingAnswer') }}
-        </Badge>
-      </Tooltip>
-      <Tooltip :text="t('workspace.awaitingPermissionTitle')">
-        <Badge
-          v-if="!renaming && (approvalCount > 0 || session.pendingInteraction === 'approval')"
-          variant="warning"
-          size="sm"
-        >
-          {{ t('workspace.awaitingPermission') }}
-        </Badge>
-      </Tooltip>
-      <!-- Failed: a distinct, low-key error tag — the session is quiet and
-           its last main turn died on an error. A manually stopped turn is
-           the user's own doing, so it never raises the tag. Hidden while
-           input is pending (the awaiting pills own the row then). -->
-      <Tooltip :text="t('workspace.abortedTitle')">
-        <Badge
-          v-if="!renaming && !session.busy && session.pendingInteraction !== 'question' && session.pendingInteraction !== 'approval' && questionCount === 0 && approvalCount === 0 && session.lastTurnReason === 'failed'"
-          variant="danger"
-          size="sm"
-        >
-          {{ t('workspace.aborted') }}
-        </Badge>
-      </Tooltip>
-
-      <!-- Trailing action slot: the relative time and the hover actions (pin +
-           archive) share one grid cell and cross-fade (opacity + visibility,
-           never display:none), so the slot width is identical in hover and
-           rest. The badges and title therefore don't reflow on hover — see
-           design-system §07 "Session row". -->
+      <!-- Trailing action slot: the status cluster (pills + flat-mode
+           indicator) or the relative time sits in flow and sets the slot
+           width; the hover actions (pin + archive) are absolutely positioned
+           over it and swapped via a cross-fade (opacity + visibility, never
+           display:none), so the slot width is identical in hover and rest and
+           nothing reflows — see design-system §07 "Session row".
+           Pending tags: "Answer" = an askUserQuestion is waiting; "Approve" =
+           a permission request is waiting; "Aborted" = quiet session whose
+           last main turn died on an error (a manually stopped turn is the
+           user's own doing and never raises the tag; hidden while input is
+           pending). The list-level interaction fact is the fallback for
+           sessions whose detailed pending lists aren't loaded. Flat mode: the
+           pills anchor to the row's right edge and the hover actions fade IN
+           as the pills fade OUT — the two never co-exist (grouped rows keep
+           pills visible on hover, status there lives in the lead slot). -->
       <span class="act">
-        <span class="ts">{{ session.time }}</span>
+        <Tooltip :text="t('workspace.awaitingAnswerTitle')">
+          <Badge
+            v-if="showQuestionBadge"
+            variant="info"
+            size="sm"
+          >
+            {{ t('workspace.awaitingAnswer') }}
+          </Badge>
+        </Tooltip>
+        <Tooltip :text="t('workspace.awaitingPermissionTitle')">
+          <Badge
+            v-if="showApprovalBadge"
+            variant="warning"
+            size="sm"
+          >
+            {{ t('workspace.awaitingPermission') }}
+          </Badge>
+        </Tooltip>
+        <Tooltip :text="t('workspace.abortedTitle')">
+          <Badge
+            v-if="showAbortedBadge"
+            variant="danger"
+            size="sm"
+          >
+            {{ t('workspace.aborted') }}
+          </Badge>
+        </Tooltip>
+        <!-- Flat-style rows (flat list, pinned section): status replaces the
+             time on the right of the first line (the time only renders when
+             nothing is reported). Grouped rows always show the time. The
+             spinner yields to attention pills (showBusySpinner): a session
+             waiting for approval/answer never shows both. -->
+        <span v-if="!isFlat || !flatHasStatus" class="ts">{{ session.time }}</span>
+        <span v-else-if="showBusySpinner || unread" class="st">
+          <Spinner v-if="showBusySpinner" size="sm" />
+          <span v-else class="unread-dot" />
+        </span>
         <span v-if="!renaming" class="ha">
           <Tooltip :text="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')">
             <IconButton
@@ -449,6 +495,31 @@ defineExpose({ closeMenu });
           </Tooltip>
         </span>
       </span>
+    </div>
+
+    <!-- Flat-style second line (rendered only when the facade projects cwdLabel
+         — the flat list and, always, the pinned section): folder icon + the
+         session's working directory name. Grouped rows never set cwdLabel and
+         stay single-line. The closed-folder glyph + one-rung-stronger muted
+         color keep the icon legible at 14px (the open-folder's thin back-flap
+         washed out — same recipe as .gh-folder). -->
+    <div v-if="session.cwdLabel !== undefined" class="sub">
+      <Icon class="sub-icon" name="folder-closed" size="sm" />
+      <span class="sub-text">{{ session.cwdLabel }}</span>
+      <!-- PR association (v2 git domain): a quiet chip at the second line's
+           right edge; click opens the PR (system browser / new tab). Open PRs
+           stand out in success green, merged/closed stay faint. -->
+      <button
+        v-if="session.pullRequest"
+        type="button"
+        class="pr"
+        :class="`pr--${session.pullRequest.state}`"
+        :aria-label="`PR #${session.pullRequest.number}`"
+        @click.stop="openPullRequest"
+      >
+        <Icon name="git-pull-request" size="sm" />
+        <span>#{{ session.pullRequest.number }}</span>
+      </button>
     </div>
 
     <!-- Right-click dropdown — teleported to <body> and position:fixed so it
@@ -617,6 +688,72 @@ defineExpose({ closeMenu });
 }
 .t .emoji:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 
+/* Flat-mode second line: folder icon + the final directory name, left-aligned
+   with the title (flat rows have no leading status slot, so both lines start
+   at the row's content edge). Same xs/faint vocabulary as the time; the tail
+   mask fade matches the title's rest-state fade (this line never competes
+   with the hover cluster, so the fade stays at rest width). Row height stays
+   font-driven — the pill just grows a second line. */
+.sub {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  user-select: none;
+}
+.sub-icon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+/* PR chip at the second line's right edge. State colors follow GitHub: open =
+   success green, merged = --color-done purple, closed = quiet faint. */
+.pr {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-05);
+  flex: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-faint);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  cursor: pointer;
+}
+.pr:hover {
+  color: var(--color-text-muted);
+}
+.pr:focus-visible {
+  outline: none;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--p-focus-ring);
+}
+.pr--open,
+.pr--open:hover {
+  color: var(--color-success);
+}
+.pr--merged,
+.pr--merged:hover {
+  color: var(--color-done);
+}
+.sub-text {
+  /* flex:1 like the title's .t: the span fills the line, so the 16px tail
+     mask only fades text that actually reaches the edge — short directory
+     names render in full. */
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, var(--color-text-strong) calc(100% - 16px), transparent);
+}
+
 .ts {
   color: var(--color-text-faint);
   font-size: var(--text-xs);
@@ -627,9 +764,10 @@ defineExpose({ closeMenu });
   text-align: right;
 }
 
-/* Trailing action slot: the relative time (in flow) sets the slot width; the
-   hover actions (pin + archive) are absolutely positioned over it and swapped
-   via a cross-fade, so they contribute neither height (the row stays
+/* Trailing action slot: the rest-state content (the time, or the flat mode's
+   status cluster — pills + spinner/dot) sits in flow and sets the slot width;
+   the hover actions (pin + archive) are absolutely positioned over it and
+   swapped via a cross-fade, so they contribute neither height (the row stays
    font-driven) nor width changes (min-width reserves a button footprint, the
    title doesn't reflow). The slot stretches to the full row height so the
    cluster centers against the row box itself — not against the time text's
@@ -642,6 +780,7 @@ defineExpose({ closeMenu });
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
+  gap: var(--sb-gap, 6px);
   /* Reserve one button's width so the trailing slot (and thus the title) never
      shifts between the time and the actions, even for short times like "2m". */
   min-width: 26px;
@@ -681,6 +820,35 @@ defineExpose({ closeMenu });
   transition: opacity var(--duration-fast) var(--ease-out);
 }
 .se:hover .act .ts {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    visibility 0s linear var(--duration-fast);
+}
+
+/* Flat mode's right-side status indicator (spinner / unread dot) shares the
+   trailing slot with the time and cross-fades out on hover the same way. */
+.act .st {
+  display: inline-flex;
+  align-items: center;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.se:hover .act .st {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    visibility 0s linear var(--duration-fast);
+}
+
+/* The pending pills ride the same cross-fade, flat rows only: hover swaps the
+   whole status cluster for the actions, so pills and pin/archive never
+   co-exist. Grouped rows keep the pills visible on hover. */
+.act .ui-badge {
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.se.flat:hover .act .ui-badge {
   opacity: 0;
   visibility: hidden;
   transition:
@@ -756,6 +924,11 @@ defineExpose({ closeMenu });
      cluster's right anchoring follows the same var. */
   --se-pad-x: calc(var(--sb-pad-x, 20px) - var(--sb-inset, 12px));
   padding: 8px var(--se-pad-x);
+}
+/* Flat rows are two-line pills — a hair of air between them keeps the list
+   from reading as one dense block (grouped rows stay flush). */
+.sessions .se.flat + .se.flat {
+  margin-top: var(--space-05);
 }
 .sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--sans); }
 </style>
