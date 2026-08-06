@@ -8,7 +8,11 @@
  * self-gates on `agentId === 'main'`; Agent scope creation instantiates it for
  * every agent, so other agents construct it as a no-op. Resolves session
  * prompt context through `sessionContext` and reports missing skills through
- * `log`; stores the refresh signal through `agentState`. Bound at Agent scope.
+ * `log` (once per plugin:skill key — the provider re-renders on every
+ * boundary, so an unguarded warn would repeat every step); stores the
+ * refresh signal through `agentState`, consumed only after a successful
+ * render so a failed render retries at the next boundary. Bound at Agent
+ * scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -102,8 +106,8 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
     injection: ContextInjectionContext,
   ): Promise<string | undefined> {
     const forceRefresh = this.refreshPending;
-    this.refreshPending = false;
     const desired = await this.renderSessionStartReminder();
+    this.refreshPending = false;
     const latest = injection.lastInjection;
     if (desired === undefined) {
       if (
@@ -147,8 +151,6 @@ function renderPluginSessionStartReminder(
   for (const sessionStart of sessionStarts) {
     const skill = catalog.getPluginSkill(sessionStart.pluginId, sessionStart.skillName);
     if (skill === undefined) {
-      // The provider reconciles at every step boundary, so a missing skill
-      // would otherwise re-warn on every step.
       const key = `${sessionStart.pluginId}:${sessionStart.skillName}`;
       if (!warnedSkills.has(key)) {
         warnedSkills.add(key);
