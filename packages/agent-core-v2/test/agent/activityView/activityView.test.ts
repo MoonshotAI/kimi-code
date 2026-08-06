@@ -210,8 +210,6 @@ describe('AgentActivityView', () => {
     bus.publish({ type: 'turn.ended', turnId: 1, reason: 'cancelled' });
     expect(view.state().lastTurn).toMatchObject({ turnId: 1, reason: 'cancelled' });
 
-    // While the next turn runs there is no current outcome; turn.ended
-    // publishes the fresh one.
     bus.publish({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } });
     expect(view.state().lastTurn).toBeUndefined();
 

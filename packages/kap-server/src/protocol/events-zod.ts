@@ -628,6 +628,14 @@ export const configWarningEventSchema = z.object({
   ),
 });
 
+export const diUnitChangedEventSchema = z.object({
+  type: z.literal('event.di.unit_changed'),
+  scope: z.string().min(1),
+  token: z.string().min(1),
+  state: z.enum(['Pending', 'Activating', 'Active', 'Unloading', 'Failed']),
+  error: z.string().optional(),
+});
+
 export const goalUpdatedEventSchema = z.object({
   type: z.literal('goal.updated'),
   snapshot: goalSnapshotSchema.nullable(),
@@ -933,7 +941,7 @@ export const toolListUpdatedEventSchema = z.object({
 export const mcpServerStatusPayloadSchema = z.object({
   name: z.string(),
   transport: z.enum(['stdio', 'http']),
-  status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth']),
+  status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth', 'removed']),
   toolCount: z.number(),
   error: z.string().optional(),
 }) satisfies z.ZodType<McpServerStatusPayload>;
@@ -956,6 +964,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceDeletedEventSchema,
   sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
+  diUnitChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
   pluginCommandActivatedEventSchema,

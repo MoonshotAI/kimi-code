@@ -50,7 +50,7 @@ export const createChildSessionOptionsSchema = forkSessionOptionsSchema;
 /** `IScopeHandle` as it survives JSON — `{ id, kind }` plus extras. */
 export const handleWireSchema = z.looseObject({
   id: z.string(),
-  kind: z.number(),
+  kind: z.string(),
 });
 
 /** `WorkspaceRef` — a `workspaceId` (optional `root` hint) or a bare `root`. */

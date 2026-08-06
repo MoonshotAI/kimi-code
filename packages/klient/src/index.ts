@@ -66,6 +66,7 @@ export type {
   SessionStatus,
 } from './core/facade/session.js';
 export type {
+  AgentCommandInfo,
   AgentContextData,
   AgentFacade,
   AgentTaskInfo,

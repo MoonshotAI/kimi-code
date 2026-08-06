@@ -12,6 +12,11 @@
  * (and the OAuth dynamic-registration label), consulted per connection so an
  * identity configured after construction still applies; omitted, or resolving
  * to `undefined`, keeps the built-in name.
+ *
+ * A server whose config disappears is tombstoned (`markRemoved`): the
+ * client is closed but the entry stays with status `removed` so consumers
+ * holding its tools can fail calls with a clear notice, until a same-named
+ * `connect` replaces it or `shutdown` clears everything.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
@@ -28,7 +33,7 @@ import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
 
-export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
 
 export interface McpServerEntry {
   readonly name: string;
@@ -226,6 +231,19 @@ export class McpConnectionManager implements McpConnectionView {
     return true;
   }
 
+  async markRemoved(name: string): Promise<boolean> {
+    const entry = this.entries.get(name);
+    if (entry === undefined) return false;
+    await this.closeClient(entry);
+    entry.status = 'removed';
+    entry.tools = undefined;
+    entry.enabledNames = undefined;
+    entry.rawTools = undefined;
+    entry.error = undefined;
+    this.emit(entry);
+    return true;
+  }
+
   waitForInitialLoad(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     if (signal === undefined) return this.initialLoad;
@@ -259,7 +277,7 @@ export class McpConnectionManager implements McpConnectionView {
 
   async reconnect(name: string): Promise<void> {
     const entry = this.entries.get(name);
-    if (entry === undefined) {
+    if (entry === undefined || entry.status === 'removed') {
       throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, `Unknown MCP server: ${name}`);
     }
     if (entry.config.enabled === false) {

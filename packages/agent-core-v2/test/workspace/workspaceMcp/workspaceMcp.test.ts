@@ -131,7 +131,7 @@ describe('WorkspaceMcpService', () => {
 
     await vi.waitFor(
       () => {
-        expect(manager?.get('alpha')).toBeUndefined();
+        expect(manager?.get('alpha')?.status).toBe('removed');
         expect(manager?.get('beta')?.status).toBe('connected');
       },
       { timeout: 10000, interval: 50 },
@@ -150,9 +150,9 @@ describe('WorkspaceMcpService', () => {
     const connect = vi
       .spyOn(McpConnectionManager.prototype, 'connect')
       .mockResolvedValue(undefined as never);
-    const remove = vi
-      .spyOn(McpConnectionManager.prototype, 'remove')
-      .mockResolvedValue(undefined as never);
+    const markRemoved = vi
+      .spyOn(McpConnectionManager.prototype, 'markRemoved')
+      .mockResolvedValue(true as never);
 
     const service = createService();
     manager = service.connectionManager();
@@ -160,13 +160,13 @@ describe('WorkspaceMcpService', () => {
     configChanges.fire({ upsert: { beta: stdioServer() }, remove: ['alpha'] });
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
     expect(connect).not.toHaveBeenCalled();
-    expect(remove).not.toHaveBeenCalled();
+    expect(markRemoved).not.toHaveBeenCalled();
 
     settleConnectAll();
     await service.ready;
     await vi.waitFor(
       () => {
-        expect(remove).toHaveBeenCalledWith('alpha');
+        expect(markRemoved).toHaveBeenCalledWith('alpha');
         expect(connect).toHaveBeenCalledWith('beta', stdioServer());
       },
       { timeout: 10000, interval: 50 },

@@ -65,6 +65,10 @@ export interface IPluginService {
   enabledSystemPrompts(): Promise<readonly EnabledPluginSystemPrompt[]>;
   enabledMcpServers(): Promise<Record<string, McpServerConfig>>;
   enabledHooks(): Promise<readonly HookDef[]>;
+  // Consumption reads resolve to a per-method fallback (never reject) while
+  // no snapshot has loaded; consumers pinning a read use this to tell a real
+  // empty snapshot from the fallback.
+  hasLoadedSnapshot(): boolean;
   readonly onDidReload: Event<ReloadSummary>;
 }
 

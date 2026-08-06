@@ -183,8 +183,6 @@ describe('AgentSwarmService', () => {
       run: async () => [],
       cancel: () => {},
     });
-    // A stand-in listener registered after the swarm listener proves whether
-    // the swarm-exclusive veto ended adjudication or abstained.
     executorEvents = stubToolExecutorEvents();
     permissionGateRan = false;
     ix.stub(IAgentToolExecutorService, executorEvents.executor);

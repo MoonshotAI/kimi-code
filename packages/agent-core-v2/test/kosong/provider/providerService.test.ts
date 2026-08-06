@@ -104,7 +104,6 @@ describe('ProviderService', () => {
     await service.set('moonshot', updated);
     expect(events.at(-1)).toEqual({ added: [], removed: [], changed: ['moonshot'] });
 
-    // Rewriting with an identical record is silent — no event fires.
     await service.set('moonshot', updated);
     expect(events).toHaveLength(2);
 

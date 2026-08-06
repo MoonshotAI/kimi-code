@@ -113,11 +113,6 @@ export class SubagentTool implements ISubagentTool {
   declare readonly _serviceBrand: undefined;
   readonly name: string = 'Agent';
 
-  /**
-   * The `model` choice only exists while the `secondary-model` experiment is
-   * on; off, the advertised schema drops it so the concept never enters the
-   * prompt. Read live per request (same as `description`).
-   */
   get parameters(): Record<string, unknown> {
     return this.flags.enabled(SECONDARY_MODEL_FLAG_ID)
       ? SUBAGENT_TOOL_PARAMETERS

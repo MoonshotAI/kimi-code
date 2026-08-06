@@ -1074,6 +1074,60 @@ describe('SessionEventBroadcaster', () => {
     expect(s1View.envelopes[0]!.volatile).toBeUndefined();
   });
 
+  it('gates event.di.unit_changed to connections opted into the DI debug feed', async () => {
+    // The engine's DI debug feed (agent-core-v2's IDebugCascadeService) has no
+    // owning session: it routes through the global state ('__global__'
+    // watermark). Only kimi-inspect consumes it, so delivery is opt-in via
+    // `addDiEventTarget` — every other connection skips the frames; being
+    // volatile they are never journaled.
+    const plainView = collectingTarget();
+    bc.addGlobalTarget(plainView.target);
+    const diView = collectingTarget();
+    bc.addGlobalTarget(diView.target);
+    bc.addDiEventTarget(diView.target);
+
+    eventBus.emit({
+      type: 'event.di.unit_changed',
+      payload: { scope: 'app', token: 'debugCascadeService', state: 'Active' },
+    });
+
+    await vi.waitFor(() => expect(diView.envelopes).toHaveLength(1));
+    expect(diView.envelopes[0]).toMatchObject({
+      type: 'event.di.unit_changed',
+      session_id: '__global__',
+      volatile: true,
+      payload: {
+        type: 'event.di.unit_changed',
+        scope: 'app',
+        token: 'debugCascadeService',
+        state: 'Active',
+        agentId: 'main',
+        sessionId: '__global__',
+      },
+    });
+    expect(diView.deliveries).toEqual(['immediate']);
+    // The non-opted-in connection never sees the debug feed.
+    expect(plainView.envelopes).toHaveLength(0);
+
+    // A malformed payload is dropped, never forwarded.
+    eventBus.emit({
+      type: 'event.di.unit_changed',
+      payload: { scope: 'app', token: 'x', state: 'Exploded' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(diView.envelopes).toHaveLength(1);
+
+    // `removeGlobalTarget` also drops the DI opt-in (the connection-close path).
+    bc.removeGlobalTarget(diView.target);
+    eventBus.emit({
+      type: 'event.di.unit_changed',
+      payload: { scope: 'app', token: 'debugCascadeService', state: 'Unloading' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(diView.envelopes).toHaveLength(1);
+    expect(plainView.envelopes).toHaveLength(0);
+  });
+
   describe('global fan-out to unsubscribed connections', () => {
     it('delivers event.session.created to a global-only target that never subscribed', async () => {
       sessions.set('s1', new FakeLifecycle());

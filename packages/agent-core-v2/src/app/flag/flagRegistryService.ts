@@ -7,7 +7,8 @@
  */
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { BugIndicatingError } from '#/errors';
 
 import {
@@ -17,6 +18,7 @@ import {
   IFlagRegistry,
 } from './flagRegistry';
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class FlagRegistryService extends Disposable implements IFlagRegistry {
   declare readonly _serviceBrand: undefined;
   private readonly byId = new Map<FlagId, FlagDefinitionInput>();

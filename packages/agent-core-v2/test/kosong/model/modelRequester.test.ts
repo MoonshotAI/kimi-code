@@ -209,7 +209,6 @@ describe('ModelRequesterImpl request execution', () => {
     const finish = events.find((e) => e.type === 'finish');
     expect(finish).toMatchObject({ id: 'msg-42', traceId: 'trace-1', providerFinishReason: 'completed' });
     const timing = events.find((e) => e.type === 'timing');
-    // Decode stats are measured by the contract's generate() driver.
     expect(timing).toMatchObject({
       requestBuildMs: expect.any(Number),
       serverDecodeMs: expect.any(Number),

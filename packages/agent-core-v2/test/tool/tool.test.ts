@@ -2,8 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, type Writable } from 'node:stream';
-
-import { LifecycleScope, type IAgentScopeHandle } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle } from '#/_base/di/scope';
 import { Event, type Event as KimiEvent } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IFlagService } from '#/app/flag/flag';
@@ -1525,7 +1525,6 @@ describe('Agent tool execution contract', () => {
       resume: 'agent-existing',
     });
 
-    // No realign: resume must not drag the child back to the parent's model.
     expect(targetProfile.update).not.toHaveBeenCalled();
     expect(lifecycle.run).toHaveBeenCalledWith(
       'agent-existing',

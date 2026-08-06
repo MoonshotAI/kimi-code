@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
-
-import { LifecycleScope, ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -134,13 +134,9 @@ describe('MiniDbQueryStore', () => {
 
   it('shares the store with a second cluster instance instead of locking it out', async () => {
     const storeDir = join(homeDir, 'cache', 'query-store');
-    // A peer instance stands in for another kimi process: it has its own
-    // lock pool, so write locks are genuinely contended between the two.
     const peer = await ClusterDb.open({ dir: storeDir, shardCount: 16, valueCodec: 'json' });
     try {
       const store = build();
-      // Writes from the peer are visible here, and vice versa — the
-      // database-wide single-writer lockout (storage.locked) is gone.
       await peer.set(`${COLLECTION}${SEP}peer`, { id: 'peer', v: 1 });
       expect(await store.get(COLLECTION, 'peer')).toEqual({ id: 'peer', v: 1 });
       await store.put(COLLECTION, 'mine', { id: 'mine', v: 2 });
@@ -159,10 +155,6 @@ describe('MiniDbQueryStore', () => {
     disposeHost?.();
     disposeHost = undefined;
 
-    // A corrupt cluster registry surfaces as a SyntaxError on the next index
-    // op. The store answers with one process-lifetime rebuild: the directory
-    // is wiped (the read model is derivable, so data is NOT preserved) and
-    // the retried op succeeds against the fresh cluster.
     const registryFile = join(homeDir, 'cache', 'query-store', 'cluster.indexes.json');
     await fsp.writeFile(registryFile, '{ definitely not valid json');
 

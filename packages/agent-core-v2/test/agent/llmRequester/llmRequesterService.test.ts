@@ -751,9 +751,6 @@ describe('AgentLLMRequesterService trace id', () => {
   });
 
   it('keeps the header-captured trace when the request fails after headers arrived', async () => {
-    // A failure after the response headers arrived (empty response, mid-stream
-    // decode error) carries no trace on the error itself; the trace captured
-    // through the provider callback must remain on the request trace.
     const requester = createTracedRequester(null);
     Object.defineProperty(requester, 'request', {
       value: async function* (...args: unknown[]) {

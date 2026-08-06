@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
 import {
   type IAgentScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -38,7 +38,7 @@ import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService, type ISessionMcpOverlay } from '#/workspace/workspaceMcp/workspaceMcp';
-import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentPlanService } from '#/features/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionSecondaryModelWarningService } from '#/session/subagent/secondaryModelWarning';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -561,11 +561,6 @@ describe('SessionLifecycleService', () => {
     await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  /**
-   * Build the App host and materialize the default handler (`/tmp/proj`,
-   * `wd_stub` with the default workspace stub), returning its session
-   * lifecycle service.
-   */
   async function build(
     extra: ReturnType<typeof stubPair>[] = [],
   ): Promise<ISessionLifecycleService> {
@@ -670,10 +665,6 @@ describe('SessionLifecycleService', () => {
 
     const handle = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
 
-    // The index entry addresses the session under the handler's workspace id
-    // — the same id seeding the session's storage scope — not a recomputed
-    // encodeWorkDirKey, so the v1 reader finds it in the bucket it was
-    // materialized into.
     const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
     expect(appended).toEqual([
       {
@@ -728,8 +719,6 @@ describe('SessionLifecycleService', () => {
       }),
       stubPair(IWorkspaceService, {
         ...workspaceStub(),
-        // As the real registry does after folding: the id minted for the
-        // first-seen spelling is reused for the alias.
         createOrTouch: (root: string, name?: string) =>
           Promise.resolve({
             id: 'wd_first_spelling',
@@ -1041,8 +1030,6 @@ describe('SessionLifecycleService', () => {
 
     await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
 
-    // Fork never gates on activity: a mid-work copy is crash-equivalent, and
-    // replay already normalizes that on restore.
     const target = await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
     expect(target.id).toBe('dst');
   });

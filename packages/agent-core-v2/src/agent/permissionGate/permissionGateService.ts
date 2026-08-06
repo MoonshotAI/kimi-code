@@ -11,8 +11,9 @@
  * risk. Bound at Agent scope.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionData } from '#/agent/permissionPolicy/types';
@@ -28,7 +29,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { IAgentPermissionGate } from './permissionGate';
 
-export class AgentPermissionGate extends Disposable implements IAgentPermissionGate {
+export class AgentPermissionGate extends Service implements IAgentPermissionGate {
   declare readonly _serviceBrand: undefined;
   constructor(
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,

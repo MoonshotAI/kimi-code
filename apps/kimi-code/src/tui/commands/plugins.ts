@@ -34,6 +34,7 @@ import {
   isOfficialPluginInstall,
   isOfficialPluginSource,
 } from '../utils/plugin-source-label';
+import { isKimiV2Enabled } from '#/cli/experimental-v2';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV, QUOTA_CONSUMING_PLUGIN_IDS } from '#/constant/app';
 import { loadPluginMarketplace, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 import { openUrl } from '#/utils/open-url';
@@ -559,7 +560,7 @@ async function installCapabilityFromPanel(
         `${label} installation did not complete. Check the logs and install again from /plugins.`,
       );
     }
-    host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+    host.showStatus(pluginReloadHint(), 'warning');
     return;
   }
   if (entry.id === 'kimi-webbridge') {
@@ -572,7 +573,7 @@ async function installCapabilityFromPanel(
     return;
   }
   host.showStatus(`${label} is installed.`);
-  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+  host.showStatus(pluginReloadHint(), 'warning');
 }
 
 async function installFromPanel(
@@ -738,7 +739,7 @@ async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
     );
     return;
   }
-  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+  host.showStatus(pluginReloadHint(), 'warning');
 }
 
 async function renderPluginsList(
@@ -781,6 +782,13 @@ async function installPluginFromSource(
 
 const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
 
+const PLUGIN_RELOAD_HINT_V2 =
+  'Plugin changes apply immediately. MCP tools already loaded in open sessions stay visible but fail with a removal notice once uninstalled.';
+
+function pluginReloadHint(): string {
+  return isKimiV2Enabled() ? PLUGIN_RELOAD_HINT_V2 : PLUGIN_RELOAD_HINT;
+}
+
 const WEBBRIDGE_POST_INSTALL_MARKDOWN = [
   '*Two steps left to use Kimi WebBridge:*',
   '1. Install the browser extension:',
@@ -805,7 +813,7 @@ function showPluginInstallResult(
       : '';
   const action = describeInstallAction(previous, summary);
   host.showStatus(`${action} (${summary.id}).${mcpHint}`);
-  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+  host.showStatus(pluginReloadHint(), 'warning');
   // Gate on provenance, not just the id: a local/GitHub fork whose manifest
   // reuses a billed plugin's id is not the official quota-consuming build.
   if (QUOTA_CONSUMING_PLUGIN_IDS.includes(summary.id) && isOfficialPluginInstall(summary)) {

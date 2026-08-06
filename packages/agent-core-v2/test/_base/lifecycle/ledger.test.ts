@@ -60,7 +60,6 @@ describe('Ledger', () => {
       const out = ledger.teardown();
       expect(out).toBeInstanceOf(Promise);
       expect(ledger.state).toBe('disposing');
-      // Reverse order: sync-3 runs first (same tick), then the async entry starts.
       expect(events).toEqual(['sync-3', 'async-start']);
 
       gate.resolve();
@@ -86,7 +85,6 @@ describe('Ledger', () => {
 
       const out = ledger.teardown();
       expect(events).toEqual(['b-start']);
-      // Resolving the later-registered gate must not unblock the earlier one.
       gates[0]!.resolve();
       await Promise.resolve();
       expect(events).toEqual(['b-start']);
@@ -111,9 +109,6 @@ describe('Ledger', () => {
       let caught: unknown;
       ledger.register(async () => {
         await gate.promise;
-        // Registration happens while the ledger is 'disposing': it must throw
-        // at the call site (the entry itself is guarded, so the error does not
-        // abort the in-flight teardown).
         try {
           ledger.register(() => {}, 'late');
         } catch (error) {
@@ -199,7 +194,6 @@ describe('Ledger', () => {
         throw new Error('async construct failed');
       };
       const entry = ledger.effect(body, 'gen');
-      // The failure surfaces through the entry's disposer chain; teardown reports it.
       const reported: unknown[] = [];
       setUnexpectedErrorHandler((err) => { reported.push(err); });
       try {

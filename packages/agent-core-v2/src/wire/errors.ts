@@ -5,7 +5,9 @@
  * Aggregates the wire domain's coded errors: `DuplicateOpError` and
  * `CycleError` stay co-located with their throw sites but extend
  * `WireError`; `wire.unknown_record` is constructed here for replay-time
- * reporting of records whose Op type is absent from `OP_REGISTRY`.
+ * reporting of records whose Op type is absent from the wire runtime's
+ * folded op registry (unknown or withdrawn vocabulary — see
+ * `wireContribution.ts`).
  */
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
