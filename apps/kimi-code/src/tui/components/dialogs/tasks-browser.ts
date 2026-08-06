@@ -516,10 +516,14 @@ export class TasksBrowserApp extends Container implements Focusable {
   // ── right: detail + preview stack ────────────────────────────────────
 
   private renderRightStack(width: number, height: number): string[] {
-    // Detail gets ~10 rows (or 40% of body, whichever is larger) — agent tasks
+    // Detail wants ~10 rows (or 40% of body, whichever is larger) — agent tasks
     // carry Task ID / Status / Description / Agent ID / Agent type / Model /
-    // Effort / Time. Preview takes the rest; both are separate stacked frames.
-    const detailHeight = Math.max(10, Math.min(Math.floor(height * 0.4), height - 5));
+    // Effort / Time. Clamp it so the preview frame keeps its borders plus one
+    // content row even near the minimum terminal height.
+    const detailHeight = Math.min(
+      Math.max(10, Math.min(Math.floor(height * 0.4), height - 5)),
+      Math.max(3, height - 3),
+    );
     const previewHeight = height - detailHeight;
     return [
       ...this.renderDetailFrame(width, detailHeight),

@@ -102,6 +102,28 @@ describe('TasksBrowserApp — full-screen rendering', () => {
     expect(big.length).toBe(40);
   });
 
+  it('clamps the detail frame to the body at the minimum terminal height', () => {
+    const props = makeProps({
+      tasks: [
+        task({
+          taskId: 'agent-aaaaaaaa',
+          kind: 'agent',
+          status: 'running',
+          agentId: 'agent-1',
+          subagentType: 'explore',
+          model: 'kimi-code/k3-256k',
+          thinkingEffort: 'low',
+        }),
+      ],
+      selectedTaskId: 'agent-aaaaaaaa',
+    });
+    // 10 rows = the smallest terminal that still renders the full layout; the
+    // render must emit exactly that many lines (no overflow truncation).
+    const lines = new TasksBrowserApp(props, fakeTerminal(10, 120)).render(120);
+    expect(lines.length).toBe(10);
+    expect(strip(lines.join('\n'))).toContain('Preview Output');
+  });
+
   it('shows the header row with TASK BROWSER title and counts', () => {
     const props: Partial<TasksBrowserProps> = {
       tasks: [
