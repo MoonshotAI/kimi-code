@@ -566,4 +566,28 @@ describe('CacheHintController scenario 1 (resume)', () => {
     await controller.maybeShowOnResume();
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
   });
+
+  it('seeds the activity baseline when the resume check skips inside the cache window', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    peekMock.mockReturnValue(CONFIG);
+    const now = Date.now();
+    // 9 minutes into a 10-minute cache window — nothing to show on resume.
+    const session = resumeSession([now - 540_000], 150000);
+    const { host } = makeHost({ session });
+    const controller = new CacheHintController(host);
+
+    await controller.maybeShowOnResume();
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+
+    // Two minutes later the window has expired; the seeded baseline lets the
+    // idle-submit path catch it instead of waving the prompt through.
+    vi.spyOn(Date, 'now').mockReturnValue(now + 660_000);
+    expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
+    expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
+    expect(host.track).toHaveBeenCalledWith(
+      'cache_hint_shown',
+      expect.objectContaining({ scene: 'idle' }),
+    );
+    vi.restoreAllMocks();
+  });
 });

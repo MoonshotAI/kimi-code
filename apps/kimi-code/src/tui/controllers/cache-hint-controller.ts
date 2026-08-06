@@ -201,6 +201,12 @@ export class CacheHintController {
     if (host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting) {
       return;
     }
+    // Seed the in-process baseline from the replay even when no dialog shows:
+    // a resume inside the cache window can still expire while the user idles
+    // in the TUI, and the idle-submit path only evaluates once this is set.
+    // Never regress a fresher baseline — a turn may have completed while the
+    // config fetch was in flight.
+    this.lastActivityAt = Math.max(this.lastActivityAt ?? 0, lastActiveAt);
     if (decision.kind === 'skip') return;
     this.resumedSessions.add(session.id);
     // The resume dialog also covers this idle cycle: the first submit right
