@@ -2925,6 +2925,56 @@ describe('search worker host (stage 4)', () => {
     expect(page.items.length).toBeGreaterThan(0);
     expect(page.indexState.state).toBe('ready');
   });
+
+  it('keeps the main thread responsive while the worker rebuilds and swaps the generation (reindex)', { timeout: 30_000 }, async () => {
+    // Same corpus scale as the open/sync probe. The measured reindex reruns
+    // the full build inside the worker and atomically swaps the published
+    // generation (the reader-reopen path); the main thread only passes RPC
+    // messages, so its event loop must stay live throughout.
+    const summaries: SessionSummary[] = [];
+    for (let i = 0; i < 120; i++) {
+      const s = summary(`reindex-${i}`, `reindex 会话 ${i}`, T1 + i);
+      summaries.push(s);
+      const lines: string[] = [];
+      for (let j = 0; j < 30; j++) {
+        lines.push(userLine(`检索词 reindex ${i}-${j} 持久化`, T1 + i * 100 + j));
+      }
+      await writeWire(home!, s.id, 'main', lines);
+    }
+
+    const service = track(makeService(home!, staticIndex(summaries)));
+    await service.reindex();
+    expect((await service.search({ query: '检索词' })).indexState.state).toBe('ready');
+
+    const eld = monitorEventLoopDelay({ resolution: 5 });
+    const stop = { done: false };
+    let ticks = 0;
+    const probe = (async () => {
+      while (!stop.done) {
+        await new Promise((resolve) => setImmediate(resolve));
+        ticks++;
+      }
+    })();
+    eld.enable();
+
+    await service.reindex();
+
+    stop.done = true;
+    await probe;
+    eld.disable();
+    const p99Ms = eld.percentile(99) / 1e6;
+    const maxMs = eld.max / 1e6;
+    // Same CI-safe ceilings as the open/sync probe: the point is "no
+    // main-thread stall", not speed.
+    console.log('[stage-4 reindex probe]', JSON.stringify({ p99Ms, maxMs, ticks }));
+    expect(ticks).toBeGreaterThan(0);
+    expect(p99Ms).toBeLessThan(20);
+    expect(maxMs).toBeLessThan(100);
+
+    const page = await service.search({ query: '检索词' });
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(page.indexState.state).toBe('ready');
+  });
 });
 
 // ---------------------------------------------------------------------------

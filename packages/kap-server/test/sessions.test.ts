@@ -1354,6 +1354,10 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
   let home: string | undefined;
   let base: string;
 
+  // The suite-level setup pins the read-model flag OFF (env outranks the
+  // `[experimental]` config section), so this describe re-enables it per test.
+  const READ_MODEL_ENV = 'KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL';
+
   const READ_MODEL_CONFIG = [
     'default_model = "stub"',
     '',
@@ -1367,12 +1371,10 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     'model = "stub"',
     'max_context_size = 1000',
     '',
-    '[experimental]',
-    'persistence_minidb_readmodel = true',
-    '',
   ].join('\n');
 
   beforeEach(async () => {
+    process.env[READ_MODEL_ENV] = '1';
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-rm-'));
     await writeFile(join(home, 'config.toml'), READ_MODEL_CONFIG, 'utf8');
     server = await startServer({
@@ -1387,6 +1389,7 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
   });
 
   afterEach(async () => {
+    process.env[READ_MODEL_ENV] = 'false';
     if (server !== undefined) {
       await server.close();
       server = undefined;
