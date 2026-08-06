@@ -23,7 +23,10 @@
  * derived store (no mirror flush, no query-store lock). First-time creation in
  * `load()` records too — a new session must appear in listings immediately
  * (the mirror's pending queue feeds the index's read-your-writes merge);
- * loading an *existing* document (session resume) stays silent.
+ * loading an *existing* document (session resume) stays silent. Queued writes
+ * are tracked in a module-level pending set, drained through
+ * `drainSessionMetadataWrites()` by hosts before the sessions root may be
+ * torn down (the query-store/mirror drain pattern).
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -50,8 +53,6 @@ const META_KEY = 'state.json';
 
 const pendingWrites = new Set<Promise<void>>();
 
-/** Await every queued metadata write — hosts call this before the sessions
- *  root may be removed, mirroring the query-store/mirror drain pattern. */
 export async function drainSessionMetadataWrites(): Promise<void> {
   await Promise.all(pendingWrites);
 }
