@@ -561,7 +561,7 @@ async function installCapabilityFromPanel(
     return;
   }
   host.showStatus(`${label} is installed.`);
-  host.showStatus(pluginPostInstallHint(entry.id, true), 'warning');
+  host.showStatus(pluginPostInstallHint(entry.id), 'warning');
 }
 
 async function installFromPanel(
@@ -779,10 +779,8 @@ const WEBBRIDGE_POST_INSTALL_HINT = [
   '2. Run /new or /reload to apply it.',
 ].join('\n');
 
-function pluginPostInstallHint(id: string, official: boolean): string {
-  return id === 'kimi-webbridge' && official
-    ? WEBBRIDGE_POST_INSTALL_HINT
-    : PLUGIN_RELOAD_HINT;
+function pluginPostInstallHint(id: string): string {
+  return id === 'kimi-webbridge' ? WEBBRIDGE_POST_INSTALL_HINT : PLUGIN_RELOAD_HINT;
 }
 
 const PLUGIN_QUOTA_NOTE = 'Note: This plugin consumes your quota.';
@@ -799,12 +797,11 @@ function showPluginInstallResult(
       ? ` Declares ${summary.mcpServerCount} MCP ${serverWord}; enabled by default and configurable from /plugins.`
       : '';
   const action = describeInstallAction(previous, summary);
-  const official = isOfficialPluginInstall(summary);
   host.showStatus(`${action} (${summary.id}).${mcpHint}`);
-  host.showStatus(pluginPostInstallHint(summary.id, official), 'warning');
+  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
   // Gate on provenance, not just the id: a local/GitHub fork whose manifest
   // reuses a billed plugin's id is not the official quota-consuming build.
-  if (QUOTA_CONSUMING_PLUGIN_IDS.includes(summary.id) && official) {
+  if (QUOTA_CONSUMING_PLUGIN_IDS.includes(summary.id) && isOfficialPluginInstall(summary)) {
     host.showStatus(PLUGIN_QUOTA_NOTE, 'warning');
   }
 }
