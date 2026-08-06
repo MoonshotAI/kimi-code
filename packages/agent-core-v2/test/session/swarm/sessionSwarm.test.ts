@@ -1140,6 +1140,7 @@ describe('SessionSwarmService metadata compatibility', () => {
         type: 'subagent.spawned',
         subagentId: 'agent-existing',
         model: 'stale-model',
+        thinkingEffort: 'medium',
       }),
     );
     expect(runAgent).toHaveBeenCalledWith(
@@ -1179,6 +1180,7 @@ describe('SessionSwarmService metadata compatibility', () => {
         type: 'subagent.spawned',
         subagentId: 'agent-new',
         model: 'provider/secondary',
+        thinkingEffort: 'low',
       }),
     );
   });
@@ -1212,6 +1214,7 @@ describe('SessionSwarmService metadata compatibility', () => {
         type: 'subagent.spawned',
         subagentId: 'agent-new',
         model: 'provider/base',
+        thinkingEffort: 'low',
       }),
     );
   });
@@ -1468,6 +1471,7 @@ function profileService(data: ProfileData): IAgentProfileService {
       current = { ...current, ...changed };
     },
     republishStatus: () => {},
+    getEffectiveThinkingLevel: () => current.thinkingLevel,
   } as IAgentProfileService;
 }
 

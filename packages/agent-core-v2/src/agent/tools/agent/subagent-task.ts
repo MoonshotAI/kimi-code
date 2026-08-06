@@ -18,6 +18,8 @@ export type SubagentHandle = {
   /** Display-normalized model alias the child is bound to (surfaces on the
    *  `subagent.spawned` wire event and the background-task record). */
   readonly model?: string;
+  /** The child's effective thinking effort at spawn (same surfaces). */
+  readonly thinkingEffort?: string;
   readonly completion: Promise<SubagentCompletion>;
 };
 
@@ -27,6 +29,8 @@ export interface SubagentTaskInfo extends AgentTaskInfoBase {
   readonly subagentType?: string;
   /** Display-normalized model alias, for REST/snapshot restore after a reload. */
   readonly model?: string;
+  /** The child's effective thinking effort, same restore intent as `model`. */
+  readonly thinkingEffort?: string;
 }
 
 declare module '#/agent/task/types' {
@@ -74,6 +78,7 @@ export class SubagentTask implements AgentTask {
   readonly agentId: string;
   readonly subagentType: string;
   readonly model?: string;
+  readonly thinkingEffort?: string;
 
   constructor(
     private readonly handle: SubagentHandle,
@@ -83,6 +88,7 @@ export class SubagentTask implements AgentTask {
     this.agentId = handle.agentId;
     this.subagentType = handle.profileName;
     this.model = handle.model;
+    this.thinkingEffort = handle.thinkingEffort;
   }
 
   async start(sink: AgentTaskSink): Promise<void> {
@@ -117,6 +123,7 @@ export class SubagentTask implements AgentTask {
       agentId: this.agentId,
       subagentType: this.subagentType,
       model: this.model,
+      thinkingEffort: this.thinkingEffort,
     };
   }
 }

@@ -4692,6 +4692,72 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
   });
 
+  it('shows the spawned effort only when it differs from the session effort', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.thinkingEffort = 'high';
+
+    // Same as the main session — hidden (adds no information).
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: false,
+        model: 'k2-cheap',
+        thinkingEffort: 'high',
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).not.toContain('· high');
+
+    // A divergent effort — shown next to the model.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: false,
+        model: 'k2-cheap',
+        thinkingEffort: 'low',
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).toContain('· low');
+  });
+
+  it('never shows a subagent effort of off', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.thinkingEffort = 'high';
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: false,
+        model: 'k2-cheap',
+        thinkingEffort: 'off',
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderTranscript(driver))).not.toContain('· off');
+  });
+
   it('keeps the child status update as the model fallback when spawned omits it', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();

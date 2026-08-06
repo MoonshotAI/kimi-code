@@ -72,6 +72,7 @@ export class SubagentRosterTracker {
           swarm_index: event.swarmIndex,
           run_in_background: event.runInBackground,
           model: event.model,
+          thinking_effort: event.thinkingEffort,
           created_at: new Date().toISOString(),
         });
         return;

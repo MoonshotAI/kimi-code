@@ -28,6 +28,8 @@ export const taskSchema = z.object({
   /** Subagent tasks only: the display-normalized model alias the child agent
    *  is bound to. */
   model: z.string().optional(),
+  /** Subagent tasks only: the child's effective thinking effort at spawn. */
+  thinking_effort: z.string().optional(),
 });
 export type Task = z.infer<typeof taskSchema>;
 

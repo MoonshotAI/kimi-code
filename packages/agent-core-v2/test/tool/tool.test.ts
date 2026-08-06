@@ -267,6 +267,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             data: () => ({ profileName: profileByAgentId.get(agentId) }),
             update: () => {},
             republishStatus: () => {},
+            getEffectiveThinkingLevel: () => 'off',
             isToolActive: () => false,
           } as never;
         }
@@ -1305,6 +1306,7 @@ describe('Agent tool execution contract', () => {
       parentAgentId: 'main',
       callerAgentId: 'main',
       model: 'provider/secondary',
+      thinkingEffort: 'off',
     });
     expect(telemetryRecords).toContainEqual({
       event: 'subagent_created',
@@ -1500,6 +1502,7 @@ describe('Agent tool execution contract', () => {
       data: () => ({ profileName: 'explore', modelAlias: 'stale-model' }),
       update: vi.fn(),
       republishStatus: vi.fn(),
+      getEffectiveThinkingLevel: () => 'medium',
       isToolActive: () => false,
     } as unknown as IAgentProfileService;
     const lifecycle = createAgentLifecycleStub({

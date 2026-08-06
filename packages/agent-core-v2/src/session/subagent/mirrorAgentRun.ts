@@ -46,6 +46,9 @@ export interface SubagentSpawnedEvent {
    *  `__secondary__` entry resolves to its base alias). Optional so older
    *  producers/consumers stay wire-compatible. */
   readonly model?: string;
+  /** The child's effective thinking effort at spawn (same vocabulary as
+   *  `agent.status.updated`). Optional for cross-version tolerance. */
+  readonly thinkingEffort?: string;
 }
 
 export interface SubagentStartedEvent {
@@ -100,6 +103,13 @@ export function emitAgentRunSpawned(
   targetAgentId: string,
   meta: AgentRunSpawnedMeta,
 ): void {
+  // Resolve the child once: its profile carries the effective thinking level
+  // (same vocabulary as the `agent.status.updated` frame republished below),
+  // which the spawned event reports so clients can show it without waiting.
+  const childProfile = requester.accessor
+    .get(IAgentLifecycleService)
+    ?.get(targetAgentId)
+    ?.accessor.get(IAgentProfileService);
   requester.accessor.get(IEventBus)?.publish({
     type: 'subagent.spawned',
     subagentId: targetAgentId,
@@ -112,12 +122,9 @@ export function emitAgentRunSpawned(
     swarmIndex: meta.swarmIndex,
     runInBackground: meta.runInBackground ?? false,
     model: meta.model,
+    thinkingEffort: childProfile?.getEffectiveThinkingLevel(),
   });
-  requester.accessor
-    .get(IAgentLifecycleService)
-    ?.get(targetAgentId)
-    ?.accessor.get(IAgentProfileService)
-    ?.republishStatus();
+  childProfile?.republishStatus();
   requester.accessor.get(ITelemetryService)?.track2('subagent_created', {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,

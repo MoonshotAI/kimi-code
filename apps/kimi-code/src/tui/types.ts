@@ -130,6 +130,8 @@ export interface BackgroundAgentMetadata {
   readonly description?: string;
   /** Display name of the model the agent is bound to (resolved at spawn). */
   readonly model?: string;
+  /** Thinking effort, present only when it differs from the main session. */
+  readonly effort?: string;
 }
 
 export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed';

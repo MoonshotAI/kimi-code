@@ -798,6 +798,9 @@ export interface SubagentSpawnedEvent {
    *  `__secondary__` entry resolves to its base alias). Optional so older
    *  producers/consumers stay wire-compatible. */
   readonly model?: string;
+  /** The child's effective thinking effort at spawn (same vocabulary as
+   *  `agent.status.updated`). Optional for cross-version tolerance. */
+  readonly thinkingEffort?: string;
 }
 
 export interface SubagentStartedEvent {
@@ -1696,6 +1699,7 @@ export const subagentSpawnedEventSchema = z.object({
   swarmIndex: z.number().optional(),
   runInBackground: z.boolean(),
   model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 }) satisfies z.ZodType<SubagentSpawnedEvent>;
 
 export const subagentStartedEventSchema = z.object({

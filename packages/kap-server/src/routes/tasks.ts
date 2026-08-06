@@ -372,6 +372,9 @@ function toWireTask(
   if (info.kind === 'agent' && info.model !== undefined) {
     base.model = info.model;
   }
+  if (info.kind === 'agent' && info.thinkingEffort !== undefined) {
+    base.thinking_effort = info.thinkingEffort;
+  }
   if (output !== undefined) {
     base.output_preview = output.preview;
     base.output_bytes = output.bytes;

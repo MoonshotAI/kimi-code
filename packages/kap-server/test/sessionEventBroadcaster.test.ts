@@ -944,6 +944,7 @@ describe('SessionEventBroadcaster', () => {
         swarmIndex: 0,
         runInBackground: false,
         model: 'provider/secondary',
+        thinkingEffort: 'low',
       }),
     );
     main.bus.emit(agentEvent('subagent.started', { subagentId: 'agent-1' }));
@@ -959,6 +960,7 @@ describe('SessionEventBroadcaster', () => {
         swarm_index: 0,
         run_in_background: false,
         model: 'provider/secondary',
+        thinking_effort: 'low',
       }),
     ]);
 

@@ -134,6 +134,7 @@ export class SubAgentEventHandler {
           event.model === undefined
             ? undefined
             : modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]),
+        effortDisplay: this.subagentEffortDisplay(event.thinkingEffort),
       });
     }
     return true;
@@ -377,6 +378,7 @@ export class SubAgentEventHandler {
       agentName: event.subagentName,
       description: typeof description === 'string' ? description : undefined,
       model: this.spawnedModelDisplay(event),
+      effort: this.subagentEffortDisplay(event.thinkingEffort),
     };
   }
 
@@ -417,12 +419,14 @@ export class SubAgentEventHandler {
     // status frame. The `agent.status.updated` channel below stays as the
     // in-run update/fallback path.
     const modelDisplay = this.spawnedModelDisplay(event);
+    const effortDisplay = this.subagentEffortDisplay(event.thinkingEffort);
     if (this.updateAgentSwarmProgress(event.parentToolCallId, (progress) => {
       progress.registerSubagent({
         agentId: event.subagentId,
         swarmIndex: event.swarmIndex,
       });
       if (modelDisplay !== undefined) progress.setModelDisplay(modelDisplay);
+      if (effortDisplay !== undefined) progress.setEffortDisplay(effortDisplay);
     })) {
       return;
     }
@@ -435,7 +439,9 @@ export class SubAgentEventHandler {
       agentName: event.subagentName,
       runInBackground: event.runInBackground,
     });
-    if (modelDisplay !== undefined) tc.updateSubagentMetrics({ modelDisplay });
+    if (modelDisplay !== undefined || effortDisplay !== undefined) {
+      tc.updateSubagentMetrics({ modelDisplay, effortDisplay });
+    }
   }
 
   /** Map the spawned event's bound alias to a display name via the loaded
@@ -445,6 +451,14 @@ export class SubAgentEventHandler {
   ): string | undefined {
     if (event.model === undefined) return undefined;
     return modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]);
+  }
+
+  /** Effort is shown only when it differs from the main session's current
+   *  effort — a subagent inheriting the session's level adds no information.
+   *  'off' (no thinking) is never shown. */
+  private subagentEffortDisplay(effort: string | undefined): string | undefined {
+    if (effort === undefined || effort === 'off') return undefined;
+    return effort === this.host.state.appState.thinkingEffort ? undefined : effort;
   }
 
   private handleForegroundSubagentStarted(
@@ -537,6 +551,8 @@ export class SubAgentEventHandler {
       progress.setModelDisplay(
         modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]),
       );
+      const effortDisplay = this.subagentEffortDisplay(event.thinkingEffort);
+      if (effortDisplay !== undefined) progress.setEffortDisplay(effortDisplay);
     }
   }
 
