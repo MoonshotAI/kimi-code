@@ -252,14 +252,17 @@ describe('plugins command capability surface', () => {
     expect(notices).toContainEqual({ title: 'Kimi WebBridge is installed.', detail: undefined });
     expect(statuses).not.toContain('Run /new or /reload to apply plugin changes.');
     const rendered = transcriptEntries.flatMap((entry) => entry.render(100)).join('\n');
-    expect(rendered).toContain(
-      '\u001B]8;;https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc\u001B\\',
-    );
+    const chromeLinkOpen =
+      '\u001B]8;;https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc\u001B\\';
+    expect(rendered.split(chromeLinkOpen)).toHaveLength(3);
     expect(rendered).toContain('Chrome Web Store');
     expect(rendered).toContain('Edge Add-ons');
     expect(rendered).toContain('Manual installation guide');
     expect(rendered).toContain('/reload');
     expect(rendered).toContain('/new');
+    expect(unwrappedVisibleText(transcriptEntries)).toContain(
+      'ChromeWebStorehttps://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc',
+    );
   });
 
   it('renders full store URLs after WebBridge installs in a terminal without hyperlinks', async () => {
@@ -278,9 +281,12 @@ describe('plugins command capability surface', () => {
 
     const rendered = transcriptEntries.flatMap((entry) => entry.render(100)).join('\n');
     expect(rendered).not.toContain('\u001B]8;;');
-    expect(unwrappedVisibleText(transcriptEntries)).toContain(
-      'https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc',
-    );
+    const visible = unwrappedVisibleText(transcriptEntries);
+    const chromeUrl =
+      'https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc';
+    expect(visible).toContain(chromeUrl);
+    expect(visible.match(new RegExp(chromeUrl.replaceAll('.', '\\.'), 'g'))).toHaveLength(1);
+    expect(visible).not.toContain(`(${chromeUrl})`);
   });
 
   it('separates the WebBridge install result from its setup steps with one blank line', async () => {
