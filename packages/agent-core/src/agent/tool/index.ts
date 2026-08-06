@@ -530,17 +530,22 @@ export class ToolManager {
   }
 
   setActiveTools(names: readonly string[], disallowedNames?: readonly string[]): void {
+    // Callers compose [tools].disabled into an array, but an empty denylist
+    // carries no information; omit it so the serialized record matches the
+    // pre-config behavior (undefined -> omitted) instead of changing every
+    // set_active_tools record. #2534.
     this.agent.records.logRecord({
       type: 'tools.set_active_tools',
       names,
-      disallowedNames,
+      ...(disallowedNames && disallowedNames.length > 0 ? { disallowedNames } : {}),
     });
     // MCP entries are glob patterns gated separately; the rest are exact
     // builtin/user tool names. The split keeps every caller on one string[].
     this.enabledTools = new Set(names.filter((name) => !isMcpToolName(name)));
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
     this.disabledTools = new Set((disallowedNames ?? []).filter((name) => !isMcpToolName(name)));
-    this.mcpDenyPatterns = (disallowedNames ?? []).filter((name) => isMcpToolName(name));    // Builtin construction reads the enabled set (Bash/Agent bake
+    this.mcpDenyPatterns = (disallowedNames ?? []).filter((name) => isMcpToolName(name));
+    // Builtin construction reads the enabled set (Bash/Agent bake
     // `allowBackground` from the Task* trio), and the constructor may already
     // have built the map while the enabled set was still empty. The lazy
     // re-init in `get tools()` only fires on an empty map, so rebuild here —
@@ -566,6 +571,15 @@ export class ToolManager {
     }
     if (mcpDenies.length > 0) {
       this.mcpDenyPatterns = [...this.mcpDenyPatterns, ...mcpDenies];
+    }
+    // Builtin construction bakes `allowBackground` from the Task* trio into
+    // Bash/Agent (see setActiveTools). The resume path already rebuilt the
+    // builtins during wire replay, before these denies were applied, so a
+    // newly-denied Task* tool would leave allowBackground stuck on until the
+    // next setActiveTools. Rebuild here so the denylist takes effect on the
+    // already-constructed builtins. #2534.
+    if (this.agent.config.hasProvider) {
+      this.initializeBuiltinTools();
     }
   }
 
