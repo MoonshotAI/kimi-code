@@ -353,7 +353,7 @@ If the user chooses review:
    git diff docs/en/release-notes/changelog.md docs/zh/release-notes/changelog.md
    ```
 
-2. Summarize synced versions, section counts, and anything that needed manual classification.
+2. Summarize synced versions, section counts, and anything that needed manual classification. List every entry folded into a catch-all line (short titles, one line each), any section that exceeds the density defaults, and every borderline call flagged during curation — the reviewer cannot own a cutoff they cannot see.
 3. Tell the user to reply when they are done reviewing, or to ask for edits.
 4. Do **not** commit, push, or open a PR until the user explicitly says review is complete, or asks to proceed.
 
