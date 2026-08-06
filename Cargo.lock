@@ -1598,6 +1598,7 @@ name = "kimi-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "base64",
  "clap",
  "clap_complete",
@@ -1609,6 +1610,7 @@ dependencies = [
  "kimi-sdk",
  "kimi-server",
  "kimi-server-client",
+ "kimi-server-transport",
  "kimi-tui",
  "kimi-ui",
  "serde_json",

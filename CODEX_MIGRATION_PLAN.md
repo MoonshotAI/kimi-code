@@ -524,6 +524,22 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - **验证**：`cargo check --workspace` 通过
 - **剩余**：① web 前端连接层切 `--http`（kimi-web/vscode/vis 从 kap-server 改连 Rust server，逐路由对拍——这是把"Rust server 存在"变成"前端真在用"的关键，涉及保留 TS 前端）② G-3 CLI 消费面 ③ G-4 TUI 长杆 ④ G-5 收编 ⑤ G-6 退役 ⑥ G-7 验证
 
+**2026-08-06 G-3 批次 1：CLI 行为对齐（kimi-cli ↔ TS CLI 硬缺口，用户范围：P0+P1 不含遥测/自更新）**：
+- **`kimi print`/`resume` 补全（TS run-prompt/prompt-render/goal-prompt parity）**：
+  - `--output-format text|stream-json`（JSONL：`JsonlWriter` 累积 assistant 文本/tool_calls，`session.tool.started`→`{role:assistant,tool_calls}`、`tool.settled`→`{role:tool,...}`、`turn.ended`→flush；TS `PromptJsonWriter` 对齐）
+  - 文本块渲染：kimi-ui `render_prompt_block`（`• ` bullet + `  ` 缩进 + 终端宽度 wrap，TS `PromptBlockWriter` 对齐；修 UTF-8 字节/字符宽度坑——`"• ".len()` 是 4 字节，须 `chars().count()`）
+  - `/goal <objective>` 前缀解析（`parse_headless_goal`，TS `parseHeadlessGoalCreate` 对齐）+ goal summary（`{"type":"goal.summary",goalId,status,reason,turnsUsed,tokensUsed,wallClockMs}`，引擎 GoalSnapshot 为 camelCase 与 TS 一致）+ **终态退出码 complete→0 / blocked→3 / paused→6**
+  - `--yolo`/`--auto` 权限模式（kimi-exec `PromptSetup.permission_auto` → `permission/set_mode {mode:"auto"}`；`--yolo` 与 `--auto` clap 互斥）
+  - `--json` 与 `--output-format stream-json` 运行时互斥检查
+- **`provider` 命令面重构（消除同名不同义）**：`provider list` 改为列**已配置** provider（config 读，apiKey 脱敏 `***`，空态提示）；新增 `provider catalog list [id] [--filter] [--json]` / `catalog search <q>` / `catalog add <id>`（原 list/search/add 迁入）；`provider add <url>` 对齐 TS registry 语义（api.json 批量导入，`--api-key` 或 `KIMI_REGISTRY_API_KEY`，无 key 报错）；`provider remove` 未知 id 报错（TS parity）
+- **`doctor` 输出对齐 TS**：`Kimi doctor` 标题 + `STATUS label(12) path` 行 + 缩进错误消息 + `All checked config files are valid.` / `Kimi doctor found N issue(s).` + exit 1（保留 health/config 摘要为附加块）；`doctor config|tui [path]` 单文件模式显式缺失 → ERROR（SKIP 带 "defaults will apply" 消息）
+- **`export` 对齐 TS**：无 id 时 TTY 交互确认 `[Y/n]`（非 TTY 仍要求 `-y`）；`--include-global-log`（默认 on，`--no-include-global-log` 关闭）→ 读 `<KIMI_CODE_HOME>/logs/global/kimi-code.log` 作为 `session/export` 的 `web_log` 打进 zip
+- **`kimi web` 实现（替换 stub）**：内嵌 `kimi-server-serve --http` 等价（`run_web`：in-process Server + event_sender + AuthConfig + `router_with_assets`），参数对齐 TS `--port/--host/--dangerous-bypass-auth/--no-open/--assets`；auth 解析同 serve 二进制（KIMI_CODE_PASSWORD → server.token 读/生成写盘）；Ctrl-C/SIGTERM 优雅关闭；SPA 由 `--assets` 提供（Rust 分发不打包前端）
+- **`-S/--session` + TUI picker（P2-8）**：`-S`/`-r` 可选值旗标（`Option<Option<String>>` + `default_missing_value` 哨兵）；无子命令时 `-S <id>` 绑定会话 / 裸 `-S` 开 picker（`App::new(None)`）/ 无 `-S` 新建 `kimi-<pid>`
+- **`login` 收敛**：去掉 refresh token 回显（TS parity，防敏感信息泄漏）
+- **测试**：headless_tests 单测 5（/goal 解析/goal summary/JSONL writer 累积+tool/web auth）+ kimi-ui prompt_block 2 + cli.rs 更新（doctor 格式/provider catalog list/provider list 已配置）+ 新增（provider remove 未知报错 / print json 互斥）——kimi-cli bin 单测 6 + kimi-ui 10 + kimi-exec 4 全绿
+- **待办**：① P1-6 遥测、P1-7 自更新（用户定案本批不做）② ACP slash-commands 广告核实 ③ `kimi print` 真实 LLM 端到端（stream-json 事件流验证）④ G-3 批次 2：选项冲突校验全量（-p/--yolo/--auto/--plan/--session 12 条规则 clap 化）
+
 **2026-08-06 G-2 批次 1：v1 契约投影 + WS v1 门面（kimi-web 前端零改动连 Rust server 的最小可验证链路）**：
 - **背景**：浏览器 daemon 客户端（`apps/kimi-web/src/api/daemon/`）按 kap-server v1 wire 契约编写（`WireSession` 形状、`{items,has_more}` 分页、`/prompts` 复数路由、`event.*` WS 协议 + `server_hello/client_hello/subscribe` 握手），而原 `http.rs` 是"RPC 直通投影"（codex 风格路径/形状 + JSON-RPC WS）——两边路径、响应形状、WS 协议全不一致，mapper 直接 TypeError / WS 帧互认垃圾。
 - **新增 `crates/kimi-server-transport/src/v1.rs`（v1 契约投影模块）**：

@@ -62,8 +62,10 @@ pub struct ConfigProcessor;
 impl Processor for ConfigProcessor {
     fn register(&self, processor: &mut MessageProcessor) {
         // `config/get` — the engine's parsed config.toml (KimiConfig shape).
+        // Unvalidated load: an empty fresh home must return defaults, not
+        // "No providers configured" (TS parity).
         processor.register(kimi_protocol::methods::CONFIG_GET, |_params| async move {
-            match kimi_agent::config::loader::load_config_with_env() {
+            match kimi_agent::config::loader::load_config_with_env_unvalidated() {
                 Ok(config) => serde_json::to_value(&config)
                     .map_err(|e| JsonRpcError::internal_error(format!("Serialize error: {e}"))),
                 Err(error) => Err(JsonRpcError::internal_error(format!("config load: {error}"))),
@@ -76,19 +78,36 @@ impl Processor for ConfigProcessor {
                 let input: kimi_protocol::wire_types::ConfigSetParams =
                     serde_json::from_value(params)
                         .map_err(|e| JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
-                let mut base = kimi_agent::config::loader::load_config_with_env()
+                let mut base = kimi_agent::config::loader::load_config_with_env_unvalidated()
                     .map_err(|e| JsonRpcError::internal_error(format!("config load: {e}")))?;
                 let patch = strip_null_deletes(input.patch, &mut base);
                 let merged = kimi_agent::config::merge::merge_configs(base, patch);
                 let toml_str = kimi_agent::config::toml::serialize_config(&merged)
                     .map_err(|e| JsonRpcError::internal_error(format!("serialize: {e}")))?;
-                let path = kimi_agent::config::loader::find_config_paths()
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| JsonRpcError::internal_error("no config path found".into()))?;
-                // The project-level target lives in `.kimi-code/`, which may
-                // not exist on a fresh checkout — create it so the write lands
-                // (main.rs parity gap fixed here).
+                // Write target: `KIMI_CONFIG_PATH` when set (explicit file),
+                // else the user-level config (`$KIMI_CODE_HOME/config.toml`
+                // or `~/.kimi-code/config.toml`) — the durable,
+                // cwd-independent target (TS parity). Project-level
+                // `.kimi-code/` in the cwd is a load-time override, not the
+                // set target.
+                let path = {
+                    let explicit = std::env::var("KIMI_CONFIG_PATH").map(std::path::PathBuf::from);
+                    match explicit {
+                        Ok(p) => p,
+                        Err(_) => {
+                            let dir = std::env::var("KIMI_CODE_HOME")
+                                .map(std::path::PathBuf::from)
+                                .or_else(|_| {
+                                    std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                                        .map(|h| std::path::PathBuf::from(h).join(".kimi-code"))
+                                })
+                                .unwrap_or_else(|_| std::path::PathBuf::from(".kimi-code"));
+                            dir.join("config.toml")
+                        }
+                    }
+                };
+                // Create the `.kimi-code/` parent so the write lands on a fresh
+                // checkout (main.rs parity gap fixed here).
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)
                         .map_err(|e| JsonRpcError::internal_error(format!("mkdir: {e}")))?;

@@ -19,6 +19,9 @@ pub struct PromptSetup {
     /// Resume a persisted session: `session/load` after create so the
     /// on-disk context + goal are restored before the setup/prompt.
     pub resume: bool,
+    /// Set the permission gate to auto before prompting (`--yolo`/`--auto`
+    /// parity — a headless run must not stall on tool approvals).
+    pub permission_auto: bool,
 }
 
 /// Run one prompt: create a session, prompt it, return the wire result.
@@ -79,6 +82,19 @@ pub async fn run_prompt_with_setup(
             .call(
                 kimi_protocol::methods::SESSION_SET_PLAN_MODE,
                 serde_json::json!({ "session_id": session_id, "enabled": true }),
+            )
+            .await;
+        if body.get("error").is_some() {
+            return body;
+        }
+    }
+    if setup.permission_auto {
+        // Headless runs must not stall on tool approvals (TS `--yolo`/`--auto`
+        // parity): force the permission gate to auto before the prompt.
+        let body = client
+            .call(
+                kimi_protocol::methods::PERMISSION_SET_MODE,
+                serde_json::json!({ "session_id": session_id, "mode": "auto" }),
             )
             .await;
         if body.get("error").is_some() {
@@ -154,6 +170,7 @@ mod tests {
             plan: true,
             goal: Some("setup goal".into()),
             resume: false,
+            permission_auto: false,
         };
         let result =
             run_prompt_with_setup(&mut client, "s-setup", "hello", native_llm_from_config(), &setup).await;

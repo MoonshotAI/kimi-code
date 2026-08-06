@@ -29,6 +29,7 @@ fn run(home: &Path, args: &[&str]) -> Output {
         .args(args)
         .current_dir(&cwd)
         .env("KIMI_AGENT_HOME", home)
+        .env("KIMI_CODE_HOME", home)
         .env("HOME", home)
         .env_remove("KIMI_MODEL")
         .env_remove("KIMI_MODEL_API_KEY")
@@ -71,8 +72,8 @@ fn export_without_id_and_without_yes_errors() {
     let output = run(&home, &["export"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        stderr(&output).contains("session id"),
-        "stderr should explain the requirement: {}",
+        stderr(&output).contains("No previous session"),
+        "stderr should explain there is nothing to export: {}",
         stderr(&output)
     );
 }
@@ -83,7 +84,7 @@ fn export_yes_with_no_sessions_errors() {
     let output = run(&home, &["export", "-y"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        stderr(&output).contains("no sessions"),
+        stderr(&output).contains("No previous session"),
         "stderr should say there are no sessions: {}",
         stderr(&output)
     );
@@ -145,11 +146,16 @@ fn doctor_reports_health_and_config_files() {
     let output = run(&home, &["doctor"]);
     assert!(output.status.success(), "doctor exited {}", output.status);
     let out = stdout(&output);
+    assert!(out.contains("Kimi doctor"), "title: {out}");
     assert!(out.contains("health: ok"), "health line: {out}");
-    assert!(out.contains("version:"), "version line: {out}");
     assert!(
-        out.contains("config parse:") && out.contains("config file:"),
-        "config checks present: {out}"
+        out.contains("OK   config.toml") || out.contains("SKIP config.toml"),
+        "config check present: {out}"
+    );
+    assert!(out.contains("tui.toml"), "tui check present: {out}");
+    assert!(
+        out.contains("All checked config files are valid."),
+        "verdict line: {out}"
     );
 }
 
@@ -174,7 +180,7 @@ fn doctor_config_validates_specific_file() {
 
     let output = run(&home, &["doctor", "config", home.join("nope.toml").to_str().unwrap()]);
     assert_eq!(output.status.code(), Some(1), "missing file should fail");
-    assert!(stdout(&output).contains("not found"));
+    assert!(stdout(&output).contains("File does not exist."));
 }
 
 #[test]
@@ -188,6 +194,7 @@ fn config_set_writes_and_persists() {
             .args(args)
             .current_dir(&cwd)
             .env("KIMI_AGENT_HOME", &home)
+            .env("KIMI_CODE_HOME", &home)
             .env("HOME", &home)
             .env_remove("KIMI_MODEL")
             .env_remove("KIMI_MODEL_API_KEY")
@@ -204,8 +211,8 @@ fn config_set_writes_and_persists() {
     assert!(output.status.success(), "config --set failed: {}", stderr(&output));
     assert!(stdout(&output).contains("\"ok\": true"), "result: {}", stdout(&output));
     assert!(
-        cwd.join(".kimi-code/config.toml").exists(),
-        "config file written under cwd"
+        home.join("config.toml").exists(),
+        "config file written to the user-level config dir"
     );
 
     let output = run_here(&["config"]);
@@ -494,18 +501,50 @@ fn chat_goal_lifecycle() {
 #[test]
 fn upgrade_and_frontend_commands_are_recognized() {
     // Stage-C "待" surface: the Rust CLI recognizes TS-owned commands instead
-    // of erroring "unknown subcommand".
+    // of erroring "unknown subcommand". `web` now launches the in-process
+    // server (spawned separately below); `upgrade`/`vis` keep the hint/error.
     let home = temp_dir("recognized");
     let out = run(&home, &["upgrade"]);
     assert!(out.status.success(), "upgrade exits 0: {}", out.status);
     let text = stdout(&out);
     assert!(text.contains("package manager"), "upgrade hint: {text}");
-    for cmd in ["web", "vis"] {
-        let out = run(&home, &[cmd]);
-        assert!(!out.status.success(), "{cmd} exits non-zero");
-        let err = stderr(&out);
-        assert!(err.contains("TS distribution"), "{cmd}: {err}");
+    let out = run(&home, &["vis"]);
+    assert!(!out.status.success(), "vis exits non-zero");
+    let err = stderr(&out);
+    assert!(err.contains("TS distribution"), "vis: {err}");
+    // `kimi web --no-open --port <ephemeral>` serves the API: probe /health,
+    // then let Ctrl-C-less shutdown via killing the child.
+    let mut child = Command::new(binary())
+        .args(["web", "--no-open", "--port", "28627"])
+        .current_dir(&home)
+        .env("KIMI_AGENT_HOME", &home)
+        .env("HOME", &home)
+        .env("KIMI_CODE_HOME", &home)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn kimi web");
+    let mut ok = false;
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        if let Ok(mut stream) =
+            std::net::TcpStream::connect(("127.0.0.1", 28627))
+        {
+            use std::io::{Read, Write};
+            let _ = stream.write_all(
+                b"GET /api/v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+            );
+            let mut buf = [0u8; 512];
+            let _ = stream.read(&mut buf);
+            if String::from_utf8_lossy(&buf).contains("200") {
+                ok = true;
+                break;
+            }
+        }
     }
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(ok, "kimi web serves /api/v1/health");
 }
 
 #[test]
@@ -574,18 +613,18 @@ fn doctor_tui_validates_specific_file() {
     std::fs::write(&valid, "[theme]\naccent = \"#ff0000\"\n").expect("write valid");
     let out = run(&home, &["doctor", "tui", valid.to_str().expect("path")]);
     assert!(out.status.success(), "valid tui exits 0: {}", out.status);
-    assert!(stdout(&out).contains("tui file: OK"), "stdout: {}", stdout(&out));
+    assert!(stdout(&out).contains("OK tui.toml"), "stdout: {}", stdout(&out));
 
     let invalid = home.join("tui-invalid.toml");
     std::fs::write(&invalid, "theme = { accent = }\n").expect("write invalid");
     let out = run(&home, &["doctor", "tui", invalid.to_str().expect("path")]);
     assert!(!out.status.success(), "invalid tui exits 1");
-    assert!(stdout(&out).contains("tui file: ERROR"), "stdout: {}", stdout(&out));
+    assert!(stdout(&out).contains("ERROR tui.toml"), "stdout: {}", stdout(&out));
 
     let missing = home.join("tui-missing.toml");
     let out = run(&home, &["doctor", "tui", missing.to_str().expect("path")]);
     assert!(!out.status.success(), "missing tui exits 1");
-    assert!(stdout(&out).contains("tui file: ERROR"), "stdout: {}", stdout(&out));
+    assert!(stdout(&out).contains("ERROR tui.toml"), "stdout: {}", stdout(&out));
 }
 
 #[test]
@@ -636,13 +675,42 @@ fn provider_remove_deletes_config_entry() {
     assert!(out.status.success(), "set: {}", out.status);
     let out = run(&home, &["provider", "remove", "acme"]);
     assert!(out.status.success(), "remove: {}", out.status);
-    assert!(stdout(&out).contains("removed"), "remove output: {}", stdout(&out));
+    assert!(stdout(&out).contains("Removed provider"), "remove output: {}", stdout(&out));
     let out = run(&home, &["config"]);
     let config: serde_json::Value = serde_json::from_str(stdout(&out).trim()).expect("config JSON");
     assert!(
         config["providers"].get("acme").is_none(),
         "provider removed: {}",
         config["providers"]
+    );
+}
+
+#[test]
+fn provider_remove_unknown_provider_errors() {
+    // TS parity: removing a provider that is not configured is an error, not
+    // a silent no-op.
+    let home = temp_dir("provider-remove-unknown");
+    let output = run(&home, &["provider", "remove", "nope"]);
+    assert!(!output.status.success(), "unknown provider must fail");
+    assert!(
+        stderr(&output).contains("not found"),
+        "stderr: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn print_json_and_stream_json_are_mutually_exclusive() {
+    let home = temp_dir("print-json-conflict");
+    let output = run(
+        &home,
+        &["print", "--json", "--output-format", "stream-json", "hi"],
+    );
+    assert!(!output.status.success(), "conflict must fail");
+    assert!(
+        stderr(&output).contains("mutually exclusive"),
+        "stderr: {}",
+        stderr(&output)
     );
 }
 
@@ -866,9 +934,11 @@ fn completions_generate_scripts() {
 }
 
 #[test]
-fn provider_list_from_catalog() {
+fn provider_catalog_list_from_catalog() {
     let home = temp_dir("provider");
-    let output = run(&home, &["provider", "list", "--json"]);
+    // `provider catalog list --json` (the catalog browse surface); `provider
+    // list` itself now lists *configured* providers.
+    let output = run(&home, &["provider", "catalog", "list", "--json"]);
     // Network-dependent: on success the raw catalog JSON is printed; on a
     // blocked network the command reports the fetch error without panicking.
     if output.status.success() {
@@ -882,6 +952,32 @@ fn provider_list_from_catalog() {
             stderr(&output)
         );
     }
+}
+
+#[test]
+fn provider_list_lists_configured_providers() {
+    let home = temp_dir("provider-list");
+    // Fresh home: no configured providers -> the list prints the empty hint.
+    let output = run(&home, &["provider", "list"]);
+    assert!(output.status.success(), "provider list exits 0: {}", output.status);
+    assert!(
+        stdout(&output).contains("no providers configured"),
+        "empty hint: {}",
+        stdout(&output)
+    );
+    // A configured provider shows up with a masked apiKey.
+    let cfg = home.join("config.toml");
+    std::fs::write(
+        &cfg,
+        "[providers.mock]\ntype = \"openai\"\nbaseUrl = \"http://localhost:9999/v1\"\napiKey = \"sk-test\"\n",
+    )
+    .expect("write config");
+    let output = run(&home, &["provider", "list"]);
+    assert!(output.status.success(), "provider list exits 0: {}", output.status);
+    let out = stdout(&output);
+    assert!(out.contains("mock"), "listed provider: {out}");
+    assert!(out.contains("***"), "apiKey masked: {out}");
+    assert!(!out.contains("sk-test"), "raw apiKey must not leak: {out}");
 }
 
 #[test]

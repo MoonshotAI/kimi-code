@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+axum = "0.8"
 base64 = "0.22"
 clap = { workspace = true }
 kimi-agent = { path = "../../packages/kimi-agent" }
@@ -19,12 +20,13 @@ kimi-oauth = { path = "../kimi-oauth" }
 kimi-protocol = { path = "../kimi-protocol" }
 kimi-server = { path = "../kimi-server" }
 kimi-server-client = { path = "../kimi-server-client" }
+kimi-server-transport = { path = "../kimi-server-transport" }
 kimi-acp = { path = "../kimi-acp" }
 kimi-sdk = { path = "../kimi-sdk" }
 kimi-tui = { path = "../kimi-tui" }
 kimi-ui = { path = "../kimi-ui" }
 serde_json = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
 clap_complete = "4"
 toml = "0.8"
 

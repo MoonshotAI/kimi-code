@@ -5,6 +5,58 @@
 /// Cap for a tool event's rendered argument / result preview.
 const TOOL_PREVIEW_CAP: usize = 80;
 
+/// Bullet + indent prefixes for the prompt transcript block (TS
+/// `PromptBlockWriter` parity: `• ` bullet, `  ` continuation indent).
+const PROMPT_BLOCK_BULLET: &str = "• ";
+const PROMPT_BLOCK_INDENT: &str = "  ";
+
+/// Render assistant text as a bullet block: a `• ` marker, `  ` indentation
+/// on every line, and optional terminal-width wrapping (TS
+/// `PromptBlockWriter` parity). `columns` is the terminal width; `None`
+/// disables wrapping.
+pub fn render_prompt_block(text: &str, columns: Option<u16>) -> String {
+    let wrap_width = columns
+        .map(|c| c as usize)
+        .filter(|c| *c > PROMPT_BLOCK_INDENT.len() + 1);
+    let mut out = String::new();
+    let mut started = false;
+    let mut at_line_start = false;
+    let mut line_width = 0usize;
+    for ch in text.chars() {
+        if !started {
+            out.push_str(PROMPT_BLOCK_BULLET);
+            started = true;
+            at_line_start = false;
+            line_width = PROMPT_BLOCK_BULLET.chars().count();
+        }
+        if at_line_start && ch != '\n' {
+            out.push_str(PROMPT_BLOCK_INDENT);
+            at_line_start = false;
+            line_width = PROMPT_BLOCK_INDENT.chars().count();
+        }
+        let char_width = if ch == '\t' { 4 } else { 1 };
+        if let Some(ww) = wrap_width {
+            if !at_line_start && ch != '\n' && line_width + char_width > ww {
+                out.push('\n');
+                out.push_str(PROMPT_BLOCK_INDENT);
+                line_width = PROMPT_BLOCK_INDENT.chars().count();
+            }
+        }
+        out.push(ch);
+        if ch == '\n' {
+            at_line_start = true;
+            line_width = 0;
+        } else {
+            line_width += char_width;
+        }
+    }
+    if !started {
+        return out;
+    }
+    out.push_str(if at_line_start { "\n" } else { "\n\n" });
+    out
+}
+
 /// Compact a tool event payload (arguments or result content) into a single
 /// short line. Strings pass through; objects/arrays serialize to JSON; the
 /// result is truncated to `TOOL_PREVIEW_CAP` chars with an ellipsis.
@@ -199,7 +251,29 @@ pub fn last_assistant_text(context: &serde_json::Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{last_assistant_text, render_event, stream_delta, stream_thinking};
+    use super::{
+        last_assistant_text, render_event, render_prompt_block, stream_delta, stream_thinking,
+    };
+
+    #[test]
+    fn prompt_block_bullets_and_indents() {
+        assert_eq!(render_prompt_block("hello", None), "• hello\n\n");
+        assert_eq!(render_prompt_block("line1\nline2", None), "• line1\n  line2\n\n");
+        // Empty input renders nothing.
+        assert_eq!(render_prompt_block("", None), "");
+    }
+
+    #[test]
+    fn prompt_block_wraps_at_terminal_width() {
+        // Width 10: the bullet (2 chars) + 8 chars fit; the 9th wraps.
+        let rendered = render_prompt_block("123456789012", Some(10));
+        assert!(
+            rendered.contains("\n  9012"),
+            "wraps with indent: {rendered:?}"
+        );
+        assert!(rendered.starts_with("• 12345678"), "first line: {rendered:?}");
+        assert!(rendered.ends_with("9012\n\n"), "wrapped tail: {rendered:?}");
+    }
 
     #[test]
     fn render_known_event_types() {

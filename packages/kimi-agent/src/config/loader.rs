@@ -64,8 +64,11 @@ pub fn find_config_paths() -> Vec<PathBuf> {
     // 3. Project-level: kimi-code.toml
     paths.push(PathBuf::from("kimi-code.toml"));
 
-    // 4. User-level: ~/.kimi-code/config.toml
-    if let Some(home) = home_dir() {
+    // 4. User-level: ~/.kimi-code/config.toml (KIMI_CODE_HOME is the
+    //    `.kimi-code` directory itself — same semantic as server.token).
+    if let Ok(dir) = std::env::var("KIMI_CODE_HOME") {
+        paths.push(PathBuf::from(dir).join("config.toml"));
+    } else if let Some(home) = home_dir() {
         paths.push(home.join(".kimi-code/config.toml"));
     }
 
@@ -181,7 +184,7 @@ pub fn validate_config(config: &KimiConfig) -> Result<()> {
 /// order. A missing file is skipped; a corrupted file aborts the whole load.
 /// Environment variable overrides (`KIMI_PROVIDER_*`) are applied last when
 /// `apply_env` is set.
-fn load_from_paths(paths: &[PathBuf], apply_env: bool) -> Result<KimiConfig> {
+fn load_from_paths(paths: &[PathBuf], apply_env: bool, validate: bool) -> Result<KimiConfig> {
     let (user_paths, project_paths, env_override) = partition_paths(paths);
 
     // Start with empty config
@@ -202,7 +205,9 @@ fn load_from_paths(paths: &[PathBuf], apply_env: bool) -> Result<KimiConfig> {
         }
     }
 
-    validate_config(&config)?;
+    if validate {
+        validate_config(&config)?;
+    }
 
     if apply_env {
         apply_env_overrides(&mut config);
@@ -221,7 +226,7 @@ fn load_from_paths(paths: &[PathBuf], apply_env: bool) -> Result<KimiConfig> {
 /// Environment variable overrides (`KIMI_PROVIDER_*`) are NOT applied — use
 /// [`load_config_with_env`] for that.
 pub fn load_config() -> Result<KimiConfig> {
-    load_from_paths(&find_config_paths(), false)
+    load_from_paths(&find_config_paths(), false, true)
 }
 
 /// Load configuration and apply environment variable overrides.
@@ -230,7 +235,15 @@ pub fn load_config() -> Result<KimiConfig> {
 /// variables (e.g. `KIMI_PROVIDER_OPENAI_API_KEY`, `KIMI_PROVIDER_ANTHROPIC_MODEL`)
 /// on top of all file-based configuration.
 pub fn load_config_with_env() -> Result<KimiConfig> {
-    load_from_paths(&find_config_paths(), true)
+    load_from_paths(&find_config_paths(), true, true)
+}
+
+/// Load configuration with environment overrides but WITHOUT the
+/// at-least-one-provider validation (TS parity — the read/write paths
+/// `config/get` / `config/set` must tolerate an empty fresh home; the
+/// provider requirement is enforced by `doctor` / startup instead).
+pub fn load_config_with_env_unvalidated() -> Result<KimiConfig> {
+    load_from_paths(&find_config_paths(), true, false)
 }
 
 /// Parse and validate a single config file (used by `kimi doctor config
@@ -275,7 +288,7 @@ pub fn reload_config() -> Result<KimiConfig> {
 /// [`reload_config`] so tests can drive reloads from temp files without
 /// depending on process-global environment variables.
 fn reload_from_paths(paths: &[PathBuf]) -> Result<KimiConfig> {
-    let config = load_from_paths(paths, true)?;
+    let config = load_from_paths(paths, true, true)?;
 
     // Commit the new state only after the whole load succeeded, so a failed
     // reload never clears the previously loaded provider/model catalogs.

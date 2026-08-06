@@ -6,4 +6,6 @@ pub mod event;
 pub mod render;
 
 pub use event::EventSource;
-pub use render::{last_assistant_text, render_event, stream_delta, stream_thinking};
+pub use render::{
+    last_assistant_text, render_event, render_prompt_block, stream_delta, stream_thinking,
+};
