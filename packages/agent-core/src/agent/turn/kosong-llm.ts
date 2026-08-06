@@ -19,7 +19,6 @@ import {
   emptyUsage,
   generate as kosongGenerate,
   isRetryableGenerateError,
-  isUnknownCapability,
   type ChatProvider,
   type ContentPart,
   type GenerateCallbacks,
@@ -301,7 +300,13 @@ export function downgradeUnsupportedMedia(
   messages: readonly Message[],
   capability: ModelCapability | undefined,
 ): Message[] {
-  if (capability === undefined || isUnknownCapability(capability)) return [...messages];
+  // Undefined = host did not supply a capability matrix; leave history alone.
+  // UNKNOWN_CAPABILITY and any known matrix with image_in/video_in/audio_in
+  // false must strip those parts: replaying image_url to a text-only
+  // OpenAI-compatible provider returns 400 and poisons every subsequent turn
+  // (#2669). UNKNOWN was previously exempt, which left custom providers that
+  // declare no vision (or are uncatalogued) unprotected.
+  if (capability === undefined) return [...messages];
   const dropImage = !capability.image_in;
   const dropVideo = !capability.video_in;
   const dropAudio = !capability.audio_in;
