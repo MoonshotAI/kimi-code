@@ -135,7 +135,7 @@ You must first complete OAuth login with a Kimi Code account via `/login`; data 
 - Technical indicators and real-time prices are only available during active trading hours
 - AI-generated output is for reference only and does not constitute investment or business advice
 
-### Kimi WebBridge
+### Kimi WebBridge <Badge type="tip" text="v1.11.3" />
 
 Kimi WebBridge lets AI drive your browser directly — not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi WebBridge site](https://www.kimi.com/features/webbridge) for a product overview.
 
@@ -160,9 +160,9 @@ Use this when you can't reach the stores:
 
    ![Load the unpacked extension](../../media/webbridge-load-unpacked.jpeg)
 
-Once installed, the Kimi WebBridge icon appears in the browser toolbar. Seeing the icon means the installation succeeded, and AI can start working on web pages for you.
+4. Once installed, the Kimi WebBridge icon appears in the browser toolbar. Seeing the icon means the installation succeeded, and AI can start working on web pages for you.
 
-![The Kimi WebBridge icon in the browser toolbar](../../media/webbridge-install-success.jpeg)
+   ![The Kimi WebBridge icon in the browser toolbar](../../media/webbridge-install-success.jpeg)
 
 #### What you can do
 
@@ -172,7 +172,7 @@ Once installed, the Kimi WebBridge icon appears in the browser toolbar. Seeing t
 - **Competitive analysis**: Batch-question multiple AI products and collect their answers to build side-by-side comparison reports
 - **Flight price comparison**: Query the same itinerary across multiple travel platforms, record airlines, departure/arrival times, and links sorted by price, and get recommended options
 
-### Kimi Computer Use
+### Kimi Computer Use <Badge type="tip" text="v0.5.4" />
 
 Kimi Computer Use lets AI operate your Mac desktop apps directly — clicking, dragging, scrolling, and typing — all silently in the background without taking over your mouse (a few popup actions may still bring an app to the foreground). macOS only for now.
 
@@ -191,9 +191,15 @@ The first time you use Kimi Computer Use after installation, it shows an authori
 
 #### What you can do
 
-- **Desktop app control**: Drive macOS apps on your behalf; for example, ask AI to open NetEase Cloud Music and play a specific song
+- **Organize and enter information**: Have AI gather scattered information into Notes, spreadsheets, or your note-taking app, instead of typing everything in by hand
+- **Walk through site and app flows**: After changing a page, let AI click through the key flows and screenshot each step to confirm rendering and navigation work
+- **Handle repetitive operations**: Repeatedly opening, copying, pasting, and checking can run silently in the background without taking over your mouse
+- **Run fixed-step tasks**: For flows with clear steps, spell them out and AI follows along; for example, ask AI to open NetEase Cloud Music and play a specific song
 - **Handle software that has no API**: Plenty of professional tools and internal systems have no CLI or API at all; what used to require your own clicking can now be handed to AI, like trimming the first three seconds off a clip in Final Cut Pro and exporting it
-- **Background execution**: AI completes clicks, typing, and other actions silently in the background while you keep using your computer
+
+::: warning Note
+Don't hand it anything involving money, accounts, or publishing, such as payments and transfers, deleting important files, changing passwords, or posting content. To judge whether a task is suitable, check three things: the result is verifiable, the action is reversible, and the risk of getting it wrong is low.
+:::
 
 ## Plugin Manifest
 
