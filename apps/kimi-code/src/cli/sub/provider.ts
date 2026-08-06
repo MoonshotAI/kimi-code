@@ -24,6 +24,7 @@ import {
   catalogProviderModels,
   CatalogFetchError,
   createKimiHarness,
+  createKimiHarnessV2,
   DEFAULT_CATALOG_URL,
   resolveCatalogImport,
   type Catalog,
@@ -35,6 +36,8 @@ import type { Command } from 'commander';
 
 import { createKimiCodeHostIdentity, createKimiCodeUserAgent } from '#/cli/version';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
+
+import { isKimiV2Enabled } from '../experimental-v2';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -457,12 +460,17 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
   // anything that escapes (e.g. a config write rejected because config.toml
   // is invalid) must end as a one-line error + exit 1, not an unhandled
   // rejection dumping a stack trace.
-  const runAction = async (resolved: ProviderDeps, run: () => Promise<void>): Promise<void> => {
+  const runAction = async (
+    resolved: ResolvedProviderDeps,
+    run: () => Promise<void>,
+  ): Promise<void> => {
     try {
       await run();
     } catch (error) {
       resolved.stderr.write(`${errorMessage(error)}\n`);
       resolved.exit(1);
+    } finally {
+      await resolved.close();
     }
   };
 
@@ -546,20 +554,30 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
     );
 }
 
-function resolveDeps(overrides: Partial<ProviderDeps> = {}): ProviderDeps {
+type ResolvedProviderDeps = ProviderDeps & { readonly close: () => Promise<void> };
+
+function resolveDeps(overrides: Partial<ProviderDeps> = {}): ResolvedProviderDeps {
   let harness: KimiHarness | undefined;
   const identity = createKimiCodeHostIdentity();
   return {
     getHarness:
       overrides.getHarness ??
       (() => {
-        harness ??= createKimiHarness({ identity });
+        // Same engine gate as the TUI's `/provider` flow: the SDK's v2-backed
+        // harness by default, the legacy agent-core harness when
+        // KIMI_CODE_LEGACY_FLAG is set.
+        harness ??= (isKimiV2Enabled() ? createKimiHarnessV2 : createKimiHarness)({ identity });
         return harness;
       }),
     stdout: overrides.stdout ?? process.stdout,
     stderr: overrides.stderr ?? process.stderr,
     env: overrides.env ?? process.env,
     exit: overrides.exit ?? ((code: number) => process.exit(code)),
+    // The v2 harness boots an engine whose watchers hold the event loop open;
+    // close it so a one-shot command can exit. No-op for injected harnesses.
+    close: async () => {
+      await harness?.close();
+    },
   };
 }
 

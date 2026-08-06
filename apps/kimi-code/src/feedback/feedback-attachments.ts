@@ -92,7 +92,8 @@ async function prepareAndUploadCodebaseArchive(
  * `produce` write the archive to it, upload it, then always remove the temp
  * directory — even when `produce` or the upload throws. Both the session log
  * archive and the codebase archive flow through here so their cleanup and
- * error handling cannot drift apart.
+ * error handling cannot drift apart. Every failure — including archive-path
+ * creation — is contained here as a non-fatal partial failure.
  */
 async function uploadProducedArchive(
   api: FeedbackUploadUrlApi,
@@ -100,16 +101,22 @@ async function uploadProducedArchive(
   filename: string,
   produce: (archivePath: string) => Promise<FeedbackArchive>,
 ): Promise<boolean> {
-  const { archivePath, cleanupDir } = await createFeedbackArchivePath(filename);
+  let cleanupDir: string | undefined;
   try {
-    const archive = await produce(archivePath);
-    await uploadArchive(api, { ...archive, cleanupDir }, feedbackId, { filename });
+    const target = await createFeedbackArchivePath(filename);
+    cleanupDir = target.cleanupDir;
+    const archive = await produce(target.archivePath);
+    await uploadArchive(api, { ...archive, cleanupDir: target.cleanupDir }, feedbackId, {
+      filename,
+    });
     return true;
   } catch (error) {
     await logFeedbackUploadError(error);
     return false;
   } finally {
-    await rm(cleanupDir, { recursive: true, force: true }).catch(() => {});
+    if (cleanupDir !== undefined) {
+      await rm(cleanupDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 }
 

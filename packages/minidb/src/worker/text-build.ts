@@ -122,7 +122,9 @@ function spawnWorker(
   }
   return new Worker(entry.url, {
     workerData: spec,
-    execArgv: ['--experimental-transform-types'],
+    // --experimental-transform-types runs the TS worker source directly in dev;
+    // silence its experimental warning so it does not bleed into the TUI.
+    execArgv: ['--experimental-transform-types', '--disable-warning=ExperimentalWarning'],
     resourceLimits,
   });
 }

@@ -217,7 +217,7 @@ describe('kimi-webbridge entry', () => {
     ]);
   });
 
-  it('reports user skill shadows for manual cleanup without deleting them', async () => {
+  it('backs up standalone skills after refreshing the managed plugin', async () => {
     const kimiHome = path.join(root, 'kimi-home');
     const userHome = path.join(root, 'user-home');
     await mkdir(path.join(kimiHome, 'skills', 'kimi-webbridge'), { recursive: true });
@@ -232,14 +232,31 @@ describe('kimi-webbridge entry', () => {
 
     const detected = await entry.detect();
 
-    expect(detected.steps.find((step) => step.id === 'skill-shadow')).toEqual({
-      id: 'skill-shadow',
-      state: 'failed',
+    expect(detected.steps.find((step) => step.id === 'standalone-skill-migration')).toEqual({
+      id: 'standalone-skill-migration',
+      state: 'missing',
       detail: `${path.join(kimiHome, 'skills', 'kimi-webbridge')}, ${path.join(userHome, '.agents', 'skills', 'kimi-webbridge')}`,
       optional: true,
     });
-    await access(path.join(kimiHome, 'skills', 'kimi-webbridge', 'SKILL.md'));
-    await access(path.join(userHome, '.agents', 'skills', 'kimi-webbridge', 'SKILL.md'));
+    const reports: string[] = [];
+    await entry.install((step) => reports.push(step));
+
+    expect(plugins.installs).toEqual([
+      'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+    ]);
+    expect(reports).toContain('standalone-skill-migration');
+    await expect(access(path.join(kimiHome, 'skills', 'kimi-webbridge'))).rejects.toThrow();
+    await expect(access(path.join(userHome, '.agents', 'skills', 'kimi-webbridge'))).rejects.toThrow();
+
+    const backupDir = path.join(kimiHome, 'backups', 'kimi-webbridge-skills');
+    const backups = await readdir(backupDir);
+    expect(backups).toHaveLength(1);
+    await expect(
+      readFile(path.join(backupDir, backups[0]!, 'kimi-code', 'SKILL.md'), 'utf8'),
+    ).resolves.toBe('old');
+    await expect(
+      readFile(path.join(backupDir, backups[0]!, 'agents', 'SKILL.md'), 'utf8'),
+    ).resolves.toBe('old');
   });
 
   it('installs end-to-end: download, start-if-down, and plugin wiring', async () => {
@@ -340,6 +357,37 @@ describe('kimi-webbridge entry', () => {
     expect(plugins.installs).toHaveLength(1);
   });
 
+  it('refreshes the wiring plugin when daemon recovery is the only missing layer', async () => {
+    const userHome = path.join(root, 'user-home');
+    await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
+    const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge');
+    await writeFile(binPath, 'bin');
+    await chmod(binPath, 0o755);
+    const plugins = fakePlugins([
+      { id: 'kimi-webbridge', enabled: true, state: 'ok', version: '1.11.3' },
+    ]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [
+        { running: false },
+        { running: false },
+        { running: true, version: 'v1.11.3', extension_connected: true },
+      ],
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({ plugins: plugins.service, hostProcess: host.service, fetchImpl }),
+    );
+
+    await entry.install(() => {});
+
+    expect(plugins.installs).toEqual([
+      'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+    ]);
+    expect(host.calls.map((call) => `${call.command} ${call.args.join(' ')}`)).toEqual([
+      `${binPath} start`,
+    ]);
+  });
+
   it('rejects install on unsupported platforms before any side effect', async () => {
     const plugins = fakePlugins([]);
     const entry = createKimiWebbridgeEntry(
@@ -388,4 +436,3 @@ describe('kimi-webbridge entry', () => {
     expect(plugins.enabledCalls).toEqual([{ id: 'kimi-webbridge', enabled: true }]);
   });
 });
-

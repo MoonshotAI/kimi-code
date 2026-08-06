@@ -125,17 +125,22 @@ export async function loadPluginMarketplace(
  * client instead of being served by the marketplace catalog, so their
  * visibility is bound to the client version — older clients never see them.
  * Same-id catalog rows are MASKED, not merged: what these ids mean stays
- * decided by the client release, and a future official marketplace listing
- * only reaches older clients (whose fix is to upgrade). No `version` is
- * pinned: reinstalling uses the latest managed artifacts.
+ * decided by the client release. The catalog may contribute only its version
+ * so the built-in row can use the normal update badge while keeping the
+ * capability install route and client-owned copy.
  */
 function withBuiltInEntries(
   marketplace: PluginMarketplace,
   builtIns: readonly PluginMarketplaceEntry[],
 ): PluginMarketplace {
   const builtInIds = new Set(builtIns.map((entry) => entry.id));
+  const catalogById = new Map(marketplace.plugins.map((entry) => [entry.id, entry]));
   const catalog = marketplace.plugins.filter((entry) => !builtInIds.has(entry.id));
-  return { ...marketplace, plugins: [...catalog, ...builtIns] };
+  const enrichedBuiltIns = builtIns.map((entry) => {
+    const version = catalogById.get(entry.id)?.version;
+    return version === undefined ? entry : { ...entry, version };
+  });
+  return { ...marketplace, plugins: [...catalog, ...enrichedBuiltIns] };
 }
 
 async function withLatestVersions(

@@ -112,7 +112,7 @@ export interface SlashCommandHost {
   state: TUIState;
   session: Session | undefined;
   readonly harness: KimiHarness;
-  /** agent-core-v2 engine (KIMI_CODE_EXPERIMENTAL_FLAG); enables lazy session creation. */
+  /** agent-core-v2 engine; enables lazy session creation. */
   readonly engineV2: boolean;
   cancelInFlight: (() => void) | undefined;
   deferUserMessages: boolean;
@@ -163,6 +163,9 @@ export interface SlashCommandHost {
   failSessionRequest(message: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   requestQueuedGoalPromotion?(): void;
+  /** Reset the client-side cache-break baseline after the context was cut
+   *  (/undo): the next step's cache-read drop is expected, not a break. */
+  noteContextCut?(): void;
 
   // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;

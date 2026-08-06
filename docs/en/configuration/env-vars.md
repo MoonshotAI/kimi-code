@@ -143,7 +143,8 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_WEB_SEARCH_API_KEY` | API key of the web search (`WebSearch`) service; replaces both the configured API key and OAuth credential when set | Non-blank string; blank values are ignored |
 | `KIMI_WEB_FETCH_BASE_URL` | API URL of the web fetch (`FetchURL`) service; takes higher priority than `[services.moonshot_fetch] base_url`. Persisted credentials and custom headers are not forwarded to an env-selected endpoint. Without an env or config endpoint, signed-in users try the managed Kimi OAuth fetch service before direct local requests | Non-blank string; blank values are ignored |
 | `KIMI_WEB_FETCH_API_KEY` | API key of the web fetch (`FetchURL`) service; replaces both the configured API key and OAuth credential when set | Non-blank string; blank values are ignored |
-| `KIMI_CODE_EXPERIMENTAL_FLAG` | Enable all registered experimental features for this process | `1`, `true`, `yes`, `on` |
+| `KIMI_CODE_EXPERIMENTAL_FLAG` | Enable all registered experimental features for this process; it does not select the agent engine | `1`, `true`, `yes`, `on` |
+| `KIMI_CODE_LEGACY_FLAG` | Use the legacy `agent-core` engine for `kimi`, `kimi -p`, `kimi doctor`, `kimi acp`, `kimi export`, and `kimi provider`; these commands use `agent-core-v2` by default | `1`, `true`, `yes`, `on` |
 | `KIMI_SHELL_PATH` | Override the Git Bash path on Windows (used when auto-detection fails) | Absolute path |
 | `KIMI_MODEL_MAX_COMPLETION_TOKENS` | Hard cap on `max_completion_tokens` per LLM step; applies to the `kimi` provider only | Positive integer; `0` or negative disables clamping |
 | `KIMI_MODEL_TEMPERATURE` | Sampling temperature for every request; applies to the `kimi` provider only (global — independent of `KIMI_MODEL_NAME`) | Number, e.g. `0.3` |
@@ -153,7 +154,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_CODE_NO_AUTO_UPDATE` | Fully disable the update preflight — no check, background install, or prompt. Legacy alias `KIMI_CLI_NO_AUTO_UPDATE` is also honored | Truthy: `1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | Disable the scheduled-task tool (`CronCreate` rejects new schedules; existing tasks do not fire) | `1` to disable |
 
-The three `KIMI_CODE_IDENTITY_*` / `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` variables are read by the `agent-core-v2` engine, which currently backs `kimi web` and the `KIMI_CODE_EXPERIMENTAL_FLAG` paths; the default `kimi` / `kimi -p` engine ignores them.
+The three `KIMI_CODE_IDENTITY_*` / `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` variables are read by the default `agent-core-v2` engine. The legacy `kimi` / `kimi -p` path selected with `KIMI_CODE_LEGACY_FLAG=1` ignores them.
 
 ## Diagnostic logs
 

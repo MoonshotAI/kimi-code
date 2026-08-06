@@ -246,6 +246,12 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     await this.ensureProjection();
   }
 
+  /** Test hook: stop the background reconcile loop, so measurement windows
+   *  contain only the operations under test. */
+  stopReconcileLoop(): void {
+    this.reconcileTimer.cancel();
+  }
+
   private async tick(): Promise<void> {
     if (!this.readModelEnabled()) return;
     if (this.state === 'degraded') {

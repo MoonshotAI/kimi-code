@@ -17,12 +17,14 @@ import type {
 
 function fakeEntry(overrides: {
   id: 'kimi-cu' | 'kimi-webbridge';
+  pluginId?: string;
   supported?: boolean;
   detect?: CapabilityDetectResult;
   install?: (report: CapabilityInstallReporter) => Promise<void>;
 }): CapabilityEntry {
   return {
     id: overrides.id,
+    pluginId: overrides.pluginId,
     displayName: overrides.id,
     description: 'fake',
     supported: overrides.supported ?? true,
@@ -52,7 +54,11 @@ function expectErrorCode(error: unknown, code: string): void {
 describe('CapabilityService', () => {
   it('lists entries with readiness computed from required steps', async () => {
     const service = fakeService([
-      fakeEntry({ id: 'kimi-cu', detect: { steps: [{ id: 'plugin', state: 'ok' }] } }),
+      fakeEntry({
+        id: 'kimi-cu',
+        pluginId: 'kimi-cu-win',
+        detect: { steps: [{ id: 'plugin', state: 'ok' }] },
+      }),
       fakeEntry({
         id: 'kimi-webbridge',
         detect: {
@@ -69,6 +75,7 @@ describe('CapabilityService', () => {
       ['kimi-cu', 'ready'],
       ['kimi-webbridge', 'partial'],
     ]);
+    expect(list[0]?.pluginId).toBe('kimi-cu-win');
   });
 
   it('isolates a failing detector to its own entry', async () => {

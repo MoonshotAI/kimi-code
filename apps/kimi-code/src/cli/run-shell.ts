@@ -81,9 +81,9 @@ export async function runShell(
     },
     sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
   };
-  // Experimental agent-core-v2 route (same master switch as `kimi -p`): the
-  // harness is the SDK's v2-backed client, so the whole TUI runs on the
-  // agent-core-v2 engine.
+  // The agent-core-v2 route is the default (same engine gate as `kimi -p`):
+  // the harness is the SDK's v2-backed client, so the whole TUI runs on the
+  // agent-core-v2 engine unless the legacy flag is set.
   const engineV2 = isKimiV2Enabled();
   const harness = engineV2
     ? createKimiHarnessV2(harnessOptions)

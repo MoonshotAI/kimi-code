@@ -4,9 +4,9 @@
  * user steps. A capability is NOT a plugin: plugins are declarative
  * contributions to a session, while capabilities own imperative install
  * orchestration and a layered readiness state machine for product-specific
- * runtimes (macOS app + launchd service + TCC permissions; local HTTP
- * daemon + browser extension). Steps marked `optional` never block
- * `ready`; `install.note` is a machine key clients localize.
+ * runtimes (macOS app + launchd service + TCC permissions; Windows signed
+ * runtime; local HTTP daemon + browser extension). Steps marked `optional`
+ * never block `ready`; `install.note` is a machine key clients localize.
  */
 
 export type CapabilityId = 'kimi-cu' | 'kimi-webbridge';
@@ -36,6 +36,8 @@ export interface CapabilityDetectResult {
 
 export interface CapabilityStatus {
   readonly id: CapabilityId;
+  /** Plugin identifier used to provide this capability's agent wiring. */
+  readonly pluginId?: string;
   readonly displayName: string;
   readonly description: string;
   readonly supported: boolean;
@@ -49,6 +51,7 @@ export type CapabilityInstallReporter = (step: string, percent?: number) => void
 
 export interface CapabilityEntry {
   readonly id: CapabilityId;
+  readonly pluginId?: string;
   readonly displayName: string;
   readonly description: string;
   readonly supported: boolean;

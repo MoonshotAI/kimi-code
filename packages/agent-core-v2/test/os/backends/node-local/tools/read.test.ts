@@ -30,6 +30,7 @@ import {
   MAX_LINES,
   type ReadInput,
   ReadInputSchema,
+  TRANSCODE_MAX_BYTES,
 } from '#/agent/tools/os/read/read';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -541,11 +542,101 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/not-utf8.txt" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+      '"/tmp/not-utf8.txt" is not valid UTF-8 or UTF-16 text. Only UTF-8 and UTF-16 text files can be read; for other encodings (e.g. GBK), convert the file to UTF-8 first (e.g. `iconv` via Bash).',
     );
     expect(output).not.toContain('Python tools');
     expect(output).not.toContain(replacement);
     expect(output).not.toContain('encoded data was not valid');
+  });
+
+  it('reads a UTF-16 LE file with BOM by transcoding to UTF-8', async () => {
+    const bytes = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('hello\nworld\n', 'utf16le'),
+    ]);
+    const { fs } = createSpiedMapFs({ '/tmp/notes.TXT': { bytes } });
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/notes.TXT' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('1\thello');
+    expect(result.output).toContain('2\tworld');
+    expect(result.note).toContain('Detected file encoding: UTF-16 LE');
+  });
+
+  it('reads a BOM-marked UTF-16 file whose content has no zero bytes (CJK-only)', async () => {
+    const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('你好世界', 'utf16le')]);
+    const { fs } = createSpiedMapFs({ '/tmp/cjk.txt': { bytes } });
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/cjk.txt' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('1\t你好世界');
+    expect(result.note).toContain('Detected file encoding: UTF-16 LE');
+  });
+
+  it('reads BOM-less UTF-16 LE text via the zero-byte heuristic', async () => {
+    const bytes = Buffer.from('first\nsecond\n', 'utf16le');
+    const { fs } = createSpiedMapFs({ '/tmp/no-bom.txt': { bytes } });
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/no-bom.txt' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('1\tfirst');
+    expect(result.output).toContain('2\tsecond');
+    expect(result.note).toContain('Detected file encoding: UTF-16 LE');
+  });
+
+  it('reads a UTF-16 BE file with BOM', async () => {
+    const le = Buffer.from('big endian\n', 'utf16le');
+    const be = Buffer.alloc(le.length);
+    for (let i = 0; i < le.length; i += 2) {
+      be[i] = le[i + 1]!;
+      be[i + 1] = le[i]!;
+    }
+    const bytes = Buffer.concat([Buffer.from([0xfe, 0xff]), be]);
+    const { fs } = createSpiedMapFs({ '/tmp/be.txt': { bytes } });
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/be.txt' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('1\tbig endian');
+    expect(result.note).toContain('Detected file encoding: UTF-16 BE');
+  });
+
+  it('paginates transcoded UTF-16 files in tail mode', async () => {
+    const bytes = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('one\ntwo\nthree\n', 'utf16le'),
+    ]);
+    const { fs } = createSpiedMapFs({ '/tmp/tail.txt': { bytes } });
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/tail.txt', line_offset: -1 });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('3\tthree');
+    expect(result.output).not.toContain('1\tone');
+    expect(result.note).toContain('Detected file encoding: UTF-16 LE');
+  });
+
+  it('refuses a UTF-16 file that exceeds TRANSCODE_MAX_BYTES', async () => {
+    const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('x\n', 'utf16le')]);
+    const { fs } = createSpiedMapFs({
+      '/tmp/huge.txt': { bytes, size: TRANSCODE_MAX_BYTES + 1 },
+    });
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/huge.txt' });
+    const output = toolContentString(result);
+
+    expect(result.isError).toBe(true);
+    expect(output).toContain('UTF-16 LE');
+    expect(output).toContain('too large to transcode');
   });
 
   it('truncates long lines and surfaces the affected line numbers', async () => {

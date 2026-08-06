@@ -6,6 +6,37 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.33.0（2026-08-05）
+
+### 新功能
+
+- `/plugins` 市场新增 Kimi Computer Use 与 Kimi WebBridge 官方内置插件，安装时自动配置托管运行时，中断后可重试。
+- web: 支持在设置中添加和管理自定义供应商。
+- web: 侧边栏支持将会话置顶。
+- web: 会话标题支持设置 emoji。
+- web: 显示登录账号信息与套餐用量。
+- 新增 `/bug` 命令作为 `/feedback` 的别名，输入 `/bug` 即可提交反馈。
+
+### 优化
+
+- 启动时询问是否信任当前文件夹。
+- `/fork` 不再切换到分叉会话，当前会话与后台任务保持运行，分叉结果可在 `/sessions` 中查看。
+- web: 深度优化界面 UI/UX 并修复已知问题。
+- 交互式 TUI 启动时不再立即创建会话。
+- 插件市场的合作伙伴标签页更名为 Curated，并说明其内容为 Kimi 合作伙伴提供的第三方插件。
+
+### 修复
+
+- 修复 macOS 上技能目录文件过多时所有工具调用失败（spawn EBADF）的问题。
+- 修复 MCP OAuth 重新授权总是因 `Invalid redirect URI` 失败的问题，现会自动清理过期注册并重新发起。
+- 修复首条请求未等待 MCP 初始化完成的问题，界面仍可立即打开。
+- 修复 MCP 工具结果中 `structuredContent` 与 `_meta` 元数据被静默丢弃的问题，现已正确传递给模型。
+- 修复 `/plugins` 中内置能力的可用性与安装状态显示，更新时保留旧版 WebBridge 技能备份，并避免 Computer Use 更新导致 MCP 服务重复或断连。
+
+### 重构
+
+- CLI 各界面（交互式 TUI、`kimi -p`、`kimi acp` 等）默认运行在 agent-core-v2 引擎上；设置 `KIMI_CODE_LEGACY_FLAG=1` 可回退旧引擎。
+
 ## 0.32.0（2026-08-04）
 
 ### 新功能

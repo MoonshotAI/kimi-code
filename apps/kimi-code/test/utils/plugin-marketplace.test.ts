@@ -154,7 +154,7 @@ describe('loadPluginMarketplace', () => {
     });
 
     // The util owns no product knowledge: entries come from the caller (the
-    // engine's capability registry), and no version is pinned.
+    // engine's capability registry), and no version is invented.
     expect(marketplace.plugins).toEqual(builtInEntries);
     expect(marketplace.plugins.map((entry) => entry.version)).toEqual([undefined, undefined]);
   });
@@ -170,6 +170,7 @@ describe('loadPluginMarketplace', () => {
             id: 'kimi-webbridge',
             tier: 'official',
             displayName: 'Kimi WebBridge',
+            version: '1.12.0',
             source: './kimi-webbridge',
           },
         ],
@@ -184,11 +185,11 @@ describe('loadPluginMarketplace', () => {
     });
 
     // What the built-in ids mean stays decided by the client release: the
-    // catalog's own kimi-webbridge row is masked, only the injected one
-    // survives — a future official listing would only reach older clients.
+    // catalog's row contributes the version, but not its source or copy.
     const webbridge = marketplace.plugins.filter((entry) => entry.id === 'kimi-webbridge');
     expect(webbridge).toHaveLength(1);
     expect(webbridge[0]?.source).toBe('capability:kimi-webbridge');
+    expect(webbridge[0]?.version).toBe('1.12.0');
     expect(marketplace.plugins.some((entry) => entry.id === 'kimi-cu')).toBe(true);
   });
 

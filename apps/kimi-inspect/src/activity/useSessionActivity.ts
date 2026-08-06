@@ -2,7 +2,8 @@
  * React binding for the session activity hub: one hub per (server, token),
  * torn down on server switch or unmount. Consumers read per-session coarse
  * activity (`get(sessionId)`) and re-render on every store bump; list-level
- * signals invalidate the `['sessions']` react-query list directly.
+ * signals invalidate the `['sessions']` / `['v2-sessions']` react-query lists
+ * directly.
  *
  * The hub is created inside `useEffect` (not `useMemo`): under StrictMode
  * the mount → cleanup → re-mount cycle runs the cleanup of the FIRST mount,
@@ -29,7 +30,10 @@ export function useSessionActivities(): {
     const created = new SessionActivityHub({
       url: baseUrl,
       token: token === '' ? undefined : token,
-      onListChanged: () => void queryClient.invalidateQueries({ queryKey: ['sessions'] }),
+      onListChanged: () => {
+        void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        void queryClient.invalidateQueries({ queryKey: ['v2-sessions'] });
+      },
     });
     setHub(created);
     return () => {

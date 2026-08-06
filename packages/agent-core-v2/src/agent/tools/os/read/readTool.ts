@@ -5,7 +5,9 @@
  * line/byte budgets from the contract, normalizes line endings for display
  * (pure CRLF shown as LF, mixed or lone carriage returns made visible as
  * `\r`), refuses binary / media files up front, and composes the `<system>`
- * finish note on the `note` side channel.
+ * finish note on the `note` side channel. UTF-16 LE/BE text (with a BOM or
+ * the zero-byte parity heuristic) is decoded whole via `readBytes` and
+ * transcoded to UTF-8, bounded by `TRANSCODE_MAX_BYTES`.
  *
  * Path safety goes through the shared path access resolver used by
  * Read/Write/Edit. Read access flows through the os `hostFs` domain
@@ -39,7 +41,8 @@ import {
 import { MEDIA_SNIFF_BYTES, detectFileType } from '#/agent/media/file-type';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
-import { makeCarriageReturnsVisible, type LineEndingStyle } from '#/_base/text/line-endings';
+import { makeCarriageReturnsVisible, splitLinesKeepingTerminator, type LineEndingStyle } from '#/_base/text/line-endings';
+import { decodeUtfText, detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
   IReadTool,
@@ -47,6 +50,7 @@ import {
   MAX_LINE_LENGTH,
   MAX_LINES,
   ReadInputSchema,
+  TRANSCODE_MAX_BYTES,
   type ReadInput,
 } from './read';
 import readDescriptionTemplate from './read.md?raw';
@@ -76,6 +80,7 @@ interface FinishReadResultInput {
   readonly startLine: number;
   readonly totalLines: number;
   readonly requestedLines: number;
+  readonly detectedEncoding?: UtfTextEncoding;
 }
 
 function truncateLine(line: string, maxLength: number): string {
@@ -184,11 +189,34 @@ function containsNulByte(text: string): boolean {
   return text.includes('\u0000');
 }
 
+function encodingDisplayName(encoding: UtfTextEncoding): string {
+  switch (encoding) {
+    case 'utf-16le':
+      return 'UTF-16 LE';
+    case 'utf-16be':
+      return 'UTF-16 BE';
+    default:
+      return 'UTF-8';
+  }
+}
+
+async function* decodedLines(lines: readonly string[]): AsyncGenerator<string> {
+  yield* lines;
+}
+
 function notReadableFileOutput(path: string): string {
   return (
     `"${path}" is not readable as UTF-8 text. ` +
     'If it is an image or video, use ReadMediaFile. ' +
     'For other binary formats, use Bash or an MCP tool if available.'
+  );
+}
+
+function notUtf8DecodableFileOutput(path: string): string {
+  return (
+    `"${path}" is not valid UTF-8 or UTF-16 text. ` +
+    'Only UTF-8 and UTF-16 text files can be read; ' +
+    'for other encodings (e.g. GBK), convert the file to UTF-8 first (e.g. `iconv` via Bash).'
   );
 }
 
@@ -265,11 +293,35 @@ export class ReadTool implements IReadTool {
           output: `"${args.path}" is a ${fileType.kind} file. Use ReadMediaFile to read image or video files.`,
         };
       }
-      if (fileType.kind === 'unknown') {
+
+      // A BOM marks UTF-16 even when the header carries no NUL bytes (e.g.
+      // CJK-only content reads as printable ASCII), so detect the encoding
+      // before falling through to the strict UTF-8 text path.
+      const detection = detectTextEncoding(header);
+      let lines: AsyncIterable<string>;
+      let detectedEncoding: UtfTextEncoding | undefined;
+      if (!detection.seemsBinary && detection.encoding !== 'utf-8') {
+        // UTF-16 LE/BE text (BOM or zero-byte parity heuristic): decode the
+        // whole file and transcode to UTF-8 for display.
+        if (stat.size > TRANSCODE_MAX_BYTES) {
+          return {
+            isError: true,
+            output:
+              `"${args.path}" is ${encodingDisplayName(detection.encoding)} text but too large to transcode ` +
+              `(${String(stat.size)} bytes > ${String(TRANSCODE_MAX_BYTES)}). ` +
+              'Convert it to UTF-8 first (e.g. `iconv` via Bash).',
+          };
+        }
+        const decoded = decodeUtfText(await this.fs.readBytes(safePath), detection.encoding);
+        detectedEncoding = detection.encoding;
+        lines = decodedLines(splitLinesKeepingTerminator(decoded));
+      } else if (fileType.kind === 'unknown') {
         return {
           isError: true,
           output: notReadableFileOutput(args.path),
         };
+      } else {
+        lines = this.fs.readLines(safePath, { errors: 'strict' });
       }
 
       const lineOffset = args.line_offset ?? 1;
@@ -278,23 +330,25 @@ export class ReadTool implements IReadTool {
 
       if (lineOffset < 0) {
         return await this.readTail(
-          safePath,
           args.path,
+          lines,
           lineOffset,
           effectiveLimit,
           requestedLines,
+          detectedEncoding,
         );
       }
       return await this.readForward(
-        safePath,
         args.path,
+        lines,
         lineOffset,
         effectiveLimit,
         requestedLines,
+        detectedEncoding,
       );
     } catch (error) {
       if (isTextDecodeError(error)) {
-        return { isError: true, output: notReadableFileOutput(args.path) };
+        return { isError: true, output: notUtf8DecodableFileOutput(args.path) };
       }
       return {
         isError: true,
@@ -304,11 +358,12 @@ export class ReadTool implements IReadTool {
   }
 
   private async readForward(
-    safePath: string,
     displayPath: string,
+    lines: AsyncIterable<string>,
     lineOffset: number,
     effectiveLimit: number,
     requestedLines: number,
+    detectedEncoding?: UtfTextEncoding,
   ): Promise<ExecutableToolResult> {
     const selectedEntries: ReadLineEntry[] = [];
     const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
@@ -316,7 +371,7 @@ export class ReadTool implements IReadTool {
     let maxLinesReached = false;
     let collectionClosed = false;
 
-    for await (const rawLine of this.fs.readLines(safePath, { errors: 'strict' })) {
+    for await (const rawLine of lines) {
       if (containsNulByte(rawLine)) {
         return { isError: true, output: notReadableFileOutput(displayPath) };
       }
@@ -357,22 +412,24 @@ export class ReadTool implements IReadTool {
       startLine: selectedEntries.length > 0 ? lineOffset : 0,
       totalLines: currentLineNo,
       requestedLines,
+      detectedEncoding,
     });
   }
 
   private async readTail(
-    safePath: string,
     displayPath: string,
+    lines: AsyncIterable<string>,
     lineOffset: number,
     effectiveLimit: number,
     requestedLines: number,
+    detectedEncoding?: UtfTextEncoding,
   ): Promise<ExecutableToolResult> {
     const tailCount = Math.abs(lineOffset);
     const entries: ReadLineEntry[] = [];
     const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
     let currentLineNo = 0;
 
-    for await (const rawLine of this.fs.readLines(safePath, { errors: 'strict' })) {
+    for await (const rawLine of lines) {
       if (containsNulByte(rawLine)) {
         return { isError: true, output: notReadableFileOutput(displayPath) };
       }
@@ -393,6 +450,7 @@ export class ReadTool implements IReadTool {
       effectiveLimit,
       totalLines: currentLineNo,
       requestedLines,
+      detectedEncoding,
     });
   }
 
@@ -402,6 +460,7 @@ export class ReadTool implements IReadTool {
     effectiveLimit: number;
     totalLines: number;
     requestedLines: number;
+    detectedEncoding?: UtfTextEncoding;
   }): ExecutableToolResult {
     const lineEndingStyle = lineEndingStyleFromFlags(input.lineEndingFlags);
     let renderedCandidates = input.entries.slice(0, input.effectiveLimit).map((entry) => {
@@ -447,6 +506,7 @@ export class ReadTool implements IReadTool {
       startLine: renderedCandidates[0]?.entry.lineNo ?? 0,
       totalLines: input.totalLines,
       requestedLines: input.requestedLines,
+      detectedEncoding: input.detectedEncoding,
     });
   }
 
@@ -481,6 +541,11 @@ export class ReadTool implements IReadTool {
     if (input.lineEndingStyle === 'mixed') {
       parts.push(
         'Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.',
+      );
+    }
+    if (input.detectedEncoding !== undefined) {
+      parts.push(
+        `Detected file encoding: ${encodingDisplayName(input.detectedEncoding)}; content transcoded to UTF-8 for display. Edit and Write expect UTF-8 — convert the file's encoding first (e.g. \`iconv\` via Bash).`,
       );
     }
     return parts.join(' ');

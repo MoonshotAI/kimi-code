@@ -28,6 +28,7 @@ type CreateKimiDeviceId = typeof createKimiDeviceIdFn;
 
 const mocks = vi.hoisted(() => ({
   kimiHarnessConstructor: vi.fn(),
+  kimiHarnessV2Constructor: vi.fn(),
   harnessEnsureConfigFile: vi.fn(),
   harnessGetConfig: vi.fn(async () => ({
     providers: {},
@@ -36,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   })),
   harnessGetCachedAccessToken: vi.fn(),
   harnessExportSession: vi.fn(),
+  harnessClose: vi.fn(async () => {}),
   harnessTrack: vi.fn(),
   createKimiDeviceId: vi.fn<CreateKimiDeviceId>(() => 'device-1'),
   initializeTelemetry: vi.fn(),
@@ -49,26 +51,33 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
+  const createFakeHarness = (options: { readonly homeDir?: string } | undefined) => {
+    const homeDir = options?.homeDir ?? '/tmp/kimi-export-home';
+    if (mocks.harnessCreatesDeviceIdOnConstruction) {
+      mocks.createKimiDeviceId(homeDir);
+    }
+    return {
+      homeDir,
+      auth: {
+        getCachedAccessToken: mocks.harnessGetCachedAccessToken,
+      },
+      ensureConfigFile: mocks.harnessEnsureConfigFile,
+      getConfig: mocks.harnessGetConfig,
+      track: mocks.harnessTrack,
+      exportSession: mocks.harnessExportSession,
+      close: mocks.harnessClose,
+    };
+  };
   return {
     ...actual,
     resolveKimiHome: mocks.resolveKimiHome,
     createKimiHarness: (...args: unknown[]) => {
-      const options = args[0] as { readonly homeDir?: string } | undefined;
-      const homeDir = options?.homeDir ?? '/tmp/kimi-export-home';
-      if (mocks.harnessCreatesDeviceIdOnConstruction) {
-        mocks.createKimiDeviceId(homeDir);
-      }
       mocks.kimiHarnessConstructor(...args);
-      return {
-        homeDir,
-        auth: {
-          getCachedAccessToken: mocks.harnessGetCachedAccessToken,
-        },
-        ensureConfigFile: mocks.harnessEnsureConfigFile,
-        getConfig: mocks.harnessGetConfig,
-        track: mocks.harnessTrack,
-        exportSession: mocks.harnessExportSession,
-      };
+      return createFakeHarness(args[0] as { readonly homeDir?: string } | undefined);
+    },
+    createKimiHarnessV2: (...args: unknown[]) => {
+      mocks.kimiHarnessV2Constructor(...args);
+      return createFakeHarness(args[0] as { readonly homeDir?: string } | undefined);
     },
   };
 });
@@ -93,10 +102,14 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
 }));
 
 beforeEach(() => {
+  // Pin the legacy engine so the default-deps cases keep exercising the legacy
+  // SDK harness this suite asserts on; the routing cases below re-stub it.
+  vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
   tmp = mkdtempSync(join(tmpdir(), 'kimi-export-'));
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(tmp, { recursive: true, force: true });
   vi.clearAllMocks();
   mocks.harnessGetConfig.mockResolvedValue({
@@ -513,6 +526,66 @@ describe('kimi export', () => {
     expect(mocks.harnessTrack).toHaveBeenCalledWith('first_launch');
     expect(mocks.initializeTelemetry.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.harnessTrack.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('builds the v2 harness by default', async () => {
+    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '');
+    const program = new Command('kimi');
+    const output = join(tmp, 'v2-engine.zip');
+    mocks.harnessExportSession.mockResolvedValue(makeResult('ses_v2_engine', output));
+
+    registerExportCommand(program, {
+      cwd: () => tmp,
+      stdout: {
+        write: () => true,
+      },
+      stderr: {
+        write: () => true,
+      },
+      exit: ((code: number) => {
+        throw new ExitCalled(code);
+      }) as ExportDeps['exit'],
+    });
+
+    await program.parseAsync(['node', 'kimi', 'export', 'ses_v2_engine', '--output', output], {
+      from: 'node',
+    });
+
+    expect(mocks.kimiHarnessV2Constructor).toHaveBeenCalledTimes(1);
+    expect(mocks.kimiHarnessConstructor).not.toHaveBeenCalled();
+    expect(mocks.harnessExportSession).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'ses_v2_engine', outputPath: output }),
+    );
+  });
+
+  it('builds the legacy harness when the legacy flag is truthy', async () => {
+    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
+    const program = new Command('kimi');
+    const output = join(tmp, 'legacy-engine.zip');
+    mocks.harnessExportSession.mockResolvedValue(makeResult('ses_legacy_engine', output));
+
+    registerExportCommand(program, {
+      cwd: () => tmp,
+      stdout: {
+        write: () => true,
+      },
+      stderr: {
+        write: () => true,
+      },
+      exit: ((code: number) => {
+        throw new ExitCalled(code);
+      }) as ExportDeps['exit'],
+    });
+
+    await program.parseAsync(['node', 'kimi', 'export', 'ses_legacy_engine', '--output', output], {
+      from: 'node',
+    });
+
+    expect(mocks.kimiHarnessConstructor).toHaveBeenCalledTimes(1);
+    expect(mocks.kimiHarnessV2Constructor).not.toHaveBeenCalled();
+    expect(mocks.harnessExportSession).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'ses_legacy_engine', outputPath: output }),
     );
   });
 });

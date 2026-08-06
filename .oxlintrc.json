@@ -166,6 +166,7 @@
   ],
   "ignorePatterns": [
     "dist/",
+    "dist-web/",
     "coverage/",
     "node_modules/",
     "apps/*/scripts/",

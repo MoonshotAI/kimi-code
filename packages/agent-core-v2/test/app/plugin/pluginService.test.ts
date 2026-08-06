@@ -58,7 +58,12 @@ function makeHost(
     stubPair(IProviderService, providers),
     stubPair(ISkillDiscovery, {
       _serviceBrand: undefined,
-      discover: async () => ({ skills: [], skipped: [], scannedRoots: [] }),
+      discover: async () => ({
+        skills: [],
+        skipped: [],
+        scannedRoots: [],
+        scannedDirectories: [],
+      }),
     } satisfies ISkillDiscovery),
   ]);
 }
