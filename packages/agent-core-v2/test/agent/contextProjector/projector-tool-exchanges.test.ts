@@ -615,10 +615,29 @@ describe('projector tool-exchange normalization', () => {
       expect(repairPayloads(warnings)).toEqual([]);
     });
 
-    it('keeps a message whose think block has real content', () => {
+    it('drops a message whose only sendable part is an unencrypted think block', () => {
       const history = [user('u1'), thinkingAssistant([{ type: 'think', think: 'real reasoning' }])];
-      expect(shape(history)).toEqual(['user', 'assistant']);
-      expect(repairPayloads(warnings)).toEqual([]);
+      expect(shape(history)).toEqual(['user']);
+      expect(repairPayloads(warnings)).toEqual([
+        expect.objectContaining({ vacuousDropped: 1 }),
+      ]);
+    });
+
+    it('drops a thinking-only assistant sealed after an interrupted step (ESC cancel)', () => {
+      // A step cancelled mid-stream (ESC) seals a partial assistant that holds
+      // only a thinking fragment; projecting it into the request would produce
+      // an assistant message with neither content nor tool_calls and trip the
+      // provider's "content or tool_calls must be set" validation.
+      const history = [
+        user('u1'),
+        thinkingAssistant([{ type: 'think', think: 'partial reasoning before cancel' }]),
+        reminder('The previous turn was interrupted by the user before completion'),
+        user('continue'),
+      ];
+      expect(shape(history)).toEqual(['user', 'user', 'user']);
+      expect(repairPayloads(warnings)).toEqual([
+        expect.objectContaining({ vacuousDropped: 1 }),
+      ]);
     });
 
     it('keeps a signed think block even when its text is empty', () => {
