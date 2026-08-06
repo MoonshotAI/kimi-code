@@ -285,6 +285,12 @@ describe('kimi-cu entry', () => {
     );
   });
 
+  it('labels the Windows capability consistently with its installed plugin', () => {
+    expect(createKimiCuEntry(makeCtx({ platform: 'win32', arch: 'x64' })).displayName).toBe(
+      'Kimi Computer Use for Windows',
+    );
+  });
+
   it('detects the Windows plugin and signed runtime through doctor', async () => {
     const plugins = fakePlugins([
       { id: 'kimi-cu-win', enabled: true, state: 'ok', version: '0.2.14' },

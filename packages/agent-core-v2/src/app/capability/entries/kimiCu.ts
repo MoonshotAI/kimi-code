@@ -704,7 +704,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
   return {
     id: 'kimi-cu',
     pluginId: WINDOWS_PLUGIN.id,
-    displayName: 'Kimi Computer Use',
+    displayName: 'Kimi Computer Use for Windows',
     description:
       'Windows GUI automation — read app UIs and click, type, scroll, and drag in desktop apps.',
     supported,
