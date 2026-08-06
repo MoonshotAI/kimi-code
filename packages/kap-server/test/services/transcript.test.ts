@@ -1577,6 +1577,40 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
+  it('projects prompt.steered media content to the wire shape (no daemon ref or path leak)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [
+          { type: 'text', text: 'look at this' },
+          { type: 'text', text: '<image path="/abs/session/media/f_img1.png"></image>' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_img1?path=%2Fabs%2Fsession%2Fmedia%2Ff_img1.png' },
+          },
+        ],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+
+    // The upload pair folds into one protocol-shaped media part; the internal
+    // `kimi-file://` URL and the absolute materialization path never land in
+    // the prompt entity.
+    const prompt = tx.getPrompt('p1');
+    expect(prompt?.content).toEqual([
+      { type: 'text', text: 'look at this' },
+      { type: 'image', source: { kind: 'file', file_id: 'f_img1' } },
+    ]);
+    expect(JSON.stringify(prompt)).not.toContain('kimi-file://');
+    expect(JSON.stringify(prompt)).not.toContain('/abs/session');
+  });
+
   it('readColdSnapshot answers empty for path-hostile agent ids without touching disk', async () => {
     const service = new TranscriptService({
       homeDir: '/nonexistent-home',

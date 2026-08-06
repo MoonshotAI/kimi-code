@@ -24,11 +24,7 @@ import {
   IFileService,
   ISessionMetadata,
   buildDaemonFileUrl,
-  buildKimiFileUrl,
   buildMediaPathTag,
-  foldMediaPathTagRefs,
-  parseDaemonFileUrl,
-  parseKimiFileUrl,
   promptMetadataTextFromContentParts,
   ProfileError,
   type ContentPart,
@@ -60,6 +56,7 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
+import { projectPromptContentParts } from '../services/messages/messageProjection';
 import {
   promptAbortResponseSchema,
   promptListResponseSchema,
@@ -429,56 +426,18 @@ function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {
   const status = prompt.state === 'running' || prompt.state === 'steered'
     ? 'running'
     : prompt.state === 'blocked' ? 'blocked' : 'queued';
-  // User prompts fold the upload pair (`<media path>` tag + daemon-ref media
-  // part) into the single media part, mirroring the message projection: the
-  // tag is machine markup and would otherwise leak the materialization path
-  // to REST callers while rendering the same upload twice.
-  const content = prompt.message.role === 'user'
-    ? foldMediaPathTagRefs(prompt.message.content).parts
-    : prompt.message.content;
+  // The prompt queue holds user prompts only; the shared projection folds the
+  // upload pair (`<media path>` tag + daemon-ref media part) into the single
+  // media part, mirroring the message projection: the tag is machine markup
+  // and would otherwise leak the materialization path to REST callers while
+  // rendering the same upload twice.
   return {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,
     status,
-    content: corePartsToProtocol(content),
+    content: projectPromptContentParts(prompt.message.content),
     created_at: prompt.createdAt,
   };
-}
-
-function corePartsToProtocol(content: readonly ContentPart[]): PromptSubmission['content'] {
-  const parts: PromptSubmission['content'] = [];
-  for (const part of content) {
-    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
-    else if (part.type === 'image_url') {
-      // Same daemon-reference rule as `video_url` below: an internal
-      // `kimi-file://<id>?path=…` reference projects back to the daemon
-      // upload it came from — the materialization path never leaks to the
-      // client.
-      const kimiFile = parseDaemonFileUrl(part.imageUrl.url);
-      if (kimiFile !== undefined) {
-        parts.push({ type: 'image', source: { kind: 'file', file_id: kimiFile.fileId } });
-        continue;
-      }
-      const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
-      parts.push(match === null
-        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
-        : { type: 'image', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
-    } else if (part.type === 'video_url') {
-      // An internal `kimi-file://<id>?path=…` reference projects back to the
-      // daemon upload it came from — the materialization path never leaks to
-      // the client.
-      const kimiFile = parseKimiFileUrl(part.videoUrl.url);
-      if (kimiFile !== undefined) {
-        parts.push({ type: 'video', source: { kind: 'file', file_id: kimiFile.fileId } });
-        continue;
-      }
-      const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
-      parts.push(match === null
-        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
-        : { type: 'video', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
-    }
-  }
-  return parts;
 }
 
 function contentToCoreParts(content: PromptSubmission['content']): ContentPart[] {
@@ -780,7 +739,7 @@ async function resolvePromptMediaFiles(
       const mediaPath = await materializePromptMedia(file, resolveMediaStore(), cacheDir);
       content.push({
         type: 'video',
-        source: { kind: 'url', url: buildKimiFileUrl(file.meta.id, mediaPath) },
+        source: { kind: 'url', url: buildDaemonFileUrl(file.meta.id, mediaPath) },
       });
       changed = true;
     }

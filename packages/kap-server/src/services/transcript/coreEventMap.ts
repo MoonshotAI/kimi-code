@@ -93,6 +93,7 @@ import type {
 } from '@moonshot-ai/transcript';
 
 import { toLegacyPhase } from '../legacyStatus/legacyStatus';
+import { projectPromptContentParts } from '../messages/messageProjection';
 
 // ---------------------------------------------------------------------------
 // Interaction view (structural — the kernel's `Interaction` narrowed to the
@@ -1344,11 +1345,15 @@ export class AgentTranscriptProjector {
    */
   private onPromptSteered(event: PromptSteeredEvent): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
+    // The event carries raw engine content parts (daemon refs with
+    // `kimi-file://…?path=<abs>` plus the paired `<media path>` tag); the
+    // entity stores the wire-projected form, so the internal URL and the
+    // materialization path never reach transcript consumers.
     const active = this.upsertPrompt(event.activePromptId, (prev) => ({
       promptId: event.activePromptId,
       status: prev?.status ?? 'running',
       userMessageId: prev?.userMessageId,
-      content: event.content,
+      content: projectPromptContentParts(event.content),
       createdAt: prev?.createdAt ?? event.steeredAt,
       finishedAt: prev?.finishedAt,
       steeredAt: event.steeredAt,

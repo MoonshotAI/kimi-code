@@ -99,6 +99,7 @@ import {
 
 import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';
+import { projectPromptContentParts } from '../../../services/messages/messageProjection';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
@@ -1096,6 +1097,20 @@ export class SessionEventBroadcaster {
       // covers live fan-out and every replay path (memory tail + cursor read).
       const { promptAttachments: _internal, ...wireFields } = event;
       wireEvent = { ...wireFields, agentId, sessionId } as unknown as Event;
+    } else if (event.type === 'prompt.steered') {
+      // `content` arrives as raw engine content parts: daemon references carry
+      // `kimi-file://…?path=<abs>` and a paired `<media path>` tag text part.
+      // Project to the declared wire shape (`promptSteeredEventSchema` content
+      // is `messageContentSchema`): the pair folds into one `{kind:'file'}`
+      // part, so neither the internal URL nor the materialization path leaves
+      // the process. Projecting before the journal write covers live fan-out
+      // and every replay path with one mapping.
+      wireEvent = {
+        ...event,
+        content: projectPromptContentParts(event.content),
+        agentId,
+        sessionId,
+      } as unknown as Event;
     } else {
       wireEvent = { ...event, agentId, sessionId } as unknown as Event;
     }

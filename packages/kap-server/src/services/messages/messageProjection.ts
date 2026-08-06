@@ -26,7 +26,7 @@
  * passes through verbatim.
  */
 
-import { foldMediaPathTagRefs, parseDaemonFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { foldMediaPathTagRefs, parseDaemonFileUrl, type ContentPart, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 
@@ -121,6 +121,44 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
   }
 
   return base;
+}
+
+/**
+ * Prompt content (engine kosong parts) → the v1 wire `messageContentSchema`
+ * shape. Shared by every prompt-queue surface — the REST prompt list, the
+ * `prompt.steered` session event, and the transcript prompt entity — so the
+ * upload pair (`<media path>` tag + daemon-ref media part) folds into the
+ * single media part and a daemon reference projects back to
+ * `{ kind: 'file', file_id }`: neither the internal `kimi-file://` URL nor
+ * the materialization path ever reaches a client.
+ */
+export function projectPromptContentParts(content: readonly ContentPart[]): MessageContent[] {
+  const parts: MessageContent[] = [];
+  for (const part of foldMediaPathTagRefs(content).parts) {
+    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
+    else if (part.type === 'image_url') {
+      const ref = parseDaemonFileUrl(part.imageUrl.url);
+      if (ref !== undefined) {
+        parts.push({ type: 'image', source: { kind: 'file', file_id: ref.fileId } });
+        continue;
+      }
+      const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
+      parts.push(match === null
+        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
+        : { type: 'image', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
+    } else if (part.type === 'video_url') {
+      const ref = parseDaemonFileUrl(part.videoUrl.url);
+      if (ref !== undefined) {
+        parts.push({ type: 'video', source: { kind: 'file', file_id: ref.fileId } });
+        continue;
+      }
+      const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
+      parts.push(match === null
+        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
+        : { type: 'video', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
+    }
+  }
+  return parts;
 }
 
 export function toProtocolMessage(
