@@ -96,7 +96,7 @@ export class AgentRPCService implements IAgentRPCService {
       }
     }
     await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
-    const handle = await this.promptService.enqueue({ message: {
+    const handle = await this.promptService.enqueue({ id: payload.promptId, message: {
       role: 'user',
       content: [...payload.input],
       toolCalls: [],

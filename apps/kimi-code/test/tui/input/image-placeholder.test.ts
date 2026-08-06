@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,7 @@ import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
   extractMediaAttachments,
+  makeExtractionResendable,
   rewriteMediaPlaceholders,
 } from '#/tui/utils/image-placeholder';
 import { getCacheDir } from '#/utils/paths';
@@ -232,43 +233,53 @@ describe('extractMediaAttachments', () => {
     expect(r.parts[0]?.type).toBe('image_url');
   });
 
-  it('expands an uploaded (fileId) image into an <image path> tag plus a kimi-file reference', () => {
+  it('expands an uploaded (fileId) image into a bare kimi-file reference', () => {
     const { cleanup } = setupTempCache();
     try {
-      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
       const store = new ImageAttachmentStore();
-      const att = store.addImage(bytes, 'image/png', 640, 480, undefined, 'file-1');
+      const att = store.addImage(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), 'image/png', 640, 480, undefined, 'file-1');
       const r = extractMediaAttachments(`describe ${att.placeholder} please`, store);
       expect(r.hasMedia).toBe(true);
       expect(r.imageAttachmentIds).toEqual([1]);
-      expect(r.parts).toHaveLength(4);
-      expect(r.parts[0]).toEqual({ type: 'text', text: 'describe ' });
-      const tag = r.parts[1];
-      if (tag?.type !== 'text') throw new Error('expected <image path> text part');
-      const m = /^<image path="([^"]+)"><\/image>$/.exec(tag.text);
-      if (!m) throw new Error(`no image tag found in: ${tag.text}`);
-      const cachePath = m[1]!;
-      expect(cachePath.startsWith(getCacheDir())).toBe(true);
-      expect(cachePath.endsWith('.png')).toBe(true);
-      // The cache copy carries the attachment bytes the reference resolves to.
-      expect(new Uint8Array(readFileSync(cachePath))).toEqual(bytes);
-      const image = r.parts[2];
-      if (image?.type !== 'image_url') throw new Error('expected image_url part');
-      // The `?path=` query is the URL-encoded cache path.
-      expect(image.imageUrl.url).toBe(
-        `kimi-file://file-1?path=${encodeURIComponent(cachePath)}`,
-      );
-      expect(parseDaemonFileUrl(image.imageUrl.url)).toEqual({
-        fileId: 'file-1',
-        path: cachePath,
-      });
-      expect(r.parts[3]).toEqual({ type: 'text', text: ' please' });
+      // No tag text part and no `?path=`: the engine's prompt intake
+      // materializes the session copy and authors the paired tag.
+      expect(r.parts).toEqual([
+        { type: 'text', text: 'describe ' },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file-1' } },
+        { type: 'text', text: ' please' },
+      ]);
+      expect(parseDaemonFileUrl('kimi-file://file-1')).toEqual({ fileId: 'file-1' });
+      // The edge stages no local copy for an uploaded image — the cache dir
+      // is never even created.
+      expect(r.stagingPaths).toEqual([]);
+      expect(existsSync(getCacheDir())).toBe(false);
     } finally {
       cleanup();
     }
   });
 
-  it('emits the compression caption before the tag and kimi-file reference', () => {
+  it('rebuilds an uploaded image as inline bytes for a new-session resend', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+      const store = new ImageAttachmentStore();
+      const att = store.addImage(bytes, 'image/png', 640, 480, undefined, 'file-1');
+      const extraction = extractMediaAttachments(att.placeholder, store);
+
+      const resend = makeExtractionResendable(extraction);
+
+      expect(resend.imageAttachmentIds).toEqual([]);
+      expect(resend.parts).toContainEqual({
+        type: 'image_url',
+        imageUrl: { url: 'data:image/png;base64,iVBORw==' },
+      });
+      expect(resend.stagingPaths).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('emits the compression caption before the bare kimi-file reference', () => {
     const { cleanup } = setupTempCache();
     try {
       const store = new ImageAttachmentStore();
@@ -287,48 +298,25 @@ describe('extractMediaAttachments', () => {
         'file-2',
       );
       const r = extractMediaAttachments(att.placeholder, store);
-      expect(r.parts).toHaveLength(3);
+      expect(r.parts).toHaveLength(2);
       const caption = r.parts[0];
       if (caption?.type !== 'text') throw new Error('expected leading text part');
       expect(caption.text).toContain('Image compressed');
-      const tag = r.parts[1];
-      if (tag?.type !== 'text') throw new Error('expected <image path> text part');
-      expect(tag.text).toMatch(/^<image path="[^"]+"><\/image>$/);
-      const image = r.parts[2];
-      if (image?.type !== 'image_url') throw new Error('expected image_url part');
-      expect(image.imageUrl.url.startsWith('kimi-file://file-2?path=')).toBe(true);
+      expect(r.parts[1]).toEqual({
+        type: 'image_url',
+        imageUrl: { url: 'kimi-file://file-2' },
+      });
     } finally {
       cleanup();
     }
   });
 
-  it('falls back to the inline base64 form when the cache copy for an uploaded image fails', () => {
+  it('keeps expanding an uploaded image as a bare reference when the cache dir is broken', () => {
     const { cleanup } = setupTempCache();
     try {
-      // Break the cache dir: a file at its path makes the mkdir fail, so the
-      // cache copy of the uploaded bytes cannot be written.
-      writeFileSync(getCacheDir(), 'occupied');
-      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-      const store = new ImageAttachmentStore();
-      const att = store.addImage(bytes, 'image/png', 640, 480, undefined, 'file-1');
-      const r = extractMediaAttachments(`describe ${att.placeholder} please`, store);
-      expect(r.hasMedia).toBe(true);
-      expect(r.imageAttachmentIds).toEqual([1]);
-      // Same shape a paste-time upload failure produces: no <image path> tag,
-      // no kimi-file reference — the message still goes out, inline.
-      expect(r.parts).toEqual([
-        { type: 'text', text: 'describe ' },
-        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,iVBORw==' } },
-        { type: 'text', text: ' please' },
-      ]);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it('continues extraction for other attachments after one uploaded image falls back to inline', () => {
-    const { cleanup } = setupTempCache();
-    try {
+      // A file at the cache dir path breaks local cache copies, but neither
+      // form stages one: an uploaded image expands to a bare reference and
+      // the inline (no fileId) form embeds its bytes.
       writeFileSync(getCacheDir(), 'occupied');
       const store = new ImageAttachmentStore();
       const uploaded = store.addImage(new Uint8Array([1]), 'image/png', 10, 10, undefined, 'file-1');
@@ -336,7 +324,7 @@ describe('extractMediaAttachments', () => {
       const r = extractMediaAttachments(`${uploaded.placeholder} and ${plain.placeholder}`, store);
       expect(r.imageAttachmentIds).toEqual([1, 2]);
       expect(r.parts).toEqual([
-        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AQ==' } },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file-1' } },
         { type: 'text', text: ' and ' },
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,Ag==' } },
       ]);

@@ -627,6 +627,8 @@ export interface TurnStartedEvent {
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
+  /** The prompt record id when the turn was opened by a prompt submission. */
+  readonly promptId?: string;
 }
 
 export interface TurnEndedEvent {

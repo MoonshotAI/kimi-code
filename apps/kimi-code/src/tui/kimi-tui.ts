@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -371,6 +372,9 @@ export class KimiTUI {
           ...fileIds.map((fileId) => this.harness.deleteFile(fileId).catch(() => undefined)),
           ...paths.map((path) => unlink(path).catch(() => undefined)),
         ]);
+      },
+      warn: (message) => {
+        this.track('staging_lease_invariant', { message });
       },
     });
     const tuiOptions: KimiTUIOptions = {
@@ -1287,10 +1291,11 @@ export class KimiTUI {
     hasMedia: boolean;
     imageAttachmentIds: readonly number[];
     videoAttachmentIds: readonly number[];
+    imageSnapshots?: readonly unknown[];
   }): boolean {
     if (!extraction.hasMedia) return true;
     if (
-      extraction.imageAttachmentIds.length > 0 &&
+      (extraction.imageAttachmentIds.length > 0 || (extraction.imageSnapshots?.length ?? 0) > 0) &&
       !this.supportsCurrentModelCapability('image_in')
     ) {
       this.showError('Current model does not support image input.');
@@ -1455,44 +1460,41 @@ export class KimiTUI {
     this.beginSessionRequest();
 
     const sdkInput = options?.parts ?? input;
+    const goalActive = this.state.appState.goal?.status === 'active';
+    // A plain prompt submission carrying staged media gets a client-chosen
+    // prompt id: the engine echoes it on the consuming turn's `turn.started`
+    // (`promptId`), so the lease binds exactly instead of through the origin
+    // heuristic. The goal-steer path binds its lease explicitly below, so it
+    // gets no id.
+    const submissionId =
+      !goalActive && (imageAttachmentIds !== undefined || (options?.stagingPaths?.length ?? 0) > 0)
+        ? randomUUID()
+        : undefined;
     const stagingLease = this.staging.create(
       imageAttachmentIds ?? [],
       options?.stagingPaths ?? [],
       'user',
+      submissionId,
     );
     // While a goal is being pursued the engine holds its active turn across the
     // whole continuation loop, so a fresh prompt races the goal driver at every
     // continuation boundary and is rejected with `turn.agent_busy`, dropping
     // the message. Steer instead: the engine buffers it into the running goal
     // turn, or launches a turn of its own if the loop just ended.
-    if (this.state.appState.goal?.status === 'active') {
+    if (goalActive) {
       if (runningTurnId !== undefined) this.staging.bindToTurn(stagingLease, runningTurnId);
-      this.staging.track(
-        session
-          .steer(sdkInput)
-          .catch((error: unknown) => {
-            const message = formatErrorMessage(error);
-            // Same reset as the prompt path: beginSessionRequest already moved the
-            // TUI to the waiting phase, and no turn events may follow a failed
-            // steer (e.g. the session is gone), which would leave the UI stuck
-            // queueing input behind a request that never completes.
-            this.failSessionRequest(`Failed to steer: ${message}`);
-            if (stagingLease?.turnId === undefined) this.staging.release(stagingLease);
-          })
-          .then(() => undefined),
-      );
+      this.staging.trackDispatch(stagingLease, session.steer(sdkInput), (error) => {
+        // Same reset as the prompt path: beginSessionRequest already moved the
+        // TUI to the waiting phase, and no turn events may follow a failed
+        // steer (e.g. the session is gone), which would leave the UI stuck
+        // queueing input behind a request that never completes.
+        this.failSessionRequest(`Failed to steer: ${formatErrorMessage(error)}`);
+      });
       return;
     }
-    this.staging.track(
-      session
-        .prompt(sdkInput)
-        .catch((error: unknown) => {
-          const message = formatErrorMessage(error);
-          this.failSessionRequest(`Failed to send: ${message}`);
-          if (stagingLease?.turnId === undefined) this.staging.release(stagingLease);
-        })
-        .then(() => undefined),
-    );
+    this.staging.trackDispatch(stagingLease, session.prompt(sdkInput, { promptId: submissionId }), (error) => {
+      this.failSessionRequest(`Failed to send: ${formatErrorMessage(error)}`);
+    });
   }
 
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void {
@@ -1519,15 +1521,12 @@ export class KimiTUI {
       rewrite.stagingPaths,
       'skill_activation',
     );
-    this.staging.track(
-      session
-        .activateSkill(skillName, rewrite.text)
-        .catch((error: unknown) => {
-          const message = formatErrorMessage(error);
-          this.failSessionRequest(`Skill "${skillName}" failed: ${message}`);
-          if (stagingLease?.turnId === undefined) this.staging.release(stagingLease);
-        })
-        .then(() => undefined),
+    this.staging.trackDispatch(
+      stagingLease,
+      session.activateSkill(skillName, rewrite.text),
+      (error) => {
+        this.failSessionRequest(`Skill "${skillName}" failed: ${formatErrorMessage(error)}`);
+      },
     );
   }
 
@@ -1557,15 +1556,14 @@ export class KimiTUI {
       rewrite.stagingPaths,
       'plugin_command',
     );
-    this.staging.track(
-      session
-        .activatePluginCommand(pluginId, commandName, rewrite.text)
-        .catch((error: unknown) => {
-          const message = formatErrorMessage(error);
-          this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
-          if (stagingLease?.turnId === undefined) this.staging.release(stagingLease);
-        })
-        .then(() => undefined),
+    this.staging.trackDispatch(
+      stagingLease,
+      session.activatePluginCommand(pluginId, commandName, rewrite.text),
+      (error) => {
+        this.failSessionRequest(
+          `Command "${pluginId}:${commandName}" failed: ${formatErrorMessage(error)}`,
+        );
+      },
     );
   }
 
@@ -1614,16 +1612,9 @@ export class KimiTUI {
     const stagingLease = this.staging.create(imageAttachmentIds, stagingPaths, 'user');
     const currentTurnId = this.streamingUI.getTurnContext().turnId;
     if (currentTurnId !== undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
-    this.staging.track(
-      session
-        .steer(combineSteerInput(input))
-        .catch((error: unknown) => {
-          const message = formatErrorMessage(error);
-          this.showError(`Failed to steer: ${message}`);
-          if (stagingLease?.turnId === undefined) this.staging.release(stagingLease);
-        })
-        .then(() => undefined),
-    );
+    this.staging.trackDispatch(stagingLease, session.steer(combineSteerInput(input)), (error) => {
+      this.showError(`Failed to steer: ${formatErrorMessage(error)}`);
+    });
   }
 
   // =========================================================================
@@ -1922,6 +1913,10 @@ export class KimiTUI {
   async setSession(session: Session): Promise<void> {
     const previous = this.unloadCurrentSession('switching session');
     await previous?.close();
+    // A session switch abandons the previous session's in-flight staging
+    // leases and retires its history-owned cache copies. Do this at the
+    // boundary so retired paths cannot accumulate until process shutdown.
+    this.staging.releaseAll();
     this.session = session;
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);

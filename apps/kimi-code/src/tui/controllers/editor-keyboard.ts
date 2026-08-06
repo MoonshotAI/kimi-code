@@ -541,16 +541,13 @@ export class EditorKeyboardController {
       },
     });
     const sessionDir = this.host.session?.summary?.sessionDir;
-    // v2 only: upload the final bytes to the daemon file store so submit-time
-    // expansion emits a `kimi-file://` reference instead of inline base64.
-    const fileId = await this.uploadImageToDaemonFileStore(
-      compressed.changed ? compressed.data : originalBytes,
-      compressed.changed ? compressed.mimeType : originalMime,
-    );
     // Dimensions come from the compression result, not parseImageMeta: the
     // compressor reports display space (EXIF orientation applied) — the space
     // the sent image, the caption, and ReadMediaFile region readback share —
     // while parseImageMeta reads the raw pre-rotation header.
+    // Persist the original BEFORE minting a daemon upload: when persistence
+    // fails the whole ingestion is abandoned, and an upload minted earlier
+    // would be orphaned (never attached, never deleted).
     const original = compressed.changed
       ? {
           path: await persistOriginalImage(
@@ -564,6 +561,12 @@ export class EditorKeyboardController {
           mime: originalMime,
         }
       : undefined;
+    // v2 only: upload the final bytes to the daemon file store so submit-time
+    // expansion emits a `kimi-file://` reference instead of inline base64.
+    const fileId = await this.uploadImageToDaemonFileStore(
+      compressed.changed ? compressed.data : originalBytes,
+      compressed.changed ? compressed.mimeType : originalMime,
+    );
     const completed = this.imageStore.completeImage(attachment, {
       bytes: compressed.changed ? compressed.data : originalBytes,
       mime: compressed.changed ? compressed.mimeType : originalMime,

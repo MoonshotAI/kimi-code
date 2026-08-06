@@ -224,6 +224,19 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(Array.isArray(list.body.data.queued)).toBe(true);
   });
 
+  it('honors a client-chosen prompt_id on submit', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      prompt_id: 'submission-1',
+    });
+    expect(submitted.body.code).toBe(0);
+    expect(submitted.body.data.prompt_id).toBe('submission-1');
+    expect(submitted.body.data.user_message_id).toBe('submission-1');
+  });
+
   it('rejects a stale file reference without creating the agent or mutating the model', async () => {
     const id = await createSession(home as string);
     const session = getLiveSessionById(server!.core.accessor, id);
@@ -303,10 +316,29 @@ describe('server-v2 /api/v1 prompts', () => {
     });
 
     // The `?path=` of that reference points at a materialized copy of the bytes
-    // in the session's own media dir (written during the submit), which the
-    // engine resolver falls back to when it cannot upload or inline the video.
+    // in the session's own media dir, written by the engine's prompt intake
+    // before the enqueue returns — the engine resolver falls back to it when
+    // it cannot upload or inline the video.
     const materialized = join(sessionMediaDir(server!, id), `${uploaded.data.id}.mp4`);
     expect(await readFile(materialized)).toEqual(videoBytes);
+
+    // Context memory carries the intake-authored pair: the synthesized
+    // `<video path>` tag text part and the daemon reference rewritten to the
+    // session-canonical path.
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const main = session!.accessor.get(IAgentLifecycleService).get('main')!;
+    const userMessage = main.accessor
+      .get(IAgentContextMemoryService)
+      .get()
+      .find((m) => m.role === 'user' && m.origin?.kind === 'user');
+    expect(userMessage?.content).toEqual([
+      { type: 'text', text: 'what happens in this video?' },
+      { type: 'text', text: `<video path="${materialized}"></video>` },
+      {
+        type: 'video_url',
+        videoUrl: { url: `kimi-file://${uploaded.data.id}?path=${encodeURIComponent(materialized)}` },
+      },
+    ]);
   });
 
   it('carries a compressed uploaded image into the prompt as an internal kimi-file reference', async () => {
@@ -521,8 +553,9 @@ describe('server-v2 /api/v1 prompts', () => {
       const mediaPath = join(cacheDir, `${uploaded.data.id}.png`);
       expect(await readFile(mediaPath)).toEqual(smallPng);
 
-      // The engine's prompt intake cannot repair the reference either (same
-      // read-only dir), so context memory keeps the cache-dir path.
+      // The engine's prompt intake performs the fallback (same read-only
+      // session dir) and authors the pair with the cache-dir path, so context
+      // memory carries it.
       const main = session.accessor.get(IAgentLifecycleService).get('main')!;
       const userMessage = main.accessor
         .get(IAgentContextMemoryService)

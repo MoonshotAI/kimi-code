@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
-import { extname, join } from 'node:path';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
@@ -24,14 +24,12 @@ import {
   IFileService,
   ISessionMetadata,
   buildDaemonFileUrl,
-  buildMediaPathTag,
   promptMetadataTextFromContentParts,
   ProfileError,
   type ContentPart,
   type PromptHandle,
   type PromptQueueSnapshot,
   ISessionContext,
-  ISessionMediaStore,
   resumeSessionById,
   ITelemetryService,
   applyPromptMetadataUpdate,
@@ -44,7 +42,6 @@ import {
   Error2,
   ErrorCodes,
   isModelAcceptedImageMime,
-  mediaExtensionForMime,
   normalizeImageMime,
   persistOriginalImage,
   resolveEffectiveImageMime,
@@ -253,10 +250,11 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
 
         // Media resolution runs BEFORE any control mutation, so a failed
         // submission leaves the session's controls untouched. Prompt videos
-        // and uploaded images are materialized to a local copy and carried
-        // into context as an internal `kimi-file://` reference; the engine
-        // resolves them to a provider form (upload / inline / path tag) at
-        // request time, so the edge no longer uploads.
+        // and uploaded images are carried into context as bare internal
+        // `kimi-file://` references; the engine's prompt intake materializes
+        // the session copy, authors the paired media-path tag, and resolves
+        // them to a provider form (upload / inline / path tag) at request
+        // time, so the edge no longer uploads.
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
         preparedMedia = await resolvePromptMediaFiles(
           req.body,
@@ -273,10 +271,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               const session = await resumeSessionById(core.accessor, session_id);
               if (session === undefined) return undefined;
               return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
-            },
-            resolveMediaStore: async () => {
-              const session = await resumeSessionById(core.accessor, session_id);
-              return session?.accessor.get(ISessionMediaStore);
             },
           },
         );
@@ -317,6 +311,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           sessionId: session_id,
         }, promptMetadataTextFromContentParts(parts));
         const handle = await resolved.prompt.enqueue({
+          id: req.body.prompt_id,
           message: {
             role: 'user',
             content: parts,
@@ -468,13 +463,6 @@ interface ResolvePromptMediaOptions {
    * the shared cache dir.
    */
   readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
-  /**
-   * Lazily resolve the session's media store for materializing uploaded
-   * image / video bytes — the copy the model re-opens with ReadMediaFile
-   * when the media cannot reach the provider. Unavailable or failing
-   * materialization falls back to the shared cache dir.
-   */
-  readonly resolveMediaStore?: () => Promise<ISessionMediaStore | undefined>;
   /** Report an `image_compress` event per compressed prompt image. */
   readonly telemetry?: ITelemetryService;
 }
@@ -523,15 +511,6 @@ async function resolvePromptMediaFiles(
       attachmentsDir = await options.resolveAttachmentsDir?.().catch(() => undefined);
     }
     return attachmentsDir ?? cacheDir;
-  };
-  let mediaStore: ISessionMediaStore | undefined;
-  let mediaStoreResolved = false;
-  const resolveMediaStore = async (): Promise<ISessionMediaStore | undefined> => {
-    if (!mediaStoreResolved) {
-      mediaStoreResolved = true;
-      mediaStore = await options.resolveMediaStore?.().catch(() => undefined);
-    }
-    return mediaStore;
   };
   const telemetryFor = (source: string): ImageCompressionTelemetry | undefined =>
     options.telemetry === undefined ? undefined : { client: options.telemetry, source };
@@ -701,14 +680,15 @@ async function resolvePromptMediaFiles(
             }),
           });
         }
-        // Like an uploaded video, the image enters context as an internal
-        // `kimi-file://<id>?path=<materialized path>` reference the engine
-        // resolves at request time, preceded by the `<image path>` tag text so
-        // the model always has a path it can re-open. When compression changed
-        // the bytes, the reference addresses a NEW daemon upload holding the
-        // final bytes — the client's original upload stays untouched. The
-        // re-save is an ordinary upload (no expiry): read models project its
-        // id, so it must keep serving bytes for the session's history.
+        // Like an uploaded video, the image enters context as a bare internal
+        // `kimi-file://<id>` reference: the engine's prompt intake
+        // materializes the session-canonical copy and authors the paired
+        // `<image path>` tag, then resolves the reference at request time.
+        // When compression changed the bytes, the reference addresses a NEW
+        // daemon upload holding the final bytes — the client's original
+        // upload stays untouched. The re-save is an ordinary upload (no
+        // expiry): read models project its id, so it must keep serving bytes
+        // for the session's history.
         let finalFile = file;
         if (compressed.changed) {
           const saved = await store.save(
@@ -722,25 +702,23 @@ async function resolvePromptMediaFiles(
           ownedFileIds.add(saved.id);
           finalFile = await store.get(saved.id);
         }
-        const mediaPath = await materializePromptMedia(finalFile, resolveMediaStore(), cacheDir);
-        content.push({ type: 'text', text: buildMediaPathTag('image', mediaPath) });
         content.push({
           type: 'image',
-          source: { kind: 'url', url: buildDaemonFileUrl(finalFile.meta.id, mediaPath) },
+          source: { kind: 'url', url: buildDaemonFileUrl(finalFile.meta.id) },
         });
         changed = true;
         continue;
       }
 
-      // Uploaded video: materialize a local copy the model can open as a
-      // fallback, and carry the upload into context as an internal
-      // `kimi-file://<id>?path=<materialized path>` reference. The engine
-      // resolves it to a provider form (upload / inline / `<video path>` tag) at
-      // request time, so the edge never uploads and never blocks on the provider.
-      const mediaPath = await materializePromptMedia(file, resolveMediaStore(), cacheDir);
+      // Uploaded video: carried into context as a bare internal
+      // `kimi-file://<id>` reference. The engine's prompt intake materializes
+      // the session copy and authors the paired `<video path>` tag, then
+      // resolves the reference to a provider form (upload / inline / tag) at
+      // request time, so the edge never uploads and never blocks on the
+      // provider.
       content.push({
         type: 'video',
-        source: { kind: 'url', url: buildDaemonFileUrl(file.meta.id, mediaPath) },
+        source: { kind: 'url', url: buildDaemonFileUrl(file.meta.id) },
       });
       changed = true;
     }
@@ -749,44 +727,6 @@ async function resolvePromptMediaFiles(
     await discard();
     throw error;
   }
-}
-
-/**
- * Materialize an upload for the prompt's media reference: the session's media
- * store first (the session-canonical copy the fork carries along), the shared
- * cache dir when the store is unavailable or its write fails — a read-only
- * session dir must not reject an otherwise-submittable prompt.
- */
-async function materializePromptMedia(
-  file: GetResult,
-  mediaStore: Promise<ISessionMediaStore | undefined>,
-  cacheDir: string,
-): Promise<string> {
-  const store = await mediaStore;
-  if (store !== undefined) {
-    const path = await store
-      .materialize({
-        fileId: file.meta.id,
-        size: file.meta.size,
-        name: file.meta.name,
-        mimeType: file.meta.media_type,
-        stream: () => file.stream(),
-      })
-      .catch(() => undefined);
-    if (path !== undefined) return path;
-  }
-  return materializeUploadToDir(file, cacheDir);
-}
-
-async function materializeUploadToDir(file: GetResult, dir: string): Promise<string> {
-  await mkdir(dir, { recursive: true });
-  const ext = extname(file.meta.name) || mediaExtensionForMime(file.meta.media_type) || '.bin';
-  const target = join(dir, `${file.meta.id}${ext}`);
-  const info = await stat(target).catch(() => undefined);
-  if (info?.size === file.meta.size) return target;
-
-  await pipeline(file.stream(), createWriteStream(target));
-  return target;
 }
 
 /**

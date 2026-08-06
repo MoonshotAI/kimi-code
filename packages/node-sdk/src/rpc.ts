@@ -76,6 +76,11 @@ export interface SessionPromptRpcInput {
    * `[]` clears the client portion.
    */
   readonly disabledTools?: readonly string[];
+  /**
+   * Client-chosen prompt record id, echoed on the consuming turn's
+   * `turn.started` (`promptId`). Honored by the v2 RPC client only.
+   */
+  readonly promptId?: string;
 }
 
 export interface SessionIdRpcInput {

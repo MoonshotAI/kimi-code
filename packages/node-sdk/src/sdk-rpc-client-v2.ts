@@ -1591,7 +1591,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async prompt(input: SessionPromptRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
-    await agent.prompt({ input: input.input, disabledTools: input.disabledTools });
+    await agent.prompt({
+      input: input.input,
+      disabledTools: input.disabledTools,
+      promptId: input.promptId,
+    });
   }
 
   /**

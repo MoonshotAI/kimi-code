@@ -13,6 +13,11 @@
  * text part is machine markup paired with its daemon-ref media part
  * (`foldMediaPathTagRefs`): the tag never reaches the prompt text, and the
  * referenced media rides as {@link TurnStartedEvent.promptAttachments}.
+ * `turn.started` also echoes the prompt record id as
+ * {@link TurnStartedEvent.promptId} when the turn was opened by a prompt
+ * submission, so submitters can bind their own bookkeeping (e.g. staged
+ * uploads) to the exact turn that consumed them; turns opened any other way
+ * (retry, goal continuation, …) leave it absent.
  */
 
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
@@ -49,6 +54,7 @@ export interface TurnStartedEvent {
   readonly origin: PromptOrigin;
   readonly prompt?: string;
   readonly promptAttachments?: readonly TurnPromptAttachment[];
+  readonly promptId?: string;
 }
 
 export function turnPromptText(input: readonly ContentPart[]): string | undefined {

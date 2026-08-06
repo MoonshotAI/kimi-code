@@ -1091,10 +1091,11 @@ export class SessionEventBroadcaster {
     if (event.type === 'turn.started') {
       // `promptAttachments` is an internal transcript-projection input, not part
       // of the v1 wire contract (`turnStartedEventSchema` stops at
-      // {type, turnId, origin, prompt?}). Strip it at the edge so the payload —
-      // video-prompt turns included — keeps exactly the pre-attachment field
-      // set. The journal records this same stripped envelope, so the one strip
-      // covers live fan-out and every replay path (memory tail + cursor read).
+      // {type, turnId, origin, prompt?, promptId?}). Strip it at the edge so the
+      // payload — video-prompt turns included — keeps exactly the
+      // pre-attachment field set (plus the optional `promptId` echo). The
+      // journal records this same stripped envelope, so the one strip covers
+      // live fan-out and every replay path (memory tail + cursor read).
       const { promptAttachments: _internal, ...wireFields } = event;
       wireEvent = { ...wireFields, agentId, sessionId } as unknown as Event;
     } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued') {

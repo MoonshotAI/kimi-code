@@ -825,10 +825,42 @@ describe('SessionEventBroadcaster', () => {
   });
 
   // The v1 wire contract for `turn.started` is exactly
-  // {type, turnId, origin, prompt?, agentId, sessionId} — the engine-internal
-  // `promptAttachments` projection input must never reach the payload, and a
-  // video prompt's frame stays field-identical to the pre-attachment shape.
+  // {type, turnId, origin, prompt?, promptId?, agentId, sessionId} — the
+  // engine-internal `promptAttachments` projection input must never reach the
+  // payload, and a video prompt's frame stays field-identical to the
+  // pre-attachment shape. Events without a `promptId` keep the six-key set.
   const TURN_STARTED_WIRE_KEYS = ['agentId', 'origin', 'prompt', 'sessionId', 'turnId', 'type'];
+
+  it('forwards the promptId echo on a prompt-opened turn.started (live + tail replay)', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('turn.started', {
+        turnId: 1,
+        origin: { kind: 'user' },
+        prompt: 'with an exact id',
+        promptId: 'submission-1',
+      }),
+    );
+    await bc.getCursor('s1'); // drain
+
+    const live = envelopes.find((e) => e.type === 'turn.started');
+    expect(live).toBeDefined();
+    expect(live!.payload).toHaveProperty('promptId', 'submission-1');
+    expect(Object.keys(live!.payload as Record<string, unknown>).sort()).toEqual(
+      [...TURN_STARTED_WIRE_KEYS, 'promptId'].sort(),
+    );
+
+    // Cursor replay within the in-memory tail serves the same promptId echo.
+    const replay = await bc.getBufferedSince('s1', { seq: 0 });
+    const replayed = replay.events.find((e) => e.envelope.type === 'turn.started');
+    expect(replayed).toBeDefined();
+    expect(replayed!.envelope.payload).toHaveProperty('promptId', 'submission-1');
+  });
 
   it('strips the internal promptAttachments from an image-prompt turn.started (live + tail replay)', async () => {
     const lc = new FakeLifecycle();

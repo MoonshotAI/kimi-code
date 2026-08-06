@@ -7,11 +7,10 @@
  *     compression caption when paste-time compression shrank the bytes — see
  *     `ImageAttachment.original`). When the paste was uploaded to the daemon
  *     file store (`ImageAttachment.fileId`, v2 engine only), the placeholder
- *     instead expands — mirroring the kap-server REST edge — to the
- *     `<image path>` tag text (pointing at a cache copy of the bytes, so the
- *     model always has a path it can re-open) plus a
- *     `kimi-file://<id>?path=…` image part the engine resolves at request
- *     time; without a `fileId` the inline base64 form is emitted unchanged
+ *     instead expands to a bare `kimi-file://<id>` image part — the engine's
+ *     prompt intake materializes the session copy and authors the paired
+ *     `<image path>` tag, then resolves the reference at request time;
+ *     without a `fileId` the inline base64 form is emitted unchanged
  *     (the only form the v1 engine accepts);
  *   - video placeholders are copied into the shared cache (`getCacheDir()`)
  *     and expand to a `video_url` part pointing at the cache copy with a
@@ -69,8 +68,24 @@ export interface ExtractionResult {
   imageAttachmentIds: number[];
   /** Video attachment ids matched, in the order they appeared. */
   videoAttachmentIds: number[];
-  /** Cache copies owned by this submission until its consuming turn ends. */
+  /**
+   * Image bytes captured while extracting the prompt. A cache-hint resend can
+   * outlive the attachment store and daemon file ids, so it uses these
+   * snapshots to rebuild the image parts as inline data URLs.
+   */
+  imageSnapshots: ImageResendSnapshot[];
+  /**
+   * Cache copies staged by this submission. Lifecycle is owned by the
+   * StagingLeaseTracker: deleted immediately when the submission is
+   * abandoned, retired to session lifetime once a turn consumes them
+   * (persisted history may still reference their paths).
+   */
   stagingPaths: string[];
+}
+
+export interface ImageResendSnapshot {
+  readonly bytes: Uint8Array;
+  readonly mime: string;
 }
 
 export function extractMediaAttachments(
@@ -80,6 +95,7 @@ export function extractMediaAttachments(
   const parts: PromptPart[] = [];
   const imageAttachmentIds: number[] = [];
   const videoAttachmentIds: number[] = [];
+  const imageSnapshots: ImageResendSnapshot[] = [];
   const stagingPaths: string[] = [];
   let cursor = 0;
   let hasMedia = false;
@@ -105,6 +121,7 @@ export function extractMediaAttachments(
         parts.push(videoPartForCachePath(cachePath));
         videoAttachmentIds.push(id);
       } else {
+        imageSnapshots.push({ bytes: attachment.bytes, mime: attachment.mime });
         // Paste-time compression is announced next to the image so the model
         // knows it received a downsampled copy and where the original lives.
         if (attachment.original !== undefined) {
@@ -112,25 +129,13 @@ export function extractMediaAttachments(
         }
         if (attachment.fileId !== undefined) {
           // The bytes were uploaded to the daemon file store at paste time
-          // (v2): reference them by a `kimi-file://` url the engine resolves
-          // at request time, preceded by the `<image path>` tag text so the
-          // model always has a path it can re-open. The tag's path is a cache
-          // copy of the same (already-compressed) bytes.
-          try {
-            const cachePath = materializeImageToCache(attachment);
-            stagingPaths.push(cachePath);
-            parts.push({ type: 'text', text: buildMediaPathTag('image', cachePath) });
-            parts.push({
-              type: 'image_url',
-              imageUrl: { url: buildDaemonFileUrl(attachment.fileId, cachePath) },
-            });
-          } catch {
-            // The cache copy failed (unwritable cache dir…): fall back to the
-            // inline base64 form for this attachment — the same shape a
-            // paste-time upload failure produces — so the message still goes
-            // out instead of being cancelled.
-            parts.push(imagePartForAttachment(attachment));
-          }
+          // (v2): reference them by a bare `kimi-file://` url — the engine's
+          // prompt intake materializes the session copy and authors the
+          // paired `<image path>` tag, so the edge stages no local copy.
+          parts.push({
+            type: 'image_url',
+            imageUrl: { url: buildDaemonFileUrl(attachment.fileId) },
+          });
         } else {
           parts.push(imagePartForAttachment(attachment));
         }
@@ -152,12 +157,47 @@ export function extractMediaAttachments(
       hasMedia,
       imageAttachmentIds,
       videoAttachmentIds,
+      imageSnapshots,
       stagingPaths,
     };
   } catch (error) {
     cleanupStagingPaths(stagingPaths);
     throw error;
   }
+}
+
+/**
+ * Make an extraction safe to resend after a session reset. The reset clears
+ * the image store and deletes daemon file ids, so uploaded image refs must be
+ * replaced with the bytes captured during the original extraction. Cache
+ * paths are intentionally preserved: they are carried by the resend's new
+ * staging lease and remain available to any path tag in the prompt.
+ */
+export function makeExtractionResendable(extraction: ExtractionResult): ExtractionResult {
+  if (extraction.imageSnapshots.length === 0) return extraction;
+
+  let imageIndex = 0;
+  const parts = extraction.parts.map((part) => {
+    if (part.type !== 'image_url') return part;
+    const snapshot = extraction.imageSnapshots[imageIndex++];
+    if (snapshot === undefined || !part.imageUrl.url.startsWith('kimi-file://')) return part;
+    return {
+      ...part,
+      imageUrl: {
+        ...part.imageUrl,
+        url: `data:${snapshot.mime};base64,${Buffer.from(snapshot.bytes).toString('base64')}`,
+      },
+    };
+  });
+
+  return {
+    ...extraction,
+    parts,
+    // The new session's store no longer contains these ids. The rebuilt parts
+    // carry their own bytes, so keeping stale ids would break thumbnail and
+    // later cleanup lookups.
+    imageAttachmentIds: [],
+  };
 }
 
 export interface MediaTagRewriteResult {

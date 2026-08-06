@@ -458,6 +458,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       origin,
       prompt: displayable ? turnPromptText(job.seed.input) : undefined,
       promptAttachments: displayable ? turnPromptAttachments(job.seed.input) : undefined,
+      promptId: job.seed.promptId,
     });
     void this.runTurn(job.turn, job.ready).then(job.result.resolve, job.result.reject);
   }

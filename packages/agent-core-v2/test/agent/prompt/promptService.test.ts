@@ -6,7 +6,7 @@
  * Run: `pnpm exec vitest run packages/agent-core-v2/test/agent/prompt/promptService.test.ts`.
  */
 
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -21,7 +21,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Step, type StepAssignment } from '#/agent/loop/loop';
 import type { StepRequest } from '#/agent/loop/stepRequest';
-import { buildDaemonFileUrl } from '#/agent/media/mediaRef';
+import { buildDaemonFileUrl, foldMediaPathTagRefs } from '#/agent/media/mediaRef';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
@@ -29,6 +29,7 @@ import { AgentPromptService } from '#/agent/prompt/promptService';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { type GetResult, IFileService } from '#/app/file/fileService';
@@ -42,13 +43,14 @@ import { ISessionContext, makeSessionContext } from '#/session/sessionContext/se
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire } from '../loop/stubs';
 import { registerStateServices } from '../../state/stubs';
+import { stubBootstrap } from '../../app/bootstrap/stubs';
 
 function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
 }
 
 function stubFileService(
-  files: Map<string, { name: string; bytes: Buffer; stream?: () => Readable }>,
+  files: Map<string, { name: string; bytes: Buffer; mime?: string; stream?: () => Readable }>,
 ): IFileService {
   return {
     _serviceBrand: undefined,
@@ -63,7 +65,7 @@ function stubFileService(
         meta: {
           id: fileId,
           name: file.name,
-          media_type: 'image/png',
+          media_type: file.mime ?? 'image/png',
           size: file.bytes.length,
           created_at: new Date(0).toISOString(),
         },
@@ -76,7 +78,8 @@ function stubFileService(
 function harness(
   opts: {
     sessionDir?: string;
-    files?: Map<string, { name: string; bytes: Buffer; stream?: () => Readable }>;
+    homeDir?: string;
+    files?: Map<string, { name: string; bytes: Buffer; mime?: string; stream?: () => Readable }>;
     fullCompaction?: IAgentFullCompactionService;
   } = {},
 ) {
@@ -103,6 +106,7 @@ function harness(
       reg.define(IEventBus, EventBusService);
       reg.define(IAgentSystemReminderService, AgentSystemReminderService);
       reg.defineInstance(IFileService, stubFileService(opts.files ?? new Map()));
+      reg.defineInstance(IBootstrapService, stubBootstrap(opts.homeDir ?? '/nonexistent-home'));
       reg.defineInstance(ISessionContext, makeSessionContext({
         sessionId: 's1',
         workspaceId: 'w1',
@@ -125,6 +129,14 @@ describe('AgentPromptService', () => {
     expect(handle.id).toBe('prompt-1');
     expect(handle.userMessageId).toBe('prompt-1');
     expect((await handle.launched)?.id).toBe(0);
+  });
+
+  it('seeds the launched turn with the prompt record id', async () => {
+    const { prompt, loop, context } = harness();
+    const handle = await prompt.enqueue({ id: 'prompt-1', message: message('hello') });
+    await handle.launched;
+    const batch = loop.drainNextBatch(context);
+    expect(batch?.driver.turnSeed?.promptId).toBe('prompt-1');
   });
 
   it('keeps later prompts in FIFO order while active', async () => {
@@ -271,7 +283,7 @@ describe('AgentPromptService daemon media intake', () => {
     return dir;
   }
 
-  it('materializes a bare daemon reference into the session media dir and stamps its path', async () => {
+  it('materializes a bare daemon reference into the session media dir and authors its paired tag', async () => {
     const sessionDir = await tmpSessionDir();
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
     const { prompt } = harness({ sessionDir, files });
@@ -289,6 +301,62 @@ describe('AgentPromptService daemon media intake', () => {
     const target = join(sessionDir, 'media', 'f_1.png');
     expect(await readFile(target)).toEqual(PNG_BYTES);
     expect(handle.message.content).toEqual([
+      { type: 'text', text: `<image path="${target}"></image>` },
+      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
+    ]);
+    const fold = foldMediaPathTagRefs(handle.message.content);
+    expect(fold.parts).toEqual([
+      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
+    ]);
+    expect(fold.media).toEqual([{ kind: 'image', ref: { fileId: 'f_1', path: target }, path: target }]);
+  });
+
+  it('authors a paired video tag for a bare video daemon reference', async () => {
+    const sessionDir = await tmpSessionDir();
+    const files = new Map([['f_v', { name: 'clip.mp4', bytes: PNG_BYTES, mime: 'video/mp4' }]]);
+    const { prompt } = harness({ sessionDir, files });
+
+    const handle = await prompt.enqueue({
+      id: 'prompt-video',
+      message: {
+        role: 'user',
+        content: [{ type: 'video_url', videoUrl: { url: buildDaemonFileUrl('f_v') } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+
+    const target = join(sessionDir, 'media', 'f_v.mp4');
+    expect(await readFile(target)).toEqual(PNG_BYTES);
+    expect(handle.message.content).toEqual([
+      { type: 'text', text: `<video path="${target}"></video>` },
+      { type: 'video_url', videoUrl: { url: buildDaemonFileUrl('f_v', target) } },
+    ]);
+  });
+
+  it('falls back to the shared cache dir when the session media store cannot write', async () => {
+    const sessionDir = await tmpSessionDir();
+    const homeDir = await mkdtemp(join(tmpdir(), 'prompt-intake-home-'));
+    onTestFinished(() => rm(homeDir, { recursive: true, force: true }));
+    // A regular file squatting on the media dir name fails the canonical write.
+    await writeFile(join(sessionDir, 'media'), 'occupied');
+    const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
+    const { prompt } = harness({ sessionDir, homeDir, files });
+
+    const handle = await prompt.enqueue({
+      id: 'prompt-fallback',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1') } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+
+    const target = join(homeDir, 'cache', 'f_1.png');
+    expect(await readFile(target)).toEqual(PNG_BYTES);
+    expect(handle.message.content).toEqual([
+      { type: 'text', text: `<image path="${target}"></image>` },
       { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
     ]);
   });
@@ -319,12 +387,11 @@ describe('AgentPromptService daemon media intake', () => {
     ]);
   });
 
-  it('keeps an already-canonical reference untouched', async () => {
+  it('keeps an already-normalized pair untouched when intake runs over it again', async () => {
     const sessionDir = await tmpSessionDir();
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
     const { prompt } = harness({ sessionDir, files });
     const target = join(sessionDir, 'media', 'f_1.png');
-    const url = buildDaemonFileUrl('f_1', target);
 
     const first = await prompt.enqueue({
       message: {
@@ -337,14 +404,18 @@ describe('AgentPromptService daemon media intake', () => {
     const second = await prompt.enqueue({
       message: {
         role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url } }],
+        content: [...first.message.content],
         toolCalls: [],
         origin: { kind: 'user' },
       },
     });
 
-    expect(first.message.content).toEqual([{ type: 'image_url', imageUrl: { url } }]);
-    expect(second.message.content).toEqual([{ type: 'image_url', imageUrl: { url } }]);
+    const normalized = [
+      { type: 'text', text: `<image path="${target}"></image>` },
+      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
+    ];
+    expect(first.message.content).toEqual(normalized);
+    expect(second.message.content).toEqual(normalized);
     expect((await readFile(target)).length).toBe(PNG_BYTES.length);
   });
 
