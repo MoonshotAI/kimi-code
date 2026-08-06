@@ -129,6 +129,7 @@ export interface McpConnectionManagerOptions {
 export class McpConnectionManager {
   private readonly entries = new Map<string, InternalEntry>();
   private readonly listeners = new Set<McpStatusListener>();
+  private readonly inFlightReconnects = new Map<string, Promise<void>>();
   private initialLoad: Promise<void> = Promise.resolve();
   private initialLoadAttemptId = 0;
   private initialLoadStartedAt: number | undefined;
@@ -294,14 +295,46 @@ export class McpConnectionManager {
     await Promise.allSettled(tasks);
   }
 
-  async reconnect(name: string): Promise<void> {
+  /**
+   * Starts or joins the server's current reconnect attempt.
+   *
+   * Manual, RPC, OAuth, and tool-recovery callers all share one attempt per
+   * server. A second attempt can start only after the current promise settles;
+   * overlapping callers never replace or supersede it.
+   */
+  reconnect(name: string): Promise<void> {
+    const existing = this.inFlightReconnects.get(name);
+    if (existing !== undefined) return existing;
     const entry = this.entries.get(name);
     if (entry === undefined) {
-      throw new KimiError(ErrorCodes.MCP_SERVER_NOT_FOUND, `Unknown MCP server: ${name}`);
+      return Promise.reject(
+        new KimiError(ErrorCodes.MCP_SERVER_NOT_FOUND, `Unknown MCP server: ${name}`),
+      );
     }
     if (entry.config.enabled === false) {
-      throw new KimiError(ErrorCodes.MCP_SERVER_DISABLED, `MCP server is disabled: ${name}`);
+      return Promise.reject(
+        new KimiError(ErrorCodes.MCP_SERVER_DISABLED, `MCP server is disabled: ${name}`),
+      );
     }
+    const work = this.reconnectEntry(entry)
+      .then(() => {
+        const current = this.entries.get(name);
+        if (current?.status === 'connected') return;
+        throw new KimiError(
+          ErrorCodes.MCP_STARTUP_FAILED,
+          current?.error ?? `MCP server failed to reconnect: ${name}`,
+        );
+      })
+      .finally(() => {
+        if (this.inFlightReconnects.get(name) === work) {
+          this.inFlightReconnects.delete(name);
+        }
+      });
+    this.inFlightReconnects.set(name, work);
+    return work;
+  }
+
+  private async reconnectEntry(entry: InternalEntry): Promise<void> {
     const attemptId = this.beginConnectAttempt(entry);
     await this.closeClient(entry);
     if (!this.isCurrent(entry, attemptId)) return;
@@ -312,6 +345,14 @@ export class McpConnectionManager {
     entry.error = undefined;
     this.emit(entry);
     await this.connectOne(entry, attemptId);
+  }
+
+  reconnectAndJoin(name: string): Promise<void> {
+    return this.reconnect(name);
+  }
+
+  inFlightReconnect(name: string): Promise<void> | undefined {
+    return this.inFlightReconnects.get(name);
   }
 
   async shutdown(): Promise<void> {
