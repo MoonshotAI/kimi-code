@@ -17,6 +17,8 @@ import {
 } from '#/index';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
+
 const tempDirs: string[] = [];
 const stdioFixture = join(
   import.meta.dirname,
@@ -211,6 +213,48 @@ describe('standalone MCP check (connection result)', () => {
 });
 
 describe('MCP OAuth facade (host-controlled browser flow)', () => {
+  it('reports persisted authorization without starting an OAuth flow', async () => {
+    const homeDir = await makeTempDir();
+    const authorizedUrl = 'https://authorized.example.test/mcp';
+    new McpOAuthService({ kimiHomeDir: homeDir })
+      .getProvider('oauth-authorized', authorizedUrl)
+      .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
+    await writeMcpConfig(homeDir, {
+      mcpServers: {
+        stdio: { command: 'local-command' },
+        plain: { transport: 'http', url: 'https://plain.example.test/mcp' },
+        bearer: {
+          transport: 'http',
+          url: 'https://bearer.example.test/mcp',
+          bearerTokenEnvVar: 'EXAMPLE_MCP_TOKEN',
+        },
+        'oauth-required': {
+          transport: 'http',
+          url: 'https://required.example.test/mcp',
+          auth: 'oauth',
+        },
+        'oauth-authorized': {
+          transport: 'http',
+          url: authorizedUrl,
+          auth: 'oauth',
+        },
+      },
+    });
+    const harness = createKimiHarness({ homeDir });
+
+    try {
+      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('resets authorization for a configured remote server', async () => {
     const homeDir = await makeTempDir();
     const harness = createKimiHarness({ homeDir });
