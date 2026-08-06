@@ -94,8 +94,14 @@ export class CacheHintController {
    * the report should carry. Unmeasured (missing/all-zero) usage is skipped
    * without touching the baseline; compaction resets it (the drop there is
    * expected).
+   *
+   * Also doubles as the cache-activity signal: a completed step is a real
+   * provider round trip, so the server-side cache was just refreshed —
+   * unlike a bare turn begin, whose prompt may still fail before any model
+   * request.
    */
   noteStepUsage(usage: TokenUsage | undefined): void {
+    this.recordActivity();
     if (usage === undefined) return;
     if (
       usage.inputOther === 0 &&
@@ -143,9 +149,13 @@ export class CacheHintController {
     this.lastActivityAt = Date.now();
   }
 
-  /** A real send starts a turn — new activity and a new idle cycle. */
+  /**
+   * A real send starts a turn — open a fresh idle cycle. Cache activity is
+   * deliberately NOT recorded here: the prompt may still fail before any
+   * model request (rejected call, hook-blocked turn), and only a completed
+   * provider round trip refreshes the server-side cache.
+   */
   onTurnBegin(): void {
-    this.recordActivity();
     this.idlePrompted = false;
     this.triggerFetchAttempted = false;
     this.lastDialogRestored = false;

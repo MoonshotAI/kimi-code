@@ -253,6 +253,19 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     vi.restoreAllMocks();
   });
 
+  it('does not advance the cache baseline at turn begin (the prompt may fail pre-model)', () => {
+    peekMock.mockReturnValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    // A send begins a turn but fails before any model request — the expired
+    // baseline must survive, so the retry still intercepts.
+    controller.onTurnBegin();
+    expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
+    vi.restoreAllMocks();
+  });
+
   it('does not intercept twice in the same idle cycle', () => {
     peekMock.mockReturnValue(CONFIG);
     const { host } = makeHost();
@@ -382,6 +395,20 @@ describe('CacheHintController cache-break detection', () => {
     const controller = new CacheHintController(host);
     controller.noteStepUsage(u(10000));
     expect(host.track).not.toHaveBeenCalled();
+  });
+
+  it('records cache activity on a completed step, even one without usage', () => {
+    peekMock.mockReturnValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    // 20 min later a step completes — the provider round trip refreshed the
+    // server-side cache…
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    controller.noteStepUsage(undefined);
+    // …so a submit right after is fresh and must not be intercepted.
+    expect(controller.maybeInterceptOnSubmit('hello')).toBe(false);
+    vi.restoreAllMocks();
   });
 
   it('reports a drop beyond the ratio and token gates with both usages', () => {
