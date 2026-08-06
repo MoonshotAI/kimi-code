@@ -1120,7 +1120,7 @@ async fn main() -> anyhow::Result<()> {
             let harness = connect_harness(&server)?;
             // `-r <id>` resumes the named session; otherwise a fresh id.
             let session_id = resume.unwrap_or_else(|| format!("kimi-{}", std::process::id()));
-            let mut app = kimi_tui::App::new(harness, &session_id);
+            let mut app = kimi_tui::App::new(harness, Some(&session_id));
             return app.run().await;
         }
         let mut cmd = Cli::command();

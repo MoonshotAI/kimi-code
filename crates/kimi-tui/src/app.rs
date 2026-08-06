@@ -198,6 +198,8 @@ pub struct App {
     history: Vec<String>,
     history_idx: Option<usize>,
     session_id: String,
+    /// When true (App::new(None)), the startup flow offers a session picker.
+    startup_pick: bool,
     session: Option<kimi_sdk::Session>,
     /// Model aliases for `/model` Tab completion.
     model_aliases: Vec<String>,
@@ -217,7 +219,7 @@ pub struct App {
 
 impl App {
     /// Create the app around an engine harness (embedded or remote).
-    pub fn new(harness: Harness, session_id: &str) -> Self {
+    pub fn new(harness: Harness, session_id: Option<&str>) -> Self {
         Self {
             harness,
             transcript: Vec::new(),
@@ -225,7 +227,8 @@ impl App {
             cursor: 0,
             history: Vec::new(),
             history_idx: None,
-            session_id: session_id.to_string(),
+            session_id: session_id.unwrap_or_default().to_string(),
+            startup_pick: session_id.is_none(),
             session: None,
             model_aliases: Vec::new(),
             tab: None,
@@ -239,6 +242,33 @@ impl App {
 
     /// Run the event loop until the user quits (`/quit` or Ctrl-C).
     pub async fn run(&mut self) -> anyhow::Result<()> {
+        // Startup picker: when no session was requested and persisted
+        // sessions exist, offer an interactive choice (resume UX parity).
+        if self.startup_pick {
+            let sessions = self.harness.list_sessions(50).await?;
+            let items: Vec<(String, String)> = sessions
+                .iter()
+                .filter_map(|s| {
+                    let id = s["id"].as_str()?.to_string();
+                    let title = s["title"].as_str().unwrap_or("(untitled)").to_string();
+                    Some((id, title))
+                })
+                .collect();
+            if !items.is_empty() {
+                let mut terminal = init_terminal()?;
+                let picked = crate::picker::select(
+                    &mut terminal,
+                    self.theme,
+                    "resume a session (Esc = new)",
+                    &items,
+                )?;
+                restore_terminal(&mut terminal)?;
+                if let Some(id) = picked {
+                    self.session_id = id;
+                }
+            }
+            self.startup_pick = false;
+        }
         // Open the session up front.
         let mut session = self.harness.create_session(&self.session_id).await?;
         // Resume semantics: create rebuilds a fresh agent, load re-applies
