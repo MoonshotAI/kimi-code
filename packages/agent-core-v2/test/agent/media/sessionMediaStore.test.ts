@@ -160,6 +160,22 @@ describe('SessionMediaStoreService', () => {
     await expect(store.resolveDisplayPath('f_1', canonical)).resolves.toBe(canonical);
     await expect(stat(canonical)).rejects.toThrow();
   });
+
+  it('never turns a non-upload id into a storage key (path traversal guard)', async () => {
+    // A crafted daemon reference (`kimi-file://../../…?path=…`) reaches the
+    // store through the request-time resolver's canonical-read fallback; the
+    // id must be rejected before it can become a filesystem key.
+    const evil = '../../../../etc/passwd';
+    expect(store.pathFor(evil, '')).toBeUndefined();
+    expect(store.pathFor(evil, '.png')).toBeUndefined();
+    await expect(store.read(evil, 'a.png')).resolves.toBeUndefined();
+    await expect(store.read(evil)).resolves.toBeUndefined();
+    await expect(store.materialize(input({ fileId: evil }))).resolves.toBeUndefined();
+    // The display path falls back to the caller's own hint, like a missing copy.
+    await expect(store.resolveDisplayPath(evil, '/hint/x.png')).resolves.toBe('/hint/x.png');
+    // Legit ids still work after the guard.
+    expect(store.pathFor('f_1', '.mp4')).toBe(join(sessionDir, 'media', 'f_1.mp4'));
+  });
 });
 
 it('retains canonical bytes without inventing a path for a non-filesystem backend', async () => {

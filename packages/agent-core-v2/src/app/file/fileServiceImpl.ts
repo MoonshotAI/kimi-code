@@ -18,6 +18,7 @@ import { IBlobStore } from '#/persistence/interface/blobStore';
 import {
   IFileService,
   fileNotFoundError,
+  isFileId,
   type FileMeta,
   type FileReadRange,
   type GetResult,
@@ -27,7 +28,6 @@ import {
 const BLOB_SCOPE = 'files';
 const INDEX_SCOPE = 'file';
 const INDEX_KEY = 'index.json';
-const FILE_ID_REGEX = /^f_[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -35,10 +35,6 @@ const textDecoder = new TextDecoder();
 interface IndexFile {
   readonly version: 1;
   readonly files: FileMeta[];
-}
-
-function isFileId(value: string): boolean {
-  return FILE_ID_REGEX.test(value);
 }
 
 function isFileMeta(value: unknown): value is FileMeta {
