@@ -9,7 +9,8 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 
@@ -28,6 +29,7 @@ export interface IUserFileSkillSource extends ISkillSource {
 export const IUserFileSkillSource: ServiceIdentifier<IUserFileSkillSource> =
   createDecorator<IUserFileSkillSource>('userFileSkillSource');
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class UserFileSkillSource extends Disposable implements IUserFileSkillSource {
   declare readonly _serviceBrand: undefined;
 

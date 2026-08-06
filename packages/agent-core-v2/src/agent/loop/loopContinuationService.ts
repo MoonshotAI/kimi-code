@@ -13,15 +13,16 @@
  * registers before the first turn runs.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IAgentLoopContinuationService } from './loopContinuation';
 import { IAgentLoopService } from './loop';
 import { ContinuationStepRequest } from './stepRequest';
 
 export class AgentLoopContinuationService
-  extends Disposable
+  extends Service
   implements IAgentLoopContinuationService
 {
   declare readonly _serviceBrand: undefined;

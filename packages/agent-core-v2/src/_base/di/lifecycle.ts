@@ -233,6 +233,10 @@ export class DisposableStore implements IDisposable {
     trackDisposable(this);
   }
 
+  get ledger(): Ledger {
+    return this._ledger;
+  }
+
   add<T extends IDisposable>(d: T): T {
     if ((d as unknown as DisposableStore) === this) {
       throw new Error('Cannot register a disposable on itself!');

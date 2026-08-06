@@ -26,8 +26,10 @@
  * bind runs, so the first `agent.status.updated` is always observed.
  */
 
-import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
@@ -50,7 +52,7 @@ export const mediaRegisteredKeyKey = defineState<string | undefined>(
   () => undefined as string | undefined,
 );
 
-export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaToolsRegistrar {
+export class AgentMediaToolsRegistrar extends Service implements IAgentMediaToolsRegistrar {
   declare readonly _serviceBrand: undefined;
 
   private registration: IDisposable | undefined;

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createDecorator } from '#/_base/di/instantiation';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';

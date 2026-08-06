@@ -832,8 +832,6 @@ describe('PluginManager consumption plane', () => {
           }),
         }),
       );
-      // An Electron host must not be routed through the CLI's `__plugin_run_node`
-      // subcommand (which only the CLI binary implements).
       expect(JSON.stringify(server)).not.toContain('__plugin_run_node');
     } finally {
       if (originalElectron === undefined) delete process.versions['electron'];
@@ -850,8 +848,6 @@ describe('PluginManager consumption plane', () => {
     await manager.load();
     await manager.install(root);
 
-    // Plain node host (tests run under node): not Electron, not the CLI native
-    // binary, so the config passes through unchanged (command stays `node`).
     const server = manager.enabledMcpServers()['plugin-demo:data'];
     expect(server).toEqual(
       expect.objectContaining({

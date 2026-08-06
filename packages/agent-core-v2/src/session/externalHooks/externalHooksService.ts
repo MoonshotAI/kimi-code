@@ -23,8 +23,9 @@
  * live in the runner. Bound at Session scope.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import type { Hooks } from '#/hooks';
@@ -53,7 +54,7 @@ type SessionStartHookSource = Exclude<SessionCreateSource, 'fork'>;
 const HEARTBEAT_INTERVAL_MS = 60_000;
 
 export class SessionExternalHooksService
-  extends Disposable
+  extends Service
   implements ISessionExternalHooksService
 {
   declare readonly _serviceBrand: undefined;

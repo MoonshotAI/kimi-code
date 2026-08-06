@@ -52,16 +52,10 @@ describe('registry-driven vendor verdicts', () => {
     expect(usesTraitDrivenThinking(registry, 'openai', 'openai')).toBe(false);
     expect(usesTraitDrivenThinking(registry, 'openai', undefined)).toBe(false);
     expect(usesTraitDrivenThinking(registry, 'anthropic', 'anthropic')).toBe(false);
-    // Kimi registers no google-genai definition — the pair contributes nothing.
     expect(usesTraitDrivenThinking(registry, 'google-genai', 'kimi')).toBe(false);
   });
 
   it('requiresStrictThinkingValidation: only the strict-validation thinking driver', () => {
-    // The strict effort gate (v1 `provider.type === 'kimi'` parity): kimi on
-    // its native openai transport qualifies (kimiOpenAITrait marks
-    // `strictThinkingValidation`); kimi over anthropic does NOT — the foreign
-    // backend may accept unlisted efforts, so the profile stays lenient there
-    // and warns instead of rejecting.
     expect(requiresStrictThinkingValidation(registry, 'openai', 'kimi')).toBe(true);
     expect(requiresStrictThinkingValidation(registry, 'anthropic', 'kimi')).toBe(false);
     expect(requiresStrictThinkingValidation(registry, 'openai', 'openai')).toBe(false);

@@ -84,8 +84,6 @@ describe('resolveModelAuthMaterial', () => {
         provider: { type: 'openai', env: { OPENAI_API_KEY: 'openai-env-key' } },
       }),
     ).toEqual({ apiKey: 'openai-env-key' });
-    // The google-genai chain keeps the legacy vertex precedence: VERTEXAI_API_KEY
-    // first, GOOGLE_API_KEY as fallback.
     expect(
       authMaterial({
         model: { model: 'm' },
@@ -138,8 +136,6 @@ describe('effectiveModelConfig', () => {
     expect(inferred.defaultEffort).toBe('high');
     expect(inferred.capabilities).toContain('thinking');
 
-    // Trait-driven (kimi) vendor over the anthropic transport: catalog-
-    // declared metadata only, no inference.
     const kimiRouted = effectiveModelConfig({ model: 'kimi-k2', protocol: 'anthropic' }, 'kimi');
     expect(kimiRouted.supportEfforts).toBeUndefined();
     expect(kimiRouted.capabilities).toBeUndefined();

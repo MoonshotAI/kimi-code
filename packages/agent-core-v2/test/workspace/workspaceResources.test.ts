@@ -17,9 +17,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -472,8 +471,6 @@ describe('workspace resource sharing (handler chain)', () => {
       () => {
         expect(catalog.catalog.getSkill('watched-skill')?.description).toBe('from watch');
       },
-      // Real FSEvents delivery + the 200 ms source debounce + a real disk
-      // rescan: under high parallel load the 10 s budget flakes, so allow 30 s.
       { timeout: 30000, interval: 100 },
     );
   }, 60000);

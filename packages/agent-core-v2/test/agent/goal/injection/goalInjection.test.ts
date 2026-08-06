@@ -335,17 +335,10 @@ describe('GoalInjection integration', () => {
       await toolCallEvents;
       await ctx.untilTurnEnd();
 
-      // Goal reminders persist asynchronously and the relative order of the
-      // async injection providers is not contractual, so wait for the
-      // continuation turn's reminder to land instead of asserting at a fixed,
-      // ordering-sensitive flush point.
       await vi.waitFor(async () => {
         expect(await flushedGoalReminderRecords(ctx, persistence)).toHaveLength(2);
       });
 
-      // One reminder per turn boundary (two boundaries here), not per step:
-      // the count settles at exactly two even though the turns ran multiple
-      // steps.
       expect(await flushedGoalReminderRecords(ctx, persistence)).toHaveLength(2);
     });
 

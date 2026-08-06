@@ -128,6 +128,8 @@ describe('plugins command capability surface', () => {
     expect(statuses.some((s) => s.includes('Removed kimi-cu'))).toBe(true);
     expect(statuses.some((s) => s.includes('runtime binaries were left untouched'))).toBe(true);
     expect(statuses.some((s) => s.includes('plugin wiring is disabled for new sessions'))).toBe(true);
+    expect(statuses.some((s) => s.includes('Restart Kimi Code before reinstalling'))).toBe(true);
+    expect(statuses.some((s) => s.includes('Run /new or /reload'))).toBe(false);
   });
 
   it('keeps the runtime note for the Windows backing plugin id', async () => {
@@ -197,6 +199,29 @@ describe('plugins command capability surface', () => {
     expect(installCapability).not.toHaveBeenCalled();
     expect(statuses.some((s) => s.includes('Failed to install'))).toBe(false);
     expect(statuses.some((s) => s.includes('is installed'))).toBe(true);
+  });
+
+  it('shows the engine error when a background capability install fails', async () => {
+    const { host, statuses } = fakeHost({
+      engineV2: true,
+      capabilityStatus: () =>
+        Promise.resolve({
+          state: 'not_installed',
+          steps: [],
+          install: { running: false, error: 'Authenticode signature is not valid' },
+        }),
+    });
+
+    await installCapabilityFromPanel(
+      host,
+      fakePanel().panel,
+      { id: 'kimi-cu', displayName: 'Kimi Computer Use', source: 'capability:kimi-cu' } as never,
+    );
+
+    expect(statuses).toContain(
+      'Kimi Computer Use installation failed: Authenticode signature is not valid',
+    );
+    expect(statuses).toContain('Fix the reported error, then install again from /plugins.');
   });
 
   it('shows required permissions once after installation instead of exposing step details', async () => {

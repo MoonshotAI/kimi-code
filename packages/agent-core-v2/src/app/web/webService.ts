@@ -25,8 +25,8 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   kimiCodeBaseUrl,
 } from '@moonshot-ai/kimi-code-oauth';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { SERVICES_SECTION, type ServicesConfig } from '#/app/auth/configSection';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';

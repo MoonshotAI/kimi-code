@@ -22,8 +22,9 @@
  */
 
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -78,7 +79,7 @@ export const externalHooksStopHookContinuationUsedKey = defineState<boolean>(
   () => false,
 );
 
-export class AgentExternalHooksService extends Disposable implements IAgentExternalHooksService {
+export class AgentExternalHooksService extends Service implements IAgentExternalHooksService {
   declare readonly _serviceBrand: undefined;
 
   constructor(

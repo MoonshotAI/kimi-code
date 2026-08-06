@@ -170,8 +170,10 @@ export interface IConfigRegistry {
   readonly _serviceBrand: undefined;
 
   readonly onDidRegisterSection: Event<ConfigSectionRegisteredEvent>;
+  readonly onDidUnregisterSection: Event<ConfigSectionRegisteredEvent>;
   readonly onDidRegisterOverlay: Event<ConfigOverlayRegisteredEvent>;
   registerSection<T>(domain: string, schema: ConfigSchema<T>, options?: RegisterSectionOptions<T>): void;
+  unregisterSection(domain: string): void;
   getSection(domain: string): ConfigSection | undefined;
   listSections(): readonly ConfigSection[];
   registerEffectiveOverlay(overlay: ConfigEffectiveOverlay): void;
@@ -250,16 +252,7 @@ export interface IConfigService {
   inspect<T = unknown>(domain: string): ConfigInspectValue<T>;
   getAll(): ResolvedConfig;
   set(domain: string, patch: unknown, target?: ConfigTarget): Promise<void>;
-  /**
-   * Replace one domain wholesale; `undefined` (or `null`, the wire encoding
-   * of clear — JSON transports cannot carry `undefined`) removes the domain.
-   */
   replace(domain: string, value: unknown, target?: ConfigTarget): Promise<void>;
-  /**
-   * Replace several domains in ONE atomic write: a domain mapped to
-   * `undefined` (or `null`, see {@link replace}) is cleared, domains absent
-   * from `sections` are left untouched.
-   */
   replaceSections(
     sections: Readonly<Record<string, unknown>>,
     target?: ConfigTarget,

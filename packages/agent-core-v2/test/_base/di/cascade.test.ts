@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type {
+  CascadeEngine,
+  CascadeHistoryEntry,
+  UnitStateChange,
+} from '#/_base/di/cascadeEngine';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { CascadeConflictError } from '#/_base/di/errors';
 import { createDecorator } from '#/_base/di/instantiation';
@@ -25,12 +30,10 @@ function ledgerOf(ix: InstantiationService): Ledger {
   return (ix as unknown as { _ledger: Ledger })._ledger;
 }
 
-/** Flush all pending microtask chains (async teardown hops). */
 function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-// ------------------------------------------------------------------ fixtures
 
 interface IRoot {
   label: string;
@@ -52,7 +55,6 @@ interface IExtra {
 }
 const IExtra = createDecorator<IExtra>('cascade-extra');
 
-/** Shared per-test event log; fixtures push construct/dispose events. */
 let events: string[] = [];
 
 class Root implements IRoot {
@@ -111,14 +113,13 @@ describe('cascade engine — mechanism matrix', () => {
   it('1. provide X auto-activates dependents from Pending', () => {
     const ix = makeContainer();
     events = [];
-    // Dependent provided before its dependency: goes to the waiting area.
     ix.provide(IMid, new SyncDescriptor(Mid));
-    expect(ix.cascade.unitState(IMid)).toBe('Pending');
+    expect(ix.cascade.stateOf(IMid)).toBe('Pending');
     expect(events).toEqual([]);
 
     ix.provide(IRoot, new SyncDescriptor(Root));
-    expect(ix.cascade.unitState(IRoot)).toBe('Active');
-    expect(ix.cascade.unitState(IMid)).toBe('Active');
+    expect(ix.cascade.stateOf(IRoot)).toBe('Active');
+    expect(ix.cascade.stateOf(IMid)).toBe('Active');
     expect(events).toEqual(['+root', '+mid']);
     ix.dispose();
   });
@@ -133,11 +134,10 @@ describe('cascade engine — mechanism matrix', () => {
     ix.unprovide(IRoot);
 
     expect(events).toEqual(['-leaf', '-mid', '-root']);
-    expect(ix.cascade.unitState(IRoot)).toBeUndefined(); // removed, not a state
-    expect(ix.cascade.unitState(IMid)).toBe('Pending');
-    expect(ix.cascade.unitState(ILeaf)).toBe('Pending');
+    expect(ix.cascade.stateOf(IRoot)).toBeUndefined();
+    expect(ix.cascade.stateOf(IMid)).toBe('Pending');
+    expect(ix.cascade.stateOf(ILeaf)).toBe('Pending');
     expect(() => ix.invokeFunction((a) => a.get(IRoot))).toThrow(/unknown service/);
-    // The waiting area retains recipes with the missing token indexed.
     expect(ix.cascade.pendingSnapshot().get('cascade-mid')).toEqual(['cascade-root']);
     void mid;
     void leaf;
@@ -169,7 +169,6 @@ describe('cascade engine — mechanism matrix', () => {
     const firstMid = ix.invokeFunction((a) => a.get(IMid));
     events = [];
 
-    // Replace the root recipe in one transaction.
     class Root2 implements IRoot {
       label = 'root2';
       constructor() {
@@ -182,17 +181,36 @@ describe('cascade engine — mechanism matrix', () => {
     const historyBefore = ix.cascade.history().length;
     ix.provide(IRoot, new SyncDescriptor(Root2));
 
-    // One transaction covered teardown + rebuild; nothing lingered in Pending.
     expect(ix.cascade.history().length).toBe(historyBefore + 1);
     const entry = ix.cascade.history().at(-1)!;
     expect(entry.tornDown).toEqual(['cascade-leaf', 'cascade-mid', 'cascade-root']);
     expect(entry.rebuilt).toEqual(['cascade-root', 'cascade-mid', 'cascade-leaf']);
     expect(events).toEqual(['-leaf', '-mid', '-root', '+root2', '+mid', '+leaf']);
-    expect(ix.cascade.unitState(IMid)).toBe('Active');
-    expect(ix.cascade.unitState(ILeaf)).toBe('Active');
+    expect(ix.cascade.stateOf(IMid)).toBe('Active');
+    expect(ix.cascade.stateOf(ILeaf)).toBe('Active');
     const newMid = ix.invokeFunction((a) => a.get(IMid));
     expect(newMid).not.toBe(firstMid);
     expect(newMid.root).toBeInstanceOf(Root2);
+    ix.dispose();
+  });
+
+  it('eager units treat an on-demand dependency as available and pull it transitively', () => {
+    const ix = makeContainer();
+    events = [];
+    ix.provide(IMid, new SyncDescriptor(Mid));
+    expect(ix.cascade.stateOf(IMid)).toBe('Pending');
+
+    ix.provide(IRoot, new SyncDescriptor(Root), { activation: 'ondemand' });
+    expect(ix.cascade.stateOf(IMid)).toBe('Active');
+    expect(ix.cascade.stateOf(IRoot)).toBe('Active');
+    expect(events).toEqual(['+root', '+mid']);
+
+    const ix2 = makeContainer();
+    events = [];
+    ix2.provide(IExtra, new SyncDescriptor(Extra), { activation: 'ondemand' });
+    expect(ix2.cascade.stateOf(IExtra)).toBe('Pending');
+    expect(events).toEqual([]);
+    ix2.dispose();
     ix.dispose();
   });
 
@@ -207,7 +225,6 @@ describe('cascade engine — mechanism matrix', () => {
       onWillCascade: (affected) => {
         calls += 1;
         hookCalls.push(affected.map(String));
-        // Park only the first transaction at the abort wait.
         return calls === 1 ? gate.promise : undefined;
       },
     });
@@ -217,7 +234,6 @@ describe('cascade engine — mechanism matrix', () => {
       token: IRoot,
       reason: 'drop root',
     });
-    // These two queue behind the in-flight transaction and merge into one.
     const second = ix.cascade.submit({
       action: 'unprovide',
       token: IExtra,
@@ -230,26 +246,21 @@ describe('cascade engine — mechanism matrix', () => {
       reason: 'add mid',
     });
 
-    // Queued changes are not applied while the first transaction is in flight.
     expect(ix.cascade.isInFlight(IRoot)).toBe(true);
-    // A token outside the in-flight contagion set resolves normally.
     expect(ix.invokeFunction((a) => a.get(IExtra))).toBeInstanceOf(Extra);
 
     gate.resolve();
     await Promise.all([first, second, third]);
 
-    // Three requests, two transactions: the queued two merged (one hook call each).
     expect(calls).toBe(2);
-    // (The first two history entries are the initial provides.)
     const history = ix.cascade.history().slice(-2);
     expect(history[0]!.changes).toEqual([{ token: 'cascade-root', action: 'unprovide' }]);
     expect(history[1]!.changes).toEqual([
       { token: 'cascade-extra', action: 'unprovide' },
       { token: 'cascade-mid', action: 'provide' },
     ]);
-    expect(ix.cascade.unitState(IExtra)).toBeUndefined();
-    // Mid's dependency is gone: it waits.
-    expect(ix.cascade.unitState(IMid)).toBe('Pending');
+    expect(ix.cascade.stateOf(IExtra)).toBeUndefined();
+    expect(ix.cascade.stateOf(IMid)).toBe('Pending');
     ix.dispose();
   });
 
@@ -266,28 +277,24 @@ describe('cascade engine — mechanism matrix', () => {
       }
     }
     ix.provide(IExtra, new SyncDescriptor(Flaky));
-    expect(ix.cascade.unitState(IExtra)).toBe('Failed');
-    // Resolving a failed unit rethrows the recorded error.
+    expect(ix.cascade.stateOf(IExtra)).toBe('Failed');
     expect(() => ix.invokeFunction((a) => a.get(IExtra))).toThrow('ctor boom');
 
-    // A dependent of a Failed unit waits.
     class NeedsExtra {
       constructor(@IExtra public readonly extra: IExtra) {}
     }
     const INeedsExtra = createDecorator<NeedsExtra>('cascade-needs-extra');
     ix.provide(INeedsExtra, new SyncDescriptor(NeedsExtra));
-    expect(ix.cascade.unitState(INeedsExtra)).toBe('Pending');
+    expect(ix.cascade.stateOf(INeedsExtra)).toBe('Pending');
 
-    // Sticky: an unrelated transaction does not retry the failed unit.
     ix.provide(IRoot, new SyncDescriptor(Root));
-    expect(ix.cascade.unitState(IExtra)).toBe('Failed');
+    expect(ix.cascade.stateOf(IExtra)).toBe('Failed');
 
-    // Explicit update() recovers it (and wakes its dependent).
     shouldThrow = false;
     events = [];
     return ix.cascade.update(IExtra).then(() => {
-      expect(ix.cascade.unitState(IExtra)).toBe('Active');
-      expect(ix.cascade.unitState(INeedsExtra)).toBe('Active');
+      expect(ix.cascade.stateOf(IExtra)).toBe('Active');
+      expect(ix.cascade.stateOf(INeedsExtra)).toBe('Active');
       expect(events).toEqual(['+flaky']);
       ix.dispose();
     });
@@ -324,7 +331,6 @@ describe('cascade engine — mechanism matrix', () => {
     events = [];
 
     const done = ix.cascade.submit({ action: 'unprovide', token: IRoot, reason: 'async teardown' });
-    // Reverse topo: leaf starts first; mid must not start until leaf finishes.
     expect(events).toEqual(['leaf-start']);
     gates.root.resolve();
     await flushMicrotasks();
@@ -352,27 +358,25 @@ describe('cascade engine — mechanism matrix', () => {
       },
     });
 
-    // (a) the cascade waits for the abort to complete.
     const first = ix.cascade.submit({ action: 'unprovide', token: IRoot, reason: 'feature "x" unloaded' });
     expect(seen).toHaveLength(1);
     expect(seen[0]!.reason).toBe('feature "x" unloaded');
     expect(seen[0]!.affected).toContain('cascade-leaf');
     await Promise.resolve();
-    expect(ix.cascade.isInFlight(IRoot)).toBe(true); // still waiting
+    expect(ix.cascade.isInFlight(IRoot)).toBe(true);
     gate!.resolve();
     await first;
     expect(ix.cascade.history().at(-1)!.abortWaited).toBe(true);
     expect(ix.cascade.history().at(-1)!.abortTimedOut).toBe(false);
-    expect(ix.cascade.unitState(IRoot)).toBeUndefined();
+    expect(ix.cascade.stateOf(IRoot)).toBeUndefined();
 
-    // (b) an abort that never completes is forced after the bounded wait.
     provideChain(ix);
     const second = ix.cascade.submit({ action: 'unprovide', token: IRoot, reason: 'forced' });
-    await second; // never resolved the gate — the bound fired
+    await second;
     const entry = ix.cascade.history().at(-1)!;
     expect(entry.abortWaited).toBe(true);
     expect(entry.abortTimedOut).toBe(true);
-    expect(ix.cascade.unitState(IRoot)).toBeUndefined();
+    expect(ix.cascade.stateOf(IRoot)).toBeUndefined();
     ix.dispose();
   });
 
@@ -390,17 +394,14 @@ describe('cascade engine — mechanism matrix', () => {
     });
     expect(ix.cascade.isInFlight(IRoot)).toBe(true);
 
-    // The sync path cannot suspend: it fails fast.
     expect(() => ix.invokeFunction((a) => a.get(IRoot))).toThrow(CascadeConflictError);
 
-    // The async path suspends until the transaction completes.
     const suspended = ix.cascade.resolveWhenAvailable<IRoot>(IRoot);
     gate.resolve();
     await replace;
     const root = await suspended;
     expect(root).toBeInstanceOf(Root);
 
-    // Timeout variant: a transaction that parks forever rejects suspended resolutions.
     const parked = deferred();
     ix.cascade.configure({ onWillCascade: () => parked.promise });
     void ix.cascade.submit({ action: 'unprovide', token: IRoot, reason: 'parked' });
@@ -412,8 +413,6 @@ describe('cascade engine — mechanism matrix', () => {
 
   it('11. cycle detection holds under dynamic edge add/remove', () => {
     const ix = makeContainer();
-    // Cyclic recipes provided dynamically: neither can satisfy its dependency,
-    // so both wait — no construction, no spurious failure.
     const IA = createDecorator<{ a: true }>('cascade-cyc-a');
     const IB = createDecorator<{ b: true }>('cascade-cyc-b');
     class A {
@@ -424,22 +423,20 @@ describe('cascade engine — mechanism matrix', () => {
     }
     ix.provide(IA, new SyncDescriptor(A));
     ix.provide(IB, new SyncDescriptor(B));
-    expect(ix.cascade.unitState(IA)).toBe('Pending');
-    expect(ix.cascade.unitState(IB)).toBe('Pending');
+    expect(ix.cascade.stateOf(IA)).toBe('Pending');
+    expect(ix.cascade.stateOf(IB)).toBe('Pending');
     expect(ix.dependencyGraph.findCycle((ref) => ref.token.toString())).toBeNull();
 
-    // Break the cycle: replace A with an independent recipe; both activate.
     class A2 {
       readonly a = true;
     }
     ix.provide(IA, new SyncDescriptor(A2));
-    expect(ix.cascade.unitState(IA)).toBe('Active');
-    expect(ix.cascade.unitState(IB)).toBe('Active');
+    expect(ix.cascade.stateOf(IA)).toBe('Active');
+    expect(ix.cascade.stateOf(IB)).toBe('Active');
     expect(ix.dependencyGraph.findCycle((ref) => ref.token.toString())).toBeNull();
 
-    // Dynamic chain teardown keeps the graph acyclic and edge-free.
     ix.unprovide(IA);
-    expect(ix.cascade.unitState(IB)).toBe('Pending');
+    expect(ix.cascade.stateOf(IB)).toBe('Pending');
     expect(ix.dependencyGraph.edges()).toHaveLength(0);
     expect(ix.dependencyGraph.findCycle((ref) => ref.token.toString())).toBeNull();
     ix.dispose();
@@ -447,18 +444,15 @@ describe('cascade engine — mechanism matrix', () => {
 
   it('12. ledger balance: arbitrary sequences leave no leaks or dangling edges', async () => {    const ix = makeContainer();
     provideChain(ix);
-    // 3 live instances + 3 provide entries on the book.
     expect(ledgerOf(ix).size).toBe(6);
 
     ix.unprovide(IMid);
-    // Left on the book: the root instance entry + root/leaf provide entries.
     expect(ledgerOf(ix).size).toBe(3);
-    // Leaf is Pending (waiting on mid); mid is removed; root is Active.
-    expect(ix.cascade.unitState(ILeaf)).toBe('Pending');
-    expect(ix.cascade.unitState(IMid)).toBeUndefined();
+    expect(ix.cascade.stateOf(ILeaf)).toBe('Pending');
+    expect(ix.cascade.stateOf(IMid)).toBeUndefined();
 
     ix.provide(IMid, new SyncDescriptor(Mid));
-    expect(ix.cascade.unitState(ILeaf)).toBe('Active');
+    expect(ix.cascade.stateOf(ILeaf)).toBe('Active');
     expect(ledgerOf(ix).size).toBe(6);
 
     await ix.cascade.update(IRoot);
@@ -486,7 +480,6 @@ describe('cascade engine — mechanism matrix', () => {
 
     ix.provide(IRoot, replacement);
 
-    // Same transaction: dependents were torn down and rebuilt against the instance.
     expect(events).toEqual(['-leaf', '-mid', '-root', '+mid', '+leaf']);
     const newMid = ix.invokeFunction((a) => a.get(IMid));
     expect(newMid).not.toBe(firstMid);
@@ -510,7 +503,7 @@ describe('cascade engine — mechanism matrix', () => {
 
       await ix.cascade.submit({ action: 'unprovide', token: IRoot, reason: 'forced anyway' });
 
-      expect(ix.cascade.unitState(IRoot)).toBeUndefined();
+      expect(ix.cascade.stateOf(IRoot)).toBeUndefined();
       expect(() => ix.invokeFunction((a) => a.get(IRoot))).toThrow(/unknown service/);
       expect(ix.cascade.history().at(-1)!.abortWaited).toBe(true);
       expect(reported).toHaveLength(1);
@@ -531,13 +524,11 @@ describe('cascade engine — cross-scope orchestration (D9)', () => {
     events = [];
 
     parent.unprovide(IRoot);
-    // Global reverse topo: the child unit dies before its parent dependency.
     expect(events).toEqual(['-mid', '-root']);
-    expect(child.cascade.unitState(IMid)).toBe('Pending');
-    expect(parent.cascade.unitState(IRoot)).toBeUndefined();
+    expect(child.cascade.stateOf(IMid)).toBe('Pending');
+    expect(parent.cascade.stateOf(IRoot)).toBeUndefined();
 
     parent.provide(IRoot, new SyncDescriptor(Root));
-    // Global topo rebuild: parent first, then the child dependent.
     expect(events).toEqual(['-mid', '-root', '+root', '+mid']);
     const mid = child.invokeFunction((a) => a.get(IMid));
     expect(mid.root).toBe(parent.invokeFunction((a) => a.get(IRoot)));
@@ -561,21 +552,31 @@ describe('cascade engine — cross-scope orchestration (D9)', () => {
     parent.dispose();
   });
 
+  it('an eager child unit pulls an on-demand ancestor dependency transitively', () => {
+    const parent = makeContainer();
+    parent.provide(IRoot, new SyncDescriptor(Root), { activation: 'ondemand' });
+    const child = parent.createChild(new ServiceCollection());
+    events = [];
+
+    child.provide(IMid, new SyncDescriptor(Mid));
+    expect(child.cascade.stateOf(IMid)).toBe('Active');
+    expect(parent.cascade.stateOf(IRoot)).toBe('Active');
+    expect(events).toEqual(['+root', '+mid']);
+    parent.dispose();
+  });
+
   it('shadowing: a child shadow of the changed token is not in the contagion set', () => {
     const parent = makeContainer();
     parent.provide(IRoot, new SyncDescriptor(Root));
     const child = parent.createChild(new ServiceCollection());
-    // The child registers its own IRoot; the child's Mid binds the shadow.
     child.provide(IRoot, new SyncDescriptor(Root, ['shadow']));
     child.provide(IMid, new SyncDescriptor(Mid));
     events = [];
 
     parent.unprovide(IRoot);
-    // Only the parent's own root is retired; the child's shadow and its
-    // dependent are untouched.
     expect(events).toEqual(['-root']);
-    expect(child.cascade.unitState(IMid)).toBe('Active');
-    expect(child.cascade.unitState(IRoot)).toBe('Active');
+    expect(child.cascade.stateOf(IMid)).toBe('Active');
+    expect(child.cascade.stateOf(IRoot)).toBe('Active');
     const mid = child.invokeFunction((a) => a.get(IMid));
     expect(mid.root).toBe(child.invokeFunction((a) => a.get(IRoot)));
     parent.dispose();
@@ -592,12 +593,11 @@ describe('cascade engine — cross-scope orchestration (D9)', () => {
 
     childA.unprovide(IMid);
     expect(events).toEqual(['-mid']);
-    expect(childB.cascade.unitState(IMid)).toBe('Active');
+    expect(childB.cascade.stateOf(IMid)).toBe('Active');
 
-    // But a parent change reaches both subtrees.
     parent.unprovide(IRoot);
     expect(events).toEqual(['-mid', '-mid', '-root']);
-    expect(childB.cascade.unitState(IMid)).toBe('Pending');
+    expect(childB.cascade.stateOf(IMid)).toBe('Pending');
     parent.dispose();
   });
 
@@ -615,12 +615,10 @@ describe('cascade engine — cross-scope orchestration (D9)', () => {
 
     parent.unprovide(IRoot);
 
-    // The child's own dispose already retired mid; the cascade skips the dead
-    // scope's units and completes its own teardown.
     expect(events).toEqual(['-mid', '-root']);
     const entry = parent.cascade.history().at(-1)!;
     expect(entry.tornDown).toEqual(['cascade-root']);
-    expect(parent.cascade.unitState(IRoot)).toBeUndefined();
+    expect(parent.cascade.stateOf(IRoot)).toBeUndefined();
     parent.dispose();
   });
 
@@ -638,7 +636,6 @@ describe('cascade engine — cross-scope orchestration (D9)', () => {
       descriptor: new SyncDescriptor(Root),
       reason: 'replace root',
     });
-    // The child sees its ancestor's token as in flight.
     expect(child.cascade.isInFlight(IRoot)).toBe(true);
     expect(() => child.invokeFunction((a) => a.get(IRoot))).toThrow(CascadeConflictError);
 
@@ -647,7 +644,167 @@ describe('cascade engine — cross-scope orchestration (D9)', () => {
     await tx;
     const root = await suspended;
     expect(root).toBeInstanceOf(Root);
-    expect(child.cascade.unitState(IMid)).toBe('Active');
+    expect(child.cascade.stateOf(IMid)).toBe('Active');
     parent.dispose();
+  });
+});
+
+describe('cascade engine — introspection (debug surface)', () => {
+  it('unitsSnapshot reflects unit states, in-flight, and the sticky failure', async () => {
+    const ix = makeContainer();
+    let stateDuringCtor: string | undefined;
+    class SpyRoot implements IRoot {
+      label = 'spy';
+      constructor() {
+        stateDuringCtor = ix.cascade.unitsSnapshot().find(
+          (unit) => unit.token === 'cascade-root',
+        )?.state;
+      }
+    }
+    ix.provide(IRoot, new SyncDescriptor(SpyRoot));
+    expect(stateDuringCtor).toBe('Activating');
+
+    ix.provide(ILeaf, new SyncDescriptor(Leaf));
+    class Boom implements IExtra {
+      label = 'boom';
+      constructor() {
+        throw new Error('ctor boom');
+      }
+    }
+    ix.provide(IExtra, new SyncDescriptor(Boom));
+
+    const byToken = new Map(ix.cascade.unitsSnapshot().map((unit) => [unit.token, unit]));
+    expect(byToken.get('cascade-root')).toMatchObject({
+      state: 'Active',
+      everActive: true,
+      inFlight: false,
+    });
+    expect(byToken.get('cascade-leaf')).toMatchObject({
+      state: 'Pending',
+      everActive: false,
+      inFlight: false,
+    });
+    expect(byToken.get('cascade-leaf')!.error).toBeUndefined();
+    expect(byToken.get('cascade-extra')).toMatchObject({
+      state: 'Failed',
+      everActive: false,
+      error: 'ctor boom',
+    });
+
+    const gate = deferred();
+    class SlowRoot implements IRoot {
+      label = 'slow';
+      dispose(): void {
+        return gate.promise as unknown as void;
+      }
+    }
+    ix.provide(IRoot, new SyncDescriptor(SlowRoot));
+    const done = ix.cascade.submit({ action: 'unprovide', token: IRoot, reason: 'drop root' });
+    const mid = new Map(ix.cascade.unitsSnapshot().map((unit) => [unit.token, unit]));
+    expect(mid.get('cascade-root')).toMatchObject({ state: 'Unloading', inFlight: true });
+    gate.resolve();
+    await done;
+    expect(ix.cascade.unitsSnapshot().some((unit) => unit.token === 'cascade-root')).toBe(false);
+    ix.dispose();
+  });
+
+  it('onDidChangeUnitState fires the transition sequence (incl. Failed with error)', () => {
+    const ix = makeContainer();
+    const seen: UnitStateChange[] = [];
+    ix.cascade.onDidChangeUnitState((change) => { seen.push(change); });
+
+    ix.provide(IRoot, new SyncDescriptor(Root));
+    expect(seen).toEqual([
+      { token: 'cascade-root', state: 'Pending' },
+      { token: 'cascade-root', state: 'Activating' },
+      { token: 'cascade-root', state: 'Active' },
+    ]);
+
+    ix.provide(IMid, new SyncDescriptor(Mid));
+    seen.length = 0;
+    ix.unprovide(IRoot);
+    expect(seen).toEqual([
+      { token: 'cascade-mid', state: 'Unloading' },
+      { token: 'cascade-mid', state: 'Pending' },
+      { token: 'cascade-root', state: 'Unloading' },
+    ]);
+
+    seen.length = 0;
+    class Boom implements IExtra {
+      label = 'boom';
+      constructor() {
+        throw new Error('ctor boom');
+      }
+    }
+    ix.provide(IExtra, new SyncDescriptor(Boom));
+    expect(seen).toEqual([
+      { token: 'cascade-extra', state: 'Pending' },
+      { token: 'cascade-extra', state: 'Activating' },
+      { token: 'cascade-extra', state: 'Failed', error: 'ctor boom' },
+    ]);
+    ix.dispose();
+  });
+
+  it('onDidCascade fires once per completed transaction with the history entry', () => {
+    const ix = makeContainer();
+    const fired: CascadeHistoryEntry[] = [];
+    ix.cascade.onDidCascade((entry) => { fired.push(entry); });
+
+    provideChain(ix);
+    expect(fired).toHaveLength(3);
+    expect(fired.map((entry) => entry.seq)).toEqual([1, 2, 3]);
+    expect(fired[2]).toBe(ix.cascade.history().at(-1));
+    expect(fired[2]!.changes).toEqual([{ token: 'cascade-leaf', action: 'provide' }]);
+    ix.dispose();
+  });
+
+  it('CascadeTree onDidAddEngine / onDidRemoveEngine track child containers', () => {
+    const parent = makeContainer();
+    const added: CascadeEngine[] = [];
+    const removed: CascadeEngine[] = [];
+    parent.cascadeTree.onDidAddEngine((engine) => { added.push(engine); });
+    parent.cascadeTree.onDidRemoveEngine((engine) => { removed.push(engine); });
+
+    const child = parent.createChild(new ServiceCollection());
+    expect(added).toEqual([child.cascade]);
+    expect(parent.cascadeTree.engines.has(child.cascade)).toBe(true);
+
+    child.dispose();
+    expect(removed).toEqual([child.cascade]);
+    expect(parent.cascadeTree.engines.has(child.cascade)).toBe(false);
+    parent.dispose();
+  });
+
+  it('servicesSnapshot lists token / uid and tracks provide/unprovide', () => {
+    const ix = makeContainer();
+    const handle = ix.provide(IRoot, new SyncDescriptor(Root));
+    const root = ix.servicesSnapshot().find((service) => service.token === 'cascade-root');
+    expect(root).toBeDefined();
+    expect(root!.uid).toBe(handle.uid);
+    expect(ix.findIdentifier('cascade-root')).toBe(IRoot);
+
+    ix.provide(IRoot, new SyncDescriptor(Root));
+    const next = ix.servicesSnapshot().find((service) => service.token === 'cascade-root');
+    expect(next!.uid).toBeGreaterThan(root!.uid);
+
+    ix.unprovide(IRoot);
+    expect(ix.servicesSnapshot().some((service) => service.token === 'cascade-root')).toBe(false);
+    expect(ix.findIdentifier('cascade-root')).toBeUndefined();
+    ix.dispose();
+  });
+
+  it('exposes ledger / cascadeTree / children for debug introspection', () => {
+    const parent = makeContainer();
+    expect(parent.ledger.state).toBe('active');
+
+    const child = parent.createChild(new ServiceCollection());
+    expect(parent.children).toHaveLength(1);
+    expect(parent.children[0]).toBe(child);
+    expect((child as InstantiationService).cascadeTree).toBe(parent.cascadeTree);
+
+    child.dispose();
+    expect(parent.children).toHaveLength(0);
+    parent.dispose();
+    expect(parent.ledger.state).toBe('disposed');
   });
 });

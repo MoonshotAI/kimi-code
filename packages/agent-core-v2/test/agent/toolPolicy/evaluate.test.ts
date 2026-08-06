@@ -26,8 +26,6 @@ describe('findInactiveToolPatterns', () => {
 
   it('flags a bare * as never matching, and the evaluator agrees', () => {
     expect(findInactiveToolPatterns(['*'])).toEqual([{ pattern: '*', kind: 'wildcard-not-mcp' }]);
-    // Pin the matching semantics the warning describes: `*` in an allowlist
-    // disables everything, in a denylist it is a no-op.
     expect(isToolActive({ tools: ['*'] }, 'Read')).toBe(false);
     expect(isToolActive({ tools: ['*'] }, 'mcp__github__create_pr', 'mcp')).toBe(false);
     expect(isToolActive({ disallowedTools: ['*'] }, 'Read')).toBe(true);

@@ -123,8 +123,8 @@ Reference:
 
 ```ts
 import { beforeEach, describe, expect, it } from 'vitest';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   _clearScopedRegistryForTests,
   registerScopedService,
   ScopeActivation,

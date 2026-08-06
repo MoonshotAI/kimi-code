@@ -434,6 +434,8 @@ export const agentTaskInfoSchema = taskInfoBaseSchema.extend({
   kind: z.literal('agent'),
   agentId: z.string().optional(),
   subagentType: z.string().optional(),
+  model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 });
 
 export const questionTaskInfoSchema = taskInfoBaseSchema.extend({
@@ -626,6 +628,14 @@ export const configWarningEventSchema = z.object({
   ),
 });
 
+export const diUnitChangedEventSchema = z.object({
+  type: z.literal('event.di.unit_changed'),
+  scope: z.string().min(1),
+  token: z.string().min(1),
+  state: z.enum(['Pending', 'Activating', 'Active', 'Unloading', 'Failed']),
+  error: z.string().optional(),
+});
+
 export const goalUpdatedEventSchema = z.object({
   type: z.literal('goal.updated'),
   snapshot: goalSnapshotSchema.nullable(),
@@ -812,6 +822,8 @@ export const subagentSpawnedEventSchema = z.object({
   description: z.string().optional(),
   swarmIndex: z.number().optional(),
   runInBackground: z.boolean(),
+  model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 }) satisfies z.ZodType<SubagentSpawnedEvent>;
 
 export const subagentStartedEventSchema = z.object({
@@ -930,7 +942,7 @@ export const toolListUpdatedEventSchema = z.object({
 export const mcpServerStatusPayloadSchema = z.object({
   name: z.string(),
   transport: z.enum(['stdio', 'http']),
-  status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth']),
+  status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth', 'removed']),
   toolCount: z.number(),
   error: z.string().optional(),
 }) satisfies z.ZodType<McpServerStatusPayload>;
@@ -953,6 +965,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceDeletedEventSchema,
   sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
+  diUnitChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
   pluginCommandActivatedEventSchema,

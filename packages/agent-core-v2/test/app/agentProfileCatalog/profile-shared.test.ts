@@ -265,8 +265,6 @@ describe('renderSystemPromptResult', () => {
   });
 
   it('renders the builtin template with no leftover placeholders', () => {
-    // Every placeholder in the builtin template must be bound in the variable
-    // table — an unbound one would stay verbatim in the output.
     const prompt = renderSystemPromptResult(
       'ROLE_TEXT',
       {

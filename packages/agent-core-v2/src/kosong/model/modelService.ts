@@ -7,7 +7,8 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event, type IWaitUntil } from '#/_base/event';
 
 import { deepEqual, diffRecords, isEmptyDiff } from '../recordDiff';
@@ -22,6 +23,7 @@ import {
 
 const NO_ABORT = new AbortController().signal;
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class ModelService extends Disposable implements IModelService {
   declare readonly _serviceBrand: undefined;
 

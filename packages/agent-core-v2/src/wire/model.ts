@@ -29,6 +29,13 @@
  * A primary Model may register cross-model reducers keyed by foreign op types:
  * the wire service runs them on both dispatch and restore, so v1-derived
  * restore effects can stay replayable without persisting extra records.
+ *
+ * `defineModel` also records every defined Model into `MODEL_REGISTRY`;
+ * together with `OP_REGISTRY`, `MODEL_CROSS_REDUCERS`, and
+ * `CHECKPOINTED_MODELS` these module tables are the static built-in channel
+ * ("import = register") that the `WireModelContribution` fold drains into the
+ * built-in layer whenever a `WireService` (re)folds its runtime lookups —
+ * registrations are append-only and never removed.
  * `DeepReadonly<T>` recursively maps a state type to its deeply-readonly view
  * for the references returned by `getModel`: functions pass
  * through, `Map` / `Set` widen to `ReadonlyMap` / `ReadonlySet`, arrays and
@@ -64,6 +71,9 @@ export interface ModelCrossReducerEntry {
 
 export const MODEL_CROSS_REDUCERS = new Map<string, ModelCrossReducerEntry[]>();
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const MODEL_REGISTRY: ModelDef<any>[] = [];
+
 export function defineModel<S>(
   name: string,
   initial: () => S,
@@ -89,6 +99,8 @@ export function defineModel<S>(
       list.push({ model: def, reducer });
     }
   }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  MODEL_REGISTRY.push(def as ModelDef<any>);
   return def;
 }
 

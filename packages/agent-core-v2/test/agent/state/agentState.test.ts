@@ -19,7 +19,6 @@ describe('agent state snapshot (full agent scope)', () => {
     const snapshot = states.snapshot();
     expect(Object.keys(snapshot).toSorted()).toEqual(registered.toSorted());
 
-    // The whole snapshot must be JSON-serializable and stay small.
     const json = JSON.stringify(snapshot);
     expect(json.length).toBeLessThan(5 * 1024 * 1024);
   });

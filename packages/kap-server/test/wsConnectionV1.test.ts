@@ -773,11 +773,13 @@ describe('WsConnectionV1 global target registration', () => {
   function makeGlobalTargetBroadcaster() {
     const added: unknown[] = [];
     const removed: unknown[] = [];
+    const diOptIns: unknown[] = [];
     const broadcaster = {
       subscribe: async () => true,
       unsubscribe: () => {},
       addGlobalTarget: (target: unknown) => added.push(target),
       removeGlobalTarget: (target: unknown) => removed.push(target),
+      addDiEventTarget: (target: unknown) => diOptIns.push(target),
       getCursor: async () => ({ seq: 0, epoch: '' }),
       getBufferedSince: async () => ({
         events: [],
@@ -786,7 +788,7 @@ describe('WsConnectionV1 global target registration', () => {
         epoch: '',
       }),
     } as unknown as SessionEventBroadcaster;
-    return { broadcaster, added, removed };
+    return { broadcaster, added, removed, diOptIns };
   }
 
   it('registers the connection as a global target on construction and unregisters on close', () => {
@@ -809,5 +811,30 @@ describe('WsConnectionV1 global target registration', () => {
 
     socket.emit('close');
     expect(removed).toEqual([conn]);
+  });
+
+  it('opts only kimi-inspect connections into the event.di.* debug feed on client_hello', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, diOptIns } = makeGlobalTargetBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    // Another client id (or none) never joins the DI fan-out.
+    socket.emit(
+      'message',
+      JSON.stringify({ type: 'client_hello', id: 'h1', payload: { client_id: 'kimi-web' } }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(diOptIns).toEqual([]);
+
+    socket.emit(
+      'message',
+      JSON.stringify({
+        type: 'client_hello',
+        id: 'h2',
+        payload: { client_id: 'kimi-inspect' },
+      }),
+    );
+    await vi.waitFor(() => expect(diOptIns).toEqual([conn]));
+    conn.close();
   });
 });

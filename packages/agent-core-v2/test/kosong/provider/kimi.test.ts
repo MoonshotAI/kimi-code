@@ -151,9 +151,6 @@ describe('kimiOpenAITrait.convertMessage', () => {
 
 describe('kimiOpenAITrait reasoning hooks', () => {
   it('does not pin a reasoning field — the base detects the endpoint dialect', () => {
-    // Detection defaults to `reasoning_content` (Kimi's native field) and
-    // adapts to peers that speak `reasoning` (newer vLLM); a trait pin would
-    // disable that adaptation. Operator config `reasoning_key` still pins.
     expect(kimiOpenAITrait.reasoningKey).toBeUndefined();
   });
 
@@ -312,8 +309,6 @@ describe('trait objects are plain declarations', () => {
   });
 
   it('marks only the native-transport thinking trait as strict-validation (v1 parity)', () => {
-    // Kimi's native API rejects unlisted efforts → strict; over the Anthropic
-    // transport the backend may accept them → lenient (warning + pass-through).
     expect(kimiOpenAITrait.strictThinkingValidation).toBe(true);
     expect(kimiAnthropicTrait.strictThinkingValidation).toBeUndefined();
   });

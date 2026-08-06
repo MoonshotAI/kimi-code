@@ -53,9 +53,6 @@ export class TestInstantiationService extends InstantiationService implements ID
     id: ServiceIdentifier<T>,
     instanceOrDescriptor: T | SyncDescriptor<T>,
   ): T | SyncDescriptor<T> | undefined {
-    // Routed through provide so test overrides get production semantics:
-    // a replaced materialized instance is retired, a new generation starts.
-    // Descriptors stay lazy (constructed at first resolution), as before.
     const prev = this._serviceCollection.get(id);
     this.provide(id, instanceOrDescriptor, { activation: 'ondemand' });
     return prev;

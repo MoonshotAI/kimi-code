@@ -10,6 +10,7 @@
  * whether the consuming Service is instantiated.
  */
 
+import { collection } from '#/_base/di/collection';
 import type { ConfigSchema, RegisterSectionOptions } from './config';
 
 export interface ConfigSectionContribution {
@@ -17,6 +18,8 @@ export interface ConfigSectionContribution {
   readonly schema: ConfigSchema<unknown>;
   readonly options: RegisterSectionOptions<unknown>;
 }
+
+export const ConfigSectionContribution = collection<ConfigSectionContribution>('config-section');
 
 const _contributions: ConfigSectionContribution[] = [];
 

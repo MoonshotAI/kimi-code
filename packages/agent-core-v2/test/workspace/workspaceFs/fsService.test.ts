@@ -2,9 +2,8 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -486,8 +485,6 @@ describe('WorkspaceFsService.search', () => {
       emptyHandler,
     );
     const result = await fs.search({ query: '', limit: 50, follow_gitignore: false });
-    // Dirs first, then files, alphabetical inside each group; hidden entries
-    // and nested paths are not listed.
     expect(result.items.map((i) => i.path)).toEqual(['src', 'README.md']);
     expect(result.items[0]).toMatchObject({
       name: 'src',

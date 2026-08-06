@@ -11,7 +11,8 @@
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import {
   PLUGIN_SKILL_SOURCE_ID,

@@ -28,7 +28,6 @@ describe('state manifest', () => {
       'state-manifest.d.ts',
       readFileSync(MANIFEST_PATH, 'utf-8'),
     );
-    // `parseDiagnostics` is internal in the compiler typings but populated at runtime.
     const diagnostics = (sourceFile.compilerNode as { parseDiagnostics?: readonly unknown[] })
       .parseDiagnostics;
     expect(diagnostics ?? []).toEqual([]);

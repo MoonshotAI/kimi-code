@@ -159,7 +159,6 @@ describe('generate() stream normalization', () => {
       {
         onMessagePart: (part) => {
           seenParts.push(structuredClone(part));
-          // Mutating the callback's copy must not corrupt the driver's merge.
           if (part.type === 'text') part.text = 'MUTATED';
         },
         onToolCall: (call) => {

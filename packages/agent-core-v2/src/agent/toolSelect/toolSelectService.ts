@@ -11,8 +11,9 @@
  * at Agent scope.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
@@ -46,7 +47,7 @@ export const toolSelectPendingLoadedKey = defineState<Set<string>>(
   () => new Set(),
 );
 
-export class AgentToolSelectService extends Disposable implements IAgentToolSelectService {
+export class AgentToolSelectService extends Service implements IAgentToolSelectService {
   declare readonly _serviceBrand: undefined;
 
   constructor(

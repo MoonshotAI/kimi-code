@@ -139,7 +139,6 @@ describe('reduceContextTranscript', () => {
         time: 220,
       },
       { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 'st1' }, time: 230 },
-      // No record time → undefined (falls back to session createdAt + index).
       { type: 'context.append_message', message: userMessage('u2') },
     ]);
 

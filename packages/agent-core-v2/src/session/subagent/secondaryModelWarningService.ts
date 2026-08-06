@@ -17,9 +17,9 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
 import {
   type IAgentScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -46,6 +46,7 @@ import {
   type SecondaryModelWarning,
 } from './secondaryModelWarning';
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class SessionSecondaryModelWarningService
   extends Disposable
   implements ISessionSecondaryModelWarningService

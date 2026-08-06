@@ -9,8 +9,7 @@
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import { LifecycleScope } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
@@ -238,9 +237,6 @@ describe('WorkspaceFsWatchService', () => {
     expect(events).toHaveLength(0);
   });
 
-  // Phase-4 behavior contract: two sessions of one workspace share the
-  // handler's single os watch — subscriptions fan out, they never hang a
-  // second watcher.
   it('shares one os watch across subscriptions and fans events out per subscription', () => {
     const { svc, watch } = makeWorkspace();
     const subA = svc.subscribe();

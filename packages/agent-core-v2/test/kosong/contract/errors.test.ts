@@ -27,8 +27,6 @@ import {
   throwIfAbortError,
 } from '#/kosong/contract/errors';
 
-// Mirrors the OpenAI/Anthropic SDKs' abort class: the contract recognizes it
-// structurally by constructor name, without importing any SDK.
 class APIUserAbortError extends Error {
   constructor(message = 'Request was aborted.') {
     super(message);
@@ -91,15 +89,11 @@ describe('throwIfAbortError', () => {
   });
 
   it('wins at the front of a classification chain, even over network-looking messages', () => {
-    // A miniature stand-in for a provider error converter: the abort guard
-    // runs first, then transport heuristics would classify by message.
     const convert = (error: unknown): ChatProviderError => {
       throwIfAbortError(error);
       return new APIConnectionError((error as Error).message);
     };
 
-    // The abort message mentions a dropped connection — without the guard
-    // first, this would be misclassified as a retryable connection error.
     const abort = new APIUserAbortError('connection aborted by user');
     let caught: unknown;
     try {
@@ -174,7 +168,6 @@ describe('classifyApiError', () => {
     expect(classifyApiError(new APIStatusError(403, 'Forbidden')).kind).toBe('auth');
     expect(classifyApiError(new APIStatusError(500, 'Internal')).kind).toBe('5xx_server');
     expect(classifyApiError(new APIStatusError(422, 'Nope')).kind).toBe('4xx_client');
-    // A 413 phrased as token overflow routes to compaction, not 4xx.
     expect(classifyApiError(new APIStatusError(413, 'Request exceeds the maximum size')).kind).toBe(
       '4xx_client',
     );

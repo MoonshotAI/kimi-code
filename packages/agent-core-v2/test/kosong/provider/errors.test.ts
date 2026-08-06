@@ -40,8 +40,6 @@ import { composeOpenAIChatHooks } from '#/kosong/provider/bases/openai/openaiHoo
 import { kimiAnthropicTrait, kimiOpenAITrait } from '#/kosong/provider/providers/kimi/kimi.contrib';
 import { classifyKimiQuotaError } from '#/kosong/provider/providers/kimi/kimi-errors';
 
-// Structurally an SDK user-abort: recognized by constructor name, the same
-// way the OpenAI and Anthropic SDKs name their abort error class.
 const APIUserAbortError = class extends Error {};
 
 function expectStandardAbort(run: () => unknown): void {

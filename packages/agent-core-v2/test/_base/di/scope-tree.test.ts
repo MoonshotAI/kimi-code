@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   Scope,
   _clearScopedRegistryForTests,
@@ -245,7 +245,7 @@ describe('Scope tree', () => {
     app.dispose();
   });
 
-  it('fails scope creation when an OnScopeCreated service constructor throws', () => {
+  it('an OnScopeCreated construction failure is sticky Failed (D5), not a scope-creation error', () => {
     interface IBoom {
       tag: 'boom';
     }
@@ -260,7 +260,19 @@ describe('Scope tree', () => {
     registerScopedService(LifecycleScope.Session, IBoom, Boom);
 
     const app = createAppScope();
-    expect(() => app.createChild(LifecycleScope.Session, 's1')).toThrow(/boom/);
+    const session = app.createChild(LifecycleScope.Session, 's1');
+    expect(session.instantiation.cascade.stateOf(IBoom)).toBe('Failed');
+    expect(() => session.accessor.get(IBoom)).toThrow(/boom/);
     app.dispose();
+  });
+
+  it('exposes the scope ledger for debug introspection', () => {
+    const { app } = buildTree();
+    expect(app.ledger.state).toBe('active');
+    const labels = app.ledger.entries().map((entry) => entry.label);
+    expect(labels).toContain('instantiation');
+    expect(labels).toContain('scope:s1');
+    app.dispose();
+    expect(app.ledger.state).toBe('disposed');
   });
 });

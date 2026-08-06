@@ -48,7 +48,7 @@ export const agentPlanContract = {
 export const mcpServerEntrySchema = z.object({
   name: z.string(),
   transport: z.enum(['stdio', 'http', 'sse']),
-  status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth']),
+  status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth', 'removed']),
   toolCount: z.number(),
   error: z.string().optional(),
 });

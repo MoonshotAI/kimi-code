@@ -130,6 +130,8 @@ The three mechanisms above are also where a domain accepts new behavior without 
 | Step into an operation in order / veto | a **hook** (`onWill`/`onDid`, `OrderedHookSlot`) | the owning scope |
 | Swap a backend (File ↔ DB ↔ S3) | a **Store / Storage token** at the byte layer (see persistence.md) | `App` (composition root) |
 
+The standard shape of a "registry / catalog the domain queries" row is an L3 contribution point: the target domain owns a `collection<T>` token, contributors call `this.provide(token, record)` from a unit, and a fold service in the target domain injects the `CollectionView` (incremental `onDidChange`; provider death withdraws the record). The four in-repo seams are `ConfigSectionContribution` → `ConfigRegistry`, `AgentToolContribution` → `AgentToolActivationService`, `AgentProfileContribution` → `IAgentProfileRegistry`, and `WireModelContribution` → `WireService` (file-level pointers: `packages/agent-core-v2/AGENTS.md` §Units and contribution points).
+
 Closed-for-modification means: the domain's own file is not where new scenarios branch. If a new scenario forces an edit here, an extension point is missing or misplaced.
 
 ## 5. Dependency direction

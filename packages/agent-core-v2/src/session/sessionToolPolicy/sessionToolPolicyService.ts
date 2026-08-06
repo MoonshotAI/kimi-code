@@ -9,7 +9,8 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event } from '#/_base/event';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -31,6 +32,7 @@ export const sessionToolPolicyStateKey = defineState<SessionToolPolicyState>('se
 
 const STATE_KEY = 'state.json';
 
+// NOTE: stays Disposable — its own 'state' collides with the Fiber
 export class SessionToolPolicyService extends Disposable implements ISessionToolPolicy {
   declare readonly _serviceBrand: undefined;
   readonly ready: Promise<void>;

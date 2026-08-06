@@ -28,8 +28,6 @@ import {
   translateProviderError,
 } from '#/kosong/protocol/errors';
 
-// Mirrors the OpenAI/Anthropic SDKs' abort class: recognized structurally by
-// constructor name, without importing any SDK.
 class APIUserAbortError extends Error {
   constructor(message = 'Request was aborted.') {
     super(message);

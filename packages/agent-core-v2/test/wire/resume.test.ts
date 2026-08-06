@@ -15,7 +15,7 @@ import {
   type PromptOrigin,
 } from '#/index';
 import { IAgentTaskService } from '#/agent/task/task';
-import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { TurnModel } from '#/agent/loop/turnOps';
 import { IWireService } from '#/wire/wire';

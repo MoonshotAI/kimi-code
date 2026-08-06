@@ -3,7 +3,10 @@
  * wire-Model factory.
  *
  * Defines the undo anchor vocabulary and registers conversation-time Models
- * for undo validation. Scope-agnostic.
+ * for undo validation. `CHECKPOINTED_MODELS` stays the undo domain's read
+ * path; the `WireModelContribution` fold also drains it into the built-in
+ * layer so the checkpointed list is part of the folded wire vocabulary.
+ * Scope-agnostic.
  */
 
 import { defineModel, type ModelDef } from '#/wire/model';

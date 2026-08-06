@@ -10,6 +10,7 @@
  */
 
 import type { AgentContextData } from '#/agent/contextMemory/types';
+import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import type {
   GoalBudgetLimits,
   GoalBudgetReport,
@@ -216,10 +217,15 @@ export interface ActivatePluginCommandPayload {
   readonly args?: string | undefined;
 }
 
+export interface RunCommandPayload {
+  readonly name: string;
+  readonly args?: string | undefined;
+}
+
 export interface McpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
-  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
   readonly toolCount: number;
   readonly error?: string;
 }
@@ -308,6 +314,8 @@ export interface AgentAPI {
   cancelCompaction: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => PromptLaunchResult | undefined;
   activatePluginCommand: (payload: ActivatePluginCommandPayload) => void;
+  listCommands: (payload: EmptyPayload) => readonly AgentCommandInfo[];
+  runCommand: (payload: RunCommandPayload) => Promise<void>;
   getContext: (payload: EmptyPayload) => AgentContextData;
   getTools: (payload: EmptyPayload) => readonly ToolInfo[];
 }

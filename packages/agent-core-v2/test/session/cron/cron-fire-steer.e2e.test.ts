@@ -22,7 +22,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
-import { LifecycleScope, type IAgentScopeHandle } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle } from '#/_base/di/scope';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { CronConfig } from '#/app/cron/configSection';
@@ -60,15 +61,12 @@ describe('cron-fired steer turn context', () => {
     };
     ctx = createTestAgent(sessionService(IAgentLifecycleService, lifecycleStub));
 
-    // Bind the cron service to the harness's main agent the way production
-    // does once AgentLifecycleService.create resolves the main handle.
     const accessor = {
       get: <T,>(id: ServiceIdentifier<T>): T => ctx.get(id),
     };
     mainHandle = { id: 'main', kind: LifecycleScope.Agent, accessor, dispose: () => {} };
     onDidCreate.fire(mainHandle);
 
-    // Deterministic cron: file-driven wall clock, manual ticks, no jitter.
     const cronConfig: CronConfig = {
       debug: false,
       noJitter: true,
@@ -77,11 +75,7 @@ describe('cron-fired steer turn context', () => {
       manualTick: true,
       clock: `file:${clockFile}`,
     };
-    // The harness KimiConfig index signature is readonly: replace the whole
-    // config object (the harness mutation idiom) instead of index-writing.
     ctx.kimiConfig = { ...ctx.kimiConfig, cron: cronConfig };
-    // Run the wire restore pipeline so the cron service's onDidRestore hook
-    // picks up the file clock and starts the (manual) scheduler.
     await ctx.restorePersisted();
 
     await ctx.rpc.setPermission({ mode: 'yolo' });
@@ -104,31 +98,25 @@ describe('cron-fired steer turn context', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'remind me every minute' }] });
     await ctx.untilTurnEnd();
 
-    // Sanity: the CronCreate tool result landed in the conversation context.
     const toolMessages = ctx.contextData().history.filter((m) => m.role === 'tool');
     expect(toolMessages).toHaveLength(1);
     const jobId = textOf(toolMessages[0]!).match(/^id: (\S+)$/m)?.[1];
     expect(jobId).toBeDefined();
 
-    // Fire: push the wall clock past the next minute boundary and tick.
     ctx.mockNextResponse({ type: 'text', text: 'cron turn done' });
     writeFileSync(clockFile, String(Date.now() + 120_000));
     await ctx.get(ISessionCronService).tick();
     await ctx.get(IAgentLoopService).settled();
 
-    // The steer turn ran exactly one more request.
     expect(ctx.llmCalls.length).toBe(3);
     const fireRequest = ctx.llmCalls.at(-1)!;
 
-    // (1) The cron fire prompt is there as the latest user message.
     const lastUser = fireRequest.history.filter((m) => m.role === 'user').at(-1);
     const lastUserText = lastUser?.content
       .map((part) => (part.type === 'text' ? part.text : ''))
       .join('') ?? '';
     expect(lastUserText).toContain('fire me');
 
-    // (2) The earlier CronCreate tool result is still in the request —
-    //     this is the regression assertion.
     const requestToolTexts = fireRequest.history
       .filter((m) => m.role === 'tool')
       .flatMap((m) => m.content)

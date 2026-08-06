@@ -711,8 +711,6 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'continued' });
     ctx.mockNextResponse({ type: 'text', text: 'hi there' });
 
-    // A goal-continuation turn carries internal steering text as its input —
-    // the turn boundary must land without a prompt.
     const system = (
       await loop.enqueue(
         new MessageStepRequest(
@@ -1209,7 +1207,7 @@ describe('interruption reminder', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
     subscription.dispose();
-    ctx.llmInputs(); // drain the interrupted turn's request
+    ctx.llmInputs();
 
     ctx.mockNextResponse({ type: 'text', text: 'second answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });

@@ -158,7 +158,7 @@ export function describeAllChannels(): readonly ChannelDescriptor[] {
   return [...byName.entries()]
     .map(([name, entry]) => ({
       name,
-      scope: SCOPE_NAME[entry.scope],
+      scope: SCOPE_NAME[entry.scope as LifecycleScope],
       domain: entry.domain,
       methods: describeMethods(entry.descriptor.ctor),
     }))

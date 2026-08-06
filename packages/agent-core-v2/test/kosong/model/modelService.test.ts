@@ -106,7 +106,6 @@ describe('ModelService', () => {
     await service.set('k1', updated);
     expect(events.at(-1)).toEqual({ added: [], removed: [], changed: ['k1'] });
 
-    // Rewriting with an identical record is silent — no event fires.
     await service.set('k1', updated);
     expect(events).toHaveLength(2);
 

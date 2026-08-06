@@ -7,8 +7,10 @@
  */
 
 import { Emitter, type Event } from '#/_base/event';
-import { Disposable, markAsDisposed, trackDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { markAsDisposed, trackDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import {
   type ITaskHandle,
@@ -159,7 +161,7 @@ class DeferHandle<T> implements IDeferredHandle<T> {
   }
 }
 
-export class TaskService extends Disposable implements ITaskService {
+export class TaskService extends Service implements ITaskService {
   declare readonly _serviceBrand: undefined;
   private _nextId = 0;
 

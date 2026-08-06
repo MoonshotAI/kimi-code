@@ -52,10 +52,7 @@
     "gen:wire-manifest": "tsx --import ../../build/register-raw-text-loader.mjs scripts/gen-wire-manifest.mts",
     "gen:state-manifest": "tsx scripts/gen-state-manifest.mts",
     "lint:imports": "node scripts/check-import-boundaries.mjs",
-    "clean": "rm -rf dist",
-    "dep-graph:analyze": "tsx scripts/dep-graph/cli.ts",
-    "dep-graph:dev": "vite --config scripts/dep-graph/vite.config.ts",
-    "dep-graph:lint": "tsx scripts/dep-graph/lint.ts"
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@antfu/utils": "^9.3.0",
@@ -90,23 +87,15 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@dagrejs/dagre": "^1.1.4",
     "@types/js-yaml": "^4.0.9",
     "@types/picomatch": "^4.0.3",
-    "@types/react": "^19.1.2",
-    "@types/react-dom": "^19.1.2",
     "@types/retry": "0.12.0",
     "@types/sinon": "^21.0.1",
     "@types/tar": "^7.0.87",
     "@types/yauzl": "^2.10.3",
     "@types/yazl": "^2.4.6",
-    "@vitejs/plugin-react": "^4.4.1",
-    "@xyflow/react": "^12.4.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
     "sinon": "^22.0.0",
     "ts-morph": "^28.0.0",
-    "tsx": "^4.21.0",
-    "vite": "^6.3.3"
+    "tsx": "^4.21.0"
   }
 }

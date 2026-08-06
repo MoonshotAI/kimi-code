@@ -13,8 +13,8 @@
  */
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
   type IAgentScopeHandle,
@@ -54,6 +54,7 @@ export const sessionActivityCurrentKey = defineState<SessionActivityState>('sess
   lastTurnReason: undefined,
 }));
 
+// NOTE: stays Disposable — its own 'state' collides with the Fiber
 export class SessionActivityView extends Disposable implements ISessionActivityView {
   declare readonly _serviceBrand: undefined;
 

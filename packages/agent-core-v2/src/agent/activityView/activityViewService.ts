@@ -19,7 +19,8 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -69,6 +70,7 @@ export const activityViewCurrentKey = defineState<AgentActivityState>('activityV
   background: [],
 }));
 
+// NOTE: stays Disposable — its own 'state' collides with the Fiber
 export class AgentActivityView extends Disposable implements IAgentActivityView {
   declare readonly _serviceBrand: undefined;
 

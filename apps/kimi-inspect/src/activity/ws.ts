@@ -11,7 +11,11 @@
  *   - `event.session.work_changed` → `{busy, main_turn_active,
  *     pending_interaction, last_turn_reason}` for one session;
  *   - `event.session.created` / `session.meta.updated` → list-level signals
- *     (a session appeared / retitled), forwarded for list invalidation.
+ *     (a session appeared / retitled), forwarded for list invalidation;
+ *   - `event.di.unit_changed` → one DI unit state transition of the engine's
+ *     scope tree (the debug-surface feed), forwarded for `['di']`
+ *     invalidation. Global like the rest: it carries the `__global__`
+ *     session watermark and fans out to every connection.
  *
  * Session/agent-grained events never arrive here (they stay subscribe-gated
  * server-side); the transcript chat channel has its own socket. Global
@@ -35,6 +39,18 @@ export interface SessionWorkFacts {
   readonly lastTurnReason?: SessionTurnOutcome | undefined;
 }
 
+export type DiUnitState = 'Pending' | 'Activating' | 'Active' | 'Unloading' | 'Failed';
+
+/** Wire payload of the `event.di.unit_changed` global event. */
+export interface DiUnitChangedPayload {
+  /** Scope path of the container owning the unit (`app` / `app/workspace:<id>` / …). */
+  readonly scope: string;
+  readonly token: string;
+  readonly state: DiUnitState;
+  /** Serialized sticky failure, present only on a Failed transition. */
+  readonly error?: string | undefined;
+}
+
 export interface GlobalEventsWsHandlers {
   /** Coarse work-fact tuple for one session changed. */
   onWorkChanged: (sessionId: string, facts: SessionWorkFacts) => void;
@@ -42,6 +58,8 @@ export interface GlobalEventsWsHandlers {
   onSessionCreated: (sessionId: string) => void;
   /** A session's title/patch changed (list-level signal). */
   onMetaUpdated: (sessionId: string) => void;
+  /** A DI unit of the engine's scope tree changed state (debug feed). */
+  onDiUnitChanged?: ((payload: DiUnitChangedPayload) => void) | undefined;
   /** Socket established (initial connect and every reconnect) — the consumer
    *  answers with a REST re-seed, since live facts are missed while down. */
   onReconnected: () => void;
@@ -165,6 +183,11 @@ export class GlobalEventsWs {
         this.handlers.onMetaUpdated(sessionId);
         return;
       }
+      case 'event.di.unit_changed': {
+        const payload = parseDiUnitChangedPayload(frame.payload);
+        if (payload !== undefined) this.handlers.onDiUnitChanged?.(payload);
+        return;
+      }
       case 'ping': {
         const nonce = (frame.payload as { nonce?: unknown } | undefined)?.nonce;
         this.send({ type: 'pong', payload: { nonce } });
@@ -209,6 +232,28 @@ function parseWorkFacts(payload: unknown): SessionWorkFacts | undefined {
     pendingInteraction: pending === 'approval' || pending === 'question' ? pending : 'none',
     lastTurnReason:
       reason === 'completed' || reason === 'cancelled' || reason === 'failed' ? reason : undefined,
+  };
+}
+
+const DI_UNIT_STATES: ReadonlySet<string> = new Set([
+  'Pending',
+  'Activating',
+  'Active',
+  'Unloading',
+  'Failed',
+]);
+
+function parseDiUnitChangedPayload(payload: unknown): DiUnitChangedPayload | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const p = payload as Record<string, unknown>;
+  if (typeof p['scope'] !== 'string' || typeof p['token'] !== 'string') return undefined;
+  const state = p['state'];
+  if (typeof state !== 'string' || !DI_UNIT_STATES.has(state)) return undefined;
+  return {
+    scope: p['scope'],
+    token: p['token'],
+    state: state as DiUnitState,
+    error: typeof p['error'] === 'string' ? p['error'] : undefined,
   };
 }
 

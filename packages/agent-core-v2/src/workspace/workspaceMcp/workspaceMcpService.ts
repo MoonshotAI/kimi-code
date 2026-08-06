@@ -5,7 +5,10 @@
  * shared by every session of the workspace). This service drives the
  * initial connect from the config domain's snapshot, applies its reconciled
  * change events incrementally (serialized on a mutation tail, always after
- * the initial connect settles), feeds the manager's global timeout defaults
+ * the initial connect settles — removals tombstone the server via
+ * `markRemoved` so live sessions keep the tool registrations but fail calls
+ * with a removal notice, while new sessions never see them), feeds the
+ * manager's global timeout defaults
  * from the config domain's tunables at each (re)connect, and reports
  * connection telemetry for the initial load. It also builds per-session
  * overlays (`sessionOverlay`): a session-owned manager for a session's
@@ -27,8 +30,9 @@
  * name.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -51,7 +55,7 @@ import {
   type SessionMcpOverlayOptions,
 } from './workspaceMcp';
 
-export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpService {
+export class WorkspaceMcpService extends Service implements IWorkspaceMcpService {
   declare readonly _serviceBrand: undefined;
 
   private readonly manager: McpConnectionManager;
@@ -161,7 +165,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
 
   private async apply(change: McpServersChange): Promise<void> {
     for (const name of change.remove) {
-      await this.manager.remove(name);
+      await this.manager.markRemoved(name);
     }
     for (const [name, config] of Object.entries(change.upsert)) {
       await this.manager.connect(name, config);

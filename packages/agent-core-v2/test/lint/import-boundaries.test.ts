@@ -120,6 +120,14 @@ describe('check-import-boundaries', () => {
     expect(violations).toHaveLength(0);
   });
 
+  it('allows kosong to import the app/scopes DI vocabulary', () => {
+    const violations = checkSource(
+      `import { LifecycleScope } from '#/app/scopes';`,
+      atKosong('provider', 'provider.ts'),
+    );
+    expect(violations).toHaveLength(0);
+  });
+
   it('flags a bases implementation importing a registry module', () => {
     const violations = checkSource(
       `import { registry } from '#/kosong/provider/protocolAdapterRegistry';`,

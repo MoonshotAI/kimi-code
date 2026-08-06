@@ -23,10 +23,6 @@ import { describe, expect, it } from 'vitest';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = join(__dirname, '..', '..', 'src');
 
-/**
- * Branching on the vendor id: `=== 'kimi'` / `== 'kimi'` / `!== 'kimi'` /
- * `!= 'kimi'` (either operand order) and `case 'kimi':`.
- */
 const VENDOR_GATE_RE = /[!=]==?\s*'kimi'|'kimi'\s*[!=]==?|\bcase\s+'kimi'\s*:/;
 
 interface GateHit {
@@ -50,7 +46,6 @@ function walk(dir: string): string[] {
   return out;
 }
 
-/** Full-line comments may quote the legacy gate as parity documentation. */
 function isCommentLine(line: string): boolean {
   const trimmed = line.trimStart();
   return trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*');

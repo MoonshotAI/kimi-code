@@ -27,6 +27,7 @@ export interface RegisterContributionOptions {
   readonly priority?: number;
 }
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class ContributionRegistry<T> extends Disposable {
   private readonly registrations = new Map<string, ContributionRegistration<T>>();
   private readonly onDidChangeEmitter = this._register(new Emitter<string>());

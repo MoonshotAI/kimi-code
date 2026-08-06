@@ -2,10 +2,10 @@
  * `workspaceAgentProfileLoader` domain — `IPluginAgentProfileLoader` contract.
  *
  * The plugin loader of the agent-profile extension point: owns the `plugin`
- * contribution in the App-scope `IAgentProfileRegistry` — the agent files
+ * record of the `AgentProfileContribution` collection — the agent files
  * discovered from the enabled plugins' agent roots, tagged with this
  * handler's `workspaceId`. `ready` tracks the most recent discovery pass;
- * `reload()` re-discovers and re-registers. Workspace-scoped.
+ * `reload()` re-discovers and re-contributes. Workspace-scoped.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

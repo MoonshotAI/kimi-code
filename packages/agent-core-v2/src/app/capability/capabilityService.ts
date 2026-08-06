@@ -4,14 +4,16 @@
  * Holds the closed registry of built-in capability entries and serializes
  * install runs per entry. Install progress lives in memory only and is
  * polled by clients; a failed attempt leaves its error in the progress state
- * until the next attempt starts. Listing degrades a single entry's failing
- * detection to a failed step on that entry instead of rejecting the whole
- * list. Bound at App scope.
+ * until the next attempt starts and logs the failure through `log`. Listing
+ * degrades a single entry's failing detection to a failed step on that entry
+ * instead of rejecting the whole list. Bound at App scope.
  */
 
 import { homedir } from 'node:os';
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ILogService } from '#/_base/log/log';
 import { Error2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -42,6 +44,7 @@ export class CapabilityService implements ICapabilityService {
     @IBootstrapService bootstrap: IBootstrapService,
     @IPluginService plugins: IPluginService,
     @IHostProcessService hostProcess: IHostProcessService,
+    @ILogService private readonly log: ILogService,
     entriesOverride?: readonly CapabilityEntry[],
   ) {
     if (entriesOverride !== undefined) {
@@ -98,6 +101,12 @@ export class CapabilityService implements ICapabilityService {
         });
         this.installProgress.set(entry.id, { running: false });
       } catch (error) {
+        const step = this.installProgress.get(entry.id)?.step;
+        this.log.warn('capability install failed', {
+          capabilityId: entry.id,
+          step,
+          error,
+        });
         this.installProgress.set(entry.id, {
           running: false,
           error: error instanceof Error ? error.message : String(error),

@@ -65,7 +65,6 @@ describe('secondaryModelOverlay.apply', () => {
         maxOutputSize: 8192,
       },
     });
-    // The pointed entry stays untouched.
     expect(models['k2']).toEqual(baseEntry);
   });
 
@@ -103,9 +102,7 @@ describe('secondaryModelOverlay.strip', () => {
 
   it('rolls back a defaultModel pointer set to the derived id', () => {
     expect(strip('defaultModel', 'k2', {})).toBe('k2');
-    // Restore the raw pointer when one exists…
     expect(strip('defaultModel', SECONDARY_DERIVED_MODEL_ID, { default_model: 'k2' })).toBe('k2');
-    // …or drop the section when the raw config never had one.
     expect(strip('defaultModel', SECONDARY_DERIVED_MODEL_ID, {})).toBeUndefined();
   });
 });

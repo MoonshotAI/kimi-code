@@ -57,10 +57,6 @@ describe('BashParserService', () => {
   });
 
   it('snapshots deeply nested trees without overflowing the call stack', () => {
-    // A long left-associative arithmetic chain nests one binary_expression
-    // per operand; with a few thousand operands the tree is thousands of
-    // levels deep but still within budget. A recursive DTO conversion
-    // overflows the JS call stack here (RangeError) instead of returning.
     const source = `echo $((${'1+'.repeat(3000)}1))`;
     const result = service.parse(source, { timeoutMs: 5000 });
     if (!result.ok) {

@@ -2,8 +2,9 @@
  * `agentProfileCatalog` domain — `IBuiltinAgentProfileLoader` implementation.
  *
  * Snapshots the module-level contributions (`registerAgentProfile`, the
- * "import = register" pattern) on construction and registers them into
- * `IAgentProfileRegistry`. Register-after-construction is not supported: like
+ * "import = register" pattern) on construction and contributes them to the
+ * `AgentProfileContribution` collection as the global `builtin` record.
+ * Register-after-construction is not supported: like
  * `IAgentToolRegistryService`, contributions are expected to accumulate at
  * import time before the container resolves the service. `getDefault()`
  * throws a `BugIndicatingError` when the builtin default profile is missing — a
@@ -11,20 +12,27 @@
  * scope.
  */
 
+import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { BugIndicatingError } from '#/errors';
 
 import type { AgentProfile } from './agentProfileCatalog';
 import { DEFAULT_AGENT_PROFILE_NAME } from './agentProfileCatalog';
-import { AGENT_PROFILE_SOURCE_PRIORITY } from './agentProfileContribution';
-import { IAgentProfileRegistry } from './agentProfileRegistry';
+import {
+  AGENT_PROFILE_SOURCE_PRIORITY,
+  AgentProfileContribution,
+  type AgentProfileContributionRecord,
+} from './agentProfileContribution';
 import {
   BUILTIN_AGENT_PROFILE_SOURCE_ID,
   IBuiltinAgentProfileLoader,
 } from './builtinAgentProfileLoader';
 import { getAgentProfileContributions } from './contribution';
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class BuiltinAgentProfileLoaderService
   extends Disposable
   implements IBuiltinAgentProfileLoader
@@ -34,17 +42,17 @@ export class BuiltinAgentProfileLoaderService
   private readonly byName: Map<string, AgentProfile>;
   private readonly ordered: readonly AgentProfile[];
 
-  constructor(@IAgentProfileRegistry registry: IAgentProfileRegistry) {
+  constructor(@IInstantiationService instantiationService: IInstantiationService) {
     super();
     const contributions = getAgentProfileContributions();
     this.ordered = [...contributions];
     this.byName = new Map(this.ordered.map((def) => [def.name, def]));
     this._register(
-      registry.register(
-        BUILTIN_AGENT_PROFILE_SOURCE_ID,
-        { profiles: this.ordered },
-        { priority: AGENT_PROFILE_SOURCE_PRIORITY.builtin },
-      ),
+      instantiationService.createInstance(BuiltinAgentProfileContributionUnit, {
+        sourceId: BUILTIN_AGENT_PROFILE_SOURCE_ID,
+        priority: AGENT_PROFILE_SOURCE_PRIORITY.builtin,
+        contribution: { profiles: this.ordered },
+      }),
     );
   }
 
@@ -64,6 +72,13 @@ export class BuiltinAgentProfileLoaderService
 
   list(): readonly AgentProfile[] {
     return this.ordered;
+  }
+}
+
+class BuiltinAgentProfileContributionUnit extends Service {
+  constructor(record: AgentProfileContributionRecord) {
+    super();
+    this.provide(AgentProfileContribution, record);
   }
 }
 

@@ -18,8 +18,6 @@ import type { UrlFetcher, UrlFetchResult } from '#/app/web/tools/fetch-url-types
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
 
-// LocalFetchURLProvider resolves hostnames before fetching; keep DNS
-// hermetic so provider-level tests never touch the real resolver.
 beforeEach(() => {
   (lookup as unknown as Mock).mockReset();
   (lookup as unknown as Mock).mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);

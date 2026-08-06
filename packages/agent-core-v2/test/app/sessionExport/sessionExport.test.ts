@@ -27,7 +27,8 @@ import {
   type ServiceRegistration,
   type TestInstantiationService,
 } from '#/_base/di/test';
-import { LifecycleScope, type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { ILogService, type ILogService as LogService } from '#/_base/log/log';
 import { IWireService } from '#/wire/wire';
@@ -172,7 +173,6 @@ describe('sessionExport', () => {
       request: { sessionId: 'ses_repeated_export', version: '1.0.0-test' },
       summary,
     });
-    // Cross the next second boundary so the second export gets a distinct timestamp.
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 1100 - (Date.now() % 1000)));
     const second = await exportSessionDirectory({
       request: { sessionId: 'ses_repeated_export', version: '1.0.0-test' },

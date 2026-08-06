@@ -19,7 +19,6 @@
 
 import { Error2, ErrorCodes } from '#/errors';
 
-/** A parsed cron expression. Opaque to callers — pass it back into {@link computeNextCronRun}. */
 export interface ParsedCronExpression {
   readonly raw: string;
   readonly minutes: ReadonlySet<number>;

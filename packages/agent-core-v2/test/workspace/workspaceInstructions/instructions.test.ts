@@ -79,8 +79,6 @@ describe('WorkspaceInstructionsService', () => {
   }
 
   function fireWatch(path: string): void {
-    // The service watches each plan ROOT (brand home, real home, project
-    // root) recursively — fire on the root that contains the changed file.
     for (const [root, emitter] of watchFires) {
       if (path === root || path.startsWith(`${root}/`)) {
         emitter.fire({ path, action: 'modified', kind: 'file' });

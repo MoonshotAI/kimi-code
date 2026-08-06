@@ -9,7 +9,8 @@
  */
 
 import { Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { ISessionToolPolicyGate } from './sessionToolPolicyGate';
 

@@ -38,8 +38,6 @@ import { IModelService, type ModelRecord } from '#/kosong/model/model';
 import { MODELS_SECTION } from '#/app/kosongConfig/configSection';
 import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/kosong/provider/provider';
 
-// Side-effect registration: the OAuth-catalog verdict
-// (`isOAuthCatalogProvider`) answers through the provider-definition registry.
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import { registerBootstrapServices } from '../bootstrap/stubs';

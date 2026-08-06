@@ -1,13 +1,15 @@
 /**
  * `workspaceAgentProfileLoader` domain — `IExtraAgentProfileLoader` implementation.
  *
- * Resolves the configured `extraAgentDirs` through `config`, `workspaceContext`,
- * `bootstrap`, and `hostFs`, reporting skipped files through `log`.
- * Reloads when the `extraAgentDirs` config section changes. Bound at
- * Workspace scope.
+ * Resolves the configured `extraAgentDirs` through `configService`,
+ * `workspaceContext`, `bootstrap`, and `hostFs`, reporting skipped files
+ * through `log`. Reloads when the `extraAgentDirs` config section changes.
+ * Bound at Workspace scope.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { discoverAgentFiles } from '#/workspace/workspaceAgentProfileLoader/internal/agentFileDiscovery';
 import { AgentProfileLoaderBase } from '#/workspace/workspaceAgentProfileLoader/internal/agentProfileLoader';
@@ -22,7 +24,6 @@ import {
   type ExtraAgentDirsConfig,
 } from '#/workspace/workspaceAgentProfileLoader/configSection';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -40,17 +41,16 @@ export class ExtraAgentProfileLoaderService
   protected readonly priority = AGENT_PROFILE_SOURCE_PRIORITY.extra;
 
   constructor(
-    @IConfigService private readonly config: IConfigService,
+    @IConfigService private readonly configService: IConfigService,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
-    @IAgentProfileRegistry registry: IAgentProfileRegistry,
   ) {
-    super(registry, log);
+    super(log);
     this._register(
-      this.config.onDidSectionChange((event) => {
+      this.configService.onDidSectionChange((event) => {
         if (event.domain === EXTRA_AGENT_DIRS_SECTION) {
           void this.reload().catch((error) => {
             this.log.warn(`agent profile loader "extra" reload failed: ${String(error)}`);
@@ -66,8 +66,8 @@ export class ExtraAgentProfileLoaderService
   }
 
   protected async load(): Promise<AgentProfileContribution> {
-    await this.config.ready;
-    const dirs = this.config.get<ExtraAgentDirsConfig>(EXTRA_AGENT_DIRS_SECTION) ?? [];
+    await this.configService.ready;
+    const dirs = this.configService.get<ExtraAgentDirsConfig>(EXTRA_AGENT_DIRS_SECTION) ?? [];
     return profilesFromDiscovery(
       await discoverAgentFiles(
         this.fs,

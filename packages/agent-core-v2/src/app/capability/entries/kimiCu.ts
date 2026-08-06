@@ -20,6 +20,8 @@
  * blocking the replacement.
  * The Windows path downloads and runs the official `setup_windows.ps1`, so
  * its signature verification, rollback, and agent autostart stay upstream.
+ * It selects a trusted PowerShell installation that satisfies the script's
+ * command requirements before changing plugin wiring.
  */
 
 import { constants } from 'node:fs';
@@ -53,8 +55,18 @@ const LAUNCHD_LABEL = 'ai.kimi.cu.service';
 const COMMAND_TIMEOUT_MS = 30_000;
 const PERMISSIONS_TIMEOUT_MS = 15_000;
 const DETECT_PROBE_TIMEOUT_MS = 3_000;
+const WINDOWS_INSTALLER_PROBE_TIMEOUT_MS = 10_000;
 const WINDOWS_INSTALL_TIMEOUT_MS = 180_000;
 const DEFAULT_WINDOWS_SYSTEM_ROOT = 'C:\\Windows';
+const DEFAULT_WINDOWS_PROGRAM_FILES = 'C:\\Program Files';
+const WINDOWS_INSTALLER_PROBE_SCRIPT =
+  "$required = @('Get-FileHash', 'Expand-Archive', 'Get-AuthenticodeSignature', 'Get-CimInstance', 'Invoke-WebRequest', 'Invoke-RestMethod', 'ConvertFrom-Json', 'ConvertTo-Json'); " +
+  '$missing = @($required | Where-Object { -not (Get-Command $_ -CommandType Cmdlet,Function -ErrorAction SilentlyContinue) }); ' +
+  '$issues = @(); ' +
+  "if ($PSVersionTable.PSVersion -lt [Version]'5.1') { $issues += ('requires PowerShell 5.1 or newer; found ' + $PSVersionTable.PSVersion) }; " +
+  "if ($missing.Count -gt 0) { $issues += ('missing commands: ' + ($missing -join ', ')) }; " +
+  "if ($issues.Count -gt 0) { [Console]::Error.Write(($issues -join '; ')); exit 2 }; " +
+  "[Console]::Out.Write(('PowerShell ' + $PSVersionTable.PSVersion));";
 const WINDOWS_DOCTOR_SCRIPT =
   '$candidates = @($env:KIMI_CU_WINDOWS_EXE); ' +
   "if ($env:KIMI_CU_WINDOWS_HOME) { $candidates += (Join-Path $env:KIMI_CU_WINDOWS_HOME 'kimi-cu.exe') }; " +
@@ -115,6 +127,18 @@ export function windowsPowerShellPath(
   );
 }
 
+export function windowsPowerShell7Path(
+  programFiles =
+    process.env['ProgramW6432'] ??
+    process.env['ProgramFiles'] ??
+    DEFAULT_WINDOWS_PROGRAM_FILES,
+): string {
+  const root = path.win32.isAbsolute(programFiles)
+    ? programFiles
+    : DEFAULT_WINDOWS_PROGRAM_FILES;
+  return path.win32.join(root, 'PowerShell', '7', 'pwsh.exe');
+}
+
 export async function readAppBundleVersion(infoPlistPath: string): Promise<string | undefined> {
   try {
     const xml = await readFile(infoPlistPath, 'utf-8');
@@ -131,6 +155,18 @@ function appleScriptQuote(script: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function powerShellStringLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function powerShellSetupCommand(setupPath: string): string {
+  return (
+    '$utf8 = New-Object System.Text.UTF8Encoding($false); ' +
+    '[Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8; ' +
+    `& ${powerShellStringLiteral(setupPath)}`
+  );
 }
 
 async function detectPluginLayer(
@@ -495,10 +531,42 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
 function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
   const supported = ctx.platform === 'win32' && ctx.arch === 'x64';
   const probeTimeoutMs = ctx.detectProbeTimeoutMs ?? DETECT_PROBE_TIMEOUT_MS;
+  const installerProbeTimeoutMs =
+    ctx.detectProbeTimeoutMs ?? WINDOWS_INSTALLER_PROBE_TIMEOUT_MS;
   const installTimeoutMs = ctx.commandTimeoutMs ?? WINDOWS_INSTALL_TIMEOUT_MS;
   const powershellPath = windowsPowerShellPath();
+  const powershell7Path = windowsPowerShell7Path();
 
-  async function runtimeStep(): Promise<{
+  async function installerPowerShell(): Promise<string> {
+    const failures: string[] = [];
+    for (const candidate of [
+      { label: 'Windows PowerShell', command: powershellPath },
+      { label: 'PowerShell 7', command: powershell7Path },
+    ]) {
+      try {
+        const result = await runCommand(
+          ctx.hostProcess,
+          candidate.command,
+          ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_INSTALLER_PROBE_SCRIPT],
+          { timeout: installerProbeTimeoutMs },
+        );
+        if (result.code === 0) return candidate.command;
+        failures.push(
+          `${candidate.label} (${candidate.command}): ${
+            result.stderr.trim() || result.stdout.trim() || `exit code ${result.code}`
+          }`,
+        );
+      } catch (error) {
+        failures.push(`${candidate.label} (${candidate.command}): ${errorMessage(error)}`);
+      }
+    }
+    throw new Error(
+      'Kimi Computer Use requires Windows PowerShell 5.1 or PowerShell 7 with the commands required by its official installer. ' +
+        failures.join('; '),
+    );
+  }
+
+  async function runtimeStep(command: string): Promise<{
     readonly step: CapabilityStep;
     readonly version?: string;
   }> {
@@ -506,7 +574,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     try {
       result = await runCommand(
         ctx.hostProcess,
-        powershellPath,
+        command,
         ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_DOCTOR_SCRIPT],
         { timeout: probeTimeoutMs },
       );
@@ -540,10 +608,21 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       : { step: { id: 'runtime', state: 'ok', detail: doctor.version }, version: doctor.version };
   }
 
+  async function detectRuntimeStep(): Promise<{
+    readonly step: CapabilityStep;
+    readonly version?: string;
+  }> {
+    const systemRuntime = await runtimeStep(powershellPath);
+    if (systemRuntime.step.state !== 'failed') return systemRuntime;
+
+    const fallbackRuntime = await runtimeStep(powershell7Path);
+    return fallbackRuntime.step.state === 'ok' ? fallbackRuntime : systemRuntime;
+  }
+
   async function detect(): Promise<CapabilityDetectResult> {
     const [plugin, runtime] = await Promise.all([
       detectPluginLayer(ctx, WINDOWS_PLUGIN),
-      runtimeStep(),
+      detectRuntimeStep(),
     ]);
     return {
       steps: [plugin.step, runtime.step],
@@ -561,11 +640,31 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     const before = await detect();
     const stepStates = new Map(before.steps.map((step) => [step.id, step.state]));
     const readyBefore = before.steps.every((step) => step.state === 'ok');
+    const installPlugin = stepStates.get('plugin') !== 'ok' || readyBefore;
+    const installRuntime = stepStates.get('runtime') !== 'ok' || readyBefore;
+    const installPowerShell = installRuntime ? await installerPowerShell() : undefined;
 
-    report('plugin');
-    await installPluginLayer(ctx, WINDOWS_PLUGIN);
+    if (installPlugin) {
+      report('plugin');
+      try {
+        await installPluginLayer(ctx, WINDOWS_PLUGIN);
+      } catch (error) {
+        if (
+          typeof error !== 'object' ||
+          error === null ||
+          !('code' in error) ||
+          error.code !== 'EBUSY'
+        ) {
+          throw error;
+        }
+        throw new Error(
+          'Kimi Computer Use plugin files are still in use by the current Kimi Code process. Restart Kimi Code, then install again.',
+          { cause: error },
+        );
+      }
+    }
 
-    if (stepStates.get('runtime') !== 'ok' || readyBefore) {
+    if (installPowerShell !== undefined) {
       const workDir = await mkdtemp(path.join(tmpdir(), 'kimi-cu-windows-install-'));
       try {
         const setupPath = path.join(workDir, 'setup_windows.ps1');
@@ -582,14 +681,14 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         report('runtime');
         const installed = await runCommand(
           ctx.hostProcess,
-          powershellPath,
+          installPowerShell,
           [
             '-NoProfile',
             '-NonInteractive',
             '-ExecutionPolicy',
             'Bypass',
-            '-File',
-            setupPath,
+            '-Command',
+            powerShellSetupCommand(setupPath),
           ],
           { timeout: installTimeoutMs },
         );
@@ -604,7 +703,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
       }
 
-      const runtime = await runtimeStep();
+      const runtime = await runtimeStep(installPowerShell);
       if (runtime.step.state !== 'ok') {
         throw new Error(
           `kimi-cu Windows runtime is not ready after install: ${runtime.step.detail ?? runtime.step.state}`,
@@ -616,7 +715,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
   return {
     id: 'kimi-cu',
     pluginId: WINDOWS_PLUGIN.id,
-    displayName: 'Kimi Computer Use',
+    displayName: 'Kimi Computer Use for Windows',
     description:
       'Windows GUI automation — read app UIs and click, type, scroll, and drag in desktop apps.',
     supported,
