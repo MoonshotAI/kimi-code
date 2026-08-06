@@ -1,5 +1,5 @@
 ---
-'@moonshot-ai/kimi-code': patch
+"@moonshot-ai/kimi-code": patch
 ---
 
-Subagent UIs now show each subagent's bound model and thinking effort.
+web: Subagent tasks now show the model and thinking level they use.
