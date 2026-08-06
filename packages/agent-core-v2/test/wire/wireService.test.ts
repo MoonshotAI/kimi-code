@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
+import { createDecorator } from '#/_base/di/instantiation';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { TestInstantiationService } from '#/_base/di/test';
 import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
 import { IEventBus } from '#/app/event/eventBus';
@@ -11,10 +13,17 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { defineModel } from '#/wire/model';
+import { defineModel, type ModelDef } from '#/wire/model';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
+import { bindDefineOp, DuplicateOpError, type Op, type OpDescriptor } from '#/wire/op';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+import {
+  builtinWireContribution,
+  foldWireContributions,
+  WireModelContribution,
+  type WireModelContributionRecord,
+} from '#/wire/wireContribution';
 import { CycleError } from '#/wire/wireService';
 
 import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from './stubs';
@@ -74,6 +83,48 @@ const mutateCounter = CounterModel.defineOp('store.counter.mutate', {
     return s;
   },
 });
+
+interface DynState {
+  readonly hits: number;
+}
+
+const dynModel: ModelDef<DynState> = {
+  name: 'wire.test.dyn',
+  initial: () => ({ hits: 0 }),
+  defineOp: bindDefineOp(() => dynModel),
+};
+
+const dynHit: OpDescriptor<'wire.test.dyn.hit', DynState, { n: number }> = {
+  type: 'wire.test.dyn.hit',
+  model: dynModel,
+  schema: z.object({ n: z.number() }),
+  apply: (state, payload) => ({ hits: state.hits + payload.n }),
+};
+
+const dynHitOp = (payload: { n: number }): Op<'wire.test.dyn.hit', { n: number }> => ({
+  type: 'wire.test.dyn.hit',
+  payload,
+  descriptor: dynHit,
+});
+
+const evilCounterAdd: OpDescriptor<'store.counter.add', DynState, { by: number }> = {
+  type: 'store.counter.add',
+  model: dynModel,
+  schema: z.object({ by: z.number() }),
+  apply: () => ({ hits: 999 }),
+};
+
+interface IDynContributor {
+  readonly marker: string;
+}
+const IDynContributor = createDecorator<IDynContributor>('wire-test-dyn-contributor');
+
+class DynContributor extends Service {
+  constructor(record: WireModelContributionRecord) {
+    super();
+    this.provide(WireModelContribution, record);
+  }
+}
 
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
@@ -285,5 +336,135 @@ describe('WireService', () => {
 
     expect(() => wire.dispatch(mutateCounter({}))).toThrow(TypeError);
     expect(wire.getModel(CounterModel)).toEqual({ value: 1 });
+  });
+});
+
+describe('WireService × WireModelContribution fold', () => {
+  function contribute(record: WireModelContributionRecord): void {
+    ix.provide(IDynContributor, new SyncDescriptor(DynContributor, [record] as never));
+    ix.invokeFunction((accessor) => accessor.get(IDynContributor));
+  }
+
+  it('replays records of a runtime-contributed op while its record lives', async () => {
+    contribute({ models: [dynModel], ops: [dynHit] });
+
+    await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
+      { type: 'wire.test.dyn.hit', n: 2 },
+      { type: 'store.counter.add', by: 1 },
+    ]);
+
+    expect(wire.getModel(dynModel)).toEqual({ hits: 2 });
+    expect(wire.getModel(CounterModel)).toEqual({ value: 1 });
+  });
+
+  it('dispatches a runtime-contributed op and persists its record', async () => {
+    contribute({ models: [dynModel], ops: [dynHit] });
+
+    wire.dispatch(dynHitOp({ n: 2 }), counterAdd({ by: 1 }));
+
+    expect(wire.getModel(dynModel)).toEqual({ hits: 2 });
+    expect(await readRecords()).toContainEqual({
+      type: 'wire.test.dyn.hit',
+      n: 2,
+      time: expect.any(Number),
+    });
+  });
+
+  it('skips and counts replayed records of an op whose contribution was withdrawn', async () => {
+    contribute({ models: [dynModel], ops: [dynHit] });
+    ix.unprovide(IDynContributor);
+
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
+        { type: 'wire.test.dyn.hit', n: 2 },
+        { type: 'store.counter.add', by: 1 },
+      ]);
+
+      expect(wire.getModel(dynModel)).toEqual({ hits: 0 });
+      expect(wire.getModel(CounterModel)).toEqual({ value: 1 });
+      expect(unexpected).toHaveLength(1);
+      expect(unexpected[0]).toMatchObject({
+        code: 'wire.unknown_record',
+        details: { type: 'wire.test.dyn.hit', index: 0 },
+      });
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+
+  it('keeps the built-in op when a contribution conflicts with a built-in op type', async () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      contribute({ models: [dynModel], ops: [evilCounterAdd] });
+      expect(unexpected).toHaveLength(1);
+      expect(unexpected[0]).toMatchObject({
+        code: 'wire.duplicate_op',
+        details: { type: 'store.counter.add' },
+      });
+
+      await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
+        { type: 'store.counter.add', by: 5 },
+      ]);
+
+      expect(wire.getModel(CounterModel)).toEqual({ value: 5 });
+      expect(wire.getModel(dynModel)).toEqual({ hits: 0 });
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+
+  it('runs cross-reducers from a contribution, and stops once it is withdrawn', () => {
+    contribute({
+      models: [dynModel],
+      crossReducers: new Map([
+        [
+          'store.counter.add',
+          [{ model: dynModel, reducer: (state: DynState, p: { by: number }) => ({ hits: state.hits + p.by }) }],
+        ],
+      ]),
+    });
+
+    wire.dispatch(counterAdd({ by: 2 }));
+    expect(wire.getModel(dynModel)).toEqual({ hits: 2 });
+
+    ix.unprovide(IDynContributor);
+    wire.dispatch(counterAdd({ by: 3 }));
+    expect(wire.getModel(CounterModel)).toEqual({ value: 5 });
+    expect(wire.getModel(dynModel)).toEqual({ hits: 2 });
+  });
+
+  it('keeps defineOp module-path behavior: duplicate type throws DuplicateOpError', () => {
+    expect(() =>
+      CounterModel.defineOp('store.counter.add', {
+        schema: z.object({}),
+        apply: (state) => state,
+      }),
+    ).toThrow(DuplicateOpError);
+  });
+
+  it('foldWireContributions folds the built-in layer, keeps the first op per type, dedups models', () => {
+    const dynHitClone: OpDescriptor<'wire.test.dyn.hit', DynState, { n: number }> = { ...dynHit };
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      const folded = foldWireContributions([
+        builtinWireContribution(),
+        { models: [dynModel, dynModel], ops: [dynHit, dynHitClone] },
+      ]);
+
+      expect(folded.ops.get('store.counter.add')?.type).toBe('store.counter.add');
+      expect(folded.ops.get('wire.test.dyn.hit')).toBe(dynHit);
+      expect(folded.models.filter((model) => model === dynModel)).toHaveLength(1);
+      expect(unexpected).toHaveLength(1);
+      expect(unexpected[0]).toMatchObject({
+        code: 'wire.duplicate_op',
+        details: { type: 'wire.test.dyn.hit' },
+      });
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
   });
 });

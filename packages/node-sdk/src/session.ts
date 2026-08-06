@@ -11,8 +11,9 @@ import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
-  CapabilityStatus,
+  AgentCommandInfo,
   BackgroundTaskInfo,
+  CapabilityStatus,
   CompactOptions,
   CreateGoalInput,
   GetCronTasksResult,
@@ -372,6 +373,15 @@ export class Session {
   }
 
   /**
+   * Contributed commands registered with this session's interactive agent
+   * (agent-core-v2 only — a v1-backed session reports the empty set).
+   */
+  async listCommands(): Promise<readonly AgentCommandInfo[]> {
+    this.ensureOpen();
+    return this.rpc.listCommands({ sessionId: this.id });
+  }
+
+  /**
    * List background tasks for this session's interactive agent.
    *
    * Defaults to all tasks (including terminal/lost). Pass
@@ -629,6 +639,24 @@ export class Session {
       pluginId: normalizedPluginId,
       commandName: normalizedCommandName,
       ...(commandArgs !== undefined ? { args: commandArgs } : {}),
+    });
+  }
+
+  /**
+   * Run a contributed command engine-side (agent-core-v2 only — a v1-backed
+   * client rejects with `not_implemented`). Unknown names reject with the
+   * engine's `request.invalid` error.
+   */
+  async runCommand(name: string, args?: string): Promise<void> {
+    this.ensureOpen();
+    const commandName = name.trim();
+    if (commandName.length === 0) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Command name cannot be empty');
+    }
+    await this.rpc.runCommand({
+      sessionId: this.id,
+      name: commandName,
+      args: normalizeOptionalString(args),
     });
   }
 

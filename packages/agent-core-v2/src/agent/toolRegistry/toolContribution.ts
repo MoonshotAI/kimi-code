@@ -10,11 +10,13 @@
  * when their host capability is absent (e.g. `WebSearchTool` without a
  * configured provider), and the runtime registry always holds real instances,
  * never proxies.
- * `AgentToolActivationService` consumes the table when
- * an Agent is created: for each contribution whose `when` predicate holds and
- * whose `name` the bound Profile's tool policy allows, it resolves the
- * service through the container (`accessor.get`, triggering construction) and
- * registers it into the per-agent runtime registry. The
+ * The App-scope built-in assembly (`builtinToolAssemblyService`) provides
+ * the table into the `AgentToolContribution` collection once at App-scope
+ * creation; the fold (`AgentToolActivationService`) consumes the collection
+ * view when an Agent is created: for each record whose `when` predicate
+ * holds and whose `name` the bound Profile's tool policy allows, it
+ * resolves the service through the container (`accessor.get`, triggering
+ * construction) and registers it into the per-agent runtime registry. The
  * declared `name` is what lets activation filter without instantiating.
  *
  * `registerAgentToolService` is deliberately not "builtin"-scoped: the same API is
@@ -29,7 +31,9 @@
  */
 
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { collection } from '#/_base/di/collection';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type {
   AgentTool,
   ToolDisclosure,
@@ -55,6 +59,8 @@ export interface AgentToolContribution<T extends AnyAgentTool = AnyAgentTool> {
   readonly ctor: AgentToolCtor<T>;
   readonly options: AgentToolContributionOptions;
 }
+
+export const AgentToolContribution = collection<AgentToolContribution>('agent-tool');
 
 const _agentToolContributions: AgentToolContribution[] = [];
 

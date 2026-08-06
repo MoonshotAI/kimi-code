@@ -12,7 +12,8 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { IConfigService } from '#/app/config/config';
@@ -42,6 +43,7 @@ export interface IWorkspaceRootSkillSource extends ISkillSource {
 export const IWorkspaceRootSkillSource: ServiceIdentifier<IWorkspaceRootSkillSource> =
   createDecorator<IWorkspaceRootSkillSource>('workspaceRootSkillSource');
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRootSkillSource {
   declare readonly _serviceBrand: undefined;
 

@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
+import type { ILogService, LogPayload } from '#/_base/log/log';
 import { CapabilityErrors } from '#/app/capability/errors';
 import { CapabilityService } from '#/app/capability/capabilityService';
 import type {
@@ -14,6 +15,8 @@ import type {
   CapabilityEntry,
   CapabilityInstallReporter,
 } from '#/app/capability/types';
+
+import { stubLog } from '../../_base/log/stubs';
 
 function fakeEntry(overrides: {
   id: 'kimi-cu' | 'kimi-webbridge';
@@ -36,12 +39,16 @@ function fakeEntry(overrides: {
   };
 }
 
-function fakeService(entries: readonly CapabilityEntry[]): CapabilityService {
+function fakeService(
+  entries: readonly CapabilityEntry[],
+  log: ILogService = stubLog(),
+): CapabilityService {
   // bootstrap / hostProcess are unused when entries are injected.
   return new CapabilityService(
     undefined as never,
     undefined as never,
     undefined as never,
+    log,
     entries,
   );
 }
@@ -238,5 +245,43 @@ describe('CapabilityService', () => {
     const retried = await service.getCapability('kimi-cu');
     expect(retried.install.error).toBeUndefined();
     expect(attempts).toBe(2);
+  });
+
+  it('logs an install error with its last progress step when setup fails', async () => {
+    const warnings: Array<{ message: string; payload?: LogPayload }> = [];
+    let resolveLogged: (() => void) | undefined;
+    const logged = new Promise<void>((resolve) => {
+      resolveLogged = resolve;
+    });
+    const error = new Error('signature mismatch');
+    const log = {
+      ...stubLog(),
+      warn: (message: string, payload?: LogPayload) => {
+        warnings.push({ message, payload });
+        resolveLogged?.();
+      },
+    } satisfies ILogService;
+    const service = fakeService(
+      [
+        fakeEntry({
+          id: 'kimi-cu',
+          install: async (report) => {
+            report('runtime');
+            throw error;
+          },
+        }),
+      ],
+      log,
+    );
+
+    await service.installCapability('kimi-cu');
+    await logged;
+
+    expect(warnings).toEqual([
+      {
+        message: 'capability install failed',
+        payload: { capabilityId: 'kimi-cu', step: 'runtime', error },
+      },
+    ]);
   });
 });

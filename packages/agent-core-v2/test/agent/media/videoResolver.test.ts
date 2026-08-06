@@ -222,8 +222,6 @@ describe('AgentVideoResolverService', () => {
 
   it('rethrows a cancelled upload without memoizing the fallback', async () => {
     const controller = new AbortController();
-    // The rejection is deliberately NOT abort-shaped: the aborted signal alone
-    // must decide cancellation, since abort error shapes vary by provider.
     const interrupted = vi.fn(async () => {
       controller.abort();
       throw new Error('socket closed');

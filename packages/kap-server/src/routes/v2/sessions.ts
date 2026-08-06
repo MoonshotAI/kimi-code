@@ -189,14 +189,19 @@ class PageTokenMismatchError extends Error {}
 
 /**
  * Map the core activity facts onto the v2 status enum. A pending interaction
- * outranks an active turn (the turn is parked waiting on it); `failed` is
- * only observable on a live session — cold sessions fold to `idle`.
+ * outranks an active turn (the turn is parked waiting on it). `failed` is
+ * observable live, and for cold sessions from the persisted outcome
+ * (completed/cancelled stay `idle`, matching the live fold).
  */
-export function mapActivityStatus(facts: SessionFacts): V2ActivityStatus {
+export function mapActivityStatus(
+  facts: SessionFacts,
+  persistedLastTurnReason?: 'completed' | 'cancelled' | 'failed',
+): V2ActivityStatus {
   if (facts.pendingInteraction === 'approval') return 'approval';
   if (facts.pendingInteraction === 'question') return 'question';
   if (facts.busy || facts.mainTurnActive) return 'running';
   if (facts.lastTurnReason === 'failed') return 'failed';
+  if (facts.live === false && persistedLastTurnReason === 'failed') return 'failed';
   return 'idle';
 }
 
@@ -424,7 +429,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         }
         if (
           query.statuses !== undefined &&
-          !query.statuses.includes(mapActivityStatus(factsOf(summary.id)))
+          !query.statuses.includes(mapActivityStatus(factsOf(summary.id), summary.lastTurnReason))
         ) {
           return false;
         }
@@ -488,7 +493,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
             updated_at: summary.updatedAt,
             archived: summary.archived,
           },
-          activity: { status: mapActivityStatus(factsOf(summary.id)) },
+          activity: { status: mapActivityStatus(factsOf(summary.id), summary.lastTurnReason) },
           git:
             gitByCwd === undefined
               ? undefined

@@ -44,9 +44,10 @@
  *   (`src/v2/resume-replay.ts`) — `includeSubagents` and `replayTurnLimit`
  *   included.
  * - `setModel` / `setPermission` / `setPlanMode` / `getPlan` / `clearPlan` /
- *   `getContext` / `getUsage` / `cancel` → the `klient.session(id).agent(id)`
- *   facade; `setThinking` / `compact` / `cancelCompaction` / `undoHistory` /
- *   `clearContext` / `importContext` → agent-scope services through the live
+ *   `getContext` / `getUsage` / `cancel` / `listCommands` / `runCommand` →
+ *   the `klient.session(id).agent(id)` facade; `setThinking` / `compact` /
+ *   `cancelCompaction` / `undoHistory` / `clearContext` / `importContext` →
+ *   agent-scope services through the live
  *   session handle (no facade exists); `getStatus` → the same six-slice
  *   aggregate the base class builds, re-read from the profile / permission /
  *   swarm services plus the facade. `importContext` composes v1's exact
@@ -196,6 +197,7 @@ import {
   IWorkspaceAliases,
   IWorkspaceDirs,
   IWorkspaceMcpService,
+  ISessionActivityView,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
   IWorkspaceSkillCatalog,
@@ -241,6 +243,7 @@ import {
   type ImportContextRpcInput,
   type ReconnectMcpServerRpcInput,
   type ReloadSessionRpcInput,
+  type RunCommandRpcInput,
   type SessionIdRpcInput,
   type SessionPromptRpcInput,
   type SetSessionModelRpcInput,
@@ -254,8 +257,9 @@ import {
 import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
-  CapabilityStatus,
+  AgentCommandInfo,
   BackgroundTaskInfo,
+  CapabilityStatus,
   CompactOptions,
   ConfigDiagnostics,
   CreateGoalInput,
@@ -829,6 +833,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const meta = await handle.accessor.get(ISessionMetadata).read();
     const ctx = handle.accessor.get(ISessionContext);
     const workspace = handle.accessor.get(ISessionWorkspaceContext);
+    // The live aggregate is authoritative for a live session: a just-resumed
+    // session already has the restored outcome in memory, while the metadata
+    // document can lag both the backfill and the clear (a retry started after
+    // a failure), so never read the document here.
+    const liveOutcome = handle.accessor.get(ISessionActivityView).state().lastTurnReason;
     return {
       id: meta.id,
       title: meta.title,
@@ -840,6 +849,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       archived: meta.archived,
       metadata: meta.custom as JsonObject | undefined,
       additionalDirs: workspace.additionalDirs,
+      lastTurnReason: liveOutcome,
     };
   }
 
@@ -988,8 +998,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       // workspace) cannot be resumed on either engine; v1's store never lists
       // one in the first place, so drop it here too.
       if (workDir === undefined) continue;
+      // A live session reports its own outcome; the index may still carry a
+      // stale one while the mirror's clear is queued (a fresh turn just
+      // started after a failure).
+      const liveHandle = getLiveSessionById(this.engineAccessor, item.id);
+      const effectiveItem =
+        liveHandle === undefined
+          ? item
+          : {
+              ...item,
+              lastTurnReason: liveHandle.accessor.get(ISessionActivityView).state().lastTurnReason,
+            };
       summaries.push(
-        v2SummaryToSessionSummary(item, {
+        v2SummaryToSessionSummary(effectiveItem, {
           workDir,
           sessionDir: sessionDirOf(
             bootstrapService.homeDir,
@@ -1411,6 +1432,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async clearPlan(input: SessionIdRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
     return agent.clearPlan();
+  }
+
+  /** Facade (`agentRPCService.listCommands`) — the v2-only contributed-command seam. */
+  override async listCommands(input: SessionIdRpcInput): Promise<readonly AgentCommandInfo[]> {
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.listCommands();
+  }
+
+  /** Facade (`agentRPCService.runCommand`) — runs the contribution engine-side. */
+  override async runCommand(input: RunCommandRpcInput): Promise<void> {
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.runCommand({ name: input.name, args: input.args });
   }
 
   /**
@@ -1994,11 +2027,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           if (seen.has(task.taskId)) continue;
           seen.add(task.taskId);
           suppressions.push(tasks.suppressTerminalNotification(task.taskId));
-          // The engine's `wait` arms a raw `setTimeout(timeoutMs)`, which
-          // overflows above the ~24.8-day timer ceiling into an immediate
-          // resolve (v1's `timeoutOutcome` clamps to the same bound) — the
-          // default print ceiling is 10 years, so clamp here. The outer loop
-          // re-enumerates after an early return, so semantics are unchanged.
+          // A configured ceiling above the ~24.8-day timer ceiling overflows
+          // a raw `setTimeout` into an immediate resolve — clamp here (the
+          // engine's `wait` clamps too; this keeps the caller side correct
+          // regardless). The outer loop re-enumerates after an early return,
+          // so semantics are unchanged.
           const remaining = Math.min(Math.max(1, deadline - Date.now()), MAX_TIMER_DELAY_MS);
           const waiter = tasks.wait(task.taskId, remaining);
           batch.push(waiter);

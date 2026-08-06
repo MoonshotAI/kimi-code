@@ -2,16 +2,17 @@
  * `workspaceAgentProfileLoader` domain — `IPluginAgentProfileLoader` implementation.
  *
  * Discovers agent profiles contributed by enabled plugins (roots from the
- * App-scope `plugins.pluginAgentRoots()`) and registers them via the shared
+ * App-scope `plugins.pluginAgentRoots()`) and contributes them via the shared
  * loader skeleton. Reloads when plugins reload; install / enable / remove
- * mutations deliberately do not re-register — those take effect on the next
+ * mutations deliberately do not re-contribute — those take effect on the next
  * explicit reload. Bound at Workspace scope: agent-file discovery lives in
  * the workspace layer alongside every other source.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -40,10 +41,9 @@ export class PluginAgentProfileLoaderService
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
-    @IAgentProfileRegistry registry: IAgentProfileRegistry,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
   ) {
-    super(registry, log);
+    super(log);
     this._register(
       this.plugins.onDidReload(() => {
         void this.reload().catch((error) => {

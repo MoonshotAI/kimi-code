@@ -15,8 +15,7 @@ import type { IDisposable } from './lifecycle';
 export interface ServiceCollectionEntry<T = unknown> {
   readonly value: T | SyncDescriptor<T>;
   readonly uid: number;
-  readonly pinned: boolean;
-  /** The recipe a materialized instance was created from (kept for rebuilds). */
+  readonly config?: unknown;
   readonly recipe?: SyncDescriptor<T>;
 }
 
@@ -47,24 +46,19 @@ export class ServiceCollection {
   set<T>(
     id: ServiceIdentifier<T>,
     instanceOrDescriptor: T | SyncDescriptor<T>,
-    options?: { readonly pinned?: boolean },
+    options?: { readonly config?: unknown },
   ): T | SyncDescriptor<T> | undefined {
     const prev = this._entries.get(id);
     const uid = ++this._nextUid;
     this._entries.set(id, {
       value: instanceOrDescriptor,
       uid,
-      pinned: options?.pinned ?? prev?.pinned ?? false,
+      config: options?.config,
     });
     this._emitterFor(id).fire({ oldUid: prev?.uid, newUid: uid });
     return prev?.value as T | SyncDescriptor<T> | undefined;
   }
 
-  /**
-   * Swap a descriptor entry for its materialized instance, keeping the uid,
-   * pinned flag, and the recipe (so the entry can be unmaterialized back to
-   * the recipe when the instance is torn down). Not a new generation.
-   */
   materialize<T>(id: ServiceIdentifier<T>, instance: T): void {
     const prev = this._entries.get(id);
     if (prev === undefined || !(prev.value instanceof SyncDescriptor)) {
@@ -73,12 +67,11 @@ export class ServiceCollection {
     this._entries.set(id, {
       value: instance,
       uid: prev.uid,
-      pinned: prev.pinned,
+      config: prev.config,
       recipe: prev.value,
     });
   }
 
-  /** Swap a materialized entry back to its recipe (instance torn down). */
   unmaterialize<T>(id: ServiceIdentifier<T>): void {
     const prev = this._entries.get(id);
     if (prev === undefined || prev.recipe === undefined) {
@@ -87,8 +80,16 @@ export class ServiceCollection {
     this._entries.set(id, {
       value: prev.recipe,
       uid: prev.uid,
-      pinned: prev.pinned,
+      config: prev.config,
     });
+  }
+
+  setConfig<T>(id: ServiceIdentifier<T>, config: unknown): void {
+    const prev = this._entries.get(id);
+    if (prev === undefined) {
+      return;
+    }
+    this._entries.set(id, { ...prev, config });
   }
 
   delete<T>(id: ServiceIdentifier<T>): T | SyncDescriptor<T> | undefined {
@@ -112,11 +113,10 @@ export class ServiceCollection {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  isPinned(id: ServiceIdentifier<any>): boolean {
-    return this._entries.get(id)?.pinned ?? false;
+  configOf(id: ServiceIdentifier<any>): unknown {
+    return this._entries.get(id)?.config;
   }
 
-  /** Fired when the token's availability changes (set → new uid, delete → undefined). */
   onDidChange<T>(
     id: ServiceIdentifier<T>,
     listener: (change: AvailabilityChange) => void,
