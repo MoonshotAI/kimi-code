@@ -52,6 +52,7 @@ import {
   abortable,
   userCancellationReason,
 } from '#/_base/utils/abort';
+import { setClampedTimeout } from '#/_base/utils/timer';
 import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
 import { Error2, ErrorCodes } from '#/errors';
@@ -685,7 +686,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private armManagerTimeout(entry: ManagedTask, timeoutMs: number): void {
-    entry.timeoutHandle = setTimeout(() => {
+    entry.timeoutHandle = setClampedTimeout(() => {
       entry.timeoutHandle = undefined;
       if (this.canAutoBackgroundOnTimeout(entry)) {
         this.detachEntry(entry, true);
@@ -871,7 +872,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
           entry.waiters.push(resolve);
         }),
         new Promise<void>((resolve) => {
-          timeout = setTimeout(resolve, timeoutMs);
+          // A clamped early return just makes callers (e.g. the print drain
+          // loop) re-poll — the task may still be running, which the caller
+          // observes from the returned info.
+          timeout = setClampedTimeout(resolve, timeoutMs);
           timeout.unref?.();
         }),
       ]);
