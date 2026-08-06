@@ -12,7 +12,7 @@ outline: 2
 
 - web: 侧边栏会话列表新增平铺视图。
 - Kimi Computer Use 插件新增 Windows x64 支持，通过 `/plugins` 安装。
-- 会话空闲过久后恢复或发送消息时，现将会弹出缓存过期提醒。将 [`cache_expiry_hint`](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#tui-toml) 设为 `false` 可关闭。
+- 会话空闲过久后恢复或发送消息时，现将会弹出缓存过期提醒。将 [cache_expiry_hint](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#tui-toml) 设为 `false` 可关闭。
 
 ### 优化
 
