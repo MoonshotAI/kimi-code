@@ -708,6 +708,89 @@ describe('FileSessionIndex (read model)', () => {
     expect(unknown.items).toEqual([]);
   });
 
+  it('remove evicts a queued mirror entry so a deleted session stays unlisted', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
+
+    // Created after the projection: present only in the mirror queue.
+    mirror.record(summary('fresh', { createdAt: 3, updatedAt: 10 }));
+    const before = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(before.items.map((s) => s.id)).toEqual(['fresh', 'a']);
+
+    // sessionLifecycle.delete removes the authoritative doc, then evicts
+    // through remove(): the queued summary must not fold the session back in.
+    await store.remove('fresh');
+    expect(mirror.pending()).toEqual([]);
+    const after = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(after.items.map((s) => s.id)).toEqual(['a']);
+
+    // A later flush must not resurrect the evicted summary either.
+    await mirror.drain();
+    const settled = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(settled.items.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('remove waits out an in-flight mirror flush before deleting from the store', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+
+    let batchGate: Promise<void> | undefined;
+    let releaseBatch: () => void = () => {};
+    let notifyBatchEntered: (() => void) | undefined;
+    class GatedQueryStore extends MiniDbQueryStore {
+      override async batch(ops: readonly WriteOp[]): Promise<void> {
+        notifyBatchEntered?.();
+        const gate = batchGate;
+        batchGate = undefined;
+        if (gate !== undefined) await gate;
+        return super.batch(ops);
+      }
+    }
+    registerScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      GatedQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new FileStorageService(homeDir);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+    await store.prepare();
+
+    // Arm the gate, queue a summary, and start a flush that parks inside
+    // batch while still carrying the id.
+    const entered = new Promise<void>((resolve) => {
+      notifyBatchEntered = resolve;
+    });
+    batchGate = new Promise<void>((resolve) => {
+      releaseBatch = resolve;
+    });
+    mirror.record(summary('fresh', { createdAt: 3, updatedAt: 10 }));
+    const draining = mirror.drain();
+    await entered;
+
+    // remove() must block behind the in-flight flush; the flush lands first,
+    // then the store delete erases the resurrected entry.
+    const removing = store.remove('fresh');
+    releaseBatch();
+    await Promise.all([removing, draining]);
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['a']);
+  });
+
   it('count folds the mirror queue in before the flush lands', async () => {
     await seedSession('a', { createdAt: 1, updatedAt: 2 });
     await seedSession('b', { createdAt: 2, updatedAt: 3 });

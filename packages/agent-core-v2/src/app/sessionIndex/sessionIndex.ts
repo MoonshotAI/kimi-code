@@ -128,6 +128,12 @@ export interface ISessionIndexMirror {
   record(summary: SessionSummary): void;
   /** Summaries accepted but not yet flushed (read-your-writes window). */
   pending(): readonly SessionSummary[];
+  /**
+   * Forget a session on the delete path: drop any queued summary and wait
+   * out an in-flight flush that may still carry it, so the caller's
+   * follow-up query-store delete is not resurrected by the mirror.
+   */
+  evict(id: string): Promise<void>;
   /** Flush everything currently queued; resolves with the queue empty. */
   drain(): Promise<void>;
 }

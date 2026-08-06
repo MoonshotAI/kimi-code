@@ -81,6 +81,7 @@ function stubSessionChain(ix: TestInstantiationService, session: ISessionScopeHa
     _serviceBrand: undefined,
     record: () => {},
     pending: () => [],
+    evict: () => Promise.resolve(),
     drain: () => Promise.resolve(),
   });
   ix.stub(IWorkspaceLifecycleService, {

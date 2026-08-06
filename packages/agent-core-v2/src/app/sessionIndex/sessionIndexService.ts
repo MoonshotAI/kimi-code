@@ -342,11 +342,14 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
    * Evict a deleted session's derived state so `get` / `listRecent` stop
    * answering for the id immediately: the authoritative directory is deleted
    * by the caller (`sessionLifecycle.delete`), and the next projection would
-   * drop the entry anyway — this closes the stale-read window in between. A
-   * summary still queued in the mirror heals at the next projection. With the
-   * read model off there is no derived state to evict.
+   * drop the entry anyway — this closes the stale-read window in between. The
+   * mirror queue is evicted first (waiting out an in-flight flush): reads
+   * fold the queue in for read-your-writes, and a late flush would otherwise
+   * resurrect the entry after the store delete. With the read model off
+   * there is no derived state to evict beyond the queue.
    */
   async remove(id: string): Promise<void> {
+    await this.mirror.evict(id);
     await this.withReadModel(
       async (generation) => {
         await this.queryStore.delete(sessionCollection(generation), id);

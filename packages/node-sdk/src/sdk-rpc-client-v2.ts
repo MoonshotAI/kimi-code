@@ -158,6 +158,8 @@ import {
   applyPromptMetadataUpdate,
   bootstrap,
   DEFAULT_AGENT_PROFILE_NAME,
+  drainQueryStoreDisposals,
+  drainSessionIndexMirror,
   ensureKimiHome,
   ensureMainAgent,
   IAgentActivityView,
@@ -187,6 +189,7 @@ import {
   ISessionCronService,
   ISessionExportService,
   ISessionIndex,
+  ISessionIndexMirror,
   ISessionInitService,
   ISessionMcpHandle,
   ISessionMetadata,
@@ -487,7 +490,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       subscription.dispose();
     }
     await this.klient.close();
+    // Same shutdown order as kap-server: drain the session-index mirror while
+    // the query store is still open, then await the asynchronous closes that
+    // disposal fires — a host that removes homeDir right after close() must
+    // not race an in-flight shard close (ENOTEMPTY on teardown).
+    await this.app.accessor.get(ISessionIndexMirror).drain();
     this.app.dispose();
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
   }
 
   /**
