@@ -539,7 +539,8 @@ async function installCapabilityFromPanel(
   }
   logCapabilityStatus(result);
   if (result.install.error !== undefined) {
-    host.showError(`${label} installation failed. Check the logs and install again from /plugins.`);
+    host.showError(`${label} installation failed: ${result.install.error}`);
+    host.showStatus('Fix the reported error, then install again from /plugins.', 'warning');
     return;
   }
   if (result.state !== 'ready') {
