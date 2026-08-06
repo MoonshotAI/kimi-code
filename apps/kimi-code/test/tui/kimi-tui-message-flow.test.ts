@@ -58,7 +58,7 @@ import {
   runModelSelector,
   type FeedbackPromptResult,
 } from '#/tui/commands/prompts';
-import type { QueuedMessage } from '#/tui/types';
+import type { InlineSkillActivation, QueuedMessage } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
@@ -122,7 +122,7 @@ interface MessageDriver {
   sendInlineSkillUserInput(
     session: Session | undefined,
     text: string,
-    activations: { skillName: string }[],
+    activations: InlineSkillActivation[],
   ): Promise<void>;
   deferUserMessages: boolean;
   getCurrentSessionId(): string;
@@ -2546,7 +2546,7 @@ command = "vim"
     const { driver, session } = await makeDriver();
     const input = 'Review this change with /skill:review and /skill:security';
 
-    driver.sendInlineSkillUserInput(session as never, input, [
+    void driver.sendInlineSkillUserInput(session as never, input, [
       { skillName: 'review' },
       { skillName: 'security' },
     ]);
@@ -7081,7 +7081,7 @@ describe('KimiTUI inline skill prompt sending', () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
 
-    driver.sendInlineSkillUserInput(session as unknown as Session, 'use /skill:review on this', [
+    void driver.sendInlineSkillUserInput(session as unknown as Session, 'use /skill:review on this', [
       { skillName: 'review' },
     ]);
 
@@ -7099,7 +7099,7 @@ describe('KimiTUI inline skill prompt sending', () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
 
-    driver.sendInlineSkillUserInput(
+    void driver.sendInlineSkillUserInput(
       session as unknown as Session,
       'use /skill:review and /skill:security',
       [{ skillName: 'review' }, { skillName: 'security' }],
@@ -7116,6 +7116,30 @@ describe('KimiTUI inline skill prompt sending', () => {
     expect(session.prompt).not.toHaveBeenCalled();
   });
 
+  it('passes leading skill args through to promptWithSkills', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    void driver.sendInlineSkillUserInput(
+      session as unknown as Session,
+      '/skill:review src/app.ts then /skill:security',
+      [
+        { skillName: 'review', args: 'src/app.ts then /skill:security' },
+        { skillName: 'security' },
+      ],
+    );
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/skill:review src/app.ts then /skill:security',
+        [{ name: 'review', args: 'src/app.ts then /skill:security' }, { name: 'security' }],
+        { submissionId: expect.any(String) },
+      );
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
   it('surfaces an atomic skill prompt failure without a fallback prompt', async () => {
     const session = makeSession({
       promptWithSkills: vi.fn(async () => {
@@ -7124,7 +7148,7 @@ describe('KimiTUI inline skill prompt sending', () => {
     });
     const { driver } = await makeDriver(session);
 
-    driver.sendInlineSkillUserInput(session as unknown as Session, 'use /skill:review on this', [
+    void driver.sendInlineSkillUserInput(session as unknown as Session, 'use /skill:review on this', [
       { skillName: 'review' },
     ]);
 
@@ -7144,7 +7168,7 @@ describe('KimiTUI inline skill prompt sending', () => {
     const { driver } = await makeDriver(session);
 
     driver.deferUserMessages = true;
-    driver.sendInlineSkillUserInput(session as unknown as Session, 'use /skill:review on this', [
+    void driver.sendInlineSkillUserInput(session as unknown as Session, 'use /skill:review on this', [
       { skillName: 'review' },
     ]);
 

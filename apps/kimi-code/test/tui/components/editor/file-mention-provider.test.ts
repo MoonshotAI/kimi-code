@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
+import { FileMentionProvider, extractInlineSkillPrefix } from '#/tui/components/editor/file-mention-provider';
 
 function ctrl(): AbortSignal {
   return new AbortController().signal;
@@ -834,6 +834,17 @@ describe('FileMentionProvider', () => {
       const provider = new FileMentionProvider(SKILL_COMMANDS, workDir, NO_FD, [], () => 'prompt');
       const result = provider.applyCompletion(['/rev'], 0, 4, { value: 'skill:review', label: 'skill:review' }, '/rev');
       expect(result.lines[0]).toBe('/skill:review ');
+    });
+
+    it('extractInlineSkillPrefix only fires while the cursor is on the token', () => {
+      // Cursor still on the token being typed: active prefix.
+      expect(extractInlineSkillPrefix('hello /skill:review /rev', 0)).toBe('/rev');
+      // Typing continued past the token: it is ordinary text again and must
+      // not shadow other completions (e.g. path completion).
+      expect(extractInlineSkillPrefix('hello /skill:review src/', 0)).toBeNull();
+      // Right after applying a completion (trailing space added), the picker
+      // must not reopen on the completed token.
+      expect(extractInlineSkillPrefix('hello /skill:review ', 0)).toBeNull();
     });
   });
 });

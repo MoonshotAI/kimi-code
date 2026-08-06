@@ -211,7 +211,7 @@ export interface SlashCommandHost {
 // Dispatch — entry point from handleUserInput
 // ---------------------------------------------------------------------------
 
-export async function dispatchInput(host: SlashCommandHost, text: string): Promise<void> {
+export function dispatchInput(host: SlashCommandHost, text: string): void {
   const parsedCommand = parseSlashInput(text);
   if (parsedCommand !== null) {
     const intent = resolveSlashCommandInput({
@@ -245,14 +245,23 @@ export async function dispatchInput(host: SlashCommandHost, text: string): Promi
           return;
         }
 
+        // Preserve the leading skill command's arguments: inline tokens carry
+        // no args, so without this the combined path would silently drop the
+        // `/skill:<name> args` the user typed. The first activation is the
+        // leading skill by construction (first-occurrence order).
+        const activations =
+          intent.args.length > 0 && allActivations[0]?.skillName === intent.skillName
+            ? [{ skillName: intent.skillName, args: intent.args }, ...allActivations.slice(1)]
+            : allActivations;
+
         // A session-less host is the v2 lazy-session case: the receiver
         // creates the session on demand, like sendNormalUserInput does.
-        await host.sendInlineSkillUserInput(session, text, allActivations);
+        void host.sendInlineSkillUserInput(session, text, activations);
         return;
       }
     }
 
-    await executeSlashCommand(host, text);
+    void executeSlashCommand(host, text);
     return;
   }
 
@@ -275,7 +284,7 @@ export async function dispatchInput(host: SlashCommandHost, text: string): Promi
 
     // A session-less host is the v2 lazy-session case: the receiver
     // creates the session on demand, like sendNormalUserInput does.
-    await host.sendInlineSkillUserInput(session, text, inlineActivations);
+    void host.sendInlineSkillUserInput(session, text, inlineActivations);
     return;
   }
 

@@ -1121,7 +1121,7 @@ export class KimiTUI {
       void this.runShellCommandFromInput(text);
       return;
     }
-    void slashCommands.dispatchInput(this, text);
+    slashCommands.dispatchInput(this, text);
   }
 
   private async runShellCommandFromInput(command: string): Promise<void> {
@@ -1376,7 +1376,7 @@ export class KimiTUI {
 
     await session.promptWithSkills(
       extraction.hasMedia ? extraction.parts : text,
-      activations.map((activation) => ({ name: activation.skillName })),
+      activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
       { submissionId },
     );
   }

@@ -353,6 +353,11 @@ export function extractInlineSkillPrefix(text: string, cursorLine: number = 0): 
 
   const lastToken = tokens.at(-1);
   if (lastToken === undefined) return null;
+  // Only treat a token as an active completion prefix while the cursor is
+  // still on it. Once typing continues past the token it is ordinary text and
+  // must not shadow other completions (e.g. path completion after a selected
+  // skill token).
+  if (lastToken.end !== text.length) return null;
   return text.slice(lastToken.start);
 }
 

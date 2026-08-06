@@ -7,6 +7,9 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { promptSubmissionId } from '#/agent/contextMemory/contextOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentSkillService } from '#/agent/skill/skill';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { summarizeSkill } from '#/app/skillCatalog/types';
@@ -197,6 +200,35 @@ describe('promptWithSkills RPC', () => {
           .get()
           .some((message) => promptSubmissionId(message.origin) === 'submission-1'),
       ).toBe(false);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('applies disabledTools before launching the combined turn', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(stubSkill('review', { content: 'Review the requested code.' }));
+    const ctx = createTestAgent(skillServices(catalog));
+
+    try {
+      // setSessionDisabledTools requires a bound profile, like the plain
+      // prompt() path it mirrors.
+      await ctx.get(IAgentProfileService).bind({
+        profile: DEFAULT_AGENT_PROFILE_NAME,
+        model: 'mock-model',
+      });
+      const toolPolicy = ctx.get(IAgentToolPolicyService);
+      expect(toolPolicy.isToolActive('Bash')).toBe(true);
+
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+      await ctx.rpc.promptWithSkills({
+        input: [{ type: 'text', text: 'Review this change.' }],
+        skills: [{ name: 'review' }],
+        disabledTools: ['Bash'],
+      });
+      await ctx.untilTurnEnd();
+
+      expect(toolPolicy.isToolActive('Bash')).toBe(false);
     } finally {
       await ctx.dispose();
     }

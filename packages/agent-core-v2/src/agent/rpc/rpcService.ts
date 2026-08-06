@@ -117,6 +117,16 @@ export class AgentRPCService implements IAgentRPCService {
   async promptWithSkills(
     payload: PromptWithSkillsPayload,
   ): Promise<PromptLaunchResult | undefined> {
+    if (payload.disabledTools !== undefined) {
+      try {
+        await this.toolPolicy.setSessionDisabledTools(payload.disabledTools);
+      } catch (error) {
+        if (error instanceof ProfileError) {
+          throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+        }
+        throw error;
+      }
+    }
     const submissionId = payload.submissionId ?? randomUUID();
     const prepared = await this.skills.prepareAll(payload.skills, submissionId);
     for (const activation of prepared) {

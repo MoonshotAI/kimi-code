@@ -233,6 +233,11 @@ export interface LivePaneState {
 
 export interface InlineSkillActivation {
   readonly skillName: string;
+  /**
+   * Skill arguments. Only set for a leading `/skill:<name> args` command that
+   * is combined with further inline skills; inline tokens carry no args.
+   */
+  readonly args?: string;
 }
 
 export interface QueuedMessage {

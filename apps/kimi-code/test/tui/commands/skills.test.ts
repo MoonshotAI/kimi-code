@@ -332,7 +332,7 @@ describe('dispatchInput inline skill activation', () => {
   it('sends normal input unchanged when no inline skill tokens are present', async () => {
     const { host } = makeHost();
 
-    await dispatchInput(host, 'hello world');
+    dispatchInput(host, 'hello world');
 
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello world');
     expect(host.sendInlineSkillUserInput).not.toHaveBeenCalled();
@@ -341,7 +341,7 @@ describe('dispatchInput inline skill activation', () => {
   it('hands inline skill activation to the host instead of sending directly', async () => {
     const { host, session } = makeHost();
 
-    await dispatchInput(host, 'use /skill:review on this');
+    dispatchInput(host, 'use /skill:review on this');
 
     expect(host.sendInlineSkillUserInput).toHaveBeenCalledWith(session, 'use /skill:review on this', [
       { skillName: 'review' },
@@ -353,7 +353,7 @@ describe('dispatchInput inline skill activation', () => {
   it('passes multiple skills in first-occurrence order and deduplicated', async () => {
     const { host, session } = makeHost();
 
-    await dispatchInput(host, 'use /skill:review and /skill:security then /skill:review again');
+    dispatchInput(host, 'use /skill:review and /skill:security then /skill:review again');
 
     expect(host.sendInlineSkillUserInput).toHaveBeenCalledWith(
       session,
@@ -366,7 +366,7 @@ describe('dispatchInput inline skill activation', () => {
   it('blocks inline skill activation while streaming', async () => {
     const { host } = makeHost({ streamingPhase: 'composing' });
 
-    await dispatchInput(host, 'use /skill:review on this');
+    dispatchInput(host, 'use /skill:review on this');
 
     expect(host.showError).toHaveBeenCalledOnce();
     expect(host.sendInlineSkillUserInput).not.toHaveBeenCalled();
@@ -375,7 +375,7 @@ describe('dispatchInput inline skill activation', () => {
   it('blocks inline skill activation while compacting', async () => {
     const { host } = makeHost({ isCompacting: true });
 
-    await dispatchInput(host, 'use /skill:review on this');
+    dispatchInput(host, 'use /skill:review on this');
 
     expect(host.showError).toHaveBeenCalledOnce();
     expect(host.sendInlineSkillUserInput).not.toHaveBeenCalled();
@@ -384,7 +384,7 @@ describe('dispatchInput inline skill activation', () => {
   it('hands inline skill activation to the host when there is no active session (v2 lazy-creates it)', async () => {
     const { host } = makeHost({ hasSession: false });
 
-    await dispatchInput(host, 'use /skill:review on this');
+    dispatchInput(host, 'use /skill:review on this');
 
     expect(host.showError).not.toHaveBeenCalled();
     expect(host.sendInlineSkillUserInput).toHaveBeenCalledWith(undefined, 'use /skill:review on this', [
@@ -395,7 +395,7 @@ describe('dispatchInput inline skill activation', () => {
   it('shows the no-model error when the model is unset', async () => {
     const { host } = makeHost({ model: '' });
 
-    await dispatchInput(host, 'use /skill:review on this');
+    dispatchInput(host, 'use /skill:review on this');
 
     expect(host.showError).toHaveBeenCalledWith(LLM_NOT_SET_MESSAGE);
     expect(host.sendInlineSkillUserInput).not.toHaveBeenCalled();
@@ -404,21 +404,38 @@ describe('dispatchInput inline skill activation', () => {
   it('routes a leading skill alone through sendSkillActivation', async () => {
     const { host } = makeHost();
 
-    await dispatchInput(host, '/skill:review some text');
+    dispatchInput(host, '/skill:review some text');
 
     expect(host.sendSkillActivation).toHaveBeenCalled();
     expect(host.sendInlineSkillUserInput).not.toHaveBeenCalled();
   });
 
-  it('routes leading skill plus additional inline skills through inline activation', async () => {
+  it('routes leading skill plus additional inline skills through inline activation', () => {
     const { host, session } = makeHost();
 
-    await dispatchInput(host, '/skill:review also /skill:security');
+    dispatchInput(host, '/skill:review also /skill:security');
 
     expect(host.sendInlineSkillUserInput).toHaveBeenCalledWith(session, '/skill:review also /skill:security', [
-      { skillName: 'review' },
+      { skillName: 'review', args: 'also /skill:security' },
       { skillName: 'security' },
     ]);
+    expect(host.sendSkillActivation).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('preserves leading skill args when combined with inline skills', () => {
+    const { host, session } = makeHost();
+
+    dispatchInput(host, '/skill:review src/app.ts then /skill:security');
+
+    expect(host.sendInlineSkillUserInput).toHaveBeenCalledWith(
+      session,
+      '/skill:review src/app.ts then /skill:security',
+      [
+        { skillName: 'review', args: 'src/app.ts then /skill:security' },
+        { skillName: 'security' },
+      ],
+    );
     expect(host.sendSkillActivation).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
@@ -427,7 +444,7 @@ describe('dispatchInput inline skill activation', () => {
     const { host } = makeHost();
     const text = 'check src/foo/skill:review and 1/2 then /not-a-skill';
 
-    await dispatchInput(host, text);
+    dispatchInput(host, text);
 
     expect(host.sendNormalUserInput).toHaveBeenCalledWith(text);
     expect(host.sendInlineSkillUserInput).not.toHaveBeenCalled();
