@@ -555,6 +555,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         forkedFrom: sourceId,
         archived: false,
         lastPrompt: sourceMeta?.lastPrompt,
+        // The fork continues the source's conversation, so it inherits the
+        // last turn's outcome too — otherwise a restart would drop a failure
+        // the warm fork was still reporting.
+        lastTurnReason: sourceMeta?.lastTurnReason,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
       });
 
