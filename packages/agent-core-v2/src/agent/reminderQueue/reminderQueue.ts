@@ -12,6 +12,17 @@ export interface OnceReminderInput {
   readonly content: string;
 }
 
+export interface OnceReminderDisclosure {
+  readonly kind: 'once_reminder';
+  readonly id: string;
+}
+
+export function isOnceReminderDisclosure(value: unknown): value is OnceReminderDisclosure {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as { readonly kind?: unknown; readonly id?: unknown };
+  return candidate.kind === 'once_reminder' && typeof candidate.id === 'string';
+}
+
 export interface IAgentReminderQueueService {
   readonly _serviceBrand: undefined;
 

@@ -47,6 +47,7 @@ import { IWireService } from '#/wire/wire';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContent,
+  type ContextInjectionContext,
   type ContextInjectionMessage,
   type ContextInjectionProvider,
   type ContextInjectionResult,
@@ -54,7 +55,7 @@ import {
 } from './contextInjector';
 
 interface ContextInjectionEntry {
-  readonly provider: ContextInjectionProvider;
+  readonly provider: ContextInjectionProvider<unknown>;
   readonly name: string;
   readonly boundary: 'step' | 'turn-start';
 }
@@ -114,16 +115,16 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     this.states.set(contextInjectorIsNewTurnKey, value);
   }
 
-  register(
+  register<D = unknown>(
     name: string,
-    provider: ContextInjectionProvider,
+    provider: ContextInjectionProvider<D>,
   ): IDisposable {
     return this.registerProvider(name, provider, 'step');
   }
 
-  registerAtTurnStart(
+  registerAtTurnStart<D = unknown>(
     name: string,
-    provider: SyncContextInjectionProvider,
+    provider: SyncContextInjectionProvider<D>,
   ): IDisposable {
     return this.registerProvider(name, provider, 'turn-start');
   }
@@ -151,13 +152,13 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     }
   }
 
-  private registerProvider(
+  private registerProvider<D>(
     name: string,
-    provider: ContextInjectionProvider,
+    provider: ContextInjectionProvider<D>,
     boundary: ContextInjectionEntry['boundary'],
   ): IDisposable {
     const entry: ContextInjectionEntry = {
-      provider,
+      provider: provider as ContextInjectionProvider<unknown>,
       name,
       boundary,
     };
@@ -211,7 +212,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   private providerContext(
     entry: ContextInjectionEntry,
     isNewTurn: boolean,
-  ): Parameters<ContextInjectionProvider>[0] {
+  ): ContextInjectionContext<unknown> {
     const injectedPositions = findInjections(this.context.get(), entry.name);
     const lastInjectedAt = injectedPositions.at(-1) ?? null;
     const lastInjection = lastInjectedAt === null
@@ -231,10 +232,10 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
 
   private appendResult(
     entry: ContextInjectionEntry,
-    content: ContextInjectionContent | ContextInjectionResult | undefined,
+    content: ContextInjectionContent | ContextInjectionResult<unknown> | undefined,
   ): void {
     if (content === undefined) return;
-    const result: ContextInjectionResult = isInjectionResult(content)
+    const result: ContextInjectionResult<unknown> = isInjectionResult(content)
       ? content
       : { content };
     const origin = {
@@ -282,8 +283,8 @@ function isRawInjectionMessage(
 }
 
 function isInjectionResult(
-  content: ContextInjectionContent | ContextInjectionResult,
-): content is ContextInjectionResult {
+  content: ContextInjectionContent | ContextInjectionResult<unknown>,
+): content is ContextInjectionResult<unknown> {
   return (
     typeof content === 'object' &&
     content !== null &&

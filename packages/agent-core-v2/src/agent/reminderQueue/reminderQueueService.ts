@@ -23,7 +23,12 @@ import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IWireService } from '#/wire/wire';
 
-import { IAgentReminderQueueService, type OnceReminderInput } from './reminderQueue';
+import {
+  IAgentReminderQueueService,
+  isOnceReminderDisclosure,
+  type OnceReminderDisclosure,
+  type OnceReminderInput,
+} from './reminderQueue';
 import {
   ReminderQueueModel,
   type ReminderQueueEntry,
@@ -60,7 +65,7 @@ export class AgentReminderQueueService extends Disposable implements IAgentRemin
         this.reminders.appendSystemReminder(entry.content, {
           kind: 'injection',
           variant: entry.variant,
-          disclosure: { kind: 'once_reminder', id: entry.id },
+          disclosure: { kind: 'once_reminder', id: entry.id } satisfies OnceReminderDisclosure,
         });
         rendered.add(collapseKey);
       }
@@ -76,7 +81,8 @@ export class AgentReminderQueueService extends Disposable implements IAgentRemin
       if (isSkippableTailAssistant(message)) continue;
       const origin = message.origin;
       if (origin?.kind !== 'injection') break;
-      if (origin.disclosure?.kind === 'once_reminder') ids.add(origin.disclosure.id);
+      const disclosure = origin.disclosure;
+      if (isOnceReminderDisclosure(disclosure)) ids.add(disclosure.id);
     }
     return ids;
   }

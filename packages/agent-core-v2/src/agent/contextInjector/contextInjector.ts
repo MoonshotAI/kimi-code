@@ -2,13 +2,13 @@ import { createDecorator } from "#/_base/di/instantiation";
 import type { IDisposable } from "#/_base/di/lifecycle";
 import type { ContentPart } from "#/kosong/contract/message";
 import type { Tool } from "#/kosong/contract/tool";
-import type { ContextInjectionDisclosure, ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 
-export interface ContextInjectionContext {
+export interface ContextInjectionContext<D = unknown> {
   readonly injectedPositions: readonly number[];
   readonly lastInjectedAt: number | null;
   readonly lastInjection?: ContextMessage;
-  readonly lastDisclosure?: ContextInjectionDisclosure;
+  readonly lastDisclosure?: D;
   readonly isNewTurn: boolean;
 }
 
@@ -23,22 +23,22 @@ export type ContextInjectionContent =
   | readonly ContentPart[]
   | { readonly message: ContextInjectionMessage };
 
-export interface ContextInjectionResult {
+export interface ContextInjectionResult<D = unknown> {
   readonly content: ContextInjectionContent;
-  readonly disclosure?: ContextInjectionDisclosure;
+  readonly disclosure?: D;
 }
 
-export type ContextInjectionProvider = (
-  context: ContextInjectionContext,
+export type ContextInjectionProvider<D = unknown> = (
+  context: ContextInjectionContext<D>,
 ) =>
   | ContextInjectionContent
-  | ContextInjectionResult
+  | ContextInjectionResult<D>
   | undefined
-  | Promise<ContextInjectionContent | ContextInjectionResult | undefined>;
+  | Promise<ContextInjectionContent | ContextInjectionResult<D> | undefined>;
 
-export type SyncContextInjectionProvider = (
-  context: ContextInjectionContext,
-) => ContextInjectionContent | ContextInjectionResult | undefined;
+export type SyncContextInjectionProvider<D = unknown> = (
+  context: ContextInjectionContext<D>,
+) => ContextInjectionContent | ContextInjectionResult<D> | undefined;
 
 export interface IAgentContextInjectorService {
   readonly _serviceBrand: undefined;
@@ -50,14 +50,14 @@ export interface IAgentContextInjectorService {
    * skipped, so one bad channel cannot starve the rest. */
   registerOnceChannel(name: string, drain: () => void): IDisposable;
 
-  register(
+  register<D = unknown>(
     name: string,
-    provider: ContextInjectionProvider,
+    provider: ContextInjectionProvider<D>,
   ): IDisposable;
 
-  registerAtTurnStart(
+  registerAtTurnStart<D = unknown>(
     name: string,
-    provider: SyncContextInjectionProvider,
+    provider: SyncContextInjectionProvider<D>,
   ): IDisposable;
 
   injectAfterCompaction(): Promise<void>;

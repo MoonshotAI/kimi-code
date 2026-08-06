@@ -37,7 +37,7 @@ const injectorStub: IAgentContextInjectorService = {
   _serviceBrand: undefined,
   registerOnceChannel: () => ({ dispose: () => {} }),
   register: (name, provider) => {
-    registeredInjection = { name, provider };
+    registeredInjection = { name, provider: provider as ContextInjectionProvider };
     return {
       dispose: () => {
         if (registeredInjection?.provider === provider) registeredInjection = undefined;
@@ -179,7 +179,7 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     ix2.stub(IAgentContextInjectorService, {
       _serviceBrand: undefined,
       register: (_name, provider) => {
-        restoredProvider = provider;
+        restoredProvider = provider as ContextInjectionProvider;
         return { dispose: () => {} };
       },
       injectAfterCompaction: async () => {},

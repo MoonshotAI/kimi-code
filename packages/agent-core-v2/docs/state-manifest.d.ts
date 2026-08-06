@@ -751,18 +751,7 @@ export interface AgentStateSnapshot {
         readonly kind: 'injection';
         readonly variant: string;
         readonly ownerPromptId?: string;
-        readonly disclosure?: {
-          readonly kind: 'date';
-          readonly renderGeneration: number;
-          readonly localDate: string;
-          readonly timeZone: string;
-        } | {
-          readonly kind: 'swarm_mode';
-          readonly state: 'active' | 'inactive';
-        } | {
-          readonly kind: 'once_reminder';
-          readonly id: string;
-        };
+        readonly disclosure?: unknown;
       } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';
@@ -887,18 +876,7 @@ export interface AgentStateSnapshot {
       readonly kind: 'injection';
       readonly variant: string;
       readonly ownerPromptId?: string;
-      readonly disclosure?: {
-        readonly kind: 'date';
-        readonly renderGeneration: number;
-        readonly localDate: string;
-        readonly timeZone: string;
-      } | {
-        readonly kind: 'swarm_mode';
-        readonly state: 'active' | 'inactive';
-      } | {
-        readonly kind: 'once_reminder';
-        readonly id: string;
-      };
+      readonly disclosure?: unknown;
     } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'shell_command';
       readonly phase: 'input' | 'output';
@@ -955,18 +933,7 @@ export interface AgentStateSnapshot {
         readonly kind: 'injection';
         readonly variant: string;
         readonly ownerPromptId?: string;
-        readonly disclosure?: {
-          readonly kind: 'date';
-          readonly renderGeneration: number;
-          readonly localDate: string;
-          readonly timeZone: string;
-        } | {
-          readonly kind: 'swarm_mode';
-          readonly state: 'active' | 'inactive';
-        } | {
-          readonly kind: 'once_reminder';
-          readonly id: string;
-        };
+        readonly disclosure?: unknown;
       } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';

@@ -34,24 +34,8 @@ export interface InjectionOrigin {
   readonly kind: 'injection';
   readonly variant: string;
   readonly ownerPromptId?: string;
-  readonly disclosure?: ContextInjectionDisclosure;
+  readonly disclosure?: unknown;
 }
-
-export type ContextInjectionDisclosure =
-  | {
-      readonly kind: 'date';
-      readonly renderGeneration: number;
-      readonly localDate: string;
-      readonly timeZone: string;
-    }
-  | {
-      readonly kind: 'swarm_mode';
-      readonly state: 'active' | 'inactive';
-    }
-  | {
-      readonly kind: 'once_reminder';
-      readonly id: string;
-    };
 
 export interface ShellCommandOrigin {
   readonly kind: 'shell_command';

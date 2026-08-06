@@ -23,10 +23,7 @@ import {
   type ContextInjectionContext,
   type ContextInjectionResult,
 } from '#/agent/contextInjector/contextInjector';
-import {
-  disclosureOfKind,
-  pickDisclosureBaseline,
-} from '#/agent/contextInjector/disclosureBaseline';
+import { pickDisclosureBaseline } from '#/agent/contextInjector/disclosureBaseline';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IHostClock } from '#/os/interface/hostClock';
@@ -54,13 +51,16 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
     super();
     this.states.register(dateChangeSeedKey);
     this._register(
-      dynamicInjector.register(DATE_CHANGE_INJECTION_VARIANT, (ctx) => this.reminder(ctx)),
+      dynamicInjector.register<DateInjectionDisclosure>(
+        DATE_CHANGE_INJECTION_VARIANT,
+        (ctx) => this.reminder(ctx),
+      ),
     );
   }
 
   private reminder({
     lastDisclosure,
-  }: ContextInjectionContext): ContextInjectionResult | undefined {
+  }: ContextInjectionContext<DateInjectionDisclosure>): ContextInjectionResult<DateInjectionDisclosure> | undefined {
     const profileData = this.profile.data();
     const environment = profileData.environmentDisclosure;
     if (
@@ -73,7 +73,7 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
     const renderGeneration = profileData.renderGeneration ?? 0;
     const current = currentDateDisclosure(this.clock);
     const baseline = pickDisclosureBaseline<DateDisclosure>(
-      disclosureOfKind(lastDisclosure, 'date'),
+      lastDisclosure,
       this.dateFromProfile(),
       this.states.get(dateChangeSeedKey),
     );
@@ -110,6 +110,13 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
       renderGeneration: profileData.renderGeneration ?? 0,
     };
   }
+}
+
+export interface DateInjectionDisclosure {
+  readonly kind: 'date';
+  readonly renderGeneration: number;
+  readonly localDate: string;
+  readonly timeZone: string;
 }
 
 interface DateDisclosure {

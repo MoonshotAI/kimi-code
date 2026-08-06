@@ -29,6 +29,11 @@ import type { SwarmModeTrigger } from '../swarm';
 const SWARM_MODE_INJECTION_VARIANT = 'swarm_mode';
 const LEGACY_SWARM_MODE_EXIT_VARIANT = 'swarm_mode_exit';
 
+interface SwarmModeInjectionDisclosure {
+  readonly kind: 'swarm_mode';
+  readonly state: 'active' | 'inactive';
+}
+
 export interface SwarmInjectionOptions {
   readonly getTrigger: () => SwarmModeTrigger | null;
 }
@@ -41,11 +46,16 @@ export class SwarmInjection extends Disposable {
   ) {
     super();
     this._register(
-      dynamicInjector.register(SWARM_MODE_INJECTION_VARIANT, (ctx) => this.reminder(ctx)),
+      dynamicInjector.register<SwarmModeInjectionDisclosure>(
+        SWARM_MODE_INJECTION_VARIANT,
+        (ctx) => this.reminder(ctx),
+      ),
     );
   }
 
-  private reminder(ctx: ContextInjectionContext): ContextInjectionResult | undefined {
+  private reminder(
+    ctx: ContextInjectionContext<SwarmModeInjectionDisclosure>,
+  ): ContextInjectionResult<SwarmModeInjectionDisclosure> | undefined {
     const trigger = this.options.getTrigger();
     const active = trigger !== null && trigger !== 'tool';
     const rendered = this.renderedState(ctx);
@@ -65,8 +75,10 @@ export class SwarmInjection extends Disposable {
       : undefined;
   }
 
-  private renderedState(ctx: ContextInjectionContext): 'active' | 'inactive' | undefined {
-    if (ctx.lastDisclosure?.kind === 'swarm_mode') return ctx.lastDisclosure.state;
+  private renderedState(
+    ctx: ContextInjectionContext<SwarmModeInjectionDisclosure>,
+  ): 'active' | 'inactive' | undefined {
+    if (ctx.lastDisclosure !== undefined) return ctx.lastDisclosure.state;
     const history = this.context.get();
     for (let i = history.length - 1; i >= 0; i--) {
       const origin = history[i]!.origin;
