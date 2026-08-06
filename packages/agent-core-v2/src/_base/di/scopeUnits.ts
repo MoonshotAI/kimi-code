@@ -118,7 +118,8 @@ export function watchScopeUnits(container: InstantiationService, kind: ScopeKind
         materialize(record);
       }
     }
-    for (const [id, retract] of [...materialized]) {
+    // Snapshot: `retract()` deletes its own entry from `materialized`.
+    for (const [id, retract] of Array.from(materialized)) {
       if (!seen.has(id)) {
         retract();
       }

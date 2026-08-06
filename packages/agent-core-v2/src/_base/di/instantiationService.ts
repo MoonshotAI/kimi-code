@@ -576,8 +576,8 @@ export class InstantiationService implements IInstantiationService {
 
   private _liveRef<T>(id: ServiceIdentifier<T>): LiveRef<T> {
     const change = new Emitter<void>();
-    const chain: InstantiationService[] = [];
-    for (let c: InstantiationService | undefined = this; c !== undefined; c = c._parent) {
+    const chain: InstantiationService[] = [this];
+    for (let c = this._parent; c !== undefined; c = c._parent) {
       chain.push(c);
     }
     const subscriptions = chain.map((container) =>
