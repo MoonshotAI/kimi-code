@@ -54,6 +54,7 @@ export function createProgram(
         'LLM model alias to use for this invocation. Defaults to default_model in config.toml.',
       ),
     )
+    .option('--effort <effort>', 'Set the thinking effort for this session')
     .addOption(
       new Option(
         '-p, --prompt <prompt>',
@@ -157,6 +158,7 @@ export function createProgram(
       auto: autoValue,
       plan: raw['plan'] as boolean,
       model: raw['model'] as string | undefined,
+      effort: raw['effort'] as string | undefined,
       outputFormat: raw['outputFormat'] as CLIOptions['outputFormat'],
       prompt: raw['prompt'] as string | undefined,
       skillsDirs: raw['skillsDir'] as string[],

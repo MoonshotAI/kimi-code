@@ -150,6 +150,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       auto: false,
       plan: false,
       model: undefined,
+      effort: undefined,
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
@@ -827,6 +828,31 @@ describe('KimiTUI message flow', () => {
       expect.objectContaining({ model: 'k2', thinking: 'high' }),
     );
     expect(driver.state.appState.lazySessionThinking).toBeUndefined();
+  });
+
+  it('strictly applies the CLI effort to the lazy-created session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: {
+        ...makeStartupInput().cliOptions,
+        model: 'k2',
+        effort: 'custom-effort',
+      },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('hello');
+    });
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'k2', thinking: 'custom-effort' }),
+    );
+    expect(session.setThinking).toHaveBeenCalledWith('custom-effort');
+    expect(driver.state.appState.thinkingEffort).toBe('custom-effort');
   });
 
   it('does not pass the config default plan mode into the lazy-created session (v2 engine)', async () => {

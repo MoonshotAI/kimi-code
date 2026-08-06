@@ -18,6 +18,7 @@ kimi <subcommand> [options]
 | `--session [id]` | `-S` | 恢复一个会话。带 ID 时直接打开指定会话；不带 ID 时进入交互式选择器 |
 | `--continue` | `-c` | 继续当前工作目录下最近一次的会话，无需手动指定 ID |
 | `--model <model>` | `-m` | 为本次启动指定模型别名。省略时新会话使用配置文件中的 `default_model` |
+| `--effort <effort>` | | 设置本次会话的 thinking effort。支持值取决于所选模型 |
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式不会打开 TUI |
 | `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text` |
 | `--yolo` | `-y` | 自动批准普通工具调用，跳过审批请求 |
@@ -45,6 +46,8 @@ kimi <subcommand> [options]
 
 恢复会话时，可以通过 `--auto`、`--yolo` 或 `--plan` 覆盖原会话保存的权限或计划模式。例如，`kimi --continue --auto` 会恢复最近会话并切换到 auto 权限模式。
 
+`--effort` 接受任意非空字符串，因为不同模型可以提供不同的 effort 档位；agent-core 会根据所选模型校验该值。该 flag 同时支持交互式 TUI 和 `--prompt` 模式。新建会话时，它用于初始化会话设置；恢复会话时，它会替换该会话当前的设置，但不会修改 `config.toml`。同时传入 `--model` 和 `--effort` 时，Kimi Code 会先切换模型，再应用 effort。
+
 ## 典型用法
 
 直接运行开启新会话：
@@ -65,6 +68,16 @@ kimi --continue
 kimi --session
 kimi --session 01HZ...XYZ
 ```
+
+为新会话、单次 prompt 或恢复的会话设置 thinking effort：
+
+```sh
+kimi --effort high
+kimi -p "分析这个项目" --effort high
+kimi --session 01HZ...XYZ --model kimi-code/kimi-for-coding --effort low
+```
+
+运维侧的 `KIMI_MODEL_THINKING_EFFORT` 环境变量仍可在 Thinking 开启时强制覆盖支持的 Kimi 供应商最终收到的 effort；适用时，它的优先级高于会话值。详见[环境变量](../configuration/env-vars.md#用环境变量定义模型-kimi-model)。
 
 跳过审批确认，适合已知安全的批处理任务：
 

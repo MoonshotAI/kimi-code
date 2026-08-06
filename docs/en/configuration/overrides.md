@@ -3,7 +3,7 @@
 Kimi Code CLI has three places where runtime parameters can be influenced: the config file, command-line options, and environment variables. They are not a simple "whoever has higher priority wins" relationship — the three serve different scenarios and have non-overlapping scopes:
 
 - **Config file** stores long-term preferences (model, keys, loop control, etc.); takes effect on every startup
-- **Command-line options** make one-off changes for the current startup; discarded after exit
+- **Command-line options** apply to the session selected at startup without changing the global config file; session-level values can remain with that session
 - **Environment variables** primarily handle data directory location, OAuth endpoint switching, and a small number of runtime switches — **not a general fallback mechanism for config fields**
 
 This distinction matters: many users run `export KIMI_API_KEY=xxx` in the shell expecting the CLI to pick it up automatically, but it does not. See [Provider credentials](#provider-credentials) below for why.
@@ -20,7 +20,7 @@ Environment variables fall into three categories by function and cannot be colla
 
 For ordinary runtime parameters such as model alias, Plan mode, yolo mode, and Skills directories, priority from highest to lowest is:
 
-1. **Command-line options** (`-m`, `--plan`, `--yolo`, etc.): apply only to the current startup
+1. **Command-line options** (`-m`, `--effort`, `--plan`, `--yolo`, etc.): apply to the session selected at startup without rewriting `config.toml`
 2. **User config file** (`~/.kimi-code/config.toml`): stores long-term preferences
 
 A small number of environment variables explicitly override specific config file fields — for example, `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` has higher priority than `[background].keep_alive_on_exit`. These exceptions are noted in [Environment variables](./env-vars.md) and in the relevant field descriptions in [Configuration files](./config-files.md).
@@ -59,9 +59,14 @@ Options passed at startup have the highest priority and apply only to the curren
 | `--auto` | Start in auto permission mode: fully autonomous, the agent will not ask questions |
 | `--plan` | Start in Plan mode |
 | `-m, --model <model>` | Use a specific model alias for this session |
+| `--effort <effort>` | Set the thinking effort for this session; supported values depend on the selected model |
 | `-p, --prompt <prompt>` | Run in non-interactive mode: execute a single prompt and exit |
 | `--output-format <format>` | Output format for `-p` mode: `text` or `stream-json` |
 | `--skills-dir <dir>` | Replace auto-discovered Skills directories (repeatable; applies to this session only) |
+
+`--effort` accepts any non-empty string and leaves model-specific validation to agent-core. For a new session, the value is written into the session configuration; for a resumed session, it replaces that session's current effort. Omitting the flag keeps the existing configuration or model default. If `--model` is also present, the model is applied first so the effort is validated against the target model.
+
+This is a session-level override and never edits `config.toml`. The operational `KIMI_MODEL_THINKING_EFFORT` environment override is different: for supported Kimi-provider requests while Thinking is on, it can force the effort sent on the wire and therefore take precedence over the CLI session value. See [Environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi-model).
 
 Mutual exclusion rules (startup fails if violated):
 
@@ -99,6 +104,12 @@ kimi --yolo -p "Batch rename the following files..."
 
 ```sh
 kimi --plan
+```
+
+**Set a session's thinking effort without changing global configuration**:
+
+```sh
+kimi --session 01HZ...XYZ --model kimi-code/kimi-for-coding --effort high
 ```
 
 ## Next steps

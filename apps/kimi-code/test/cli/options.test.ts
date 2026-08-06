@@ -45,6 +45,7 @@ describe('CLI options parsing', () => {
       expect(opts.continue).toBe(false);
       expect(opts.session).toBeUndefined();
       expect(opts.model).toBeUndefined();
+      expect(opts.effort).toBeUndefined();
       expect(opts.outputFormat).toBeUndefined();
       expect(opts.prompt).toBeUndefined();
       expect(opts.skillsDirs).toEqual([]);
@@ -238,6 +239,27 @@ describe('CLI options parsing', () => {
       const opts = parse(['--model', '   ']);
       expect(() => validateOptions(opts)).toThrow(OptionConflictError);
       expect(() => validateOptions(opts)).toThrow('Model cannot be empty.');
+    });
+  });
+
+  describe('--effort', () => {
+    it('parses a space-separated effort override', () => {
+      expect(parse(['--effort', 'high']).effort).toBe('high');
+    });
+
+    it('parses an equals-separated effort override', () => {
+      expect(parse(['--effort=high']).effort).toBe('high');
+    });
+
+    it('accepts a custom effort name for model-level validation', () => {
+      const opts = parse(['--effort=custom-tier']);
+      expect(validateOptions(opts).options.effort).toBe('custom-tier');
+    });
+
+    it('rejects an empty effort value before reaching the SDK', () => {
+      const opts = parse(['--effort=']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Effort cannot be empty.');
     });
   });
 

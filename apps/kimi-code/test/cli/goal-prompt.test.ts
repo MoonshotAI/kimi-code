@@ -152,6 +152,7 @@ function opts(overrides: Partial<Parameters<typeof runPrompt>[0]> = {}) {
     auto: false,
     plan: false,
     model: undefined,
+    effort: undefined,
     outputFormat: undefined,
     prompt: '/goal Ship feature X',
     skillsDirs: [],

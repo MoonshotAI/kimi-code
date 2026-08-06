@@ -53,6 +53,7 @@ export interface PromptSession {
 
   getStatus(): Promise<SessionStatus>;
   setModel(model: string): Promise<void>;
+  setThinking(effort: string): Promise<void>;
   setPermission(mode: PermissionMode): Promise<void>;
   setApprovalHandler(handler: ApprovalHandler | undefined): void;
   setQuestionHandler(handler: QuestionHandler | undefined): void;

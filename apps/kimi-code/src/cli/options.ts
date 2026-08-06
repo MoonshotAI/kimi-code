@@ -41,6 +41,7 @@ export interface CLIOptions {
   auto: boolean;
   plan: boolean;
   model: string | undefined;
+  effort: string | undefined;
   outputFormat: PromptOutputFormat | undefined;
   prompt: string | undefined;
   skillsDirs: string[];
@@ -72,6 +73,9 @@ export function validateOptions(
   }
   if (opts.model !== undefined && opts.model.trim().length === 0) {
     throw new OptionConflictError('Model cannot be empty.');
+  }
+  if (opts.effort !== undefined && opts.effort.trim().length === 0) {
+    throw new OptionConflictError('Effort cannot be empty.');
   }
   if (!promptMode && opts.outputFormat !== undefined) {
     throw new OptionConflictError('Output format is only supported in prompt mode.');

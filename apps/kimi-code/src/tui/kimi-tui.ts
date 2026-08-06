@@ -14,6 +14,7 @@ import type {
   PromptPart,
   Session,
   SkillSummary,
+  ThinkingEffort,
   WorkspaceTrustInfo,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
@@ -404,6 +405,7 @@ export class KimiTUI {
         auto: startupInput.cliOptions.auto,
         plan: startupInput.cliOptions.plan,
         model: startupInput.cliOptions.model,
+        effort: startupInput.cliOptions.effort,
         agentProfile: startupInput.agentProfile,
         agentFiles: startupInput.cliOptions.agentFiles,
         startupNotice: startupInput.startupNotice,
@@ -810,10 +812,12 @@ export class KimiTUI {
     const { workDir } = this.state.appState;
     let session: Session | undefined;
     let shouldReplayHistory = false;
+    let createdFreshSession = false;
     const isResumeStartup = startup.sessionFlag !== undefined || startup.continueLast;
     const createSessionOptions: MutableCreateSessionOptions = {
       workDir,
       model: startup.model,
+      thinking: startup.effort,
       permission: startup.auto ? 'auto' : startup.yolo ? 'yolo' : undefined,
       planMode: startup.plan ? true : undefined,
       // --agent/--agent-file bind the startup session only; sessions created
@@ -872,6 +876,7 @@ export class KimiTUI {
             shouldReplayHistory = true;
           } else {
             session = await this.harness.createSession(createSessionOptions);
+            createdFreshSession = true;
             this.startupNotice = combineStartupNotice(
               this.startupNotice,
               `No sessions to continue under "${workDir}"; starting a fresh session.`,
@@ -888,12 +893,14 @@ export class KimiTUI {
         this.appendStartupNotice(SESSIONLESS_STARTUP_NOTICE);
       } else {
         session = await this.harness.createSession(createSessionOptions);
+        createdFreshSession = true;
       }
       if (session !== undefined && shouldReplayHistory) {
-        await this.applyStartupModesToResumedSession(session);
-        if (startup.model !== undefined) {
-          await session.setModel(startup.model);
-        }
+        await this.applyStartupOverridesToResumedSession(session);
+      } else if (session !== undefined && createdFreshSession && startup.effort !== undefined) {
+        // createSession intentionally keeps lenient SDK compatibility; an
+        // explicit CLI effort must use the strict, model-aware setter too.
+        await session.setThinking(startup.effort);
       }
     } catch (error) {
       if (!isOAuthLoginRequiredError(error)) throw error;
@@ -1694,18 +1701,23 @@ export class KimiTUI {
     if (!startup.plan) {
       patch.planMode = config.defaultPlanMode === true;
     }
-    const effort = thinkingEffortFromConfig(config.thinking);
-    if (effort !== undefined) {
-      patch.thinkingEffort = effort;
-    } else if (startupModel !== undefined) {
-      // No concrete effort configured: mirror the engine, which resolves the
-      // model's default effort at createSession time.
-      const raw = config.models?.[startupModel];
-      if (raw !== undefined) {
-        const providerType = config.providers?.[raw.provider]?.type;
-        patch.thinkingEffort = defaultThinkingEffortFor(
-          effectiveModelAlias(raw, providerType ?? raw.protocol),
-        );
+    if (startup.effort !== undefined) {
+      patch.thinkingEffort = startup.effort as ThinkingEffort;
+      patch.lazySessionThinking = startup.effort as ThinkingEffort;
+    } else {
+      const effort = thinkingEffortFromConfig(config.thinking);
+      if (effort !== undefined) {
+        patch.thinkingEffort = effort;
+      } else if (startupModel !== undefined) {
+        // No concrete effort configured: mirror the engine, which resolves the
+        // model's default effort at createSession time.
+        const raw = config.models?.[startupModel];
+        if (raw !== undefined) {
+          const providerType = config.providers?.[raw.provider]?.type;
+          patch.thinkingEffort = defaultThinkingEffortFor(
+            effectiveModelAlias(raw, providerType ?? raw.protocol),
+          );
+        }
       }
     }
     if (startup.agentProfile !== undefined || startup.agentFiles !== undefined) {
@@ -1796,6 +1808,11 @@ export class KimiTUI {
     let session: Session;
     try {
       session = await this.createSessionFromCurrentState(true);
+      if (this.options.startup.effort !== undefined) {
+        // createSession remains lenient for SDK compatibility. An explicit
+        // CLI effort must also pass the strict, model-aware session setter.
+        await session.setThinking(this.options.startup.effort);
+      }
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to start a session: ${msg}`);
@@ -1856,11 +1873,12 @@ export class KimiTUI {
     this.syncAdditionalDirs(session);
   }
 
-  // Apply --auto/--yolo/--plan startup flags to a resumed session. The resumed
+  // Apply CLI startup overrides to a resumed session. The resumed
   // session may already be in plan mode from its persisted records, and
   // re-entering plan mode throws, so only enable it when it is not active yet.
-  // setPermission is idempotent and needs no such guard.
-  private async applyStartupModesToResumedSession(session: Session): Promise<void> {
+  // setPermission is idempotent and needs no such guard. Model must be applied
+  // before effort because the engine validates effort against the active model.
+  private async applyStartupOverridesToResumedSession(session: Session): Promise<void> {
     const { startup } = this.options;
     if (startup.auto) {
       await session.setPermission('auto');
@@ -1872,6 +1890,12 @@ export class KimiTUI {
       if (!status.planMode) {
         await session.setPlanMode(true);
       }
+    }
+    if (startup.model !== undefined) {
+      await session.setModel(startup.model);
+    }
+    if (startup.effort !== undefined) {
+      await session.setThinking(startup.effort);
     }
   }
 
@@ -3305,7 +3329,9 @@ export class KimiTUI {
     const switched = await this.resumeSession(session.id);
     if (!switched) return;
     if (applyStartupModes) {
-      await this.applyStartupModesToResumedSession(this.requireSession());
+      const resumedSession = this.requireSession();
+      await this.applyStartupOverridesToResumedSession(resumedSession);
+      await this.syncRuntimeState(resumedSession);
       this.applyStartupPermissionAndPlanToAppState();
     }
     this.hideSessionPicker();

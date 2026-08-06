@@ -263,6 +263,7 @@ export interface TUIStartupOptions {
   readonly auto: boolean;
   readonly plan: boolean;
   readonly model?: string;
+  readonly effort?: string;
   /** Resolved profile name from --agent/--agent-file; bound to the startup session only. */
   readonly agentProfile?: string;
   /** Raw --agent-file paths, passed to session creation alongside `agentProfile`. */

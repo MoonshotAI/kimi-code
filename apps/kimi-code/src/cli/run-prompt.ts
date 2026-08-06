@@ -288,6 +288,15 @@ interface ResolvedPromptSession {
   readonly goalModel?: string;
 }
 
+async function applySessionOverrides(session: PromptSession, opts: CLIOptions): Promise<void> {
+  if (opts.model !== undefined) {
+    await session.setModel(opts.model);
+  }
+  if (opts.effort !== undefined) {
+    await session.setThinking(opts.effort);
+  }
+}
+
 async function resolvePromptSession(
   harness: PromptHarness,
   opts: CLIOptions,
@@ -326,9 +335,7 @@ async function resolvePromptSession(
       status.permission,
       setRestorePermission,
     );
-    if (opts.model !== undefined) {
-      await session.setModel(opts.model);
-    }
+    await applySessionOverrides(session, opts);
     installHeadlessHandlers(session);
     return {
       session,
@@ -353,9 +360,7 @@ async function resolvePromptSession(
         status.permission,
         setRestorePermission,
       );
-      if (opts.model !== undefined) {
-        await session.setModel(opts.model);
-      }
+      await applySessionOverrides(session, opts);
       installHeadlessHandlers(session);
       return {
         session,
@@ -373,12 +378,18 @@ async function resolvePromptSession(
   const session = await harness.createSession({
     workDir,
     model,
+    thinking: opts.effort,
     permission: 'auto',
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     agentProfile,
     agentFiles: opts.agentFiles?.length ? opts.agentFiles : undefined,
     drainAgentTasksOnStop: true,
   });
+  // Session creation preserves the SDK's lenient compatibility semantics.
+  // Explicit CLI input must additionally use the strict, model-aware setter.
+  if (opts.effort !== undefined) {
+    await session.setThinking(opts.effort);
+  }
   installHeadlessHandlers(session);
   return {
     session,

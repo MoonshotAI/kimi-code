@@ -76,7 +76,11 @@ export class AuthFlowController {
     this.host.setStartupReady();
   }
 
-  async activateModelAfterLogin(model: string, effort?: string): Promise<void> {
+  async activateModelAfterLogin(
+    model: string,
+    effort?: string,
+    strictThinking = false,
+  ): Promise<void> {
     const { host } = this;
     if (host.session !== undefined) {
       await host.session.setModel(model);
@@ -121,6 +125,9 @@ export class AuthFlowController {
       options.additionalDirs = [...host.state.appState.additionalDirs];
     }
     const session = await host.harness.createSession(options);
+    if (strictThinking && effort !== undefined) {
+      await session.setThinking(effort);
+    }
     await host.setSession(session);
     host.setAppState({
       sessionId: session.id,
@@ -164,7 +171,12 @@ export class AuthFlowController {
       return;
     }
 
-    await this.activateModelAfterLogin(defaultModel, thinkingEffortFromConfig(config.thinking));
+    const startupEffort = host.options.startup.effort;
+    await this.activateModelAfterLogin(
+      defaultModel,
+      startupEffort ?? thinkingEffortFromConfig(config.thinking),
+      startupEffort !== undefined,
+    );
     if (host.session === undefined && host.engineV2) {
       // Session-less v2: also hydrate permission/plan defaults from the
       // refreshed config, same as startup.
