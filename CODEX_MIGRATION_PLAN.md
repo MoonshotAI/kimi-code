@@ -568,6 +568,12 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - chatwidget `render_frame` 加 completion 参数：弹窗覆盖 chat 面板底部（`commands` 边框 + 选中 `▶` 高亮）
 - 测试：`completion_popup_matches_bare_slash_prefix`（/s 匹配、普通文本/空格/无匹配关闭）→ kimi-tui **38** 全绿；workspace 0 errors
 
+**2026-08-06 G-4 分片 F：审批面板视觉化（全屏 modal）✅**：
+- `v` 键从"transcript 行详情"升级为**全屏审批 modal**（`approval_detail` 字段 + `render_approval_modal` 覆盖层：工具名/rule/完整参数/决策提示行）
+- modal 激活时键盘独占：**y/n/s 决策并关闭、Esc 关闭**（其余忽略）；回合中 `poll_prompt_keys` 先分派 modal 再处理取消/普通审批键
+- `approval_modal_lines` 自由函数（标题/参数/动作提示，纯函数可测）+ 测试
+- kimi-tui **39** 全绿；workspace 0 errors——G-4 分片 A-F 全部落地（历史/补全/审批/工具卡片/弹窗/审批面板）
+
 **2026-08-06 CLI 续补（G-3 批次 2 + ACP 增补）**：
 - **选项冲突校验补全 ✅**（TS `validateOptions` parity）：`print` 空 prompt / 空 `--model` 报错（"Prompt/Model cannot be empty."）；`print --continue` 与全局 `-S <id>` clap `conflicts_with` 互斥；新增 2 集成测试 → cli.rs 44 全绿
 - **ACP skills 命令广告 + `/skill:` 拦截 ✅**（kimi-acp，TS `acp-adapter` parity）：

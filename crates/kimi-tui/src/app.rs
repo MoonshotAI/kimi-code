@@ -114,6 +114,16 @@ pub fn tool_result_collapsed(text: &str) -> bool {
     text.chars().count() > 120
 }
 
+/// The approval-detail modal's text lines (pure, tested).
+pub fn approval_modal_lines(pending: &PendingApproval) -> Vec<String> {
+    vec![
+        format!("⚙ {} ({})", pending.tool, pending.rule),
+        pending.arguments.clone(),
+        String::new(),
+        "y = allow    n = deny    s = allow for session    Esc = close".to_string(),
+    ]
+}
+
 /// The slash-command completion popup state for an input, or `None` when the
 /// input is not a bare `/prefix`.
 pub fn completion_for_input(input: &str) -> Option<CompletionState> {
@@ -276,6 +286,8 @@ pub struct App {
     pending_approvals: Vec<PendingApproval>,
     /// Active slash-command completion popup (None when not typing `/…`).
     completion: Option<CompletionState>,
+    /// Full-screen approval detail modal (the `v` key), when open.
+    approval_detail: Option<PendingApproval>,
     /// Permission rules the user approved "for this session": future
     /// approvals matching these rules resolve automatically (TS
     /// approve-for-session parity).
@@ -307,6 +319,7 @@ impl App {
             tab: None,
             pending_approvals: Vec::new(),
             completion: None,
+            approval_detail: None,
             auto_allow_rules: std::collections::HashSet::new(),
             scroll: 0,
             status: String::new(),
@@ -1255,6 +1268,27 @@ impl App {
             if key.kind != KeyEventKind::Press {
                 return Ok(());
             }
+            // The approval-detail modal owns the keys while it is open:
+            // y/n/s decide (and close), Esc closes, anything else is ignored.
+            if self.approval_detail.is_some() {
+                match key.code {
+                    KeyCode::Char('y') => {
+                        self.answer_approval(true).await?;
+                        self.approval_detail = None;
+                    }
+                    KeyCode::Char('n') => {
+                        self.answer_approval(false).await?;
+                        self.approval_detail = None;
+                    }
+                    KeyCode::Char('s') => {
+                        self.approve_for_session().await?;
+                        self.approval_detail = None;
+                    }
+                    KeyCode::Esc => self.approval_detail = None,
+                    _ => {}
+                }
+                return Ok(());
+            }
             if interrupt_action(key.code, key.modifiers) == Some(InterruptAction::CancelTurn) {
                 let mut session = self.session.clone().expect("session");
                 session.cancel().await;
@@ -1265,7 +1299,7 @@ impl App {
                 match key.code {
                     KeyCode::Char('y') => self.answer_approval(true).await?,
                     KeyCode::Char('n') => self.answer_approval(false).await?,
-                    KeyCode::Char('v') => self.show_approval_detail(),
+                    KeyCode::Char('v') => self.open_approval_detail(),
                     KeyCode::Char('s') => self.approve_for_session().await?,
                     _ => {}
                 }
@@ -1320,19 +1354,12 @@ impl App {
         toggle_last_tool_collapse(&mut self.transcript);
     }
 
-    /// Show the full arguments of the front pending approval (`v` key) — the
-    /// compact prompt line truncates at 80 chars, so this is the detail view.
-    fn show_approval_detail(&mut self) {
-        let Some(pending) = self.pending_approvals.first().cloned() else {
-            return;
-        };
-        self.transcript.push(TranscriptLine::status(format!(
-            "approval {}: {} ({rule})",
-            pending.id,
-            pending.tool,
-            rule = pending.rule,
-        )));
-        self.transcript.push(TranscriptLine::status(format!("  args: {}", pending.arguments)));
+    /// Open the full-screen approval detail modal (`v` key): the front
+    /// pending approval's full arguments, with y/n/s/Esc decision keys.
+    fn open_approval_detail(&mut self) {
+        if let Some(pending) = self.pending_approvals.first().cloned() {
+            self.approval_detail = Some(pending);
+        }
     }
 
     /// Approve the front approval "for this session" (`s` key): remember its
@@ -1432,6 +1459,31 @@ impl App {
             self.theme,
             self.completion.as_ref(),
         );
+        if let Some(pending) = self.approval_detail.as_ref() {
+            self.render_approval_modal(frame, pending);
+        }
+    }
+
+    /// Draw the full-screen approval detail modal over the chat layout.
+    fn render_approval_modal(&self, frame: &mut ratatui::Frame<'_>, pending: &PendingApproval) {
+        let lines: Vec<ratatui::text::Line> = approval_modal_lines(pending)
+            .into_iter()
+            .enumerate()
+            .map(|(i, text)| {
+                let color = match i {
+                    0 => self.theme.assistant,
+                    3 => self.theme.error,
+                    _ => self.theme.status,
+                };
+                ratatui::text::Line::from(ratatui::text::Span::styled(
+                    text,
+                    ratatui::style::Style::default().fg(color),
+                ))
+            })
+            .collect();
+        let modal = ratatui::widgets::Paragraph::new(lines)
+            .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title("approval"));
+        frame.render_widget(modal, frame.area());
     }
 }
 fn init_terminal() -> anyhow::Result<Terminal<CrosstermBackend<io::Stdout>>> {
@@ -1569,6 +1621,23 @@ mod tests {
         assert!(completion_for_input("/").is_none() || completion_for_input("/").is_some());
         assert!(completion_for_input("/session x").is_none(), "space closes popup");
         assert!(completion_for_input("/zzz").is_none(), "no matches");
+    }
+
+    #[test]
+    fn approval_modal_lines_show_details_and_actions() {
+        let pending = PendingApproval {
+            id: "a1".into(),
+            tool: "Bash".into(),
+            rule: "Ask".into(),
+            args: r#"{"command":"ls"}"#.into(),
+            arguments: r#"{"command":"ls"}"#.into(),
+        };
+        let lines = approval_modal_lines(&pending);
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].contains("Bash"), "title: {}", lines[0]);
+        assert!(lines[0].contains("Ask"), "rule: {}", lines[0]);
+        assert_eq!(lines[1], r#"{"command":"ls"}"#);
+        assert!(lines[3].contains("s = allow for session"), "actions: {}", lines[3]);
     }
 
     #[test]
