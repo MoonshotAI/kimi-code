@@ -1080,6 +1080,31 @@ describe('SessionService.undo', () => {
     ]);
   });
 
+  it('counts a submission-scoped skill activation group as a single undo step', async () => {
+    const created = await svc.create({ metadata: { cwd: '/tmp/undo-group' } });
+    state.contexts.set(created.id, {
+      history: [
+        textMessage('user', 'earlier prompt'),
+        textMessage('assistant', 'earlier answer'),
+        textMessage('user', '/skill demo', {
+          kind: 'skill_activation',
+          activationId: 'act-1',
+          skillName: 'demo',
+          trigger: 'user-slash',
+          submissionId: 'sub-1',
+        }),
+        textMessage('user', 'do the thing', { kind: 'user', submissionId: 'sub-1' }),
+        textMessage('assistant', 'group answer'),
+      ],
+      tokenCount: 50,
+    });
+
+    await expect(svc.undo(created.id, { count: 3 })).rejects.toBeInstanceOf(
+      SessionUndoUnavailableError,
+    );
+    expect(state.undoPayloads).toEqual([]);
+  });
+
   it('throws SessionNotFoundError on a missing id', async () => {
     await expect(svc.undo('does-not-exist', { count: 1 })).rejects.toBeInstanceOf(
       SessionNotFoundError,
