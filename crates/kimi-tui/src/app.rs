@@ -102,9 +102,10 @@ struct PendingApproval {
 
 /// Active slash-command completion popup: the matching commands shown above
 /// the input while typing `/…` (↑/↓ to move, Enter to fill, Esc to close).
+/// Each entry is `(command, description)` for the description column.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompletionState {
-    pub matches: Vec<String>,
+    pub matches: Vec<(String, String)>,
     pub selected: usize,
 }
 
@@ -125,15 +126,16 @@ pub fn approval_modal_lines(pending: &PendingApproval) -> Vec<String> {
 }
 
 /// The slash-command completion popup state for an input, or `None` when the
-/// input is not a bare `/prefix`.
+/// input is not a bare `/prefix`. Entries carry the command's description
+/// (TS registry parity).
 pub fn completion_for_input(input: &str) -> Option<CompletionState> {
     if !input.starts_with('/') || input.contains(' ') {
         return None;
     }
-    let matches: Vec<String> = crate::bottom_pane::SLASH_COMMANDS
+    let matches: Vec<(String, String)> = crate::bottom_pane::COMMAND_DESCRIPTIONS
         .iter()
-        .filter(|c| c.starts_with(input))
-        .map(|s| s.to_string())
+        .filter(|(name, _)| name.starts_with(input))
+        .map(|(name, desc)| (name.to_string(), desc.to_string()))
         .collect();
     if matches.is_empty() {
         None
@@ -961,14 +963,60 @@ impl App {
                     }
                 }
                 "/goal" => {
-                    if rest.is_empty() {
-                        self.transcript.push(TranscriptLine::status("usage: /goal <objective>"));
-                    } else {
-                        let snapshot = self.session.as_mut().expect("session").create_goal(rest).await?;
-                        self.transcript.push(TranscriptLine::status(format!(
-                            "goal created: {}",
-                            snapshot["objective"]
-                        )));
+                    // TS parity: `/goal <subcommand>` manages the goal;
+                    // anything else is the objective of a new goal.
+                    let (cmd, objective) = match rest.split_once(char::is_whitespace) {
+                        Some((c, o)) => (c, o.trim()),
+                        None => (rest, ""),
+                    };
+                    let session = self.session.as_mut().expect("session");
+                    match cmd {
+                        "" => {
+                            self.transcript.push(TranscriptLine::status(
+                                "usage: /goal <objective> | status|pause|resume|cancel|replace|next",
+                            ));
+                        }
+                        "status" => {
+                            let goal = session.goal().await?;
+                            let status = goal["result"]["goal"]["status"].as_str().unwrap_or("none");
+                            self.transcript.push(TranscriptLine::status(format!("goal status: {status}")));
+                        }
+                        "pause" => {
+                            session.pause_goal(Some(objective)).await?;
+                            self.transcript.push(TranscriptLine::status("goal paused"));
+                        }
+                        "resume" => {
+                            session.resume_goal(Some(objective)).await?;
+                            self.transcript.push(TranscriptLine::status("goal resumed"));
+                        }
+                        "cancel" => {
+                            session.cancel_goal().await?;
+                            self.transcript.push(TranscriptLine::status("goal cancelled"));
+                        }
+                        "replace" => {
+                            if objective.is_empty() {
+                                self.transcript.push(TranscriptLine::status("usage: /goal replace <objective>"));
+                            } else {
+                                let snapshot = session.create_goal(objective).await?;
+                                self.transcript.push(TranscriptLine::status(format!(
+                                    "goal replaced: {}",
+                                    snapshot["objective"]
+                                )));
+                            }
+                        }
+                        "next" => {
+                            self.transcript.push(TranscriptLine::status(
+                                "goal queueing is not supported in the Rust TUI — use a plain objective",
+                            ));
+                        }
+                        _ => {
+                            // A bare objective creates a goal (TS parity).
+                            let snapshot = session.create_goal(rest).await?;
+                            self.transcript.push(TranscriptLine::status(format!(
+                                "goal created: {}",
+                                snapshot["objective"]
+                            )));
+                        }
                     }
                 }
                 "/goal-cancel" => {
@@ -1397,7 +1445,7 @@ impl App {
     /// Fill the input with the popup's selected command and close the popup.
     fn apply_completion(&mut self) {
         let Some(state) = self.completion.take() else { return };
-        if let Some(cmd) = state.matches.get(state.selected) {
+        if let Some((cmd, _)) = state.matches.get(state.selected) {
             self.input = cmd.clone();
             self.cursor = self.input.chars().count();
         }
@@ -1614,11 +1662,12 @@ mod tests {
         // `/s` matches the commands starting with `/s` (session, skills, …).
         let state = completion_for_input("/s").expect("popup for /s");
         assert!(!state.matches.is_empty());
-        assert!(state.matches.iter().any(|c| c == "/session"));
+        assert!(state.matches.iter().any(|(name, _)| name == "/session"));
         assert_eq!(state.selected, 0);
+        // Every entry carries a description (popup description column).
+        assert!(state.matches.iter().all(|(_, desc)| !desc.is_empty()));
         // Plain text / empty input / an argument after the command close it.
         assert!(completion_for_input("hello").is_none());
-        assert!(completion_for_input("/").is_none() || completion_for_input("/").is_some());
         assert!(completion_for_input("/session x").is_none(), "space closes popup");
         assert!(completion_for_input("/zzz").is_none(), "no matches");
     }

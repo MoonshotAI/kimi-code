@@ -39,12 +39,20 @@ pub fn render_frame(
             .matches
             .iter()
             .enumerate()
-            .map(|(i, cmd)| {
+            .map(|(i, (cmd, desc))| {
                 let selected = i == state.selected;
-                RenderLine::from(Span::styled(
-                    format!("  {} {}", if selected { "▶" } else { " " }, cmd),
-                    Style::default().fg(if selected { theme.assistant } else { theme.status }),
-                ))
+                // Command + dimmed description in a second column.
+                let prefix = if selected { "▶" } else { " " };
+                RenderLine::from(vec![
+                    Span::styled(
+                        format!("  {prefix} {cmd}"),
+                        Style::default().fg(if selected { theme.assistant } else { theme.status }),
+                    ),
+                    Span::styled(
+                        format!("  {desc}"),
+                        Style::default().fg(theme.thinking),
+                    ),
+                ])
             })
             .collect();
         let popup = Paragraph::new(popup_lines).block(

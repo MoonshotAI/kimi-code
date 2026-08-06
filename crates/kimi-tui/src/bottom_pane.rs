@@ -10,6 +10,59 @@ pub const ON_OFF_ARGS: &[&str] = &["on", "off"];
 pub const THINKING_ARGS: &[&str] = &["low", "medium", "high"];
 /// `/permission` modes (TS picker parity).
 pub const PERMISSION_ARGS: &[&str] = &["manual", "plan", "auto", "yolo"];
+/// `/goal` subcommands (TS `GOAL_ARG_COMPLETIONS` parity; a bare objective
+/// still creates a goal).
+pub const GOAL_ARGS: &[&str] = &["status", "pause", "resume", "cancel", "replace", "next"];
+
+/// Slash commands with a one-line description (the completion popup's
+/// description column; TS registry parity).
+pub const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
+    ("/quit", "Leave the chat"),
+    ("/exit", "Leave the chat"),
+    ("/help", "Show available commands"),
+    ("/approvals", "List pending approvals"),
+    ("/approve", "Approve a pending approval"),
+    ("/deny", "Deny a pending approval"),
+    ("/status", "Show session status"),
+    ("/info", "Show session info"),
+    ("/session", "Show or rename the session"),
+    ("/plugins", "Manage plugins"),
+    ("/config", "Show engine config"),
+    ("/skills", "List skills"),
+    ("/plan", "Toggle plan mode"),
+    ("/swarm", "Toggle swarm mode or run a task"),
+    ("/thinking", "Set thinking effort"),
+    ("/permission", "Set permission mode"),
+    ("/yolo", "Auto-approve all tool calls"),
+    ("/auto", "Auto permission mode"),
+    ("/new", "Start a fresh session"),
+    ("/init", "Generate AGENTS.md"),
+    ("/title", "Rename the session"),
+    ("/mcp", "List MCP servers"),
+    ("/tasks", "List background tasks"),
+    ("/theme", "Toggle dark/light theme"),
+    ("/version", "Show version"),
+    ("/models", "List models"),
+    ("/model", "Switch model"),
+    ("/reload", "Reload session state"),
+    ("/resume", "Switch to a session"),
+    ("/goal", "Start or manage a goal"),
+    ("/goal-cancel", "Cancel the goal"),
+    ("/goal-pause", "Pause the goal"),
+    ("/goal-resume", "Resume the goal"),
+    ("/goal-status", "Show goal status"),
+    ("/add-dir", "Add an additional directory"),
+    ("/clear", "Clear session context"),
+    ("/compact", "Compact the conversation"),
+    ("/usage", "Show token usage"),
+    ("/undo", "Undo the last turn"),
+    ("/fork", "Fork the session"),
+    ("/steer", "Steer the active turn"),
+    ("/import", "Import context"),
+    ("/sessions", "Switch sessions"),
+    ("/export", "Export the session"),
+    ("/archive", "Archive the session"),
+];
 
 /// Command names for `/…` Tab completion.
 pub const SLASH_COMMANDS: &[&str] = &[
@@ -124,13 +177,14 @@ pub fn complete_line(
     tab_idx: Option<usize>,
 ) -> (String, Option<usize>) {
     // Argument completion: `/plan `, `/swarm `, `/thinking `, `/model `,
-    // `/permission `, `/session `.
+    // `/permission `, `/session `, `/goal `.
     if let Some((cmd, arg)) = base.split_once(' ') {
         let next = match cmd {
             "/plan" | "/swarm" => complete_from(cmd, arg, ON_OFF_ARGS, tab_idx),
             "/thinking" => complete_from(cmd, arg, THINKING_ARGS, tab_idx),
             "/permission" => complete_from(cmd, arg, PERMISSION_ARGS, tab_idx),
             "/session" => complete_from(cmd, arg, &["set"], tab_idx),
+            "/goal" => complete_from(cmd, arg, GOAL_ARGS, tab_idx),
             "/model" => complete_model_arg(arg, model_aliases, tab_idx),
             _ => None,
         };
@@ -208,6 +262,13 @@ mod tests {
         assert_eq!(done, "/session set");
         let (done, _) = complete_line("/swarm o", &[], None);
         assert_eq!(done, "/swarm on");
+        // `/goal` subcommands (TS registry parity).
+        let (done, _) = complete_line("/goal p", &[], None);
+        assert_eq!(done, "/goal pause");
+        let (done, _) = complete_line("/goal c", &[], None);
+        assert_eq!(done, "/goal cancel");
+        let (done, _) = complete_line("/goal status", &[], None);
+        assert_eq!(done, "/goal status");
     }
 
     #[test]

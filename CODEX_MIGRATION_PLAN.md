@@ -574,6 +574,13 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - `approval_modal_lines` 自由函数（标题/参数/动作提示，纯函数可测）+ 测试
 - kimi-tui **39** 全绿；workspace 0 errors——G-4 分片 A-F 全部落地（历史/补全/审批/工具卡片/弹窗/审批面板）
 
+**2026-08-06 G-4 对拍修正：补全对齐 TS（goal 子命令 + 描述列）✅**：
+- **对拍审计**（亲自读 TS 源码）：`approval/controller.ts` autoResolveFor（并发队列短路——我的 rule 记忆为超集，记录差异）、`tool-call.ts` 966 行组件树（我的线性折叠为架构简化，留待 chatwidget 组件树）、`session-replay.ts` getResumeState 富数据（富结构留待组件树）、`complete-args.ts` + registry 参数集、pi-tui AutocompleteItem description
+- **修正**：
+  - `/goal` 加子命令支持（status/pause/resume/cancel/replace/next + 裸 objective 创建，TS `GOAL_ARG_COMPLETIONS` parity）——app.rs dispatch 分派 + bottom_pane `GOAL_ARGS` 参数集补全
+  - 弹窗描述列：`COMMAND_DESCRIPTIONS` 表（45 命令描述）+ `CompletionState.matches` 改 `(name, desc)` + chatwidget 渲染第二列暗色描述（TS AutocompleteItem parity）
+- **测试**：bottom_pane goal 参数集补全（pause/cancel/status）+ completion 描述非空断言 → kimi-tui 39 全绿；workspace 0 errors
+
 **2026-08-06 CLI 续补（G-3 批次 2 + ACP 增补）**：
 - **选项冲突校验补全 ✅**（TS `validateOptions` parity）：`print` 空 prompt / 空 `--model` 报错（"Prompt/Model cannot be empty."）；`print --continue` 与全局 `-S <id>` clap `conflicts_with` 互斥；新增 2 集成测试 → cli.rs 44 全绿
 - **ACP skills 命令广告 + `/skill:` 拦截 ✅**（kimi-acp，TS `acp-adapter` parity）：
