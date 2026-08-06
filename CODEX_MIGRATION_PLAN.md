@@ -540,6 +540,15 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - **测试**：headless_tests 单测 5（/goal 解析/goal summary/JSONL writer 累积+tool/web auth）+ kimi-ui prompt_block 2 + cli.rs 更新（doctor 格式/provider catalog list/provider list 已配置）+ 新增（provider remove 未知报错 / print json 互斥）——kimi-cli bin 单测 6 + kimi-ui 10 + kimi-exec 4 全绿
 - **待办**：① P1-6 遥测、P1-7 自更新（用户定案本批不做）② ACP slash-commands 广告核实 ③ `kimi print` 真实 LLM 端到端（stream-json 事件流验证）④ G-3 批次 2：选项冲突校验全量（-p/--yolo/--auto/--plan/--session 12 条规则 clap 化）
 
+**2026-08-06 G-4 分片 A+C：TUI 会话恢复历史渲染 + 补全参数集**：
+- **差距分析**（kimi-tui 8 文件 2471 行 vs TS TUI 203 文件 40.8k）：分片排序 A（历史渲染）> B（审批面板）> C（补全升级）；确认 question 侧引擎设计"工具内容+下条消息"（TS native `setQuestionHandler` 同为 no-op）→ 无需反向 RPC；审批走"事件→approvals()→队列→RPC 决策"与引擎授权回调自洽
+- **分片 A：会话恢复历史渲染 ✅**（resume 一片空白是最大体验缺口）：
+  - 新增 `crates/kimi-tui/src/history.rs`：纯函数 `render_history`（TS `session-replay hydrateFromReplay` 对齐）——`session/get_context` 的 `history` → `TranscriptLine`（user→`▶`、assistant→`⚙` 工具行 + 文本、tool→`⚙`、system/空内容跳过）；4 单测（顺序/工具行/tool 消息/空过滤）
+  - `app.rs` `run()`：`session.load()` 后 `get_context()` → `render_history` 追加到 transcript（"session ready" 之前）
+- **分片 C：补全参数集扩展 ✅**：`bottom_pane.rs` `complete_line` 加 `/permission`（manual|plan|auto|yolo）与 `/session`（set）参数集（TS registry 参数补全规格对齐）；测试扩展
+- **验证**：kimi-tui 33 全绿（29 基线 + history 4 + bottom_pane 补全扩展）；`cargo check --workspace` 0 errors
+- **待办**：分片 B 审批面板化（DisplayBlock diff/shell/file 预览 + approve-for-session 记忆）；工具调用卡片（结构化 tool 条目/结果折叠）；补全弹窗；媒体渲染
+
 **2026-08-06 G-2 批次 1：v1 契约投影 + WS v1 门面（kimi-web 前端零改动连 Rust server 的最小可验证链路）**：
 - **背景**：浏览器 daemon 客户端（`apps/kimi-web/src/api/daemon/`）按 kap-server v1 wire 契约编写（`WireSession` 形状、`{items,has_more}` 分页、`/prompts` 复数路由、`event.*` WS 协议 + `server_hello/client_hello/subscribe` 握手），而原 `http.rs` 是"RPC 直通投影"（codex 风格路径/形状 + JSON-RPC WS）——两边路径、响应形状、WS 协议全不一致，mapper 直接 TypeError / WS 帧互认垃圾。
 - **新增 `crates/kimi-server-transport/src/v1.rs`（v1 契约投影模块）**：
@@ -610,9 +619,9 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 | 项 | 状态 | 说明 |
 |---|---|---|
 | D-1 `kimi-tui` 主循环 + 事件流 | ✅ | `app.rs`/`lib.rs`/`markdown.rs`/`theme.rs`，13 测试（ratatui 实时渲染/角色化转录/23+ 命令面 Tab 补全/审批 y-n/流式） |
-| D-2 chatwidget（transcript/streaming/tool_requests/slash） | 🔶 | 仅 markdown 渲染与转录线；**transcript 历史记录渲染、tool_requests 工具调用卡片、slash 命令面（现 kimi-cli REPL 36 命令）未平移**——TS `apps/kimi-code/src/tui/commands` 6k + `components/messages` 20k 仍待迁 |
-| D-3 bottom_pane（composer/textarea/footer/popup/mentions） | ❌ | 完全缺失：输入区/编辑器集成/vim 模式/弹窗/mentions 未平移 |
-| D-4 reverse_rpc（approval/question 反向 RPC 接线） | ❌ | 未接线；现审批走 y/n 本地交互，host 回调反向面缺 |
+| D-2 chatwidget（transcript/streaming/tool_requests/slash） | 🔶 | 已推进（2026-08-06）：44 斜杠命令 dispatch ✅ + 流式文本/thinking ✅ + 会话恢复**历史渲染** ✅（`history.rs`）+ 参数补全集扩展 ✅（`/permission`/`/session`）；**剩余**：工具调用卡片（结构化 tool 条目/结果折叠/流式参数预览）、命令补全弹窗、@mention |
+| D-3 bottom_pane（composer/textarea/footer/popup/mentions） | 🔶 | 已推进（2026-08-06）：单行编辑原语 + Tab 补全 ✅；**剩余**：补全弹窗（picker 模式）、`!` bash 模式、Ctrl-G 外部编辑器、@mention |
+| D-4 reverse_rpc（approval/question 反向 RPC 接线） | 🔶 | 已确认设计（2026-08-06）：审批走"事件通知→`approvals()` 拉取→队列→y/n 或 `/approve`/`/deny` RPC 决策"与引擎授权回调自洽（无需 host 回调）；question 侧引擎为"工具内容+下条消息"设计（TS native `setQuestionHandler` 同为 no-op）；**剩余**：审批面板化（DisplayBlock diff/shell/file 预览 + approve-for-session 记忆） |
 | D-5 验证（TUI 冒烟 + 交互路径与 TS 版行为一致） | 🔶 | TestBackend 冒烟 ✅；全交互路径对拍未做 |
 
 ### 阶段 E — SDK/ACP/OAuth/Config 收尾

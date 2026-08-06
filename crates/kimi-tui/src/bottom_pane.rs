@@ -8,6 +8,8 @@
 /// Closed argument sets for Tab completion of a few commands.
 pub const ON_OFF_ARGS: &[&str] = &["on", "off"];
 pub const THINKING_ARGS: &[&str] = &["low", "medium", "high"];
+/// `/permission` modes (TS picker parity).
+pub const PERMISSION_ARGS: &[&str] = &["manual", "plan", "auto", "yolo"];
 
 /// Command names for `/…` Tab completion.
 pub const SLASH_COMMANDS: &[&str] = &[
@@ -121,11 +123,14 @@ pub fn complete_line(
     model_aliases: &[String],
     tab_idx: Option<usize>,
 ) -> (String, Option<usize>) {
-    // Argument completion: `/plan `, `/swarm `, `/thinking `, `/model `.
+    // Argument completion: `/plan `, `/swarm `, `/thinking `, `/model `,
+    // `/permission `, `/session `.
     if let Some((cmd, arg)) = base.split_once(' ') {
         let next = match cmd {
             "/plan" | "/swarm" => complete_from(cmd, arg, ON_OFF_ARGS, tab_idx),
             "/thinking" => complete_from(cmd, arg, THINKING_ARGS, tab_idx),
+            "/permission" => complete_from(cmd, arg, PERMISSION_ARGS, tab_idx),
+            "/session" => complete_from(cmd, arg, &["set"], tab_idx),
             "/model" => complete_model_arg(arg, model_aliases, tab_idx),
             _ => None,
         };
@@ -196,6 +201,13 @@ mod tests {
         assert_eq!(done, "/plan on");
         let (done, _) = complete_line("/thinking l", &[], None);
         assert_eq!(done, "/thinking low");
+        // `/permission` modes and the `/session` subcommand.
+        let (done, _) = complete_line("/permission a", &[], None);
+        assert_eq!(done, "/permission auto");
+        let (done, _) = complete_line("/session ", &[], None);
+        assert_eq!(done, "/session set");
+        let (done, _) = complete_line("/swarm o", &[], None);
+        assert_eq!(done, "/swarm on");
     }
 
     #[test]

@@ -7,6 +7,7 @@
 pub mod app;
 pub mod bottom_pane;
 pub mod chatwidget;
+pub mod history;
 pub mod markdown;
 pub mod picker;
 pub mod streaming;

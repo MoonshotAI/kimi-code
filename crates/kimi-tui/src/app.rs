@@ -275,6 +275,12 @@ impl App {
         // the persisted context + goal for an existing session (no-op for a
         // brand-new one).
         let _ = session.load().await;
+        // Rebuild the transcript from the persisted context (resume UX
+        // parity): the user sees the conversation history instead of a blank
+        // chat, exactly as it ended.
+        let context = session.get_context().await;
+        let history = crate::history::render_history(&context["result"]);
+        self.transcript.extend(history);
         // Seed the footer status (best-effort) before the session moves.
         let status = session.get_status().await;
         let plan = status["result"]["plan_mode"].as_bool().unwrap_or(false);
