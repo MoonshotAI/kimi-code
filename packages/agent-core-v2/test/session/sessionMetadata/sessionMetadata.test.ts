@@ -117,6 +117,44 @@ describe('SessionMetadata', () => {
     expect(mirror.recorded[0]).toMatchObject({ id: 's1', archived: false });
   });
 
+  it('persists the authoritative document before recording to the mirror', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    // Read the persisted document back from inside record(): at that point
+    // the mutation must already be durable.
+    const persistedAtRecord: Promise<Record<string, unknown> | undefined>[] = [];
+    const baseRecord = mirror.record;
+    mirror.record = (summary) => {
+      persistedAtRecord.push(store.get<Record<string, unknown>>(META_SCOPE, 'state.json'));
+      baseRecord(summary);
+    };
+
+    const meta = ix.get(ISessionMetadata);
+    await meta.ready; // first-time creation records too
+    await meta.update({ title: 'durable-first' });
+
+    expect(persistedAtRecord).toHaveLength(2);
+    const [atCreate, atUpdate] = await Promise.all(persistedAtRecord);
+    expect(atCreate).toMatchObject({ id: 's1', archived: false });
+    expect(atUpdate).toMatchObject({ title: 'durable-first' });
+  });
+
+  it('a mirror failure degrades the read model but never fails the metadata mutation', async () => {
+    mirror.record = () => {
+      throw new Error('mirror down');
+    };
+
+    const meta = ix.get(ISessionMetadata);
+    // The creation-time record throws inside load(); the load must survive.
+    await meta.ready;
+    await meta.update({ title: 'still fine' });
+    expect(await meta.read()).toMatchObject({ title: 'still fine' });
+
+    // The mutation reached the authoritative document: a fresh instance reads
+    // it back even though every mirror record failed.
+    const fresh = createFreshMetadata(ix);
+    expect(await fresh.read()).toMatchObject({ title: 'still fine' });
+  });
+
   it('persists across instances', async () => {
     const meta = ix.get(ISessionMetadata);
     await meta.update({ title: 'persisted' });

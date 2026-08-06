@@ -20,7 +20,9 @@
  * `ISessionIndexMirror` — a bounded, coalescing queue that flushes to the
  * `IQueryStore` read model off the user completion path. The mutation
  * completes with the authoritative `state.json` write; it never waits on the
- * derived store (no mirror flush, no query-store lock). First-time creation in
+ * derived store (no mirror flush, no query-store lock), and a mirror failure
+ * is logged and swallowed — the read model heals by reconciliation, the
+ * session lifecycle never sees it. First-time creation in
  * `load()` records too — a new session must appear in listings immediately
  * (the mirror's pending queue feeds the index's read-your-writes merge);
  * loading an *existing* document (session resume) stays silent.
@@ -130,19 +132,29 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
   }
 
   private mirrorToReadModel(): void {
-    this.mirror.record(
-      buildSessionSummary({
-        id: this.data.id,
-        workspaceId: this.ctx.workspaceId,
-        cwd: this.ctx.cwd,
-        title: this.data.title,
-        lastPrompt: this.data.lastPrompt,
-        createdAt: this.data.createdAt,
-        updatedAt: this.data.updatedAt,
-        archived: this.data.archived === true,
-        custom: this.data.custom,
-      }),
-    );
+    try {
+      this.mirror.record(
+        buildSessionSummary({
+          id: this.data.id,
+          workspaceId: this.ctx.workspaceId,
+          cwd: this.ctx.cwd,
+          title: this.data.title,
+          lastPrompt: this.data.lastPrompt,
+          createdAt: this.data.createdAt,
+          updatedAt: this.data.updatedAt,
+          archived: this.data.archived === true,
+          custom: this.data.custom,
+        }),
+      );
+    } catch (error) {
+      // The authoritative document is already durable at this point; a mirror
+      // failure only degrades the read model (reconciliation heals it) and
+      // must never fail the session mutation itself.
+      this.log.warn('session index mirror record failed; the read model heals by reconciliation', {
+        sessionId: this.ctx.sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async load(): Promise<void> {
