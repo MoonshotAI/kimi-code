@@ -29,7 +29,7 @@ function spawn(subagentId: string, extra: Record<string, unknown> = {}): Event {
 describe('SubagentRosterTracker', () => {
   it('seeds a roster entry from subagent.spawned with the swarm identity metadata', () => {
     const t = new SubagentRosterTracker();
-    t.apply(SID, spawn('agent-1', { swarmIndex: 2 }));
+    t.apply(SID, spawn('agent-1', { swarmIndex: 2, model: 'provider/secondary' }));
 
     expect(t.get(SID)).toEqual([
       expect.objectContaining({
@@ -43,6 +43,7 @@ describe('SubagentRosterTracker', () => {
         parent_tool_call_id: 'tc_swarm_1',
         swarm_index: 2,
         run_in_background: false,
+        model: 'provider/secondary',
       }),
     ]);
   });

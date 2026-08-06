@@ -71,6 +71,7 @@ export class SubagentRosterTracker {
           parent_tool_call_id: event.parentToolCallId === '' ? undefined : event.parentToolCallId,
           swarm_index: event.swarmIndex,
           run_in_background: event.runInBackground,
+          model: event.model,
           created_at: new Date().toISOString(),
         });
         return;

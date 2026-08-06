@@ -224,6 +224,8 @@ interface AgentLifecycleStub extends IAgentLifecycleService, ISessionSubagentSer
   readonly create: ReturnType<typeof vi.fn<IAgentLifecycleService['create']>>;
   readonly run: ReturnType<typeof vi.fn<ISessionSubagentService['run']>>;
   readonly get: ReturnType<typeof vi.fn<IAgentLifecycleService['get']>>;
+  /** Domain events published through any handle's event-bus stub. */
+  readonly publishedEvents: DomainEvent[];
   addHandle(
     agentId: string,
     profileName: string,
@@ -237,6 +239,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
   const profileByAgentId = new Map<string, string>();
   const handles = new Map<string, IAgentScopeHandle>();
   const servicesByAgentId = new Map(options.handleServices);
+  const publishedEvents: DomainEvent[] = [];
   const handle = (agentId: string): IAgentScopeHandle => ({
     id: agentId,
     kind: LifecycleScope.Agent,
@@ -299,7 +302,9 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         if (serviceId === IEventBus) {
           return {
             _serviceBrand: undefined,
-            publish: () => {},
+            publish: (event: DomainEvent) => {
+              publishedEvents.push(event);
+            },
             subscribe: () => noopDisposable(),
           } as never;
         }
@@ -366,6 +371,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       if (services !== undefined) servicesByAgentId.set(agentId, services);
       handles.set(agentId, handle(agentId));
     },
+    publishedEvents,
   };
   return lifecycle;
 }
@@ -1036,6 +1042,34 @@ describe('Agent tool execution contract', () => {
     );
   });
 
+  it('reports the display-normalized model on the spawned signal', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(
+      lifecycle,
+      secondaryModelFlags(),
+      {
+        initialConfig: {
+          secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
+        },
+      },
+    );
+
+    await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    // Bound to the synthesized derived entry, but the spawned signal reports
+    // the recipe's base alias — the display never shows `__secondary__`.
+    expect(lifecycle.publishedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'subagent.spawned',
+        subagentId: 'agent-child',
+        model: 'provider/secondary',
+      }),
+    );
+  });
+
   it('binds the pointed entry directly with natural thinking when the recipe has no patch', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
     const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
@@ -1251,6 +1285,7 @@ describe('Agent tool execution contract', () => {
       profileName: 'explore',
       parentToolCallId: 'call_agent',
       runInBackground: false,
+      model: 'provider/secondary',
     });
     await mirrorAgentRun(
       requester,
@@ -1269,6 +1304,7 @@ describe('Agent tool execution contract', () => {
     expect(events.find((event) => event.type === 'subagent.spawned')).toMatchObject({
       parentAgentId: 'main',
       callerAgentId: 'main',
+      model: 'provider/secondary',
     });
     expect(telemetryRecords).toContainEqual({
       event: 'subagent_created',

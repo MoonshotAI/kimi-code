@@ -13,6 +13,10 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
+import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { SECONDARY_MODEL_SECTION } from '#/app/kosongConfig/configSection';
+import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { APIProviderRateLimitError } from '#/kosong/contract/errors';
@@ -53,6 +57,8 @@ import { ConfigErrors } from '#/app/config/errors';
 import { SessionSwarmService } from '#/session/swarm/sessionSwarmService';
 
 import { stubLog } from '../../_base/log/stubs';
+import { stubFlag } from '../../app/flag/stubs';
+import { StubConfigService } from '../../kosong/stubs';
 
 describe('resolveSwarmMaxConcurrency', () => {
   it('returns undefined when the variable is unset', () => {
@@ -936,6 +942,8 @@ describe('SessionSwarmService metadata compatibility', () => {
       },
     });
     ix.stub(ILogService, stubLog());
+    ix.stub(IConfigService, new StubConfigService({}));
+    ix.stub(IFlagService, stubFlag(() => false));
     ix.stub(IModelCatalog, {
       _serviceBrand: undefined,
       get: (alias: string) => {
@@ -1126,6 +1134,14 @@ describe('SessionSwarmService metadata compatibility', () => {
 
     // No realign: resume must not drag the child back to the parent's model.
     expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('stale-model');
+    // The spawned signal reports the child's own recorded binding.
+    expect(eventBus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'subagent.spawned',
+        subagentId: 'agent-existing',
+        model: 'stale-model',
+      }),
+    );
     expect(runAgent).toHaveBeenCalledWith(
       'agent-existing',
       { kind: 'prompt', prompt: 'Continue' },
@@ -1155,6 +1171,47 @@ describe('SessionSwarmService metadata compatibility', () => {
           model: 'provider/secondary',
           thinking: 'low',
         },
+      }),
+    );
+    // The spawned signal surfaces the bound alias for display.
+    expect(eventBus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'subagent.spawned',
+        subagentId: 'agent-new',
+        model: 'provider/secondary',
+      }),
+    );
+  });
+
+  it('emits the recipe base alias (never the derived entry id) as the spawned display model', async () => {
+    ix.stub(
+      IConfigService,
+      new StubConfigService({
+        [SECONDARY_MODEL_SECTION]: { model: 'provider/base', defaultEffort: 'low' },
+      }),
+    );
+    ix.stub(IFlagService, stubFlag((id) => id === SECONDARY_MODEL_FLAG_ID));
+    const service = ix.get(ISessionSwarmService);
+    const spawnTask: SessionSwarmSpawnTask = {
+      ...spawnSessionTask('src/a.ts'),
+      kind: 'spawn',
+      // The tool layer binds the synthesized derived entry when the recipe
+      // carries patch fields; the display model must stay human-readable.
+      binding: { model: '__secondary__', thinking: 'low' },
+    };
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [spawnTask],
+      }),
+    ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-new' }]);
+
+    expect(eventBus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'subagent.spawned',
+        subagentId: 'agent-new',
+        model: 'provider/base',
       }),
     );
   });

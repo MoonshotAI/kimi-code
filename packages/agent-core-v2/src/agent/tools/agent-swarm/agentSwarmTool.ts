@@ -191,12 +191,15 @@ export class AgentSwarmTool implements IAgentSwarmTool {
         });
       }
       if (own.modelAlias !== undefined) {
-        binding = resolveSubagentBinding(
+        // Keep the spawn binding to execution fields only — the swarm service
+        // re-derives the display model from `binding.model` at spawn time.
+        const resolved = resolveSubagentBinding(
           this.config,
           this.flags,
           { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
           args.model ?? targetProfile.modelPreference,
         );
+        binding = { model: resolved.model, thinking: resolved.thinking };
       }
     }
     const timeoutMs = resolveSubagentTimeoutMs(this.config);

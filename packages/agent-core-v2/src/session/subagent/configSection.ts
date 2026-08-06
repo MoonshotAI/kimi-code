@@ -114,18 +114,33 @@ export function resolveSubagentBinding(
   flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: SubagentModelChoice,
-): { model: string; thinking?: string } {
+): { model: string; thinking?: string; displayModel: string } {
   const secondary = resolveSecondaryModel(config, flags);
   if (requested !== 'primary' && secondary?.model !== undefined) {
+    const model =
+      secondaryModelPatch(secondary) === undefined ? secondary.model : SECONDARY_DERIVED_MODEL_ID;
     return {
-      model:
-        secondaryModelPatch(secondary) === undefined
-          ? secondary.model
-          : SECONDARY_DERIVED_MODEL_ID,
+      model,
       thinking: secondary.defaultEffort,
+      displayModel: subagentDisplayModel(config, flags, model),
     };
   }
-  return { model: own.modelAlias, thinking: own.thinkingLevel };
+  return { model: own.modelAlias, thinking: own.thinkingLevel, displayModel: own.modelAlias };
+}
+
+/**
+ * Display-facing alias for a bound subagent model: the synthesized
+ * `__secondary__` derived entry means nothing to a user, so it resolves back
+ * to the base alias the secondary recipe points at. Every other alias is
+ * returned unchanged. Falls back to the raw alias when the recipe is gone.
+ */
+export function subagentDisplayModel(
+  config: IConfigService,
+  flags: IFlagService,
+  boundAlias: string,
+): string {
+  if (boundAlias !== SECONDARY_DERIVED_MODEL_ID) return boundAlias;
+  return resolveSecondaryModel(config, flags)?.model ?? boundAlias;
 }
 
 export function buildSubagentModelDescriptions(

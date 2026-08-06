@@ -376,6 +376,7 @@ export class SubAgentEventHandler {
       parentToolCallId: event.parentToolCallId,
       agentName: event.subagentName,
       description: typeof description === 'string' ? description : undefined,
+      model: this.spawnedModelDisplay(event),
     };
   }
 
@@ -411,11 +412,17 @@ export class SubAgentEventHandler {
   private handleForegroundSubagentSpawned(
     event: SubagentLifecycleEventOf<'subagent.spawned'>,
   ): void {
+    // The spawned event carries the display-normalized bound alias (newer
+    // cores) — show it at spawn instead of waiting for the child's first
+    // status frame. The `agent.status.updated` channel below stays as the
+    // in-run update/fallback path.
+    const modelDisplay = this.spawnedModelDisplay(event);
     if (this.updateAgentSwarmProgress(event.parentToolCallId, (progress) => {
       progress.registerSubagent({
         agentId: event.subagentId,
         swarmIndex: event.swarmIndex,
       });
+      if (modelDisplay !== undefined) progress.setModelDisplay(modelDisplay);
     })) {
       return;
     }
@@ -428,6 +435,16 @@ export class SubAgentEventHandler {
       agentName: event.subagentName,
       runInBackground: event.runInBackground,
     });
+    if (modelDisplay !== undefined) tc.updateSubagentMetrics({ modelDisplay });
+  }
+
+  /** Map the spawned event's bound alias to a display name via the loaded
+   *  model catalog; falls back to the alias itself for unknown entries. */
+  private spawnedModelDisplay(
+    event: SubagentLifecycleEventOf<'subagent.spawned'>,
+  ): string | undefined {
+    if (event.model === undefined) return undefined;
+    return modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]);
   }
 
   private handleForegroundSubagentStarted(

@@ -42,6 +42,10 @@ export interface SubagentSpawnedEvent {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
+  /** Model alias the child is bound to, display-normalized (the derived
+   *  `__secondary__` entry resolves to its base alias). Optional so older
+   *  producers/consumers stay wire-compatible. */
+  readonly model?: string;
 }
 
 export interface SubagentStartedEvent {
@@ -79,6 +83,8 @@ export interface AgentRunSpawnedMeta {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
+  /** Display-normalized model alias the child is bound to (see the event). */
+  readonly model?: string;
 }
 
 export interface MirrorAgentRunOptions {
@@ -105,6 +111,7 @@ export function emitAgentRunSpawned(
     description: meta.description,
     swarmIndex: meta.swarmIndex,
     runInBackground: meta.runInBackground ?? false,
+    model: meta.model,
   });
   requester.accessor
     .get(IAgentLifecycleService)

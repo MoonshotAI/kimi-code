@@ -85,6 +85,7 @@ import {
   resolveSubagentBinding,
   resolveSubagentTimeoutMs,
   stripSubagentModelParameter,
+  subagentDisplayModel,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
@@ -254,6 +255,7 @@ export class SubagentTool implements ISubagentTool {
 
     let agentId: string;
     let profileName: string;
+    let displayModel: string | undefined;
     let promptText = args.prompt;
     if (isResume) {
       const target = this.lifecycle.get(resumeAgentId);
@@ -264,8 +266,14 @@ export class SubagentTool implements ISubagentTool {
       }
       await this.ensureOwnedIdleSubagent(resumeAgentId, target);
       agentId = target.id;
-      profileName =
-        target.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_LABEL;
+      const resumed = target.accessor.get(IAgentProfileService).data();
+      profileName = resumed.profileName ?? RESUMED_LABEL;
+      // A resumed child keeps its original binding; normalize the derived
+      // `__secondary__` entry back to its base alias for display.
+      displayModel =
+        resumed.modelAlias === undefined
+          ? undefined
+          : subagentDisplayModel(this.config, this.flags, resumed.modelAlias);
     } else {
       const requestedProfileName = args.subagent_type?.length
         ? args.subagent_type
@@ -317,6 +325,7 @@ export class SubagentTool implements ISubagentTool {
         .inheritUserTools(requester.accessor.get(IAgentUserToolService));
       agentId = created.id;
       profileName = profile.name;
+      displayModel = binding.displayModel;
       promptText = await applyProfilePromptPrefix(profile, args.prompt, {
         cwd: this.workspace.workDir,
         runner: this.processRunner,
@@ -330,6 +339,7 @@ export class SubagentTool implements ISubagentTool {
       parentToolCallId: toolCallId,
       description: args.description,
       runInBackground,
+      model: displayModel,
     });
 
     const run = await this.subagents.run(
@@ -348,6 +358,7 @@ export class SubagentTool implements ISubagentTool {
     return {
       agentId,
       profileName,
+      model: displayModel,
       completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
     };
   }

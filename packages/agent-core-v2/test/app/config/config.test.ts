@@ -1746,10 +1746,12 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      displayModel: 'provider/main',
     });
     expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own, 'secondary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      displayModel: 'provider/main',
     });
     noModel.disposables.dispose();
 
@@ -1759,10 +1761,12 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/secondary',
       thinking: undefined,
+      displayModel: 'provider/secondary',
     });
     expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      displayModel: 'provider/main',
     });
     withModel.disposables.dispose();
 
@@ -1771,15 +1775,18 @@ describe('subagent config section', () => {
       '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
     );
     // Patch fields bind the synthesized derived entry; default_effort is the
-    // explicit subagent thinking.
+    // explicit subagent thinking. displayModel stays human-readable: the base
+    // alias the recipe points at, never the derived `__secondary__` id.
     expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own)).toEqual({
       model: SECONDARY_DERIVED_MODEL_ID,
       thinking: 'low',
+      displayModel: 'provider/secondary',
     });
     // default_effort only applies together with the secondary model.
     expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      displayModel: 'provider/main',
     });
     withEffort.disposables.dispose();
 
@@ -1790,6 +1797,7 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(withFactPatch.config, secondaryModelFlags(), own)).toEqual({
       model: SECONDARY_DERIVED_MODEL_ID,
       thinking: undefined,
+      displayModel: 'provider/secondary',
     });
     withFactPatch.disposables.dispose();
   });
@@ -1804,6 +1812,7 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      displayModel: 'provider/main',
     });
 
     disposables.dispose();

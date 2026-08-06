@@ -943,6 +943,7 @@ describe('SessionEventBroadcaster', () => {
         description: 'task agent-1',
         swarmIndex: 0,
         runInBackground: false,
+        model: 'provider/secondary',
       }),
     );
     main.bus.emit(agentEvent('subagent.started', { subagentId: 'agent-1' }));
@@ -957,6 +958,7 @@ describe('SessionEventBroadcaster', () => {
         parent_tool_call_id: 'tc_swarm_1',
         swarm_index: 0,
         run_in_background: false,
+        model: 'provider/secondary',
       }),
     ]);
 

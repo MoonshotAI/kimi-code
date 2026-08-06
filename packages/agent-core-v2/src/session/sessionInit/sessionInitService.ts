@@ -93,6 +93,8 @@ export class SessionInitService implements ISessionInitService {
         parentToolCallId: INIT_PARENT_TOOL_CALL_ID,
         description: INIT_DESCRIPTION,
         runInBackground: false,
+        // The init child inherits the main agent's own binding verbatim.
+        model: own.modelAlias,
       });
 
       const run = await this.subagents.run(
