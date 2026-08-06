@@ -3,7 +3,8 @@
  *
  * Persists once-reminder entries through its own wire Model, delivers them
  * through `systemReminder` (the unified write head), and schedules itself:
- * it drains on every `contextInjector` injection boundary (`onWillInject`).
+ * it drains on every `contextInjector` injection boundary
+ * (`registerOnceChannel`).
  * Crash-window dedup reads the conversation tail through `contextMemory` and
  * matches the entry id recorded as the delivered reminder's disclosure, so a
  * reminder appended but not yet marked delivered is never re-appended after a
@@ -40,7 +41,7 @@ export class AgentReminderQueueService extends Disposable implements IAgentRemin
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
   ) {
     super();
-    this._register(injector.onWillInject(() => {
+    this._register(injector.registerOnceChannel('reminder-queue', () => {
       this.drain();
     }));
   }

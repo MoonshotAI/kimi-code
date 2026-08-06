@@ -3,16 +3,23 @@
  *
  * The unified boundary scheduler for every model-facing reminder. At each
  * injection boundary (turn start, step, compaction follow-up, wire restore)
- * it first fires `onWillInject` — where boundary participants such as the
- * `reminderQueue` drain their persisted once-reminders (past-tense events,
- * exactly-once) — then reconciles the registered context providers
- * (present-tense state) through `loop` and `systemReminder`. Provider
+ * it first drains the registered once-channels (`registerOnceChannel`) —
+ * past-tense, exactly-once deliveries such as the `reminderQueue`'s
+ * persisted once-reminders — then reconciles the registered context
+ * providers (present-tense state) through `loop` and `systemReminder`. A
+ * once-channel drain that throws or returns a Promise is logged and
+ * skipped, so one bad channel cannot starve the providers. Provider
  * positions are never cached: each provider call derives them by scanning
  * `contextMemory` for its own surviving injection messages, so splices,
  * compaction folds, and `wire` restoration need no index bookkeeping. Each
  * provider call receives the newest surviving injection of its own variant
  * (`lastInjection`) and the typed disclosure recorded on it (`lastDisclosure`),
- * so providers never read context layout or position indexes themselves. Turn-start providers run
+ * so providers never read context layout or position indexes themselves.
+ * Provider results route by shape: strings become `<system-reminder>`
+ * messages through `systemReminder`, content parts append as bare user
+ * messages, and tagged raw messages (`{ message }`) append verbatim with the
+ * injection origin stamped — the form for structured payloads such as the
+ * dynamic-tool schema declaration's `tools` field. Turn-start providers run
  * synchronously after `turn.started` — before the turn's first step request
  * materializes its prompt — and must stay synchronous (a provider that throws
  * or returns a Promise is logged and skipped, so one bad provider cannot
@@ -21,13 +28,12 @@
  * example, a queued turn cancelled while another turn is already running).
  * The plain-data `isNewTurn` flag is registered
  * into `agentState` (`IAgentStateService`) and read/written through it;
- * `entries` stays a plain instance field (its values hold provider functions,
- * not plain data). Bound at Agent scope.
+ * `entries` and `onceChannels` stay plain instance fields (their values
+ * hold functions, not plain data). Bound at Agent scope.
  */
 
 import { Disposable, toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
 
@@ -41,6 +47,7 @@ import { IWireService } from '#/wire/wire';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContent,
+  type ContextInjectionMessage,
   type ContextInjectionProvider,
   type ContextInjectionResult,
   type SyncContextInjectionProvider,
@@ -52,6 +59,11 @@ interface ContextInjectionEntry {
   readonly boundary: 'step' | 'turn-start';
 }
 
+interface OnceChannelEntry {
+  readonly name: string;
+  readonly drain: () => unknown;
+}
+
 export const contextInjectorIsNewTurnKey = defineState<boolean>(
   'contextInjector.isNewTurn',
   () => true,
@@ -60,8 +72,7 @@ export const contextInjectorIsNewTurnKey = defineState<boolean>(
 export class AgentContextInjectorService extends Disposable implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
-  private readonly willInject = this._register(new Emitter<void>());
-  readonly onWillInject: Event<void> = this.willInject.event;
+  private readonly onceChannels = new Set<OnceChannelEntry>();
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -82,14 +93,14 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     );
     this._register(
       this.eventBus.subscribe('turn.started', () => {
-        this.willInject.fire();
+        this.runOnceChannels();
         this.isNewTurn = true;
         this.injectAtTurnStart();
       }),
     );
     this._register(
       wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
-        this.willInject.fire();
+        this.runOnceChannels();
         await next();
       }),
     );
@@ -117,6 +128,29 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     return this.registerProvider(name, provider, 'turn-start');
   }
 
+  registerOnceChannel(name: string, drain: () => void): IDisposable {
+    const entry: OnceChannelEntry = { name, drain };
+    this.onceChannels.add(entry);
+    return toDisposable(() => {
+      this.onceChannels.delete(entry);
+    });
+  }
+
+  private runOnceChannels(): void {
+    for (const entry of this.onceChannels) {
+      try {
+        const result: unknown = entry.drain();
+        if (isThenable(result)) {
+          this.log.error('once-channel drain returned a Promise; skipping it', {
+            name: entry.name,
+          });
+        }
+      } catch (error) {
+        this.log.error('once-channel drain failed; skipping it', { name: entry.name, error });
+      }
+    }
+  }
+
   private registerProvider(
     name: string,
     provider: ContextInjectionProvider,
@@ -139,7 +173,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   }
 
   private async inject(boundary?: ContextInjectionEntry['boundary']): Promise<void> {
-    this.willInject.fire();
+    this.runOnceChannels();
     const isNewTurn = this.isNewTurn;
     this.isNewTurn = false;
     for (const entry of this.entries) {
@@ -200,28 +234,62 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     content: ContextInjectionContent | ContextInjectionResult | undefined,
   ): void {
     if (content === undefined) return;
-    const result: ContextInjectionResult =
-      typeof content === 'object' && content !== null && !Array.isArray(content)
-        ? (content as ContextInjectionResult)
-        : { content: content as ContextInjectionContent };
+    const result: ContextInjectionResult = isInjectionResult(content)
+      ? content
+      : { content };
     const origin = {
       kind: 'injection' as const,
       variant: entry.name,
       disclosure: result.disclosure,
     };
-    if (typeof result.content === 'string') {
-      if (result.content.trim().length === 0) return;
-      this.reminders.appendSystemReminder(result.content, origin);
+    const resolved = result.content;
+    if (typeof resolved === 'string') {
+      if (resolved.trim().length === 0) return;
+      this.reminders.appendSystemReminder(resolved, origin);
       return;
     }
-    if (result.content.length === 0) return;
+    if (isRawInjectionMessage(resolved)) {
+      const message = resolved.message;
+      if (
+        message.content.length === 0 &&
+        (message.tools === undefined || message.tools.length === 0)
+      ) {
+        return;
+      }
+      this.context.append({
+        role: message.role,
+        content: [...message.content],
+        toolCalls: [],
+        tools: message.tools,
+        origin,
+      });
+      return;
+    }
+    if (resolved.length === 0) return;
     this.context.append({
       role: 'user',
-      content: [...result.content],
+      content: [...resolved],
       toolCalls: [],
       origin,
     });
   }
+}
+
+function isRawInjectionMessage(
+  content: Exclude<ContextInjectionContent, string>,
+): content is { readonly message: ContextInjectionMessage } {
+  return !Array.isArray(content);
+}
+
+function isInjectionResult(
+  content: ContextInjectionContent | ContextInjectionResult,
+): content is ContextInjectionResult {
+  return (
+    typeof content === 'object' &&
+    content !== null &&
+    !Array.isArray(content) &&
+    'content' in content
+  );
 }
 
 function findInjections(

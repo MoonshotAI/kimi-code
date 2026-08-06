@@ -11,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { Emitter } from '#/_base/event';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { CHECKPOINTED_MODELS } from '#/agent/contextMemory/conversationTime';
@@ -36,20 +35,23 @@ describe('AgentReminderQueueService', () => {
   let context: IAgentContextMemoryService;
   let queue: IAgentReminderQueueService;
   let reminders: IAgentSystemReminderService;
-  let willInject: Emitter<void>;
+  let onceDrains: Array<() => void>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     records = [];
     log = recordingWireLog(records);
-    willInject = disposables.add(new Emitter<void>());
+    onceDrains = [];
     ix = createServices(disposables, {
       base: [registerContextMemoryServices],
       strict: true,
       additionalServices: (reg) => {
         reg.defineInstance(IAgentContextInjectorService, {
           _serviceBrand: undefined,
-          onWillInject: willInject.event,
+          registerOnceChannel: (_name: string, drain: () => void) => {
+            onceDrains.push(drain);
+            return { dispose() {} };
+          },
           register: () => ({ dispose() {} }),
           registerAtTurnStart: () => ({ dispose() {} }),
           injectAfterCompaction: async () => {},
@@ -255,7 +257,7 @@ describe('AgentReminderQueueService', () => {
   it('drains itself on every injection boundary', () => {
     queue.enqueue({ variant: 'a', content: 'first' });
 
-    willInject.fire();
+    for (const drain of onceDrains) drain();
 
     expect(injectionMessages()).toHaveLength(1);
     expect(wire.getModel(ReminderQueueModel)).toEqual([]);

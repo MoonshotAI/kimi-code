@@ -335,13 +335,11 @@ describe('AgentContextInjectorService', () => {
     ]);
   });
 
-  it('fires onWillInject before running the providers', async () => {
+  it('drains once-channels before running the providers', async () => {
     const calls: string[] = [];
-    disposables.add(
-      injector(ix).onWillInject(() => {
-        calls.push('willInject');
-      }),
-    );
+    injector(ix).registerOnceChannel('test_channel', () => {
+      calls.push('once-channel');
+    });
     injector(ix).register('ordering_test', () => {
       calls.push('provider');
       return undefined;
@@ -349,7 +347,67 @@ describe('AgentContextInjectorService', () => {
 
     await injector(ix).inject();
 
-    expect(calls).toEqual(['willInject', 'provider']);
+    expect(calls).toEqual(['once-channel', 'provider']);
+  });
+
+  it('skips a throwing once-channel drain and still runs the rest', async () => {
+    const calls: string[] = [];
+    injector(ix).registerOnceChannel('throwing_channel', () => {
+      throw new Error('boom');
+    });
+    injector(ix).registerOnceChannel('surviving_channel', () => {
+      calls.push('surviving');
+    });
+    injector(ix).register('ordering_test', () => {
+      calls.push('provider');
+      return undefined;
+    });
+
+    await injector(ix).inject();
+
+    expect(calls).toEqual(['surviving', 'provider']);
+  });
+
+  it('appends tagged raw messages verbatim with the injection origin stamped', async () => {
+    injector(ix).register('schema_test', () => ({
+      message: {
+        role: 'system',
+        content: [],
+        tools: [{ name: 'TestTool', description: 'test tool', parameters: { type: 'object' } }],
+      },
+    }));
+
+    await runInjectionStep();
+
+    const message = context.get().at(-1);
+    expect(message?.role).toBe('system');
+    expect(message?.tools).toEqual([
+      { name: 'TestTool', description: 'test tool', parameters: { type: 'object' } },
+    ]);
+    expect(message?.origin).toEqual({ kind: 'injection', variant: 'schema_test' });
+  });
+
+  it('stamps the disclosure on tagged raw messages returned through the result wrapper', async () => {
+    injector(ix).register('schema_test', () => ({
+      content: { message: { role: 'user', content: [{ type: 'text', text: 'raw' }] } },
+      disclosure: { kind: 'once_reminder', id: 'r1' },
+    }));
+
+    await runInjectionStep();
+
+    expect(context.get().at(-1)?.origin).toEqual({
+      kind: 'injection',
+      variant: 'schema_test',
+      disclosure: { kind: 'once_reminder', id: 'r1' },
+    });
+  });
+
+  it('skips tagged raw messages with neither content nor tools', async () => {
+    injector(ix).register('empty_raw_test', () => ({ message: { role: 'system', content: [] } }));
+
+    await runInjectionStep();
+
+    expect(context.get()).toHaveLength(0);
   });
 
   it('runs synchronous turn-start providers before the next prompt materializes', () => {
