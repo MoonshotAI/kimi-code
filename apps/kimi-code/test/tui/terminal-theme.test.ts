@@ -12,6 +12,7 @@ import {
   getBuiltInPalette,
   getBuiltInPaletteForTerminal,
   getColorPaletteSync,
+  inferBuiltInResolvedTheme,
   isBasicColorTerminal,
 } from "#/tui/theme";
 import {
@@ -233,6 +234,15 @@ describe('ANSI-16 basic palette fallback', () => {
       expect(sgrCode(hex), `basicLightColors.${token}`).not.toBe("37");
       expect(sgrCode(hex), `basicLightColors.${token}`).not.toBe("97");
     }
+  });
+
+  it('infers the resolved theme from built-in and basic palette identities', () => {
+    expect(inferBuiltInResolvedTheme(darkColors)).toBe("dark");
+    expect(inferBuiltInResolvedTheme(basicDarkColors)).toBe("dark");
+    expect(inferBuiltInResolvedTheme(lightColors)).toBe("light");
+    expect(inferBuiltInResolvedTheme(basicLightColors)).toBe("light");
+    // Custom-theme palettes are new objects and must not be inferred.
+    expect(inferBuiltInResolvedTheme({ ...lightColors })).toBeNull();
   });
 
   it('keeps basic dark hues on their intended ANSI codes', () => {

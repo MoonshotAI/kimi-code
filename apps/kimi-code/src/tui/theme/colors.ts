@@ -215,3 +215,13 @@ export function getBuiltInPalette(resolved: ResolvedTheme): ColorPalette {
 export function getBasicPalette(resolved: ResolvedTheme): ColorPalette {
   return resolved === 'dark' ? basicDarkColors : basicLightColors;
 }
+
+/**
+ * Infer the resolved theme from a built-in palette object identity, covering
+ * the ANSI-16 `basic*` variants. Returns `null` for custom-theme palettes.
+ */
+export function inferBuiltInResolvedTheme(palette: ColorPalette): ResolvedTheme | null {
+  if (palette === darkColors || palette === basicDarkColors) return 'dark';
+  if (palette === lightColors || palette === basicLightColors) return 'light';
+  return null;
+}

@@ -9,7 +9,7 @@ import { detectTerminalTheme, isBasicColorTerminal } from './detect';
 
 export { currentTheme, Theme } from './theme';
 export type { ColorToken } from './theme';
-export { darkColors, lightColors, getBuiltInPalette } from './colors';
+export { darkColors, lightColors, getBuiltInPalette, inferBuiltInResolvedTheme } from './colors';
 export type { ColorPalette, ResolvedTheme } from './colors';
 export { detectTerminalTheme, isBasicColorTerminal } from './detect';
 export { loadCustomTheme, loadCustomThemeMerged, listCustomThemes } from './custom-theme-loader';
