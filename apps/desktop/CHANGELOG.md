@@ -1,5 +1,57 @@
 # kimi-code-app
 
+## 0.0.15
+
+### Patch Changes
+
+- [#169](https://github.com/MoonshotAI/kimi-code-app/pull/169) [`6fc20c6`](https://github.com/MoonshotAI/kimi-code-app/commit/6fc20c68dd5b47d5ad0c5f3f06b5a15641faa289) - 优化归档会话的交互：归档后列表会自动补上后面的会话。
+
+- [#180](https://github.com/MoonshotAI/kimi-code-app/pull/180) [`db6b8ce`](https://github.com/MoonshotAI/kimi-code-app/commit/db6b8ce1e567a270e0ece15d90642c143ec7be27) - 修复可用模型较多时模型切换菜单超出屏幕、底部选项不可见的问题。
+
+- [#179](https://github.com/MoonshotAI/kimi-code-app/pull/179) [`3568f49`](https://github.com/MoonshotAI/kimi-code-app/commit/3568f49671a02f48f0b7ab13f5e439a3bb38be10) - 支持把文件夹拖入输入框直接插入文件夹路径。
+
+- [#178](https://github.com/MoonshotAI/kimi-code-app/pull/178) [`897e5fd`](https://github.com/MoonshotAI/kimi-code-app/commit/897e5fd24d87de74980c8bea7dd29816feb3f293) - 模型请求失败导致对话中断时，会话内会常驻显示失败卡片并可一键继续。
+
+- [#174](https://github.com/MoonshotAI/kimi-code-app/pull/174) [`1a4dc18`](https://github.com/MoonshotAI/kimi-code-app/commit/1a4dc18ce750cdc4d10e184ee84f9b0c1d3b2a1d) - 修复聊天中代码块没有使用等宽字体、字号偏小的问题。
+
+- [#174](https://github.com/MoonshotAI/kimi-code-app/pull/174) [`1a4dc18`](https://github.com/MoonshotAI/kimi-code-app/commit/1a4dc18ce750cdc4d10e184ee84f9b0c1d3b2a1d) - 修复新会话还未发送消息时 @ 文件提及搜索不到文件的问题。
+
+- [#170](https://github.com/MoonshotAI/kimi-code-app/pull/170) [`413f7ad`](https://github.com/MoonshotAI/kimi-code-app/commit/413f7ad5baf29e74f8bda55b305b7aa450d27437) - 修复侧边栏开合或流式消息结束折叠时「最新消息」按钮误出现的问题。
+
+- [#165](https://github.com/MoonshotAI/kimi-code-app/pull/165) [`739b693`](https://github.com/MoonshotAI/kimi-code-app/commit/739b693110625af5b1703d61c95a6a60612a9953) - 「内部测试」标识从设置菜单里移到侧边栏底部用户名旁边。
+
+- [#172](https://github.com/MoonshotAI/kimi-code-app/pull/172) [`ec74eab`](https://github.com/MoonshotAI/kimi-code-app/commit/ec74eab9ce8c66ec93b350a6abff5f2b9aa2cd6d) - 支持预览工作区外的文件，聊天中提到的任意文件路径都可以点开查看。
+
+- [#168](https://github.com/MoonshotAI/kimi-code-app/pull/168) [`852e549`](https://github.com/MoonshotAI/kimi-code-app/commit/852e5493f5a47b257ebcd605557c0f2e5df487bc) - 会话列表的置顶和归档按钮增加了悬停文字提示。
+
+- [#171](https://github.com/MoonshotAI/kimi-code-app/pull/171) [`d17567e`](https://github.com/MoonshotAI/kimi-code-app/commit/d17567e6217d5da9e8b056f4349646eff4feab1e) - 优化设置页排版。
+
+- [#178](https://github.com/MoonshotAI/kimi-code-app/pull/178) [`897e5fd`](https://github.com/MoonshotAI/kimi-code-app/commit/897e5fd24d87de74980c8bea7dd29816feb3f293) - 侧栏会话的异常标记改为仅在上一轮对话失败时显示，手动终止的会话不再被标记。
+
+- [#183](https://github.com/MoonshotAI/kimi-code-app/pull/183) [`277af5d`](https://github.com/MoonshotAI/kimi-code-app/commit/277af5dd9b07cbab156c913bf0ac06390d4027d1) - 侧栏会话列表新增平铺视图
+
+- [#176](https://github.com/MoonshotAI/kimi-code-app/pull/176) [`8ef34c2`](https://github.com/MoonshotAI/kimi-code-app/commit/8ef34c22aeb0eff374433a9ad5c713992a312f09) - 侧栏滚动时置顶会话和「工作区」标题保持固定，置顶区可折叠。
+
+- [#191](https://github.com/MoonshotAI/kimi-code-app/pull/191) [`4c1f7b5`](https://github.com/MoonshotAI/kimi-code-app/commit/4c1f7b58d88b6754be2c4fb58088f1498a4d91b2) - 修复 Skill 命令与附件一起发送时附件被静默丢弃的问题。
+
+- [#182](https://github.com/MoonshotAI/kimi-code-app/pull/182) [`bfac055`](https://github.com/MoonshotAI/kimi-code-app/commit/bfac05512857f005d8506159eda2a891f94a4865) - 修复新会话页面手动切换思考档位后，发送技能（/skill）命令会使档位被重置回模型默认的问题。
+
+- [#177](https://github.com/MoonshotAI/kimi-code-app/pull/177) [`9c23755`](https://github.com/MoonshotAI/kimi-code-app/commit/9c2375588a8dae75cebe0bb07436efa7b2a541b9) - 修复重命名会话时拼音输入中按回车会直接提交、按 Esc 会直接退出的问题。
+
+- [#188](https://github.com/MoonshotAI/kimi-code-app/pull/188) [`9d67d3c`](https://github.com/MoonshotAI/kimi-code-app/commit/9d67d3ce150d43cbefde4b2f25b1f3829979edf1) - 子代理任务现在显示它使用的模型和思考档位。
+
+- [#177](https://github.com/MoonshotAI/kimi-code-app/pull/177) [`9c23755`](https://github.com/MoonshotAI/kimi-code-app/commit/9c2375588a8dae75cebe0bb07436efa7b2a541b9) - 修复重命名会话或工作区时无法拖选文字、拖动会移动整个列表项的问题。
+
+- [#190](https://github.com/MoonshotAI/kimi-code-app/pull/190) [`4c5d9e7`](https://github.com/MoonshotAI/kimi-code-app/commit/4c5d9e7777a27d6947017aa3e0b7a5f7193dc063) - 修复文件变更总结卡片"收起"按钮箭头方向错误的问题。
+
+- [#178](https://github.com/MoonshotAI/kimi-code-app/pull/178) [`897e5fd`](https://github.com/MoonshotAI/kimi-code-app/commit/897e5fd24d87de74980c8bea7dd29816feb3f293) - 模型请求失败后的自动重试期间，工作状态会显示重试进度（第几次/共几次），不再像无响应。
+
+- [#175](https://github.com/MoonshotAI/kimi-code-app/pull/175) [`d445135`](https://github.com/MoonshotAI/kimi-code-app/commit/d44513598868420cdfd8bde5d630cd5368ee082a) - 修复 Windows 上同一个文件夹因路径写法不同（大小写、斜杠方向）被显示成多个工作区的问题。
+
+- [#181](https://github.com/MoonshotAI/kimi-code-app/pull/181) [`278c8f4`](https://github.com/MoonshotAI/kimi-code-app/commit/278c8f4d72d984e26bc9cc34f92b36aab5be4b4e) - 修复计划审批弹窗展开后，后台任务和待办入口被顶到窗口顶部的问题。
+
+- [#175](https://github.com/MoonshotAI/kimi-code-app/pull/175) [`d445135`](https://github.com/MoonshotAI/kimi-code-app/commit/d44513598868420cdfd8bde5d630cd5368ee082a) - 添加工作区对话框不再显示 git 标记，移动端工作区列表不再显示分支。
+
 ## 0.0.14
 
 ### Patch Changes
