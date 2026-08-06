@@ -7,9 +7,9 @@
  * (completed/failed, or a user's stop), cleared when a new turn starts, and
  * backfilled from a cold resume's restored outcome — backfills never bump
  * `updatedAt`, and programmatic aborts (including scope-teardown cancels)
- * are deliberately never persisted, and backfills only apply to a pure
- * resume (no turn started in this process — a live turn end owns its write,
- * recency bump included). Writes are deduped against the last value this
+ * are deliberately never persisted live (a close-induced abort produces no
+ * write here), and backfills only apply to a pure resume (no turn started in
+ * this process — a live turn end owns its write, recency bump included). Writes are deduped against the last value this
  * process persisted. Bound at Session scope.
  */
 
@@ -97,8 +97,9 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
         if (this.lastPersisted !== undefined) return;
         const lastTurn = (event as { lastTurn?: { reason?: unknown } }).lastTurn;
         const reason = lastTurn?.reason;
-        if (reason === 'completed') this.write('completed', { touchUpdatedAt: false });
-        else if (reason === 'failed' || reason === 'blocked') {
+        if (reason === 'completed' || reason === 'cancelled') {
+          this.write(reason, { touchUpdatedAt: false });
+        } else if (reason === 'failed' || reason === 'blocked') {
           this.write('failed', { touchUpdatedAt: false });
         }
       }),

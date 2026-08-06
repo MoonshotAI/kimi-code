@@ -26,7 +26,8 @@
  * loading an *existing* document (session resume) stays silent. Queued writes
  * are tracked in a module-level pending set, drained through
  * `drainSessionMetadataWrites()` by hosts before the sessions root may be
- * torn down (the query-store/mirror drain pattern).
+ * torn down (the query-store/mirror drain pattern); a patch still queued
+ * when the scope is disposed is dropped rather than written into a teardown.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -119,9 +120,6 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     opts?: { readonly touchUpdatedAt?: boolean },
   ): Promise<void> {
     await this.ready;
-    // The update queue outlives its callers: a patch queued before scope
-    // disposal must not write (or recreate files) once the session is being
-    // torn down.
     if (this.disposed) return;
     const updatedAt = opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now();
     this.data = { ...this.data, ...patch, updatedAt };
