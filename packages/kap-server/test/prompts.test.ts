@@ -131,6 +131,10 @@ function pngDimensions(bytes: Buffer): { width: number; height: number } {
   };
 }
 
+async function readFileEventually(path: string): Promise<Buffer> {
+  return vi.waitFor(() => readFile(path));
+}
+
 /** The session's own media dir, where prompt media materializes now. */
 function sessionMediaDir(server: RunningServer, sessionId: string): string {
   const session = getLiveSessionById(server.core.accessor, sessionId);
@@ -316,11 +320,11 @@ describe('server-v2 /api/v1 prompts', () => {
     });
 
     // The `?path=` of that reference points at a materialized copy of the bytes
-    // in the session's own media dir, written by the engine's prompt intake
-    // before the enqueue returns — the engine resolver falls back to it when
-    // it cannot upload or inline the video.
+    // in the session's own media dir, written asynchronously by the engine's
+    // prompt intake — the engine resolver falls back to it when it cannot
+    // upload or inline the video.
     const materialized = join(sessionMediaDir(server!, id), `${uploaded.data.id}.mp4`);
-    expect(await readFile(materialized)).toEqual(videoBytes);
+    expect(await readFileEventually(materialized)).toEqual(videoBytes);
 
     // Context memory carries the intake-authored pair: the synthesized
     // `<video path>` tag text part and the daemon reference rewritten to the
@@ -388,7 +392,7 @@ describe('server-v2 /api/v1 prompts', () => {
     // copy still lands on disk for the engine, but its path never reaches the
     // wire.
     const mediaPath = join(sessionMediaDir(server!, id), `${finalFileId}.png`);
-    expect(pngDimensions(await readFile(mediaPath))).toEqual({ width: 2000, height: 1000 });
+    expect(pngDimensions(await readFileEventually(mediaPath))).toEqual({ width: 2000, height: 1000 });
     expect(JSON.stringify(content)).not.toContain(mediaPath);
 
     // The original client upload stays untouched.
@@ -400,7 +404,7 @@ describe('server-v2 /api/v1 prompts', () => {
     // final bytes like any client upload — deleting it after intake would
     // leave every projected `{kind:'file'}` reference dangling.
     const final = await server!.core.accessor.get(IFileService).get(finalFileId);
-    expect(final.meta.size).toBe((await readFile(mediaPath)).length);
+    expect(final.meta.size).toBe((await readFileEventually(mediaPath)).length);
 
     // The internal reference never leaks to the wire.
     expect(JSON.stringify(content)).not.toContain('kimi-file://');
@@ -500,7 +504,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(JSON.stringify(content)).not.toContain(mediaPath);
 
     // The session-media copy holds the original bytes, named by the original upload id.
-    expect(await readFile(mediaPath)).toEqual(smallPng);
+    expect(await readFileEventually(mediaPath)).toEqual(smallPng);
 
     // The internal reference never leaks to the wire.
     expect(JSON.stringify(content)).not.toContain('kimi-file://');
@@ -551,7 +555,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
       const cacheDir = server!.core.accessor.get(IBootstrapService).cacheDir;
       const mediaPath = join(cacheDir, `${uploaded.data.id}.png`);
-      expect(await readFile(mediaPath)).toEqual(smallPng);
+      expect(await readFileEventually(mediaPath)).toEqual(smallPng);
 
       // The engine's prompt intake performs the fallback (same read-only
       // session dir) and authors the pair with the cache-dir path, so context

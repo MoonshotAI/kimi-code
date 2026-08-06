@@ -6,9 +6,8 @@
  * steers, settles lifecycle handles, and keeps system input outside the prompt
  * resource model. Daemon file references in submissions are normalized through
  * the `media` domain's intake (`materializePromptDaemonRefs` — materialize
- * into the session media store and author the paired media-path tag, read
- * through `IFileService`, falling back to the shared cache dir from
- * `bootstrap` when the session dir is not writable). The pure-data
+ * into the session media store and author the paired media-path tag); the media
+ * store owns canonical and shared-cache persistence. The pure-data
  * `launching` flag is registered into
  * `agentState` (`IAgentStateService`) and read/written through it; the
  * `active` / `pending` / `steered` records stay plain fields because their
@@ -22,6 +21,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
+import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { userCancellationReason } from '#/_base/utils/abort';
@@ -37,7 +37,6 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/kosong/contract/message';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFileService } from '#/app/file/fileService';
 import { IEventBus } from '#/app/event/eventBus';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -106,7 +105,6 @@ export class AgentPromptService extends Disposable implements IAgentPromptServic
     @IAgentStateService private readonly states: IAgentStateService,
     @IFileService private readonly files: IFileService,
     @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     super();
     this.states.register(promptLaunchingKey);
@@ -130,7 +128,6 @@ export class AgentPromptService extends Disposable implements IAgentPromptServic
     const intake = materializePromptDaemonRefs(record.message.content, {
       files: this.files,
       mediaStore: this.mediaStore,
-      fallbackDir: this.bootstrap.cacheDir,
       signal: record.intakeController.signal,
     }).then((content) => {
       if (record.intakeController.signal.aborted) return;
@@ -157,6 +154,7 @@ export class AgentPromptService extends Disposable implements IAgentPromptServic
       id, userMessageId: id, createdAt: new Date().toISOString(), state: 'pending', message,
       launchedDeferred, completionDeferred, intakeController: new AbortController(),
     } as Record;
+    const requiresMediaIntake = message.content.some((part) => daemonFileRefFromPart(part) !== undefined);
     record.intake = this.mediaIntakeOf(record);
     record.handle = {
       get id() { return record.id; }, get userMessageId() { return record.userMessageId; },
@@ -171,6 +169,10 @@ export class AgentPromptService extends Disposable implements IAgentPromptServic
         return record.handle;
       }
       void this.startNext();
+      if (requiresMediaIntake) {
+        this.publishQueued(record);
+        return record.handle;
+      }
       await Promise.race([record.launchedDeferred.promise, record.completionDeferred.promise]);
     } else {
       this.publishQueued(record);

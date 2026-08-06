@@ -2,33 +2,38 @@
  * `media` domain — `ISessionMediaStore` implementation.
  *
  * Materializes and reads session-canonical media through the `storage` byte
- * backend, addressed by `sessionContext`. Filesystem deployments expose an
- * absolute host path for model readback; non-filesystem deployments retain
- * the canonical bytes without inventing one. Every entry point rejects ids
- * that are not minted upload ids (`isFileId`) — the id becomes a storage key
- * here, so an unvalidated id would be a path-traversal vector. Bound at
+ * backend, addressed by `sessionContext`, with the shared cache as a fallback
+ * when the session media directory is unavailable. Filesystem deployments
+ * expose an absolute host path for model readback; non-filesystem deployments
+ * retain the canonical bytes without inventing one. Every entry point rejects
+ * ids that are not minted upload ids (`isFileId`) — the id becomes a storage
+ * key here, so an unvalidated id would be a path-traversal vector. Bound at
  * Session scope.
  */
 
 import { extname } from 'node:path';
 
 import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { isFileId } from '#/app/file/fileService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
 import { mediaExtensionForMime } from './mediaRef';
-import { ISessionMediaStore } from './sessionMediaStore';
+import { ISessionMediaStore, type SessionMediaMaterializeInput } from './sessionMediaStore';
 
 export class SessionMediaStoreService implements ISessionMediaStore {
   declare readonly _serviceBrand: undefined;
   private readonly scope: string;
+  private readonly fallbackScope: string;
 
   constructor(
     @ISessionContext sessionContext: ISessionContext,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @IBootstrapService bootstrap: IBootstrapService,
   ) {
     this.scope = sessionContext.scope('media');
+    this.fallbackScope = bootstrap.scope('cache');
   }
 
   pathFor(fileId: string, ext: string): string | undefined {
@@ -60,15 +65,18 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     return data === undefined ? undefined : { data, name: key };
   }
 
-  async materialize(input: {
-    readonly fileId: string;
-    readonly size: number;
-    readonly name: string;
-    readonly mimeType: string;
-    readonly hintPath?: string;
-    readonly stream: () => NodeJS.ReadableStream;
-    readonly signal?: AbortSignal;
-  }): Promise<string | undefined> {
+  async materialize(input: SessionMediaMaterializeInput): Promise<string | undefined> {
+    return this.materializeAt(this.scope, input);
+  }
+
+  async materializeFallback(input: SessionMediaMaterializeInput): Promise<string | undefined> {
+    return this.materializeAt(this.fallbackScope, input);
+  }
+
+  private async materializeAt(
+    scope: string,
+    input: SessionMediaMaterializeInput,
+  ): Promise<string | undefined> {
     if (!isFileId(input.fileId)) return undefined;
     const ext =
       (input.hintPath === undefined ? '' : extname(input.hintPath)) ||
@@ -76,15 +84,15 @@ export class SessionMediaStoreService implements ISessionMediaStore {
       mediaExtensionForMime(input.mimeType) ||
       '.bin';
     const key = this.keyFor(input.fileId, ext);
-    const existingSize = await this.storage.size(this.scope, key);
+    const existingSize = await this.storage.size(scope, key);
     if (existingSize !== input.size) {
       const source = input.stream() as NodeJS.ReadableStream & AsyncIterable<Uint8Array>;
-      await this.storage.writeStream(this.scope, key, source, {
+      await this.storage.writeStream(scope, key, source, {
         atomic: true,
         signal: input.signal,
       });
     }
-    return this.storage.pathFor(this.scope, key);
+    return this.storage.pathFor(scope, key);
   }
 
   private keyFor(fileId: string, ext: string): string {

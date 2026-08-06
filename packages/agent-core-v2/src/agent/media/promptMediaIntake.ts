@@ -6,11 +6,10 @@
  * store (`ISessionMediaStore`) and carries that absolute path, so the
  * persisted reference always points into the session's own `media/` dir —
  * whichever edge (REST prompt route, SDK prompt, steer, …) the message
- * arrived through. When the canonical write fails and the caller provided a
- * `fallbackDir` (the shared cache dir — a read-only session dir must not
- * reject a submittable prompt), the bytes land at `<fallbackDir>/<fileId><ext>`
- * instead, with the extension derived like the canonical copy's: hint path,
- * then upload name, then MIME.
+ * arrived through. When the canonical write fails, the session media store
+ * places the bytes in its shared-cache fallback — a read-only session dir must
+ * not reject a submittable prompt — with the extension derived like the
+ * canonical copy's: hint path, then upload name, then MIME.
  *
  * Intake also authors the paired `<image|video path="…">` tag: edges submit
  * the bare daemon reference, and a successfully materialized reference that
@@ -25,12 +24,7 @@
  * its own.
  */
 
-import { createWriteStream } from 'node:fs';
-import { mkdir, stat } from 'node:fs/promises';
-import { extname, join } from 'node:path';
-import { pipeline } from 'node:stream/promises';
-
-import { isFileId, type IFileService } from '#/app/file/fileService';
+import type { IFileService } from '#/app/file/fileService';
 import { abortable } from '#/_base/utils/abort';
 import type { ContentPart } from '#/kosong/contract/message';
 
@@ -40,7 +34,6 @@ import {
   claimingRefIndex,
   daemonFileRefFromPart,
   matchSingleMediaPathTag,
-  mediaExtensionForMime,
   pairMediaPathTagRefs,
 } from './mediaRef';
 import { ISessionMediaStore } from './sessionMediaStore';
@@ -48,7 +41,6 @@ import { ISessionMediaStore } from './sessionMediaStore';
 export interface PromptMediaIntakeDeps {
   readonly files: IFileService;
   readonly mediaStore: ISessionMediaStore;
-  readonly fallbackDir?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -143,34 +135,11 @@ async function materializeRef(
   } catch {
     deps.signal?.throwIfAborted();
   }
-  if (deps.fallbackDir === undefined) return undefined;
-  return materializeToDir(deps.fallbackDir, input, () => file.stream());
-}
-
-async function materializeToDir(
-  dir: string,
-  input: {
-    readonly fileId: string;
-    readonly size: number;
-    readonly name: string;
-    readonly mimeType: string;
-    readonly hintPath?: string;
-  },
-  stream: () => NodeJS.ReadableStream,
-): Promise<string | undefined> {
-  if (!isFileId(input.fileId)) return undefined;
-  const ext =
-    (input.hintPath === undefined ? '' : extname(input.hintPath)) ||
-    extname(input.name) ||
-    mediaExtensionForMime(input.mimeType) ||
-    '.bin';
-  const target = join(dir, `${input.fileId}${ext}`);
-  await mkdir(dir, { recursive: true });
-  const info = await stat(target).catch(() => undefined);
-  if (info?.size !== input.size) {
-    await pipeline(stream(), createWriteStream(target));
-  }
-  return target;
+  return deps.mediaStore.materializeFallback({
+    ...input,
+    stream: () => file.stream(),
+    signal: deps.signal,
+  });
 }
 
 function rewriteRefPath(part: ContentPart, fileId: string, path: string): ContentPart {

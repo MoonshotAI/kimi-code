@@ -2,9 +2,9 @@
  * Scenario: session-canonical media persists through the byte-storage boundary.
  */
 
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -13,10 +13,13 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+
+import { stubBootstrap } from '../../app/bootstrap/stubs';
 
 const BYTES = Buffer.from('media bytes');
 
@@ -27,12 +30,15 @@ function streamOf(bytes: Buffer): () => NodeJS.ReadableStream {
 describe('SessionMediaStoreService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
+  let homeDir: string;
   let sessionDir: string;
   let store: ISessionMediaStore;
 
   beforeEach(async () => {
     disposables = new DisposableStore();
-    sessionDir = await mkdtemp(join(tmpdir(), 'session-media-store-'));
+    homeDir = await mkdtemp(join(tmpdir(), 'session-media-store-home-'));
+    sessionDir = join(homeDir, 'sessions', 's1');
+    await mkdir(sessionDir, { recursive: true });
     ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
@@ -40,10 +46,11 @@ describe('SessionMediaStoreService', () => {
           sessionId: 's1',
           workspaceId: 'w1',
           sessionDir,
-          sessionScope: basename(sessionDir),
+          sessionScope: join('sessions', 's1'),
           cwd: '/tmp',
         }));
-        reg.defineInstance(IFileSystemStorageService, new FileStorageService(dirname(sessionDir)));
+        reg.defineInstance(IBootstrapService, stubBootstrap(homeDir));
+        reg.defineInstance(IFileSystemStorageService, new FileStorageService(homeDir));
         reg.define(ISessionMediaStore, SessionMediaStoreService);
       },
     });
@@ -52,7 +59,7 @@ describe('SessionMediaStoreService', () => {
 
   afterEach(async () => {
     disposables.dispose();
-    await rm(sessionDir, { recursive: true, force: true });
+    await rm(homeDir, { recursive: true, force: true });
   });
 
   function input(overrides: Partial<Parameters<ISessionMediaStore['materialize']>[0]> = {}) {
@@ -76,6 +83,12 @@ describe('SessionMediaStoreService', () => {
     const target = await store.materialize(input());
     expect(target).toBe(pathFor('f_1', '.mp4'));
     expect(target).toBe(join(sessionDir, 'media', 'f_1.mp4'));
+    expect(await readFile(target!)).toEqual(BYTES);
+  });
+
+  it('materializes at the shared cache fallback through the storage boundary', async () => {
+    const target = await store.materializeFallback(input());
+    expect(target).toBe(join(homeDir, 'cache', 'f_1.mp4'));
     expect(await readFile(target!)).toEqual(BYTES);
   });
 
@@ -190,6 +203,7 @@ it('retains canonical bytes without inventing a path for a non-filesystem backen
         sessionScope: 'sessions/w1/s1',
         cwd: '/tmp',
       }));
+      reg.defineInstance(IBootstrapService, stubBootstrap('/unused-home'));
       reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
       reg.define(ISessionMediaStore, SessionMediaStoreService);
     },

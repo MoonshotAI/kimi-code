@@ -6,9 +6,9 @@
  * Run: `pnpm exec vitest run packages/agent-core-v2/test/agent/prompt/promptService.test.ts`.
  */
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -95,6 +95,8 @@ function harness(
     onDidFinishCompaction: Event.None,
   } as unknown as IAgentFullCompactionService);
   const sessionDir = opts.sessionDir ?? '/nonexistent-session';
+  const homeDir = opts.homeDir ?? dirname(sessionDir);
+  const sessionScope = opts.homeDir === undefined ? basename(sessionDir) : relative(homeDir, sessionDir);
   const ix = createServices(disposables, {
     strict: true, additionalServices: (reg) => {
       registerStateServices(reg);
@@ -106,15 +108,15 @@ function harness(
       reg.define(IEventBus, EventBusService);
       reg.define(IAgentSystemReminderService, AgentSystemReminderService);
       reg.defineInstance(IFileService, stubFileService(opts.files ?? new Map()));
-      reg.defineInstance(IBootstrapService, stubBootstrap(opts.homeDir ?? '/nonexistent-home'));
+      reg.defineInstance(IBootstrapService, stubBootstrap(homeDir));
       reg.defineInstance(ISessionContext, makeSessionContext({
         sessionId: 's1',
         workspaceId: 'w1',
         sessionDir,
-        sessionScope: basename(sessionDir),
+        sessionScope,
         cwd: '/tmp',
       }));
-      reg.defineInstance(IFileSystemStorageService, new FileStorageService(dirname(sessionDir)));
+      reg.defineInstance(IFileSystemStorageService, new FileStorageService(homeDir));
       reg.define(ISessionMediaStore, SessionMediaStoreService);
       reg.define(IAgentPromptService, AgentPromptService);
     }
@@ -297,6 +299,7 @@ describe('AgentPromptService daemon media intake', () => {
         origin: { kind: 'user' },
       },
     });
+    await handle.launched;
 
     const target = join(sessionDir, 'media', 'f_1.png');
     expect(await readFile(target)).toEqual(PNG_BYTES);
@@ -325,6 +328,7 @@ describe('AgentPromptService daemon media intake', () => {
         origin: { kind: 'user' },
       },
     });
+    await handle.launched;
 
     const target = join(sessionDir, 'media', 'f_v.mp4');
     expect(await readFile(target)).toEqual(PNG_BYTES);
@@ -335,9 +339,10 @@ describe('AgentPromptService daemon media intake', () => {
   });
 
   it('falls back to the shared cache dir when the session media store cannot write', async () => {
-    const sessionDir = await tmpSessionDir();
     const homeDir = await mkdtemp(join(tmpdir(), 'prompt-intake-home-'));
     onTestFinished(() => rm(homeDir, { recursive: true, force: true }));
+    const sessionDir = join(homeDir, 'sessions', 's1');
+    await mkdir(sessionDir, { recursive: true });
     // A regular file squatting on the media dir name fails the canonical write.
     await writeFile(join(sessionDir, 'media'), 'occupied');
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
@@ -352,6 +357,7 @@ describe('AgentPromptService daemon media intake', () => {
         origin: { kind: 'user' },
       },
     });
+    await handle.launched;
 
     const target = join(homeDir, 'cache', 'f_1.png');
     expect(await readFile(target)).toEqual(PNG_BYTES);
@@ -359,6 +365,38 @@ describe('AgentPromptService daemon media intake', () => {
       { type: 'text', text: `<image path="${target}"></image>` },
       { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
     ]);
+  });
+
+  it('returns the first idle media prompt before intake resolves', async () => {
+    const sessionDir = await tmpSessionDir();
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    const files = new Map([
+      ['f_slow', {
+        name: 'slow.png',
+        bytes: PNG_BYTES,
+        stream: () => Readable.from((async function* () {
+          await gate;
+          yield PNG_BYTES;
+        })()),
+      }],
+    ]);
+    const { prompt } = harness({ sessionDir, files });
+
+    const handle = await prompt.enqueue({
+      id: 'media-idle-first',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_slow') } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+
+    expect(handle.state).toBe('pending');
+    expect(prompt.list()).toEqual({ active: undefined, pending: [] });
+    open();
+    await expect(handle.launched).resolves.toBeDefined();
   });
 
   it('rewrites a client-cache tag+reference pair to the session media dir', async () => {
@@ -379,6 +417,7 @@ describe('AgentPromptService daemon media intake', () => {
         origin: { kind: 'user' },
       },
     });
+    await handle.launched;
 
     const target = join(sessionDir, 'media', 'f_1.png');
     expect(handle.message.content).toEqual([
@@ -401,6 +440,7 @@ describe('AgentPromptService daemon media intake', () => {
         origin: { kind: 'user' },
       },
     });
+    await first.launched;
     const second = await prompt.enqueue({
       message: {
         role: 'user',
@@ -469,7 +509,8 @@ describe('AgentPromptService daemon media intake', () => {
     expect(prompt.list().pending.map((item) => item.id)).toEqual(['text-second']);
     open();
 
-    await mediaHandle;
+    const mediaRecord = await mediaHandle;
+    await mediaRecord.launched;
     expect(prompt.list().active?.id).toBe('media-first');
     expect(prompt.list().pending.map((item) => item.id)).toEqual(['text-second']);
   });
@@ -617,6 +658,7 @@ describe('AgentPromptService daemon media intake', () => {
     compactionState.current = null;
     for (const listener of finishListeners) listener();
     const handle = await handlePromise;
+    await handle.launched;
     expect(handle.state).toBe('running');
     expect(prompt.list().active?.id).toBe('media-compacted');
   });
