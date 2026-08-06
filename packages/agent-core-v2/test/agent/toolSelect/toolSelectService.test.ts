@@ -805,6 +805,22 @@ describe('AgentToolSelectService.load', () => {
     expect(h.sut.load([MCP_ALPHA]).toLoad).toEqual([MCP_ALPHA]);
   });
 
+  it('keeps the pending ledger across a compaction replacement splice', async () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+
+    h.sut.load([MCP_ALPHA]);
+    h.eventBus.emit('context.spliced', {
+      start: 0,
+      deleteCount: 2,
+      messages: [userMessage('Compacted summary.')],
+    });
+
+    expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
+    const declared = await declareSchemas(h);
+    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
+  });
+
   it('reconciles the pending ledger with history when a mid-history splice removes schema messages', async () => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
