@@ -39,8 +39,13 @@ export interface GitStatusCacheOptions {
   readonly onChange?: () => void;
 }
 
+interface BranchInfo {
+  readonly name: string;
+  readonly detached: boolean;
+}
+
 interface BranchState {
-  value: string | null;
+  value: BranchInfo | null;
   fetchedAt: number;
 }
 
@@ -93,21 +98,34 @@ export function createGitStatusCache(
       if (now - branch.fetchedAt >= BRANCH_TTL_MS) {
         branch = { value: readBranch(workDir), fetchedAt: now };
       }
-      if (branch.value === null) return null;
+      const branchInfo = branch.value;
+      if (branchInfo === null) return null;
 
       if (now - status.fetchedAt >= STATUS_TTL_MS) {
         status = { ...readStatus(workDir), fetchedAt: now };
       }
-      refreshPullRequestIfNeeded(branch.value, now);
+      if (branchInfo.detached) {
+        const requestId =
+          pullRequest.pendingBranch === null ? pullRequest.requestId : pullRequest.requestId + 1;
+        pullRequest = {
+          value: null,
+          branch: null,
+          fetchedAt: 0,
+          pendingBranch: null,
+          requestId,
+        };
+      } else {
+        refreshPullRequestIfNeeded(branchInfo.name, now);
+      }
 
       return {
-        branch: branch.value,
+        branch: branchInfo.name,
         dirty: status.dirty,
         ahead: status.ahead,
         behind: status.behind,
         diffAdded: status.diffAdded,
         diffDeleted: status.diffDeleted,
-        pullRequest: pullRequest.branch === branch.value ? pullRequest.value : null,
+        pullRequest: pullRequest.branch === branchInfo.name ? pullRequest.value : null,
       };
     },
   };
@@ -155,7 +173,7 @@ function detectGitRepo(workDir: string): boolean {
   }
 }
 
-function readBranch(workDir: string): string | null {
+function readBranch(workDir: string): BranchInfo | null {
   try {
     const result = spawnSync('git', ['-C', workDir, 'branch', '--show-current'], {
       encoding: 'utf8',
@@ -163,7 +181,23 @@ function readBranch(workDir: string): string | null {
     });
     if (result.status !== 0) return null;
     const name = result.stdout.trim();
-    return name.length > 0 ? name : null;
+    return name.length > 0 ? { name, detached: false } : readDetachedHead(workDir);
+  } catch {
+    return null;
+  }
+}
+
+function readDetachedHead(workDir: string): BranchInfo | null {
+  try {
+    const result = spawnSync('git', ['-C', workDir, 'rev-parse', '--short', 'HEAD'], {
+      encoding: 'utf8',
+      timeout: SPAWN_TIMEOUT_MS,
+    });
+    if (result.status !== 0) return null;
+
+    const commit = result.stdout.trim();
+    if (!/^[0-9a-fA-F]+$/.test(commit)) return null;
+    return { name: `detached@${commit}`, detached: true };
   } catch {
     return null;
   }
