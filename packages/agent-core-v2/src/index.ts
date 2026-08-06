@@ -288,6 +288,8 @@ export * from '#/agent/toolSelect/toolSelect';
 export * from '#/agent/toolSelect/toolSelectService';
 export * from '#/agent/toolSelect/toolSelectAnnouncements';
 export * from '#/agent/toolSelect/toolSelectAnnouncementsService';
+export * from '#/agent/toolSelect/toolSelectSchemas';
+export * from '#/agent/toolSelect/toolSelectSchemasService';
 import '#/agent/toolPolicy/configSection';
 export * from '#/agent/toolPolicy/configSection';
 export * from '#/agent/toolPolicy/evaluate';
