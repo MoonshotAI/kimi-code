@@ -1442,10 +1442,16 @@ fn styled_lines(
                 entry.text.clone(),
                 Style::default().fg(theme.thinking).add_modifier(Modifier::ITALIC),
             ))),
-            TranscriptKind::Tool => out.push(RenderLine::from(Span::styled(
-                format!("  ⚙ {}", entry.text),
-                Style::default().fg(theme.tool),
-            ))),
+            TranscriptKind::Tool => {
+                // AskUserQuestion lines are surfaced as a question prompt
+                // (❓) rather than a plain tool progress line, so the user
+                // sees at a glance that the model is waiting for an answer.
+                let is_question = entry.text.contains("AskUserQuestion");
+                out.push(RenderLine::from(Span::styled(
+                    format!("  {} {}", if is_question { "❓" } else { "⚙" }, entry.text),
+                    Style::default().fg(if is_question { theme.status } else { theme.tool }),
+                )));
+            }
             TranscriptKind::Status => out.push(RenderLine::from(Span::styled(
                 entry.text.clone(),
                 Style::default().fg(theme.status),
