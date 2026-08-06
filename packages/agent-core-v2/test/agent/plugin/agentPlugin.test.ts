@@ -65,6 +65,7 @@ function pluginServiceStub(options: PluginServiceStubOptions): IPluginService {
     enabledSystemPrompts: async () => [],
     enabledMcpServers: async () => ({}),
     enabledHooks: async () => [],
+    hasLoadedSnapshot: () => true,
   };
 }
 

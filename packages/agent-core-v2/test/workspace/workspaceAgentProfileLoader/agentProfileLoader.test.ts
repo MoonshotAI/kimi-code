@@ -211,6 +211,7 @@ function pluginStub(
     enabledSystemPrompts: async () => [],
     enabledMcpServers: async () => ({}),
     enabledHooks: async () => [],
+    hasLoadedSnapshot: () => true,
   };
 }
 

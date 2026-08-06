@@ -260,6 +260,24 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toBe(before);
   });
 
+  // While the initial plugin load has failed, `enabledSystemPrompts()`
+  // resolves to its consumption fallback instead of rejecting — that empty
+  // read must not freeze, or a later successful reload would never reach
+  // the live agent.
+  it('freezes plugin sections only once the plugin snapshot has loaded', async () => {
+    const sections = { value: [] as readonly EnabledPluginSystemPrompt[] };
+    const loaded = { value: false };
+    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections, loaded)));
+    await svc.applyProfile(pluginProfile);
+    expect(svc.data().systemPrompt).toBe('');
+
+    loaded.value = true;
+    sections.value = [{ pluginId: 'demo', content: 'V1' }];
+    await svc.refreshSystemPrompt();
+
+    expect(svc.data().systemPrompt).toContain('<!-- From: plugin demo -->');
+  });
+
   it('lets a freshly built agent snapshot the current plugin sections', async () => {
     const sections = {
       value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
@@ -369,11 +387,13 @@ function skillCatalogWithChange(
   });
 }
 
-function pluginStub(sections: {
-  value: readonly EnabledPluginSystemPrompt[];
-}): IPluginService {
+function pluginStub(
+  sections: { value: readonly EnabledPluginSystemPrompt[] },
+  loaded: { value: boolean } = { value: true },
+): IPluginService {
   return {
     onDidReload: Event.None as IPluginService['onDidReload'],
+    hasLoadedSnapshot: () => loaded.value,
     pluginSkillRoots: async () => [],
     enabledSessionStarts: async () => [],
     enabledSystemPrompts: async () => sections.value,

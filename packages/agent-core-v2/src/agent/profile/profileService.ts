@@ -1035,9 +1035,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       }
     }
     const resolved = parts.join('\n\n');
-    // Freeze only on success — a failed `enabledSystemPrompts()` read must
-    // not pin an empty section set for the agent's lifetime.
-    this.frozenPluginSections = resolved;
+    // Freeze only on a real snapshot: while the initial plugin load has
+    // failed, `enabledSystemPrompts()` resolves to its consumption fallback
+    // instead of rejecting, and pinning that empty read would lock plugin
+    // sections out of the live agent even after a later successful reload.
+    if (this.plugins.hasLoadedSnapshot()) this.frozenPluginSections = resolved;
     return resolved;
   }
 }
