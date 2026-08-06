@@ -196,6 +196,7 @@ import {
   IWorkspaceAliases,
   IWorkspaceDirs,
   IWorkspaceMcpService,
+  ISessionActivityView,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
   IWorkspaceSkillCatalog,
@@ -829,6 +830,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const meta = await handle.accessor.get(ISessionMetadata).read();
     const ctx = handle.accessor.get(ISessionContext);
     const workspace = handle.accessor.get(ISessionWorkspaceContext);
+    // The live aggregate wins: a just-resumed session may still have its
+    // restored outcome queued as a metadata backfill, so the document can lag
+    // the in-memory fold by a tick.
+    const liveOutcome = handle.accessor.get(ISessionActivityView).state().lastTurnReason;
     return {
       id: meta.id,
       title: meta.title,
@@ -840,7 +845,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       archived: meta.archived,
       metadata: meta.custom as JsonObject | undefined,
       additionalDirs: workspace.additionalDirs,
-      lastTurnReason: meta.lastTurnReason,
+      lastTurnReason: liveOutcome ?? meta.lastTurnReason,
     };
   }
 
