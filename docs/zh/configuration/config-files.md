@@ -303,7 +303,7 @@ max_output_size = 8192
 
 ```toml
 [subagent]
-default_model = "k27-hs"
+default_model = "kimi-hs"
 ```
 
 在交互式 TUI 中，也可以用 [`/secondary_model`](../reference/slash-commands.md) 命令打开模型选择器来设置：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的子 Agent 立即按新默认值绑定，无需重启会话。
@@ -314,9 +314,9 @@ default_model = "k27-hs"
 [models.k3]
 provider = "kimi"
 model = "k3"
-[models.k27-hs]
-provider = "moonshot"
-model = "kimi-k2-7-hs"
+[models.kimi-hs]
+provider = "managed:kimi-code"
+model = "kimi-for-coding-highspeed"
 [models.fable]
 provider = "openai"
 model = "o4-mini"
@@ -325,10 +325,10 @@ provider = "openai"
 model = "codex"
 
 [subagent]
-default_model = "k27-hs"
+default_model = "kimi-hs"
 [subagent.models]
 k3 = "前端选它。擅长 React/Vue 组件、CSS、UI/UX 实现、交互逻辑和前端调试。"
-k27-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
+kimi-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
 fable = "难题选它。擅长复杂推理、算法设计、深度调试、数学和系统性难题。"
 codex = "后端选它。擅长 API 设计、数据库建模、服务端架构、业务逻辑实现。"
 ```
@@ -342,11 +342,11 @@ v2 引擎会忽略遗留的 [`[secondary_model]`](#secondary-model) 配置；迁
 ```toml
 # 旧
 [secondary_model]
-model = "k27-hs"
+model = "kimi-hs"
 
 # 新
 [subagent]
-default_model = "k27-hs"
+default_model = "kimi-hs"
 ```
 
 旧的补丁字段（`default_effort`、`max_output_size` 等）在模型池中没有对应物——请把这些设置写到别名指向的 `[models]` 条目上，例如通过 [`[models."<alias>".overrides]`](#模型覆盖项)。

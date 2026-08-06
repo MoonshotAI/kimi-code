@@ -303,7 +303,7 @@ To simply point every subagent at one model by default, no models table is neede
 
 ```toml
 [subagent]
-default_model = "k27-hs"
+default_model = "kimi-hs"
 ```
 
 In the interactive TUI, the [`/secondary_model`](../reference/slash-commands.md) command opens a model selector for this: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately — no session restart needed.
@@ -314,9 +314,9 @@ A configured pool — an explicit `[subagent.models]` table or a lone `default_m
 [models.k3]
 provider = "kimi"
 model = "k3"
-[models.k27-hs]
-provider = "moonshot"
-model = "kimi-k2-7-hs"
+[models.kimi-hs]
+provider = "managed:kimi-code"
+model = "kimi-for-coding-highspeed"
 [models.fable]
 provider = "openai"
 model = "o4-mini"
@@ -325,10 +325,10 @@ provider = "openai"
 model = "codex"
 
 [subagent]
-default_model = "k27-hs"
+default_model = "kimi-hs"
 [subagent.models]
 k3 = "前端选它。擅长 React/Vue 组件、CSS、UI/UX 实现、交互逻辑和前端调试。"
-k27-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
+kimi-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
 fable = "难题选它。擅长复杂推理、算法设计、深度调试、数学和系统性难题。"
 codex = "后端选它。擅长 API 设计、数据库建模、服务端架构、业务逻辑实现。"
 ```
@@ -342,11 +342,11 @@ The v2 engine ignores a leftover [`[secondary_model]`](#secondary-model) section
 ```toml
 # Before
 [secondary_model]
-model = "k27-hs"
+model = "kimi-hs"
 
 # After
 [subagent]
-default_model = "k27-hs"
+default_model = "kimi-hs"
 ```
 
 The old patch fields (`default_effort`, `max_output_size`, …) have no pool equivalent — write those settings onto the `[models]` entry the alias points to, for example via [`[models."<alias>".overrides]`](#model-overrides).
