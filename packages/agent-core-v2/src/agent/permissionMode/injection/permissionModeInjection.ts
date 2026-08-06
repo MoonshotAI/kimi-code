@@ -32,13 +32,13 @@ export const permissionModeLastModeKey = defineState<PermissionMode | undefined>
 export class PermissionModeInjection extends Disposable {
   constructor(
     private readonly permissionMode: Pick<IAgentPermissionModeService, 'mode'>,
-    @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
     this.states.register(permissionModeLastModeKey);
     this._register(
-      dynamicInjector.register(PERMISSION_MODE_INJECTION_VARIANT, (ctx) => this.reminder(ctx)),
+      injector.register(PERMISSION_MODE_INJECTION_VARIANT, (ctx) => this.reminder(ctx)),
     );
   }
 

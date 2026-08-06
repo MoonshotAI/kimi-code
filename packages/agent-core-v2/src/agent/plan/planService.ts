@@ -73,7 +73,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IBlobStore private readonly blobs: IBlobStore,
-    @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IEventBus eventBus: IEventBus,
     @IWireService private readonly wire: IWireService,
@@ -105,7 +105,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
       }),
     );
 
-    this._register(new PlanModeInjection(dynamicInjector, this, this.context, states));
+    this._register(new PlanModeInjection(injector, this, this.context, states));
     this._register(this.registerPlanGuard(toolExecutor));
   }
 

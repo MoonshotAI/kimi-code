@@ -286,7 +286,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentReminderQueueService private readonly reminderQueue: IAgentReminderQueueService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
@@ -316,7 +316,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         {
           getGoal: () => this.getGoal().goal,
         },
-        dynamicInjector,
+        injector,
       ),
     );
     this._register(

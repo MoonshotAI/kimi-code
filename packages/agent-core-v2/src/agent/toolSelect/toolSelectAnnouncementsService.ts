@@ -24,11 +24,11 @@ export class AgentToolSelectAnnouncementsService extends Disposable implements I
 
   constructor(
     @IAgentToolSelectService toolSelect: IAgentToolSelectService,
-    @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
   ) {
     super();
     this._register(
-      dynamicInjector.register(LOADABLE_TOOLS_VARIANT, ({ isNewTurn }) =>
+      injector.register(LOADABLE_TOOLS_VARIANT, ({ isNewTurn }) =>
         isNewTurn ? toolSelect.loadableToolsAnnouncement() : undefined,
       ),
     );

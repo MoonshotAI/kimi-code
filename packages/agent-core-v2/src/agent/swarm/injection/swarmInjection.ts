@@ -41,12 +41,12 @@ export interface SwarmInjectionOptions {
 export class SwarmInjection extends Disposable {
   constructor(
     private readonly options: SwarmInjectionOptions,
-    @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
   ) {
     super();
     this._register(
-      dynamicInjector.register<SwarmModeInjectionDisclosure>(
+      injector.register<SwarmModeInjectionDisclosure>(
         SWARM_MODE_INJECTION_VARIANT,
         (ctx) => this.reminder(ctx),
       ),

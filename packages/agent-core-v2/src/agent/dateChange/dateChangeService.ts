@@ -29,7 +29,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
-import { IAgentDateChangeService } from './dateChange';
+import { type DateInjectionDisclosure, IAgentDateChangeService } from './dateChange';
 
 const DATE_CHANGE_INJECTION_VARIANT = 'date_change';
 
@@ -42,7 +42,7 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IHostClock private readonly clock: IHostClock,
@@ -51,7 +51,7 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
     super();
     this.states.register(dateChangeSeedKey);
     this._register(
-      dynamicInjector.register<DateInjectionDisclosure>(
+      injector.register<DateInjectionDisclosure>(
         DATE_CHANGE_INJECTION_VARIANT,
         (ctx) => this.reminder(ctx),
       ),
@@ -110,13 +110,6 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
       renderGeneration: profileData.renderGeneration ?? 0,
     };
   }
-}
-
-export interface DateInjectionDisclosure {
-  readonly kind: 'date';
-  readonly renderGeneration: number;
-  readonly localDate: string;
-  readonly timeZone: string;
 }
 
 interface DateDisclosure {

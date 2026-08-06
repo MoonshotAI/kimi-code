@@ -24,11 +24,11 @@ export class AgentToolSelectSchemasService extends Disposable implements IAgentT
 
   constructor(
     @IAgentToolSelectService toolSelect: IAgentToolSelectService,
-    @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
   ) {
     super();
     this._register(
-      dynamicInjector.register(DYNAMIC_TOOL_SCHEMA_VARIANT, () => {
+      injector.register(DYNAMIC_TOOL_SCHEMA_VARIANT, () => {
         const tools = toolSelect.drainPendingToolSchemas();
         if (tools === undefined) return undefined;
         return { message: { role: 'system', content: [], tools } };
