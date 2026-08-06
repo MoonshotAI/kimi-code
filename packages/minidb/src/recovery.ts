@@ -186,8 +186,27 @@ export function* frameToOps(
   }
 }
 
-/** Yield to the event loop every this many applied frames (see applyFrames). */
-const APPLY_YIELD_FRAMES = 4096;
+/** Budgets for the cooperative slicing of recovered-op apply loops. A BATCH
+ *  frame unrolls into thousands of primitive ops, so frame-granular yielding
+ *  cannot bound an apply slice — primitive-op count and elapsed time can. */
+export const WAL_APPLY_OPS_PER_SLICE = 512;
+export const WAL_APPLY_SLICE_MS = 8;
+
+/** Cooperative slicing for the recovered-op apply loops: reports true when
+ *  either budget (primitive ops, or wall-clock since the last yield) is
+ *  exhausted and the loop should yieldToLoop(). Safe mid-apply: the store is
+ *  not published until open() returns, so nothing observes a half-applied
+ *  pass. */
+export function walApplySlicer(): () => boolean {
+  let ops = 0;
+  let sliceStart = performance.now();
+  return () => {
+    if (++ops < WAL_APPLY_OPS_PER_SLICE && performance.now() - sliceStart < WAL_APPLY_SLICE_MS) return false;
+    ops = 0;
+    sliceStart = performance.now();
+    return true;
+  };
+}
 
 /** Apply recovered frames to the store. This is pure in-memory bookkeeping —
  *  one synchronous pass per file would be a noticeable event-loop stall on a
@@ -203,13 +222,13 @@ async function applyFrames(
   valueMode: ValueMode,
   onCorruptBatch?: () => void,
 ): Promise<void> {
-  let applied = 0;
+  const slice = walApplySlicer();
   for (const f of frames) {
     for (const op of frameToOps(f, file, fd, valueMode, onCorruptBatch)) {
       if (op.type === TYPE_SET) store.setRef(op.key, op.ref!, op.expireAt, op.dt);
       else if (op.type === TYPE_DEL) store.del(op.key);
+      if (slice()) await yieldToLoop();
     }
-    if (++applied % APPLY_YIELD_FRAMES === 0) await yieldToLoop();
   }
 }
 

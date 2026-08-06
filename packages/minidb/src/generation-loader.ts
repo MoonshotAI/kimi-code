@@ -28,14 +28,14 @@ import { generationDir, listGenerations, readCurrent, readManifest } from './gen
 import {
   GenerationCorruptError,
   STORE_VERSION,
-  readGenerationFileChecked,
+  readGenerationFileCheckedAsync,
   readStoreImage,
   readDtIndexImage,
-  readSecondaryIndexImage,
-  readCompoundIndexImage,
-  readTextDictionaryImage,
-  readTextDocsImage,
-  verifyFileIntegritySync,
+  readSecondaryIndexImageAsync,
+  readCompoundIndexImageAsync,
+  readTextDictionaryImageAsync,
+  readTextDocsImageAsync,
+  verifyFileIntegrityAsync,
 } from './gen-codec.js';
 import type { StoreImageRecord } from './gen-codec.js';
 import { IndexManager } from './index-manager.js';
@@ -46,9 +46,10 @@ import type { LifecycleTracker } from './lifecycle-status.js';
 import { TextRegistry } from './text-registry.js';
 import type { TextIndexDef } from './text-registry.js';
 import type { TextIndex } from './text-index/index.js';
+import { yieldToLoop } from './text-index/tokenize.js';
 import type { TextBuildCheckpoint } from './worker/text-build.js';
 import { ValueReader } from './value-reader.js';
-import { frameToOps } from './recovery.js';
+import { frameToOps, walApplySlicer } from './recovery.js';
 import type { RecoveryMode, RecoveryInfo, ValueMode, RecoveredOp } from './recovery.js';
 import { scanFrameRefsFdAsync } from './codec.js';
 import { toKStr } from './value-codec.js';
@@ -57,6 +58,10 @@ import type { WAL } from './wal.js';
 import type { DtIndex } from './dt-index.js';
 import type { ValueCodecName } from './types.js';
 import type { GenerationStats } from './generation-builder.js';
+
+/** Store-image parse/filter records per event-loop slice on the open path
+ *  (the bulk load's own slicing lives in Store.bulkLoadRefsAsync). */
+const STORE_IMAGE_RECORDS_PER_SLICE = 8192;
 
 /** The owner-injected surface the load path needs (a structural subset of
  *  GenerationBuilderDeps — the builder passes its own deps through). */
@@ -166,14 +171,18 @@ export class GenerationLoader<V> {
     // Store image. Records expire-past at load time are dropped here AND
     // noted, so their loaded index entries can be reconciled below (the
     // image legitimately contains records whose TTL elapsed after the build).
+    // The payload verify, the parse/filter walk, and the bulk load are all
+    // sliced with event-loop yields (safe mid-load: nothing is published
+    // until open() returns).
     const tStore = performance.now();
     const storeInfo = manifest.files[STORE_IMAGE_FILE];
     if (!storeInfo) throw new GenerationCorruptError('store image missing from manifest');
-    const storePayload = await readGenerationFileChecked(path.join(genDir, STORE_IMAGE_FILE), 'MDGS', STORE_VERSION, storeInfo);
+    const storePayload = await readGenerationFileCheckedAsync(path.join(genDir, STORE_IMAGE_FILE), 'MDGS', STORE_VERSION, storeInfo);
     const now = Date.now();
     const droppedExpired: string[] = [];
     const records: StoreImageRecord[] = [];
     let imageCount = 0;
+    let parsed = 0;
     for (const rec of readStoreImage(storePayload)) {
       imageCount++;
       if (rec.expireAt && rec.expireAt <= now) {
@@ -184,8 +193,9 @@ export class GenerationLoader<V> {
         throw new GenerationCorruptError('store image carries disk refs for a memory-mode open');
       }
       records.push(rec);
+      if (++parsed % STORE_IMAGE_RECORDS_PER_SLICE === 0) await yieldToLoop();
     }
-    this.deps.store().bulkLoadRefs(records);
+    await this.deps.store().bulkLoadRefsAsync(records);
     if (manifest.counts && typeof manifest.counts.records === 'number' && manifest.counts.records !== imageCount) {
       throw new GenerationCorruptError(`store image record count mismatch (${imageCount} != ${manifest.counts.records})`);
     }
@@ -306,7 +316,7 @@ export class GenerationLoader<V> {
     const info = manifest.files[DT_INDEX_FILE];
     if (info) {
       try {
-        const payload = await readGenerationFileChecked(path.join(genDir, DT_INDEX_FILE), 'MDGD', 1, info);
+        const payload = await readGenerationFileCheckedAsync(path.join(genDir, DT_INDEX_FILE), 'MDGD', 1, info);
         this.deps.dt.loadImage(readDtIndexImage(payload));
         return;
       } catch (e) {
@@ -324,16 +334,17 @@ export class GenerationLoader<V> {
 
   /** Load secondary-index images for definitions whose hash still matches;
    *  rebuild exactly the affected indexes otherwise (plan: only the affected
-   *  index is rebuilt, never the whole registry). */
+   *  index is rebuilt, never the whole registry). The payload verify, the
+   *  parse, and each image's map construction are event-loop sliced. */
   private async loadSecondaryImages(genDir: string, manifest: GenerationManifest): Promise<void> {
     const live = this.deps.indexes.list();
     if (live.length === 0) return;
-    let images: Map<string, ReturnType<typeof readSecondaryIndexImage>[number]> | null = null;
+    let images: Map<string, Awaited<ReturnType<typeof readSecondaryIndexImageAsync>>[number]> | null = null;
     const info = manifest.files[SECONDARY_INDEX_FILE];
     if (info) {
       try {
-        const payload = await readGenerationFileChecked(path.join(genDir, SECONDARY_INDEX_FILE), 'MDSI', 1, info);
-        images = new Map(readSecondaryIndexImage(payload).map((i) => [i.name, i]));
+        const payload = await readGenerationFileCheckedAsync(path.join(genDir, SECONDARY_INDEX_FILE), 'MDSI', 1, info);
+        images = new Map((await readSecondaryIndexImageAsync(payload)).map((i) => [i.name, i]));
       } catch (e) {
         if (!(e instanceof GenerationCorruptError)) throw e;
       }
@@ -342,7 +353,7 @@ export class GenerationLoader<V> {
       const image = images?.get(def.name);
       if (image && manifest.indexDefs.secondary[def.name] === indexDefHash(def)) {
         try {
-          this.deps.indexes.loadImage(image);
+          await this.deps.indexes.loadImageAsync(image);
           continue;
         } catch {
           /* shape mismatch: rebuild below */
@@ -362,16 +373,17 @@ export class GenerationLoader<V> {
     this.deps.indexes.indexes.set(def.name, fresh.indexes.get(def.name)!);
   }
 
-  /** Load compound-index images (same per-index discipline as secondary). */
+  /** Load compound-index images (same per-index discipline — and the same
+   *  event-loop slicing — as secondary). */
   private async loadCompoundImages(genDir: string, manifest: GenerationManifest): Promise<void> {
     const live = this.deps.compound.list();
     if (live.length === 0) return;
-    let images: Map<string, ReturnType<typeof readCompoundIndexImage>[number]> | null = null;
+    let images: Map<string, Awaited<ReturnType<typeof readCompoundIndexImageAsync>>[number]> | null = null;
     const info = manifest.files[COMPOUND_INDEX_FILE];
     if (info) {
       try {
-        const payload = await readGenerationFileChecked(path.join(genDir, COMPOUND_INDEX_FILE), 'MDCI', 1, info);
-        images = new Map(readCompoundIndexImage(payload).map((i) => [i.name, i]));
+        const payload = await readGenerationFileCheckedAsync(path.join(genDir, COMPOUND_INDEX_FILE), 'MDCI', 1, info);
+        images = new Map((await readCompoundIndexImageAsync(payload)).map((i) => [i.name, i]));
       } catch (e) {
         if (!(e instanceof GenerationCorruptError)) throw e;
       }
@@ -380,7 +392,7 @@ export class GenerationLoader<V> {
       const image = images?.get(def.name);
       if (image && manifest.indexDefs.compound[def.name] === indexDefHash(def)) {
         try {
-          this.deps.compound.loadImage(image);
+          await this.deps.compound.loadImageAsync(image);
           continue;
         } catch {
           /* shape mismatch: rebuild below */
@@ -416,32 +428,23 @@ export class GenerationLoader<V> {
       if (dictInfo && docsInfo && postingsInfo && manifest.indexDefs.text[def.name] === indexDefHash(TextRegistry.canonicalTextDef(def))) {
         try {
           const tImage = performance.now();
-          const dictPayload = await readGenerationFileChecked(path.join(genDir, textDictionaryFile(def.name)), 'MDTD', 1, dictInfo);
-          const docsPayload = await readGenerationFileChecked(path.join(genDir, textDocsFile(def.name)), 'MDTC', 1, docsInfo);
+          const dictPayload = await readGenerationFileCheckedAsync(path.join(genDir, textDictionaryFile(def.name)), 'MDTD', 1, dictInfo);
+          const docsPayload = await readGenerationFileCheckedAsync(path.join(genDir, textDocsFile(def.name)), 'MDTC', 1, docsInfo);
           // The postings file carries the base every search reads: verify it
           // wholesale against the manifest NOW (one streaming crc pass), so a
           // corrupt base is rebuilt at open instead of failing a query later
-          // (its per-record CRCs would only trip on the first read).
+          // (its per-record CRCs would only trip on the first read). The
+          // verify is chunked with event-loop yields — a large postings file
+          // no longer pins the main thread for the whole pass.
           const postingsPath = path.join(genDir, textPostingsFile(def.name));
           const tCrc = performance.now();
-          verifyFileIntegritySync(postingsPath, postingsInfo);
+          await verifyFileIntegrityAsync(postingsPath, postingsInfo);
           this.deps.lifecycle.time('postingsIntegrityCheckMs', performance.now() - tCrc);
-          const dict = new Map(readTextDictionaryImage(dictPayload).map((e) => [e.term, { off: e.off, len: e.len, df: e.df }]));
-          const docs = readTextDocsImage(docsPayload);
-          const docLens = new Map<number, number>();
-          for (let i = 0; i < docs.docLens.length; i++) {
-            const len = docs.docLens[i];
-            if (len !== undefined) docLens.set(i, len);
-          }
-          ti.attachImage({
-            postingsPath,
-            dict,
-            keys: docs.keys,
-            docLens,
-            liveCount: docs.liveCount,
-            removed: new Set(docs.removed),
-            delta: new Map(docs.delta.map((d) => [d.term, new Map(d.docs.map((x) => [x.docID, x.freq] as [number, number]))])),
-          });
+          // The map constructions (dictionary, doc table, delta) are built
+          // inside the sliced attach — no intermediate wholesale Maps here.
+          const dictEntries = await readTextDictionaryImageAsync(dictPayload);
+          const docs = await readTextDocsImageAsync(docsPayload);
+          await ti.attachImageAsync({ postingsPath, dictEntries, docs });
           // Carry the integrity record forward: a later CLEAN fast-path build
           // re-publishes this unchanged file without re-reading it.
           ti.postingsFileInfo = { bytes: postingsInfo.bytes, crc32: postingsInfo.crc32 };
@@ -497,10 +500,16 @@ export class GenerationLoader<V> {
       const tApply = performance.now();
       let corruptBatches = 0;
       let appliedOps = 0;
+      // Cooperative slicing by PRIMITIVE op count and elapsed time (a batch
+      // frame can unroll into thousands of ops, so frame-granular yielding
+      // could not bound an apply slice — the open-time freeze this removes).
+      // Safe mid-apply: the store is not published until open() returns.
+      const slice = walApplySlicer();
       for (const f of r.frames) {
         for (const op of frameToOps(f, 'wal', fd, this.deps.valueMode(), () => corruptBatches++)) {
           this.deps.applyRecoveredOp(op);
           appliedOps++;
+          if (slice()) await yieldToLoop();
         }
       }
       this.deps.lifecycle.time('walApplyMs', performance.now() - tApply);

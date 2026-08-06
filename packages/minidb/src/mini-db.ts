@@ -26,7 +26,7 @@ import { CompoundIndexManager } from './compound-index.js';
 import { toKStr, writeFileAtomic } from './value-codec.js';
 import { LockFile } from './lockfile.js';
 import { createSerializer } from './serialize.js';
-import { MaintenanceScheduler, defaultWorkerSlots } from './maintenance.js';
+import { MaintenanceScheduler, defaultWorkerSlots, TEXT_BUILD_SLOT_WAIT_MS } from './maintenance.js';
 import { MemoryGuard } from './memory-guard.js';
 import { backup as runBackup, backupInProgressError as newBackupInProgressError } from './backup.js';
 import type { BackupDeps } from './backup.js';
@@ -54,7 +54,7 @@ import type { RangeOptions } from './skiplist.js';
 import type { TextIndexTokenizerName } from './trigram.js';
 import type { PostingEntry } from './text-postings.js';
 import { startWorkerTextBuild, textBuildWorkerAvailable, verifyFileCrcAsync, WorkerTextBuildError } from './worker/text-build.js';
-import type { TextBuildCheckpoint } from './worker/text-build.js';
+import type { TextBuildCheckpoint, WorkerTextBuildFallbackReason } from './worker/text-build.js';
 import { readBaseDocsImageAsync, BASE_DOCS_MAGIC, BASE_DOCS_VERSION } from './worker/text-build-core.js';
 import type { TextBuildCoreResult } from './worker/text-build-core.js';
 import { readGenerationFileCheckedAsync, readTextDictionaryImageAsync } from './gen-codec.js';
@@ -195,6 +195,10 @@ export class MiniDb<V = unknown> {
   private textWorkerDisabled = false;
   /** Stage 6: worker aggregation memory budget. */
   /* Non-private (package-internal): lifecycle.ts reads/writes this through its LifecycleHost view. */ textBuildMemoryBytes = 128 * 1024 * 1024;
+  /** TUI-safe worker-slot policy: how long a worker-eligible text build
+   *  queues for a process-wide slot before the bounded inline core is
+   *  allowed as the last resort (never the unbounded staged aggregation). */
+  /* Non-private (package-internal): read through the GenerationBuilderDeps view. */ textBuildSlotWaitMs = TEXT_BUILD_SLOT_WAIT_MS;
   /** Stage 6: maintenance I/O concurrency (snapshot grouped reads). */
   /* Non-private (package-internal): lifecycle.ts reads/writes this through its LifecycleHost view. */ maintenanceIoConcurrency = 8;
   /** Defer the open-time full text rebuild (no-generation fallback) to a background
@@ -333,6 +337,7 @@ export class MiniDb<V = unknown> {
       this.textWorkerDisabled = true;
     },
     textBuildMemoryBytes: () => this.textBuildMemoryBytes,
+    textBuildSlotWaitMs: () => this.textBuildSlotWaitMs,
     dt: this.dt,
     indexes: this.indexes,
     compound: this.compound,
@@ -847,11 +852,21 @@ export class MiniDb<V = unknown> {
       const postingsPath = tmpDir !== null ? path.join(tmpDir, rootPostingsFile(name)) : output!.postingsPath;
       const dictionaryPath = path.join(artifactsDir, textDictionaryFile(name));
       const baseDocsPath = path.join(artifactsDir, `${textDocsFile(name)}.base`);
-      // Worker thread when its entry file exists; the inline bounded core
-      // otherwise (slot pressure or a single-file deployment) — never the
-      // unbounded staged aggregation.
+      // Worker thread when its entry file exists; the inline bounded core is
+      // the last resort — never the unbounded staged aggregation. TUI-safe
+      // slot policy: queue for a process-wide worker slot first (bounded by
+      // textBuildSlotWaitMs and the caller's abort signal) instead of
+      // dropping a large build onto the main thread the moment every slot is
+      // busy; only a persisted slot drought (or a deployment without the
+      // worker file) hosts the SAME bounded core inline.
       const workerAvailable = textBuildWorkerAvailable();
-      slotRelease = workerAvailable ? defaultWorkerSlots.tryAcquire() : null;
+      let inlineReason: WorkerTextBuildFallbackReason | undefined;
+      if (workerAvailable) {
+        slotRelease = await defaultWorkerSlots.acquireBounded(this.textBuildSlotWaitMs, signal);
+        if (slotRelease === null) inlineReason = 'slot-pressure';
+      } else {
+        inlineReason = 'runtime-unavailable';
+      }
       const inline = slotRelease === null;
       const handle = startWorkerTextBuild(
         {
@@ -877,7 +892,7 @@ export class MiniDb<V = unknown> {
         {
           shouldAbort: () => this.state !== 'open' || signal?.aborted === true,
           inline,
-          inlineReason: workerAvailable ? 'slot-pressure' : 'runtime-unavailable',
+          inlineReason,
           signal,
           onFallback: (reason) => {
             this.stats.textWorkerFallbacks++;

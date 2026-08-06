@@ -643,3 +643,65 @@ test('async scanner: resync candidate budget bounds fake-magic storms', async ()
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+// ---- phase 3: cooperative slicing of the recovered-op apply loops -----------
+
+import { walApplySlicer, WAL_APPLY_OPS_PER_SLICE, WAL_APPLY_SLICE_MS } from '../src/recovery.js';
+
+test('walApplySlicer trips on the op budget, then resets; the time budget trips independently', () => {
+  const slice = walApplySlicer();
+  for (let i = 1; i < WAL_APPLY_OPS_PER_SLICE; i++) assert.equal(slice(), false);
+  assert.equal(slice(), true); // the op budget trips exactly at the cap
+  assert.equal(slice(), false); // counters reset for the next slice
+  // The time budget trips below the op cap once the slice ran long enough.
+  const timed = walApplySlicer();
+  assert.equal(timed(), false); // one op, well under the op cap
+  const t0 = performance.now();
+  while (performance.now() - t0 < WAL_APPLY_SLICE_MS + 5) {
+    // busy-wait: keep this slice over its time budget with ops to spare
+  }
+  assert.equal(timed(), true);
+});
+
+test('a generation WAL delta of large batch frames replays every op through the sliced apply loop', async () => {
+  const dir = await tmpDir();
+  try {
+    let db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    db.genBuildKickMinIntervalMs = Number.POSITIVE_INFINITY; // exactly one explicit generation
+    for (let base = 0; base < 2000; base += 500) {
+      await db.batch(Array.from({ length: 500 }, (_, i) => ({ op: 'set' as const, key: `b${base + i}`, value: { n: base + i } })));
+    }
+    await db.rebuildGeneration();
+    await db.close();
+
+    // A WAL delta of batch frames past the checkpoint: thousands of primitive
+    // ops in a handful of frames — frame-granular yielding could never slice
+    // this; the op/time budgets can. Small values keep the delta far below
+    // the close-time republish threshold.
+    db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    const gen = db.getIndexGeneration()?.id;
+    for (let base = 0; base < 3000; base += 500) {
+      await db.batch(Array.from({ length: 500 }, (_, i) => ({ op: 'set' as const, key: `d${base + i}`, value: { n: base + i } })));
+    }
+    await db.close();
+    assert.equal(db.getIndexGeneration()?.id, gen); // no close-time republish: the delta must be replayed
+
+    db = await MiniDb.open({ dir, valueCodec: 'json', autoCompact: false });
+    try {
+      assert.ok(db.recoveryInfo?.indexGeneration);
+      assert.equal(db.recoveryInfo?.walDeltaAppliedOps, 3000);
+      assert.equal(db.size, 5000);
+      assert.deepEqual(db.get('d0'), { n: 0 });
+      assert.deepEqual(db.get('d2999'), { n: 2999 });
+      assert.deepEqual(db.get('b1999'), { n: 1999 });
+      const status = db.lifecycleStatus();
+      assert.equal(status.state, 'ready');
+      assert.deepEqual(status.path, ['no-generation', 'generation-load', 'wal-catch-up', 'ready']);
+      assert.ok(status.phases.walApplyMs > 0);
+    } finally {
+      await db.close();
+    }
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

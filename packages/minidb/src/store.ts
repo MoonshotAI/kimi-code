@@ -389,6 +389,34 @@ export class Store {
     this.order = SkipList.bulkLoad(orderEntries, { compareKey: cmpString });
   }
 
+  /** Sliced variant of bulkLoadRefs (the open-time main-thread path):
+   *  identical resulting state, but the per-record map insertions yield to
+   *  the event loop every `sliceEvery` records, so a large store image never
+   *  loads in one synchronous run. The final ordered-index bulk build is a
+   *  single O(N) pass over the sorted entries and is likewise sliced via
+   *  SkipList.bulkLoadAsync. Safe to yield mid-load: the store is
+   *  not published until open() returns. */
+  async bulkLoadRefsAsync(
+    records: Iterable<{ kstr: string; ref: ValueRef; expireAt: number; dt: Record<string, number> | null; metaBytes?: number }>,
+    opts: { sliceEvery?: number } = {},
+  ): Promise<void> {
+    const sliceEvery = opts.sliceEvery ?? 8192;
+    const orderEntries: RangeEntry<string, string>[] = [];
+    let n = 0;
+    for (const { kstr, ref, expireAt, dt, metaBytes } of records) {
+      const seq = ++this.seq;
+      this.map.set(kstr, { ref, expireAt: expireAt || 0, seq, dt });
+      this.bytes += Buffer.byteLength(kstr, 'binary') + this.refBytes(ref) + (metaBytes ?? 0);
+      if (expireAt) {
+        this.expiring++;
+        this.heap.push({ t: expireAt, k: kstr, seq });
+      }
+      orderEntries.push({ key: kstr, val: kstr });
+      if (++n % sliceEvery === 0) await new Promise((r) => setImmediate(r));
+    }
+    this.order = await SkipList.bulkLoadAsync(orderEntries, { compareKey: cmpString }, { sliceEvery });
+  }
+
   private activeExpire(): void {
     const now = Date.now();
     // Normal ticks stay within the small budget; a tick that still finds a
