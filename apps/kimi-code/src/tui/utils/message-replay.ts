@@ -1,6 +1,7 @@
 import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
+  BackgroundTaskStatus,
   ContentPart,
   ContextMessage,
   PromptOrigin,
@@ -204,10 +205,26 @@ export function contentPartsToText(content: readonly ContentPart[]): string {
   return content.map(contentPartToText).join('');
 }
 
+/**
+ * agent-core-v2's task domain persists the terminal notification under the
+ * 'task' spelling (v1 used 'background_task'); both reach replay verbatim.
+ */
+export interface TaskNotificationOrigin {
+  readonly kind: 'task';
+  readonly taskId: string;
+  readonly status: BackgroundTaskStatus;
+  readonly notificationId: string;
+}
+
+export type BackgroundTaskNotificationOrigin =
+  | Extract<PromptOrigin, { kind: 'background_task' }>
+  | TaskNotificationOrigin;
+
 export function backgroundOrigin(
   message: ContextMessage,
-): Extract<PromptOrigin, { kind: 'background_task' }> | undefined {
-  return message.origin?.kind === 'background_task' ? message.origin : undefined;
+): BackgroundTaskNotificationOrigin | undefined {
+  const origin = message.origin as BackgroundTaskNotificationOrigin | undefined;
+  return origin?.kind === 'background_task' || origin?.kind === 'task' ? origin : undefined;
 }
 
 export function skillActivationFromOrigin(
