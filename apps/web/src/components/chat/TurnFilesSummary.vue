@@ -145,7 +145,7 @@ function openChange(change: TurnFileChange): void {
       <template v-if="showMoreRow" #foot>
         <Button variant="ghost" size="sm" class="tf-more" :aria-expanded="expanded" @click="expanded = !expanded">
           {{ moreLabel }}
-          <Icon class="tf-more-car" :class="{ open: expanded }" name="chevron-right" size="sm" aria-hidden="true" />
+          <Icon class="tf-more-car" :class="{ open: expanded }" name="chevron-down" size="sm" aria-hidden="true" />
         </Button>
       </template>
     </Card>
@@ -292,7 +292,7 @@ button.tf-file:hover {
   transition: transform var(--duration-base) var(--ease-out);
 }
 .tf-more-car.open {
-  transform: rotate(90deg);
+  transform: rotate(180deg);
 }
 
 /* Mini add/del proportion bar — same shape as the Edit tool line's. */
