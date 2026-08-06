@@ -561,6 +561,13 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - chatwidget `styled_lines`：折叠行单行预览 + `[+]` 标记；展开行逐行渲染（首行 `⚙` 前缀）
 - 测试：`tool_result_collapse_and_toggle`（短不折叠/长折叠/双向 toggle/无操作）+ chatwidget 2（折叠 `[+]` 单行 / 展开多行）→ kimi-tui **37** 全绿；workspace 0 errors
 
+**2026-08-06 G-4 分片 E：补全弹窗（slash 命令列表）✅**：
+- `CompletionState`（pub：matches + selected）；`completion_for_input` 自由函数——输入为裸 `/前缀`（无空格）时列出匹配 `SLASH_COMMANDS`
+- `refresh_completion` 在每次输入编辑（字符/退格/删除/光标移动）后刷新；输入含空格或普通文本时关闭
+- 键盘分支：弹窗激活时 **↑/↓ 移动选中、Enter 填入选中命令并关闭、Esc 先关弹窗**（二次 Esc 退出）
+- chatwidget `render_frame` 加 completion 参数：弹窗覆盖 chat 面板底部（`commands` 边框 + 选中 `▶` 高亮）
+- 测试：`completion_popup_matches_bare_slash_prefix`（/s 匹配、普通文本/空格/无匹配关闭）→ kimi-tui **38** 全绿；workspace 0 errors
+
 **2026-08-06 CLI 续补（G-3 批次 2 + ACP 增补）**：
 - **选项冲突校验补全 ✅**（TS `validateOptions` parity）：`print` 空 prompt / 空 `--model` 报错（"Prompt/Model cannot be empty."）；`print --continue` 与全局 `-S <id>` clap `conflicts_with` 互斥；新增 2 集成测试 → cli.rs 44 全绿
 - **ACP skills 命令广告 + `/skill:` 拦截 ✅**（kimi-acp，TS `acp-adapter` parity）：

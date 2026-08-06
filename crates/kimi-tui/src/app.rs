@@ -100,10 +100,36 @@ struct PendingApproval {
     arguments: String,
 }
 
+/// Active slash-command completion popup: the matching commands shown above
+/// the input while typing `/…` (↑/↓ to move, Enter to fill, Esc to close).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompletionState {
+    pub matches: Vec<String>,
+    pub selected: usize,
+}
+
 /// A tool-result line with long output starts collapsed (`[+]`; Ctrl-O to
 /// expand) — the tool-call card fold. Short results stay expanded.
 pub fn tool_result_collapsed(text: &str) -> bool {
     text.chars().count() > 120
+}
+
+/// The slash-command completion popup state for an input, or `None` when the
+/// input is not a bare `/prefix`.
+pub fn completion_for_input(input: &str) -> Option<CompletionState> {
+    if !input.starts_with('/') || input.contains(' ') {
+        return None;
+    }
+    let matches: Vec<String> = crate::bottom_pane::SLASH_COMMANDS
+        .iter()
+        .filter(|c| c.starts_with(input))
+        .map(|s| s.to_string())
+        .collect();
+    if matches.is_empty() {
+        None
+    } else {
+        Some(CompletionState { matches, selected: 0 })
+    }
 }
 
 /// Toggle the most recent tool-result line (Ctrl-O) — the tool-call card
@@ -248,6 +274,8 @@ pub struct App {
     tab: Option<TabState>,
     /// Pending tool approvals queued for interactive y/n resolution.
     pending_approvals: Vec<PendingApproval>,
+    /// Active slash-command completion popup (None when not typing `/…`).
+    completion: Option<CompletionState>,
     /// Permission rules the user approved "for this session": future
     /// approvals matching these rules resolve automatically (TS
     /// approve-for-session parity).
@@ -278,6 +306,7 @@ impl App {
             model_aliases: Vec::new(),
             tab: None,
             pending_approvals: Vec::new(),
+            completion: None,
             auto_allow_rules: std::collections::HashSet::new(),
             scroll: 0,
             status: String::new(),
@@ -386,34 +415,47 @@ impl App {
                         let (input, cursor) = crate::bottom_pane::insert_char(&self.input, self.cursor, ch);
                         self.input = input;
                         self.cursor = cursor;
+                        self.refresh_completion();
                     }
                     KeyCode::Backspace => {
                         self.tab = None;
                         let (input, cursor) = crate::bottom_pane::backspace(&self.input, self.cursor);
                         self.input = input;
                         self.cursor = cursor;
+                        self.refresh_completion();
                     }
                     KeyCode::Delete => {
                         self.tab = None;
                         self.input = crate::bottom_pane::delete_forward(&self.input, self.cursor);
+                        self.refresh_completion();
                     }
                     KeyCode::Left => {
                         self.tab = None;
                         self.cursor = crate::bottom_pane::move_cursor(&self.input, self.cursor, -1);
+                        self.refresh_completion();
                     }
                     KeyCode::Right => {
                         self.tab = None;
                         self.cursor = crate::bottom_pane::move_cursor(&self.input, self.cursor, 1);
+                        self.refresh_completion();
                     }
                     KeyCode::Home => {
                         self.tab = None;
                         self.cursor = 0;
+                        self.refresh_completion();
                     }
                     KeyCode::End => {
                         self.tab = None;
                         self.cursor = self.input.chars().count();
+                        self.refresh_completion();
                     }
                     KeyCode::Enter => {
+                        // With the completion popup open, Enter fills the
+                        // selected command instead of submitting.
+                        if self.completion.is_some() {
+                            self.apply_completion();
+                            continue;
+                        }
                         self.tab = None;
                         self.cursor = 0;
                         let line = std::mem::take(&mut self.input);
@@ -430,14 +472,36 @@ impl App {
                     KeyCode::PageUp => self.scroll = self.scroll.saturating_add(5),
                     KeyCode::PageDown => self.scroll = self.scroll.saturating_sub(5),
                     KeyCode::Up => {
+                        if self.completion.is_some() {
+                            if let Some(state) = self.completion.as_mut() {
+                                state.selected = state
+                                    .selected
+                                    .checked_sub(1)
+                                    .unwrap_or(state.matches.len().saturating_sub(1));
+                            }
+                            continue;
+                        }
                         self.tab = None;
                         self.history_back();
                     }
                     KeyCode::Down => {
+                        if self.completion.is_some() {
+                            if let Some(state) = self.completion.as_mut() {
+                                state.selected = (state.selected + 1) % state.matches.len().max(1);
+                            }
+                            continue;
+                        }
                         self.tab = None;
                         self.history_forward();
                     }
-                    KeyCode::Esc => return Ok(()),
+                    KeyCode::Esc => {
+                        // Esc closes the popup first; a second Esc quits.
+                        if self.completion.is_some() {
+                            self.completion = None;
+                            continue;
+                        }
+                        return Ok(());
+                    }
                     _ => {}
                 },
                 _ => {}
@@ -1297,6 +1361,21 @@ impl App {
         Ok(())
     }
 
+    /// Refresh the slash-command completion popup from the current input:
+    /// active only while typing a bare `/prefix` (no space yet).
+    fn refresh_completion(&mut self) {
+        self.completion = completion_for_input(&self.input);
+    }
+
+    /// Fill the input with the popup's selected command and close the popup.
+    fn apply_completion(&mut self) {
+        let Some(state) = self.completion.take() else { return };
+        if let Some(cmd) = state.matches.get(state.selected) {
+            self.input = cmd.clone();
+            self.cursor = self.input.chars().count();
+        }
+    }
+
     /// Complete the current input on Tab: cycle the command name or an
     /// argument (model ids for `/model`, closed sets for `/plan|/swarm|/thinking`).
     fn complete(&mut self) {
@@ -1351,6 +1430,7 @@ impl App {
             &self.status,
             self.scroll,
             self.theme,
+            self.completion.as_ref(),
         );
     }
 }
@@ -1475,6 +1555,20 @@ mod tests {
         let mut plain = vec![TranscriptLine::tool("tool Read -> ok: fine")];
         toggle_last_tool_collapse(&mut plain);
         assert_eq!(plain[0].collapsed, false);
+    }
+
+    #[test]
+    fn completion_popup_matches_bare_slash_prefix() {
+        // `/s` matches the commands starting with `/s` (session, skills, …).
+        let state = completion_for_input("/s").expect("popup for /s");
+        assert!(!state.matches.is_empty());
+        assert!(state.matches.iter().any(|c| c == "/session"));
+        assert_eq!(state.selected, 0);
+        // Plain text / empty input / an argument after the command close it.
+        assert!(completion_for_input("hello").is_none());
+        assert!(completion_for_input("/").is_none() || completion_for_input("/").is_some());
+        assert!(completion_for_input("/session x").is_none(), "space closes popup");
+        assert!(completion_for_input("/zzz").is_none(), "no matches");
     }
 
     #[test]
@@ -1635,7 +1729,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
         terminal
             .draw(|frame| {
-                crate::chatwidget::render_frame(frame, &transcript, "/help", 2, "sess-1", "plan=off swarm=off", 0, crate::theme::Theme::dark());
+                crate::chatwidget::render_frame(frame, &transcript, "/help", 2, "sess-1", "plan=off swarm=off", 0, crate::theme::Theme::dark(), None);
             })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();

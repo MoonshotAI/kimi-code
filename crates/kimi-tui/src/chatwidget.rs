@@ -13,7 +13,8 @@ use crate::theme::Theme;
 
 /// Draw the two-pane chat layout: a scrollable transcript on top and the
 /// input line (with session id + status footer) below, with the cursor at
-/// the editing position.
+/// the editing position. When a slash-command completion popup is active it
+/// is drawn over the bottom of the chat pane.
 pub fn render_frame(
     frame: &mut ratatui::Frame<'_>,
     transcript: &[TranscriptLine],
@@ -23,20 +24,50 @@ pub fn render_frame(
     status: &str,
     scroll: u16,
     theme: Theme,
+    completion: Option<&crate::app::CompletionState>,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(3)])
         .split(frame.area());
-    let chat = Paragraph::new(styled_lines(transcript, theme))
+    let mut chat = Paragraph::new(styled_lines(transcript, theme))
         .block(Block::default().borders(Borders::ALL).title("chat"))
         .scroll((scroll, 0));
+    // The completion popup overlays the bottom of the chat pane.
+    if let Some(state) = completion {
+        let popup_lines: Vec<RenderLine<'static>> = state
+            .matches
+            .iter()
+            .enumerate()
+            .map(|(i, cmd)| {
+                let selected = i == state.selected;
+                RenderLine::from(Span::styled(
+                    format!("  {} {}", if selected { "▶" } else { " " }, cmd),
+                    Style::default().fg(if selected { theme.assistant } else { theme.status }),
+                ))
+            })
+            .collect();
+        let popup = Paragraph::new(popup_lines).block(
+            Block::default().borders(Borders::ALL).title("commands"),
+        );
+        let popup_height = (state.matches.len() as u16 + 2).min(chunks[0].height);
+        let area = ratatui::layout::Rect {
+            x: chunks[0].x,
+            y: chunks[0].y + chunks[0].height - popup_height,
+            width: chunks[0].width,
+            height: popup_height,
+        };
+        frame.render_widget(chat, chunks[0]);
+        // Overlay the popup on the bottom of the chat pane.
+        frame.render_widget(popup, area);
+    } else {
+        frame.render_widget(chat, chunks[0]);
+    }
     let input_widget = Paragraph::new(input).block(
         Block::default()
             .borders(Borders::ALL)
             .title(format!("input — {session_id} | {status}")),
     );
-    frame.render_widget(chat, chunks[0]);
     frame.render_widget(input_widget, chunks[1]);
     // Place the terminal cursor at the input editing position (inside the
     // border). A cursor beyond the pane width is safe — it just stays hidden
