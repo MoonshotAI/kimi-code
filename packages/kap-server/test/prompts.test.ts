@@ -362,9 +362,13 @@ describe('server-v2 /api/v1 prompts', () => {
     // The original client upload stays untouched.
     const original = await server!.core.accessor.get(IFileService).get(uploaded.data.id);
     expect(original.meta.size).toBe(bigPng.length);
-    await expect(server!.core.accessor.get(IFileService).get(finalFileId)).rejects.toMatchObject({
-      code: 'file.not_found',
-    });
+
+    // The compressed re-save stays retrievable: read models project this id
+    // (submit response, prompt list, transcript), so it must keep serving the
+    // final bytes like any client upload — deleting it after intake would
+    // leave every projected `{kind:'file'}` reference dangling.
+    const final = await server!.core.accessor.get(IFileService).get(finalFileId);
+    expect(final.meta.size).toBe((await readFile(mediaPath)).length);
 
     // The internal reference never leaks to the wire.
     expect(JSON.stringify(content)).not.toContain('kimi-file://');

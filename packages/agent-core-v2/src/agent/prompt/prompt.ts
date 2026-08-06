@@ -12,8 +12,6 @@ export interface PromptSubmitContext {
 export interface PromptInput {
   readonly id?: string;
   readonly message: ContextMessage;
-  /** Release edge-owned staging resources after intake has reached a terminal state. */
-  readonly release?: () => Promise<void> | void;
 }
 
 export type PromptState =

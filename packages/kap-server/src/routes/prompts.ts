@@ -241,8 +241,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { session_id } = req.params;
-      let releasePrepared: (() => Promise<void>) | undefined;
-      let handedOff = false;
+      let preparedMedia: PromptMediaPreparation | undefined;
+      let enqueued = false;
       try {
         // Fail fast on stale file references before anything is resolved or
         // mutated: a bad `file_id` must not create the agent, register `main`
@@ -258,7 +258,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         // resolves them to a provider form (upload / inline / path tag) at
         // request time, so the edge no longer uploads.
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
-        const preparedMedia = await resolvePromptMediaFiles(
+        preparedMedia = await resolvePromptMediaFiles(
           req.body,
           core.accessor.get(IFileService),
           core.accessor.get(IBootstrapService).cacheDir,
@@ -281,7 +281,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           },
         );
         const resolvedBody = preparedMedia.body;
-        releasePrepared = preparedMedia.release;
 
         // Media prepared successfully — only now do the overrides bind.
         let thinkingConsumed = false;
@@ -324,14 +323,16 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             toolCalls: [],
             origin: { kind: 'user' },
           },
-          release: preparedMedia.release,
         });
-        handedOff = true;
+        enqueued = true;
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
+        // A submission that failed before the engine took the prompt projected
+        // no upload ids to the client — roll back the uploads the preparation
+        // created. After a successful enqueue the compressed re-save must stay
+        // retrievable: read models project its id.
+        if (!enqueued) await preparedMedia?.discard();
         sendMappedError(reply, req, error);
-      } finally {
-        if (!handedOff) await releasePrepared?.();
       }
     },
   );
@@ -480,7 +481,13 @@ interface ResolvePromptMediaOptions {
 
 interface PromptMediaPreparation {
   readonly body: PromptSubmission;
-  readonly release: () => Promise<void>;
+  /**
+   * Delete the daemon uploads this preparation created (the compressed
+   * re-save). Failure rollback only: once a submission reaches the engine,
+   * client read models project these upload ids, so they must stay
+   * retrievable like any client upload.
+   */
+  readonly discard: () => Promise<void>;
 }
 
 async function resolvePromptMediaFiles(
@@ -490,10 +497,10 @@ async function resolvePromptMediaFiles(
   options: ResolvePromptMediaOptions = {},
 ): Promise<PromptMediaPreparation> {
   const ownedFileIds = new Set<string>();
-  let released = false;
-  const release = async (): Promise<void> => {
-    if (released) return;
-    released = true;
+  let discarded = false;
+  const discard = async (): Promise<void> => {
+    if (discarded) return;
+    discarded = true;
     await Promise.all(
       [...ownedFileIds].map((fileId) => store.delete(fileId).catch(() => undefined)),
     );
@@ -699,29 +706,23 @@ async function resolvePromptMediaFiles(
         // resolves at request time, preceded by the `<image path>` tag text so
         // the model always has a path it can re-open. When compression changed
         // the bytes, the reference addresses a NEW daemon upload holding the
-        // final bytes — the client's original upload stays untouched.
+        // final bytes — the client's original upload stays untouched. The
+        // re-save is an ordinary upload (no expiry): read models project its
+        // id, so it must keep serving bytes for the session's history.
         let finalFile = file;
         if (compressed.changed) {
           const saved = await store.save(
             Readable.from(Buffer.from(compressed.data)),
             compressedUploadName(file.meta.name, compressed.mimeType),
-            { mimeType: compressed.mimeType, expiresInSec: 60 * 60 },
+            { mimeType: compressed.mimeType },
           );
+          // Owned until the body reaches the engine: a preparation failure
+          // rolls the re-save back (the outer catch), a successful submission
+          // keeps it alive.
           ownedFileIds.add(saved.id);
-          try {
-            finalFile = await store.get(saved.id);
-          } catch (error) {
-            await release();
-            throw error;
-          }
+          finalFile = await store.get(saved.id);
         }
-        let mediaPath: string;
-        try {
-          mediaPath = await materializePromptMedia(finalFile, resolveMediaStore(), cacheDir);
-        } catch (error) {
-          await release();
-          throw error;
-        }
+        const mediaPath = await materializePromptMedia(finalFile, resolveMediaStore(), cacheDir);
         content.push({ type: 'text', text: buildMediaPathTag('image', mediaPath) });
         content.push({
           type: 'image',
@@ -743,9 +744,9 @@ async function resolvePromptMediaFiles(
       });
       changed = true;
     }
-    return { body: changed ? { ...body, content } : body, release };
+    return { body: changed ? { ...body, content } : body, discard };
   } catch (error) {
-    await release();
+    await discard();
     throw error;
   }
 }

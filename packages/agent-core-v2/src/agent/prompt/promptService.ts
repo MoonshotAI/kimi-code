@@ -70,7 +70,6 @@ interface Record extends PromptSnapshot {
   readonly completionDeferred: Deferred<PromptCompletion>;
   readonly intakeController: AbortController;
   intake: Promise<void>;
-  readonly release?: () => Promise<void> | void;
   handle: PromptHandle;
 }
 
@@ -135,8 +134,7 @@ export class AgentPromptService extends Disposable implements IAgentPromptServic
     let tracked!: Promise<void>;
     tracked = intake
       .catch(() => undefined)
-      .then(async () => {
-        await Promise.resolve(record.release?.()).catch(() => undefined);
+      .then(() => {
         this.intakes.delete(tracked);
         this.intakeControllers.delete(record.intakeController);
       });
@@ -153,7 +151,6 @@ export class AgentPromptService extends Disposable implements IAgentPromptServic
     const record = {
       id, userMessageId: id, createdAt: new Date().toISOString(), state: 'pending', message,
       launchedDeferred, completionDeferred, intakeController: new AbortController(),
-      release: input.release,
     } as Record;
     record.intake = this.mediaIntakeOf(record);
     record.handle = {
@@ -209,10 +206,21 @@ export class AgentPromptService extends Disposable implements IAgentPromptServic
       const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
         this.wire.dispatch(steerTurn({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }));
       }, () => {});
-      const turn = (await this.loop.enqueue(request).assigned).turn;
-      if (turn === undefined || this.active !== active || turn.id !== active.turn.id) {
+      const receipt = this.loop.enqueue(request);
+      const turn = (await receipt.assigned).turn;
+      const cancelledMidFlight = !this.reservationsMatch(selected, active);
+      if (turn === undefined || this.active !== active || turn.id !== active.turn.id || cancelledMidFlight) {
+        // The steer request is turn-agnostic (`turnScoped: false`), so without
+        // an explicit abort it could still materialize its content into
+        // whichever turn pops it next. An abort that landed inside the
+        // `assigned` window has already settled the record as cancelled —
+        // keep that terminal state instead of flipping it to 'steered'.
+        receipt.abort(userCancellationReason());
         this.cancelSteering(selected);
-        throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
+        throw new Error2(
+          ErrorCodes.PROMPT_NOT_FOUND,
+          cancelledMidFlight ? 'prompt steer was cancelled' : 'no active turn to steer into',
+        );
       }
       for (const item of selected) {
         this.steering.delete(item.id);

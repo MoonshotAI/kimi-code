@@ -19,7 +19,8 @@ import { Event } from '#/_base/event';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentLoopService, type Step, type StepAssignment } from '#/agent/loop/loop';
+import type { StepRequest } from '#/agent/loop/stepRequest';
 import { buildDaemonFileUrl } from '#/agent/media/mediaRef';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
@@ -274,11 +275,9 @@ describe('AgentPromptService daemon media intake', () => {
     const sessionDir = await tmpSessionDir();
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
     const { prompt } = harness({ sessionDir, files });
-    const release = vi.fn(async () => undefined);
 
     const handle = await prompt.enqueue({
       id: 'prompt-media',
-      release,
       message: {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1') } }],
@@ -292,10 +291,6 @@ describe('AgentPromptService daemon media intake', () => {
     expect(handle.message.content).toEqual([
       { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
     ]);
-    // The staged-upload release fires exactly once, right after intake settles.
-    await vi.waitFor(() => {
-      expect(release).toHaveBeenCalledTimes(1);
-    });
   });
 
   it('rewrites a client-cache tag+reference pair to the session media dir', async () => {
@@ -425,11 +420,9 @@ describe('AgentPromptService daemon media intake', () => {
       ['f_slow', { name: 'slow.png', bytes: PNG_BYTES, stream: slowStream }],
     ]);
     const { prompt } = harness({ sessionDir, files });
-    const release = vi.fn(async () => undefined);
 
     const handlePromise = prompt.enqueue({
       id: 'media-abort',
-      release,
       message: {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_slow') } }],
@@ -444,7 +437,6 @@ describe('AgentPromptService daemon media intake', () => {
     await expect(handle.completion).resolves.toMatchObject({ state: 'cancelled' });
     open();
     await prompt.drain();
-    expect(release).toHaveBeenCalledTimes(1);
     await expect(readFile(join(sessionDir, 'media', 'f_slow.png'))).rejects.toMatchObject({
       code: 'ENOENT',
     });
@@ -671,5 +663,51 @@ describe('AgentPromptService daemon media intake', () => {
     await expect(steerPromise).rejects.toThrow(/cancelled/);
     expect(queued.state).toBe('cancelled');
     await expect(queued.completion).resolves.toMatchObject({ state: 'cancelled' });
+  });
+
+  it('keeps an abort that lands while a steer awaits its step assignment', async () => {
+    const { prompt, loop, eventBus } = harness();
+    const active = await prompt.enqueue({ id: 'active', message: message('active') });
+    const activeTurn = await active.launched;
+    const queued = await prompt.enqueue({ id: 'steer-me', message: message('steer me') });
+
+    // Hold the steer request's step assignment so the abort lands mid-flight.
+    let assign!: (assignment: StepAssignment) => void;
+    let steerRequest!: StepRequest;
+    const originalEnqueue = loop.enqueue.bind(loop);
+    vi.spyOn(loop, 'enqueue').mockImplementation((request, options) => {
+      if (request.kind !== 'steer') return originalEnqueue(request, options);
+      steerRequest = request;
+      const assigned = new Promise<StepAssignment>((resolve) => { assign = resolve; });
+      void assigned.catch(() => undefined);
+      return { assigned, abort: () => request.abort() };
+    });
+    const events: string[] = [];
+    eventBus.subscribe('prompt.steered', () => events.push('steered'));
+    eventBus.subscribe('prompt.aborted', () => events.push('aborted'));
+
+    const steerPromise = prompt.steer([queued.id]);
+    void steerPromise.catch(() => undefined);
+    await vi.waitFor(() => expect(steerRequest).toBeDefined());
+
+    // The abort settles the prompt as cancelled inside the assignment window;
+    // the steer must not flip it back to 'steered', and the undispatched
+    // request must be discarded so its content never reaches the context.
+    expect(prompt.abort(queued.id)).toBe(true);
+    const step: Step = {
+      id: steerRequest.id,
+      turnId: activeTurn!.id,
+      state: 'queued',
+      signal: new AbortController().signal,
+      result: Promise.resolve({ type: 'completed' }),
+      cancel: () => steerRequest.abort(),
+    };
+    assign({ turn: activeTurn!, step });
+
+    await expect(steerPromise).rejects.toThrow(/steer was cancelled/);
+    expect(queued.state).toBe('cancelled');
+    await expect(queued.completion).resolves.toMatchObject({ state: 'cancelled' });
+    expect(steerRequest.aborted).toBe(true);
+    expect(events).toEqual(['aborted']);
   });
 });
