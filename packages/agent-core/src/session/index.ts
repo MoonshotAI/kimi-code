@@ -780,18 +780,14 @@ export class Session {
     const subagentNames = Object.keys(this.agentCatalog.delegatableSubagents(profile.name));
 
     // Apply global [tools].disabled without persisting it into the agent's
-    // profile/wire record. useProfile internally calls setActiveTools with
-    // profile.disallowedTools, which gets replayed on resume - so merging
-    // config-disabled tools into the profile would persist them even after
-    // the user removes the config. Instead, use the original profile for
-    // useProfile, then compose the denylist separately. #2534.
+    // profile/wire record. useProfile persists only profile.disallowedTools
+    // (replayed on resume); config denies are added via addDisallowedTools,
+    // which mutates the deny set without logging a record, so removing the
+    // config later does not leave a stale persisted deny. #2534.
     const toolsDisabled = this.readToolsDisabled();
     agent.useProfile(profile, context, this.options.kimiHomeDir, subagentNames);
     if (toolsDisabled.length > 0) {
-      agent.tools.setActiveTools(
-        profile.tools,
-        [...(profile.disallowedTools ?? []), ...toolsDisabled],
-      );
+      agent.tools.addDisallowedTools(toolsDisabled);
     }
     const { agentsMdWarning } = context;
     if (agentsMdWarning !== undefined) {

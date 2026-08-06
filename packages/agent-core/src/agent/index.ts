@@ -450,14 +450,17 @@ export class Agent {
   ): void {
     this.setActiveProfile(profile, brandHome);
     this.updateSystemPromptFromProfile(profile, context, subagentNames);
-    // Compose the global [tools].disabled denylist so a standalone Agent (no
-    // Session) honors the config at startup, not only on a later tool-selection
-    // RPC. #2534.
+    // Persist only the profile's own denylist via setActiveTools (it is
+    // replayed on resume). The global [tools].disabled denylist is applied
+    // separately via addDisallowedTools, which mutates the deny set without
+    // logging a set_active_tools record - otherwise a config deny added at
+    // startup would be written into the wire record and survive a later
+    // config removal on cold resume. #2534.
+    this.tools.setActiveTools(profile.tools, profile.disallowedTools);
     const toolsDisabled = this.configDisabledTools();
-    this.tools.setActiveTools(profile.tools, [
-      ...(profile.disallowedTools ?? []),
-      ...toolsDisabled,
-    ]);
+    if (toolsDisabled.length > 0) {
+      this.tools.addDisallowedTools(toolsDisabled);
+    }
   }
 
   /** Global [tools].disabled from options.config.raw, if provided. #2534. */
@@ -671,11 +674,16 @@ export class Agent {
         this.tools.unregisterUserTool(payload.name);
       },
       setActiveTools: (payload) => {
-        // Compose the global [tools].disabled denylist here so a runtime
-        // tool selection cannot reset disabledTools to empty. Without this,
-        // a setActiveTools update that includes a disabled tool (e.g. Bash)
-        // would reactivate it. #2534.
-        this.tools.setActiveTools(payload.names, this.configDisabledTools());
+        // Persist the runtime selection only. The global [tools].disabled
+        // denylist is re-applied via addDisallowedTools (no record) so a
+        // runtime selection cannot reactivate a disabled tool, while keeping
+        // config-only denies out of the persisted set_active_tools record.
+        // #2534.
+        this.tools.setActiveTools(payload.names);
+        const toolsDisabled = this.configDisabledTools();
+        if (toolsDisabled.length > 0) {
+          this.tools.addDisallowedTools(toolsDisabled);
+        }
       },
       stopBackground: (payload) => {
         void this.background.stop(payload.taskId, payload.reason);
