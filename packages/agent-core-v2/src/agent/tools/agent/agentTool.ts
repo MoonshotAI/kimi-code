@@ -273,7 +273,7 @@ export class SubagentTool implements ISubagentTool {
       displayModel =
         resumed.modelAlias === undefined
           ? undefined
-          : subagentDisplayModel(this.config, this.flags, resumed.modelAlias);
+          : subagentDisplayModel(this.config, resumed.modelAlias);
     } else {
       const requestedProfileName = args.subagent_type?.length
         ? args.subagent_type

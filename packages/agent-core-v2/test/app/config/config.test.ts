@@ -80,6 +80,7 @@ import {
   resolveSubagentTimeoutMs,
   SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
+  subagentDisplayModel,
   type SubagentConfig,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
@@ -1816,6 +1817,27 @@ describe('subagent config section', () => {
     });
 
     disposables.dispose();
+  });
+
+  it('normalizes the derived entry to the recipe base alias regardless of the flag', async () => {
+    const withRecipe = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
+    );
+    // A persisted derived binding (from when the flag was on) must still
+    // display as the base alias after the experiment is switched off.
+    expect(subagentDisplayModel(withRecipe.config, SECONDARY_DERIVED_MODEL_ID)).toBe(
+      'provider/secondary',
+    );
+    expect(subagentDisplayModel(withRecipe.config, 'provider/main')).toBe('provider/main');
+    withRecipe.disposables.dispose();
+
+    // Recipe gone: fall back to the raw alias rather than dropping the row.
+    const bare = await createConfig({});
+    expect(subagentDisplayModel(bare.config, SECONDARY_DERIVED_MODEL_ID)).toBe(
+      SECONDARY_DERIVED_MODEL_ID,
+    );
+    bare.disposables.dispose();
   });
 
   it('preserves the coded error contract when adding secondary-model guidance', () => {

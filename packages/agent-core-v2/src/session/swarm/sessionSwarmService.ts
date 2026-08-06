@@ -31,7 +31,6 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
 import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -96,7 +95,6 @@ export class SessionSwarmService implements ISessionSwarmService {
     @ILogService private readonly log: ILogService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IConfigService private readonly config: IConfigService,
-    @IFlagService private readonly flags: IFlagService,
   ) {}
 
   async getSwarmItem(args: {
@@ -196,7 +194,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       runInBackground: options.runInBackground,
       // Display-facing alias: the derived `__secondary__` entry resolves back
       // to its base alias (idempotent when the caller already normalized it).
-      model: subagentDisplayModel(this.config, this.flags, binding.model),
+      model: subagentDisplayModel(this.config, binding.model),
     });
     const promptText = await applyProfilePromptPrefix(profile, options.prompt, {
       cwd: this.sessionContext.cwd,
@@ -236,7 +234,7 @@ export class SessionSwarmService implements ISessionSwarmService {
         model:
           resumedModel === undefined
             ? undefined
-            : subagentDisplayModel(this.config, this.flags, resumedModel),
+            : subagentDisplayModel(this.config, resumedModel),
       });
     }
     const request = retryTurn

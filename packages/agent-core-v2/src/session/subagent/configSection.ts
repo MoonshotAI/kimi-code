@@ -122,7 +122,7 @@ export function resolveSubagentBinding(
     return {
       model,
       thinking: secondary.defaultEffort,
-      displayModel: subagentDisplayModel(config, flags, model),
+      displayModel: subagentDisplayModel(config, model),
     };
   }
   return { model: own.modelAlias, thinking: own.thinkingLevel, displayModel: own.modelAlias };
@@ -133,14 +133,19 @@ export function resolveSubagentBinding(
  * `__secondary__` derived entry means nothing to a user, so it resolves back
  * to the base alias the secondary recipe points at. Every other alias is
  * returned unchanged. Falls back to the raw alias when the recipe is gone.
+ *
+ * Deliberately flag-independent: the experimental flag gates whether NEW
+ * spawns bind the secondary model, but interpreting an already-persisted
+ * derived binding (resume) must keep working after the flag is flipped off.
  */
 export function subagentDisplayModel(
   config: IConfigService,
-  flags: IFlagService,
   boundAlias: string,
 ): string {
   if (boundAlias !== SECONDARY_DERIVED_MODEL_ID) return boundAlias;
-  return resolveSecondaryModel(config, flags)?.model ?? boundAlias;
+  return (
+    config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION)?.model ?? boundAlias
+  );
 }
 
 export function buildSubagentModelDescriptions(
