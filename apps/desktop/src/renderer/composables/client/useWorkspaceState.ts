@@ -42,6 +42,7 @@ import { buildFullDiffTexts, type DiffFullTexts } from '../../lib/diffFullTexts'
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import { ackThinkingPending, markThinkingPending } from '../../lib/modelThinking';
+import { attachmentsToContent } from '../../lib/attachmentsToContent';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
 import { track } from '../../lib/track';
 import { consumeSessionIntent } from '../../lib/session-intent';
@@ -1633,12 +1634,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * new-session screen silently dropped the activation (`activateSkill` needs a
    * session id). Shares createDraftSession so the model and draft modes are
    * applied identically to a prompt-started session; then persists any draft
-   * plan/swarm modes here, because skill activation carries only `args`.
+   * plan/swarm modes here, because skill activation carries only `args` and
+   * attachments.
    */
   async function startSessionAndActivateSkill(
     workspaceId: string,
     skillName: string,
     args?: string,
+    attachments?: PromptAttachment[],
   ): Promise<string | null> {
     // Same reentry window as startSessionAndSendPrompt (see the guard there):
     // draft-session creation selects the new session before the activation,
@@ -1650,14 +1653,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const sid = await createDraftSession(workspaceId);
       if (!sid) return null;
       createdId = sid;
-      // Unlike a plain prompt, skill activation only carries `args`, so the
-      // daemon never sees the prompt-time controls the user may have changed on
-      // the draft (plan/swarm, plus permission via /auto|/yolo). Persist them
-      // onto this new session's profile and await it before activating,
-      // otherwise the first skill turn can start before applyAgentState and
-      // run at daemon defaults while the UI shows otherwise. Goal mode is a
-      // one-shot flag consumed per send, not a profile field, so there is
-      // nothing to persist for it.
+      // Unlike a plain prompt, skill activation carries no prompt-time
+      // controls, so the daemon never sees the prompt-time controls the user
+      // may have changed on the draft (plan/swarm, plus permission via
+      // /auto|/yolo). Persist them onto this new session's profile and await
+      // it before activating, otherwise the first skill turn can start before
+      // applyAgentState and run at daemon defaults while the UI shows
+      // otherwise. Goal mode is a one-shot flag consumed per send, not a
+      // profile field, so there is nothing to persist for it.
       const planMode = rawState.planModeBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
       const promptSession = rawState.sessions.find((s) => s.id === sid);
@@ -1684,7 +1687,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (!persisted) return sid;
       // The patch above already carried (and awaited) the thinking level —
       // skip the redundant second write inside activateSkill.
-      await modelProvider.activateSkill(skillName, args, sid, { skipThinkingPersist: true });
+      await modelProvider.activateSkill(skillName, args, attachments, sid, { skipThinkingPersist: true });
       return sid;
     } catch (err) {
       pushOperationFailure('startSessionAndActivateSkill', err);
@@ -1982,18 +1985,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const api = getKimiWebApi();
       const content: import('../../api/types').AppMessageContent[] = [];
       if (text) content.push({ type: 'text', text });
-      for (const att of attachments ?? []) {
-        if (att.kind === 'video') content.push({ type: 'video', source: { kind: 'file', fileId: att.fileId } });
-        else if (att.kind === 'file') {
-          content.push({
-            type: 'file',
-            fileId: att.fileId,
-            name: att.name ?? '',
-            mediaType: att.mediaType || 'application/octet-stream',
-            size: att.size ?? 0,
-          });
-        } else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
-      }
+      content.push(...attachmentsToContent(attachments));
       if (content.length === 0) {
         rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
         return 'rejected';

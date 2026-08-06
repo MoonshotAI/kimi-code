@@ -195,6 +195,61 @@ describe('messagesToTurns skill activation', () => {
     expect(turns.map((t) => t.role)).toEqual(['assistant', 'user', 'assistant']);
     expect(turns[1]?.skillActivation).toEqual({ name: 'kimi-webbridge', args: undefined });
   });
+
+  it('recovers attachment chips on a user-slash activation and surfaces args once', () => {
+    // A skill activation carrying uploads: the daemon appends the resolved
+    // attachment parts after the rendered skill-prompt text part on the same
+    // user message. After a reload, media come back as `<video|image path>…`
+    // tags and other files as "Attached file …" notices — same as plain prompts.
+    const fileId = 'f_0aa63f2e-9e03-4e4d-b191-245d15e0ba61';
+    const turns = messagesToTurns(
+      [
+        message(
+          'sk-1',
+          'user',
+          [
+            { type: 'text', text: '<kimi-skill-loaded skill="kimi-webbridge">\n…' },
+            { type: 'text', text: `<video path="/cache/${fileId}.mp4"></video>` },
+            {
+              type: 'text',
+              text: `Attached file "notes.txt" (text/plain, 12 bytes): /sess/attachments/${fileId}-notes.txt — open it with the Read tool`,
+            },
+            { type: 'image', source: { kind: 'file', fileId } },
+          ],
+          {
+            metadata: {
+              origin: {
+                kind: 'skill_activation',
+                skillName: 'kimi-webbridge',
+                skillArgs: 'fix it',
+                trigger: 'user-slash',
+              },
+            },
+          },
+        ),
+      ],
+      [],
+      (id) => `file://${id}`,
+      false,
+    );
+    expect(turns).toHaveLength(1);
+    const turn = turns[0]!;
+    // The args show once — not once per text part.
+    expect(turn.text).toBe('fix it');
+    expect(turn.skillActivation).toEqual({ name: 'kimi-webbridge', args: 'fix it' });
+    expect(turn.attachments).toEqual([
+      { url: `file://${fileId}`, kind: 'video', fileId },
+      {
+        kind: 'file',
+        url: `file://${fileId}`,
+        fileId,
+        name: 'notes.txt',
+        mediaType: 'text/plain',
+        size: 12,
+      },
+      { url: `file://${fileId}`, kind: 'image', name: undefined, fileId },
+    ]);
+  });
 });
 
 describe('messagesToTurns turn stamps', () => {

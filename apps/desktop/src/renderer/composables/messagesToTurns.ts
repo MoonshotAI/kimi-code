@@ -973,9 +973,34 @@ export function messagesToTurns(
       for (const c of msg.content) {
         if (c.type === 'text') {
           if (isSkillActivation) {
-            // Skill activation messages carry the raw XML block; we strip it and
-            // surface only the user-provided args as the "user input" text.
-            textParts.push(origin.skillArgs ?? '');
+            // Skill activation messages carry the rendered skill-prompt XML;
+            // the bubble replaces it with a command card plus the user args
+            // (set once after the loop — pushing per text part would duplicate
+            // the args now that uploads add notice parts to the same message).
+            // Those uploads come back exactly like the plain-message path:
+            // media as `<video|image path="…">` tags, other files as
+            // "Attached file …" notices — recover the chips the same way.
+            const tag = mediaPathTag(c.text);
+            if (tag && (tag.kind === 'video' || tag.kind === 'image') && getFileUrl) {
+              const fileId = fileIdFromCachePath(tag.path);
+              if (fileId) {
+                attachments.push({ url: getFileUrl(fileId), kind: tag.kind, fileId });
+                continue;
+              }
+            }
+            const attached = attachedFileNotice(c.text);
+            if (attached) {
+              attachments.push({
+                kind: 'file',
+                // No recoverable fileId (inline-base64 upload) → no URL: the
+                // chip renders name/size but stays non-clickable.
+                url: attached.fileId && getFileUrl ? getFileUrl(attached.fileId) : '',
+                fileId: attached.fileId,
+                name: attached.name,
+                mediaType: attached.mediaType,
+                size: attached.size,
+              });
+            }
           } else if (isPluginCommand) {
             // Plugin command turns carry the expanded body; surface only the
             // user-provided args, mirroring skill activations.
@@ -1042,7 +1067,10 @@ export function messagesToTurns(
         id: msg.id,
         role: 'user',
         no: no++,
-        text: textParts.join('\n'),
+        // Skill activations surface only the args as the bubble text (the
+        // skill-prompt XML text parts are dropped above); everything else
+        // joins its kept text parts.
+        text: isSkillActivation ? (origin?.skillArgs ?? '') : textParts.join('\n'),
         attachments: attachments.length > 0 ? attachments : undefined,
         skillActivation: isSkillActivation
           ? { name: origin.skillName!, args: origin.skillArgs }

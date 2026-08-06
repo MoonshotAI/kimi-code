@@ -297,6 +297,10 @@ export type ImageSource =
   | { kind: 'base64'; mediaType: string; data: string }
   | { kind: 'file'; fileId: string };
 
+/** Attachment parts a skill activation can carry — the media/file subset of
+    AppMessageContent (text stays in the skill's `args`). */
+export type AppSkillAttachment = Extract<AppMessageContent, { type: 'image' | 'video' | 'file' }>;
+
 export interface AppMessage {
   id: string;
   sessionId: string;
@@ -1128,7 +1132,7 @@ export interface KimiWebApi {
   listSkills(sessionId: string): Promise<AppSkill[]>;
   /** List skills for a workspace (no session required) — GET /workspaces/{id}/skills. */
   listSkillsForWorkspace(workspaceId: string): Promise<AppSkill[]>;
-  activateSkill(sessionId: string, skillName: string, args?: string): Promise<{ activated: true; skillName: string }>;
+  activateSkill(sessionId: string, skillName: string, args?: string, attachments?: AppSkillAttachment[]): Promise<{ activated: true; skillName: string }>;
   listTasks(sessionId: string, status?: AppTaskStatus): Promise<AppTask[]>;
   getTask(sessionId: string, taskId: string, input?: { withOutput?: boolean; outputBytes?: number }): Promise<AppTask>;
   cancelTask(sessionId: string, taskId: string): Promise<{ cancelled: true }>;

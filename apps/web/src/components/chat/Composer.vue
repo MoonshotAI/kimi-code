@@ -103,7 +103,9 @@ const emit = defineEmits<{
   /** Steer the composer text (+ any queued prompts, merged by the parent)
       into the RUNNING turn — TUI ctrl+s. */
   steer: [payload: { text: string; attachments: PromptAttachment[] }];
-  command: [cmd: string];
+  /** Slash command. Only skill commands carry the composer's attachments;
+      built-in commands leave the chips untouched (attachments stay pending). */
+  command: [payload: { cmd: string; attachments: PromptAttachment[] }];
   interrupt: [];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
@@ -220,7 +222,10 @@ const {
   textareaRef,
   autosize,
   skills: () => props.skills,
-  emitCommand: (cmd) => emit('command', cmd),
+  // Menu-selected bare commands never carry attachments (skills all take
+  // `acceptsInput`, so they leave the command in the composer instead of
+  // firing; any pending chips stay put for the eventual submit).
+  emitCommand: (cmd) => emit('command', { cmd, attachments: [] }),
   historyPush: (entry) => history.push(entry),
   clearDraft,
 });
@@ -470,19 +475,35 @@ function handleSubmit(): void {
   // `/swarm <task>`, `/btw <question>`, slash skills with args, and bare
   // commands such as `/model`. A hand-typed bare skill name (`/deploy`) also
   // resolves to its prefixed menu entry (`/skill:deploy`), mirroring the TUI.
+  //
+  // Skill commands take the composer's attachments along (the daemon appends
+  // them to the activation's user message); built-in commands don't consume
+  // attachments, so the chips stay pending for the next send.
   if (trimmed) {
     const parsed = parseSlash(trimmed);
-    const known = parsed
-      ? buildSlashItems(props.skills).some(
+    const matched = parsed
+      ? buildSlashItems(props.skills).find(
           (item) => item.name === parsed.cmd || item.name === `/${SKILL_COMMAND_PREFIX}${parsed.cmd.slice(1)}`,
         )
-      : false;
-    if (parsed && known) {
+      : undefined;
+    if (parsed && matched) {
+      const cmd = parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd;
+      const isSkill = matched.isSkill === true;
       text.value = '';
       clearDraft();
       slashOpen.value = false;
       collapseAndRefit();
-      emit('command', parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd);
+      if (isSkill) {
+        // The chips leave with the command — mirror the plain-submit cleanup
+        // so they don't linger (and their object URLs are revoked).
+        previewAttachment.value = null;
+        previewThumbImg.value = null;
+        clearAfterSubmit();
+        mentionOpen.value = false;
+        emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)) });
+      } else {
+        emit('command', { cmd, attachments: [] });
+      }
       return;
     }
   }

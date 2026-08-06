@@ -131,7 +131,7 @@ const emit = defineEmits<{
   cancelTask: [taskId: string];
   answer: [questionId: string, response: QuestionResponse];
   dismiss: [questionId: string];
-  command: [cmd: string];
+  command: [payload: { cmd: string; attachments: PromptAttachment[] }];
   interrupt: [];
   unqueue: [index: number];
   editQueued: [index: number];
@@ -2251,7 +2251,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
               @toggle-plan="emit('togglePlan')"
               @toggle-swarm="emit('toggleSwarm')"
               @toggle-goal="emit('toggleGoal')"
-              @open-btw="emit('command', '/btw')"
+              @open-btw="emit('command', { cmd: '/btw', attachments: [] })"
               @create-goal="emit('createGoal', $event)"
               @control-goal="emit('controlGoal', $event)"
               @focus-goal="focusGoal"
@@ -2420,7 +2420,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
         @toggle-plan="emit('togglePlan')"
         @toggle-swarm="emit('toggleSwarm')"
         @toggle-goal="emit('toggleGoal')"
-          @open-btw="emit('command', '/btw')"
+          @open-btw="emit('command', { cmd: '/btw', attachments: [] })"
           @create-goal="emit('createGoal', $event)"
           @focus-goal="focusGoal"
           @compact="emit('compact')"

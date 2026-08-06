@@ -196,11 +196,26 @@ describe('startSessionAndActivateSkill', () => {
     const persistOrder = persistSessionProfile.mock.invocationCallOrder[0]!;
     const activateOrder = modelProvider.activateSkill.mock.invocationCallOrder[0]!;
     expect(persistOrder).toBeLessThan(activateOrder);
-    expect(modelProvider.activateSkill).toHaveBeenCalledWith('agent-browser', undefined, 'session-1', {
+    expect(modelProvider.activateSkill).toHaveBeenCalledWith('agent-browser', undefined, undefined, 'session-1', {
       skipThinkingPersist: true,
     });
     // The chain-tail fold reported the persisted level back — pick acked.
     expect(rawState.pendingThinkingBySession['session-1']).toBeUndefined();
+  });
+
+  it('forwards composer attachments to the activation', async () => {
+    const { modelProvider, ws } = createWorkspaceState();
+    const attachments = [
+      { fileId: 'f_1', kind: 'image' as const, name: 'shot.png', mediaType: 'image/png', size: 10 },
+      { fileId: 'f_2', kind: 'file' as const, name: 'notes.txt', mediaType: 'text/plain', size: 20 },
+    ];
+
+    const sid = await ws.startSessionAndActivateSkill('workspace', 'agent-browser', 'go', attachments);
+
+    expect(sid).toBe('session-1');
+    expect(modelProvider.activateSkill).toHaveBeenCalledWith('agent-browser', 'go', attachments, 'session-1', {
+      skipThinkingPersist: true,
+    });
   });
 
   it('seeds the draft pick before the session is selected, and skips the fresh /status fold', async () => {

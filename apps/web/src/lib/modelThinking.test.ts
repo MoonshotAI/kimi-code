@@ -410,7 +410,7 @@ describe('useModelProviderState thinking on model selection', () => {
     await provider.activateSkill('gen-changesets');
 
     expect(persistSessionProfileMock).toHaveBeenCalledWith({ thinking: 'high' }, 'session-1');
-    expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined);
+    expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined, []);
     // The profile write precedes the activation, mirroring the new-session path.
     const persistOrder = persistSessionProfileMock.mock.invocationCallOrder[0]!;
     const activateOrder = apiMock.activateSkill.mock.invocationCallOrder[0]!;
@@ -426,10 +426,10 @@ describe('useModelProviderState thinking on model selection', () => {
     });
     const provider = createModelProvider(state);
 
-    await provider.activateSkill('gen-changesets', undefined, undefined, { skipThinkingPersist: true });
+    await provider.activateSkill('gen-changesets', undefined, undefined, undefined, { skipThinkingPersist: true });
 
     expect(persistSessionProfileMock).not.toHaveBeenCalled();
-    expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined);
+    expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined, []);
   });
 
   it('does not activate the skill when the thinking profile update fails', async () => {
@@ -462,7 +462,7 @@ describe('useModelProviderState thinking on model selection', () => {
     await provider.activateSkill('gen-changesets');
 
     expect(persistSessionProfileMock).toHaveBeenCalledWith({ thinking: 'high' }, 'session-1');
-    expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined);
+    expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined, []);
   });
 
   it('pins the catalog default in memory when no thinking preference exists', async () => {

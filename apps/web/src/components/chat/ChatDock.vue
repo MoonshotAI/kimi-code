@@ -74,7 +74,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   submit: [payload: { text: string; attachments: PromptAttachment[] }];
   steer: [payload: { text: string; attachments: PromptAttachment[] }];
-  command: [cmd: string];
+  command: [payload: { cmd: string; attachments: PromptAttachment[] }];
   interrupt: [];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];

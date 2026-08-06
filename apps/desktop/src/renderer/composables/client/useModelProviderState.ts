@@ -10,6 +10,7 @@ import { getKimiWebApi } from '../../api';
 import { DaemonApiError } from '../../api/errors';
 import type { AddProviderInput, AppCatalogProvider, AppMessage, AppModel, AppProvider, AppProviderDetail, AppSession, AppSkill, DeleteProviderResult, ImportCatalogProviderInput, ImportCustomRegistryInput, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel, UpdateProviderInput } from '../../api/types';
 import { logError, logWarn } from '../../lib/log';
+import { attachmentsToContent } from '../../lib/attachmentsToContent';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
 import {
   ackThinkingPending,
@@ -21,7 +22,7 @@ import {
 } from '../../lib/modelThinking';
 import { beginLocalTurn, settleLocalTurn } from './useWorkspaceState';
 import type { ActivityState } from '../../types';
-import type { ExtendedState } from '../useKimiWebClient';
+import type { ExtendedState, PromptAttachment } from '../useKimiWebClient';
 
 const STARRED_MODELS_STORAGE_KEY = STORAGE_KEYS.starredModels;
 
@@ -418,6 +419,9 @@ export function useModelProviderState(
    * TUI). The daemon starts a turn with a `skill_activation` origin; progress
    * arrives over the WS stream like any other turn. Never crashes the caller.
    *
+   * `attachments` are the composer's uploaded files — they ride the same user
+   * message as the rendered skill prompt, exactly like a prompt with uploads.
+   *
    * `sessionId` overrides the active session — used when activating right after
    * creating a session, so a concurrent session switch can't redirect the
    * activation to the wrong session. No session at all is a no-op.
@@ -427,6 +431,7 @@ export function useModelProviderState(
   async function activateSkill(
     skillName: string,
     args?: string,
+    attachments?: PromptAttachment[],
     sessionId?: string,
     opts?: { skipThinkingPersist?: boolean },
   ): Promise<void> {
@@ -444,7 +449,10 @@ export function useModelProviderState(
         id: tempId,
         sessionId: sid,
         role: 'user',
-        content: [{ type: 'text', text: `/${skillName}${args ? ` ${args}` : ''}` }],
+        content: [
+          { type: 'text', text: `/${skillName}${args ? ` ${args}` : ''}` },
+          ...attachmentsToContent(attachments),
+        ],
         createdAt: new Date().toISOString(),
         metadata: {
           'kimiWeb.optimisticUserMessage': true,
@@ -479,7 +487,7 @@ export function useModelProviderState(
         );
         if (!persisted) throw PROFILE_PERSIST_FAILED;
       }
-      await getKimiWebApi().activateSkill(sid, skillName, args);
+      await getKimiWebApi().activateSkill(sid, skillName, args, attachmentsToContent(attachments));
     } catch (err) {
       if (guarded) {
         rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };

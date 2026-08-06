@@ -247,7 +247,7 @@ export function toAppMessage(wire: WireMessage): AppMessage {
 // Prompt mappers
 // ---------------------------------------------------------------------------
 
-function toWireMessageContent(app: AppMessageContent): WireMessageContent {
+export function toWireMessageContent(app: AppMessageContent): WireMessageContent {
   switch (app.type) {
     case 'text':
       return { type: 'text', text: app.text };

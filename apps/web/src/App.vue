@@ -645,8 +645,10 @@ async function passAuthGate(text: string, attachments: PromptAttachment[]): Prom
 // <task>`, skill activations): the same prompt as the plain-send gate, but
 // the command goes back to the composer for a manual re-fire — its
 // continuation is command-specific, not a plain prompt pendingWorkspaceSubmit
-// can resume. Resolves true when the caller may proceed.
-async function passWorkspaceGateForCommand(text: string): Promise<boolean> {
+// can resume. Resolves true when the caller may proceed. Skill commands carry
+// the composer's pending attachments — restore them alongside the text or a
+// gated first-skill send would lose the chips.
+async function passWorkspaceGateForCommand(text: string, attachments: PromptAttachment[] = []): Promise<boolean> {
   if (client.activeSessionId.value || client.activeWorkspaceId.value) return true;
   const pick = await confirm({
     title: t('workspace.requiredTitle'),
@@ -654,20 +656,22 @@ async function passWorkspaceGateForCommand(text: string): Promise<boolean> {
     confirmLabel: t('conversation.pickFolder'),
     variant: 'primary',
   });
-  conversationPaneRef.value?.loadComposerForEdit(text);
+  conversationPaneRef.value?.loadComposerForEdit(text, toEditableAttachments(attachments));
   if (pick) showAddWorkspace.value = true;
   return false;
 }
 
 // Both gates, for command paths that submit work. `text` is the full command
-// line, handed back to the composer when gated.
-async function passCommandGates(text: string): Promise<boolean> {
-  if (!(await passAuthGate(text, []))) return false;
-  return passWorkspaceGateForCommand(text);
+// line, handed back to the composer when gated; `attachments` are the
+// composer's pending uploads (skill commands only — other commands pass none).
+async function passCommandGates(text: string, attachments: PromptAttachment[] = []): Promise<boolean> {
+  if (!(await passAuthGate(text, attachments))) return false;
+  return passWorkspaceGateForCommand(text, attachments);
 }
 
 // Handler for slash commands emitted by Composer (via ConversationPane)
-async function handleCommand(cmd: string): Promise<void> {
+async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[] }): Promise<void> {
+  const { cmd, attachments } = payload;
   // `/compact <text>` carries an optional free-text instruction steering what
   // the summary should focus on (TUI parity).
   if (cmd === '/compact' || cmd.startsWith('/compact ')) {
@@ -756,18 +760,19 @@ async function handleCommand(cmd: string): Promise<void> {
       // `/<skill> args`). Strip the `skill:` display prefix — the REST API
       // takes the bare skill name. The daemon answers an unknown name with
       // skill.not_found, surfaced as a warning, so a stray slash is harmless.
-      // With no active session, create one first (same path as the first
-      // prompt) so the activation isn't silently dropped on the new-session
-      // screen.
+      // The composer's pending attachments ride along into the activation's
+      // user message. With no active session, create one first (same path as
+      // the first prompt) so the activation isn't silently dropped on the
+      // new-session screen.
       const space = cmd.indexOf(' ');
       const name = stripSkillPrefix((space === -1 ? cmd : cmd.slice(0, space)).slice(1));
       const args = space === -1 ? undefined : cmd.slice(space + 1).trim() || undefined;
       if (!name) break;
-      if (!(await passCommandGates(cmd))) return;
+      if (!(await passCommandGates(cmd, attachments))) return;
       if (!client.activeSessionId.value && client.activeWorkspaceId.value) {
-        void client.startSessionAndActivateSkill(client.activeWorkspaceId.value, name, args);
+        void client.startSessionAndActivateSkill(client.activeWorkspaceId.value, name, args, attachments);
       } else {
-        void client.activateSkill(name, args);
+        void client.activateSkill(name, args, attachments);
       }
       break;
     }
