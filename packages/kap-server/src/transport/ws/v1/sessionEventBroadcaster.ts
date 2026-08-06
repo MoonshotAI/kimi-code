@@ -36,9 +36,11 @@
  * families, including every session's `event.session.work_changed`) are pushed
  * to EVERY established connection (registered via
  * {@link SessionEventBroadcaster.addGlobalTarget}, no subscription needed)
- * union every subscribed target. Session/agent events only reach connections
- * subscribed to that session, subject to the per-subscription agent allowlist
- * and the transcript suppression below. Transcript frames (`transcript.reset`
+ * union every subscribed target — except the `event.di.*` debug feed, which
+ * only reaches connections opted in via
+ * {@link SessionEventBroadcaster.addDiEventTarget}. Session/agent events only
+ * reach connections subscribed to that session, subject to the
+ * per-subscription agent allowlist and the transcript suppression below. Transcript frames (`transcript.reset`
  * / `transcript.ops`) are a separate channel: they are governed by the
  * per-agent transcript grades alone and bypass the agent allowlist entirely.
  *
@@ -224,6 +226,16 @@ export class SessionEventBroadcaster {
    */
   private readonly globalTargets = new Set<BroadcastTarget>();
   /**
+   * Opt-in set for the `event.di.*` debug-surface feed. That feed is global
+   * (no owning session) and high-churn, but only kimi-inspect's DI view
+   * consumes it — pushing it to every connection wastes bandwidth on clients
+   * that drop the frames unread. Temporary gate until a client-declared
+   * event-type whitelist exists: `WsConnectionV1` opts a connection in when
+   * its `client_hello` carries `client_id: 'kimi-inspect'`; every other
+   * connection (including subscribed targets) skips `event.di.*` frames.
+   */
+  private readonly diEventTargets = new Set<BroadcastTarget>();
+  /**
    * Single-flight guard for session activation: without it, two concurrent
    * activations (WS subscribe racing a REST snapshot / replay / resync) each
    * built their own SessionState, bus subscriptions, and journal writer. The
@@ -271,6 +283,16 @@ export class SessionEventBroadcaster {
   /** Drop a closed connection from the global fan-out set. Idempotent. */
   removeGlobalTarget(target: BroadcastTarget): void {
     this.globalTargets.delete(target);
+    this.diEventTargets.delete(target);
+  }
+
+  /**
+   * Opt a connection into the `event.di.*` debug-surface feed (see
+   * {@link diEventTargets}). Idempotent; cleaned up by
+   * {@link removeGlobalTarget}.
+   */
+  addDiEventTarget(target: BroadcastTarget): void {
+    this.diEventTargets.add(target);
   }
 
   /**
@@ -904,8 +926,9 @@ export class SessionEventBroadcaster {
       if (payload === undefined) return;
       // Engine DI unit state transitions (the debug-surface feed) have no
       // owning session: route through the global state so the envelope carries
-      // the '__global__' watermark, and let `isGlobalEvent` fan out to every
-      // connection. `VOLATILE_EVENT_TYPES` keeps the churn unjournaled.
+      // the '__global__' watermark. `isGlobalEvent` fans it out, but delivery
+      // is gated to connections opted in via `addDiEventTarget` (kimi-inspect
+      // only) — `VOLATILE_EVENT_TYPES` keeps the churn unjournaled.
       void this.dispatchGlobal({
         type: 'event.di.unit_changed',
         ...payload,
@@ -1256,7 +1279,11 @@ export class SessionEventBroadcaster {
       // minimal embeds) on the legacy delivery path.
       const recipients = new Set<BroadcastTarget>(this.globalTargets);
       for (const target of this.allTargets()) recipients.add(target);
+      // The `event.di.*` debug feed is opt-in (kimi-inspect only) — every
+      // other connection drops those frames unread anyway.
+      const diGated = event.type.startsWith('event.di.');
       for (const target of recipients) {
+        if (diGated && !this.diEventTargets.has(target)) continue;
         try {
           target.send(envelope, 'immediate');
         } catch {
