@@ -78,6 +78,7 @@
 import {
   builtinProductSkillsEnabled,
   visibleBuiltinSkills,
+  Error2,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
   IAgentSkillService,
@@ -95,6 +96,7 @@ import {
   IWorkspaceService,
   InMemorySkillCatalog,
   isError2,
+  isUserActivatableSkillType,
   resumeSessionById,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
@@ -313,6 +315,22 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         const attachments = req.body.attachments ?? [];
         const attachmentParts: ContentPart[] = [];
         if (attachments.length > 0) {
+          // Validate the skill BEFORE materializing anything: an unknown or
+          // non-user-activatable name must fail without streaming upload bytes
+          // into the session/cache dirs. activate() re-validates on its own —
+          // this is only the edge fail-fast for the side-effecting pipeline.
+          const catalog = resolved.handle.accessor.get(ISessionSkillCatalog);
+          await catalog.ready;
+          const skill = catalog.catalog.getSkill(parsed.id);
+          if (skill === undefined) {
+            throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${parsed.id}" was not found`);
+          }
+          if (!isUserActivatableSkillType(skill.metadata.type)) {
+            throw new Error2(
+              ErrorCodes.SKILL_TYPE_UNSUPPORTED,
+              `Skill "${skill.name}" cannot be activated by the user`,
+            );
+          }
           await assertPromptFileRefs(attachments, core.accessor.get(IFileService));
           const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
           const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
