@@ -994,8 +994,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       // workspace) cannot be resumed on either engine; v1's store never lists
       // one in the first place, so drop it here too.
       if (workDir === undefined) continue;
+      // A live session reports its own outcome; the index may still carry a
+      // stale one while the mirror's clear is queued (a fresh turn just
+      // started after a failure).
+      const liveHandle = getLiveSessionById(this.engineAccessor, item.id);
+      const effectiveItem =
+        liveHandle === undefined
+          ? item
+          : {
+              ...item,
+              lastTurnReason: liveHandle.accessor.get(ISessionActivityView).state().lastTurnReason,
+            };
       summaries.push(
-        v2SummaryToSessionSummary(item, {
+        v2SummaryToSessionSummary(effectiveItem, {
           workDir,
           sessionDir: sessionDirOf(
             bootstrapService.homeDir,
