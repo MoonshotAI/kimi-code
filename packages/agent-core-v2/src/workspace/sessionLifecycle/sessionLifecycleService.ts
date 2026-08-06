@@ -13,7 +13,9 @@
  * (metadata, agent wire records, plans, logs), evicts the index read-model
  * entry, and appends a `deleted` tombstone to the shared
  * `session_index.jsonl`, raising `session.not_found` for ids this handler
- * never persisted. Session start and
+ * never persisted. Pending metadata writes and the index mirror are
+ * drained before any teardown, so a listing right after close/archive/delete
+ * never reads a stale outcome. Session start and
  * resume failures are reported through telemetry. Each Session scope
  * receives a telemetry view bound to its session id, while failures before
  * a scope is available use an ephemeral context view. Closing a session
@@ -430,10 +432,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
     this.sessions.delete(sessionId);
     await this.drainAgents(handle);
-    // Event-driven metadata writes (e.g. the outcome mirror) must settle —
-    // and their summaries must reach the read model — before the scope (and
-    // for delete(), the session dir) goes away, or the very next cold list
-    // reads a stale outcome.
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
     handle.dispose();
