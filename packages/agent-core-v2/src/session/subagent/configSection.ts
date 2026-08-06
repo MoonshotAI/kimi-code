@@ -12,7 +12,10 @@
  *
  * The model half of the spawn binding is the subagent model pool
  * (`[subagent.models]`: alias → description, with `[subagent].default_model`
- * naming the fallback). When a pool is configured, newly spawned subagents
+ * naming the fallback). A `default_model` without a `[subagent.models]`
+ * table stands on its own as an implicit single-entry pool (empty
+ * description) — the minimal "secondary model" configuration. When a pool
+ * is configured, newly spawned subagents
  * bind to the pool's default model unless the parent model picks a pool alias
  * — or `primary` (`PRIMARY_SUBAGENT_MODEL_CHOICE`), the always-available
  * symbolic choice binding the caller's own model and thinking level — per
@@ -35,15 +38,15 @@
  * available choices so the parent model can retry. The tools advertise the
  * pool via `buildSubagentModelDescriptions`: the default model leads with a
  * `[default]` marker, the remaining aliases follow in config order, and the
- * caller's own alias is never listed on its own — it folds into the trailing
- * `primary (alias) [main model]` line (which carries the pool description,
- * plus a `[default]` marker when the caller IS the default) or, when the
- * caller is outside the pool, a generic `primary` hint line; an empty-string
- * description renders a bare `- alias` line. Spawn failures are wrapped by
- * `wrapSubagentModelError`: when the bound model is not the caller's own and
- * the catalog failed on exactly that alias, the parent model gets guidance
- * toward `[subagent.models]` instead of a bare resolution error.
- *
+ * caller's own alias is listed like any other pool entry (marked
+ * `[main model]`) — pool alias bindings carry no thinking, so the trailing
+ * `primary` line stays distinct from it: it binds the caller's model WITH the
+ * caller's current thinking level, and names the alias in parentheses when
+ * the caller is in the pool. An empty-string description renders a bare
+ * `- alias` line. Spawn failures are wrapped by `wrapSubagentModelError`:
+ * when the bound model is not the caller's own and the catalog failed on
+ * exactly that alias, the parent model gets guidance toward
+ * `[subagent.models]` instead of a bare resolution error.
  * Cross-field pool validation is NOT part of the schema — it is enforced as
  * `Error2(CONFIG_INVALID)` by `assertValidSubagentModelPool` (run before
  * session materialization by the session lifecycle, with the Session-scope
@@ -122,8 +125,13 @@ export interface SubagentModelPool {
 
 export function resolveSubagentModelPool(config: IConfigService): SubagentModelPool | undefined {
   const section = config.get<SubagentConfig | undefined>(SUBAGENT_SECTION);
-  if (section?.models === undefined) return undefined;
-  return { defaultModel: section.defaultModel, models: section.models };
+  if (section?.models !== undefined) {
+    return { defaultModel: section.defaultModel, models: section.models };
+  }
+  if (section?.defaultModel !== undefined) {
+    return { defaultModel: section.defaultModel, models: { [section.defaultModel]: '' } };
+  }
+  return undefined;
 }
 
 export const SUBAGENT_DEFAULT_MODEL_REQUIRED_MESSAGE =
@@ -223,31 +231,26 @@ export function buildSubagentModelDescriptions(
   if (pool === undefined) return undefined;
   const lines = ['Available models (pass via model):'];
   const defaultModel = pool.defaultModel;
-  if (
-    defaultModel !== undefined &&
-    defaultModel !== callerModelAlias &&
-    Object.hasOwn(pool.models, defaultModel)
-  ) {
-    lines.push(formatPoolLine(`${defaultModel} [default]`, pool.models[defaultModel]!));
+  const markersFor = (alias: string): string => {
+    const markers: string[] = [];
+    if (alias === defaultModel) markers.push('[default]');
+    if (alias === callerModelAlias) markers.push('[main model]');
+    return markers.length === 0 ? '' : ` ${markers.join(' ')}`;
+  };
+  if (defaultModel !== undefined && Object.hasOwn(pool.models, defaultModel)) {
+    lines.push(
+      formatPoolLine(`${defaultModel}${markersFor(defaultModel)}`, pool.models[defaultModel]!),
+    );
   }
   for (const [alias, description] of Object.entries(pool.models)) {
-    if (alias === defaultModel || alias === callerModelAlias) continue;
-    lines.push(formatPoolLine(alias, description));
+    if (alias === defaultModel) continue;
+    lines.push(formatPoolLine(`${alias}${markersFor(alias)}`, description));
   }
-  if (callerModelAlias !== undefined && Object.hasOwn(pool.models, callerModelAlias)) {
-    const markers =
-      callerModelAlias === defaultModel ? '[main model] [default]' : '[main model]';
-    lines.push(
-      formatPoolLine(
-        `${PRIMARY_SUBAGENT_MODEL_CHOICE} (${callerModelAlias}) ${markers}`,
-        pool.models[callerModelAlias]!,
-      ),
-    );
-  } else {
-    lines.push(
-      `- ${PRIMARY_SUBAGENT_MODEL_CHOICE}: the main model you are running on; use it for hard, quality-sensitive subagent tasks`,
-    );
-  }
+  const callerInPool =
+    callerModelAlias !== undefined && Object.hasOwn(pool.models, callerModelAlias);
+  lines.push(
+    `- ${PRIMARY_SUBAGENT_MODEL_CHOICE}${callerInPool ? ` (${callerModelAlias})` : ''}: the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks`,
+  );
   return lines.join('\n');
 }
 

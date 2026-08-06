@@ -7,7 +7,8 @@
  * (`ScopeActivation.OnScopeCreated`), so a broken pool fails session creation
  * with `Error2(CONFIG_INVALID)` even on paths that bypass the lifecycle
  * service. Reads the pool through `config` and resolves aliases through the
- * model catalog. A session without `[subagent.models]` is a no-op. The checks
+ * model catalog — a lone `default_model` included, as the implicit
+ * single-entry pool; only a session with neither is a no-op. The checks
  * themselves live in `assertValidSubagentModelPool` (configSection): the
  * reserved `primary` key rejected, default present, default in the pool,
  * every pool alias resolvable. Bound at Session scope.

@@ -290,7 +290,7 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `timeout_ms` | `integer` | `7200000` (2 hours) | Maximum wall-clock time (milliseconds) a single subagent (`Agent` / `AgentSwarm`) is allowed to run before it is settled as `timed_out`. `0` means no timeout — the subagent runs until it finishes or the model stops it. This is the background-task manager's per-task timeout for each subagent task, so it applies to both foreground and background subagents. In print mode (`kimi -p`) the default is `0` unless explicitly set. Note: any value above `2147483647` (about 24.8 days) is clamped to roughly 24.8 days by the runtime |
-| `default_model` | `string` | — | Default subagent model. Required when `[subagent.models]` is configured, and must be one of its keys |
+| `default_model` | `string` | — | Default subagent model. Required when `[subagent.models]` is configured, and must be one of its keys; written on its own (without a models table) it is equivalent to a pool containing only that entry |
 | `models` | `table<string, string>` | — | Subagent model pool. Each key is the alias of a configured [`[models]`](#models) entry; each value is the description the main agent sees when picking a subagent model (Chinese or English; an empty string lists the alias with no hint) |
 
 `timeout_ms` can be overridden by the `KIMI_SUBAGENT_TIMEOUT_MS` environment variable, which takes higher priority than `config.toml`.
@@ -299,7 +299,16 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 
 The pool is read by the `agent-core-v2` engine, which currently backs `kimi web` and the `KIMI_CODE_EXPERIMENTAL_FLAG` paths; the default `kimi` / `kimi -p` engine ignores `default_model` and `[subagent.models]`, and resolves subagent models through [`[secondary_model]`](#secondary-model) instead.
 
-Writing `[subagent.models]` is what enables model selection: only then do the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Model definitions stay in [`[models]`](#models) — the pool only references them and attaches the selection hints:
+To simply point every subagent at one model by default, no models table is needed — a single `default_model` line is a pool with a single entry:
+
+```toml
+[subagent]
+default_model = "k27-hs"
+```
+
+In the interactive TUI, the [`/secondary_model`](../reference/slash-commands.md) command opens a model selector for this: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately — no session restart needed.
+
+A configured pool — an explicit `[subagent.models]` table or a lone `default_model` — enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Model definitions stay in [`[models]`](#models) — the pool only references them and attaches the selection hints:
 
 ```toml
 [models.k3]
@@ -324,7 +333,7 @@ fable = "难题选它。擅长复杂推理、算法设计、深度调试、数�
 codex = "后端选它。擅长 API 设计、数据库建模、服务端架构、业务逻辑实现。"
 ```
 
-A spawn resolves the subagent's model in this order: an explicit tool-call `model` → `default_model`. The `model` parameter accepts any pool alias, or `"primary"` — the model the caller itself is running, always valid even when that model is not in the pool. When `[subagent.models]` is not configured at all, the parameter is not advertised and subagents inherit the caller's model. Binding a pool alias carries no explicit thinking effort — the subagent resolves it naturally (global `[thinking]` config → the bound model's default effort) instead of inheriting the caller's level, while `"primary"` inherits both the model and the level from the caller.
+A spawn resolves the subagent's model in this order: an explicit tool-call `model` → `default_model`. The `model` parameter accepts any pool alias, or `"primary"` — the model the caller itself is running, always valid even when that model is not in the pool. When neither `default_model` nor `[subagent.models]` is configured, the parameter is not advertised and subagents inherit the caller's model. Binding a pool alias carries no explicit thinking effort — the subagent resolves it naturally (global `[thinking]` config → the bound model's default effort) instead of inheriting the caller's level, while `"primary"` inherits both the model and the level from the caller.
 
 Configuration errors fail loudly instead of falling back silently: session creation, resume, and fork all fail at startup when `default_model` is missing, is not a pool key, or a pool key does not resolve to a configured `[models]` entry. The alias `primary` is reserved — it always binds the caller's own model — and is rejected as a pool key. A spawn whose `model` is neither a pool alias nor `"primary"` fails with an error listing the available choices.
 
@@ -338,8 +347,6 @@ model = "k27-hs"
 # After
 [subagent]
 default_model = "k27-hs"
-[subagent.models]
-k27-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
 ```
 
 The old patch fields (`default_effort`, `max_output_size`, …) have no pool equivalent — write those settings onto the `[models]` entry the alias points to, for example via [`[models."<alias>".overrides]`](#model-overrides).

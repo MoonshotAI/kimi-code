@@ -698,14 +698,14 @@ describe('Agent tool description', () => {
     const defaultIndex = description.indexOf('- provider/fast [default]: fast and cheap');
     const smartIndex = description.indexOf('- provider/smart: hard tasks');
     const primaryIndex = description.indexOf(
-      '- primary: the main model you are running on; use it for hard, quality-sensitive subagent tasks',
+      '- primary: the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks',
     );
     expect(defaultIndex).toBeGreaterThanOrEqual(0);
     expect(smartIndex).toBeGreaterThan(defaultIndex);
     expect(primaryIndex).toBeGreaterThan(smartIndex);
   });
 
-  it('folds the caller-in-pool alias into the primary line and renders empty descriptions bare', () => {
+  it('lists the caller-in-pool alias with a [main model] marker and renders empty descriptions bare', () => {
     ctx = createTestAgent({
       initialConfig: {
         subagent: {
@@ -723,17 +723,18 @@ describe('Agent tool description', () => {
     const description = agentDescription();
 
     expect(description).toContain('- provider/fast [default]: fast and cheap');
-    // The caller's own alias is never listed on its own — it renders through
-    // the primary line with its pool description.
-    expect(description).not.toContain('- mock-model:');
-    expect(description).toContain(
-      '- primary (mock-model) [main model]: the main model, great at hard things',
-    );
+    // The caller's own alias is a normal pool entry: a pool binding carries no
+    // thinking, while the `primary` line below binds the same model WITH the
+    // caller's thinking level — both choices stay visible.
+    expect(description).toContain('- mock-model [main model]: the main model, great at hard things');
     // An empty-string description renders a bare alias line.
     expect(description).toContain('- provider/smart\n');
+    expect(description).toContain(
+      '- primary (mock-model): the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks',
+    );
   });
 
-  it('keeps the [default] marker on the folded primary line when the caller is the default', () => {
+  it('marks the caller-as-default alias with both [default] and [main model]', () => {
     ctx = createTestAgent({
       initialConfig: {
         subagent: {
@@ -749,9 +750,16 @@ describe('Agent tool description', () => {
 
     const description = agentDescription();
 
-    expect(description).toContain('- provider/fast: fast and cheap');
+    // The caller IS the default: the marker pair sits on its pool line, which
+    // still leads the list.
+    const defaultIndex = description.indexOf(
+      '- mock-model [default] [main model]: the main model, great at hard things',
+    );
+    const fastIndex = description.indexOf('- provider/fast: fast and cheap');
+    expect(defaultIndex).toBeGreaterThanOrEqual(0);
+    expect(fastIndex).toBeGreaterThan(defaultIndex);
     expect(description).toContain(
-      '- primary (mock-model) [main model] [default]: the main model, great at hard things',
+      '- primary (mock-model): the main model you are running on, bound with your current thinking level',
     );
   });
 
@@ -788,6 +796,24 @@ describe('Agent tool description', () => {
 
     expect(properties['model']?.type).toBe('string');
     expect(properties['model']?.enum).toBeUndefined();
+  });
+
+  it('treats a pool-less default_model as an implicit single-entry pool', () => {
+    ctx = createTestAgent({
+      initialConfig: {
+        subagent: { defaultModel: 'provider/fast' },
+        models: POOL_MODEL_ENTRIES,
+      },
+    });
+
+    const properties = agentParameters()['properties'] as Record<string, unknown>;
+    expect(properties).toHaveProperty('model');
+
+    const description = agentDescription();
+    expect(description).toContain('- provider/fast [default]\n');
+    expect(description).toContain(
+      '- primary: the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks',
+    );
   });
 });
 
@@ -1044,6 +1070,46 @@ describe('Agent tool execution contract', () => {
           model: 'mock-model',
           thinking: 'off',
         }),
+      }),
+    );
+  });
+
+  it('binds the caller-in-pool alias without thinking, unlike "primary"', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child', 'agent-child-2'],
+    });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: {
+        subagent: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap', 'mock-model': 'the main model' },
+        },
+      },
+    });
+
+    // Same model, two bindings: the pool alias resolves thinking naturally,
+    // "primary" inherits the caller's level.
+    await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      model: 'mock-model',
+    });
+    await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      model: 'primary',
+    });
+
+    expect(lifecycle.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        binding: expect.objectContaining({ model: 'mock-model', thinking: undefined }),
+      }),
+    );
+    expect(lifecycle.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        binding: expect.objectContaining({ model: 'mock-model', thinking: 'off' }),
       }),
     );
   });
@@ -2099,7 +2165,7 @@ describe('AgentSwarm tool description', () => {
     expect(description).toContain('- provider/fast [default]: fast and cheap');
     expect(description).toContain('- provider/smart: hard tasks');
     expect(description).toContain(
-      '- primary: the main model you are running on; use it for hard, quality-sensitive subagent tasks',
+      '- primary: the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks',
     );
   });
 

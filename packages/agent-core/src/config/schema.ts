@@ -181,6 +181,15 @@ export const SubagentConfigSchema = z.object({
    * in milliseconds. `0` means no timeout. Defaults to 2 hours when unset.
    */
   timeoutMs: z.number().int().min(0).optional(),
+  /**
+   * Subagent model pool: `defaultModel` names the `[models]` alias newly
+   * spawned subagents bind to unless the caller passes another pool alias (or
+   * `primary`); `models` maps pool aliases to the selection hints rendered in
+   * the Agent/AgentSwarm tool descriptions. Consumed by the v2 engine only —
+   * the default engine ignores both fields.
+   */
+  defaultModel: z.string().min(1).optional(),
+  models: z.record(z.string(), z.string()).optional(),
 });
 
 export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;

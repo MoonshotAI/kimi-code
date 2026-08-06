@@ -852,9 +852,11 @@ describe('AgentSwarmTool', () => {
 
     expect(configured.description).toContain('Available models (pass via model):');
     expect(configured.description).toContain('- provider/fast [default]: fast and cheap');
-    // The caller's alias folds into the primary line with its pool description.
-    expect(configured.description).not.toContain('- main-model:');
-    expect(configured.description).toContain('- primary (main-model) [main model]: the main model');
+    // The caller's alias is a normal pool entry; the primary line stays distinct.
+    expect(configured.description).toContain('- main-model [main model]: the main model');
+    expect(configured.description).toContain(
+      '- primary (main-model): the main model you are running on, bound with your current thinking level',
+    );
 
     const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }));
 

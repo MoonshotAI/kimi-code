@@ -66,9 +66,20 @@ describe('SessionSubagentModelsValidationService', () => {
     expect(resolve()).toBeUndefined();
   });
 
-  it('is a no-op when default_model is set without a pool', () => {
+  it('constructs fine when default_model alone forms an implicit single-entry pool', () => {
+    modelIds.add('provider/fast');
     setup({ [SUBAGENT_SECTION]: { defaultModel: 'provider/fast' } });
     expect(resolve()).toBeUndefined();
+  });
+
+  it('fails session creation when a pool-less default_model does not resolve', () => {
+    setup({ [SUBAGENT_SECTION]: { defaultModel: 'provider/typo' } });
+    const error = resolve();
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((error as Error2).message).toContain(
+      '[subagent.models] entry "provider/typo" could not be resolved',
+    );
   });
 
   it('constructs fine for a valid pool', () => {

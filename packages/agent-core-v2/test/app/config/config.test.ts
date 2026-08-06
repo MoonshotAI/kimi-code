@@ -1778,6 +1778,31 @@ describe('subagent config section', () => {
     pool.disposables.dispose();
   });
 
+  it('treats a pool-less default_model as an implicit single-entry pool', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[subagent]\ndefault_model = "provider/fast"\n',
+    );
+
+    // An omitted model falls back to the default; pool bindings carry no
+    // explicit thinking.
+    expect(resolveSubagentBinding(config, own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    // The only other choice is "primary".
+    expect(resolveSubagentBinding(config, own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    expect(() => resolveSubagentBinding(config, own, 'provider/smart')).toThrow(
+      /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
+    );
+
+    disposables.dispose();
+  });
+
   it('rejects an alias outside the pool, listing the available models', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig(

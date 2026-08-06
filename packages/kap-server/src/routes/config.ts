@@ -192,14 +192,29 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function convertKeysSnakeToCamel(obj: unknown): unknown {
+/**
+ * Config properties whose values are maps keyed by user-defined identifiers
+ * (provider ids, model aliases, subagent pool aliases, flag names). Those keys
+ * are data, not field names — snake→camel conversion must pass them through
+ * untouched (`fast_model` must not become `fastModel`), while the map *values*
+ * (e.g. a provider's `api_key`) still convert. Preserve mode therefore only
+ * engages from a normal field-name level: an entry key that happens to match
+ * the list (a provider literally named `models`) must not keep its own
+ * children preserved.
+ */
+const MAP_VALUED_CONFIG_KEYS = new Set(['providers', 'models', 'experimental', 'raw']);
+
+function convertKeysSnakeToCamel(obj: unknown, preserveKeys = false): unknown {
   if (Array.isArray(obj)) {
-    return obj.map(convertKeysSnakeToCamel);
+    return obj.map((item) => convertKeysSnakeToCamel(item));
   }
   if (isPlainObject(obj)) {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
-      result[snakeToCamel(key)] = convertKeysSnakeToCamel(value);
+      result[preserveKeys ? key : snakeToCamel(key)] = convertKeysSnakeToCamel(
+        value,
+        !preserveKeys && MAP_VALUED_CONFIG_KEYS.has(key),
+      );
     }
     return result;
   }

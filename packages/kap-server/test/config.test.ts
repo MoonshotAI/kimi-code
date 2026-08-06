@@ -100,6 +100,52 @@ describe('server-v2 /api/v1/config', () => {
     expect(after.yolo).toBe(false);
   });
 
+  it('POST { subagent } persists the subagent model pool and GET echoes it', async () => {
+    await boot();
+    const cfg = await patchConfig({
+      subagent: { default_model: 'provider/fast', models: { 'provider/fast': 'fast and cheap' } },
+    });
+    expect(cfg.subagent).toMatchObject({ defaultModel: 'provider/fast' });
+
+    const after = await getConfig();
+    expect(after.subagent).toMatchObject({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': 'fast and cheap' },
+    });
+  });
+
+  it('POST { subagent } preserves pool alias keys containing underscores', async () => {
+    await boot();
+    await patchConfig({
+      subagent: { default_model: 'provider/fast_model', models: { 'provider/fast_model': '' } },
+    });
+
+    const after = await getConfig();
+    expect(after.subagent).toMatchObject({
+      defaultModel: 'provider/fast_model',
+      models: { 'provider/fast_model': '' },
+    });
+    expect(
+      Object.keys((after.subagent as { models: Record<string, string> }).models),
+    ).not.toContain('provider/fastModel');
+  });
+
+  it('POST { providers } converts fields of a provider id colliding with a map-valued key', async () => {
+    await boot();
+    await patchConfig({
+      providers: {
+        models: { type: 'openai', base_url: 'https://example.test', api_key: 'sk-test' },
+      },
+    });
+
+    const after = await getConfig();
+    expect(after.providers['models']).toMatchObject({
+      type: 'openai',
+      base_url: 'https://example.test',
+      has_api_key: true,
+    });
+  });
+
   it('session create with a broken subagent model pool fails with VALIDATION_FAILED', async () => {
     await boot('[subagent.models]\n"provider/fast" = "fast and cheap"\n');
     const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
