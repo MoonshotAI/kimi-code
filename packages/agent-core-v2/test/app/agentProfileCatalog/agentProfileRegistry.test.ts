@@ -1,46 +1,99 @@
 /**
- * Scenario: the App-scope agent-profile registry service.
+ * Scenario: the App-scope agent-profile registry fold.
  *
- * Exercises `AgentProfileRegistryService` directly: the (sourceId,
- * workspaceKey) storage-key encoding (one global entry per source id, with
- * same-id workspace-local entries coexisting across handlers), the scoped
- * `unregister` / dispose-handle semantics, the `entries()` metadata, and the
- * decoded `onDidChange` payload. The generic contribution registry
- * underneath is covered by `test/_base/contribution/registry.test.ts`; this
- * suite only pins the service layer's workspaceKey dimension. Run:
+ * Exercises `AgentProfileRegistryService` as a fold over the
+ * `AgentProfileContribution` collection: records are contributed through real
+ * containers by contributor units (the same `this.provide` path the
+ * production loaders take), and the suite pins the folded read surface — the
+ * (sourceId, workspaceKey) pair encoding (one global entry per source id,
+ * with same-id workspace-local entries coexisting across handlers),
+ * later-record-shadows-earlier replacement, provider-death withdrawal, the
+ * `entries()` metadata, and the decoded `onDidChange` payload (a pair fires
+ * only when its winning record actually changes). Run:
  * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
  * test/app/agentProfileCatalog/agentProfileRegistry.test.ts`.
  */
 
 import { describe, expect, it } from 'vitest';
 
+import { createDecorator } from '#/_base/di/instantiation';
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { InstantiationService } from '#/_base/di/instantiationService';
+import type { IDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
+import { ServiceCollection } from '#/_base/di/serviceCollection';
+import {
+  AgentProfileContribution,
+  type AgentProfileContributionRecord,
+} from '#/app/agentProfileCatalog/agentProfileContribution';
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import type { AgentProfileContribution } from '#/app/agentProfileCatalog/agentProfileContribution';
 
-function contribution(marker: string): AgentProfileContribution {
-  return { profiles: [normalizeAgentProfile({ name: marker, systemPrompt: () => marker })] };
+interface IContributor {
+  readonly record: AgentProfileContributionRecord;
+}
+const IContributor = createDecorator<IContributor>('test-agent-profile-contributor');
+
+class Contributor extends Service implements IContributor {
+  declare readonly _serviceBrand: undefined;
+
+  constructor(readonly record: AgentProfileContributionRecord) {
+    super();
+    this.provide(AgentProfileContribution, record);
+  }
 }
 
-describe('AgentProfileRegistryService', () => {
-  it('replaces a same-sourceId global registration', () => {
-    const registry = new AgentProfileRegistryService();
-    registry.register('user', contribution('v1'));
-    registry.register('user', contribution('v2'));
+function record(
+  sourceId: string,
+  marker: string,
+  options?: { readonly priority?: number; readonly workspaceKey?: string },
+): AgentProfileContributionRecord {
+  return {
+    sourceId,
+    priority: options?.priority,
+    workspaceKey: options?.workspaceKey,
+    contribution: { profiles: [normalizeAgentProfile({ name: marker, systemPrompt: () => marker })] },
+  };
+}
+
+function makeFold(): {
+  readonly container: InstantiationService;
+  readonly registry: AgentProfileRegistryService;
+} {
+  const container = new InstantiationService(new ServiceCollection(), true);
+  const registry = container.createInstance(AgentProfileRegistryService);
+  return { container, registry };
+}
+
+function contribute(
+  container: InstantiationService,
+  value: AgentProfileContributionRecord,
+): IDisposable {
+  const child = container.createChild(new ServiceCollection()) as InstantiationService;
+  child.provide(IContributor, new SyncDescriptor(Contributor, [value] as never));
+  child.invokeFunction((accessor) => accessor.get(IContributor));
+  return child;
+}
+
+describe('AgentProfileRegistryService (collection fold)', () => {
+  it('lets a later record for the same pair shadow the earlier one', () => {
+    const { container, registry } = makeFold();
+    contribute(container, record('user', 'v1'));
+    contribute(container, record('user', 'v2'));
 
     const entries = registry.entries();
     expect(entries).toHaveLength(1);
     expect(entries[0]?.contribution.profiles[0]?.name).toBe('v2');
-    registry.dispose();
+    container.dispose();
   });
 
-  it('keeps same-sourceId entries with different workspaceKeys coexisting', () => {
-    const registry = new AgentProfileRegistryService();
-    registry.register('workspace', contribution('global'));
-    registry.register('workspace', contribution('wd_a'), { workspaceKey: 'wd_a' });
-    registry.register('workspace', contribution('wd_b'), { workspaceKey: 'wd_b' });
-    // Re-registering one key replaces only that key's entry.
-    registry.register('workspace', contribution('wd_a-v2'), { workspaceKey: 'wd_a' });
+  it('keeps same-sourceId records with different workspaceKeys coexisting', () => {
+    const { container, registry } = makeFold();
+    contribute(container, record('workspace', 'global'));
+    const wdA = contribute(container, record('workspace', 'wd_a', { workspaceKey: 'wd_a' }));
+    contribute(container, record('workspace', 'wd_b', { workspaceKey: 'wd_b' }));
+    wdA.dispose();
+    contribute(container, record('workspace', 'wd_a-v2', { workspaceKey: 'wd_a' }));
 
     const entries = registry.entries();
     expect(entries).toHaveLength(3);
@@ -48,48 +101,49 @@ describe('AgentProfileRegistryService', () => {
     expect(byKey.get(undefined)?.contribution.profiles[0]?.name).toBe('global');
     expect(byKey.get('wd_a')?.contribution.profiles[0]?.name).toBe('wd_a-v2');
     expect(byKey.get('wd_b')?.contribution.profiles[0]?.name).toBe('wd_b');
-    registry.dispose();
+    container.dispose();
   });
 
-  it('unregister(sourceId, workspaceKey) removes only the matching entry', () => {
-    const registry = new AgentProfileRegistryService();
-    registry.register('workspace', contribution('wd_a'), { workspaceKey: 'wd_a' });
-    registry.register('workspace', contribution('wd_b'), { workspaceKey: 'wd_b' });
-    registry.register('user', contribution('global'));
+  it('withdraws only the dead provider’s record', () => {
+    const { container, registry } = makeFold();
+    const wdA = contribute(container, record('workspace', 'wd_a', { workspaceKey: 'wd_a' }));
+    const wdB = contribute(container, record('workspace', 'wd_b', { workspaceKey: 'wd_b' }));
+    const global = contribute(container, record('user', 'global'));
 
-    registry.unregister('workspace', 'wd_a');
+    wdA.dispose();
     expect(registry.entries().map((entry) => entry.workspaceKey)).toEqual(['wd_b', undefined]);
 
-    registry.unregister('workspace', 'wd_b');
+    wdB.dispose();
     expect(registry.entries().map((entry) => entry.sourceId)).toEqual(['user']);
 
-    registry.unregister('user');
+    global.dispose();
     expect(registry.entries()).toHaveLength(0);
-    registry.dispose();
+    container.dispose();
   });
 
-  it('a dispose handle removes only the entry it registered', () => {
-    const registry = new AgentProfileRegistryService();
-    const stale = registry.register('workspace', contribution('old'), { workspaceKey: 'wd_a' });
-    registry.register('workspace', contribution('new'), { workspaceKey: 'wd_a' });
+  it('withdrawing a shadowed record keeps the winning entry and stays silent', () => {
+    const { container, registry } = makeFold();
+    const stale = contribute(container, record('workspace', 'old', { workspaceKey: 'wd_a' }));
+    contribute(container, record('workspace', 'new', { workspaceKey: 'wd_a' }));
 
+    const seen: unknown[] = [];
+    const subscription = registry.onDidChange((change) => seen.push(change));
     stale.dispose();
 
     const entries = registry.entries();
     expect(entries).toHaveLength(1);
     expect(entries[0]?.contribution.profiles[0]?.name).toBe('new');
-    registry.dispose();
+    expect(seen).toEqual([]);
+    subscription.dispose();
+    container.dispose();
   });
 
   it('exposes sourceId, priority, workspaceKey, and contribution through entries()', () => {
-    const registry = new AgentProfileRegistryService();
-    const pluginContribution = contribution('plugin-p');
-    const workspaceContribution = contribution('ws-p');
-    registry.register('plugin', pluginContribution, { priority: 5 });
-    registry.register('workspace', workspaceContribution, {
-      priority: 30,
-      workspaceKey: 'wd_a',
-    });
+    const { container, registry } = makeFold();
+    const pluginRecord = record('plugin', 'plugin-p', { priority: 5 });
+    const workspaceRecord = record('workspace', 'ws-p', { priority: 30, workspaceKey: 'wd_a' });
+    contribute(container, pluginRecord);
+    contribute(container, workspaceRecord);
 
     const entries = registry.entries();
     expect(entries).toHaveLength(2);
@@ -97,30 +151,27 @@ describe('AgentProfileRegistryService', () => {
       sourceId: 'plugin',
       priority: 5,
       workspaceKey: undefined,
-      contribution: pluginContribution,
+      contribution: pluginRecord.contribution,
     });
     expect(entries[1]).toEqual({
       sourceId: 'workspace',
       priority: 30,
       workspaceKey: 'wd_a',
-      contribution: workspaceContribution,
+      contribution: workspaceRecord.contribution,
     });
-    // Priority defaults to 0 when omitted.
-    registry.register('user', contribution('user-p'));
+    contribute(container, record('user', 'user-p'));
     expect(registry.entries()[2]?.priority).toBe(0);
-    registry.dispose();
+    container.dispose();
   });
 
   it('fires onDidChange with the decoded { sourceId, workspaceKey } payload', () => {
-    const registry = new AgentProfileRegistryService();
+    const { container, registry } = makeFold();
     const seen: { readonly sourceId: string; readonly workspaceKey?: string }[] = [];
     const subscription = registry.onDidChange((change) => seen.push(change));
 
-    registry.register('user', contribution('global'));
-    registry.register('workspace', contribution('wd_a'), { workspaceKey: 'wd_a' });
-    registry.unregister('workspace', 'wd_a');
-    // Unregistering a missing entry stays silent.
-    registry.unregister('workspace', 'wd_b');
+    contribute(container, record('user', 'global'));
+    const wdA = contribute(container, record('workspace', 'wd_a', { workspaceKey: 'wd_a' }));
+    wdA.dispose();
 
     expect(seen).toStrictEqual([
       { sourceId: 'user', workspaceKey: undefined },
@@ -128,6 +179,21 @@ describe('AgentProfileRegistryService', () => {
       { sourceId: 'workspace', workspaceKey: 'wd_a' },
     ]);
     subscription.dispose();
-    registry.dispose();
+    container.dispose();
+  });
+
+  it('fires once when a record swap lands before the displaced one is withdrawn (the reload shape)', () => {
+    const { container, registry } = makeFold();
+    const stale = contribute(container, record('user', 'v1'));
+
+    const seen: { readonly sourceId: string; readonly workspaceKey?: string }[] = [];
+    const subscription = registry.onDidChange((change) => seen.push(change));
+    contribute(container, record('user', 'v2'));
+    stale.dispose();
+
+    expect(registry.entries()[0]?.contribution.profiles[0]?.name).toBe('v2');
+    expect(seen).toStrictEqual([{ sourceId: 'user', workspaceKey: undefined }]);
+    subscription.dispose();
+    container.dispose();
   });
 });

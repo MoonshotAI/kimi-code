@@ -7,7 +7,8 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 
@@ -40,6 +41,7 @@ export function isValidCronTask(obj: unknown): obj is CronTask {
   return true;
 }
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class CronTaskPersistenceService extends Disposable implements ICronTaskPersistence {
   declare readonly _serviceBrand: undefined;
 

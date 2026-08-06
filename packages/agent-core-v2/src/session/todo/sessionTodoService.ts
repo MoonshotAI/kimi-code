@@ -9,10 +9,11 @@
  * Session scope.
  */
 
-import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
 import {
   type IAgentScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -32,7 +33,7 @@ import { TODO_LIST_REMINDER_VARIANT, todoListStaleReminder } from './todoListRem
 
 const MAIN_AGENT_ID = 'main';
 
-export class SessionTodoService extends Disposable implements ISessionTodoService {
+export class SessionTodoService extends Service implements ISessionTodoService {
   declare readonly _serviceBrand: undefined;
 
   private readonly onDidChangeEmitter = this._register(new Emitter<readonly TodoItem[]>());

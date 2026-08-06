@@ -17,24 +17,26 @@ Classes talk only to interfaces and never care how an implementation is construc
 Lifetimes form a tree, from longest to shortest:
 
 ```text
-App (0)             process-wide, single global instance
- └── Workspace (1)     one workspace handler (a materialized workspace root)
-      └── Session (2)    one session
-           └── Agent (3)    one agent
+App                 process-wide, single global instance
+ └── Workspace        one workspace handler (a materialized workspace root)
+      └── Session       one session
+           └── Agent      one agent
 ```
 
 ```ts
+// src/app/scopes.ts — the business layer declares the tiers and their order;
+// the DI kernel only knows opaque string kinds plus the declared topology.
 export enum LifecycleScope {
-  App = 0,
-  Workspace = 1,
-  Session = 2,
-  Agent = 3,
+  App = 'app',
+  Workspace = 'workspace',
+  Session = 'session',
+  Agent = 'agent',
 }
 ```
 
-- A larger number = shorter life = closer to a leaf.
+- Later in the topology = shorter life = closer to a leaf.
 - "Singleton" means **one per scope**: `ILogService` is global once; each `Session` scope has its own `ISessionMetadata`.
-- `kind` strictly increases along the parent→child direction.
+- `kind` must advance along the declared topology in the parent→child direction.
 
 ### Visibility rule
 
@@ -47,7 +49,15 @@ A child scope sees its ancestors; a parent never sees its children. Resolution w
 
 ### Disposal order
 
-Deterministic: **child scopes die first; within one scope, instances dispose in reverse construction order** (last constructed, first disposed). Business code declares which tier it lives in and never disposes by hand.
+Deterministic: **child scopes die first; within one scope, teardown runs in strict reverse registration order, one entry at a time.** The mechanism is the Ledger (`src/_base/lifecycle/`): ordered effect bookkeeping, dual-track (sync + async disposers), serial reverse-order teardown (never parallel), with the teardown reason (`'scope-close' | 'cascade' | 'unload'`) passed through to every disposer. `Disposable` / `DisposableStore` (`src/_base/di/lifecycle.ts`) delegate to it — "reverse construction order" is a Ledger property, not a container convention. Business code declares which tier it lives in and never disposes by hand.
+
+## Dynamic DI: units and cascades
+
+Registration is not the end of the story. Every unit a container tracks — static registrations and runtime `provide`s alike — lives in a small state machine owned by the scope's cascade engine (`src/_base/di/cascadeEngine.ts`, one per scope container, orchestrating tree-wide). Vocabulary you will meet in errors, tests, and the debug surface:
+
+- **Unit states** — `Pending → Activating → Active`, plus `Unloading` during teardown and a sticky `Failed`. A construction failure parks the unit in `Failed` with no auto-retry: resolving it rethrows its error; an explicit `update()` reloads it.
+- **Waiting area** — a unit whose declared dependencies are missing sits `Pending` and auto-activates when they arrive, including cross-scope wake-up when an ancestor gains the token. An `ondemand` unit counts as available: consumers pull it transitively at materialization.
+- **Cascade transaction** — every `provide` / `unprovide` / `update` runs as one tree-wide transaction: contagion set from the persistent dependency graph (instance edges, child→parent across scopes) → abort hook → global reverse-topo teardown → apply the change → waiting-area recheck fixpoint → history ring. Static bootstrap shares this path: scope creation submits the kind's whole registration batch as one `provideAll`, so registration order never matters.
 
 ## Import boundaries
 

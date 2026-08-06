@@ -1,3 +1,15 @@
+/**
+ * `agent/tools/agent` — the background-task embodiment of a subagent run.
+ *
+ * Wraps a `SubagentHandle` as an `AgentTask` so the run registers in the
+ * owning agent's task store (a foreground run may detach into it later):
+ * aborts flow through the task signal, completion settles the task and
+ * appends the result as its output. `toInfo` also carries the display-facing
+ * facts (subagent type, normalized model alias, effective thinking effort)
+ * onto the task record, which the spawned-event / snapshot / REST surfaces
+ * read back after a client reload.
+ */
+
 import type { TokenUsage } from '#/kosong/contract/usage';
 
 import { isAbortError } from '#/_base/utils/abort';
@@ -15,6 +27,8 @@ type SubagentCompletion = {
 export type SubagentHandle = {
   readonly agentId: string;
   readonly profileName: string;
+  readonly model?: string;
+  readonly thinkingEffort?: string;
   readonly completion: Promise<SubagentCompletion>;
 };
 
@@ -22,6 +36,8 @@ export interface SubagentTaskInfo extends AgentTaskInfoBase {
   readonly kind: 'agent';
   readonly agentId?: string;
   readonly subagentType?: string;
+  readonly model?: string;
+  readonly thinkingEffort?: string;
 }
 
 declare module '#/agent/task/types' {
@@ -68,6 +84,8 @@ export class SubagentTask implements AgentTask {
   readonly idPrefix: string = 'agent';
   readonly agentId: string;
   readonly subagentType: string;
+  readonly model?: string;
+  readonly thinkingEffort?: string;
 
   constructor(
     private readonly handle: SubagentHandle,
@@ -76,6 +94,8 @@ export class SubagentTask implements AgentTask {
   ) {
     this.agentId = handle.agentId;
     this.subagentType = handle.profileName;
+    this.model = handle.model;
+    this.thinkingEffort = handle.thinkingEffort;
   }
 
   async start(sink: AgentTaskSink): Promise<void> {
@@ -109,6 +129,8 @@ export class SubagentTask implements AgentTask {
       kind: 'agent',
       agentId: this.agentId,
       subagentType: this.subagentType,
+      model: this.model,
+      thinkingEffort: this.thinkingEffort,
     };
   }
 }

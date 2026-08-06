@@ -7,11 +7,12 @@ import {
   type ExperimentalFeatureState,
 } from '@moonshot-ai/agent-core';
 
-import { Session } from '#/session';
+import { capabilityRpc, Session } from '#/session';
 import type { KimiAuthFacade } from '#/auth';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AuthenticateMcpServerOptions,
+  CapabilityStatus,
   ConfigDiagnostics,
   CreateSessionOptions,
   ExportSessionInput,
@@ -310,6 +311,24 @@ export class KimiHarness {
 
   async getPluginInfo(id: string): Promise<PluginInfo> {
     return this.rpc.getPluginInfo(id);
+  }
+
+  /**
+   * App-global capability readiness and setup (the built-in product
+   * capabilities kimi-cu / kimi-webbridge), no session required. Routed
+   * through the same global channel as session capability calls; requires
+   * the v2 engine and throws on v1, which has no capability surface.
+   */
+  async listCapabilities(): Promise<readonly CapabilityStatus[]> {
+    return capabilityRpc(this.rpc).listCapabilities();
+  }
+
+  async getCapability(id: string): Promise<CapabilityStatus> {
+    return capabilityRpc(this.rpc).getCapability(id);
+  }
+
+  async installCapability(id: string): Promise<CapabilityStatus> {
+    return capabilityRpc(this.rpc).installCapability(id);
   }
 
   /**

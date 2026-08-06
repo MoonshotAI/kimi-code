@@ -321,7 +321,7 @@ describe('session lifecycle routing', () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
     channel.results.set('sessionIndex.get', SUMMARY);
-    channel.results.set('sessionLifecycleService.restore', { id: 's1', kind: 2 });
+    channel.results.set('sessionLifecycleService.restore', { id: 's1', kind: 'session' });
 
     const opts = {
       mcpServers: { example: { transport: 'stdio' as const, command: 'node' } },
@@ -339,8 +339,8 @@ describe('session lifecycle routing', () => {
   it('sessions.create forwards mcpServers to the engine', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
-    channel.results.set('workspaceLifecycleService.handlerFor', { id: 'w1', kind: 1 });
-    channel.results.set('sessionLifecycleService.create', { id: 's1', kind: 2 });
+    channel.results.set('workspaceLifecycleService.handlerFor', { id: 'w1', kind: 'workspace' });
+    channel.results.set('sessionLifecycleService.create', { id: 's1', kind: 'session' });
     channel.results.set('sessionMetadata.read', {
       id: 's1',
       createdAt: 1,

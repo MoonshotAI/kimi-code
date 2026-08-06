@@ -47,7 +47,8 @@ export const IGreeter: ServiceIdentifier<IGreeter> = createDecorator<IGreeter>('
 
 ```ts
 // greet/greetService.ts
-import { LifecycleScope, registerScopedService, ScopeActivation } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { registerScopedService, ScopeActivation } from '#/_base/di/scope';
 import { IGreeter } from './greet';
 
 export class Greeter implements IGreeter {
@@ -144,15 +145,16 @@ const meta = accessor.get(ISessionMetadata);   // 类型是 ISessionMetadata
 ### 3.1 四层，按寿命从长到短
 
 ```ts
+// src/app/scopes.ts（业务层声明；内核只认识字符串 kind 与拓扑序）
 export enum LifecycleScope {
-  App = 0,       // 进程级，全局一份
-  Workspace = 1, // 一个工作区 handler（与 Session 一对多）
-  Session = 2,   // 一次会话
-  Agent = 3,     // 一个 agent
+  App = 'app',             // 进程级，全局一份
+  Workspace = 'workspace', // 一个工作区 handler（与 Session 一对多）
+  Session = 'session',     // 一次会话
+  Agent = 'agent',         // 一个 agent
 }
 ```
 
-数值越大，寿命越短、越靠叶子。注册时把 `scope` 换成对应层即可：
+拓扑里越靠后，寿命越短、越靠叶子。注册时把 `scope` 换成对应层即可：
 
 ```ts
 registerScopedService(

@@ -8,8 +8,9 @@
  * Bound at Agent scope.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -30,7 +31,7 @@ const INTERRUPTION_REMINDER = [
 ].join(' ');
 
 export class AgentInterruptionReminderService
-  extends Disposable
+  extends Service
   implements IAgentInterruptionReminderService
 {
   declare readonly _serviceBrand: undefined;

@@ -23,7 +23,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { PlanData } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
+import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type {
   ActivateSkillPayload,
   AgentAPI,
@@ -156,6 +156,7 @@ import {
   turnPhaseSchema,
 } from '../src/contract/agent/activity.js';
 import {
+  agentCommandInfoSchema,
   agentContextDataSchema,
   agentTaskInfoSchema,
   activateSkillPayloadSchema,
@@ -169,6 +170,7 @@ import {
   promptLaunchResultSchema,
   promptPartSchema,
   promptPayloadSchema,
+  runCommandPayloadSchema,
   runShellCommandPayloadSchema,
   setModelPayloadSchema,
   setModelResultSchema,
@@ -530,6 +532,8 @@ type PromptLaunchResult = NonNullable<ReturnType<AgentAPI['prompt']>>;
 type SteerPayload = Parameters<AgentAPI['steer']>[0];
 type CancelPayload = Parameters<AgentAPI['cancel']>[0];
 type SetPermissionPayload = Parameters<AgentAPI['setPermission']>[0];
+type AgentCommandInfo = Awaited<ReturnType<AgentAPI['listCommands']>>[number];
+type RunCommandPayload = Parameters<AgentAPI['runCommand']>[0];
 type TokenUsage = NonNullable<UsageStatus['total']>;
 
 const _emptyPayload: AssertWire<typeof emptyPayloadSchema, EmptyPayload> = true;
@@ -561,6 +565,8 @@ const _usageStatus: AssertWire<typeof usageStatusSchema, UsageStatus> = true;
 // One-directional: `history` entries are full `ContextMessage`s (deep
 // `Message`/`Tool`/`PromptOrigin` unions) mirrored as `unknown`.
 const _agentContextData: AssertEngineToWire<typeof agentContextDataSchema, AgentContextData> = true;
+const _agentCommandInfo: AssertWire<typeof agentCommandInfoSchema, AgentCommandInfo> = true;
+const _runCommandPayload: AssertWire<typeof runCommandPayloadSchema, RunCommandPayload> = true;
 const _planData: AssertWire<typeof planDataSchema, PlanData> = true;
 const _cancelPlanPayload: AssertWire<typeof cancelPlanPayloadSchema, CancelPlanPayload> = true;
 const _getTasksPayload: AssertWire<typeof getTasksPayloadSchema, GetTasksPayload> = true;

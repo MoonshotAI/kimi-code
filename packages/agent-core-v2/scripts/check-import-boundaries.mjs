@@ -16,6 +16,8 @@
  *       - purity: `contract` imports no other domain (only `_base` helpers)
  *         and no external package at all (no SDKs, not even types);
  *         `protocol` imports only `_base` + `contract` and no wire SDK.
+ *         All pure layers may additionally import the DI vocabulary modules
+ *         in `KOSONG_ALLOWED_VOCABULARY` (`app/scopes`).
  *       - `provider/bases/` sub-boundary: base implementation files must not
  *         import the registries (`protocolBase`, `protocolAdapterRegistry`),
  *         `providerDefinition`, or any `*.contrib.ts` module. The
@@ -74,12 +76,23 @@ const KOSONG_LAYER = new Map([
 /**
  * Kosong is a pure provider/model abstraction layer: NO kosong subdomain may
  * import another v2 domain outside kosong itself — only `_base` utilities
- * are allowed. (`protocol` additionally sees `kosong/contract`, handled by
- * the internal-layer rule above.) Config persistence, OAuth tokens, events,
+ * are allowed, plus the DI vocabulary modules in
+ * `KOSONG_ALLOWED_VOCABULARY` (`app/scopes`: the `LifecycleScope` tier names
+ * every self-registering Service needs). (`protocol` additionally sees
+ * `kosong/contract`, handled by the internal-layer rule above.) Config
+ * persistence, OAuth tokens, events,
  * and discovery orchestration all live in the upper `app/kosongConfig`
  * wrapper — kosong must never reach up to them.
  */
 const KOSONG_BASE_ONLY_SUBDOMAINS = new Set(['contract', 'protocol', 'provider', 'model']);
+
+/**
+ * Non-`_base` modules the pure kosong layers may still import, keyed by
+ * extensionless `src/`-relative path. `app/scopes` is DI vocabulary (the
+ * scope tier names + topology declaration), not app orchestration, so a
+ * kosong Service may read its registration tier from it.
+ */
+const KOSONG_ALLOWED_VOCABULARY = new Set(['app/scopes']);
 
 /**
  * Wire SDK packages the pure kosong layers must never import — not even
@@ -292,12 +305,15 @@ export function checkSource(source, absFile) {
     }
 
     // Rule 2c: outside the kosong subtree, kosong code may only depend on
-    // `_base` utilities (`protocol` additionally sees `kosong/contract`,
+    // `_base` utilities plus the DI vocabulary in KOSONG_ALLOWED_VOCABULARY
+    // (`protocol` additionally sees `kosong/contract`,
     // handled by Rule 2b above). This is what keeps kosong a pure
     // abstraction layer with no upward dependencies.
     if (KOSONG_BASE_ONLY_SUBDOMAINS.has(sourceKosong.sub)) {
       const targetDomain = targetDomainOf(targetAbs);
-      if (targetDomain !== '_base') {
+      const targetRel = relative(SRC_ROOT, targetAbs).split(/[\\/]/).join('/');
+      const targetStripped = targetRel.endsWith('.ts') ? targetRel.slice(0, -'.ts'.length) : targetRel;
+      if (targetDomain !== '_base' && !KOSONG_ALLOWED_VOCABULARY.has(targetStripped)) {
         violations.push({
           file: absFile,
           line,

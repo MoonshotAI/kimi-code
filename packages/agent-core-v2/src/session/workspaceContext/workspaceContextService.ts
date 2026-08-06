@@ -12,8 +12,9 @@
 
 import { isAbsolute, relative, resolve } from 'node:path';
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -28,7 +29,7 @@ export const workspaceContextAdditionalDirsKey = defineState<string[]>(
   () => [],
 );
 
-export class SessionWorkspaceContextService extends Disposable implements ISessionWorkspaceContext {
+export class SessionWorkspaceContextService extends Service implements ISessionWorkspaceContext {
   declare readonly _serviceBrand: undefined;
 
   constructor(

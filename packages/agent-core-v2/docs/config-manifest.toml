@@ -13,7 +13,7 @@
 #   builtinProductSkills     src/app/skillCatalog/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
-#   defaultPlanMode          src/agent/plan/configSection.ts
+#   defaultPlanMode          src/features/plan/configSection.ts
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/app/skillCatalog/configSection.ts
@@ -102,7 +102,7 @@ manual_tick = false
 
 # ##########################################################################
 # defaultPlanMode (config.toml: default_plan_mode)
-#   owner: src/agent/plan/configSection.ts
+#   owner: src/features/plan/configSection.ts
 #   scope: core
 # ##########################################################################
 

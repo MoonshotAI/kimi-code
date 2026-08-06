@@ -64,6 +64,10 @@ class FakeMcpManager {
     return [...this.entries.values()];
   }
 
+  get(name: string): McpServerEntry | undefined {
+    return this.entries.get(name);
+  }
+
   resolved(name: string): ResolvedServer | undefined {
     if (this.entries.get(name)?.status !== 'connected') return undefined;
     return this.resolvedEntries.get(name);
@@ -173,6 +177,14 @@ class FakeMcpManager {
     const entry: McpServerEntry = { ...current, status: 'disabled', toolCount: 0 };
     this.emit(entry);
     this.entries.delete(name);
+  }
+
+  markRemoved(name: string): void {
+    const current = this.entries.get(name);
+    if (current === undefined) return;
+    const entry: McpServerEntry = { ...current, status: 'removed', toolCount: 0 };
+    this.entries.set(name, entry);
+    this.emit(entry);
   }
 
   private emit(entry: McpServerEntry): void {
@@ -335,6 +347,48 @@ describe('AgentMcpService', () => {
         serverName: 's',
       }),
     );
+  });
+
+  it('keeps tools registered when the server is tombstoned as removed, and calls fail with a removal notice', async () => {
+    const manager = new FakeMcpManager();
+    const counter = { calls: 0 };
+    const client = countingClient(fakeMcpClient(), counter);
+    manager.setResolved('s', client, await discoverTools(client));
+    createService(manager);
+    manager.connect('s');
+    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
+
+    manager.markRemoved('s');
+
+    const registered = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
+    expect(registered).toHaveLength(2);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ type: 'tool.list.updated', reason: 'mcp.disconnected' }),
+    );
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    expect(echo).toBeDefined();
+    const result = await executeTool(echo!, {
+      turnId: 1,
+      toolCallId: 'tc-removed',
+      args: { text: 'hello world' },
+      signal: new AbortController().signal,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('has been removed');
+    expect(counter.calls).toBe(0);
+  });
+
+  it('does not register tools for a server tombstoned before the agent attached', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient();
+    manager.setResolved('s', client, await discoverTools(client));
+    manager.connect('s');
+    manager.markRemoved('s');
+
+    createService(manager);
+
+    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toEqual([]);
   });
 
   it('reports same-server qualified-name collisions and keeps only the first tool', async () => {
@@ -502,10 +556,6 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    // The connection drops while no call is in flight: the manager marks the
-    // server failed. The tools must stay registered so the next call reaches
-    // the adapter and its reconnect-and-retry path instead of failing with
-    // "tool not found".
     manager.fail('s');
 
     const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
@@ -572,8 +622,6 @@ describe('AgentMcpService', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow('Connection closed');
-    // The tools stay registered after the failed reconnect so a later call
-    // can try healing the server again instead of hitting "tool not found".
     expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
   });
 
@@ -755,9 +803,6 @@ describe('AgentMcpService', () => {
     const registry = ix.get(IAgentToolRegistryService);
     const staleEcho = registry.resolve('mcp__s__echo');
 
-    // Resolve the stale tool first, then heal the server the way a parallel
-    // call's reconnect would: the resolved entry swaps to a fresh client and
-    // the registry re-seeds, leaving `staleEcho` bound to the dead client.
     manager.setResolved('s', freshClient, await discoverTools(freshClient));
     manager.connect('s');
 
