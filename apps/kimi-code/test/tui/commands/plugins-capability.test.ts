@@ -201,6 +201,33 @@ describe('plugins command capability surface', () => {
     expect(statuses.some((s) => s.includes('is installed'))).toBe(true);
   });
 
+  it('shows browser extension steps after WebBridge installation succeeds', async () => {
+    const { host, statuses } = fakeHost({ engineV2: true });
+
+    await installCapabilityFromPanel(
+      host,
+      fakePanel().panel,
+      {
+        id: 'kimi-webbridge',
+        displayName: 'Kimi WebBridge',
+        source: 'capability:kimi-webbridge',
+      } as never,
+    );
+
+    expect(statuses).toContain('Kimi WebBridge is installed.');
+    expect(statuses).toContain(
+      [
+        'Two steps left to use Kimi WebBridge.',
+        '1. Install the browser extension (skip this if you already have it installed)',
+        '   Install from the Chrome Web Store:   https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc?authuser=0&hl=zh-CN',
+        '   Install from the Edge Add-ons Store: https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg',
+        '   Manual installation guide: https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension',
+        '2. Run /new or /reload to apply it.',
+      ].join('\n'),
+    );
+    expect(statuses).not.toContain('Run /new or /reload to apply plugin changes.');
+  });
+
   it('shows the engine error when a background capability install fails', async () => {
     const { host, statuses } = fakeHost({
       engineV2: true,

@@ -561,7 +561,7 @@ async function installCapabilityFromPanel(
     return;
   }
   host.showStatus(`${label} is installed.`);
-  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+  host.showStatus(pluginPostInstallHint(entry.id, true), 'warning');
 }
 
 async function installFromPanel(
@@ -770,6 +770,21 @@ async function installPluginFromSource(
 
 const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
 
+const WEBBRIDGE_POST_INSTALL_HINT = [
+  'Two steps left to use Kimi WebBridge.',
+  '1. Install the browser extension (skip this if you already have it installed)',
+  '   Install from the Chrome Web Store:   https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc?authuser=0&hl=zh-CN',
+  '   Install from the Edge Add-ons Store: https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg',
+  '   Manual installation guide: https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension',
+  '2. Run /new or /reload to apply it.',
+].join('\n');
+
+function pluginPostInstallHint(id: string, official: boolean): string {
+  return id === 'kimi-webbridge' && official
+    ? WEBBRIDGE_POST_INSTALL_HINT
+    : PLUGIN_RELOAD_HINT;
+}
+
 const PLUGIN_QUOTA_NOTE = 'Note: This plugin consumes your quota.';
 
 function showPluginInstallResult(
@@ -784,11 +799,12 @@ function showPluginInstallResult(
       ? ` Declares ${summary.mcpServerCount} MCP ${serverWord}; enabled by default and configurable from /plugins.`
       : '';
   const action = describeInstallAction(previous, summary);
+  const official = isOfficialPluginInstall(summary);
   host.showStatus(`${action} (${summary.id}).${mcpHint}`);
-  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+  host.showStatus(pluginPostInstallHint(summary.id, official), 'warning');
   // Gate on provenance, not just the id: a local/GitHub fork whose manifest
   // reuses a billed plugin's id is not the official quota-consuming build.
-  if (QUOTA_CONSUMING_PLUGIN_IDS.includes(summary.id) && isOfficialPluginInstall(summary)) {
+  if (QUOTA_CONSUMING_PLUGIN_IDS.includes(summary.id) && official) {
     host.showStatus(PLUGIN_QUOTA_NOTE, 'warning');
   }
 }
