@@ -8,7 +8,7 @@ import {
   type PluginSummary,
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
-import { getCapabilities, Markdown, Spacer } from '@moonshot-ai/pi-tui';
+import { Markdown, Spacer } from '@moonshot-ai/pi-tui';
 
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import {
@@ -567,7 +567,7 @@ async function installCapabilityFromPanel(
     host.showNotice(`${label} is installed.`);
     host.state.transcriptContainer.addChild(new Spacer(1));
     host.state.transcriptContainer.addChild(
-      new Markdown(webbridgePostInstallMarkdown(), 2, 0, createMarkdownTheme()),
+      new Markdown(WEBBRIDGE_POST_INSTALL_MARKDOWN, 2, 0, createMarkdownTheme()),
     );
     host.state.ui.requestRender();
     return;
@@ -789,23 +789,15 @@ function pluginReloadHint(): string {
   return isKimiV2Enabled() ? PLUGIN_RELOAD_HINT_V2 : PLUGIN_RELOAD_HINT;
 }
 
-function webbridgePostInstallMarkdown(): string {
-  const link = (label: string, url: string): string => {
-    const visibleUrl = `<${url}>`;
-    return getCapabilities().hyperlinks
-      ? `[${label}](${url}) ${visibleUrl}`
-      : `${label} ${visibleUrl}`;
-  };
-  return [
-    '1. Install the browser extension',
-    '',
-    `   - ${link('Chrome Web Store', 'https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc')}`,
-    `   - ${link('Edge Add-ons', 'https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg')}`,
-    `   - ${link('Manual installation guide', 'https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension')}`,
-    '',
-    '2. Run `/reload` or `/new` to apply it.',
-  ].join('\n');
-}
+const WEBBRIDGE_POST_INSTALL_MARKDOWN = [
+  '1. Install the browser extension',
+  '',
+  '   - [Chrome Web Store](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc)',
+  '   - [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg)',
+  '   - [Manual installation guide](https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension)',
+  '',
+  '2. Run `/reload` or `/new` to apply it.',
+].join('\n');
 
 const PLUGIN_QUOTA_NOTE = 'Note: This plugin consumes your quota.';
 
