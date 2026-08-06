@@ -56,6 +56,7 @@ import {
   ISessionLifecycleHooks,
   type SessionLifecycleHookSlots,
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
+import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -281,6 +282,15 @@ function persistentWorkspaceStub(): IWorkspaceService {
     },
     update: () => Promise.resolve(undefined),
     delete: () => Promise.resolve(),
+  };
+}
+
+function sessionIndexMirrorStub(): ISessionIndexMirror {
+  return {
+    _serviceBrand: undefined,
+    record: () => {},
+    pending: () => [],
+    drain: () => Promise.resolve(),
   };
 }
 
@@ -583,6 +593,7 @@ describe('SessionLifecycleService', () => {
       stubPair(IWorkspaceInstructionsService, workspaceInstructionsStub()),
       stubPair(IWorkspaceService, workspaceStub()),
       stubPair(ISessionIndex, sessionIndexStub()),
+      stubPair(ISessionIndexMirror, sessionIndexMirrorStub()),
       stubPair(IAppendLogStore, appendLogStoreStub()),
       stubPair(IAtomicDocumentStore, atomicDocumentStoreStub()),
       stubPair(IEventService, eventStub()),

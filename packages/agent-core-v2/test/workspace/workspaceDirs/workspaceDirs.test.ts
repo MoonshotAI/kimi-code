@@ -41,7 +41,7 @@ import { IEventService } from '#/app/event/event';
 import {
   IProjectLocalConfigService,
 } from '#/app/projectLocalConfig/projectLocalConfig';
-import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
 import { WorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycleService';
@@ -306,6 +306,12 @@ describe('workspace add-dir (handler chain)', () => {
         get: () => Promise.resolve(undefined),
         countActive: () => Promise.resolve(0),
       } as unknown as ISessionIndex),
+      stubPair(ISessionIndexMirror, {
+        _serviceBrand: undefined,
+        record: () => {},
+        pending: () => [],
+        drain: () => Promise.resolve(),
+      } as unknown as ISessionIndexMirror),
       stubPair(IAppendLogStore, {
         _serviceBrand: undefined,
         append: () => {},

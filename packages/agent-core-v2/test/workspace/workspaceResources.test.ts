@@ -42,7 +42,7 @@ import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
-import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
 import { InMemorySkillDiscovery } from '#/app/skillCatalog/inMemorySkillDiscovery';
@@ -307,6 +307,12 @@ describe('workspace resource sharing (handler chain)', () => {
         get: () => Promise.resolve(undefined),
         countActive: () => Promise.resolve(0),
       } as unknown as ISessionIndex),
+      stubPair(ISessionIndexMirror, {
+        _serviceBrand: undefined,
+        record: () => {},
+        pending: () => [],
+        drain: () => Promise.resolve(),
+      } as unknown as ISessionIndexMirror),
       stubPair(IAppendLogStore, {
         _serviceBrand: undefined,
         append: () => {},

@@ -86,6 +86,7 @@ import {
   CHILD_SESSION_KIND,
   CHILD_SESSION_KIND_KEY,
   ISessionIndex,
+  ISessionIndexMirror,
   PARENT_SESSION_ID_KEY,
 } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -187,6 +188,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IConfigService private readonly config: IConfigService,
     @IHostEnvironment private readonly hostEnv: IHostEnvironment,
     @ISessionIndex private readonly index: ISessionIndex,
+    @ISessionIndexMirror private readonly indexMirror: ISessionIndexMirror,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
@@ -428,9 +430,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
     this.sessions.delete(sessionId);
     await this.drainAgents(handle);
-    // Event-driven metadata writes (e.g. the outcome mirror) must settle
-    // before the scope — and for delete(), the session dir — goes away.
+    // Event-driven metadata writes (e.g. the outcome mirror) must settle —
+    // and their summaries must reach the read model — before the scope (and
+    // for delete(), the session dir) goes away, or the very next cold list
+    // reads a stale outcome.
     await drainSessionMetadataWrites();
+    await this.indexMirror.drain();
     handle.dispose();
     this._onDidCloseSession.fire({ sessionId });
   }
@@ -448,6 +453,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.announceWillClose({ sessionId, handle, reason: 'archive' });
     this.sessions.delete(sessionId);
     await drainSessionMetadataWrites();
+    await this.indexMirror.drain();
     handle.dispose();
     this._onDidArchiveSession.fire({ sessionId });
   }

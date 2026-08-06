@@ -23,7 +23,7 @@ import { IConfigService } from '#/app/config/config';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { ISessionLegacyService } from '#/app/sessionLegacy/sessionLegacy';
 import { SessionLegacyService } from '#/app/sessionLegacy/sessionLegacyService';
-import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
@@ -75,6 +75,12 @@ function stubSessionChain(ix: TestInstantiationService, session: ISessionScopeHa
             }
           : undefined,
       ),
+  });
+  ix.stub(ISessionIndexMirror, {
+    _serviceBrand: undefined,
+    record: () => {},
+    pending: () => [],
+    drain: () => Promise.resolve(),
   });
   ix.stub(IWorkspaceLifecycleService, {
     handlerFor: () => Promise.resolve(handler),
