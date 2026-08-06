@@ -9,7 +9,6 @@ import {
   type IAgentScopeHandle,
   type Scope,
 } from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import type { DomainEvent } from '#/app/event/eventBus';
