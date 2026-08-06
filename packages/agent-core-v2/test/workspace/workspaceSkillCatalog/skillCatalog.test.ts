@@ -121,6 +121,7 @@ function pluginStub(
   return {
     _serviceBrand: undefined,
     onDidReload: reloadEmitter !== undefined ? reloadEmitter.event : () => ({ dispose: () => {} }),
+    onDidMutate: () => ({ dispose: () => {} }),
     listPlugins: async () => [],
     installPlugin: async () => ({ id: '' }) as never,
     setPluginEnabled: async () => {},

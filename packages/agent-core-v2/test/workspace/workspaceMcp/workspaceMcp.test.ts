@@ -173,6 +173,64 @@ describe('WorkspaceMcpService', () => {
     );
   }, 20000);
 
+  it('sessionHandle admits servers connecting before ready settles and freezes the baseline after', async () => {
+    current = { alpha: stdioServer() };
+    let settleConnectAll: () => void = () => undefined;
+    vi.spyOn(McpConnectionManager.prototype, 'connectAll').mockImplementation(function (
+      this: McpConnectionManager,
+      servers: Readonly<Record<string, McpServerConfig>>,
+    ) {
+      for (const [name, config] of Object.entries(servers)) {
+        void this.connect(name, config);
+      }
+      return new Promise<void>((resolve) => {
+        settleConnectAll = resolve;
+      });
+    });
+
+    const service = createService();
+    manager = service.connectionManager();
+    const handle = service.sessionHandle();
+
+    // 'alpha' appears (connecting) while the initial load is still unsettled:
+    // admitted into the baseline. A name the view does not know is not.
+    await vi.waitFor(() => {
+      expect(manager?.get('alpha')).toBeDefined();
+    });
+    expect(handle.isBaselineServer('alpha')).toBe(true);
+    expect(handle.isBaselineServer('ghost')).toBe(false);
+
+    settleConnectAll();
+    await service.ready;
+
+    // Once the initial connect settles the baseline is closed: a server that
+    // connects afterwards (a plugin install or a config edit) stays outside.
+    await manager?.connect('late', stdioServer());
+    expect(handle.isBaselineServer('late')).toBe(false);
+    expect(handle.isBaselineServer('alpha')).toBe(true);
+
+    // A session materializing now captures a fresh baseline that includes it.
+    expect(service.sessionHandle().isBaselineServer('late')).toBe(true);
+  }, 20000);
+
+  it('sessionOverlay marks the ephemeral server names as baseline by construction', async () => {
+    current = { base: stdioServer() };
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+
+    const overlay = service.sessionOverlay({ eph: stdioServer() });
+    // True even before the overlay's own connect settles.
+    expect(overlay.handle.isBaselineServer('eph')).toBe(true);
+    expect(overlay.handle.isBaselineServer('base')).toBe(true);
+
+    await overlay.handle.ready;
+    expect(overlay.handle.isBaselineServer('eph')).toBe(true);
+    expect(overlay.handle.isBaselineServer('late')).toBe(false);
+
+    await overlay.shutdown();
+  }, 20000);
+
   it('sessionOverlay connects ephemeral servers on a session-owned manager, released by shutdown', async () => {
     current = { base: stdioServer() };
     const service = createService();

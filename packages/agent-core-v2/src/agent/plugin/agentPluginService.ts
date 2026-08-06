@@ -3,7 +3,13 @@
  *
  * Renders session-start skills from `plugin` and `sessionSkillCatalog`, injects
  * them through `contextInjector` and `systemReminder`, and uses `contextMemory`
- * to neutralize stale guidance. Main-agent-only (v1 parity): the service
+ * to neutralize stale guidance. Also appends a `plugin_change` system reminder
+ * through `systemReminder` whenever a plugin mutation lands (`plugin`
+ * `onDidMutate` — never on an explicit reload, whose resumed session would
+ * otherwise inherit a stale notice), naming the mutated plugin and telling the
+ * model the live session keeps its original prompt and tool set until `/new`
+ * or `/reload`.
+ * Main-agent-only (v1 parity): the service
  * self-gates on `agentId === 'main'`; Agent scope creation instantiates it for
  * every agent, so other agents construct it as a no-op. Resolves
  * session prompt context through `sessionContext` and reports missing skills
@@ -20,7 +26,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IPluginService } from '#/app/plugin/plugin';
-import type { EnabledPluginSessionStart } from '#/app/plugin/types';
+import type { EnabledPluginSessionStart, PluginMutation } from '#/app/plugin/types';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
 import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -29,6 +35,24 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { IAgentPluginService } from './agentPlugin';
 
 const SESSION_START_INJECTION_VARIANT = 'plugin_session_start';
+
+const PLUGIN_CHANGE_INJECTION_VARIANT = 'plugin_change';
+
+const PLUGIN_CHANGE_VERBS: Record<PluginMutation['kind'], string> = {
+  install: 'installed',
+  enable: 'enabled',
+  disable: 'disabled',
+  remove: 'removed',
+  'mcp-server': 'updated',
+};
+
+function renderPluginChangeReminder(mutation: PluginMutation): string {
+  return (
+    `Plugin "${mutation.id}" was ${PLUGIN_CHANGE_VERBS[mutation.kind]}. ` +
+    'This session keeps the prompt and tools it started with; ' +
+    'run /new or /reload to apply the change, and tell the user if they expect it now.'
+  );
+}
 
 const MAIN_AGENT_ID = 'main';
 
@@ -61,6 +85,14 @@ export class AgentPluginService extends Service implements IAgentPluginService {
         if (sourceId === PLUGIN_SKILL_SOURCE_ID) {
           void this.appendFreshSessionStartReminder();
         }
+      }),
+    );
+    this._register(
+      this.plugins.onDidMutate(({ mutation }) => {
+        this.reminders.appendSystemReminder(renderPluginChangeReminder(mutation), {
+          kind: 'injection',
+          variant: PLUGIN_CHANGE_INJECTION_VARIANT,
+        });
       }),
     );
   }

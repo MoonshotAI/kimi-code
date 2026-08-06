@@ -10,7 +10,14 @@
  * as `removed`, swaps in the OAuth tool for
  * `needs-auth` servers, journals tool discoveries on the wire (queued until
  * restore finishes), and publishes `mcp.server.status` / `tool.list.updated`
- * events. Sessions and agents construct without awaiting the manager's
+ * events. Only the session's baseline servers take part
+ * (`ISessionMcpHandle.isBaselineServer`, checked on every replayed and
+ * live status change): a server that appears mid-session — a plugin
+ * install or a config edit — is ignored here, so its tools, status events,
+ * and discoveries never reach a live agent; it joins on the next session
+ * materialization (`/new`, `/reload`, resume), while a tombstoned baseline
+ * server reconnecting under the same name (a re-enabled plugin) registers
+ * again. Sessions and agents construct without awaiting the manager's
  * initial connect; each LLM step instead waits for it through a `loop`
  * onWillBeginStep hook (a no-op once settled), with the per-execution
  * `toolExecutor` onWillExecuteTool wait as the backstop. The plain-data state (`mcpToolsByServer`, `discoveryWritesReady`)
@@ -219,6 +226,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
   }
 
   private handleMcpServerStatusChange(entry: McpServerEntry): void {
+    if (!this.mcpHandle.isBaselineServer(entry.name)) return;
     this.eventBus.publish({
       type: 'mcp.server.status',
       server: {

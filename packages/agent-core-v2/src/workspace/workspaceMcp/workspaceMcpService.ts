@@ -10,9 +10,17 @@
  * with a removal notice, while new sessions never see them), feeds the
  * manager's global timeout defaults
  * from the config domain's tunables at each (re)connect, and reports
- * connection telemetry for the initial load. It also builds per-session
+ * connection telemetry for the initial load. Every session handle it hands
+ * out (`sessionHandle` / `sessionOverlay`) captures a server baseline — the
+ * names present when the session materializes, open to additions until the
+ * initial connect settles, then closed — so servers that appear mid-session
+ * (a plugin install or a config edit, which always land after the initial
+ * connect via the mutation tail) never reach the live sessions' tool
+ * registries; the next session materialization (`/new`, `/reload`, resume)
+ * captures a fresh baseline. It also builds per-session
  * overlays (`sessionOverlay`): a session-owned manager for a session's
- * ephemeral (caller-injected, never persisted) servers, presented through a
+ * ephemeral (caller-injected, never persisted) servers — baseline members
+ * by construction — presented through a
  * `MergedMcpConnectionView` over the shared manager and shut down by the
  * session lifecycle when the session scope tears down.
  * An outright initial-load or change-apply failure is logged (per-server
@@ -35,7 +43,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 
-import { McpConnectionManager } from '#/mcpCore/connection-manager';
+import { McpConnectionManager, type McpConnectionView } from '#/mcpCore/connection-manager';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
@@ -106,6 +114,7 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
       _serviceBrand: undefined,
       ready: this.ready,
       connectionManager: this.manager,
+      isBaselineServer: this.sessionBaseline(this.manager, this.ready),
     };
   }
 
@@ -130,13 +139,42 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
       sessionManager,
       new Set(Object.keys(servers)),
     );
+    const ready = Promise.all([this.ready, connect]).then(() => undefined);
     return {
       handle: {
         _serviceBrand: undefined,
-        ready: Promise.all([this.ready, connect]).then(() => undefined),
+        ready,
         connectionManager: view,
+        isBaselineServer: this.sessionBaseline(view, ready, Object.keys(servers)),
       },
       shutdown: () => sessionManager.shutdown(),
+    };
+  }
+
+  private sessionBaseline(
+    view: McpConnectionView,
+    ready: Promise<void>,
+    extra?: readonly string[],
+  ): (name: string) => boolean {
+    const baseline = new Set<string>(extra);
+    for (const entry of view.list()) {
+      baseline.add(entry.name);
+    }
+    let frozen = false;
+    void ready.then(
+      () => {
+        frozen = true;
+      },
+      () => {
+        frozen = true;
+      },
+    );
+    return (name) => {
+      if (baseline.has(name)) return true;
+      if (frozen) return false;
+      if (view.get(name) === undefined) return false;
+      baseline.add(name);
+      return true;
     };
   }
 
