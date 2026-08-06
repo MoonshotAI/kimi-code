@@ -566,7 +566,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     );
   }
 
-  async function runtimeStep(command = powershellPath): Promise<{
+  async function runtimeStep(command: string): Promise<{
     readonly step: CapabilityStep;
     readonly version?: string;
   }> {
@@ -608,10 +608,21 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       : { step: { id: 'runtime', state: 'ok', detail: doctor.version }, version: doctor.version };
   }
 
+  async function detectRuntimeStep(): Promise<{
+    readonly step: CapabilityStep;
+    readonly version?: string;
+  }> {
+    const systemRuntime = await runtimeStep(powershellPath);
+    if (systemRuntime.step.state !== 'failed') return systemRuntime;
+
+    const fallbackRuntime = await runtimeStep(powershell7Path);
+    return fallbackRuntime.step.state === 'ok' ? fallbackRuntime : systemRuntime;
+  }
+
   async function detect(): Promise<CapabilityDetectResult> {
     const [plugin, runtime] = await Promise.all([
       detectPluginLayer(ctx, WINDOWS_PLUGIN),
-      runtimeStep(),
+      detectRuntimeStep(),
     ]);
     return {
       steps: [plugin.step, runtime.step],

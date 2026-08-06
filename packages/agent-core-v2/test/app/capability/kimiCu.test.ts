@@ -460,6 +460,66 @@ describe('kimi-cu entry', () => {
     ]);
   });
 
+  it('keeps the Windows runtime detectable after installing through PowerShell 7', async () => {
+    const plugins = fakePlugins([]);
+    const calls: string[] = [];
+    let runtimeInstalled = false;
+    const hostProcess = {
+      _serviceBrand: undefined,
+      spawn: (command: string, args: readonly string[] = []) => {
+        calls.push(`${command} ${args.join(' ')}`);
+        if (command === windowsPowerShellPath()) {
+          return Promise.reject(new Error('Windows PowerShell cannot launch'));
+        }
+        if (args.some((arg) => arg.includes('Get-FileHash'))) {
+          return Promise.resolve(fakeProc(0, 'PowerShell 7.5.2'));
+        }
+        if (args.some((arg) => arg.includes('setup_windows.ps1'))) {
+          runtimeInstalled = true;
+          return Promise.resolve(fakeProc(0));
+        }
+        return Promise.resolve(
+          runtimeInstalled
+            ? fakeProc(
+                0,
+                'version=0.2.14\r\nmcp=true\r\nhelper=embedded\r\nagent=running\r\n',
+              )
+            : fakeProc(3),
+        );
+      },
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(
+      makeCtx({
+        platform: 'win32',
+        arch: 'x64',
+        plugins: plugins.service,
+        hostProcess,
+        fetchImpl: (() =>
+          Promise.resolve(
+            new Response("Write-Host 'official setup'", {
+              headers: { 'content-length': '27' },
+            }),
+          )) as typeof fetch,
+      }),
+    );
+
+    await entry.install(() => undefined);
+
+    await expect(entry.detect()).resolves.toEqual({
+      version: '0.2.14',
+      steps: [
+        { id: 'plugin', state: 'ok' },
+        { id: 'runtime', state: 'ok', detail: '0.2.14' },
+      ],
+    });
+    expect(
+      calls.some(
+        (call) =>
+          call.startsWith(windowsPowerShell7Path()) && call.includes('setup_windows.ps1'),
+      ),
+    ).toBe(true);
+  });
+
   it('leaves plugin wiring untouched when no PowerShell can run the installer', async () => {
     const plugins = fakePlugins([]);
     let downloads = 0;
