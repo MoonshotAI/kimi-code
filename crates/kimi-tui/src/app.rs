@@ -79,7 +79,8 @@ struct TabState {
     idx: usize,
 }
 
-/// A pending tool approval awaiting an interactive y/n decision.
+/// A pending tool approval awaiting an interactive decision (y/n, `v` for
+/// details, `s` to approve-for-session).
 #[derive(Debug, Clone, PartialEq)]
 struct PendingApproval {
     id: String,
@@ -88,6 +89,8 @@ struct PendingApproval {
     rule: String,
     /// Compact preview of the tool arguments (bounded length).
     args: String,
+    /// The full tool arguments JSON (for the `v` detail view).
+    arguments: String,
 }
 
 /// Compact single-line preview of a tool's arguments (≤ 80 chars, char-safe).
@@ -102,9 +105,16 @@ fn args_preview(arguments: &serde_json::Value) -> String {
 }
 
 /// Merge newly fetched approval items into the pending queue (dedup by id).
-/// Returns how many new approvals were queued.
-fn queue_new_approvals(queue: &mut Vec<PendingApproval>, items: &[serde_json::Value]) -> usize {
+/// Items whose rule is in `auto_allow_rules` are returned separately so the
+/// caller can resolve them automatically (approve-for-session parity).
+/// Returns `(newly_queued, auto_resolve_ids)`.
+fn queue_new_approvals(
+    queue: &mut Vec<PendingApproval>,
+    items: &[serde_json::Value],
+    auto_allow_rules: &std::collections::HashSet<String>,
+) -> (usize, Vec<String>) {
     let mut added = 0;
+    let mut auto_resolve = Vec::new();
     for item in items {
         let id = item["id"].as_str().unwrap_or("").to_string();
         if id.is_empty() {
@@ -112,13 +122,19 @@ fn queue_new_approvals(queue: &mut Vec<PendingApproval>, items: &[serde_json::Va
         }
         let tool = item["tool_name"].as_str().unwrap_or("?").to_string();
         let rule = item["approval_rule"].as_str().unwrap_or("?").to_string();
-        let args = args_preview(&item["arguments"]);
+        let arguments = item["arguments"].clone();
+        let args = args_preview(&arguments);
+        let arguments = serde_json::to_string(&arguments).unwrap_or_default();
         if !queue.iter().any(|p| p.id == id) {
-            queue.push(PendingApproval { id, tool, rule, args });
+            if auto_allow_rules.contains(&rule) {
+                auto_resolve.push(id.clone());
+                continue;
+            }
+            queue.push(PendingApproval { id, tool, rule, args, arguments });
             added += 1;
         }
     }
-    added
+    (added, auto_resolve)
 }
 
 /// An interrupt a running turn should react to.
@@ -207,6 +223,10 @@ pub struct App {
     tab: Option<TabState>,
     /// Pending tool approvals queued for interactive y/n resolution.
     pending_approvals: Vec<PendingApproval>,
+    /// Permission rules the user approved "for this session": future
+    /// approvals matching these rules resolve automatically (TS
+    /// approve-for-session parity).
+    auto_allow_rules: std::collections::HashSet<String>,
     /// Transcript scroll offset (lines from the bottom).
     scroll: u16,
     /// Session status summary for the footer (plan/swarm).
@@ -233,6 +253,7 @@ impl App {
             model_aliases: Vec::new(),
             tab: None,
             pending_approvals: Vec::new(),
+            auto_allow_rules: std::collections::HashSet::new(),
             scroll: 0,
             status: String::new(),
             theme: crate::theme::load_theme(),
@@ -1096,16 +1117,24 @@ impl App {
     }
 
     /// Fetch pending approvals after an `approval.requested` event and queue
-    /// them for interactive y/n resolution.
+    /// them for interactive resolution. Approvals matching an
+    /// auto-approved rule resolve immediately (approve-for-session parity).
     async fn request_approval(&mut self) {
         let session_id = self.session_id.clone();
         match self.harness.approvals(Some(&session_id)).await {
             Ok(items) if !items.is_empty() => {
-                let added = queue_new_approvals(&mut self.pending_approvals, &items);
+                let (added, auto_resolve) = queue_new_approvals(
+                    &mut self.pending_approvals,
+                    &items,
+                    &self.auto_allow_rules,
+                );
+                for id in auto_resolve {
+                    let _ = self.harness.resolve_approval(&id, true, None).await;
+                }
                 if added > 0 {
                     if let Some(head) = self.pending_approvals.last() {
                         self.transcript.push(TranscriptLine::status(format!(
-                            "approval requested: {} ({rule}) {args} — press y/n",
+                            "approval requested: {} ({rule}) {args} — y/n, v=details, s=for-session",
                             head.tool,
                             rule = head.rule,
                             args = head.args,
@@ -1141,6 +1170,8 @@ impl App {
                 match key.code {
                     KeyCode::Char('y') => self.answer_approval(true).await?,
                     KeyCode::Char('n') => self.answer_approval(false).await?,
+                    KeyCode::Char('v') => self.show_approval_detail(),
+                    KeyCode::Char('s') => self.approve_for_session().await?,
                     _ => {}
                 }
             }
@@ -1182,6 +1213,47 @@ impl App {
             let action = if allow { "allowed" } else { "denied" };
             self.transcript.push(TranscriptLine::status(format!("{} {}", pending.tool, action)));
         } else {
+            self.transcript
+                .push(TranscriptLine::status(format!("{} no longer pending", pending.tool)));
+        }
+        Ok(())
+    }
+
+    /// Show the full arguments of the front pending approval (`v` key) — the
+    /// compact prompt line truncates at 80 chars, so this is the detail view.
+    fn show_approval_detail(&mut self) {
+        let Some(pending) = self.pending_approvals.first().cloned() else {
+            return;
+        };
+        self.transcript.push(TranscriptLine::status(format!(
+            "approval {}: {} ({rule})",
+            pending.id,
+            pending.tool,
+            rule = pending.rule,
+        )));
+        self.transcript.push(TranscriptLine::status(format!("  args: {}", pending.arguments)));
+    }
+
+    /// Approve the front approval "for this session" (`s` key): remember its
+    /// rule so future matching approvals resolve automatically, then allow
+    /// it (TS approve-for-session parity).
+    async fn approve_for_session(&mut self) -> anyhow::Result<()> {
+        let Some(pending) = self.pending_approvals.first().cloned() else {
+            return Ok(());
+        };
+        self.auto_allow_rules.insert(pending.rule.clone());
+        let resolved = self
+            .harness
+            .resolve_approval(&pending.id, true, None)
+            .await
+            .unwrap_or(false);
+        self.pending_approvals.remove(0);
+        self.transcript.push(TranscriptLine::status(format!(
+            "{} approved for session ({} will auto-approve)",
+            pending.tool,
+            pending.rule,
+        )));
+        if !resolved {
             self.transcript
                 .push(TranscriptLine::status(format!("{} no longer pending", pending.tool)));
         }
@@ -1345,12 +1417,15 @@ mod tests {
     #[test]
     fn queues_approvals_with_dedup() {
         let mut queue = Vec::new();
+        let auto = std::collections::HashSet::new();
         // New items are queued in order with their rule + args preview.
         let items = vec![
             serde_json::json!({ "id": "a1", "tool_name": "Bash", "approval_rule": "Always allow", "arguments": { "command": "ls" } }),
             serde_json::json!({ "id": "a2", "tool_name": "Read", "approval_rule": "Ask", "arguments": { "path": "/x" } }),
         ];
-        assert_eq!(queue_new_approvals(&mut queue, &items), 2);
+        let (added, auto_resolve) = queue_new_approvals(&mut queue, &items, &auto);
+        assert_eq!(added, 2);
+        assert!(auto_resolve.is_empty(), "no auto rules yet");
         assert_eq!(
             queue,
             vec![
@@ -1359,25 +1434,43 @@ mod tests {
                     tool: "Bash".into(),
                     rule: "Always allow".into(),
                     args: r#"{"command":"ls"}"#.into(),
+                    arguments: r#"{"command":"ls"}"#.into(),
                 },
                 PendingApproval {
                     id: "a2".into(),
                     tool: "Read".into(),
                     rule: "Ask".into(),
                     args: r#"{"path":"/x"}"#.into(),
+                    arguments: r#"{"path":"/x"}"#.into(),
                 },
             ]
         );
         // Re-fetching the same ids adds nothing.
-        assert_eq!(queue_new_approvals(&mut queue, &items), 0);
+        assert_eq!(queue_new_approvals(&mut queue, &items, &auto).0, 0);
         // A fresh id appended; items without an id are skipped.
         let more = vec![
             serde_json::json!({ "id": "a3", "tool_name": "Edit", "arguments": { "path": "/y" } }),
             serde_json::json!({ "tool_name": "no-id" }),
         ];
-        assert_eq!(queue_new_approvals(&mut queue, &more), 1);
+        assert_eq!(queue_new_approvals(&mut queue, &more, &auto).0, 1);
         assert_eq!(queue[2].id, "a3");
         assert_eq!(queue[2].rule, "?");
+    }
+
+    #[test]
+    fn auto_allow_rules_skip_queuing() {
+        let mut queue = Vec::new();
+        let mut auto = std::collections::HashSet::new();
+        auto.insert("Always allow".to_string());
+        let items = vec![
+            serde_json::json!({ "id": "a1", "tool_name": "Bash", "approval_rule": "Always allow", "arguments": { "command": "ls" } }),
+            serde_json::json!({ "id": "a2", "tool_name": "Read", "approval_rule": "Ask", "arguments": { "path": "/x" } }),
+        ];
+        let (added, auto_resolve) = queue_new_approvals(&mut queue, &items, &auto);
+        // The Always-allow item is auto-resolved (not queued); Ask is queued.
+        assert_eq!(added, 1, "only the Ask approval is queued");
+        assert_eq!(auto_resolve, vec!["a1".to_string()], "auto-resolved id");
+        assert_eq!(queue[0].id, "a2");
     }
 
     #[test]

@@ -547,7 +547,12 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
   - `app.rs` `run()`：`session.load()` 后 `get_context()` → `render_history` 追加到 transcript（"session ready" 之前）
 - **分片 C：补全参数集扩展 ✅**：`bottom_pane.rs` `complete_line` 加 `/permission`（manual|plan|auto|yolo）与 `/session`（set）参数集（TS registry 参数补全规格对齐）；测试扩展
 - **验证**：kimi-tui 33 全绿（29 基线 + history 4 + bottom_pane 补全扩展）；`cargo check --workspace` 0 errors
-- **待办**：分片 B 审批面板化（DisplayBlock diff/shell/file 预览 + approve-for-session 记忆）；工具调用卡片（结构化 tool 条目/结果折叠）；补全弹窗；媒体渲染
+- **分片 B：审批面板化（详情 + approve-for-session）✅**（2026-08-06）：
+  - `PendingApproval` 增加完整 `arguments` JSON 字段（列表保留 80 字符预览）
+  - **`v` 键详情**：回合中按 `v` 显示当前审批的完整参数（多行 status：id/tool/rule/args）
+  - **`s` 键 approve-for-session**：当前审批的 rule 记入 `auto_allow_rules`（App 字段，会话内记忆）→ 后续同 rule 审批在 `request_approval` 拉取时**自动 resolve allow**（`queue_new_approvals` 返回 auto_resolve 列表，不入队不打断）；提示行更新 "y/n, v=details, s=for-session"
+  - 测试：`auto_allow_rules_skip_queuing`（命中规则不入队、返回 auto-resolve id）+ `queues_approvals_with_dedup` 适配新签名 → kimi-tui **34** 全绿
+- **待办**：工具调用卡片（结构化 tool 条目/结果折叠 Ctrl-O）；补全弹窗；媒体渲染；审批面板视觉化（DisplayBlock diff/shell/file 全屏预览，当前为 transcript 行详情）
 
 **2026-08-06 CLI 续补（G-3 批次 2 + ACP 增补）**：
 - **选项冲突校验补全 ✅**（TS `validateOptions` parity）：`print` 空 prompt / 空 `--model` 报错（"Prompt/Model cannot be empty."）；`print --continue` 与全局 `-S <id>` clap `conflicts_with` 互斥；新增 2 集成测试 → cli.rs 44 全绿
