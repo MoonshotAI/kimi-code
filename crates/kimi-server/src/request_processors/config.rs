@@ -125,9 +125,45 @@ mod tests {
     use super::*;
     use kimi_protocol::rpc::JsonRpcRequest;
 
+    /// Serializes tests that touch the process-global env (`KIMI_CONFIG_PATH`,
+    /// `USERPROFILE` / `HOME`).
+    static CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Point the user-level config search (`~/.kimi-code/config.toml`) at a
+    /// temp dir so `config/get` never depends on the real user config — a dev
+    /// machine's config may carry real credentials or fail to parse (a broken
+    /// user config must not break `config/*` round-trip tests). Restores the
+    /// previous env vars on drop.
+    struct HomeIsolation(Option<std::ffi::OsString>, Option<std::ffi::OsString>);
+
+    impl Drop for HomeIsolation {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(v) => std::env::set_var("USERPROFILE", v),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+            match &self.1 {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    fn isolate_user_config() -> HomeIsolation {
+        let home = std::env::temp_dir().join(format!("kimi-config-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("mkdir");
+        let previous_profile = std::env::var_os("USERPROFILE");
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("HOME", &home);
+        HomeIsolation(previous_profile, previous_home)
+    }
+
     #[tokio::test]
     async fn config_get_returns_kimi_config() {
         let _guard = CONFIG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _home = isolate_user_config();
         let mut processor = MessageProcessor::new();
         ConfigProcessor.register(&mut processor);
         let body = processor
@@ -143,12 +179,10 @@ mod tests {
         assert!(body["result"].is_object() || body["result"].is_null());
     }
 
-    /// Serializes tests that touch `KIMI_CONFIG_PATH` (process-global env).
-    static CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[tokio::test]
     async fn config_set_writes_file_and_persists() {
         let _guard = CONFIG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _home = isolate_user_config();
         // Point the highest-priority config path at a temp file so the write
         // lands where we can assert on it.
         let tmp = std::env::temp_dir().join(format!("kimi-config-set-{}", std::process::id()));
@@ -211,6 +245,7 @@ mod tests {
     #[tokio::test]
     async fn config_set_tolerates_host_unknown_fields() {
         let _guard = CONFIG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _home = isolate_user_config();
         let tmp = std::env::temp_dir().join(format!("kimi-config-lenient-{}", std::process::id()));
         std::fs::write(
             &tmp,

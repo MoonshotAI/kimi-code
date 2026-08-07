@@ -2,14 +2,13 @@
 
 use kimi_sdk::Harness;
 
+mod common;
+
 #[tokio::test]
 async fn embedded_harness_creates_sessions() {
     // Point the session store at a temp dir so session/export (which opens
     // the store per call) sees the session created by the harness.
-    let home = std::env::temp_dir().join(format!("kimi-sdk-test-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
+    let _guard = common::isolate_home("test").await.0;
 
     let harness = Harness::embedded().expect("embedded engine");
     assert_eq!(harness.health().await.expect("health"), "ok");
@@ -51,10 +50,7 @@ async fn embedded_harness_creates_sessions() {
 
 #[tokio::test]
 async fn harness_exposes_engine_events() {
-    let home = std::env::temp_dir().join(format!("kimi-sdk-events-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
+    let _guard = common::isolate_home("events").await.0;
 
     let harness = Harness::embedded().expect("embedded engine");
     // Subscribe BEFORE driving the session so no event is missed.
@@ -145,10 +141,7 @@ async fn harness_exposes_engine_events() {
 
 #[tokio::test]
 async fn harness_set_config_round_trip() {
-    let home = std::env::temp_dir().join(format!("kimi-sdk-cfgset-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
+    let _guard = common::isolate_home("cfgset").await.0;
 
     let harness = Harness::embedded().expect("embedded");
     let write = harness
@@ -164,10 +157,7 @@ async fn harness_set_config_round_trip() {
 
 #[tokio::test]
 async fn session_extended_surfaces_offline() {
-    let home = std::env::temp_dir().join(format!("kimi-sdk-ext-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
+    let _guard = common::isolate_home("ext").await.0;
 
     let harness = Harness::embedded().expect("embedded");
     let mut session = harness.create_session("s-ext").await.expect("create");
@@ -232,10 +222,7 @@ async fn remote_harness_over_stdio() {
 #[tokio::test]
 async fn fake_llm_step_drives_an_offline_turn() {
     use std::sync::Arc;
-    let home = std::env::temp_dir().join(format!("kimi-sdk-turn-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
+    let _guard = common::isolate_home("turn").await.0;
 
     // A fake LLM that answers one shot: text, no tool calls -> EndTurn.
     let step: kimi_server::callbacks::LlmStep = Arc::new(move |_req: kimi_protocol::wire_types::LlmChatRequest| {
@@ -295,10 +282,7 @@ async fn fake_llm_step_drives_an_offline_turn() {
 
 #[tokio::test]
 async fn harness_plugin_lifecycle_local_install() {
-    let home = std::env::temp_dir().join(format!("kimi-sdk-plugin-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
+    let (_guard, home) = common::isolate_home("plugin").await;
 
     let harness = Harness::embedded().expect("embedded engine");
 
@@ -350,10 +334,7 @@ async fn harness_plugin_lifecycle_local_install() {
 
 #[tokio::test]
 async fn session_cron_lifecycle() {
-    let home = std::env::temp_dir().join(format!("kimi-sdk-cron-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
+    let _guard = common::isolate_home("cron").await.0;
 
     let harness = Harness::embedded().expect("embedded engine");
     let mut session = harness.create_session("s-cron").await.expect("create");
@@ -388,10 +369,7 @@ async fn session_cron_lifecycle() {
 
 #[tokio::test]
 async fn session_archive_marks_metadata() {
-    let home = std::env::temp_dir().join(format!("kimi-sdk-archive-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
+    let _guard = common::isolate_home("archive").await.0;
 
     let harness = Harness::embedded().expect("embedded engine");
     let mut session = harness.create_session("s-arch").await.expect("create");
@@ -408,10 +386,7 @@ async fn session_archive_marks_metadata() {
 
 #[tokio::test]
 async fn harness_close_fork_rename_sessions() {
-    let home = std::env::temp_dir().join(format!("kimi-sdk-closefork-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
+    let _guard = common::isolate_home("closefork").await.0;
 
     let harness = Harness::embedded().expect("embedded engine");
     let mut session = harness.create_session("s-cf").await.expect("create");
@@ -444,10 +419,7 @@ async fn harness_close_fork_rename_sessions() {
 #[tokio::test]
 async fn run_prompt_stream_returns_transcript() {
     use std::sync::Arc;
-    let home = std::env::temp_dir().join(format!("kimi-sdk-stream-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
+    let _guard = common::isolate_home("stream").await.0;
 
     // A fake LLM that answers one shot (host-proxy mode: no llm.delta, so the
     // deltas vec is empty — the full transcript still lands).

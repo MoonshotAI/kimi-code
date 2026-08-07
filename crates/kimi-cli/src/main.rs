@@ -967,6 +967,7 @@ mod headless_tests {
     }
 }
 
+#[cfg(test)]
 mod cli_render_tests {
     use super::{cli_render, CliRender};
 

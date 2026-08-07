@@ -9,9 +9,6 @@ catalogs:
     pathe:
       specifier: ^2.0.3
       version: 2.0.3
-    smol-toml:
-      specifier: ^1.6.1
-      version: 1.6.1
     zod:
       specifier: 4.3.6
       version: 4.3.6
@@ -650,6 +647,12 @@ importers:
       pathe:
         specifier: 'catalog:'
         version: 2.0.3
+      socks:
+        specifier: ^2.8.9
+        version: 2.8.9
+      undici:
+        specifier: '>=7.28.0'
+        version: 8.8.0
       zod:
         specifier: 'catalog:'
         version: 4.3.6
@@ -657,6 +660,8 @@ importers:
       '@moonshot-ai/kosong':
         specifier: workspace:*
         version: link:../kosong
+
+  packages/kimi-code-rust-bin: {}
 
   packages/kimi-native-tools:
     devDependencies:
@@ -666,43 +671,6 @@ importers:
       vitest:
         specifier: 4.1.4
         version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@25.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@6.0.2))(vite@6.4.3(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
-
-  packages/klient:
-    dependencies:
-      '@moonshot-ai/kimi-agent':
-        specifier: workspace:^
-        version: link:../kimi-agent
-      '@moonshot-ai/kimi-code-oauth':
-        specifier: workspace:^
-        version: link:../oauth
-      '@moonshot-ai/kimi-code-sdk':
-        specifier: workspace:^
-        version: link:../node-sdk
-      '@moonshot-ai/kimi-i18n':
-        specifier: workspace:^
-        version: link:../i18n
-      '@moonshot-ai/kosong':
-        specifier: workspace:^
-        version: link:../kosong
-      smol-toml:
-        specifier: 'catalog:'
-        version: 1.6.1
-      zod:
-        specifier: 'catalog:'
-        version: 4.3.6
-    devDependencies:
-      '@moonshot-ai/protocol':
-        specifier: workspace:^
-        version: link:../protocol
-      '@types/ws':
-        specifier: ^8.18.0
-        version: 8.18.1
-      ulid:
-        specifier: ^3.0.1
-        version: 3.0.2
-      ws:
-        specifier: '>=8.21.0'
-        version: 8.21.1
 
   packages/kosong:
     dependencies:
@@ -6481,6 +6449,10 @@ packages:
     resolution: {integrity: sha512-XXADHxXmvT9+CRxhXg56LJovE+bmWnEWB78LB83VZTprKTmaC5QfruXocxzTZ2Kl0DNwKuBdlIhjL8LeY8Sf8Q==}
     engines: {node: '>= 12'}
 
+  ip-address@10.4.0:
+    resolution: {integrity: sha512-oSK96Grm3aP6OrS263xVxbNDGVL7rzBtYdpGqlDG8iQdoenDoTs/nkki+DflYbAEE8Xl6o5YxhxlrKvI3nqKXQ==}
+    engines: {node: '>= 12'}
+
   ipaddr.js@1.9.1:
     resolution: {integrity: sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==}
     engines: {node: '>= 0.10'}
@@ -8538,9 +8510,17 @@ packages:
     resolution: {integrity: sha512-stxByr12oeeOyY2BlviTNQlYV5xOj47GirPr4yA1hE9JCtxfQN0+tVbkxwCtYDQWhEKWFHsEK48ORg5jrouCAg==}
     engines: {node: '>=20'}
 
+  smart-buffer@4.2.0:
+    resolution: {integrity: sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==}
+    engines: {node: '>= 6.0.0', npm: '>= 3.0.0'}
+
   smol-toml@1.6.1:
     resolution: {integrity: sha512-dWUG8F5sIIARXih1DTaQAX4SsiTXhInKf1buxdY9DIg4ZYPZK5nGM1VRIYmEbDbsHt7USo99xSLFu5Q1IqTmsg==}
     engines: {node: '>= 18'}
+
+  socks@2.8.9:
+    resolution: {integrity: sha512-LJhUYUvItdQ0LkJTmPeaEObWXAqFyfmP85x0tch/ez9cahmhlBBLbIqDFnvBnUJGagb0JbIQrkBs1wJ+yRYpEw==}
+    engines: {node: '>= 10.0.0', npm: '>= 3.0.0'}
 
   sonic-boom@4.2.1:
     resolution: {integrity: sha512-w6AxtubXa2wTXAUsZMMWERrsIRAdrK0Sc+FUytWvYAhBJLyuI4llrMIC1DtlNSdI99EI86KZum2MMq3EAZlF9Q==}
@@ -15481,6 +15461,8 @@ snapshots:
 
   ip-address@10.1.0: {}
 
+  ip-address@10.4.0: {}
+
   ipaddr.js@1.9.1: {}
 
   ipaddr.js@2.4.0: {}
@@ -17996,7 +17978,14 @@ snapshots:
       ansi-styles: 6.2.3
       is-fullwidth-code-point: 5.1.0
 
+  smart-buffer@4.2.0: {}
+
   smol-toml@1.6.1: {}
+
+  socks@2.8.9:
+    dependencies:
+      ip-address: 10.4.0
+      smart-buffer: 4.2.0
 
   sonic-boom@4.2.1:
     dependencies:

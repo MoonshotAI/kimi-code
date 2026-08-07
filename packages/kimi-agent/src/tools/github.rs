@@ -1310,10 +1310,9 @@ mod tests {
         let resp = execute_github_tool("GitHubGetRepo", &serde_json::json!({
             "owner": "o", "repo": "r"
         })).await;
-        unsafe {
-            restore_var("GITHUB_TOKEN", saved_token);
+                    restore_var("GITHUB_TOKEN", saved_token);
             restore_var("GITHUB_API_URL", saved_api);
-        }
+        
         assert!(!resp.is_error, "unexpected error: {}", resp.content);
         assert!(resp.content.contains("o/r"));
         let head = seen.lock().unwrap().take().expect("server saw a request").to_ascii_lowercase();
@@ -1373,10 +1372,9 @@ mod tests {
         let resp = execute_github_tool("GitHubSearchCode", &serde_json::json!({
             "q": "fn main"
         })).await;
-        unsafe {
-            restore_var("GITHUB_TOKEN", saved_token);
+                    restore_var("GITHUB_TOKEN", saved_token);
             restore_var("GITHUB_API_URL", saved_api);
-        }
+        
         assert!(!resp.is_error, "unexpected error: {}", resp.content);
         assert!(resp.content.contains("a.rs"));
         assert!(resp.content.contains("b.rs"), "pagination should aggregate page 2");
@@ -1396,10 +1394,9 @@ mod tests {
         let resp = execute_github_tool("GitHubCreateIssue", &serde_json::json!({
             "owner": "o", "repo": "r", "title": "Bug", "body": "Details"
         })).await;
-        unsafe {
-            restore_var("GITHUB_TOKEN", saved_token);
+                    restore_var("GITHUB_TOKEN", saved_token);
             restore_var("GITHUB_API_URL", saved_api);
-        }
+        
         assert!(!resp.is_error, "unexpected error: {}", resp.content);
         assert!(resp.content.contains("\"number\":5"));
         let head = seen.lock().unwrap().take().expect("server saw a request").to_ascii_lowercase();
@@ -1421,10 +1418,9 @@ mod tests {
         let resp = execute_github_tool("GitHubGetRepo", &serde_json::json!({
             "owner": "o", "repo": "nope"
         })).await;
-        unsafe {
-            restore_var("GITHUB_TOKEN", saved_token);
+                    restore_var("GITHUB_TOKEN", saved_token);
             restore_var("GITHUB_API_URL", saved_api);
-        }
+        
         assert!(resp.is_error);
         assert!(resp.content.contains("status 404"));
     }

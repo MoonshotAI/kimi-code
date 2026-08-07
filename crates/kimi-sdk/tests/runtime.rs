@@ -11,6 +11,8 @@ use std::sync::Arc;
 use kimi_protocol::wire_types::{LlmChatRequest, LlmChatResponse, LlmToolCall, TokenUsage};
 use kimi_sdk::Harness;
 
+mod common;
+
 /// A one-shot fake LLM: text, no tool calls -> EndTurn after one step.
 fn fake_llm() -> kimi_server::callbacks::LlmStep {
     Arc::new(move |_req: LlmChatRequest| {
@@ -80,14 +82,10 @@ fn scripted_llm(state: Arc<std::sync::Mutex<Vec<Scripted>>>) -> kimi_server::cal
     })
 }
 
-/// A fresh isolated engine home (process-global `KIMI_AGENT_HOME` must be
-/// unique per test to avoid cross-test store interference).
-fn home(tag: &str) -> std::path::PathBuf {
-    let home = std::env::temp_dir().join(format!("kimi-sdk-runtime-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
-    home
+/// A fresh isolated engine home (unique per test; see
+/// [`common::isolate_home`] for what it isolates).
+async fn home(tag: &str) -> (tokio::sync::MutexGuard<'static, ()>, std::path::PathBuf) {
+    common::isolate_home(tag).await
 }
 
 /// Drain the harness event stream until `predicate` matches (or timeout).
@@ -109,7 +107,7 @@ async fn wait_for_event(
 
 #[tokio::test]
 async fn prompt_emits_turn_events_and_transcript() {
-    home("prompt");
+    let _guard = home("prompt").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded with llm");
     let mut guard = harness.events().await;
     let mut events = guard.as_mut().expect("event source");
@@ -133,7 +131,7 @@ async fn prompt_emits_turn_events_and_transcript() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancel_of_active_turn_emits_aborted() {
-    home("cancel");
+    let _guard = home("cancel").await.0;
     let harness = Harness::embedded_with_llm_step(Some(hanging_llm())).expect("embedded");
     let mut guard = harness.events().await;
     let mut events = guard.as_mut().expect("event source");
@@ -170,7 +168,7 @@ async fn cancel_of_active_turn_emits_aborted() {
 
 #[tokio::test]
 async fn steer_queues_input_into_the_active_turn() {
-    home("steer");
+    let _guard = home("steer").await.0;
     // The engine appends queued steer input as a real user message; with a
     // one-shot fake LLM the turn still ends, and the transcript carries both
     // the original prompt and the steered text.
@@ -194,7 +192,7 @@ async fn steer_queues_input_into_the_active_turn() {
 
 #[tokio::test]
 async fn background_tasks_are_listable_and_output_is_ghost_blank() {
-    home("bg");
+    let _guard = home("bg").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-bg").await.expect("create");
 
@@ -224,7 +222,7 @@ async fn background_tasks_are_listable_and_output_is_ghost_blank() {
 /// indexes are rejected. Mirrors the SDK's `Session.fork({ turnIndex })`.
 #[tokio::test]
 async fn fork_with_turn_index_truncates_history() {
-    home("fork-idx");
+    let _guard = home("fork-idx").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-fork-idx").await.expect("create");
 
@@ -266,7 +264,7 @@ async fn fork_with_turn_index_truncates_history() {
 /// then drive list / output / stop / detach through `Session`.
 #[tokio::test]
 async fn session_background_task_methods_roundtrip() {
-    home("bg-methods");
+    let _guard = home("bg-methods").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-bg-m").await.expect("create");
 
@@ -311,7 +309,7 @@ async fn session_background_task_methods_roundtrip() {
 
 #[tokio::test]
 async fn goal_continuation_drives_turns_until_complete() {
-    home("goal-cont");
+    let _guard = home("goal-cont").await.0;
     // Scripted LLM: turn 1 answers with text (goal stays active, so the goal
     // driver queues a continuation turn); turn 2 calls `UpdateGoal(complete)`
     // — the engine's native goal tool clears the record — then closes the
@@ -351,7 +349,7 @@ async fn goal_continuation_drives_turns_until_complete() {
 
 #[tokio::test]
 async fn set_model_reflects_in_status_and_persists() {
-    home("model");
+    let _guard = home("model").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-model").await.expect("create");
 
@@ -365,7 +363,7 @@ async fn set_model_reflects_in_status_and_persists() {
 
 #[tokio::test]
 async fn set_thinking_and_modes_reflect_in_status() {
-    home("thinking");
+    let _guard = home("thinking").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-thinking").await.expect("create");
 
@@ -382,7 +380,7 @@ async fn set_thinking_and_modes_reflect_in_status() {
 /// valid modes round-trip, unknown modes are rejected at the engine.
 #[tokio::test]
 async fn set_permission_mode_roundtrip() {
-    home("perm");
+    let _guard = home("perm").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-perm").await.expect("create");
 
@@ -405,7 +403,7 @@ async fn set_permission_mode_roundtrip() {
 
 #[tokio::test]
 async fn skills_list_and_unknown_activate_errors() {
-    home("skills");
+    let _guard = home("skills").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-skills").await.expect("create");
 
@@ -424,7 +422,7 @@ async fn skills_list_and_unknown_activate_errors() {
 
 #[tokio::test]
 async fn context_import_clear_round_trip() {
-    home("context");
+    let _guard = home("context").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-ctx").await.expect("create");
 
@@ -456,7 +454,7 @@ async fn context_import_clear_round_trip() {
 
 #[tokio::test]
 async fn export_rename_list_delete_round_trip() {
-    home("export");
+    let _guard = home("export").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-xport").await.expect("create");
 
@@ -478,7 +476,7 @@ async fn export_rename_list_delete_round_trip() {
 
 #[tokio::test]
 async fn usage_accumulates_after_prompt() {
-    home("usage");
+    let _guard = home("usage").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-usage").await.expect("create");
 
@@ -494,7 +492,7 @@ async fn usage_accumulates_after_prompt() {
 
 #[tokio::test]
 async fn usage_updated_event_carries_token_fields() {
-    home("usage-event");
+    let _guard = home("usage-event").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut guard = harness.events().await;
     let mut events = guard.as_mut().expect("event source");
@@ -516,7 +514,7 @@ async fn usage_updated_event_carries_token_fields() {
 
 #[tokio::test]
 async fn get_plan_is_null_without_plan_mode() {
-    home("plan");
+    let _guard = home("plan").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-plan").await.expect("create");
 
@@ -526,7 +524,7 @@ async fn get_plan_is_null_without_plan_mode() {
 
 #[tokio::test]
 async fn compact_errors_without_native_llm() {
-    home("compact");
+    let _guard = home("compact").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-compact").await.expect("create");
 
@@ -541,7 +539,7 @@ async fn compact_errors_without_native_llm() {
 
 #[tokio::test]
 async fn save_then_resume_restores_context() {
-    home("resume");
+    let _guard = home("resume").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-resume").await.expect("create");
 
@@ -563,7 +561,7 @@ async fn save_then_resume_restores_context() {
 
 #[tokio::test]
 async fn reload_session_restores_context_and_reports_status() {
-    home("reload");
+    let _guard = home("reload").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-reload").await.expect("create");
 
@@ -592,7 +590,7 @@ async fn reload_session_restores_context_and_reports_status() {
 
 #[tokio::test]
 async fn reload_session_on_fresh_session_reports_status() {
-    home("reload-fresh");
+    let _guard = home("reload-fresh").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-fresh").await.expect("create");
 
@@ -609,7 +607,7 @@ async fn reload_session_on_fresh_session_reports_status() {
 
 #[tokio::test]
 async fn swarm_enters_task_mode_and_runs_the_prompt() {
-    home("swarm");
+    let _guard = home("swarm").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-swarm").await.expect("create");
 
@@ -626,7 +624,7 @@ async fn swarm_enters_task_mode_and_runs_the_prompt() {
 
 #[tokio::test]
 async fn prompt_parts_send_multi_part_input() {
-    home("parts");
+    let _guard = home("parts").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
     let mut session = harness.create_session("s-parts").await.expect("create");
 

@@ -124,15 +124,32 @@ impl SessionManager {
         model_config: ModelConfig,
     ) -> SessionRecord {
         let id = id.into();
-        let record = SessionRecord::new(&id, model_config);
+        let mut record = SessionRecord::new(&id, model_config.clone());
 
-        // Preserve an existing persisted record: a resume re-creates the
-        // session under its old id before `session/load`, and the store copy
-        // is the one carrying the durable agent state. Only fresh ids write.
-        let exists = self.store.load_session(&id).ok().flatten().is_some();
-        if !exists {
-            if let Err(e) = self.save_to_store(&record) {
-                eprintln!("[session] failed to persist new session {}: {e}", id);
+        // Resume path: a session that already exists in the store is being
+        // re-created under its old id before `session/load`. The store copy
+        // carries the durable agent state (context history + goal) written by
+        // `save_agent_session` — load it into the cache verbatim so any later
+        // write (work_dir, touch, save) does not clobber that state with a
+        // fresh empty record. Only the caller's model config is refreshed; the
+        // rest (work_dir/title/messages/agent_state) stays persisted.
+        match self.store.load_session(&id) {
+            Ok(Some(persisted)) => {
+                if let Some(mut rich) = serde_json::from_value::<SessionRecord>(
+                    persisted.state_json,
+                )
+                .ok()
+                .filter(SessionRecord::is_valid_shape)
+                {
+                    rich.model_config = model_config;
+                    rich.state = SessionState::Active;
+                    record = rich;
+                }
+            }
+            _ => {
+                if let Err(e) = self.save_to_store(&record) {
+                    eprintln!("[session] failed to persist new session {}: {e}", id);
+                }
             }
         }
 

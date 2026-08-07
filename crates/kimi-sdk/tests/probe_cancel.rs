@@ -16,19 +16,17 @@ use std::sync::Arc;
 use kimi_protocol::wire_types::LlmChatRequest;
 use kimi_sdk::Harness;
 
+mod common;
+
 /// A fake LLM that never settles — keeps the turn active until cancelled.
 fn hanging_llm() -> kimi_server::callbacks::LlmStep {
     Arc::new(move |_req: LlmChatRequest| Box::pin(async move { std::future::pending().await }))
 }
 
-/// A fresh isolated engine home (process-global `KIMI_AGENT_HOME` must be
-/// unique per test to avoid cross-test store interference).
-fn home(tag: &str) -> std::path::PathBuf {
-    let home = std::env::temp_dir().join(format!("kimi-probe-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
-    home
+/// A fresh isolated engine home (unique per test; see
+/// [`common::isolate_home`] for what it isolates).
+async fn home(tag: &str) -> (tokio::sync::MutexGuard<'static, ()>, std::path::PathBuf) {
+    common::isolate_home(tag).await
 }
 
 /// Drain the harness event stream until `predicate` matches (or timeout).
@@ -50,7 +48,7 @@ async fn wait_for_event(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pre_cancel_aborts_the_next_turn() {
-    home("pre-cancel");
+    let _guard = home("pre-cancel").await.0;
     let harness = Harness::embedded_with_llm_step(Some(hanging_llm())).expect("embedded");
 
     let mut session = harness.create_session("s-pre").await.expect("create");
@@ -73,7 +71,7 @@ async fn pre_cancel_aborts_the_next_turn() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mid_turn_cancel_aborts_the_hung_prompt_turn() {
-    home("mid-cancel");
+    let _guard = home("mid-cancel").await.0;
     let harness = Harness::embedded_with_llm_step(Some(hanging_llm())).expect("embedded");
     let mut guard = harness.events().await;
     let mut events = guard.as_mut().expect("event source");

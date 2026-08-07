@@ -1023,7 +1023,7 @@ async fn session_tasks(State(state): State<HttpState>, Path(id): Path<String>) -
 }
 
 /// `GET /api/v1/sessions/{id}/tasks/{task_id}` — one background task.
-async fn session_task(State(state): State<HttpState>, Path((id, task_id)): Path<(String, String)>) -> Json<Value> {
+async fn session_task(State(state): State<HttpState>, Path((_id, task_id)): Path<(String, String)>) -> Json<Value> {
     let r = state.rpc(kimi_protocol::methods::BG_GET, json!({ "task_id": task_id })).await;
     if r["code"].as_i64() != Some(0) {
         return Json(r);

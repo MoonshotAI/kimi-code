@@ -5,14 +5,12 @@
 use kimi_oauth::OAuthFlowConfig;
 use kimi_sdk::{Harness, KimiAuth};
 
-/// A fresh isolated engine home (process-global `KIMI_AGENT_HOME` must be
-/// unique per test to avoid cross-test store interference).
-fn home(tag: &str) -> std::path::PathBuf {
-    let home = std::env::temp_dir().join(format!("kimi-auth-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("mkdir");
-    std::env::set_var("KIMI_AGENT_HOME", &home);
-    home
+mod common;
+
+/// A fresh isolated engine home (unique per test; see
+/// [`common::isolate_home`] for what it isolates).
+async fn home(tag: &str) -> (tokio::sync::MutexGuard<'static, ()>, std::path::PathBuf) {
+    common::isolate_home(tag).await
 }
 
 /// Serve one canned response per connection on a local port, then return the
@@ -41,7 +39,7 @@ use std::io::{Read, Write};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn login_persists_status_sees_it_logout_removes_it() {
-    home("flow");
+    let _guard = home("flow").await.0;
     // Sequence: device_authorization → pending poll → granted token.
     let host = mock_server(&[
         (
