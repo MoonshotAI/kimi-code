@@ -37,6 +37,10 @@ export function parseTime(value: unknown): number {
   return 0;
 }
 
+export function parseTurnOutcome(value: unknown): 'completed' | 'cancelled' | 'failed' | undefined {
+  return value === 'completed' || value === 'cancelled' || value === 'failed' ? value : undefined;
+}
+
 export function recoverCwd(meta: Record<string, unknown>): string | undefined {
   if (typeof meta['cwd'] === 'string' && meta['cwd'].length > 0) return meta['cwd'];
   if (typeof meta['workDir'] === 'string' && meta['workDir'].length > 0) {
@@ -63,6 +67,7 @@ export function buildSessionSummary(fields: {
   updatedAt: number;
   archived: boolean;
   custom?: Record<string, unknown>;
+  lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }): SessionSummary {
   return {
     id: fields.id,
@@ -74,6 +79,7 @@ export function buildSessionSummary(fields: {
     updatedAt: fields.updatedAt,
     archived: fields.archived,
     custom: fields.custom,
+    lastTurnReason: fields.lastTurnReason,
   };
 }
 
@@ -102,6 +108,7 @@ export function summaryEquals(a: SessionSummary, b: SessionSummary): boolean {
     a.createdAt === b.createdAt &&
     a.updatedAt === b.updatedAt &&
     a.archived === b.archived &&
+    a.lastTurnReason === b.lastTurnReason &&
     JSON.stringify(a.custom) === JSON.stringify(b.custom)
   );
 }
@@ -153,6 +160,7 @@ export async function readSessionSummary(
     updatedAt: parseTime(meta['updatedAt']),
     archived: meta['archived'] === true,
     custom,
+    lastTurnReason: parseTurnOutcome(meta['lastTurnReason']),
   });
 }
 

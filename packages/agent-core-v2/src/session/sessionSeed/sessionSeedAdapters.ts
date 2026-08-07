@@ -165,6 +165,7 @@ export class SessionMcpHandleAdapter extends Service {
       get connectionManager() {
         return backing.connectionManager;
       },
+      isBaselineServer: (name) => backing.isBaselineServer(name),
     };
     instantiation.provide(ISessionMcpHandle, handle);
   }

@@ -89,7 +89,9 @@ export const tokenCountingTruncated = TokenCountingModel.defineOp('token_countin
 
 /** Clear / compaction: reset the ledger to a single anchor. Compaction passes
  *  `measured: false` — its `tokensAfter` blends a measured summary with
- *  estimated kept messages. */
+ *  estimated kept messages and the estimated request overhead (system prompt
+ *  + tools), keeping the anchor on the same full-request basis as measured
+ *  exchange anchors. */
 export const tokenCountingRebased = TokenCountingModel.defineOp('token_counting.rebased', {
   schema: sizeSchema.extend({ measured: z.boolean() }),
   persist: false,

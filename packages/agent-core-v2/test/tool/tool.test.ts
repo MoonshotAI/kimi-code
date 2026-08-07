@@ -686,6 +686,91 @@ describe('Agent tool description', () => {
     expect(description).not.toContain('- coder: Coder');
   });
 
+  it('freezes the subagent type list once the profile catalog is ready', async () => {
+    const caller: AgentProfile = normalizeAgentProfile({
+      name: 'orchestrator',
+      description: 'Orchestrator',
+      systemPrompt: () => 'orchestrator',
+    });
+    const coder: AgentProfile = normalizeAgentProfile({
+      name: 'coder',
+      description: 'Coder',
+      systemPrompt: () => 'coder',
+    });
+    const explore: AgentProfile = normalizeAgentProfile({
+      name: 'explore',
+      description: 'Explorer',
+      systemPrompt: () => 'explore',
+    });
+    const profiles = [coder];
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => [caller, ...profiles].find((profile) => profile.name === name),
+      getDefault: () => caller,
+      list: () => [...profiles],
+      inspect: () => undefined,
+      load: async () => {},
+      reload: async () => {},
+    };
+    ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
+    // Prime the tool, then let catalog.ready settle: from the next read on,
+    // the description freezes the catalog list.
+    expect(agentDescription()).toContain('- coder: Coder');
+    await Promise.resolve();
+
+    const frozen = agentDescription();
+    expect(frozen).toContain('- coder: Coder');
+
+    profiles.push(explore);
+    const after = agentDescription();
+    expect(after).toBe(frozen);
+    expect(after).not.toContain('- explore: Explorer');
+  });
+
+  it('reflects the current catalog list in the description before the catalog is ready', async () => {
+    const caller: AgentProfile = normalizeAgentProfile({
+      name: 'orchestrator',
+      description: 'Orchestrator',
+      systemPrompt: () => 'orchestrator',
+    });
+    const coder: AgentProfile = normalizeAgentProfile({
+      name: 'coder',
+      description: 'Coder',
+      systemPrompt: () => 'coder',
+    });
+    const explore: AgentProfile = normalizeAgentProfile({
+      name: 'explore',
+      description: 'Explorer',
+      systemPrompt: () => 'explore',
+    });
+    const profiles = [coder];
+    let resolveReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready,
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => [caller, ...profiles].find((profile) => profile.name === name),
+      getDefault: () => caller,
+      list: () => [...profiles],
+      inspect: () => undefined,
+      load: async () => {},
+      reload: async () => {},
+    };
+    ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
+
+    expect(agentDescription()).toContain('- coder: Coder');
+    profiles.push(explore);
+    expect(agentDescription()).toContain('- explore: Explorer');
+
+    resolveReady();
+    await ready;
+  });
+
   it('mentions resume preference and result visibility', () => {
     ctx = createTestAgent();
 

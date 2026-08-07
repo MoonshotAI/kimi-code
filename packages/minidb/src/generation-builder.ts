@@ -76,11 +76,12 @@ import { TextRegistry } from './text-registry.js';
 import type { TextIndexDef } from './text-registry.js';
 import { ValueReader } from './value-reader.js';
 import type { RecoveryMode, RecoveryInfo, ValueMode, RecoveredOp } from './recovery.js';
+import type { LifecycleTracker } from './lifecycle-status.js';
 import { fsyncDir } from './compaction.js';
-import { defaultWorkerSlots } from './maintenance.js';
+import { defaultWorkerSlots, MaintenanceCancelledError } from './maintenance.js';
 import type { MaintenanceContext, MaintenanceScheduler } from './maintenance.js';
 import { startWorkerTextBuild, textBuildWorkerAvailable, verifyFileCrcAsync, WorkerTextBuildError } from './worker/text-build.js';
-import type { WorkerTextBuildHandle, TextBuildCheckpoint } from './worker/text-build.js';
+import type { WorkerTextBuildFallbackReason, WorkerTextBuildHandle, TextBuildCheckpoint } from './worker/text-build.js';
 import { readBaseDocsImageAsync, BASE_DOCS_MAGIC, BASE_DOCS_VERSION } from './worker/text-build-core.js';
 import type { TextBuildCoreResult } from './worker/text-build-core.js';
 import { TYPE_SET } from './codec.js';
@@ -186,11 +187,18 @@ export interface GenerationBuilderDeps<V> {
    *  disables the worker path for the rest of the instance. */
   disableTextWorker: () => void;
   textBuildMemoryBytes: () => number;
+  /** TUI-safe worker-slot policy: how long the worker build queues for a
+   *  process-wide slot before the bounded inline core is allowed as the last
+   *  resort (see MiniDb.textBuildSlotWaitMs). */
+  textBuildSlotWaitMs: () => number;
   dt: DtIndex;
   indexes: IndexManager;
   compound: CompoundIndexManager;
   textRegistry: TextRegistry<V>;
   stats: GenerationStats;
+  /** Per-open lifecycle telemetry, shared with the loader facet (the open
+   *  flow's state machine + phase timings; the build path does not feed it). */
+  lifecycle: LifecycleTracker;
   decode: (b: Buffer | undefined) => V | undefined;
   indexable: (v: unknown) => v is Record<string, unknown>;
   /** Live records (decoded values), for per-index rebuilds. */
@@ -295,9 +303,10 @@ export class GenerationBuilder<V> {
    *  thread verifies the worker's output (sanity + streaming crc) and swaps
    *  the live base in via commitRebase, and the stage-5 atomic publish stays
    *  the safety boundary — the worker only ever writes inside the tmp
-   *  generation directory. Custom-tokenizer indexes, small corpora, worker
-   *  slot pressure, and deployments without the worker file stay on the
-   *  in-thread staged build. */
+   *  generation directory. Custom-tokenizer indexes and small corpora stay
+   *  on the in-thread staged build; a deployment without the worker file —
+   *  or a worker-slot drought that outlasts the bounded queue wait — hosts
+   *  the SAME bounded core inline instead. */
   private async runGenerationBuild(ctx: MaintenanceContext): Promise<void> {
     const t0 = performance.now();
     const gens = generationsDir(this.deps.dir());
@@ -483,11 +492,26 @@ export class GenerationBuilder<V> {
         }
         // Host the bounded build in a worker thread when its entry file
         // exists; otherwise run the SAME bounded core inline on the main
-        // thread (worker-slot pressure, or a bundled single-file deployment
-        // without the worker file). Inline is still memory-bounded — the
-        // unbounded staged aggregation is NOT the fallback here.
+        // thread (a bundled single-file deployment without the worker file,
+        // or a persisted slot drought). Inline is still memory-bounded — the
+        // unbounded staged aggregation is NOT the fallback here. TUI-safe
+        // slot policy: queue for a process-wide slot first (bounded by
+        // textBuildSlotWaitMs and the build's abort signal) instead of
+        // dropping the build onto the main thread the moment every slot is
+        // busy.
         const workerAvailable = textBuildWorkerAvailable();
-        workerSlotRelease = workerAvailable ? defaultWorkerSlots.tryAcquire() : null;
+        let inlineReason: WorkerTextBuildFallbackReason | undefined;
+        if (workerAvailable) {
+          try {
+            workerSlotRelease = await defaultWorkerSlots.acquireBounded(this.deps.textBuildSlotWaitMs(), aborter.signal);
+          } catch (e) {
+            if (e instanceof MaintenanceCancelledError) throw new GenerationBuildAborted('worker slot wait cancelled');
+            throw e;
+          }
+          if (workerSlotRelease === null) inlineReason = 'slot-pressure';
+        } else {
+          inlineReason = 'runtime-unavailable';
+        }
         const inline = workerSlotRelease === null;
         workerHandle = startWorkerTextBuild(
           {
@@ -512,7 +536,7 @@ export class GenerationBuilder<V> {
             signal: aborter.signal,
             shouldAbort: () => gb.aborted || this.deps.wal() !== gb.wal || this.deps.state() !== 'open',
             inline,
-            inlineReason: workerAvailable ? 'slot-pressure' : 'runtime-unavailable',
+            inlineReason,
             onFallback: (reason) => {
               this.deps.stats.textWorkerFallbacks++;
               this.deps.stats.lastTextWorkerFallback = reason;

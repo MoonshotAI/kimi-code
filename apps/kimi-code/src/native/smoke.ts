@@ -1,8 +1,11 @@
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { once } from 'node:events';
 import { dirname, join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 
 import { MiniDb } from '@moonshot-ai/minidb';
+import { getSearchWorkerRuntimeState } from '@moonshot-ai/kap-server/search-worker-runtime';
 
 import {
   getEmbeddedNativeAssetManifest,
@@ -74,6 +77,34 @@ async function smokeMinidbWorker(): Promise<void> {
   }
 }
 
+async function smokeSearchWorker(): Promise<void> {
+  // The SEA-extracted global-search worker entry must boot from disk and
+  // complete the versioned ready handshake.
+  const runtime = getSearchWorkerRuntimeState();
+  if (!runtime.configured) {
+    throw new Error('search worker runtime was not configured');
+  }
+  const cacheBase = getNativeCacheBase();
+  mkdirSync(cacheBase, { recursive: true });
+  const dir = mkdtempSync(join(cacheBase, 'sea-search-worker-'));
+  const worker = new Worker(runtime.path, {
+    workerData: { dir, bootSalt: 'sea-smoke' },
+  });
+  try {
+    const ready = once(worker, 'message', {
+      signal: AbortSignal.timeout(15_000),
+    }) as Promise<unknown[]>;
+    const [event] = await ready;
+    const v = (event as { type?: string; v?: number }).v;
+    if ((event as { type?: string }).type !== 'ready' || typeof v !== 'number') {
+      throw new Error(`search worker handshake is unexpected: ${JSON.stringify(event)}`);
+    }
+  } finally {
+    await worker.terminate().catch(() => {});
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function runSmoke(): Promise<void> {
   const manifest = getEmbeddedNativeAssetManifest();
   if (manifest === null) throw new Error('Native asset manifest is not available.');
@@ -84,7 +115,10 @@ async function runSmoke(): Promise<void> {
   }
   smokePiTuiNativeLoad();
   await smokeMinidbWorker();
-  process.stdout.write(`Native asset smoke passed: ${manifest.target}; MiniDb worker build passed\n`);
+  await smokeSearchWorker();
+  process.stdout.write(
+    `Native asset smoke passed: ${manifest.target}; MiniDb worker build passed; search worker ready\n`,
+  );
 }
 
 export function runNativeAssetSmokeIfRequested(): boolean {

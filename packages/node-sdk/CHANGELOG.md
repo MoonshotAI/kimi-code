@@ -1,5 +1,13 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.15.3
+
+### Patch Changes
+
+- [#2666](https://github.com/MoonshotAI/kimi-code/pull/2666) [`335588e`](https://github.com/MoonshotAI/kimi-code/commit/335588e2594a61a767ce258b34b4049a32b18fe5) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Session listings keep how the last turn ended (completed, cancelled, or failed) across server restarts, so clients can mark previously failed sessions before they are opened.
+
+- [#2679](https://github.com/MoonshotAI/kimi-code/pull/2679) [`7b2784b`](https://github.com/MoonshotAI/kimi-code/commit/7b2784b9b7bf4749058da48923ecbbc8019eb7af) Thanks [@liruifengv](https://github.com/liruifengv)! - Subagent lifecycle events and background task info now carry the subagent's bound model and thinking effort.
+
 ## 0.15.2
 
 ### Patch Changes

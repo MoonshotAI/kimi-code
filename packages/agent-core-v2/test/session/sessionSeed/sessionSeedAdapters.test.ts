@@ -132,6 +132,7 @@ class WorkspaceMcpStub implements IWorkspaceMcpService {
       _serviceBrand: undefined,
       ready: this.ready,
       connectionManager: this.manager,
+      isBaselineServer: () => true,
     };
   }
 

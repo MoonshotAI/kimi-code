@@ -56,6 +56,7 @@ import {
   ISessionLifecycleHooks,
   type SessionLifecycleHookSlots,
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
+import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -284,6 +285,16 @@ function persistentWorkspaceStub(): IWorkspaceService {
   };
 }
 
+function sessionIndexMirrorStub(): ISessionIndexMirror {
+  return {
+    _serviceBrand: undefined,
+    record: () => {},
+    pending: () => [],
+    evict: () => Promise.resolve(),
+    drain: () => Promise.resolve(),
+  };
+}
+
 function sessionIndexStub(): ISessionIndex {
   return {
     _serviceBrand: undefined,
@@ -381,6 +392,7 @@ function workspaceMcpServiceStub(ready: Promise<void> = Promise.resolve()): IWor
       get connectionManager(): McpConnectionManager {
         throw new Error('not implemented');
       },
+      isBaselineServer: () => true,
     }),
     sessionOverlay: () => {
       throw new Error('not implemented');
@@ -578,6 +590,7 @@ describe('SessionLifecycleService', () => {
       stubPair(IWorkspaceInstructionsService, workspaceInstructionsStub()),
       stubPair(IWorkspaceService, workspaceStub()),
       stubPair(ISessionIndex, sessionIndexStub()),
+      stubPair(ISessionIndexMirror, sessionIndexMirrorStub()),
       stubPair(IAppendLogStore, appendLogStoreStub()),
       stubPair(IAtomicDocumentStore, atomicDocumentStoreStub()),
       stubPair(IEventService, eventStub()),
@@ -1164,6 +1177,7 @@ describe('SessionLifecycleService', () => {
       _serviceBrand: undefined,
       ready,
       connectionManager: {} as unknown as McpConnectionManager,
+      isBaselineServer: () => true,
     };
     const shutdown = vi.fn(() => Promise.resolve());
     const sessionOverlay = vi.fn(
@@ -1489,6 +1503,26 @@ describe('SessionLifecycleService', () => {
   });
 
   describe('fork session state', () => {
+    it('fork inherits the source session\'s last turn outcome', async () => {
+      const updates: { readonly lastTurnReason?: unknown }[] = [];
+      const metaStub: ISessionMetadata = {
+        ...metadataStub(),
+        read: () =>
+          Promise.resolve({ lastTurnReason: 'failed', agents: {} } as never),
+        update: (patch) => {
+          updates.push(patch);
+          return Promise.resolve();
+        },
+      };
+      const svc = await build([stubPair(ISessionMetadata, metaStub)]);
+
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      const forkUpdate = updates.find((u) => 'forkedFrom' in u);
+      expect(forkUpdate?.lastTurnReason).toBe('failed');
+    });
+
     it('copies blobs, plans, background tasks, and media originals into the fork', async () => {
       const root = await makeTmpRoot();
       const svc = await build([

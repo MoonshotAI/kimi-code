@@ -164,6 +164,15 @@ export interface ReloadSummary {
   readonly errors: ReadonlyArray<{ readonly id: string; readonly message: string }>;
 }
 
+export interface PluginMutation {
+  readonly kind: 'install' | 'enable' | 'disable' | 'remove' | 'mcp-server';
+  readonly id: string;
+}
+
+export interface PluginMutationSummary extends ReloadSummary {
+  readonly mutation: PluginMutation;
+}
+
 export interface PluginUpdateStatus {
   readonly id: string;
   readonly source: PluginSource;

@@ -465,6 +465,7 @@ export interface SessionStateSnapshot {
       readonly swarmItem?: string;
     }>>;
     readonly custom?: Record<string, unknown>;
+    readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   } | undefined;
   // src/session/sessionSkillCatalog/skillCatalogService.ts
   'sessionSkillCatalog.contributions': Map<string, {

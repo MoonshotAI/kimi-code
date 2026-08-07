@@ -349,6 +349,40 @@ export class WorkerSlots {
     });
   }
 
+  /** TUI-safe slot policy: queue for a slot up to `waitMs` (observing the
+   *  optional abort signal) instead of dropping a large worker-eligible
+   *  build onto the main thread the moment every slot is busy. Resolves null
+   *  on timeout — the caller decides whether its bounded inline core is an
+   *  acceptable last resort. Rejects MaintenanceCancelledError on abort. */
+  async acquireBounded(waitMs: number, signal?: AbortSignal): Promise<(() => void) | null> {
+    const immediate = this.tryAcquire();
+    if (immediate) return immediate;
+    if (signal?.aborted) throw new MaintenanceCancelledError('generation-build');
+    return new Promise<(() => void) | null>((resolve, reject) => {
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        const i = this.waiters.indexOf(grant);
+        if (i >= 0) this.waiters.splice(i, 1);
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, waitMs);
+      timer.unref?.();
+      const onAbort = (): void => {
+        cleanup();
+        reject(new MaintenanceCancelledError('generation-build'));
+      };
+      const grant = (): void => {
+        cleanup();
+        resolve(() => this.release());
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.waiters.push(grant);
+    });
+  }
+
   private release(): void {
     const next = this.waiters.shift();
     if (next) {
@@ -363,3 +397,9 @@ export class WorkerSlots {
  *  capped at two — one worker build already saturates a core for seconds,
  *  and the main thread must stay responsive. */
 export const defaultWorkerSlots = new WorkerSlots(Math.max(1, Math.min(2, Math.floor(os.cpus().length / 2))));
+
+/** Default budget of the TUI-safe slot queue (WorkerSlots.acquireBounded):
+ *  a worker-eligible text build waits this long for a slot before falling
+ *  back to the bounded inline core as the explicit last resort — large
+ *  full-text builds are never dropped onto the main thread UNCONDITIONALLY. */
+export const TEXT_BUILD_SLOT_WAIT_MS = 30_000;

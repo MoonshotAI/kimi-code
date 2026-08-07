@@ -15,7 +15,7 @@ import { Store } from './store.js';
 import type { StoreRecord } from './store.js';
 import { WAL } from './wal.js';
 import { ValueReader } from './value-reader.js';
-import { catchUpWal } from './recovery.js';
+import { catchUpWalAsync } from './recovery.js';
 import { compact, shouldCompact } from './compaction.js';
 import { OpTracker } from './op-tracker.js';
 import { TEXT_INDEXES_FILE, SNAPSHOT_FILE, isPersistentFile, rootPostingsFile, textDictionaryFile, textDocsFile } from './generation.js';
@@ -26,7 +26,7 @@ import { CompoundIndexManager } from './compound-index.js';
 import { toKStr, writeFileAtomic } from './value-codec.js';
 import { LockFile } from './lockfile.js';
 import { createSerializer } from './serialize.js';
-import { MaintenanceScheduler, defaultWorkerSlots } from './maintenance.js';
+import { MaintenanceScheduler, defaultWorkerSlots, TEXT_BUILD_SLOT_WAIT_MS } from './maintenance.js';
 import { MemoryGuard } from './memory-guard.js';
 import { backup as runBackup, backupInProgressError as newBackupInProgressError } from './backup.js';
 import type { BackupDeps } from './backup.js';
@@ -39,6 +39,8 @@ import { openMiniDb, closeMiniDb, renewMiniDbLock, openOrRebuildMiniDb } from '.
 import { IndexAdmin } from './index-admin.js';
 import { ReadPath } from './read-path.js';
 import { createMiniDbStats } from './stats.js';
+import { LifecycleTracker } from './lifecycle-status.js';
+import type { MiniDbLifecycleStatus } from './lifecycle-status.js';
 import type { LifecycleHooks } from './lifecycle.js';
 import { TextRegistry } from './text-registry.js';
 import type { TextIndexDef } from './text-registry.js';
@@ -52,7 +54,7 @@ import type { RangeOptions } from './skiplist.js';
 import type { TextIndexTokenizerName } from './trigram.js';
 import type { PostingEntry } from './text-postings.js';
 import { startWorkerTextBuild, textBuildWorkerAvailable, verifyFileCrcAsync, WorkerTextBuildError } from './worker/text-build.js';
-import type { TextBuildCheckpoint } from './worker/text-build.js';
+import type { TextBuildCheckpoint, WorkerTextBuildFallbackReason } from './worker/text-build.js';
 import { readBaseDocsImageAsync, BASE_DOCS_MAGIC, BASE_DOCS_VERSION } from './worker/text-build-core.js';
 import type { TextBuildCoreResult } from './worker/text-build-core.js';
 import { readGenerationFileCheckedAsync, readTextDictionaryImageAsync } from './gen-codec.js';
@@ -112,6 +114,12 @@ export class MiniDb<V = unknown> {
    *  offset as advanced by the last successful catch-up (recoveryInfo's scan
    *  endpoint anchors the first call). */
   private walTail: { dev: number; ino: number; size: number } | null = null;
+  /** Catch-up serializer: the sliced async apply yields to the event loop, so
+   *  overlapping catch-ups would interleave op-by-op (the pre-async apply was
+   *  atomic per call by virtue of being synchronous). Chaining restores that
+   *  per-call atomicity; a caller queued behind another catch-up observes the
+   *  advanced watermark and no-ops or falls back to a full reopen. */
+  private catchUpChain: Promise<unknown> = Promise.resolve();
   readOnly = false;
   /* Non-private (package-internal): lifecycle.ts reads/writes this through its LifecycleHost view. */ lock: LockFile | null = null;
 
@@ -193,6 +201,10 @@ export class MiniDb<V = unknown> {
   private textWorkerDisabled = false;
   /** Stage 6: worker aggregation memory budget. */
   /* Non-private (package-internal): lifecycle.ts reads/writes this through its LifecycleHost view. */ textBuildMemoryBytes = 128 * 1024 * 1024;
+  /** TUI-safe worker-slot policy: how long a worker-eligible text build
+   *  queues for a process-wide slot before the bounded inline core is
+   *  allowed as the last resort (never the unbounded staged aggregation). */
+  /* Non-private (package-internal): read through the GenerationBuilderDeps view. */ textBuildSlotWaitMs = TEXT_BUILD_SLOT_WAIT_MS;
   /** Stage 6: maintenance I/O concurrency (snapshot grouped reads). */
   /* Non-private (package-internal): lifecycle.ts reads/writes this through its LifecycleHost view. */ maintenanceIoConcurrency = 8;
   /** Defer the open-time full text rebuild (no-generation fallback) to a background
@@ -236,6 +248,10 @@ export class MiniDb<V = unknown> {
    *  this state the caller cannot assume a rejected write had no effect. */
   writeDisabled: unknown = null;
   readonly stats = createMiniDbStats();
+  /** Per-open lifecycle telemetry (the open() state machine + per-phase
+   *  wall-clock timings): driven by lifecycle.ts and the generation loader,
+   *  read through lifecycleStatus(). */
+  /* Non-private (package-internal): lifecycle.ts drives it through its LifecycleHost view. */ readonly lifecycle = new LifecycleTracker();
 
   /** The text-index registry facet (text-registry.ts): owns the live TextIndex
    *  map, the persisted definition list, and the staged-drop marks (declared
@@ -327,11 +343,13 @@ export class MiniDb<V = unknown> {
       this.textWorkerDisabled = true;
     },
     textBuildMemoryBytes: () => this.textBuildMemoryBytes,
+    textBuildSlotWaitMs: () => this.textBuildSlotWaitMs,
     dt: this.dt,
     indexes: this.indexes,
     compound: this.compound,
     textRegistry: this.textRegistry,
     stats: this.stats,
+    lifecycle: this.lifecycle,
     decode: (b) => this.decode(b),
     indexable: (v): v is Record<string, unknown> => this.indexable(v),
     liveRecords: () => this.liveRecords(),
@@ -561,7 +579,14 @@ export class MiniDb<V = unknown> {
         deferred.add(name);
       }
     }
+    const textRebuildMsBefore = this.stats.textRebuildDurationMs;
     await this.indexAdmin.rebuildAllIndexes({ skipTextIndex: (name) => deferred.has(name) });
+    this.lifecycle.time('textRebuildMs', this.stats.textRebuildDurationMs - textRebuildMsBefore);
+    // Every non-deferred text index was just rebuilt by the staged in-thread
+    // walk above (the full-recovery path leaves them empty).
+    for (const name of this.text.keys()) {
+      if (!deferred.has(name)) this.lifecycle.noteTextIndexSource(name, 'staged');
+    }
     if (deferred.size > 0) this.deferOpenTextBuilds([...deferred]);
   }
 
@@ -590,6 +615,7 @@ export class MiniDb<V = unknown> {
       ti.basePending = true;
       ti.beginRebase();
       armed.push({ name, ti, def });
+      this.lifecycle.markTextIndexPending(name);
     }
     if (armed.length === 0) return;
     // The checkpoint the build covers: the recovery scan endpoint (see the
@@ -644,6 +670,8 @@ export class MiniDb<V = unknown> {
           const output = scratchDir !== null ? { dir: scratchDir, postingsPath: path.join(scratchDir, rootPostingsFile(name)) } : null;
           let checkpoint = pin();
           let committed = false;
+          let hostedMode: 'worker' | 'inline' | null = null;
+          const tBuild = performance.now();
           for (let attempt = 1; attempt <= 3 && !committed; attempt++) {
             if (attempt > 1) checkpoint = repin(ti);
             try {
@@ -652,13 +680,16 @@ export class MiniDb<V = unknown> {
               // mid-task): no build will come — stop retrying.
               if (hosted === null) break;
               committed = true;
+              hostedMode = hosted;
             } catch {
               // Shutdown cancels the task: leave close() to finish teardown.
               if (ctx.signal.aborted) return;
             }
           }
-          if (committed) {
+          this.lifecycle.time('textRebuildMs', performance.now() - tBuild);
+          if (committed && hostedMode !== null) {
             this.stats.textDeferredBuilds++;
+            this.lifecycle.clearTextIndexPending(name, hostedMode);
           } else {
             // Every attempt failed: disarm and mark the base pending —
             // searches keep the typed building signal instead of silently
@@ -827,11 +858,21 @@ export class MiniDb<V = unknown> {
       const postingsPath = tmpDir !== null ? path.join(tmpDir, rootPostingsFile(name)) : output!.postingsPath;
       const dictionaryPath = path.join(artifactsDir, textDictionaryFile(name));
       const baseDocsPath = path.join(artifactsDir, `${textDocsFile(name)}.base`);
-      // Worker thread when its entry file exists; the inline bounded core
-      // otherwise (slot pressure or a single-file deployment) — never the
-      // unbounded staged aggregation.
+      // Worker thread when its entry file exists; the inline bounded core is
+      // the last resort — never the unbounded staged aggregation. TUI-safe
+      // slot policy: queue for a process-wide worker slot first (bounded by
+      // textBuildSlotWaitMs and the caller's abort signal) instead of
+      // dropping a large build onto the main thread the moment every slot is
+      // busy; only a persisted slot drought (or a deployment without the
+      // worker file) hosts the SAME bounded core inline.
       const workerAvailable = textBuildWorkerAvailable();
-      slotRelease = workerAvailable ? defaultWorkerSlots.tryAcquire() : null;
+      let inlineReason: WorkerTextBuildFallbackReason | undefined;
+      if (workerAvailable) {
+        slotRelease = await defaultWorkerSlots.acquireBounded(this.textBuildSlotWaitMs, signal);
+        if (slotRelease === null) inlineReason = 'slot-pressure';
+      } else {
+        inlineReason = 'runtime-unavailable';
+      }
       const inline = slotRelease === null;
       const handle = startWorkerTextBuild(
         {
@@ -857,7 +898,7 @@ export class MiniDb<V = unknown> {
         {
           shouldAbort: () => this.state !== 'open' || signal?.aborted === true,
           inline,
-          inlineReason: workerAvailable ? 'slot-pressure' : 'runtime-unavailable',
+          inlineReason,
           signal,
           onFallback: (reason) => {
             this.stats.textWorkerFallbacks++;
@@ -1114,8 +1155,8 @@ export class MiniDb<V = unknown> {
    *  derived-index maintenance applyOp performs on the write path — minus
    *  unique checks: the writer already validated, and intermediate frame
    *  states must apply literally (LWW). */
-  private applyRecoveredFrame(f: FrameRef, fd: number): void {
-    this.writePath.applyRecoveredFrame(f, fd);
+  private applyRecoveredFrameAsync(f: FrameRef, fd: number, slice: () => boolean): Promise<void> {
+    return this.writePath.applyRecoveredFrameAsync(f, fd, slice);
   }
 
   private applyRecoveredOp(op: RecoveredOp): void {
@@ -1352,13 +1393,34 @@ export class MiniDb<V = unknown> {
    *  rotated file and a shrunken one all return null, meaning: reopen from
    *  scratch. A partial/torn tail left by a writer mid-writev is NOT an
    *  error: the scan stops at the last fully-valid frame; call again later
-   *  and its CRC validates once the writev landed. */
+   *  and its CRC validates once the writev landed.
+   *
+   *  Cooperative: the scan runs through the windowed async scanner and the
+   *  apply yields between primitive ops on the walApplySlicer budgets, so a
+   *  replica that fell far behind does not block the host's event loop in
+   *  one synchronous scan+apply. Calls are serialized per instance (see
+   *  catchUpChain). */
   async catchUpFromWal(offset: number): Promise<{ offset: number; appliedFrames: number } | null> {
+    this.ensureOpen();
+    const run = this.catchUpChain.then(() => this.doCatchUpFromWal(offset));
+    // The chain itself must survive a caller's rejection (treated as "reopen
+    // from scratch" by every caller): swallow for the chain, not for the caller.
+    this.catchUpChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async doCatchUpFromWal(offset: number): Promise<{ offset: number; appliedFrames: number } | null> {
+    // Re-check on dequeue: the instance may have been closed while this call
+    // waited on the chain behind another catch-up (both production callers
+    // gate close externally; this is the library-contract backstop).
     this.ensureOpen();
     const ri = this.recoveryInfo;
     const anchor = this.walTail ?? (ri && ri.walIno ? { dev: ri.walDev, ino: ri.walIno, size: ri.walScanEnd } : null);
     if (!anchor || offset !== anchor.size) return null;
-    const res = catchUpWal(this.walPath, offset, anchor, (f, fd) => this.applyRecoveredFrame(f, fd));
+    const res = await catchUpWalAsync(this.walPath, offset, anchor, (f, fd, slice) => this.applyRecoveredFrameAsync(f, fd, slice));
     if (res) this.walTail = { dev: anchor.dev, ino: anchor.ino, size: res.offset };
     return res;
   }
@@ -1374,6 +1436,16 @@ export class MiniDb<V = unknown> {
    *  internal scheduler — callers never see workers or file details. */
   maintenanceStatus(): MaintenanceTaskInfo[] {
     return this.maintenance.status();
+  }
+
+  /** The last open()'s lifecycle read model: which path served the open
+   *  ('generation-load' + 'wal-catch-up' vs 'full-rebuild'), whether the
+   *  instance is 'ready' or still 'degraded' (a deferred text-index base
+   *  build in flight), the per-phase wall-clock timings, and how every text
+   *  index's base was served (generation image vs worker/inline/staged
+   *  rebuild). Diagnostics only — the cumulative counters stay in `stats`. */
+  lifecycleStatus(): MiniDbLifecycleStatus {
+    return this.lifecycle.snapshot();
   }
 
   async close(): Promise<void> {
