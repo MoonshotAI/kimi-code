@@ -1776,12 +1776,14 @@ name = "kimi-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "crossterm",
  "kimi-protocol",
  "kimi-sdk",
  "kimi-ui",
  "pulldown-cmark",
  "ratatui",
+ "regex",
  "serde_json",
  "tokio",
  "toml",

@@ -139,12 +139,22 @@ impl Session {
 
     /// Compact the session's context.
     pub async fn compact(&mut self) -> anyhow::Result<serde_json::Value> {
+        self.compact_with_instruction(None).await
+    }
+
+    /// Compact the session context, optionally with a custom instruction
+    /// (TS `compact({ instruction })` parity).
+    pub async fn compact_with_instruction(
+        &mut self,
+        instruction: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let mut params = serde_json::json!({ "session_id": self.id });
+        if let Some(instruction) = instruction {
+            params["instruction"] = serde_json::json!(instruction);
+        }
         let body = self
             .client
-            .call(
-                kimi_protocol::methods::SESSION_COMPACT,
-                serde_json::json!({ "session_id": self.id }),
-            )
+            .call(kimi_protocol::methods::SESSION_COMPACT, params)
             .await;
         if let Some(error) = body.get("error") {
             anyhow::bail!("compact: {}", error["message"].as_str().unwrap_or("unknown"));

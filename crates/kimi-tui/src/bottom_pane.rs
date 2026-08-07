@@ -67,6 +67,9 @@ pub const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("/logout", "tui.cmd.logout"),
     ("/locale", "tui.cmd.locale"),
     ("/editor", "tui.cmd.editor"),
+    ("/settings", "tui.cmd.settings"),
+    ("/copy", "tui.cmd.copy"),
+    ("/export-md", "tui.cmd.export-md"),
 ];
 
 /// Resolved `(command, description)` pairs for the active locale (the
@@ -84,8 +87,9 @@ pub const SLASH_COMMANDS: &[&str] = &[
     "/deny", "/exit", "/export", "/fork", "/goal", "/goal-cancel", "/goal-pause", "/goal-resume",
     "/goal-status", "/help", "/import", "/info", "/init", "/locale", "/login", "/logout", "/mcp",
     "/model", "/models", "/new", "/permission", "/plan", "/plugins", "/quit", "/reload",
-    "/resume", "/session", "/sessions", "/skills", "/status", "/steer", "/swarm", "/tasks",
-    "/theme", "/thinking", "/title", "/undo", "/usage", "/version", "/yolo", "/editor",
+    "/resume", "/session", "/sessions", "/settings", "/skills", "/status", "/steer", "/swarm",
+    "/tasks", "/theme", "/thinking", "/title", "/undo", "/usage", "/version", "/yolo", "/editor",
+    "/copy", "/export-md",
 ];
 
 // ── Input editing (char-index based) ────────────────────────────────────
@@ -104,6 +108,17 @@ pub fn insert_char(input: &str, cursor: usize, ch: char) -> (String, usize) {
     out.push(ch);
     out.push_str(&input[at..]);
     (out, cursor + 1)
+}
+
+/// Insert a whole `text` at the char index `cursor` (bracketed paste).
+pub fn insert_text(input: &str, cursor: usize, text: &str) -> (String, usize) {
+    let cursor = cursor.min(input.chars().count());
+    let at = byte_of_char(input, cursor);
+    let mut out = String::with_capacity(input.len() + text.len());
+    out.push_str(&input[..at]);
+    out.push_str(text);
+    out.push_str(&input[at..]);
+    (out, cursor + text.chars().count())
 }
 
 /// Delete the char before `cursor`; returns the new input and cursor.
@@ -253,7 +268,7 @@ pub fn complete_line(
     tab_idx: Option<usize>,
 ) -> (String, Option<usize>) {
     // Argument completion: `/plan `, `/swarm `, `/thinking `, `/model `,
-    // `/permission `, `/session `, `/goal `.
+    // `/permission `, `/session `, `/goal `, plus filesystem paths.
     if let Some((cmd, arg)) = base.split_once(' ') {
         let next = match cmd {
             "/plan" | "/swarm" => complete_from(cmd, arg, ON_OFF_ARGS, tab_idx),
@@ -262,7 +277,8 @@ pub fn complete_line(
             "/session" => complete_from(cmd, arg, &["set"], tab_idx),
             "/goal" => complete_from(cmd, arg, GOAL_ARGS, tab_idx),
             "/model" => complete_model_arg(arg, model_aliases, tab_idx),
-            _ => None,
+            // Any path-like argument falls through to filesystem completion.
+            _ => complete_path(arg, tab_idx),
         };
         return next.map_or((base.to_string(), None), |(s, i)| (s, Some(i)));
     }
@@ -308,6 +324,67 @@ pub fn complete_model_arg(
     }
     let idx = tab_idx.map_or(0, |i| (i + 1) % matches.len());
     Some(((*matches[idx]).clone(), idx))
+}
+
+// ── Filesystem path completion ─────────────────────────────────────────
+
+/// The user's home directory (USERPROFILE on Windows, HOME elsewhere).
+fn home_dir() -> Option<String> {
+    let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var(key).ok().filter(|h| !h.is_empty())
+}
+
+/// Whether `arg` looks like a path (empty, `.`/`..`, or contains a `/` or
+/// starts with `~`) — the trigger for filesystem completion.
+fn is_path_like(arg: &str) -> bool {
+    arg.is_empty()
+        || arg == "."
+        || arg == ".."
+        || arg.starts_with("./")
+        || arg.starts_with("../")
+        || arg.starts_with('/')
+        || arg.starts_with('~')
+        || arg.contains('/')
+}
+
+/// Complete a filesystem path argument (`~` expands; directories get a
+/// trailing `/`). Returns the completed argument and the next cycle index.
+pub fn complete_path(arg: &str, tab_idx: Option<usize>) -> Option<(String, usize)> {
+    if !is_path_like(arg) {
+        return None;
+    }
+    let expanded = if arg == "~" {
+        format!("{}/", home_dir()?)
+    } else if let Some(rest) = arg.strip_prefix("~/") {
+        format!("{}/{rest}", home_dir()?)
+    } else {
+        arg.to_string()
+    };
+    let (dir, partial) = match expanded.rfind('/') {
+        Some(i) => (expanded[..=i].to_string(), expanded[i + 1..].to_string()),
+        None => (String::new(), expanded.clone()),
+    };
+    let entries: Vec<String> = std::fs::read_dir(&dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !name.starts_with(&partial) {
+                return None;
+            }
+            // Hidden files only when the partial explicitly asks for them.
+            if name.starts_with('.') && !partial.starts_with('.') {
+                return None;
+            }
+            let is_dir = e.path().is_dir();
+            Some(if is_dir { format!("{name}/") } else { name })
+        })
+        .collect();
+    if entries.is_empty() {
+        return None;
+    }
+    let idx = tab_idx.map_or(0, |i| (i + 1) % entries.len());
+    Some((format!("{dir}{}", entries[idx]), idx))
 }
 
 #[cfg(test)]
@@ -399,5 +476,34 @@ mod tests {
         assert_eq!(cursor_line_col(&out, cur), (1, 0));
         let (out2, cur2) = backspace(&out, cur);
         assert_eq!((out2.as_str(), cur2), ("ab", 1));
+    }
+
+    #[test]
+    fn completes_filesystem_paths() {
+        // A temp dir with known entries; non-path args are left alone.
+        let dir = std::env::temp_dir().join(format!("kimi-tab-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("alpha")).unwrap();
+        std::fs::create_dir_all(dir.join("beta")).unwrap();
+        std::fs::write(dir.join("alpha.txt"), b"x").unwrap();
+        std::fs::write(dir.join(".hidden"), b"x").unwrap();
+
+        let prefix = format!("{}/al", dir.display());
+        let (done, _idx) = complete_path(&prefix, None).expect("completes");
+        assert!(done.ends_with("alpha/") || done.ends_with("alpha.txt"), "done: {done}");
+
+        // Directory listing when the arg ends with a slash.
+        let prefix = format!("{}/", dir.display());
+        let (done, _) = complete_path(&prefix, None).expect("completes dir");
+        assert!(done.starts_with(&prefix), "done: {done}");
+
+        // Hidden files are skipped unless requested.
+        let prefix = format!("{}/.", dir.display());
+        let (done, _) = complete_path(&prefix, None).expect("completes hidden");
+        assert!(done.contains(".hidden"), "done: {done}");
+
+        // Non-path args do not trigger.
+        assert!(complete_path("plain-arg", None).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

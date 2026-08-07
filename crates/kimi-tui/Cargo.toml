@@ -7,12 +7,14 @@ description = "Kimi Code interactive TUI — stage D (ratatui + crossterm), driv
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 crossterm = "0.28"
 kimi-protocol = { path = "../kimi-protocol" }
 kimi-sdk = { path = "../kimi-sdk" }
 kimi-ui = { path = "../kimi-ui" }
 pulldown-cmark = "0.12"
 ratatui = "0.29"
+regex = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 toml = "0.8"

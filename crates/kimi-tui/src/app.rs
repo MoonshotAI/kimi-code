@@ -352,6 +352,10 @@ pub struct App {
     theme: crate::theme::Theme,
     /// Whether the dark palette is active (`/theme` toggles this).
     dark_mode: bool,
+    /// When the last Ctrl-C was pressed (double-press exit confirmation).
+    last_ctrl_c: Option<std::time::Instant>,
+    /// Pasted image attachments referenced by `[image #N]` placeholders.
+    image_attachments: Vec<crate::clipboard::ImageAttachment>,
 }
 
 impl App {
@@ -382,6 +386,8 @@ impl App {
             footer: crate::footer::FooterInfo::default(),
             theme: crate::theme::load_theme(),
             dark_mode: true,
+            last_ctrl_c: None,
+            image_attachments: Vec::new(),
         }
     }
 
@@ -460,9 +466,57 @@ impl App {
                 continue;
             }
             match event::read()? {
+                Event::Paste(data) => {
+                    // Bracketed paste (Ctrl-V / terminal paste) inserts into
+                    // the input at the cursor.
+                    self.tab = None;
+                    let (input, cursor) =
+                        crate::bottom_pane::insert_text(&self.input, self.cursor, &data);
+                    self.input = input;
+                    self.cursor = cursor;
+                    self.refresh_completion();
+                }
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                    KeyCode::Char('v') if key.modifiers.contains(event::KeyModifiers::ALT) => {
+                        // Paste an image from the clipboard (Alt-V on
+                        // Windows — Ctrl-V is usually reserved by the
+                        // terminal for bracketed text paste).
+                        match crate::clipboard::clipboard_image() {
+                            Ok(Some((path, mime))) => {
+                                let id = self.image_attachments.len();
+                                self.image_attachments.push(crate::clipboard::ImageAttachment {
+                                    id,
+                                    path,
+                                    mime,
+                                });
+                                let (input, cursor) = crate::bottom_pane::insert_text(
+                                    &self.input,
+                                    self.cursor,
+                                    &format!("{} ", crate::clipboard::placeholder(id)),
+                                );
+                                self.input = input;
+                                self.cursor = cursor;
+                                self.push_line(TranscriptLine::status(t!("tui.paste.image", id)));
+                            }
+                            Ok(None) => {
+                                self.push_line(TranscriptLine::status(t("tui.paste.noImage")))
+                            }
+                            Err(e) => self
+                                .push_line(TranscriptLine::error(format!("clipboard: {e}"))),
+                        }
+                    }
                     KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                        return Ok(());
+                        // Double-press Ctrl-C within 1.5s to exit; the first
+                        // press just warns (TS exit-confirmation parity).
+                        let now = std::time::Instant::now();
+                        let again = self.last_ctrl_c.is_some_and(|t| {
+                            now.duration_since(t) < std::time::Duration::from_millis(1500)
+                        });
+                        if again {
+                            return Ok(());
+                        }
+                        self.last_ctrl_c = Some(now);
+                        self.push_line(TranscriptLine::status(t("tui.turn.exitConfirm")));
                     }
                     KeyCode::Char(ch) if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
                         self.tab = None;
@@ -481,6 +535,24 @@ impl App {
                                 let (input, cursor) = crate::bottom_pane::kill_word(&self.input, self.cursor);
                                 self.input = input;
                                 self.cursor = cursor;
+                            }
+                            's' => {
+                                // Send the current input as a steer (TS
+                                // Ctrl-S parity) instead of submitting.
+                                let text = std::mem::take(&mut self.input);
+                                self.cursor = 0;
+                                if !text.trim().is_empty() {
+                                    let queued = self
+                                        .session
+                                        .as_mut()
+                                        .expect("session")
+                                        .steer(serde_json::json!([{ "type": "text", "text": text }]))
+                                        .await?;
+                                    self.push_line(TranscriptLine::status(t!(
+                                        "tui.steer.queued",
+                                        queued
+                                    )));
+                                }
                             }
                             'o' => self.toggle_last_tool_collapse(),
                             'g' => {
@@ -629,14 +701,18 @@ impl App {
     }
 
     /// Handle one submitted line (slash command or prompt). Returns `true`
-    /// when the app should quit.
-    async fn dispatch(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        line: &str,
-    ) -> anyhow::Result<bool> {
+    /// when the app should quit. Boxed so `/settings` can re-enter it
+    /// (async recursion needs indirection).
+    fn dispatch<'a>(
+        &'a mut self,
+        terminal: &'a mut Terminal<CrosstermBackend<io::Stdout>>,
+        line: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + 'a>> {
+        Box::pin(async move {
         if line.starts_with('/') {
             let (cmd, rest) = line.split_once(' ').map(|(c, r)| (c, r.trim())).unwrap_or((line, ""));
+            // Alias resolution (TS registry aliases parity).
+            let cmd = resolve_alias(cmd);
             match cmd {
                 "/quit" | "/exit" => return Ok(true),
                 "/help" => {
@@ -871,12 +947,19 @@ impl App {
                     }
                 }
                 "/plan" => {
-                    let enabled = rest == "on" || rest.is_empty();
-                    self.session.as_mut().expect("session").set_plan_mode(enabled).await?;
-                    self.push_line(TranscriptLine::status(t!("tui.status.plan",
-                        t(if enabled { "tui.status.on" } else { "tui.status.off" })
-                    )));
-                    self.refresh_status().await;
+                    if rest == "clear" {
+                        // `/plan clear` drops the current plan (TS parity).
+                        self.session.as_mut().expect("session").clear_plan().await?;
+                        self.push_line(TranscriptLine::status(t("tui.plan.cleared")));
+                        self.refresh_status().await;
+                    } else {
+                        let enabled = rest == "on" || rest.is_empty();
+                        self.session.as_mut().expect("session").set_plan_mode(enabled).await?;
+                        self.push_line(TranscriptLine::status(t!("tui.status.plan",
+                            t(if enabled { "tui.status.on" } else { "tui.status.off" })
+                        )));
+                        self.refresh_status().await;
+                    }
                 }
                 "/swarm" => {
                     let enabled = rest == "on" || rest.is_empty();
@@ -1290,7 +1373,16 @@ impl App {
                     self.push_line(TranscriptLine::status(t("tui.clear.ok")));
                 }
                 "/compact" => {
-                    match self.session.as_mut().expect("session").compact().await {
+                    // `/compact <instruction>` passes a custom compaction
+                    // instruction (TS `compact({ instruction })` parity).
+                    let instruction = (!rest.is_empty()).then_some(rest);
+                    let result = self
+                        .session
+                        .as_mut()
+                        .expect("session")
+                        .compact_with_instruction(instruction)
+                        .await;
+                    match result {
                         Ok(_) => self.push_line(TranscriptLine::status(t("tui.compact.ok"))),
                         Err(e) => self.push_line(TranscriptLine::error(t!("tui.err.compactFailed", e))),
                     }
@@ -1489,12 +1581,35 @@ impl App {
                     }
                 }
                 "/locale" => {
-                    let locale = match rest {
-                        "zh" => crate::i18n::Locale::Zh,
-                        "en" => crate::i18n::Locale::En,
-                        _ => {
-                            self.push_line(TranscriptLine::status(t("tui.locale.usage")));
-                            return Ok(false);
+                    let locale = if rest.is_empty() {
+                        // No arg: pick en/zh (TS locale-selector parity).
+                        let items: Vec<(String, String)> = ["en", "zh"]
+                            .iter()
+                            .map(|m| (m.to_string(), String::new()))
+                            .collect();
+                        match crate::picker::select(
+                            terminal,
+                            self.theme,
+                            t("tui.picker.selectLocale"),
+                            &items,
+                        )? {
+                            Some(choice) => match choice.as_str() {
+                                "zh" => crate::i18n::Locale::Zh,
+                                _ => crate::i18n::Locale::En,
+                            },
+                            None => {
+                                self.push_line(TranscriptLine::status(t("tui.locale.cancelled")));
+                                return Ok(false);
+                            }
+                        }
+                    } else {
+                        match rest {
+                            "zh" => crate::i18n::Locale::Zh,
+                            "en" => crate::i18n::Locale::En,
+                            _ => {
+                                self.push_line(TranscriptLine::status(t("tui.locale.usage")));
+                                return Ok(false);
+                            }
                         }
                     };
                     // Persist to tui.toml first, then switch the runtime locale
@@ -1525,11 +1640,110 @@ impl App {
                         }
                     }
                 }
+                "/settings" => {
+                    // Unified settings menu (TS settings-selector parity):
+                    // pick an entry and dispatch to the underlying command.
+                    let items: Vec<(String, String)> = [
+                        ("model", t("tui.settings.model")),
+                        ("theme", t("tui.settings.theme")),
+                        ("editor", t("tui.settings.editor")),
+                        ("language", t("tui.settings.language")),
+                        ("permission", t("tui.settings.permission")),
+                    ]
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect();
+                    match crate::picker::select(
+                        terminal,
+                        self.theme,
+                        t("tui.picker.selectSetting"),
+                        &items,
+                    )? {
+                        Some(choice) => {
+                            let cmd = match choice.as_str() {
+                                "model" => "/model",
+                                "theme" => "/theme",
+                                "editor" => "/editor",
+                                "language" => "/locale",
+                                "permission" => "/permission",
+                                _ => return Ok(false),
+                            };
+                            // Re-enter dispatch with the subcommand; a quit
+                            // from within propagates.
+                            if self.dispatch(terminal, cmd).await? {
+                                return Ok(true);
+                            }
+                        }
+                        None => self
+                            .push_line(TranscriptLine::status(t("tui.settings.cancelled"))),
+                    }
+                }
+                "/copy" => {
+                    // Copy the last assistant reply to the clipboard (TS
+                    // `handleCopyCommand` parity — sourced from the rendered
+                    // transcript so it survives compaction).
+                    match find_last_assistant_text(&self.transcript) {
+                        Some(text) => match copy_to_clipboard(&text) {
+                            Ok(()) => self.push_line(TranscriptLine::status(t!(
+                                "tui.copy.ok",
+                                text.chars().count()
+                            ))),
+                            Err(e) => self
+                                .push_line(TranscriptLine::error(t!("tui.err.copyFailed", e))),
+                        },
+                        None => self
+                            .push_line(TranscriptLine::status(t("tui.copy.none"))),
+                    }
+                }
+                "/export-md" => {
+                    // Export the visible transcript as a Markdown file (TS
+                    // `/export-md` parity, simplified).
+                    let path = format!("{}.md", self.session_id);
+                    let markdown = transcript_to_markdown(&self.transcript);
+                    match std::fs::write(&path, markdown) {
+                        Ok(()) => self.push_line(TranscriptLine::status(t!(
+                            "tui.exportMd.done",
+                            path
+                        ))),
+                        Err(e) => self
+                            .push_line(TranscriptLine::error(t!("tui.err.exportMdFailed", e))),
+                    }
+                }
                 other => self
                     .transcript
                     .push_line(TranscriptLine::error(t!("tui.err.unknownCommand", other))),
             }
             return Ok(false);
+        }
+        // Bash mode: a leading `!` runs a shell command one-shot (TS
+        // shell-run parity, simplified — output is not streamed).
+        if let Some(raw) = line.strip_prefix('!') {
+            let command = raw.trim();
+            if !command.is_empty() {
+                self.push_line(TranscriptLine::tool(format!("! {command}")));
+                let result = self.session.as_mut().expect("session").run_shell(command).await;
+                if let Some(error) = result.get("error") {
+                    self.push_line(TranscriptLine::error(t!(
+                        "tui.err.shellFailed",
+                        error["message"].as_str().unwrap_or("unknown")
+                    )));
+                } else {
+                    let output = result["result"]["output"].as_str().unwrap_or("");
+                    let is_error = result["result"]["is_error"].as_bool().unwrap_or(false);
+                    let line = if output.is_empty() {
+                        t("tui.shell.done").to_string()
+                    } else {
+                        output.to_string()
+                    };
+                    let entry = if is_error {
+                        TranscriptLine::error(line)
+                    } else {
+                        TranscriptLine::tool_collapsed(line)
+                    };
+                    self.transcript.push_line(entry);
+                }
+                return Ok(false);
+            }
         }
         // A real prompt: run it and render the transcript, pumping engine
         // events into the panel while the turn runs. The prompt future lives
@@ -1539,7 +1753,10 @@ impl App {
             // Clone the session out so the prompt future (which borrows it
             // mutably) can coexist with `self.pump_one_event` in the select.
             let mut session = self.session.clone().expect("session");
-            let prompt_fut = session.prompt(line);
+            // Expand `[image #N]` paste placeholders into multi-modal parts
+            // (plain text when nothing was pasted).
+            let parts = crate::clipboard::expand_placeholders(line, &self.image_attachments);
+            let prompt_fut = session.prompt_parts(parts);
             tokio::pin!(prompt_fut);
             loop {
                 self.poll_prompt_keys().await?;
@@ -1570,6 +1787,7 @@ impl App {
             }
         }
         Ok(false)
+        })
     }
 
     /// Refresh the footer status strip from the current session snapshot.
@@ -2004,16 +2222,102 @@ impl App {
         frame.render_widget(modal, frame.area());
     }
 }
+
+/// Alias resolution (TS registry aliases parity).
+fn resolve_alias(cmd: &str) -> &str {
+    match cmd {
+        "/yes" => "/yolo",
+        "/h" | "/?" => "/help",
+        "/q" => "/quit",
+        "/rename" => "/title",
+        "/task" => "/tasks",
+        "/effort" => "/thinking",
+        _ => cmd,
+    }
+}
+
+/// The newest assistant reply's text (TS `findLastAssistantText` parity):
+/// sourced from the rendered transcript so it survives compaction.
+fn find_last_assistant_text(transcript: &[TranscriptEntry]) -> Option<String> {
+    transcript
+        .iter()
+        .rev()
+        .find_map(|entry| match entry {
+            TranscriptEntry::Line(line) if line.kind == TranscriptKind::Assistant => {
+                let text = line.text.trim();
+                (!text.is_empty()).then(|| line.text.clone())
+            }
+            _ => None,
+        })
+}
+
+/// Copy text to the system clipboard (Windows via `Set-Clipboard`).
+fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
+    #[cfg(windows)]
+    {
+        // Single-quote escaping: `''` is a literal quote inside a PS string.
+        let escaped = text.replace('\'', "''");
+        let status = std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!("Set-Clipboard -Value '{}'", escaped),
+            ])
+            .status()?;
+        if !status.success() {
+            anyhow::bail!("Set-Clipboard exited with {status}");
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        anyhow::bail!("clipboard is not supported on this platform")
+    }
+}
+
+/// Render the visible transcript as Markdown (simplified `/export-md`).
+fn transcript_to_markdown(transcript: &[TranscriptEntry]) -> String {
+    let mut md = String::new();
+    for entry in transcript {
+        match entry {
+            TranscriptEntry::Line(line) => match line.kind {
+                TranscriptKind::User => md.push_str(&format!("## User\n\n{}\n\n", line.text)),
+                TranscriptKind::Assistant | TranscriptKind::Streaming => {
+                    md.push_str(&format!("## Assistant\n\n{}\n\n", line.text))
+                }
+                TranscriptKind::Tool => md.push_str(&format!("```\n{}\n```\n\n", line.text)),
+                _ => {}
+            },
+            TranscriptEntry::ToolCall(tc) => {
+                md.push_str(&format!("## Tool: {}\n\n```\n", tc.tool_name));
+                if let Some(result) = &tc.result {
+                    md.push_str(result);
+                }
+                md.push_str("\n```\n\n");
+            }
+        }
+    }
+    md
+}
+
 fn init_terminal() -> anyhow::Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    crossterm::execute!(stdout, EnterAlternateScreen)?;
+    crossterm::execute!(
+        stdout,
+        EnterAlternateScreen,
+        crossterm::event::EnableBracketedPaste
+    )?;
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> anyhow::Result<()> {
     disable_raw_mode()?;
-    crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    crossterm::execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        crossterm::event::DisableBracketedPaste
+    )?;
     Ok(())
 }
 
@@ -2454,5 +2758,59 @@ mod tests {
         assert_eq!(crate::chatwidget::max_scroll(7, 9), 0);
         // Empty transcript never underflows.
         assert_eq!(crate::chatwidget::max_scroll(0, 9), 0);
+    }
+
+    #[test]
+    fn aliases_resolve_to_canonical_commands() {
+        assert_eq!(resolve_alias("/yes"), "/yolo");
+        assert_eq!(resolve_alias("/h"), "/help");
+        assert_eq!(resolve_alias("/?"), "/help");
+        assert_eq!(resolve_alias("/q"), "/quit");
+        assert_eq!(resolve_alias("/rename"), "/title");
+        assert_eq!(resolve_alias("/task"), "/tasks");
+        assert_eq!(resolve_alias("/effort"), "/thinking");
+        assert_eq!(resolve_alias("/plan"), "/plan");
+    }
+
+    #[test]
+    fn finds_last_assistant_reply() {
+        let t = vec![
+            TranscriptEntry::Line(TranscriptLine::user("hi")),
+            TranscriptEntry::Line(TranscriptLine::assistant("first reply")),
+            TranscriptEntry::Line(TranscriptLine::user("again")),
+            TranscriptEntry::Line(TranscriptLine::status("status")),
+            TranscriptEntry::Line(TranscriptLine::assistant("second reply")),
+        ];
+        assert_eq!(find_last_assistant_text(&t).as_deref(), Some("second reply"));
+        // A trailing empty assistant line is skipped.
+        let t2 = vec![
+            TranscriptEntry::Line(TranscriptLine::assistant("  ")),
+            TranscriptEntry::Line(TranscriptLine::assistant("real")),
+        ];
+        assert_eq!(find_last_assistant_text(&t2).as_deref(), Some("real"));
+        // No assistant text at all.
+        assert!(find_last_assistant_text(&[]).is_none());
+    }
+
+    #[test]
+    fn transcript_renders_as_markdown() {
+        let t = vec![
+            TranscriptEntry::Line(TranscriptLine::user("question")),
+            TranscriptEntry::Line(TranscriptLine::assistant("answer")),
+            TranscriptEntry::ToolCall(ToolCallEntry {
+                tool_call_id: "t1".into(),
+                tool_name: "Bash".into(),
+                args: "{}".into(),
+                result: Some("ok".into()),
+                is_error: false,
+                is_question: false,
+                collapsed: false,
+            }),
+        ];
+        let md = transcript_to_markdown(&t);
+        assert!(md.contains("## User\n\nquestion"), "md: {md}");
+        assert!(md.contains("## Assistant\n\nanswer"), "md: {md}");
+        assert!(md.contains("## Tool: Bash"), "md: {md}");
+        assert!(md.contains("ok"), "md: {md}");
     }
 }

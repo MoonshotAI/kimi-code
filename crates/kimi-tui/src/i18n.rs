@@ -161,6 +161,12 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.status.swarm", "swarm mode {0}", "群组模式{0}"),
     ("tui.status.on", "on", "已开启"),
     ("tui.status.off", "off", "已关闭"),
+    ("tui.plan.cleared", "plan mode cleared", "已清除计划模式"),
+    ("tui.copy.none", "no assistant message to copy", "没有可复制的助手消息"),
+    ("tui.copy.ok", "copied {0} chars to the clipboard", "已复制 {0} 个字符到剪贴板"),
+    ("tui.err.copyFailed", "copy failed: {0}", "复制失败：{0}"),
+    ("tui.exportMd.done", "exported to {0}", "已导出到 {0}"),
+    ("tui.err.exportMdFailed", "export failed: {0}", "导出失败：{0}"),
     // ── Approvals ──────────────────────────────────────────────────────
     ("tui.approval.none", "no pending approvals", "没有待处理的审批"),
     ("tui.approval.listItem", "{0}  {1}  ({2})", "{0}  {1}  ({2})"),
@@ -297,6 +303,11 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.err.logoutFailed", "logout failed: {0}", "退出登录失败：{0}"),
     // ── Turn lifecycle ──────────────────────────────────────────────────
     ("tui.turn.cancelled", "turn cancelled", "已取消本轮"),
+    ("tui.turn.exitConfirm", "press Ctrl-C again to exit", "再按一次 Ctrl-C 退出"),
+    ("tui.shell.done", "command finished", "命令执行完成"),
+    ("tui.err.shellFailed", "shell failed: {0}", "命令执行失败：{0}"),
+    ("tui.paste.image", "pasted image #{0} (Alt-V)", "已粘贴图片 #{0}（Alt-V）"),
+    ("tui.paste.noImage", "no image on the clipboard", "剪贴板中没有图片"),
     ("tui.editor.noEditor", "no editor configured (set $EDITOR)", "未配置编辑器（请设置 $EDITOR）"),
     ("tui.err.editorFailed", "editor failed: {0}", "编辑器失败：{0}"),
     ("tui.editor.usage", "usage: /editor <command> (e.g. code --wait)", "用法：/editor <命令>（如 code --wait）"),
@@ -305,6 +316,15 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     // ── Locale ─────────────────────────────────────────────────────────
     ("tui.locale.usage", "usage: /locale <en|zh>", "用法：/locale <en|zh>"),
     ("tui.locale.set", "locale set to {0}", "语言已设为 {0}"),
+    ("tui.picker.selectLocale", "select a language", "选择语言"),
+    ("tui.locale.cancelled", "locale selection cancelled", "已取消语言选择"),
+    ("tui.settings.model", "Switch model", "切换模型"),
+    ("tui.settings.theme", "Set the theme", "设置主题"),
+    ("tui.settings.editor", "Set the external editor", "设置外部编辑器"),
+    ("tui.settings.language", "Switch the UI language", "切换界面语言"),
+    ("tui.settings.permission", "Set permission mode", "设置权限模式"),
+    ("tui.picker.selectSetting", "settings", "设置"),
+    ("tui.settings.cancelled", "settings closed", "已关闭设置"),
     // ── Chat chrome ─────────────────────────────────────────────────────
     ("tui.chat.title", "chat", "对话"),
     ("tui.chat.inputTitle", "input — {0}", "输入 — {0}"),
@@ -373,6 +393,9 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.cmd.logout", "Log out of the current provider", "退出当前提供商登录"),
     ("tui.cmd.locale", "Switch the UI language", "切换界面语言"),
     ("tui.cmd.editor", "Set the external editor (Ctrl-G)", "设置外部编辑器（Ctrl-G）"),
+    ("tui.cmd.settings", "Open the settings menu", "打开设置菜单"),
+    ("tui.cmd.copy", "Copy the last assistant reply", "复制最近一条助手回复"),
+    ("tui.cmd.export-md", "Export the session as Markdown", "将会话导出为 Markdown"),
 ];
 
 #[cfg(test)]
