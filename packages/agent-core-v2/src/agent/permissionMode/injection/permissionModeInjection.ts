@@ -10,7 +10,7 @@
  * `agentState` (`IAgentStateService`) and read/written through it.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { defineState } from '#/_base/state/stateRegistry';
 import {
   IAgentContextInjectorService,
@@ -29,7 +29,7 @@ export const permissionModeLastModeKey = defineState<PermissionMode | undefined>
   () => undefined as PermissionMode | undefined,
 );
 
-export class PermissionModeInjection extends Disposable {
+export class PermissionModeInjection extends Service {
   constructor(
     private readonly permissionMode: Pick<IAgentPermissionModeService, 'mode'>,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,

@@ -343,6 +343,9 @@ function projectSessionSummary(summary: SessionSummary, home: HomePair): unknown
   const projected = scrubHomePrefixes(summary, home) as Record<string, unknown>;
   delete projected['createdAt'];
   delete projected['updatedAt'];
+  // `lastTurnReason` is v2-only: the v1 engine never records a turn outcome,
+  // so the field cannot compare across engines.
+  delete projected['lastTurnReason'];
   if (projected['title'] === 'New Session') delete projected['title'];
   return projected;
 }

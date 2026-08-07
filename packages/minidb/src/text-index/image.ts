@@ -150,6 +150,92 @@ export function attachImage(
   s.baseEpoch++;
 }
 
+/** The raw parsed images attachImageAsync consumes (the generation loader's
+ *  readTextDictionaryImageAsync / readTextDocsImageAsync output, structurally
+ *  — avoiding a gen-codec import here). */
+export interface AttachImageRaw {
+  postingsPath: string;
+  dictEntries: Iterable<{ term: string; off: number; len: number; df: number }>;
+  docs: {
+    keys: (string | undefined)[];
+    docLens: (number | undefined)[];
+    liveCount: number;
+    removed: number[];
+    delta: { term: string; docs: { docID: number; freq: number }[] }[];
+  };
+}
+
+/** Sliced variant of attachImage (the open-time main-thread path): identical
+ *  resulting state and the same side-effect order, but every O(terms/docs)
+ *  map construction happens here, in slices with event-loop yields, so
+ *  attaching a large generation's base never stalls the loop for the whole
+ *  pass. Safe to yield mid-attach: the index is not serving until open()
+ *  returns, and the readonly-bound containers (delta, deltaDocs, removed —
+ *  their bindings are stable by class invariant) are cleared-then-refilled
+ *  in place exactly like the sync attach, only with yields interleaved. */
+export async function attachImageAsync(
+  s: TextIndexImageState,
+  args: AttachImageRaw,
+  opts: { sliceEvery?: number } = {},
+): Promise<void> {
+  const sliceEvery = opts.sliceEvery ?? 32768;
+  let n = 0;
+  const tick = async (): Promise<void> => {
+    if (++n % sliceEvery === 0) await yieldToLoop();
+  };
+  s.close(); // release any previous postings handle
+  s.memBase = null;
+  const postings = new Map<string, PostingEntry>();
+  for (const e of args.dictEntries) {
+    postings.set(e.term, { off: e.off, len: e.len, df: e.df });
+    await tick();
+  }
+  s.postings = postings;
+  s.pf = PostingsFile.open(args.postingsPath);
+  const keys = args.docs.keys; // adopted (fresh from the parser — see commitRebase's containers)
+  const docLen = new Map<number, number>();
+  for (let i = 0; i < keys.length; i++) {
+    const len = args.docs.docLens[i];
+    if (len !== undefined) docLen.set(i, len);
+    await tick();
+  }
+  const keyToId = new Map<string, number>();
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    if (k !== undefined) keyToId.set(k, i);
+    await tick();
+  }
+  s.docLen = docLen;
+  s.keys = keys;
+  s.keyToId = keyToId;
+  s.delta.clear();
+  s.deltaDocs.clear();
+  s.deltaCount = 0;
+  for (const d of args.docs.delta) {
+    const m = new Map<number, number>();
+    s.delta.set(d.term, m);
+    for (const doc of d.docs) {
+      m.set(doc.docID, doc.freq);
+      s.deltaCount++;
+      let set = s.deltaDocs.get(doc.docID);
+      if (!set) s.deltaDocs.set(doc.docID, (set = new Set()));
+      set.add(d.term);
+      await tick();
+    }
+  }
+  s.removed.clear();
+  for (const id of args.docs.removed) {
+    s.removed.add(id);
+    await tick();
+  }
+  s.clearCache();
+  s.N = args.docs.liveCount;
+  // A committed base is now attached — the index no longer owes a build, and
+  // any async read in flight must re-read from the attached base.
+  s.basePending = false;
+  s.baseEpoch++;
+}
+
 /** Stage-5 generation build: after the atomic publish rename, repoint the
  *  live base handle from the build's tmp directory to the published
  *  generation directory (same file, final name). On Windows an open handle

@@ -19,7 +19,11 @@
  * payload type, stays assignable to the single `dispatch(...ops: Op[])` rest
  * parameter, while the precise payload type survives on `Op.payload` for the
  * Op's own caller. Registering a duplicate `type` throws `DuplicateOpError` so
- * the global Op-type namespace stays unique. Scope-agnostic.
+ * the global Op-type namespace stays unique. `OP_REGISTRY` is never consulted
+ * at runtime directly: it is the static built-in channel ("import = register")
+ * that the `WireModelContribution` fold drains into the built-in layer (see
+ * `wireContribution.ts`); runtime lookups read the folded result.
+ * Scope-agnostic.
  */
 
 import type { z } from 'zod';

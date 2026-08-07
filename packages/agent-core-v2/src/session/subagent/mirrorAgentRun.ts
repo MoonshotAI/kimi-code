@@ -15,7 +15,11 @@
  *
  * Wire shape note: the signals are still named `subagent.spawned / started /
  * completed / failed` and telemetry still tracks `subagent_created` so existing
- * session recordings and dashboards stay valid.
+ * session recordings and dashboards stay valid. The spawned signal also
+ * reports the child's display-normalized model alias (the derived secondary
+ * entry resolves to its base alias) and its effective thinking effort, so
+ * clients can render both at spawn instead of waiting for the first
+ * `agent.status.updated` frame.
  */
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
@@ -42,6 +46,8 @@ export interface SubagentSpawnedEvent {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
+  readonly model?: string;
+  readonly thinkingEffort?: string;
 }
 
 export interface SubagentStartedEvent {
@@ -79,6 +85,7 @@ export interface AgentRunSpawnedMeta {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
+  readonly model?: string;
 }
 
 export interface MirrorAgentRunOptions {
@@ -94,6 +101,10 @@ export function emitAgentRunSpawned(
   targetAgentId: string,
   meta: AgentRunSpawnedMeta,
 ): void {
+  const childProfile = requester.accessor
+    .get(IAgentLifecycleService)
+    ?.get(targetAgentId)
+    ?.accessor.get(IAgentProfileService);
   requester.accessor.get(IEventBus)?.publish({
     type: 'subagent.spawned',
     subagentId: targetAgentId,
@@ -105,12 +116,10 @@ export function emitAgentRunSpawned(
     description: meta.description,
     swarmIndex: meta.swarmIndex,
     runInBackground: meta.runInBackground ?? false,
+    model: meta.model,
+    thinkingEffort: childProfile?.getEffectiveThinkingLevel(),
   });
-  requester.accessor
-    .get(IAgentLifecycleService)
-    ?.get(targetAgentId)
-    ?.accessor.get(IAgentProfileService)
-    ?.republishStatus();
+  childProfile?.republishStatus();
   requester.accessor.get(ITelemetryService)?.track2('subagent_created', {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,

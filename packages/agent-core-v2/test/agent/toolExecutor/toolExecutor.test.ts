@@ -805,10 +805,6 @@ describe('onBeforeExecuteTool veto semantics', () => {
     expect(tool.calls[0]).toEqual(expect.objectContaining({ metadata }));
   });
 
-  // Regression for the ask/deny ordering bug: a deny-style veto (btw's
-  // deny-all) registered after an ask-style listener (permission) must win
-  // without the ask's Interaction ever starting — the waitUntil factory
-  // stays cold because the veto lands in the immediate pass.
   it('never invokes waitUntil factories when an immediate veto decides the call', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);

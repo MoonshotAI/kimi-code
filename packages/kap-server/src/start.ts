@@ -10,6 +10,7 @@
 import {
   bootstrap,
   drainQueryStoreDisposals,
+  drainSessionMetadataWrites,
   drainSessionIndexMirror,
   IConfigService,
   IEventService,
@@ -385,6 +386,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       );
     }
     try {
+      // Settle session metadata writes first: requests have stopped, and a
+      // queued write must land before the mirror flushes its summary and the
+      // scope disposal marks the service disposed.
+      await drainSessionMetadataWrites();
       // Drain the session-index mirror while the query store is still open:
       // requests have stopped, so no new summaries arrive and the queue just
       // needs its final flush to land in the read model.
@@ -397,6 +402,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
       await drainQueryStoreDisposals();
+      await drainSessionMetadataWrites();
     } finally {
       await registration.release();
     }

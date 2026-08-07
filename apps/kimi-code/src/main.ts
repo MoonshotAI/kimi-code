@@ -38,6 +38,7 @@ import { createKimiCodeHostIdentity, getVersion } from './cli/version';
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from './constant/app';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installMinidbTextBuildWorker } from './native/minidb-worker';
+import { installKapSearchWorker } from './native/search-worker';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
 
@@ -157,6 +158,17 @@ export function main(): void {
       : workerInstall.status === 'failed'
         ? `minidb-worker:failed code=${workerInstall.errorCode} sha256=${workerInstall.assetSha256 ?? 'unknown'}`
         : `minidb-worker:${workerInstall.status}`,
+  );
+  // Same pattern for the global-search worker: extracted from the SEA blob so
+  // the search index runs off the main thread; a failure leaves the search
+  // surface degraded (the `search_worker` flag restores the inline host).
+  const searchWorkerInstall = installKapSearchWorker();
+  startupTrace(
+    searchWorkerInstall.status === 'installed'
+      ? `search-worker:installed basename=${searchWorkerInstall.basename} sha256=${searchWorkerInstall.assetSha256}`
+      : searchWorkerInstall.status === 'failed'
+        ? `search-worker:failed code=${searchWorkerInstall.errorCode} sha256=${searchWorkerInstall.assetSha256 ?? 'unknown'}`
+        : `search-worker:${searchWorkerInstall.status}`,
   );
   if (runNativeAssetSmokeIfRequested()) return;
 

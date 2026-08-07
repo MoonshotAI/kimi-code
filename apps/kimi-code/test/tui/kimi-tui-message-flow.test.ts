@@ -4639,6 +4639,206 @@ command = "vim"
     expect(transcript).toContain('✗ The user manually interrupted this subagent x.');
   });
 
+  it('shows the spawned model on the subagent card at spawn, mapped through the model catalog', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.availableModels = {
+      'k2-cheap': {
+        provider: 'managed:kimi-code',
+        model: 'kimi-k2-cheap',
+        maxContextSize: 100_000,
+        displayName: 'Kimi K2 Cheap',
+        capabilities: [],
+      },
+    };
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: false,
+        model: 'k2-cheap',
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderTranscript(driver))).toContain('Kimi K2 Cheap');
+  });
+
+  it('falls back to the raw alias when the spawned model is missing from the catalog', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: false,
+        model: 'k2-cheap',
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
+  });
+
+  it('shows any concrete spawned effort, same as the session or not', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.thinkingEffort = 'high';
+
+    // Same level as the main session — still shown (level info is level info).
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: false,
+        model: 'k2-cheap',
+        thinkingEffort: 'high',
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).toContain('· high');
+  });
+
+  it('hides the boolean effort states on and off', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    for (const effort of ['on', 'off']) {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'subagent.spawned',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          parentToolCallId: `call_agent_${effort}`,
+          subagentId: `agent-${effort}`,
+          subagentName: 'explore',
+          description: `explore ${effort}`,
+          runInBackground: false,
+          model: 'k2-cheap',
+          thinkingEffort: effort,
+        } as Event,
+        sendQueued,
+      );
+    }
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('· on');
+    expect(transcript).not.toContain('· off');
+  });
+
+  it('keeps the child status update as the model fallback when spawned omits it', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: false,
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).not.toContain('k2-cheap');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'agent-1',
+        sessionId: 'ses-1',
+        model: 'k2-cheap',
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
+  });
+
+  it('shows the spawned model in the swarm panel header at spawn', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: {
+          description: 'Review changed files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts'],
+        },
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_swarm',
+        subagentId: 'agent-1',
+        subagentName: 'coder',
+        description: 'Review changed files #1 (coder)',
+        swarmIndex: 1,
+        runInBackground: false,
+        model: 'k2-cheap',
+      } as Event,
+      sendQueued,
+    );
+
+    const progress = driver.state.transcriptContainer.children.find(
+      (child): child is AgentSwarmProgressComponent => child instanceof AgentSwarmProgressComponent,
+    );
+    if (progress === undefined) throw new Error('expected AgentSwarm progress');
+    expect(stripSgr(progress.render(118).join('\n'))).toContain('k2-cheap');
+  });
+
+  it('includes the spawned model in the background-agent transcript entry', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: true,
+        model: 'k2-cheap',
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
+  });
+
   it('does not let later transcript entries reduce the AgentSwarm grid height', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();

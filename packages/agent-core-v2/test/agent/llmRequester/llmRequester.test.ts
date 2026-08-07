@@ -141,8 +141,6 @@ describe('LLMRequester service migration coverage', () => {
       expect(requests).toHaveLength(2);
       expect(requests[0]?.args).toMatchObject({
         kind: 'loop',
-        // The durable record's `provider` field carries the wire protocol:
-        // Kimi is a vendor over the openai base, not a protocol.
         provider: 'openai',
         model: 'mock-model',
         modelAlias: 'mock-model',
@@ -407,8 +405,6 @@ describe('LLMRequester service migration coverage', () => {
           agent_id: 'main',
           model: 'mock-model',
           alias: 'mock-model',
-          // vendor and wire protocol are separate fields now: the mock
-          // provider is the kimi vendor over the openai base.
           provider_type: 'kimi',
           protocol: 'openai',
           retryable: expect.any(Boolean),
@@ -469,8 +465,6 @@ describe('LLMRequester service migration coverage', () => {
       logEntries = entries;
       ctx = createTestAgent(
         llmGenerateServices(async (_provider, _systemPrompt, _tools, _messages, callbacks, options) => {
-          // The per-turn completion budget arrives as a GenerateOptions
-          // intent (the morph-era baked `modelParameters.max_tokens` is gone).
           requestMaxTokens = options?.maxCompletionTokens;
           options?.onRequestStart?.();
           await callbacks?.onMessagePart?.({ type: 'text', text: 'timed' });
@@ -635,10 +629,6 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('forwards the session id as the per-turn cache-key intent', async () => {
-      // The engine half of the cache-key probe: the same session's id reaches
-      // the composed provider as GenerateOptions.cacheKey. How each dialect
-      // encodes it (Kimi `prompt_cache_key`, Anthropic `metadata.user_id`) is
-      // asserted at the kosong/provider composition layer.
       await llmRequester.request();
 
       expect(capturedCacheKey).toBe('test-session');

@@ -37,8 +37,6 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-// Side-effect registration: `drivesThinkingThroughTraits('kimi')` (used by
-// the forced-effort override) answers through the provider-definition registry.
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
@@ -62,12 +60,6 @@ function createConfigStub(): IConfigService {
   } as unknown as IConfigService;
 }
 
-/**
- * The pure-data Model the kosong catalog hands out. No morphs: per-turn
- * intent (cache key / sampling / thinking effort+keep) now surfaces through
- * `IAgentProfileService.resolveRequestParams()` instead of `with*` call
- * records on a recording Model stub.
- */
 function createTestModel(
   options: {
     readonly id?: string;
@@ -134,13 +126,6 @@ function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): I
   };
 }
 
-/**
- * The one registry answer the profile reads: whether the (protocol,
- * providerType) pair drives thinking through traits, and whether that driver
- * demands strict effort validation (`strictThinkingValidation`). Mirrored
- * here from the real Kimi definitions: strict on the native openai
- * transport, lenient over anthropic, nothing on other protocols.
- */
 function createProtocolRegistryStub(): IProtocolAdapterRegistry {
   return {
     _serviceBrand: undefined,
@@ -543,9 +528,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
 
-    // The morph chain's replacement: the profile's dialect-free per-turn
-    // intent. Wire encoding (`extra_body.thinking.keep`) is the Kimi dialect's
-    // own hook now.
     expect(host.svc.resolveRequestParams()).toEqual({
       cacheKey: 'session-test',
       sampling: { temperature: 0.3 },
@@ -621,8 +603,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'claude-code', thinkingLevel: 'high' });
 
-    // The intent is dialect-free now; how a cache key reaches the Anthropic
-    // wire (`metadata.user_id`) is the dialect's own hook.
     expect(host.svc.resolveRequestParams()).toEqual({
       cacheKey: 'session-test',
       sampling: { temperature: 0.3 },
@@ -641,10 +621,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
 
-    // "Without Kimi generation kwargs" is no longer decidable at the profile:
-    // the durable record in `llmRequester.recordRequest` carries the
-    // thinking/sampling knobs unconditionally, and the Anthropic dialect
-    // encodes the thinking intent itself.
     expect(host.svc.resolveModelContext().thinkingLevel).toBe('max');
     expect(host.svc.resolveRequestParams()).toEqual({
       cacheKey: 'session-test',
@@ -747,10 +723,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'claude-sonnet', thinkingLevel: 'high' });
 
-    // The cache-key intent is dialect-free now: the profile resolves it for
-    // every protocol. How each dialect encodes it (Kimi `prompt_cache_key`
-    // vs Anthropic `metadata.user_id` vs silently dropped) is the dialect
-    // hook's own decision, asserted at the kosong/provider composition layer.
     expect(host.svc.resolveRequestParams().cacheKey).toBe('session-test');
   });
 });
