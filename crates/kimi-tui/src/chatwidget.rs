@@ -8,30 +8,32 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as RenderLine, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::{TranscriptEntry, TranscriptKind, TranscriptLine, ToolCallEntry};
+use crate::app::{TranscriptEntry, TranscriptKind};
+use crate::i18n::t;
+use crate::t;
 use crate::theme::Theme;
 
-/// Draw the two-pane chat layout: a scrollable transcript on top and the
-/// input line (with session id + status footer) below, with the cursor at
-/// the editing position. When a slash-command completion popup is active it
-/// is drawn over the bottom of the chat pane.
+/// Draw the three-pane chat layout: a scrollable transcript on top, the
+/// input line (with the session id) below, and the footer status bar at the
+/// bottom, with the cursor at the editing position. When a slash-command
+/// completion popup is active it is drawn over the bottom of the chat pane.
 pub fn render_frame(
     frame: &mut ratatui::Frame<'_>,
     transcript: &[TranscriptEntry],
     input: &str,
     cursor: usize,
     session_id: &str,
-    status: &str,
     scroll: u16,
     theme: Theme,
+    footer: &crate::footer::FooterInfo,
     completion: Option<&crate::app::CompletionState>,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(3)])
+        .constraints([Constraint::Min(3), Constraint::Length(3), Constraint::Length(2)])
         .split(frame.area());
-    let mut chat = Paragraph::new(styled_lines(transcript, theme))
-        .block(Block::default().borders(Borders::ALL).title("chat"))
+    let chat = Paragraph::new(styled_lines(transcript, theme))
+        .block(Block::default().borders(Borders::ALL).title(t("tui.chat.title")))
         .scroll((scroll, 0));
     // The completion popup overlays the bottom of the chat pane.
     if let Some(state) = completion {
@@ -74,14 +76,17 @@ pub fn render_frame(
     let input_widget = Paragraph::new(input).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(format!("input — {session_id} | {status}")),
+            .title(t!("tui.chat.inputTitle", session_id)),
     );
     frame.render_widget(input_widget, chunks[1]);
+    // Footer status strip + rotating tip.
+    let footer_widget = Paragraph::new(crate::footer::footer_lines(footer, theme, chunks[2].width));
+    frame.render_widget(footer_widget, chunks[2]);
     // Place the terminal cursor at the input editing position (inside the
-    // border). A cursor beyond the pane width is safe — it just stays hidden
-    // until horizontal scrolling lands (later batch).
-    let input_row = chunks[1].y + 1;
-    let input_col = chunks[1].x + 1 + cursor as u16;
+    // border). Multi-line input: row/col come from the cursor's line.
+    let (line, col) = crate::bottom_pane::cursor_line_col(input, cursor);
+    let input_row = chunks[1].y + 1 + line as u16;
+    let input_col = chunks[1].x + 1 + col as u16;
     frame.set_cursor_position((input_col, input_row));
 }
 
@@ -101,12 +106,15 @@ pub fn styled_lines(
     for entry in transcript {
         match entry {
             TranscriptEntry::ToolCall(tc) => {
-                // Tool-call card: `⚙ name(args)` header, then the result when
-                // settled (collapsed -> preview + `[+]`).
-                let header = format!("⚙ {}({})", tc.tool_name, preview(&tc.args, 60));
+                // Tool-call card: `⚙ name(args)` header (or `❓` for
+                // AskUserQuestion), then the result when settled
+                // (collapsed -> preview + `[+]`).
+                let marker = if tc.is_question { "❓" } else { "⚙" };
+                let color = if tc.is_question { theme.status } else { theme.tool };
+                let header = format!("{marker} {}({})", tc.tool_name, preview(&tc.args, 60));
                 out.push(RenderLine::from(Span::styled(
                     header,
-                    Style::default().fg(theme.tool),
+                    Style::default().fg(color),
                 )));
                 if let Some(result) = &tc.result {
                     if tc.collapsed {
@@ -172,7 +180,6 @@ fn preview(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::TranscriptLine;
     use crate::theme::Theme;
 
     #[test]
@@ -183,6 +190,7 @@ mod tests {
             args: "{}".into(),
             result: Some("very long result output".repeat(20)),
             is_error: false,
+            is_question: false,
             collapsed: true,
         })];
         let lines = styled_lines(&transcript, Theme::dark());
@@ -200,6 +208,7 @@ mod tests {
             args: "{}".into(),
             result: Some("line1\nline2\nline3".into()),
             is_error: false,
+            is_question: false,
             collapsed: false,
         })];
         let lines = styled_lines(&transcript, Theme::dark());

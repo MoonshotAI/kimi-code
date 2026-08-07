@@ -14,64 +14,78 @@ pub const PERMISSION_ARGS: &[&str] = &["manual", "plan", "auto", "yolo"];
 /// still creates a goal).
 pub const GOAL_ARGS: &[&str] = &["status", "pause", "resume", "cancel", "replace", "next"];
 
-/// Slash commands with a one-line description (the completion popup's
-/// description column; TS registry parity).
+/// Slash commands with a one-line description key (the completion popup's
+/// description column; TS registry parity). The second element is an i18n
+/// key under `tui.cmd.*` — resolve via [`command_descriptions`].
 pub const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
-    ("/quit", "Leave the chat"),
-    ("/exit", "Leave the chat"),
-    ("/help", "Show available commands"),
-    ("/approvals", "List pending approvals"),
-    ("/approve", "Approve a pending approval"),
-    ("/deny", "Deny a pending approval"),
-    ("/status", "Show session status"),
-    ("/info", "Show session info"),
-    ("/session", "Show or rename the session"),
-    ("/plugins", "Manage plugins"),
-    ("/config", "Show engine config"),
-    ("/skills", "List skills"),
-    ("/plan", "Toggle plan mode"),
-    ("/swarm", "Toggle swarm mode or run a task"),
-    ("/thinking", "Set thinking effort"),
-    ("/permission", "Set permission mode"),
-    ("/yolo", "Auto-approve all tool calls"),
-    ("/auto", "Auto permission mode"),
-    ("/new", "Start a fresh session"),
-    ("/init", "Generate AGENTS.md"),
-    ("/title", "Rename the session"),
-    ("/mcp", "List MCP servers"),
-    ("/tasks", "List background tasks"),
-    ("/theme", "Toggle dark/light theme"),
-    ("/version", "Show version"),
-    ("/models", "List models"),
-    ("/model", "Switch model"),
-    ("/reload", "Reload session state"),
-    ("/resume", "Switch to a session"),
-    ("/goal", "Start or manage a goal"),
-    ("/goal-cancel", "Cancel the goal"),
-    ("/goal-pause", "Pause the goal"),
-    ("/goal-resume", "Resume the goal"),
-    ("/goal-status", "Show goal status"),
-    ("/add-dir", "Add an additional directory"),
-    ("/clear", "Clear session context"),
-    ("/compact", "Compact the conversation"),
-    ("/usage", "Show token usage"),
-    ("/undo", "Undo the last turn"),
-    ("/fork", "Fork the session"),
-    ("/steer", "Steer the active turn"),
-    ("/import", "Import context"),
-    ("/sessions", "Switch sessions"),
-    ("/export", "Export the session"),
-    ("/archive", "Archive the session"),
+    ("/quit", "tui.cmd.quit"),
+    ("/exit", "tui.cmd.exit"),
+    ("/help", "tui.cmd.help"),
+    ("/approvals", "tui.cmd.approvals"),
+    ("/approve", "tui.cmd.approve"),
+    ("/deny", "tui.cmd.deny"),
+    ("/status", "tui.cmd.status"),
+    ("/info", "tui.cmd.info"),
+    ("/session", "tui.cmd.session"),
+    ("/plugins", "tui.cmd.plugins"),
+    ("/config", "tui.cmd.config"),
+    ("/skills", "tui.cmd.skills"),
+    ("/plan", "tui.cmd.plan"),
+    ("/swarm", "tui.cmd.swarm"),
+    ("/thinking", "tui.cmd.thinking"),
+    ("/permission", "tui.cmd.permission"),
+    ("/yolo", "tui.cmd.yolo"),
+    ("/auto", "tui.cmd.auto"),
+    ("/new", "tui.cmd.new"),
+    ("/init", "tui.cmd.init"),
+    ("/title", "tui.cmd.title"),
+    ("/mcp", "tui.cmd.mcp"),
+    ("/tasks", "tui.cmd.tasks"),
+    ("/theme", "tui.cmd.theme"),
+    ("/version", "tui.cmd.version"),
+    ("/models", "tui.cmd.models"),
+    ("/model", "tui.cmd.model"),
+    ("/reload", "tui.cmd.reload"),
+    ("/resume", "tui.cmd.resume"),
+    ("/goal", "tui.cmd.goal"),
+    ("/goal-cancel", "tui.cmd.goal-cancel"),
+    ("/goal-pause", "tui.cmd.goal-pause"),
+    ("/goal-resume", "tui.cmd.goal-resume"),
+    ("/goal-status", "tui.cmd.goal-status"),
+    ("/add-dir", "tui.cmd.add-dir"),
+    ("/clear", "tui.cmd.clear"),
+    ("/compact", "tui.cmd.compact"),
+    ("/usage", "tui.cmd.usage"),
+    ("/undo", "tui.cmd.undo"),
+    ("/fork", "tui.cmd.fork"),
+    ("/steer", "tui.cmd.steer"),
+    ("/import", "tui.cmd.import"),
+    ("/sessions", "tui.cmd.sessions"),
+    ("/export", "tui.cmd.export"),
+    ("/archive", "tui.cmd.archive"),
+    ("/login", "tui.cmd.login"),
+    ("/logout", "tui.cmd.logout"),
+    ("/locale", "tui.cmd.locale"),
+    ("/editor", "tui.cmd.editor"),
 ];
+
+/// Resolved `(command, description)` pairs for the active locale (the
+/// completion popup / `/help` description column).
+pub fn command_descriptions() -> Vec<(String, String)> {
+    COMMAND_DESCRIPTIONS
+        .iter()
+        .map(|(name, key)| ((*name).to_string(), crate::i18n::t(key).to_string()))
+        .collect()
+}
 
 /// Command names for `/…` Tab completion.
 pub const SLASH_COMMANDS: &[&str] = &[
     "/add-dir", "/approvals", "/approve", "/archive", "/auto", "/clear", "/compact", "/config",
     "/deny", "/exit", "/export", "/fork", "/goal", "/goal-cancel", "/goal-pause", "/goal-resume",
-    "/goal-status", "/help", "/import", "/info", "/init", "/mcp", "/model", "/models", "/new",
-    "/permission", "/plan", "/plugins", "/quit", "/reload", "/resume", "/session", "/sessions",
-    "/skills", "/status", "/steer", "/swarm", "/tasks", "/theme", "/thinking", "/title", "/undo",
-    "/usage", "/version", "/yolo",
+    "/goal-status", "/help", "/import", "/info", "/init", "/locale", "/login", "/logout", "/mcp",
+    "/model", "/models", "/new", "/permission", "/plan", "/plugins", "/quit", "/reload",
+    "/resume", "/session", "/sessions", "/skills", "/status", "/steer", "/swarm", "/tasks",
+    "/theme", "/thinking", "/title", "/undo", "/usage", "/version", "/yolo", "/editor",
 ];
 
 // ── Input editing (char-index based) ────────────────────────────────────
@@ -128,6 +142,68 @@ pub fn move_cursor(input: &str, cursor: usize, dir: i8) -> usize {
     match dir {
         d if d < 0 => cursor.saturating_sub(1),
         d if d > 0 => (cursor + 1).min(chars),
+        _ => cursor,
+    }
+}
+
+/// The 0-based `(line, col)` of `cursor` in a `\n`-separated buffer.
+pub fn cursor_line_col(input: &str, cursor: usize) -> (usize, usize) {
+    let cursor = cursor.min(input.chars().count());
+    let prefix = &input[..byte_of_char(input, cursor)];
+    let mut row = 0;
+    let mut col = 0;
+    for c in prefix.chars() {
+        if c == '\n' {
+            row += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (row, col)
+}
+
+/// Index of the char at `(row, col)`, clamped to the target line's end.
+fn line_col_index(input: &str, row: usize, col: usize) -> usize {
+    let mut r = 0;
+    let mut c = 0;
+    for (i, ch) in input.chars().enumerate() {
+        if r == row {
+            if c >= col || ch == '\n' {
+                return i;
+            }
+            c += 1;
+        } else if ch == '\n' {
+            r += 1;
+            if r > row {
+                return i;
+            }
+        }
+    }
+    input.chars().count()
+}
+
+/// Move the cursor one visual line up (`dir < 0`) or down (`dir > 0`) at
+/// the same column, clamped to the target line's end. No-op on the first
+/// line up / last line down.
+pub fn move_cursor_vert(input: &str, cursor: usize, dir: i8) -> usize {
+    let (row, col) = cursor_line_col(input, cursor);
+    let rows = input.chars().filter(|c| *c == '\n').count() + 1;
+    match dir {
+        d if d < 0 => {
+            if row == 0 {
+                0
+            } else {
+                line_col_index(input, row - 1, col)
+            }
+        }
+        d if d > 0 => {
+            if row + 1 >= rows {
+                input.chars().count()
+            } else {
+                line_col_index(input, row + 1, col)
+            }
+        }
         _ => cursor,
     }
 }
@@ -290,5 +366,38 @@ mod tests {
         assert_eq!(move_cursor("abc", 0, 1), 1);
         let (out, _) = kill_word("hello world", 11);
         assert_eq!(out, "hello ");
+    }
+
+    #[test]
+    fn multiline_cursor_navigates_lines() {
+        // "ab\ncd\nef" — cursor at index 3 ('c').
+        let input = "ab\ncd\nef";
+        assert_eq!(cursor_line_col(input, 3), (1, 0));
+        // Up from (1,0) → (0,0).
+        assert_eq!(move_cursor_vert(input, 3, -1), 0);
+        // Down from (1,0) → (2,0) = 'e' (index 6).
+        assert_eq!(move_cursor_vert(input, 3, 1), 6);
+        // Up from the first line is a no-op.
+        assert_eq!(move_cursor_vert(input, 1, -1), 0);
+        // Down from the last line lands at the end.
+        assert_eq!(move_cursor_vert(input, 5, 1), 8);
+    }
+
+    #[test]
+    fn multiline_cursor_clamps_to_line_end() {
+        // "ab\ncd\nef" — cursor at index 5 ('e'), col 0.
+        // Up to line 0 (len 2) clamps to index 2.
+        assert_eq!(move_cursor_vert("ab\ncd\nef", 5, -1), 2);
+        // Down to line 1 col 1 clamps to 'd' (index 4).
+        assert_eq!(move_cursor_vert("ab\ncd\nef", 1, 1), 4);
+    }
+
+    #[test]
+    fn newline_insert_and_delete_roundtrip() {
+        let (out, cur) = insert_char("ab", 1, '\n');
+        assert_eq!((out.as_str(), cur), ("a\nb", 2));
+        assert_eq!(cursor_line_col(&out, cur), (1, 0));
+        let (out2, cur2) = backspace(&out, cur);
+        assert_eq!((out2.as_str(), cur2), ("ab", 1));
     }
 }

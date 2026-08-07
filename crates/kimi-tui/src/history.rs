@@ -3,7 +3,7 @@
 //! `hydrateFromReplay` parity). Pure function over the wire shape, so it is
 //! unit-testable without a running engine.
 
-use crate::app::{TranscriptEntry, TranscriptKind, TranscriptLine, ToolCallEntry};
+use crate::app::{TranscriptEntry, TranscriptLine, ToolCallEntry};
 
 /// Join the text parts of an engine message's `content` array
 /// (`[{"type":"text","text":…}, …]`).
@@ -54,12 +54,14 @@ pub fn render_history(data: &serde_json::Value) -> Vec<TranscriptEntry> {
                         let tool_name = call["name"].as_str().unwrap_or("tool").to_string();
                         let args = serde_json::to_string(&call["arguments"]).unwrap_or_default();
                         let collapsed = args.chars().count() > crate::app::TOOL_COLLAPSE_THRESHOLD;
+                        let is_question = tool_name == "AskUserQuestion";
                         entries.push(TranscriptEntry::ToolCall(ToolCallEntry {
                             tool_call_id,
                             tool_name,
                             args,
                             result: None,
                             is_error: false,
+                            is_question,
                             collapsed,
                         }));
                     }

@@ -7,8 +7,13 @@
 pub mod app;
 pub mod bottom_pane;
 pub mod chatwidget;
+pub mod editor;
+pub mod footer;
+pub mod goal_queue;
 pub mod history;
+pub mod i18n;
 pub mod markdown;
+pub mod media;
 pub mod picker;
 pub mod streaming;
 pub mod theme;

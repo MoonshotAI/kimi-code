@@ -1,4 +1,4 @@
-﻿//! Markdown rendering for the assistant transcript 鈥?a lightweight pass over
+//! Markdown rendering for the assistant transcript — a lightweight pass over
 //! `pulldown-cmark` that maps block/span events onto ratatui styled spans.
 //! Pure function, unit-testable without a terminal.
 
@@ -20,7 +20,7 @@ pub fn render_markdown(markdown: &str) -> Vec<RenderLine<'static>> {
 }
 
 fn render_inner(markdown: &str, theme: Theme) -> Vec<RenderLine<'static>> {
-    let parser = Parser::new_ext(markdown, Options::ENABLE_TABLES);
+    let parser = Parser::new_ext(markdown, Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS);
     let mut out: Vec<RenderLine<'static>> = Vec::new();
     let mut current: Vec<Span<'static>> = Vec::new();
     // Inline emphasis / code state.
@@ -75,7 +75,7 @@ fn render_inner(markdown: &str, theme: Theme) -> Vec<RenderLine<'static>> {
             Event::End(TagEnd::List(_)) => {}
             Event::Start(Tag::Item) => {
                 let indent = "  ".repeat(quote_depth);
-                current.push(Span::raw(format!("{indent}鈥?")));
+                current.push(Span::raw(format!("{indent}•")));
             }
             Event::End(TagEnd::Item) => flush_line!(),
             Event::Start(Tag::CodeBlock(_kind)) => {
@@ -120,12 +120,12 @@ fn render_inner(markdown: &str, theme: Theme) -> Vec<RenderLine<'static>> {
             Event::Rule => {
                 flush_line!();
                 out.push(RenderLine::from(Span::styled(
-                    "鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€",
+                    "──────────────────────────────────────────────",
                     Style::default().fg(theme.status),
                 )));
             }
-            Event::TaskListMarker(true) => current.push(Span::raw("鈽?")),
-            Event::TaskListMarker(false) => current.push(Span::raw("鈽?")),
+            Event::TaskListMarker(true) => current.push(Span::raw("☑")),
+            Event::TaskListMarker(false) => current.push(Span::raw("☐")),
             Event::Start(Tag::Link { .. }) | Event::Start(Tag::Image { .. }) => {}
             Event::End(TagEnd::Link) | Event::End(TagEnd::Image) => {}
             Event::Html(_) | Event::InlineHtml(_) => {}
@@ -171,7 +171,7 @@ fn render_inner(markdown: &str, theme: Theme) -> Vec<RenderLine<'static>> {
     out
 }
 
-/// The visual prefix for a heading level (h1 鈫?`# `, h2 鈫?`## `, 鈥?.
+/// The visual prefix for a heading level (h1 → `# `, h2 → `## `, …).
 fn heading_prefix(level: HeadingLevel) -> String {
     let n = match level {
         HeadingLevel::H1 => 1,
@@ -246,6 +246,37 @@ mod tests {
         let lines = render_markdown("");
         assert_eq!(lines.len(), 1);
         assert!(lines[0].spans.is_empty());
+    }
+
+    #[test]
+    fn list_items_render_bullet_prefix() {
+        let lines = render_markdown("- item one\n- item two");
+        let all: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
+            .collect();
+        assert!(all.contains("•"), "bullet prefix: {all}");
+    }
+
+    #[test]
+    fn task_list_markers_render_checked_and_unchecked() {
+        let lines = render_markdown("- [x] done\n- [ ] todo");
+        let all: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
+            .collect();
+        assert!(all.contains("☑"), "checked marker: {all}");
+        assert!(all.contains("☐"), "unchecked marker: {all}");
+    }
+
+    #[test]
+    fn horizontal_rule_renders_dash_line() {
+        let lines = render_markdown("---");
+        let all: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
+            .collect();
+        assert!(all.contains("─"), "rule dashes: {all}");
     }
 }
 

@@ -13,6 +13,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
+use crate::t;
 use crate::theme::Theme;
 
 /// Interactively pick one of `items` (`(value, label)`), rendered in a
@@ -75,7 +76,7 @@ pub(crate) fn render(
         .collect();
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!("{title} — ↑/↓ pick · Enter select · Esc cancel"));
+        .title(t!("tui.picker.hint", title));
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block), frame.area());
 }
 

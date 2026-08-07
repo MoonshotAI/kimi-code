@@ -127,6 +127,32 @@ pub fn tui_config_path() -> Option<PathBuf> {
     Some(PathBuf::from(base).join(".kimi-code").join("tui.toml"))
 }
 
+/// Read a top-level string field from `tui.toml`.
+pub fn tui_config_field(key: &str) -> Option<String> {
+    let path = tui_config_path()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let value: toml::Value = text.parse().ok()?;
+    value.get(key).and_then(|v| v.as_str()).map(str::to_string)
+}
+
+/// Set a top-level field in `tui.toml` (creates the file when absent).
+/// Shared by `/locale`, `/editor`, and future chrome settings.
+pub fn set_tui_config_field(key: &str, value: toml::Value) -> anyhow::Result<()> {
+    let Some(path) = tui_config_path() else {
+        anyhow::bail!("cannot locate tui.toml");
+    };
+    let mut doc = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| text.parse::<toml::Value>().ok())
+        .unwrap_or_else(|| toml::Table::new().into());
+    doc[key] = value;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, doc.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
