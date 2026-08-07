@@ -297,6 +297,10 @@ export class ToolManager {
     for (const tool of tools) {
       if (enabledTools !== undefined && !enabledTools.has(tool.name)) continue;
       const qualified = qualifyMcpToolName(serverName, tool.name);
+      // Skip tools that are explicitly disabled via the profile's deny patterns
+      if (this.mcpDenyPatterns.some((pattern) => picomatch.isMatch(qualified, pattern))) {
+        continue;
+      }
       const firstInThisCall = seenInThisCall.get(qualified);
       if (firstInThisCall !== undefined) {
         collisions.push({
