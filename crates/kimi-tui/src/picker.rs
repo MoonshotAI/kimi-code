@@ -52,6 +52,93 @@ pub fn select(
     }
 }
 
+/// Keep the items whose value or label contains `filter` (case-insensitive).
+/// Used by the filtered picker; exported for unit tests.
+pub fn filter_items<'a>(
+    items: &'a [(String, String)],
+    filter: &str,
+) -> Vec<(&'a str, &'a str)> {
+    let filter = filter.to_lowercase();
+    items
+        .iter()
+        .filter(|(value, label)| {
+            value.to_lowercase().contains(&filter) || label.to_lowercase().contains(&filter)
+        })
+        .map(|(value, label)| (value.as_str(), label.as_str()))
+        .collect()
+}
+
+/// A picker with incremental search: typing filters the list, Backspace
+/// clears the last filter char (TS model-selector parity). Returns the
+/// picked value, or `None` on Esc / Ctrl-C / no matches.
+pub fn select_filtered(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    theme: Theme,
+    title: &str,
+    items: &[(String, String)],
+) -> io::Result<Option<String>> {
+    if items.is_empty() {
+        return Ok(None);
+    }
+    let mut selected = 0usize;
+    let mut filter = String::new();
+    loop {
+        let filtered: Vec<(String, String)> = if filter.is_empty() {
+            items.to_vec()
+        } else {
+            filter_items(items, &filter)
+                .into_iter()
+                .map(|(v, l)| (v.to_string(), l.to_string()))
+                .collect()
+        };
+        let no_match = filtered.is_empty();
+        let shown: Vec<(String, String)> = if no_match {
+            vec![(String::new(), format!("no match: {filter}"))]
+        } else {
+            filtered
+        };
+        selected = selected.min(shown.len().saturating_sub(1));
+        let display_title = if filter.is_empty() {
+            title.to_string()
+        } else {
+            format!("{title} — {filter}")
+        };
+        terminal.draw(|frame| render(frame, theme, &display_title, &shown, selected))?;
+        if !event::poll(std::time::Duration::from_millis(100))? {
+            continue;
+        }
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match key.code {
+                KeyCode::Up => selected = selected.saturating_sub(1),
+                KeyCode::Down => selected = (selected + 1).min(shown.len().saturating_sub(1)),
+                KeyCode::Enter => {
+                    // A no-match placeholder row is not selectable.
+                    if no_match {
+                        continue;
+                    }
+                    return Ok(Some(shown[selected].0.clone()));
+                }
+                KeyCode::Backspace => {
+                    filter.pop();
+                    selected = 0;
+                }
+                KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                    return Ok(None);
+                }
+                KeyCode::Esc => return Ok(None),
+                KeyCode::Char(ch) => {
+                    filter.push(ch);
+                    selected = 0;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 /// Render the selector overlay (full area, bordered list with the current
 /// row highlighted).
 pub(crate) fn render(
@@ -125,5 +212,19 @@ mod tests {
         assert_eq!(items_len, 0);
         // The interactive loop is guarded by `if items.is_empty() { return None }`.
         let _ = select;
+    }
+
+    #[test]
+    fn filter_matches_value_or_label_case_insensitively() {
+        let items = vec![
+            ("kimi-k2".to_string(), "Kimi K2".to_string()),
+            ("kimi-k2-thinking".to_string(), "Kimi K2 Thinking".to_string()),
+            ("deepseek".to_string(), "DeepSeek".to_string()),
+        ];
+        assert_eq!(filter_items(&items, "k2").len(), 2);
+        assert_eq!(filter_items(&items, "DEEP").len(), 1);
+        assert_eq!(filter_items(&items, "DEEP")[0].0, "deepseek");
+        assert!(filter_items(&items, "zzz").is_empty());
+        assert_eq!(filter_items(&items, "").len(), 3);
     }
 }

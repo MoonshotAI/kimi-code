@@ -1239,7 +1239,7 @@ impl App {
                         if items.is_empty() {
                             self.push_line(TranscriptLine::status(t("tui.models.none")));
                         } else {
-                            match crate::picker::select(terminal, self.theme, t("tui.picker.selectModel"), &items)? {
+                            match crate::picker::select_filtered(terminal, self.theme, t("tui.picker.selectModel"), &items)? {
                                 Some(model) => {
                                     self.session.as_mut().expect("session").set_model(&model).await?;
                                     self.transcript
