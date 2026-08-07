@@ -19,6 +19,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
 
+import { startMcpAuthStatusServer } from './mcp-auth-status-server';
+
 const tempDirs: string[] = [];
 const stdioFixture = join(
   import.meta.dirname,
@@ -215,6 +217,7 @@ describe('standalone MCP check (connection result)', () => {
 describe('MCP OAuth facade (host-controlled browser flow)', () => {
   it('reports persisted authorization without starting an OAuth flow', async () => {
     const homeDir = await makeTempDir();
+    const statusServer = await startMcpAuthStatusServer();
     const authorizedUrl = 'https://authorized.example.test/mcp';
     new McpOAuthService({ kimiHomeDir: homeDir })
       .getProvider('oauth-authorized', authorizedUrl)
@@ -222,7 +225,10 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
     await writeMcpConfig(homeDir, {
       mcpServers: {
         stdio: { command: 'local-command' },
-        plain: { transport: 'http', url: 'https://plain.example.test/mcp' },
+        plain: { transport: 'http', url: statusServer.plainUrl },
+        detected: { transport: 'http', url: statusServer.oauthUrl },
+        sse: { transport: 'sse', url: statusServer.oauthUrl },
+        'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
         bearer: {
           transport: 'http',
           url: 'https://bearer.example.test/mcp',
@@ -246,14 +252,18 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
       await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-required' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
       ]);
     } finally {
       await harness.close();
+      await statusServer.close();
     }
-  });
+  }, 15_000);
 
   it('resets authorization for a configured remote server', async () => {
     const homeDir = await makeTempDir();

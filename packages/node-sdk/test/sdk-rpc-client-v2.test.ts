@@ -32,6 +32,7 @@ import {
 import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
 
 import { TEST_IDENTITY } from './test-identity';
+import { startMcpAuthStatusServer } from './mcp-auth-status-server';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 
 const tempDirs: string[] = [];
@@ -56,6 +57,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
   it('reports global MCP authorization from the persisted v2 credential store', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
+    const statusServer = await startMcpAuthStatusServer();
     const authorizedUrl = 'https://authorized.example.test/mcp';
     const requiredUrl = 'https://required.example.test/mcp';
     const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
@@ -67,7 +69,10 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       JSON.stringify({
         mcpServers: {
           stdio: { command: 'local-command' },
-          plain: { transport: 'http', url: 'https://plain.example.test/mcp' },
+          plain: { transport: 'http', url: statusServer.plainUrl },
+          detected: { transport: 'http', url: statusServer.oauthUrl },
+          sse: { transport: 'sse', url: statusServer.oauthUrl },
+          'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
           bearer: {
             transport: 'http',
             url: 'https://bearer.example.test/mcp',
@@ -93,6 +98,9 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-required' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
@@ -106,14 +114,18 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-authorized' },
         { name: 'oauth-authorized', authStatus: 'oauth-required' },
       ]);
     } finally {
       await harness.close();
+      await statusServer.close();
     }
-  });
+  }, 15_000);
 
   it('seeds the host request headers (User-Agent + X-Msh-*) into the engine', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
