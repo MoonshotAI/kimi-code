@@ -53,7 +53,7 @@ The spec divides methods into a **stable** surface and an evolving **unstable** 
 
 | Method | Implemented | Description |
 | --- | --- | --- |
-| `session/update` | Yes | Streams `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
+| `session/update` | Yes | Streams `agent_message_chunk` / `tool_call*` / `plan` / `usage_update` / `config_option_update` / `available_commands_update` |
 | `session/request_permission` | Yes | Shared channel for tool approval and question elicitation |
 | `fs/read_text_file` | Yes | File reads at the kaos layer are routed to the client (advertised via `fsCapabilities`) |
 | `fs/write_text_file` | Yes | File writes at the kaos layer are routed to the client |
@@ -67,6 +67,44 @@ The spec divides methods into a **stable** surface and an evolving **unstable** 
 | Remaining 18 methods | No | Includes session lifecycle extensions, buffer sync, inline-edit prediction, provider management, etc. |
 
 All methods not listed above return `methodNotFound`.
+
+## Account usage updates
+
+The adapter emits a standard ACP `usage_update` when a session opens and after
+each main-agent turn. `used` and `size` report the current context window. Kimi
+Code account information is attached under `_meta.kimiCode` so clients can opt
+in without changing the standard ACP fields:
+
+```json
+{
+  "sessionUpdate": "usage_update",
+  "used": 25000,
+  "size": 262144,
+  "_meta": {
+    "kimiCode": {
+      "billingMode": "coding_plan",
+      "rateLimits": {
+        "summary": { "used": 33, "limit": 100, "resetAt": "..." },
+        "limits": [
+          {
+            "window": { "duration": 5, "unit": "hour" },
+            "used": 20,
+            "limit": 100,
+            "resetAt": "..."
+          }
+        ],
+        "booster": null
+      }
+    }
+  }
+}
+```
+
+`billingMode` is `coding_plan` for the managed OAuth account and `api_key` for
+an API-key-backed provider. API keys are never included in the notification.
+Managed rate limits are fetched best-effort and cached for one minute; if the
+account endpoint is temporarily unavailable, the adapter still reports
+`coding_plan` without stale or invented limits.
 
 ## MCP Forwarding
 

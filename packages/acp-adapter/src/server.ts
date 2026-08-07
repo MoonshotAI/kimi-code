@@ -421,6 +421,7 @@ export class AcpServer implements Agent {
       DEFAULT_MODE_ID,
     );
     this.scheduleAvailableCommandsUpdate(session.id);
+    void acpSession.emitUsageReport();
     return {
       sessionId: session.id,
       configOptions,
@@ -464,6 +465,7 @@ export class AcpServer implements Agent {
     // `resumeSession`, which intentionally omits this step.
     await acpSession.replayHistory();
     this.scheduleAvailableCommandsUpdate(session.id);
+    void acpSession.emitUsageReport();
     return { configOptions };
   }
 
@@ -487,13 +489,14 @@ export class AcpServer implements Agent {
    * rationale, and gap-4.1 for the matching capability advertisement.
    */
   async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
-    const { session, configOptions } = await this.setupSessionFromExisting({
+    const { session, acpSession, configOptions } = await this.setupSessionFromExisting({
       cwd: params.cwd,
       sessionId: params.sessionId,
       mcpServers: params.mcpServers,
       mode: 'resume',
     });
     this.scheduleAvailableCommandsUpdate(session.id);
+    void acpSession.emitUsageReport();
     return { configOptions };
   }
 
