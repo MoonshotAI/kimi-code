@@ -196,6 +196,34 @@ describe('skill discovery', () => {
     expect(warnings.some((message) => message.includes('"name"'))).toBe(true);
     expect(warnings.some((message) => message.includes('"description"'))).toBe(true);
   });
+
+  it('reports a skill with unparseable frontmatter as skipped, not just warned', async () => {
+    // Regression for #1972: a `description` containing a bare "word: word"
+    // (e.g. "Triggers on: ...") is invalid as a plain YAML scalar, so the
+    // frontmatter fails to parse. The skill used to vanish with only a log
+    // line nobody sees; it must now show up in the skipped list too.
+    const { repoDir } = await makeWorkspace();
+    const projectRoot = path.join(repoDir, '.kimi-code', 'skills');
+    await writeSkill(projectRoot, path.join('codebase-memory', 'SKILL.md'), [
+      '---',
+      'name: codebase-memory',
+      'description: Explore the codebase. Triggers on: find callers of.',
+      '---',
+      '',
+      'Body.',
+    ]);
+
+    const skipped: { path: string; type: string; reason: string }[] = [];
+    const skills = await discoverSkills({
+      roots: [{ path: projectRoot, source: 'project' }],
+      onSkippedByPolicy: (skill) => skipped.push(skill),
+    });
+
+    expect(skills).toEqual([]);
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.type).toBe('invalid-frontmatter');
+    expect(skipped[0]?.path).toContain('codebase-memory/SKILL.md');
+  });
 });
 
 describe('discoverSkills shape and ordering', () => {
