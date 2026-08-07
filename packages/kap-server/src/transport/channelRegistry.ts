@@ -39,7 +39,7 @@ export interface ChannelDescriptor {
    * Registration scope — the minimal scope at which the channel resolves.
    * Derived from the scoped DI registry.
    */
-  readonly scope: 'app' | 'session' | 'agent';
+  readonly scope: 'app' | 'workspace' | 'session' | 'agent';
   /** Domain tag recorded at `registerScopedService`. */
   readonly domain: string;
   /** Public prototype members, sorted — events are instance properties and never appear. */
@@ -48,6 +48,7 @@ export interface ChannelDescriptor {
 
 const SCOPE_NAME: Record<LifecycleScope, ChannelDescriptor['scope']> = {
   [LifecycleScope.App]: 'app',
+  [LifecycleScope.Workspace]: 'workspace',
   [LifecycleScope.Session]: 'session',
   [LifecycleScope.Agent]: 'agent',
 };
@@ -64,7 +65,12 @@ let serviceNameIndex: Map<string, ServiceIdentifier<unknown>> | undefined;
 function scopedServiceNameIndex(): Map<string, ServiceIdentifier<unknown>> {
   serviceNameIndex ??= (() => {
     const map = new Map<string, ServiceIdentifier<unknown>>();
-    for (const scope of [LifecycleScope.App, LifecycleScope.Session, LifecycleScope.Agent]) {
+    for (const scope of [
+      LifecycleScope.App,
+      LifecycleScope.Workspace,
+      LifecycleScope.Session,
+      LifecycleScope.Agent,
+    ]) {
       for (const entry of getScopedServiceDescriptors(scope)) {
         const name = entry.id.toString();
         if (!map.has(name)) map.set(name, entry.id);
@@ -138,7 +144,12 @@ function describeMethods(
  */
 export function describeAllChannels(): readonly ChannelDescriptor[] {
   const byName = new Map<string, ScopedEntry>();
-  for (const scope of [LifecycleScope.App, LifecycleScope.Session, LifecycleScope.Agent]) {
+  for (const scope of [
+    LifecycleScope.App,
+    LifecycleScope.Workspace,
+    LifecycleScope.Session,
+    LifecycleScope.Agent,
+  ]) {
     for (const entry of getScopedServiceDescriptors(scope)) {
       const name = entry.id.toString();
       if (!byName.has(name)) byName.set(name, entry);
@@ -147,7 +158,7 @@ export function describeAllChannels(): readonly ChannelDescriptor[] {
   return [...byName.entries()]
     .map(([name, entry]) => ({
       name,
-      scope: SCOPE_NAME[entry.scope],
+      scope: SCOPE_NAME[entry.scope as LifecycleScope],
       domain: entry.domain,
       methods: describeMethods(entry.descriptor.ctor),
     }))

@@ -1,5 +1,5 @@
 /**
- * `usage` domain (L3) — `IAgentUsageService` implementation.
+ * `usage` domain — `IAgentUsageService` implementation.
  *
  * Accumulates the agent's token usage in the `wire` `UsageModel`, mutating it
  * only through the `usage.record` Op (`wire.dispatch(recordUsage(...))`) and
@@ -14,8 +14,9 @@
  */
 
 import { addUsage, type TokenUsage } from '#/kosong/contract/usage';
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { defineState } from '#/_base/state/stateRegistry';
 
@@ -42,7 +43,7 @@ export const usageCurrentTurnKey = defineState<TokenUsage | undefined>(
   () => undefined as TokenUsage | undefined,
 );
 
-export class AgentUsageService extends Disposable implements IAgentUsageService {
+export class AgentUsageService extends Service implements IAgentUsageService {
   declare readonly _serviceBrand: undefined;
 
   private readonly _onDidRecord = this._register(new Emitter<UsageRecordedContext>());

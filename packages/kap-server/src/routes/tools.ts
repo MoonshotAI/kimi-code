@@ -19,7 +19,7 @@
  * the most-recent session. v2 has no global tool/MCP state — both services are
  * Agent-scoped — so we reproduce the fallback: `core` → `ISessionIndex` (pick
  * the newest session by `createdAt`, or the explicit `session_id`) →
- * `ISessionLifecycleService` → `IAgentLifecycleService` (the `main` agent) →
+ * the live handler registry → `IAgentLifecycleService` (the `main` agent) →
  * the service. When no session is live, or the main agent does not exist yet
  * (server-v2 gap G10), the GET endpoints answer an empty list and `:restart`
  * answers `40408`, exactly like v1.
@@ -35,7 +35,7 @@
  *     (bound profile policy ∩ global `[tools]` config ∩ session denylist).
  *     Deliberate v2 extension beyond the v1 wire shape — v1 had no tool gates.
  *   - MCP `status`: `pending`→`connecting`, `connected`→`connected`,
- *     `failed`/`needs-auth`→`error`, `disabled`→`disconnected`.
+ *     `failed`/`needs-auth`→`error`, `disabled`/`removed`→`disconnected`.
  *   - MCP `last_error`: carried from `entry.error` when non-empty.
  *
  * **Error mapping**:
@@ -51,9 +51,9 @@ import {
   ErrorCodes,
   IAgentMcpService,
   ISessionIndex,
-  ISessionLifecycleService,
   IAgentToolRegistryService,
   IAgentToolPolicyService,
+  getLiveSessionById,
   Error2,
   type Scope,
   type ToolInfo,
@@ -222,14 +222,14 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
 async function resolveEffectiveAgent(core: Scope, sessionId: string | undefined) {
   const sid = sessionId ?? (await mostRecentSessionId(core));
   if (sid === undefined) return undefined;
-  const session = core.accessor.get(ISessionLifecycleService).get(sid);
+  const session = getLiveSessionById(core.accessor, sid);
   if (session === undefined) return undefined;
   return ensureMainAgent(session);
 }
 
 /** Pick the most-recently-created session id, mirroring v1's fallback. */
 async function mostRecentSessionId(core: Scope): Promise<string | undefined> {
-  const page = await core.accessor.get(ISessionIndex).list({});
+  const page = await core.accessor.get(ISessionIndex).listRecent({});
   const [first, ...rest] = page.items;
   if (first === undefined) return undefined;
   let newest = first;
@@ -286,6 +286,8 @@ function mapMcpStatus(status: McpEntry['status']): McpServer['status'] {
     case 'connected':
       return 'connected';
     case 'disabled':
+      return 'disconnected';
+    case 'removed':
       return 'disconnected';
     case 'failed':
       return 'error';

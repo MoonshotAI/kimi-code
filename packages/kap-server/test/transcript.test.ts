@@ -18,8 +18,10 @@ import {
   IWireService,
   IEventBus,
   ISessionInteractionService,
-  ISessionLifecycleService,
   ISessionQuestionService,
+  closeSessionById,
+  getLiveSessionById,
+  resumeSessionById,
   IModelCatalog,
   type ContextMessage,
   type DomainEvent,
@@ -28,6 +30,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -156,6 +159,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
 
   async function boot(): Promise<void> {
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home as string,
@@ -196,7 +200,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
 
   /** Ensure the main agent exists (server-v2 does not create it with the session). */
   async function ensureMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     if (session.accessor.get(IAgentLifecycleService).get('main') === undefined) {
       await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
@@ -204,7 +208,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   }
 
   function mainAgentBus(sessionId: string): IEventBus {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     const agent = session!.accessor.get(IAgentLifecycleService).get('main');
     return agent!.accessor.get(IEventBus);
   }
@@ -213,7 +217,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     sessionId: string,
     messages: readonly ContextMessage[],
   ): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     const agent = session!.accessor.get(IAgentLifecycleService).get('main');
     agent!.accessor.get(IAgentContextMemoryService).append(...messages);
     await agent!.accessor.get(IWireService).flush();
@@ -297,7 +301,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     const interactions = session!.accessor.get(ISessionInteractionService);
     interactions.enqueue({
       id: 'apr-1',
@@ -434,7 +438,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await server!.close();
     server = undefined;
     await boot();
-    await server!.core.accessor.get(ISessionLifecycleService).resume(id);
+    await resumeSessionById(server!.core.accessor, id);
 
     const { body } = await getJson<TranscriptContract>(
       `/api/v1/sessions/${id}/transcript?agent_id=main`,
@@ -460,7 +464,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('rebuilds a subagent for a cold session from its own wire records', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
     sub.accessor
       .get(IAgentContextMemoryService)
@@ -493,7 +497,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('backfills an unmaterialized subagent for a resumed live session', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
     sub.accessor
       .get(IAgentContextMemoryService)
@@ -509,11 +513,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await server!.close();
     server = undefined;
     await boot();
-    await server!.core.accessor.get(ISessionLifecycleService).resume(id);
+    await resumeSessionById(server!.core.accessor, id);
     expect(
-      server!.core.accessor
-        .get(ISessionLifecycleService)
-        .get(id)!
+      getLiveSessionById(server!.core.accessor, id)!
         .accessor.get(IAgentLifecycleService)
         .get('sub-1'),
     ).toBeUndefined();
@@ -533,7 +535,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('keeps the metadata-seeded subagent descriptor after an on-demand backfill', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     const sub = await session!.accessor
       .get(IAgentLifecycleService)
       .create({ agentId: 'sub-1', labels: { parentAgentId: 'main' } });
@@ -570,7 +572,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     ]);
 
     // The approval is already pending when the transcript binds.
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     session!.accessor.get(ISessionInteractionService).enqueue({
       id: 'apr-1',
       kind: 'approval',
@@ -618,7 +620,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('seeds a subagent pending question only after its own backfill', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
     sub.accessor
       .get(IAgentContextMemoryService)
@@ -708,7 +710,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
 
-    await server!.core.accessor.get(ISessionLifecycleService).close(id);
+    await closeSessionById(server!.core.accessor, id);
 
     const { body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     expect(body.code).toBe(0);
@@ -780,7 +782,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('routes a subagent question to the subagent transcript, not main', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
 
     // Bind the transcript (main + any agent appearing later).
@@ -978,7 +980,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('serves per-agent user messages for every rostered agent when agent_id is omitted (live)', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
     sub.accessor
       .get(IAgentContextMemoryService)
@@ -1038,7 +1040,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         toolCalls: [],
       } as ContextMessage,
     ]);
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
     sub.accessor
       .get(IAgentContextMemoryService)
@@ -1118,7 +1120,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       path: '/tmp/plans/foo.md',
       options: [{ label: 'Approach A', description: 'fast' }],
     };
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     const interactions = session!.accessor.get(ISessionInteractionService);
     interactions.enqueue({
       id: 'apr-plan',
@@ -1251,7 +1253,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
 
     // A Revise outcome: the tool result carries no plan content — only the
     // persisted interaction does.
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     const interactions = session!.accessor.get(ISessionInteractionService);
     interactions.enqueue({
       id: 'apr-plan',
@@ -1364,7 +1366,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     const interactions = session!.accessor.get(ISessionInteractionService);
     interactions.enqueue({
       id: 'apr-final',

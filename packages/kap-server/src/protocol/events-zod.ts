@@ -25,7 +25,7 @@ import type {
   TaskOrigin,
   UserPromptOrigin,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
-import { messageContentSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import { messageContentSchema } from './message';
 import type { HookResultEvent } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
 import type {
   CompactionBlockedEvent,
@@ -307,6 +307,12 @@ export const kimiErrorCodeSchema = z.enum([
   'session.question_handler_error',
   'session.init_failed',
   'agent.not_found',
+  'agent.already_exists',
+  'agent.already_running',
+  'agent.not_a_subagent',
+  'agent.not_owned',
+  'agent.type_not_allowed',
+  'agent.max_tokens_exceeded',
   'activity.agent_busy',
   'activity.cancelling',
   'activity.disposing',
@@ -343,15 +349,19 @@ export const kimiErrorCodeSchema = z.enum([
   'skill.not_found',
   'skill.type_unsupported',
   'skill.name_empty',
+  'skill.parse_failed',
+  'skill.nested_too_deep',
   'records.write_failed',
   'compaction.failed',
   'compaction.unable',
   'task.task_id_empty',
+  'task.limit_exceeded',
   'usage.turn_id_conflict',
   'mcp.server_not_found',
   'mcp.server_disabled',
   'mcp.startup_failed',
   'mcp.tool_name_collision',
+  'mcp.oauth_failed',
   'message.not_found',
   'plugin.not_found',
   'plugin.load_failed',
@@ -376,6 +386,13 @@ export const kimiErrorCodeSchema = z.enum([
   'fs.too_many_results',
   'fs.grep_timeout',
   'fs.git_unavailable',
+  'wire.migration_missing',
+  'storage.permission_denied',
+  'storage.disk_full',
+  'cron.expression_invalid',
+  'web.invalid_url',
+  'web.private_address',
+  'web.fetch_failed',
   'validation.failed',
   'not_implemented',
   'internal',
@@ -417,6 +434,8 @@ export const agentTaskInfoSchema = taskInfoBaseSchema.extend({
   kind: z.literal('agent'),
   agentId: z.string().optional(),
   subagentType: z.string().optional(),
+  model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 });
 
 export const questionTaskInfoSchema = taskInfoBaseSchema.extend({
@@ -452,6 +471,7 @@ export const toolUpdateSchema = z.object({
 export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
   serverName: z.string(),
   authorizationUrl: z.string(),
+  expiresAt: z.number().optional(),
 }) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
 
 export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked']) satisfies z.ZodType<TurnEndReason>;
@@ -598,6 +618,24 @@ export const configChangedEventSchema = z.object({
   config: configResponseSchema,
 });
 
+export const configWarningEventSchema = z.object({
+  type: z.literal('event.config.warning'),
+  warnings: z.array(
+    z.object({
+      domain: z.string().optional(),
+      message: z.string(),
+    }),
+  ),
+});
+
+export const diUnitChangedEventSchema = z.object({
+  type: z.literal('event.di.unit_changed'),
+  scope: z.string().min(1),
+  token: z.string().min(1),
+  state: z.enum(['Pending', 'Activating', 'Active', 'Unloading', 'Failed']),
+  error: z.string().optional(),
+});
+
 export const goalUpdatedEventSchema = z.object({
   type: z.literal('goal.updated'),
   snapshot: goalSnapshotSchema.nullable(),
@@ -646,6 +684,9 @@ export const turnEndedEventSchema = z.object({
   reason: turnEndReasonSchema,
   error: kimiErrorPayloadSchema.optional(),
   durationMs: z.number().optional(),
+  interruptReason: z
+    .enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked'])
+    .optional(),
 });
 
 export const turnStepStartedEventSchema = z.object({
@@ -780,6 +821,8 @@ export const subagentSpawnedEventSchema = z.object({
   description: z.string().optional(),
   swarmIndex: z.number().optional(),
   runInBackground: z.boolean(),
+  model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 }) satisfies z.ZodType<SubagentSpawnedEvent>;
 
 export const subagentStartedEventSchema = z.object({
@@ -898,7 +941,7 @@ export const toolListUpdatedEventSchema = z.object({
 export const mcpServerStatusPayloadSchema = z.object({
   name: z.string(),
   transport: z.enum(['stdio', 'http']),
-  status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth']),
+  status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth', 'removed']),
   toolCount: z.number(),
   error: z.string().optional(),
 }) satisfies z.ZodType<McpServerStatusPayload>;
@@ -921,6 +964,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceDeletedEventSchema,
   sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
+  diUnitChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
   pluginCommandActivatedEventSchema,

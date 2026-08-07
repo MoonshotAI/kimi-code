@@ -43,6 +43,10 @@ export const turnEndedEventSchema = z.object({
   /** Protocol `KimiErrorPayload` — mirrored as `unknown`. */
   error: z.unknown().optional(),
   durationMs: z.number().optional(),
+  /** Why a non-completed turn stopped early; absent on completion. */
+  interruptReason: z
+    .enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked'])
+    .optional(),
 });
 
 export const assistantDeltaEventSchema = z.object({
@@ -68,6 +72,28 @@ export const toolCallStartedEventSchema = z.object({
   display: z.unknown().optional(),
 });
 
+export const toolCallDeltaEventSchema = z.object({
+  type: z.literal('tool.call.delta'),
+  turnId: z.number(),
+  toolCallId: z.string(),
+  name: z.string().optional(),
+  argumentsPart: z.string().optional(),
+});
+
+export const toolProgressEventSchema = z.object({
+  type: z.literal('tool.progress'),
+  turnId: z.number(),
+  toolCallId: z.string(),
+  /** Protocol `ToolUpdate` — mirrored field-for-field. */
+  update: z.object({
+    kind: z.enum(['stdout', 'stderr', 'progress', 'status', 'custom']),
+    text: z.string().optional(),
+    percent: z.number().optional(),
+    customKind: z.string().optional(),
+    customData: z.unknown().optional(),
+  }),
+});
+
 export const toolResultEventSchema = z.object({
   type: z.literal('tool.result'),
   turnId: z.number(),
@@ -90,6 +116,40 @@ export const promptAbortedEventSchema = z.object({
   promptId: z.string(),
   /** ISO 8601 datetime string on the wire. */
   abortedAt: z.string(),
+});
+
+export const compactionStartedEventSchema = z.object({
+  type: z.literal('compaction.started'),
+  trigger: z.enum(['manual', 'auto']),
+  instruction: z.string().optional(),
+});
+
+export const compactionBlockedEventSchema = z.object({
+  type: z.literal('compaction.blocked'),
+  turnId: z.number().optional(),
+});
+
+export const compactionCancelledEventSchema = z.object({
+  type: z.literal('compaction.cancelled'),
+});
+
+/**
+ * Protocol `CompactionResult` — mirrored field-for-field. The engine's
+ * internal result additionally carries `contextSummary`, but the service
+ * strips it before publishing (`fullCompactionService.ts`), so it never
+ * reaches the wire.
+ */
+export const compactionCompletedEventSchema = z.object({
+  type: z.literal('compaction.completed'),
+  result: z.object({
+    summary: z.string(),
+    compactedCount: z.number(),
+    tokensBefore: z.number(),
+    tokensAfter: z.number(),
+    keptUserMessageCount: z.number().optional(),
+    keptHeadUserMessageCount: z.number().optional(),
+    droppedCount: z.number().optional(),
+  }),
 });
 
 /** Engine `permission.approval.requested` — not in the protocol union; loose. */
@@ -131,9 +191,15 @@ export interface AgentEventPayloads {
   'assistant.delta': z.infer<typeof assistantDeltaEventSchema>;
   'thinking.delta': z.infer<typeof thinkingDeltaEventSchema>;
   'tool.call.started': z.infer<typeof toolCallStartedEventSchema>;
+  'tool.call.delta': z.infer<typeof toolCallDeltaEventSchema>;
+  'tool.progress': z.infer<typeof toolProgressEventSchema>;
   'tool.result': z.infer<typeof toolResultEventSchema>;
   'prompt.completed': z.infer<typeof promptCompletedEventSchema>;
   'prompt.aborted': z.infer<typeof promptAbortedEventSchema>;
+  'compaction.started': z.infer<typeof compactionStartedEventSchema>;
+  'compaction.blocked': z.infer<typeof compactionBlockedEventSchema>;
+  'compaction.cancelled': z.infer<typeof compactionCancelledEventSchema>;
+  'compaction.completed': z.infer<typeof compactionCompletedEventSchema>;
   'permission.approval.requested': z.infer<typeof permissionApprovalRequestedEventSchema>;
   'permission.approval.resolved': z.infer<typeof permissionApprovalResolvedEventSchema>;
   error: z.infer<typeof errorEventSchema>;
@@ -150,9 +216,35 @@ export const agentEvents = {
   'assistant.delta': { kind: 'stream', name: 'events', type: 'assistant.delta', schema: assistantDeltaEventSchema },
   'thinking.delta': { kind: 'stream', name: 'events', type: 'thinking.delta', schema: thinkingDeltaEventSchema },
   'tool.call.started': { kind: 'stream', name: 'events', type: 'tool.call.started', schema: toolCallStartedEventSchema },
+  'tool.call.delta': { kind: 'stream', name: 'events', type: 'tool.call.delta', schema: toolCallDeltaEventSchema },
+  'tool.progress': { kind: 'stream', name: 'events', type: 'tool.progress', schema: toolProgressEventSchema },
   'tool.result': { kind: 'stream', name: 'events', type: 'tool.result', schema: toolResultEventSchema },
   'prompt.completed': { kind: 'stream', name: 'events', type: 'prompt.completed', schema: promptCompletedEventSchema },
   'prompt.aborted': { kind: 'stream', name: 'events', type: 'prompt.aborted', schema: promptAbortedEventSchema },
+  'compaction.started': {
+    kind: 'stream',
+    name: 'events',
+    type: 'compaction.started',
+    schema: compactionStartedEventSchema,
+  },
+  'compaction.blocked': {
+    kind: 'stream',
+    name: 'events',
+    type: 'compaction.blocked',
+    schema: compactionBlockedEventSchema,
+  },
+  'compaction.cancelled': {
+    kind: 'stream',
+    name: 'events',
+    type: 'compaction.cancelled',
+    schema: compactionCancelledEventSchema,
+  },
+  'compaction.completed': {
+    kind: 'stream',
+    name: 'events',
+    type: 'compaction.completed',
+    schema: compactionCompletedEventSchema,
+  },
   'permission.approval.requested': {
     kind: 'stream',
     name: 'events',

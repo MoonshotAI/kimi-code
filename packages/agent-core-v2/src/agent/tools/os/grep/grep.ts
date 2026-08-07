@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IGrepTool` contract.
+ * `tools` domain — `IGrepTool` contract.
  *
  * Public contract of Grep, the model's ripgrep-backed content search. Supports
  * glob/type filtering, context lines, output modes, pagination, multiline,

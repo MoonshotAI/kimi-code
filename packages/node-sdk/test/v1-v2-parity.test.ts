@@ -17,8 +17,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   ISessionApprovalService,
-  ISessionLifecycleService,
   ISessionQuestionService,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 
 import {
@@ -169,9 +169,9 @@ function scrubHomePrefixes(value: unknown, home: HomePair): unknown {
  */
 const KNOWN_DIFFS = {
   // v2's flag registry is per-domain and already carries flags v1 does not
-  // have (fault-injection, minidb backend, subagent); v1-only flags would be
-  // the symmetric case. Parity is enforced on the intersection of ids until
-  // the registries are unified.
+  // have (minidb backend, subagent); v1-only flags would be the symmetric
+  // case. Parity is enforced on the intersection of ids until the registries
+  // are unified.
   getExperimentalFeatures: (
     features: readonly { id: string }[],
     other: readonly { id: string }[],
@@ -241,12 +241,12 @@ const KNOWN_DIFFS = {
     projectResumedSession(resumed, home),
   reloadSession: (resumed: ResumedSessionSummary, home: HomePair): unknown =>
     projectResumedSession(resumed, home),
-  // Agent context: v1 reports the running token ESTIMATE (an import adopts
-  // it wholesale); v2 reports the provider-MEASURED prefix, which an
-  // in-memory append never touches — post-import counts diverge by design
-  // (v1 > 0, v2 === 0, asserted explicitly at the call site). Histories
-  // compare in full; the count compares only in the pre-import state where
-  // both are 0.
+  // Agent context: v1 reports the running token ESTIMATE; v2 reports the
+  // provider-MEASURED prefix. In-memory appends (e.g. importContext) count
+  // identically on both engines via the shared `estimateTokensForMessages`,
+  // but once the provider reports measured usage the counts diverge by
+  // design. Histories compare in full; the count compares only in the
+  // pre-LLM state where both sides still estimate.
   getContext: (context: { readonly history: readonly unknown[] }): unknown =>
     context.history.length === 0 ? context : { history: context.history },
   // Plan ids are random per engine (hero slugs) and the plan path embeds
@@ -343,6 +343,9 @@ function projectSessionSummary(summary: SessionSummary, home: HomePair): unknown
   const projected = scrubHomePrefixes(summary, home) as Record<string, unknown>;
   delete projected['createdAt'];
   delete projected['updatedAt'];
+  // `lastTurnReason` is v2-only: the v1 engine never records a turn outcome,
+  // so the field cannot compare across engines.
+  delete projected['lastTurnReason'];
   if (projected['title'] === 'New Session') delete projected['title'];
   return projected;
 }
@@ -393,8 +396,9 @@ function projectResumedAgents(
  *   v2's resumed agent state has no equivalent field. Engine-owned profile
  *   data, not resume data.
  * - `context.tokenCount`: the KNOWN_DIFFS.getContext divergence (v1's running
- *   estimate vs v2's provider-measured prefix) — the history compares in
- *   full, the count only in the empty state.
+ *   estimate vs v2's provider-measured prefix once the provider reports
+ *   usage) — the history compares in full, the count only where both sides
+ *   still estimate.
  * - replay `config_updated` records: v1 persists the profile BIND as
  *   `config.update` records (which restore maps to config_updated entries);
  *   v2 persists it as a `profile.bind` op the replay fold deliberately does
@@ -1927,11 +1931,12 @@ describe('v1↔v2 agent interaction parity', () => {
       expect(normalize(v2Context.history, '')).toEqual(normalize(v1Context.history, ''));
       expect(v1Context.history).toHaveLength(1);
       expect(v1Context.history[0]).toMatchObject({ role: 'user', origin: { kind: 'user' } });
-      // The pinned divergence (KNOWN_DIFFS.getContext): v1 adopts the import
-      // estimate as its reported count; v2's reported count is
-      // provider-measured and stays 0 until the first LLM round.
+      // Both engines estimate an in-memory import with the same
+      // `estimateTokensForMessages`, so post-import counts match exactly.
+      // (They diverge again once the provider reports measured usage — see
+      // KNOWN_DIFFS.getContext.)
       expect(v1Context.tokenCount).toBeGreaterThan(0);
-      expect(v2Context.tokenCount).toBe(0);
+      expect(v2Context.tokenCount).toBe(v1Context.tokenCount);
       // v1's validations, replicated on the v2 side.
       await expect(
         pair.v1.importContext({ ...input, content: ' \n\t ', source: "file 'empty.md'" }),
@@ -3710,6 +3715,33 @@ describe('v1↔v2 global MCP parity', () => {
   }, 20_000);
 });
 
+type McpServerList = Awaited<ReturnType<SDKRpcClientBase['listMcpServers']>>;
+
+/**
+ * List MCP servers on both engines once the initial connect has settled.
+ * v1 connects in the background after create resolves while v2 awaits the
+ * initial connect inside create, so an immediate list can catch either side
+ * still pending under load; poll until no server reports a transient status.
+ */
+async function listMcpServersWhenSettled(
+  pair: SessionParityPair,
+  input: { readonly sessionId: string },
+  timeoutMs = 10_000,
+): Promise<readonly [McpServerList, McpServerList]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const lists = await Promise.all([
+      pair.v1.listMcpServers(input),
+      pair.v2.listMcpServers(input),
+    ] as const);
+    const settled = lists.every((servers) =>
+      servers.every((server) => server.status !== 'pending'),
+    );
+    if (settled || Date.now() >= deadline) return lists;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 describe('v1↔v2 session MCP parity', () => {
   /** working (connects, 3 tools) + broken (fails fast) + off (disabled). */
   const SESSION_MCP_FIXTURE = {
@@ -3735,10 +3767,7 @@ describe('v1↔v2 session MCP parity', () => {
     try {
       await createOnBoth(pair, { id: 'session_parity_mcp_list' });
       const input = { sessionId: 'session_parity_mcp_list' } as const;
-      const [v1Servers, v2Servers] = await Promise.all([
-        pair.v1.listMcpServers(input),
-        pair.v2.listMcpServers(input),
-      ]);
+      const [v1Servers, v2Servers] = await listMcpServersWhenSettled(pair, input);
       expect(normalize(v2Servers, 'name')).toEqual(normalize(v1Servers, 'name'));
       const byName = new Map(v1Servers.map((server) => [server.name, server]));
       expect(byName.get('working')).toMatchObject({
@@ -4051,7 +4080,7 @@ describe('v1↔v2 event & interaction parity', () => {
     try {
       await createOnBoth(pair, { id: 'session_parity_events_approval' });
       const sessionId = 'session_parity_events_approval';
-      const v2Session = pair.v2.engineAccessor.get(ISessionLifecycleService).get(sessionId);
+      const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
       expect(v2Session).toBeDefined();
       const v2Approvals = v2Session!.accessor.get(ISessionApprovalService);
       const requestInput = {
@@ -4130,7 +4159,7 @@ describe('v1↔v2 event & interaction parity', () => {
     try {
       await createOnBoth(pair, { id: 'session_parity_events_question' });
       const sessionId = 'session_parity_events_question';
-      const v2Session = pair.v2.engineAccessor.get(ISessionLifecycleService).get(sessionId);
+      const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
       expect(v2Session).toBeDefined();
       const v2Questions = v2Session!.accessor.get(ISessionQuestionService);
       const requestInput = {

@@ -27,7 +27,8 @@ import {
   type ServiceRegistration,
   type TestInstantiationService,
 } from '#/_base/di/test';
-import { LifecycleScope, type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { ILogService, type ILogService as LogService } from '#/_base/log/log';
 import { IWireService } from '#/wire/wire';
@@ -43,13 +44,10 @@ import {
 } from '#/app/sessionExport/sessionExportService';
 import { writeExportZip } from '#/app/sessionExport/zip';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
-import {
-  ISessionLifecycleService,
-  type SessionLifecycleHooks,
-} from '#/app/sessionLifecycle/sessionLifecycle';
+import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { Error2 } from '#/errors';
-import { createHooks } from '#/hooks';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
@@ -175,7 +173,6 @@ describe('sessionExport', () => {
       request: { sessionId: 'ses_repeated_export', version: '1.0.0-test' },
       summary,
     });
-    // Cross the next second boundary so the second export gets a distinct timestamp.
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 1100 - (Date.now() % 1000)));
     const second = await exportSessionDirectory({
       request: { sessionId: 'ses_repeated_export', version: '1.0.0-test' },
@@ -896,34 +893,58 @@ function registerSessionExportServices(
   reg.defineInstance(ILogService, options.appLog ?? stubLog());
   reg.defineInstance(ISessionIndex, {
     _serviceBrand: undefined,
-    list: async () => ({ items: options.summary === undefined ? [] : [options.summary] }),
+    prepare: async () => ({ state: 'uninitialized' as const, degradedCount: 0 }),
+    status: () => ({ state: 'uninitialized' as const, degradedCount: 0 }),
+    listRecent: async () => ({ items: options.summary === undefined ? [] : [options.summary] }),
     get: async () => options.summary,
-    countActive: async () => (options.summary === undefined || options.summary.archived ? 0 : 1),
+    count: async () => (options.summary === undefined || options.summary.archived ? 0 : 1),
+    remove: async () => {},
   });
-  reg.defineInstance(ISessionLifecycleService, {
+  reg.defineInstance(IWorkspaceLifecycleService, {
     _serviceBrand: undefined,
-    onDidCreateSession: noopEvent,
-    onDidCloseSession: noopEvent,
-    onDidArchiveSession: noopEvent,
-    onDidForkSession: noopEvent,
-    hooks: createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
-      'onDidCreateSession',
-      'onWillCloseSession',
-    ]),
-    create: async () => {
-      throw new Error('create should not be called by session export');
+    onDidMaterializeHandler: noopEvent,
+    handlerFor: async () => {
+      throw new Error('handlerFor should not be called by session export');
     },
-    get: () => options.lifecycleHandle,
-    list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
-    resume: async () => options.lifecycleHandle,
-    close: async () => {},
-    archive: async () => {},
-    restore: async () => options.lifecycleHandle,
-    fork: async () => {
-      throw new Error('fork should not be called by session export');
+    handlers: {
+      list: () => [
+        {
+          id: 'ws_live',
+          kind: LifecycleScope.Workspace,
+          accessor: accessorFrom([
+            [
+              ISessionLifecycleService,
+              {
+                _serviceBrand: undefined,
+                onDidCreateSession: noopEvent,
+                onDidCloseSession: noopEvent,
+                onDidArchiveSession: noopEvent,
+                onDidForkSession: noopEvent,
+                create: async () => {
+                  throw new Error('create should not be called by session export');
+                },
+                get: () => options.lifecycleHandle,
+                list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
+                resume: async () => options.lifecycleHandle,
+                close: async () => {},
+                archive: async () => {},
+                restore: async () => options.lifecycleHandle,
+                delete: async () => {},
+                fork: async () => {
+                  throw new Error('fork should not be called by session export');
+                },
+                createChild: async () => {
+                  throw new Error('createChild should not be called by session export');
+                },
+              } satisfies ISessionLifecycleService,
+            ],
+          ]),
+          dispose: () => {},
+        },
+      ],
     },
-    createChild: async () => {
-      throw new Error('createChild should not be called by session export');
+    sessions: {
+      list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle.id]),
     },
   });
   reg.defineInstance(IWorkspaceService, {

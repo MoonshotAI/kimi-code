@@ -14,8 +14,8 @@
  * Migrated so far:
  * - `getExperimentalFeatures` → `klient.global.flags.list()`
  * - `listWorkspaceSkills` → not covered by the klient facade, so it goes
- *   through the `engineAccessor` escape hatch (`ISkillDiscovery` + the v2
- *   skill-root helpers) instead.
+ *   through the `engineAccessor` escape hatch (the workspace handler's
+ *   `IWorkspaceSkillCatalog`) instead.
  * - `getConfig` / `setConfig` / `removeProvider` / `getConfigDiagnostics` →
  *   `klient.global.config.*`, with the v1 `KimiConfig` shape restored by the
  *   pure mapping layer in `src/v2/config-mapper.ts`.
@@ -30,9 +30,9 @@
  *   `updateSessionMetadata` / `addAdditionalDir` → the session lifecycle
  *   batch: `klient.global.sessions.list` plus the `klient.session(id)`
  *   metadata mutations where the facade reaches, and the
- *   `ISessionLifecycleService` / session-scope services through
+ *   `IWorkspaceLifecycleService` / handler chain / session-scope services through
  *   {@link engineAccessor} where it does not (explicit session ids, resume,
- *   fork ids, workspace commands). The v1 `SessionSummary` / `SessionMeta`
+ *   fork ids, the workspace-level add-dir surface). The v1 `SessionSummary` / `SessionMeta`
  *   shapes are restored by the pure mapping layer in
  *   `src/v2/session-mapper.ts`. `deleteSession` stays `not_implemented` —
  *   the v2 engine has no session-deletion capability anywhere (tracked in
@@ -44,9 +44,10 @@
  *   (`src/v2/resume-replay.ts`) — `includeSubagents` and `replayTurnLimit`
  *   included.
  * - `setModel` / `setPermission` / `setPlanMode` / `getPlan` / `clearPlan` /
- *   `getContext` / `getUsage` / `cancel` → the `klient.session(id).agent(id)`
- *   facade; `setThinking` / `compact` / `cancelCompaction` / `undoHistory` /
- *   `clearContext` / `importContext` → agent-scope services through the live
+ *   `getContext` / `getUsage` / `cancel` / `listCommands` / `runCommand` →
+ *   the `klient.session(id).agent(id)` facade; `setThinking` / `compact` /
+ *   `cancelCompaction` / `undoHistory` / `clearContext` / `importContext` →
+ *   agent-scope services through the live
  *   session handle (no facade exists); `getStatus` → the same six-slice
  *   aggregate the base class builds, re-read from the profile / permission /
  *   swarm services plus the facade. `importContext` composes v1's exact
@@ -87,9 +88,10 @@
  *   `IAtomicDocumentStore`, whose on-disk layout
  *   (`<home>/credentials/mcp/<key>-*.json`) matches v1's.
  * - `listMcpServers` / `getMcpStartupMetrics` / `reconnectMcpServer` →
- *   `ISessionMcpService.connectionManager()` through the session scope (no
- *   klient facade exists); the v2 `McpServerEntry` is field-identical with
- *   v1's `McpServerInfo`.
+ *   the seeded `ISessionMcpHandle.connectionManager` through the session
+ *   scope (no klient facade exists) — one shared manager per workspace
+ *   handler since the workspace-domain resource consolidation; the v2
+ *   `McpServerEntry` is field-identical with v1's `McpServerInfo`.
  * - `onEvent` / `receiveEvent` → the base class registries, fed by a
  *   per-live-session wiring (`src/v2/session-wiring.ts`) that subscribes
  *   every live agent's `IEventBus` and translates each `DomainEvent` back
@@ -130,6 +132,7 @@ import { join } from 'node:path';
 import {
   ensureConfigFile,
   ErrorCodes,
+  HookDefSchema,
   KimiError,
   limitAgentReplayByTurns,
   noopTelemetryClient,
@@ -138,27 +141,29 @@ import {
   type ExperimentalFeatureState,
 } from '@moonshot-ai/agent-core';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
-import { MCP_SECTION, type McpSection } from '@moonshot-ai/agent-core-v2/agent/mcp/configSection';
-import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/agent/mcp/connection-manager';
+import { MCP_SECTION, type McpSection } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configSection';
+import { IAgentIdentity } from '@moonshot-ai/agent-core-v2/app/agentIdentity/agentIdentity';
+import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import {
   AlreadyAuthorizedError,
   McpOAuthService,
   type BeginAuthorizationResult,
-} from '@moonshot-ai/agent-core-v2/agent/mcp/oauth/service';
-import { createMcpOAuthStore } from '@moonshot-ai/agent-core-v2/agent/mcp/oauth/store';
+} from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
+import { createMcpOAuthStore } from '@moonshot-ai/agent-core-v2/app/mcpConfig/oauthStore';
 import { SECONDARY_MODEL_SECTION } from '@moonshot-ai/agent-core-v2/app/kosongConfig/configSection';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { wrapSubagentModelError } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
+import { loadMcpServers } from '@moonshot-ai/agent-core-v2/workspace/workspaceMcpConfig/internal/config-loader';
 import {
   applyPromptMetadataUpdate,
   bootstrap,
-  BUILTIN_SKILLS,
   DEFAULT_AGENT_PROFILE_NAME,
+  drainQueryStoreDisposals,
+  drainSessionIndexMirror,
   ensureKimiHome,
   ensureMainAgent,
   IAgentActivityView,
   IAgentContextMemoryService,
-  IAgentContextSizeService,
   IAgentFullCompactionService,
   IAgentGoalService,
   IAgentLifecycleService,
@@ -166,11 +171,11 @@ import {
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentProfileService,
-  configuredRoots,
   IAgentRPCService,
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
+  IAgentTokenCountingService,
   IBootstrapService,
   IConfigService,
   IEventService,
@@ -178,25 +183,35 @@ import {
   IHostFileSystem,
   IModelCatalog,
   IModelService,
-  IProjectLocalConfigService,
   IProviderService,
   ISessionBtwService,
   ISessionContext,
   ISessionCronService,
   ISessionExportService,
   ISessionIndex,
+  ISessionIndexMirror,
   ISessionInitService,
-  ISessionLifecycleService,
-  ISessionMcpService,
+  ISessionMcpHandle,
   ISessionMetadata,
   ISessionSecondaryModelWarningService,
   ISessionSkillCatalog,
-  ISessionWorkspaceCommandService,
   ISessionWorkspaceContext,
-  ISkillCatalogRuntimeOptions,
-  ISkillDiscovery,
   ITelemetryService,
   IWorkspaceAliases,
+  IWorkspaceDirs,
+  IWorkspaceMcpService,
+  ISessionActivityView,
+  ISessionLifecycleService,
+  IWorkspaceLifecycleService,
+  IWorkspaceSkillCatalog,
+  IWorkspaceTrust,
+  closeSessionById,
+  followWorkspaceHandlers,
+  getLiveSessionById,
+  handlerForSession,
+  resumeSessionById,
+  sessionDirOf,
+  workspacePersistenceScope,
   logSeed,
   MAIN_AGENT_ID,
   prepareSystemPromptContext,
@@ -204,16 +219,13 @@ import {
   PRINT_WAIT_CEILING_S_DEFAULT,
   ProfileError,
   ProfileErrors,
-  projectRoots,
   promptMetadataTextFromSkill,
   resolveAgentTaskConfig,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
-  skillCatalogRuntimeOptionsSeed,
   summarizeSkill,
-  userRoots,
   type IAgentScopeHandle,
   type IDisposable,
   type ISessionScopeHandle,
@@ -223,7 +235,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentHandle, Klient } from '@moonshot-ai/klient';
 import { createKlient } from '@moonshot-ai/klient/memory';
-import { assertKimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
+import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 
 import { KimiAuthFacade } from '#/auth';
 import { KimiHarness } from '#/kimi-harness';
@@ -234,6 +246,7 @@ import {
   type ImportContextRpcInput,
   type ReconnectMcpServerRpcInput,
   type ReloadSessionRpcInput,
+  type RunCommandRpcInput,
   type SessionIdRpcInput,
   type SessionPromptRpcInput,
   type SetSessionModelRpcInput,
@@ -247,7 +260,9 @@ import {
 import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
+  AgentCommandInfo,
   BackgroundTaskInfo,
+  CapabilityStatus,
   CompactOptions,
   ConfigDiagnostics,
   CreateGoalInput,
@@ -284,6 +299,7 @@ import type {
   SessionUsage,
   SkillSummary,
   TelemetryClient,
+  WorkspaceTrustInfo,
 } from '#/types';
 import {
   diagnosticsToConfigDiagnostics,
@@ -315,8 +331,7 @@ export interface SDKRpcClientV2Options {
    * Explicit skill directories for this process (v1's SDK `skillDirs` /
    * the CLI's `--skills-dir`): when non-empty, default user / project skill
    * discovery is skipped and these directories serve as the user skill
-   * source. Seeded into the engine's app-scope
-   * `ISkillCatalogRuntimeOptions`.
+   * source. Passed into the engine through `BootstrapInput.args.skillDirs`.
    */
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient;
@@ -412,18 +427,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       onRefresh: options.onOAuthRefresh,
     });
 
+    const identity = assertKimiHostIdentity(this.identity);
     const { app } = bootstrap(
       {
         homeDir: this.homeDir,
         configPath: this.configPath,
-        clientVersion: this.identity?.version,
+        clientIdentity: identity,
+        args: {
+          // Host identity headers for the engine's outbound requests (model,
+          // WebSearch, registry refresh). Without them the managed vendors go
+          // out with the SDK's default User-Agent and no X-Msh-* at all.
+          requestHeaders: createKimiDefaultHeaders({ homeDir: this.homeDir, ...identity }),
+          // `--skills-dir` (v1 parity): explicit skill dirs replace default
+          // user / project discovery for every session this client hosts.
+          skillDirs: options.skillDirs,
+        },
       },
-      [
-        ...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env })),
-        // `--skills-dir` (v1 parity): explicit skill dirs replace default
-        // user / project discovery for every session this client hosts.
-        ...skillCatalogRuntimeOptionsSeed(options.skillDirs),
-      ],
+      [...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env }))],
     );
     this.app = app;
     this.klient = createKlient({ scope: app });
@@ -446,10 +466,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         if (translated !== undefined) this.receiveEvent(translated);
       }),
       // A session closed without going through this client (archive, an
-      // engine-initiated close) drops its wiring with the scope.
-      this.app.accessor.get(ISessionLifecycleService).onDidCloseSession((closed) => {
-        this.unwireSession(closed.sessionId);
-      }),
+      // engine-initiated close) drops its wiring with the scope. Close events
+      // fire per workspace handler, so follow every handler — present and
+      // future — through the App-scope registry.
+      followWorkspaceHandlers(this.app.accessor, (service) =>
+        service.onDidCloseSession((closed) => {
+          this.unwireSession(closed.sessionId);
+        }),
+      ),
     );
   }
 
@@ -466,7 +490,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       subscription.dispose();
     }
     await this.klient.close();
+    // Same shutdown order as kap-server: drain the session-index mirror while
+    // the query store is still open, then await the asynchronous closes that
+    // disposal fires — a host that removes homeDir right after close() must
+    // not race an in-flight shard close (ENOTEMPTY on teardown).
+    await this.app.accessor.get(ISessionIndexMirror).drain();
     this.app.dispose();
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
   }
 
   /**
@@ -517,40 +548,63 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * klient has no skills facade; composed directly from the engine's
-   * app-scope `ISkillDiscovery` plus the v2 root helpers (user + project
-   * roots) and the code-defined `BUILTIN_SKILLS` via {@link engineAccessor}.
-   * `skillDirs` (explicit dirs) replaces the default user / project roots,
-   * matching the engine's session skill catalog. Gap vs the v1
-   * implementation: plugin skills are not included.
+   * Through the workspace handler's `IWorkspaceSkillCatalog` — the engine's
+   * own merged view (builtin / user / explicit / extra / workspace-root /
+   * plugin), so the session-less list matches what a session would serve.
+   * `handlerFor` is create-or-get: session creation materializes the handler
+   * anyway.
    */
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
-    const bootstrapService = this.engineAccessor.get(IBootstrapService);
-    const discovery = this.engineAccessor.get(ISkillDiscovery);
-    const explicitDirs = this.engineAccessor.get(ISkillCatalogRuntimeOptions).explicitDirs ?? [];
-    const roots =
-      explicitDirs.length > 0
-        ? await configuredRoots(explicitDirs, workDir, bootstrapService.osHomeDir, 'user')
-        : [
-            ...(await userRoots(bootstrapService.homeDir, bootstrapService.osHomeDir)),
-            ...(await projectRoots(workDir)),
-          ];
-    const { skills } = await discovery.discover(roots);
-    // Builtins are the lowest-priority contribution: a discovered skill with
-    // the same name shadows the builtin (v1 registry semantics).
-    const byName = new Map<string, SkillSummary>();
-    for (const skill of [...BUILTIN_SKILLS, ...skills]) {
-      byName.set(skill.name, {
-        name: skill.name,
-        description: skill.description,
-        path: skill.path,
-        source: skill.source,
-        type: skill.metadata.type,
-        disableModelInvocation: skill.metadata.disableModelInvocation,
-        isSubSkill: skill.metadata.isSubSkill,
-      });
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: normalizeRequiredWorkDir('listWorkspaceSkills', workDir) });
+    const catalog = handler.accessor.get(IWorkspaceSkillCatalog);
+    await catalog.ready;
+    return catalog.catalog.listSkills().map(summarizeSkill);
+  }
+
+  /**
+   * klient has no workspace-trust facade; composed directly from the engine
+   * via {@link engineAccessor} — the same `handlerFor({ root })` path
+   * `createSession` takes (materializing the workspace handler is a no-op
+   * cost here: session creation does it anyway). The gated-server list is
+   * what the pure config loader sees with project files included vs skipped
+   * (the workspaceTrust gate inside the engine's `workspaceMcpConfig`),
+   * computed best-effort: an unreadable/invalid project file degrades to an
+   * empty list rather than failing the caller.
+   */
+  override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: workDir });
+    const trusted = await handler.accessor.get(IWorkspaceTrust).get();
+    if (trusted) return { trusted: true, gatedMcpServers: [] };
+    try {
+      const fs = this.engineAccessor.get(IHostFileSystem);
+      const [withProject, userOnly] = await Promise.all([
+        loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: true }),
+        loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: false }),
+      ]);
+      const gatedMcpServers = Object.keys(withProject)
+        .filter((name) => !(name in userOnly))
+        .toSorted();
+      return { trusted: false, gatedMcpServers };
+    } catch {
+      return { trusted: false, gatedMcpServers: [] };
     }
-    return [...byName.values()];
+  }
+
+  /**
+   * klient has no workspace-trust facade; see {@link getWorkspaceTrustInfo}.
+   * The flip fires `IWorkspaceTrust.onDidChange`, which makes the engine's
+   * `workspaceMcpConfig` reload with project files included — project MCP
+   * servers connect live, no restart needed.
+   */
+  override async trustWorkspace(workDir: string): Promise<void> {
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: workDir });
+    await handler.accessor.get(IWorkspaceTrust).trust();
   }
 
   /**
@@ -592,9 +646,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * v1's removal cascades: the provider entry, every model pointing at it,
    * and the default pointers when they dangle. The engine's own
-   * `kosong.removeProvider` only clears the default-provider pointer, so
-   * the full v1 cascade is computed from the user-layer values and applied
-   * through the config facade (see `planProviderRemoval`).
+   * `kosong.removeProvider` only clears the default-provider pointer, so the
+   * full v1 cascade is computed from the user-layer values (see
+   * `planProviderRemoval`) and persisted as ONE atomic multi-section replace —
+   * the same single-write shape as v1's `removeKimiProvider`, so a process
+   * exit can never leave the file in a halfway-cascaded state.
    */
   override async removeProvider(providerId: string): Promise<KimiConfig> {
     await this.configReady;
@@ -611,15 +667,27 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       defaultProvider: defaultProvider.userValue,
       providerId,
     });
-    await this.klient.global.config.replace({ domain: 'providers', value: plan.providers });
-    await this.klient.global.config.replace({ domain: 'models', value: plan.models });
+    const sections: Record<string, unknown> = {
+      providers: plan.providers,
+      models: plan.models,
+    };
     if (plan.clearDefaultModel) {
-      await this.klient.global.config.replace({ domain: 'defaultModel', value: undefined });
+      sections['defaultModel'] = undefined;
     }
     if (plan.clearDefaultProvider) {
-      await this.klient.global.config.replace({ domain: 'defaultProvider', value: undefined });
+      sections['defaultProvider'] = undefined;
     }
+    await this.klient.global.config.replaceSections({ sections });
     return this.getConfig();
+  }
+
+  override supportsAtomicSectionReplace(): boolean {
+    return true;
+  }
+
+  override async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {
+    await this.configReady;
+    await this.klient.global.config.replaceSections({ sections });
   }
 
   override async listPlugins(): Promise<readonly PluginSummary[]> {
@@ -651,7 +719,40 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async getPluginInfo(id: string): Promise<PluginInfo> {
-    return this.klient.global.plugins.info(id);
+    // The v2 engine's hook-event union is a superset of v1's (`TurnStarted`,
+    // `UserPromptQueued`, `TaskStarted`, `SessionHeartbeat` are v2-only). The
+    // SDK contract keeps the v1 `PluginInfo` shape, so hooks using v2-only
+    // events are dropped from the projection — mirroring how the config
+    // mapper drops config domains v1 does not know.
+    const info = await this.klient.global.plugins.info(id);
+    const manifest =
+      info.manifest === undefined
+        ? undefined
+        : {
+            ...info.manifest,
+            hooks: info.manifest.hooks?.filter((hook) =>
+              (HookDefSchema.shape.event.options as readonly string[]).includes(hook.event),
+            ) as NonNullable<PluginInfo['manifest']>['hooks'],
+          };
+    return { ...info, manifest };
+  }
+
+  /**
+   * Capability surface (v2-only): built-in product capabilities (kimi-cu,
+   * kimi-webbridge) with layered readiness and idempotent installs. v1 has
+   * no capability domain, so these stay off the shared base — callers
+   * feature-detect via `in` before use.
+   */
+  async listCapabilities(): Promise<readonly CapabilityStatus[]> {
+    return this.klient.global.capabilities.list();
+  }
+
+  async getCapability(id: string): Promise<CapabilityStatus> {
+    return this.klient.global.capabilities.get(id);
+  }
+
+  async installCapability(id: string): Promise<CapabilityStatus> {
+    return this.klient.global.capabilities.install(id);
   }
 
   /**
@@ -666,6 +767,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     input: SessionIdRpcInput,
   ): Promise<readonly PluginCommandDef[]> {
     void input;
+    return this.listPluginCommandsGlobal();
+  }
+
+  /** App-global live view of the enabled plugin commands, no session required. */
+  override async listPluginCommandsGlobal(): Promise<readonly PluginCommandDef[]> {
     return this.klient.global.plugins.listCommands();
   }
 
@@ -674,7 +780,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   //
   // The v2 engine splits what v1's SessionStore + in-memory session map did
   // across the app-scope `ISessionIndex` (persisted read model),
-  // `ISessionLifecycleService` (live session scopes), and the session-scope
+  // `IWorkspaceLifecycleService` (live workspace handlers and, under them, the
+  // live session scopes), and the session-scope
   // metadata/workspace services. The klient facade covers listing and the
   // metadata mutations of a LIVE session; everything that needs an explicit
   // session id, a resume, or a workspace command goes through the
@@ -690,8 +797,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // the host supplies one).
   // -----------------------------------------------------------------------
 
-  private get sessionLifecycle(): ISessionLifecycleService {
-    return this.engineAccessor.get(ISessionLifecycleService);
+  private liveSession(sessionId: string): ISessionScopeHandle | undefined {
+    return getLiveSessionById(this.engineAccessor, sessionId);
   }
 
   /** v1's `requireSession` / store lookup failure shape. */
@@ -703,7 +810,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /** The live session handle, or the error v1 raises for a non-active session. */
   private requireLiveSession(sessionId: string): ISessionScopeHandle {
-    const handle = this.sessionLifecycle.get(sessionId);
+    const handle = this.liveSession(sessionId);
     if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
     return handle;
   }
@@ -736,6 +843,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const meta = await handle.accessor.get(ISessionMetadata).read();
     const ctx = handle.accessor.get(ISessionContext);
     const workspace = handle.accessor.get(ISessionWorkspaceContext);
+    // The live aggregate is authoritative for a live session: a just-resumed
+    // session already has the restored outcome in memory, while the metadata
+    // document can lag both the backfill and the clear (a retry started after
+    // a failure), so never read the document here.
+    const liveOutcome = handle.accessor.get(ISessionActivityView).state().lastTurnReason;
     return {
       id: meta.id,
       title: meta.title,
@@ -747,6 +859,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       archived: meta.archived,
       metadata: meta.custom as JsonObject | undefined,
       additionalDirs: workspace.additionalDirs,
+      lastTurnReason: liveOutcome,
     };
   }
 
@@ -895,10 +1008,25 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       // workspace) cannot be resumed on either engine; v1's store never lists
       // one in the first place, so drop it here too.
       if (workDir === undefined) continue;
+      // A live session reports its own outcome; the index may still carry a
+      // stale one while the mirror's clear is queued (a fresh turn just
+      // started after a failure).
+      const liveHandle = getLiveSessionById(this.engineAccessor, item.id);
+      const effectiveItem =
+        liveHandle === undefined
+          ? item
+          : {
+              ...item,
+              lastTurnReason: liveHandle.accessor.get(ISessionActivityView).state().lastTurnReason,
+            };
       summaries.push(
-        v2SummaryToSessionSummary(item, {
+        v2SummaryToSessionSummary(effectiveItem, {
           workDir,
-          sessionDir: bootstrapService.sessionDir(item.workspaceId, item.id),
+          sessionDir: sessionDirOf(
+            bootstrapService.homeDir,
+            workspacePersistenceScope(bootstrapService.scope('sessions'), item.workspaceId),
+            item.id,
+          ),
         }),
       );
     }
@@ -907,7 +1035,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * v1 semantics: register the workDir as a workspace and create the session
-   * (the v2 `sessionLifecycleService.create` does both; the klient facade
+   * (the handler's `ISessionLifecycleService.create` does both; the klient facade
    * wrapper is bypassed because it takes neither an explicit session id nor
    * caller metadata). The `model` / `thinking` / `permission` options are the
    * main-agent configuration v1 applies eagerly at creation: supplying any of
@@ -923,7 +1051,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const workDir = normalizeRequiredWorkDir('createSession', input.workDir);
     if (input.id !== undefined) {
       const existing =
-        this.sessionLifecycle.get(input.id) ??
+        this.liveSession(input.id) ??
         (await this.engineAccessor.get(ISessionIndex).get(input.id));
       if (existing !== undefined) {
         throw new KimiError(
@@ -932,7 +1060,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       }
     }
-    const handle = await this.sessionLifecycle.create({
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: workDir });
+    const handle = await handler.accessor.get(ISessionLifecycleService).create({
       sessionId: input.id,
       workDir,
       additionalDirs: input.additionalDirs,
@@ -974,21 +1105,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (title.length === 0) {
       throw new KimiError(ErrorCodes.SESSION_TITLE_EMPTY, 'Session title cannot be empty');
     }
-    if (this.sessionLifecycle.get(input.id) !== undefined) {
+    if (this.liveSession(input.id) !== undefined) {
       await this.klient.session(input.id).setTitle(title);
       return;
     }
-    const handle = await this.sessionLifecycle.resume(input.id);
+    const handle = await resumeSessionById(this.engineAccessor, input.id);
     if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
     try {
       await this.klient.session(input.id).setTitle(title);
     } finally {
-      await this.sessionLifecycle.close(input.id);
+      await closeSessionById(this.engineAccessor, input.id);
     }
   }
 
   /**
-   * Through `engineAccessor` (`ISessionLifecycleService.fork`) because the
+   * Through `engineAccessor` (the handler chain's `ISessionLifecycleService.fork`) because the
    * klient facade fork takes no explicit target id. Known gaps vs v1: the
    * engine's fork is unconditional — it never rejects an in-flight source
    * turn (v1's SESSION_FORK_ACTIVE_TURN) — and `turnIndex` truncation has no
@@ -1003,7 +1134,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         'forkSession turnIndex truncation is not wired to agent-core-v2 yet.',
       );
     }
-    const handle = await this.sessionLifecycle.fork({
+    const forkHandler = await handlerForSession(this.engineAccessor, input.id);
+    if (forkHandler === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
+    const handle = await forkHandler.accessor.get(ISessionLifecycleService).fork({
       sourceSessionId: input.id,
       newSessionId: input.forkId,
       title: input.title,
@@ -1021,7 +1154,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * Materializes the session through `engineAccessor`
-   * (`ISessionLifecycleService.resume`; the facade only offers `restore`,
+   * (`resumeSessionById` through the handler chain; the facade only offers `restore`,
    * which would also clear the archived flag — v1's resume does not).
    * `includeSubagents` / `replayTurnLimit` shape the returned per-agent
    * snapshot exactly like v1: subagent states are folded best-effort from
@@ -1029,19 +1162,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * most recent N user turns via the shared `limitAgentReplayByTurns`.
    */
   override async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
-    const handle = await this.sessionLifecycle.resume(input.id);
+    // v1 re-resolves caller-provided additional dirs on every resume and
+    // merges them over the workspace-local set; the engine's resume options
+    // union them into the handler's shared in-memory set while the session
+    // scope is materialized. Unlike v1, the v2
+    // engine has no caller `mcpServers` channel on create/resume (caller
+    // servers are an ACP-side concern to be designed separately).
+    const handle = await resumeSessionById(this.engineAccessor, input.id, {
+      additionalDirs: input.additionalDirs,
+    });
     if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
     this.wireSession(handle);
-    // v1 re-resolves caller-provided additional dirs on every resume and
-    // merges them over the workspace-local set; the engine's own resume only
-    // restores the workspace-local ones.
-    if (input.additionalDirs !== undefined && input.additionalDirs.length > 0) {
-      const workspace = handle.accessor.get(ISessionWorkspaceContext);
-      const resolved = await this.engineAccessor
-        .get(IProjectLocalConfigService)
-        .resolveAdditionalDirs(workspace.workDir, input.additionalDirs);
-      workspace.setAdditionalDirs([...workspace.additionalDirs, ...resolved]);
-    }
     return this.resumedSessionSummary(handle, {
       includeSubagents: input.includeSubagents,
       replayTurnLimit: input.replayTurnLimit,
@@ -1058,7 +1189,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary> {
     const sessionId = input.sessionId;
-    const live = this.sessionLifecycle.get(sessionId);
+    const live = this.liveSession(sessionId);
     if (live !== undefined) {
       for (const agent of live.accessor.get(IAgentLifecycleService).list()) {
         if (agent.accessor.get(IAgentActivityView).state().turn !== undefined) {
@@ -1076,12 +1207,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     await this.klient.global.config.reload();
     await this.klient.global.plugins.reload();
     if (live !== undefined) {
-      await this.sessionLifecycle.close(sessionId);
+      await closeSessionById(this.engineAccessor, sessionId);
     }
     // Same print-steer reset as closeSession: v1's reload rebuilds the
     // Session, and with it the counters.
     this.printSteerStates.delete(sessionId);
-    const handle = await this.sessionLifecycle.resume(sessionId);
+    const handle = await resumeSessionById(this.engineAccessor, sessionId);
     if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
     this.wireSession(handle);
     return this.resumedSessionSummary(handle);
@@ -1100,18 +1231,20 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through `engineAccessor` (`ISessionWorkspaceCommandService`, session
-   * scope) — no klient facade exists for workspace commands. The v2 service
-   * returns the same `{additionalDirs, projectRoot, configPath, persisted}`
-   * shape as v1. Gap: with `persist: false` v1 also writes the dir into the
-   * session metadata so it survives a resume; v2 keeps it in memory only, so
-   * a non-persisted dir is lost on resume.
+   * Through the session's handler (`IWorkspaceDirs`, workspace scope) — the
+   * workspace-level add-dir surface: `persist: true` (default) appends to the
+   * project-local `.kimi-code/local.toml`, `persist: false` joins the
+   * handler's shared in-memory set. The set is shared by every session of
+   * the workspace (a v1 `persist: false` dir was session-scoped and written
+   * into session metadata to survive a resume; the v2 handler keeps it for
+   * every session of the workspace until the process exits). Returns the
+   * same `{additionalDirs, projectRoot, configPath, persisted}` shape as v1.
    */
   override async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
     const handle = this.requireLiveSession(input.id);
     return handle.accessor
-      .get(ISessionWorkspaceCommandService)
-      .addAdditionalDir({ path: input.path, persist: input.persist });
+      .get(IWorkspaceDirs)
+      .addDir({ path: input.path, persist: input.persist });
   }
 
   /**
@@ -1311,6 +1444,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return agent.clearPlan();
   }
 
+  /** Facade (`agentRPCService.listCommands`) — the v2-only contributed-command seam. */
+  override async listCommands(input: SessionIdRpcInput): Promise<readonly AgentCommandInfo[]> {
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.listCommands();
+  }
+
+  /** Facade (`agentRPCService.runCommand`) — runs the contribution engine-side. */
+  override async runCommand(input: RunCommandRpcInput): Promise<void> {
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.runCommand({ name: input.name, args: input.args });
+  }
+
   /**
    * Facade (`agentRPCService.getContext`). The v2 `AgentContextData` is the
    * same wire shape as v1's — the cast only bridges the two packages' type
@@ -1446,7 +1591,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
     const message = buildImportContextMessage(input.content, input.source);
     const capability = agent.accessor.get(IAgentProfileService).data().modelCapabilities;
-    const currentTokenCount = agent.accessor.get(IAgentContextSizeService).get().size;
+    const currentTokenCount = agent.accessor.get(IAgentTokenCountingService).get().size;
     assertImportFits(
       message,
       currentTokenCount,
@@ -1892,11 +2037,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           if (seen.has(task.taskId)) continue;
           seen.add(task.taskId);
           suppressions.push(tasks.suppressTerminalNotification(task.taskId));
-          // The engine's `wait` arms a raw `setTimeout(timeoutMs)`, which
-          // overflows above the ~24.8-day timer ceiling into an immediate
-          // resolve (v1's `timeoutOutcome` clamps to the same bound) — the
-          // default print ceiling is 10 years, so clamp here. The outer loop
-          // re-enumerates after an early return, so semantics are unchanged.
+          // A configured ceiling above the ~24.8-day timer ceiling overflows
+          // a raw `setTimeout` into an immediate resolve — clamp here (the
+          // engine's `wait` clamps too; this keeps the caller side correct
+          // regardless). The outer loop re-enumerates after an early return,
+          // so semantics are unchanged.
           const remaining = Math.min(Math.max(1, deadline - Date.now()), MAX_TIMER_DELAY_MS);
           const waiter = tasks.wait(task.taskId, remaining);
           batch.push(waiter);
@@ -1923,16 +2068,34 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // MCP: the user-global surface is rebuilt over the SDK-side store port in
   // `src/v2/global-mcp.ts` plus the v2 engine's own OAuth service and
   // connection manager (agent-core-v2 has no app-scope MCP config service —
-  // it only reads `mcp.json` — and binds its OAuth orchestrator inside the
-  // session scope); the session-level reads go through the session scope's
-  // `ISessionMcpService` (no klient facade exists for either group).
+  // it only reads `mcp.json`); the session-level reads go through the
+  // session scope's seeded `ISessionMcpHandle` (no klient facade exists for
+  // either group).
   // -----------------------------------------------------------------------
 
-  /** v1's per-core `globalMcpOAuth`, built over the app-scope document store. */
-  private get globalMcpOAuthService(): McpOAuthService {
+  /**
+   * Configured custom identity announced to MCP servers, so these global flows
+   * match what the workspace-owned manager sends. Reads the frozen snapshot;
+   * every path that reaches it awaited `globalMcpOAuthService()` first.
+   */
+  private resolveMcpClientName(): string | undefined {
+    return this.engineAccessor.get(IAgentIdentity).current().slug;
+  }
+
+  /**
+   * v1's per-core `globalMcpOAuth`, built over the app-scope document store.
+   *
+   * Async on purpose: the service caches providers by store key and stamps the
+   * client name when it first builds one, so any path that can materialize a
+   * provider must not run before the identity snapshot froze. Guarding here
+   * rather than at each call site means a new entry point cannot forget to.
+   */
+  private async globalMcpOAuthService(): Promise<McpOAuthService> {
+    await this.engineAccessor.get(IAgentIdentity).resolved();
     if (this.globalMcpOAuth === undefined) {
       this.globalMcpOAuth = new McpOAuthService({
         store: createMcpOAuthStore(this.engineAccessor.get(IAtomicDocumentStore)),
+        resolveClientName: () => this.resolveMcpClientName(),
       });
     }
     return this.globalMcpOAuth;
@@ -1969,7 +2132,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const server = await this.globalMcpConfig.get(name);
     const config = requireOAuthMcpServer(server);
     try {
-      const flow = await this.globalMcpOAuthService.beginAuthorization(server.name, config.url);
+      const oauth = await this.globalMcpOAuthService();
+      const flow = await oauth.beginAuthorization(server.name, config.url);
       const flowId = randomUUID();
       this.globalMcpOAuthFlows.set(flowId, { flow });
       return {
@@ -2013,7 +2177,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async resetGlobalMcpServerAuth(name: string): Promise<void> {
     const server = await this.globalMcpConfig.get(name);
     const config = requireRemoteMcpServer(server);
-    await this.globalMcpOAuthService.invalidate(server.name, config.url);
+    const oauth = await this.globalMcpOAuthService();
+    await oauth.invalidate(server.name, config.url);
   }
 
   /**
@@ -2034,7 +2199,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const section = this.engineAccessor.get(IConfigService).get<McpSection | undefined>(MCP_SECTION);
     const manager = new McpConnectionManager({
       stdioCwd: options.cwd,
-      oauthService: this.globalMcpOAuthService,
+      oauthService: await this.globalMcpOAuthService(),
+      resolveClientName: () => this.resolveMcpClientName(),
       resolveDefaultTimeouts: () => ({
         startupTimeoutMs: section?.startupTimeoutMs,
         toolTimeoutMs: section?.toolTimeoutMs,
@@ -2049,21 +2215,37 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the session scope (`ISessionMcpService.connectionManager()`).
-   * Both engines settle the initial connect before create/resume returns, so
-   * the entry list is final here; the v2 `McpServerEntry` is field-identical
-   * with v1's `McpServerInfo` (the cast bridges the two packages' type
-   * declarations).
+   * Through the session scope (the seeded `ISessionMcpHandle.connectionManager`
+   * — the workspace handler's one shared manager). This is a live snapshot:
+   * create/resume no longer waits for MCP startup, so entries may still be
+   * pending. The v2 `McpServerEntry` is field-identical with v1's
+   * `McpServerInfo` (the cast bridges the two packages' type declarations).
    */
   override async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {
-    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpService);
+    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpHandle);
+    return mcp.connectionManager.list() as readonly McpServerInfo[];
+  }
+
+  /**
+   * Workspace-level MCP view (the handler's one shared connection set), so
+   * `/mcp` is inspectable on a v2 session-less startup before any session
+   * exists. Awaits `ready` so a fresh handler's initial connect settles
+   * before the list is read.
+   * Same `McpServerEntry`-as-`McpServerInfo` cast as listMcpServers.
+   */
+  override async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: normalizeRequiredWorkDir('listWorkspaceMcpServers', workDir) });
+    const mcp = handler.accessor.get(IWorkspaceMcpService);
+    await mcp.ready;
     return mcp.connectionManager().list() as readonly McpServerInfo[];
   }
 
   override async getMcpStartupMetrics(input: SessionIdRpcInput): Promise<McpStartupMetrics> {
-    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpService);
-    await mcp.connectionManager().waitForInitialLoad();
-    return { durationMs: mcp.connectionManager().initialLoadDurationMs() };
+    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpHandle);
+    await mcp.ready;
+    return { durationMs: mcp.connectionManager.initialLoadDurationMs() };
   }
 
   /**
@@ -2072,8 +2254,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * re-registration rides on the status listeners in both engines.
    */
   override async reconnectMcpServer(input: ReconnectMcpServerRpcInput): Promise<void> {
-    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpService);
-    await mcp.connectionManager().reconnect(input.name);
+    const mcp = this.requireLiveSession(input.sessionId).accessor.get(ISessionMcpHandle);
+    await mcp.connectionManager.reconnect(input.name);
   }
 }
 

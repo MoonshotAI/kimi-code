@@ -1,9 +1,9 @@
 /**
  * `file` domain — `IFileService` contract and error helpers.
  *
- * Process-global upload store backing the `/files` REST endpoints: persists
- * uploaded bytes via `IBlobStore` and their `FileMeta` index in the same
- * store, then hands callers a stream back on download. Bound at App scope.
+ * Process-global upload store: persists uploaded bytes via `IBlobStore` and
+ * their `FileMeta` index in the same store, then hands callers a stream back
+ * on download. Bound at App scope.
  */
 
 import type { Readable } from 'node:stream';

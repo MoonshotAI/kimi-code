@@ -1,11 +1,13 @@
 /**
- * `question` domain (L7) — `ISessionQuestionService` implementation.
+ * `question` domain — `ISessionQuestionService` implementation.
  *
  * Typed facade over the `interaction` kernel for ask-user requests; owns no
  * pending state of its own (the kernel holds it). Bound at Session scope.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 
 import {

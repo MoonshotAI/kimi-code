@@ -1,6 +1,6 @@
 /**
  * Shared MCP server wire schema for session creation and plugin manifests.
- * Mirrors `agent-core-v2/agent/mcp/config-schema.ts`.
+ * Mirrors `agent-core-v2/mcpCore/config-schema.ts`.
  */
 
 import { z } from 'zod';
@@ -42,3 +42,5 @@ export const mcpServerConfigSchema = z.discriminatedUnion('transport', [
     ...mcpServerCommonFields,
   }),
 ]);
+
+export type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;

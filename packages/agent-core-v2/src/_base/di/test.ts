@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — scoped test host and service-stub helpers for DI domain tests.
+ * `di` domain — scoped test host and service-stub helpers for DI domain tests.
  */
 
 export {
@@ -13,12 +13,12 @@ export type {
 } from './testInstantiationService';
 
 import { type ServiceIdentifier } from './instantiation';
-import { createAppScope, LifecycleScope, Scope, type ScopeSeed } from './scope';
+import { createAppScope, Scope, type ScopeKind, type ScopeSeed } from './scope';
 
 export interface ScopedTestHost {
   readonly app: Scope;
-  child(kind: LifecycleScope, id: string, stubs?: ScopeSeed): Scope;
-  childOf(parent: Scope, kind: LifecycleScope, id: string, stubs?: ScopeSeed): Scope;
+  child(kind: ScopeKind, id: string, stubs?: ScopeSeed): Scope;
+  childOf(parent: Scope, kind: ScopeKind, id: string, stubs?: ScopeSeed): Scope;
   dispose(): void;
 }
 

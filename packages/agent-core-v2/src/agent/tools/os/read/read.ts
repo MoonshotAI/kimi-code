@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IReadTool` contract.
+ * `tools` domain — `IReadTool` contract.
  *
  * Public contract of Read, the model's UTF-8 text file reader. Renders a
  * text file as `<line-number>\t<content>` per line as `output`, and rides a
@@ -9,8 +9,11 @@
  * are displayed with LF line endings; mixed or lone carriage returns are
  * shown as `\r` so the model can reproduce them exactly.
  *
- * Binary, non-UTF-8, NUL-containing, image and video files are refused;
- * images/videos are redirected to ReadMediaFile. Supports one-based
+ * UTF-16 LE/BE text files (with a BOM, or recognized via the zero-byte
+ * parity heuristic) are transparently transcoded to UTF-8 for display, up to
+ * `TRANSCODE_MAX_BYTES`. Binary, other non-UTF encodings, NUL-containing,
+ * image and video files are refused; images/videos are redirected to
+ * ReadMediaFile. Supports one-based
  * `line_offset` / `n_lines` pagination and a negative `line_offset` tail
  * mode, bounded by the per-call caps owned here (`MAX_LINES`,
  * `MAX_LINE_LENGTH`, `MAX_BYTES`).
@@ -26,6 +29,13 @@ import { type AgentTool } from '#/tool/toolContract';
 export const MAX_LINES: number = 1000;
 export const MAX_LINE_LENGTH: number = 2000;
 export const MAX_BYTES: number = 100 * 1024;
+
+/**
+ * Largest file the Read tool transcodes from UTF-16 in memory. Unlike the
+ * streaming UTF-8 path, transcoding needs the whole file decoded at once;
+ * 10 MiB mirrors kap-server's `FS_READ_MAX_BYTES`.
+ */
+export const TRANSCODE_MAX_BYTES: number = 10 * 1024 * 1024;
 
 const PositiveLineOffsetSchema = z.number().int().min(1);
 const TailLineOffsetSchema = z.number().int().min(-MAX_LINES).max(-1);

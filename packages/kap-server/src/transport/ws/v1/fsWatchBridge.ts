@@ -1,9 +1,9 @@
 /**
  * `FsWatchBridge` — volatile `/api/v1/ws` delivery for filesystem changes.
  *
- * Turns the core `ISessionFsWatchService.onDidChangeFiles` feed into
- * `event.fs.changed` frames on the v1 WebSocket, byte-compatible with the v1
- * server (`packages/server/.../fsWatcherService.ts`):
+ * Turns the core `IWorkspaceFsWatchService` feed into `event.fs.changed`
+ * frames on the v1 WebSocket, byte-compatible with the v1 server
+ * (`packages/server/.../fsWatcherService.ts`):
  *
  *   client → `{type:'watch_fs_add',    id, payload:{session_id, paths}}`
  *   client → `{type:'watch_fs_remove', id, payload:{session_id, paths}}`
@@ -18,9 +18,12 @@
  * to the socket — they never enter the broadcaster / journal (fs changes are
  * volatile: on overflow the client sees `truncated` and re-syncs).
  *
- * The core `ISessionFsWatchService` keeps a single subscription set per
- * session; the bridge drives it with the **union** of every connection's
- * paths for that session, then re-filters per connection on the way out.
+ * The core watch service is Workspace-scoped: one os watcher per handler,
+ * shared by every session of the workspace. The bridge holds ONE
+ * `IWorkspaceFsWatchSubscription` per session (driven with the union of every
+ * connection's paths for that session) and re-filters per connection on the
+ * way out — two sessions of one workspace fan out from the same handler
+ * watch instead of hanging a second os watcher.
  */
 
 import { isAbsolute, relative, sep } from 'node:path';
@@ -28,12 +31,16 @@ import { isAbsolute, relative, sep } from 'node:path';
 import {
   type IDisposable,
   type ISessionScopeHandle,
-  ISessionFsWatchService,
-  ISessionLifecycleService,
+  IWorkspaceFsWatchService,
   ISessionWorkspaceContext,
+  getLiveSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import type { FsChangeEntry, FsChangeEvent } from '@moonshot-ai/agent-core-v2/session/sessionFs/fsWatch';
+import type {
+  FsChangeEntry,
+  FsChangeEvent,
+  IWorkspaceFsWatchSubscription,
+} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fsWatch';
 
 import type { EventEnvelope, JournalLogger } from './sessionEventJournal';
 
@@ -75,7 +82,7 @@ interface ConnEntry {
 interface SessionWatch {
   readonly id: string;
   readonly session: ISessionScopeHandle;
-  readonly fsWatch: ISessionFsWatchService;
+  readonly fsWatch: IWorkspaceFsWatchSubscription;
   readonly workspace: ISessionWorkspaceContext;
   readonly conns: Map<string, ConnEntry>;
   union: Set<string>;
@@ -176,12 +183,14 @@ export class FsWatchBridge {
   private resolveSession(sessionId: string): SessionWatch | undefined {
     const existing = this.bySession.get(sessionId);
     if (existing !== undefined) return existing;
-    const session = this.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(this.core.accessor, sessionId);
     if (session === undefined) return undefined;
     const sw: SessionWatch = {
       id: sessionId,
       session,
-      fsWatch: session.accessor.get(ISessionFsWatchService),
+      // One subscription per session, held on the handler-shared Workspace
+      // watch service (resolved through the session's parent scope).
+      fsWatch: session.accessor.get(IWorkspaceFsWatchService).subscribe(),
       workspace: session.accessor.get(ISessionWorkspaceContext),
       conns: new Map(),
       union: new Set(),
@@ -208,6 +217,7 @@ export class FsWatchBridge {
     sw.sub?.dispose();
     sw.sub = undefined;
     sw.fsWatch.setWatchedPaths([]);
+    sw.fsWatch.dispose();
     this.bySession.delete(sw.id);
   }
 

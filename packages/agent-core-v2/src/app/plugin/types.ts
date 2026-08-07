@@ -1,5 +1,5 @@
 import type { HookDefConfig } from '#/agent/externalHooks/configSection';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 export type PluginDiagnosticSeverity = 'error' | 'warn' | 'info';
 
@@ -15,6 +15,11 @@ export interface PluginAuthor {
 
 export interface PluginSessionStart {
   readonly skill: string;
+}
+
+export interface PluginAgentRoot {
+  readonly path: string;
+  readonly source: 'plugin';
 }
 
 export interface PluginInterface {
@@ -157,6 +162,15 @@ export interface ReloadSummary {
   readonly added: readonly string[];
   readonly removed: readonly string[];
   readonly errors: ReadonlyArray<{ readonly id: string; readonly message: string }>;
+}
+
+export interface PluginMutation {
+  readonly kind: 'install' | 'enable' | 'disable' | 'remove' | 'mcp-server';
+  readonly id: string;
+}
+
+export interface PluginMutationSummary extends ReloadSummary {
+  readonly mutation: PluginMutation;
 }
 
 export interface PluginUpdateStatus {

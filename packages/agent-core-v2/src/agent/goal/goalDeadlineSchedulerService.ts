@@ -1,12 +1,13 @@
 /**
- * `goal` domain (L4) — `IGoalDeadlineScheduler` implementation.
+ * `goal` domain — `IGoalDeadlineScheduler` implementation.
  *
  * Measures monotonic elapsed time and schedules disposable one-shot deadlines
  * with the host timer API. Bound at App scope.
  */
 
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 

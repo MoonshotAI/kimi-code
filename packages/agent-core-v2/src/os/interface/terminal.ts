@@ -1,12 +1,10 @@
 /**
- * `terminal` domain (L6) — interactive terminal (PTY) contract.
+ * `terminal` domain — interactive terminal (PTY) contract.
  *
  * Defines the App-scoped `IHostTerminalService` that owns the actual OS terminal
  * processes and the low-level process/stream primitives (`TerminalProcess`,
  * `TerminalSpawnOptions`, `TerminalAttachSink`, `TerminalFrame`) used to wire
- * terminal I/O to a transport. The session-scoped facade
- * (`ISessionTerminalService`) lives in `src/session/terminal` and is the
- * surface most business code and the edge consume.
+ * terminal I/O to a transport.
  *
  * Wire types (`Terminal`, `CreateTerminalRequest`, frame messages) are defined
  * here — the terminal REST schemas as zod, the attach-frame messages as plain

@@ -1,29 +1,48 @@
 /**
- * `di` domain (L0) — DI Scope tree (`Scope`, `LifecycleScope`) and scoped service registry.
+ * `di` domain — DI Scope tree (`Scope`) and scoped service registry.
  *
  * Scoped services are resolved when their scope is created by default;
  * registrations that defer construction until first resolution use `OnDemand`.
+ *
+ * The kernel only knows the scope tree and the `ScopeKind` partial order.
+ * The tier set is a business concept: the host bootstrap declares it through
+ * `setScopeTopology` (see `src/app/scopes.ts`).
  */
 
+import { BugIndicatingError } from '../errors/errors';
 import { SyncDescriptor } from './descriptors';
+import { ScopeActivation, type ProvideAllEntry } from './instantiation';
 import type { ServiceIdentifier, ServicesAccessor, IInstantiationService } from './instantiation';
 import { InstantiationService } from './instantiationService';
 import { DisposableStore, type IDisposable } from './lifecycle';
+import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
 import { ServiceCollection } from './serviceCollection';
+import { watchScopeUnits } from './scopeUnits';
 
-export enum LifecycleScope {
-  App = 0,
-  Session = 1,
-  Agent = 2,
-}
+export { ScopeActivation };
 
-export enum ScopeActivation {
-  OnScopeCreated = 0,
-  OnDemand = 1,
+export type ScopeKind = string;
+
+let _scopeTopology: readonly string[] | undefined;
+
+export function setScopeTopology(kinds: readonly string[]): void {
+  if (_scopeTopology === undefined) {
+    _scopeTopology = [...kinds];
+    return;
+  }
+  if (
+    _scopeTopology.length === kinds.length &&
+    _scopeTopology.every((kind, index) => kind === kinds[index])
+  ) {
+    return;
+  }
+  throw new BugIndicatingError(
+    `scope topology already declared as [${_scopeTopology.join(', ')}]; cannot redeclare as [${kinds.join(', ')}]`,
+  );
 }
 
 export interface ScopedEntry {
-  readonly scope: LifecycleScope;
+  readonly scope: ScopeKind;
   readonly id: ServiceIdentifier<unknown>;
   readonly descriptor: SyncDescriptor<unknown>;
   readonly domain: string;
@@ -33,7 +52,7 @@ export interface ScopedEntry {
 const _scopedRegistry: ScopedEntry[] = [];
 
 export function registerScopedService<T>(
-  scope: LifecycleScope,
+  scope: ScopeKind,
   id: ServiceIdentifier<T>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctor: new (...args: any[]) => T,
@@ -50,7 +69,7 @@ export function registerScopedService<T>(
   });
 }
 
-export function getScopedServiceDescriptors(scope: LifecycleScope): ReadonlyArray<ScopedEntry> {
+export function getScopedServiceDescriptors(scope: ScopeKind): ReadonlyArray<ScopedEntry> {
   return _scopedRegistry.filter((entry) => entry.scope === scope);
 }
 
@@ -66,26 +85,23 @@ export type ScopeSeed = ReadonlyArray<
 export interface ScopeOptions {
   readonly id?: string;
   readonly extra?: ScopeSeed;
+  readonly assemble?: (container: InstantiationService) => void;
 }
 
-export interface IScopeHandle<K extends LifecycleScope = LifecycleScope> {
+export interface IScopeHandle<K extends ScopeKind = ScopeKind> {
   readonly id: string;
   readonly kind: K;
   readonly accessor: ServicesAccessor;
   dispose(): void;
 }
 
-export type IAppScopeHandle = IScopeHandle<LifecycleScope.App>;
-export type ISessionScopeHandle = IScopeHandle<LifecycleScope.Session>;
-export type IAgentScopeHandle = IScopeHandle<LifecycleScope.Agent>;
+export type IAppScopeHandle = IScopeHandle<'app'>;
+export type IWorkspaceScopeHandle = IScopeHandle<'workspace'>;
+export type ISessionScopeHandle = IScopeHandle<'session'>;
+export type IAgentScopeHandle = IScopeHandle<'agent'>;
 
-function buildCollection(kind: LifecycleScope, extra?: ScopeSeed): ServiceCollection {
+function buildCollection(extra?: ScopeSeed): ServiceCollection {
   const collection = new ServiceCollection();
-  for (const entry of _scopedRegistry) {
-    if (entry.scope === kind) {
-      collection.set(entry.id, entry.descriptor);
-    }
-  }
   if (extra) {
     for (const [id, value] of extra) {
       collection.set(id, value);
@@ -94,33 +110,40 @@ function buildCollection(kind: LifecycleScope, extra?: ScopeSeed): ServiceCollec
   return collection;
 }
 
-function activateScopeServices(
+function provideScopeServices(
   instantiation: IInstantiationService,
-  kind: LifecycleScope,
+  kind: ScopeKind,
   collection: ServiceCollection,
 ): void {
+  const entries: ProvideAllEntry[] = [];
   for (const entry of _scopedRegistry) {
-    if (
-      entry.scope !== kind ||
-      entry.activation !== ScopeActivation.OnScopeCreated ||
-      collection.get(entry.id) !== entry.descriptor
-    ) {
+    if (entry.scope !== kind || collection.get(entry.id) !== undefined) {
       continue;
     }
-    instantiation.invokeFunction((accessor) => accessor.get(entry.id));
+    entries.push({
+      id: entry.id,
+      descriptor: entry.descriptor,
+      options: {
+        activation: entry.activation === ScopeActivation.OnDemand ? 'ondemand' : 'eager',
+      },
+    });
   }
+  instantiation.provideAll(entries);
 }
 
 export function createScopedChildHandle(
   parent: IInstantiationService,
-  kind: LifecycleScope,
+  kind: ScopeKind,
   id: string,
   options: ScopeOptions = {},
 ): IScopeHandle {
-  const collection = buildCollection(kind, options.extra);
+  const collection = buildCollection(options.extra);
   const child = parent.createChild(collection);
+  (child as InstantiationService).debugLabel = id;
   try {
-    activateScopeServices(child, kind, collection);
+    watchScopeUnits(child as InstantiationService, kind);
+    options.assemble?.(child as InstantiationService);
+    provideScopeServices(child, kind, collection);
   } catch (error) {
     child.dispose();
     throw error;
@@ -137,26 +160,42 @@ export class Scope implements IDisposable {
   readonly accessor: ServicesAccessor;
 
   private readonly _store = new DisposableStore();
+  private readonly _ledger: Ledger;
+  private _ledgerEntry: LedgerEntry | undefined;
   private _disposed = false;
 
   private constructor(
     readonly id: string,
-    readonly kind: LifecycleScope,
+    readonly kind: ScopeKind,
     readonly instantiation: IInstantiationService,
     private readonly _parent?: Scope,
   ) {
+    this._ledger = new Ledger(`scope:${id}`);
+    this._ledger.register(() => {
+      this.instantiation.dispose();
+    }, 'instantiation');
+    this._ledger.register(() => {
+      this._store.dispose();
+    }, 'store');
     this.accessor = {
       get: <T>(serviceId: ServiceIdentifier<T>): T =>
         instantiation.invokeFunction((a) => a.get(serviceId)),
     };
   }
 
+  get ledger(): Ledger {
+    return this._ledger;
+  }
+
   static createApp(options: ScopeOptions = {}): Scope {
-    const kind = LifecycleScope.App;
-    const collection = buildCollection(kind, options.extra);
+    const kind: ScopeKind = 'app';
+    const collection = buildCollection(options.extra);
     const instantiation = new InstantiationService(collection, true);
+    instantiation.debugLabel = options.id ?? 'app';
     try {
-      activateScopeServices(instantiation, kind, collection);
+      watchScopeUnits(instantiation, kind);
+      options.assemble?.(instantiation);
+      provideScopeServices(instantiation, kind, collection);
     } catch (error) {
       instantiation.dispose();
       throw error;
@@ -170,26 +209,36 @@ export class Scope implements IDisposable {
     }
   }
 
-  createChild(kind: LifecycleScope, id: string, options: ScopeOptions = {}): Scope {
+  createChild(kind: ScopeKind, id: string, options: ScopeOptions = {}): Scope {
     this._assertNotDisposed();
-    if (kind <= this.kind) {
-      throw new Error(
-        `child scope kind ${LifecycleScope[kind]}(${kind}) must be greater than parent kind ${LifecycleScope[this.kind]}(${this.kind})`,
-      );
+    if (_scopeTopology !== undefined) {
+      const parentIndex = _scopeTopology.indexOf(this.kind);
+      const childIndex = _scopeTopology.indexOf(kind);
+      if (parentIndex === -1 || childIndex === -1 || childIndex <= parentIndex) {
+        throw new Error(
+          `child scope kind '${kind}' must be greater than parent kind '${this.kind}' in the declared scope topology`,
+        );
+      }
     }
     if (this.children.has(id)) {
       throw new Error(`Scope '${this.id}' already has a child with id '${id}'`);
     }
-    const collection = buildCollection(kind, options.extra);
+    const collection = buildCollection(options.extra);
     const childInstantiation = this.instantiation.createChild(collection);
+    (childInstantiation as InstantiationService).debugLabel = id;
     try {
-      activateScopeServices(childInstantiation, kind, collection);
+      watchScopeUnits(childInstantiation as InstantiationService, kind);
+      options.assemble?.(childInstantiation as InstantiationService);
+      provideScopeServices(childInstantiation, kind, collection);
     } catch (error) {
       childInstantiation.dispose();
       throw error;
     }
     const child = new Scope(id, kind, childInstantiation, this);
     this.children.set(id, child);
+    child._ledgerEntry = this._ledger.register(() => {
+      child.dispose();
+    }, `scope:${id}`);
     return child;
   }
 
@@ -203,17 +252,15 @@ export class Scope implements IDisposable {
     }
     this._disposed = true;
 
-    const kids = Array.from(this.children.values());
-    this.children.clear();
-    for (const child of kids) {
-      child.dispose();
-    }
-
-    this._store.dispose();
-    this.instantiation.dispose();
-
-    if (this._parent) {
-      this._parent.children.delete(this.id);
+    this._ledgerEntry?.release();
+    this._ledgerEntry = undefined;
+    try {
+      void this._ledger.teardown('scope-close');
+    } finally {
+      this.children.clear();
+      if (this._parent) {
+        this._parent.children.delete(this.id);
+      }
     }
   }
 }

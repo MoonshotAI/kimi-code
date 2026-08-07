@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 let home: string;
 let server: RunningServer | undefined;
@@ -35,6 +36,7 @@ afterEach(async () => {
 
 async function boot(): Promise<RunningServer> {
   server = await startServer({
+    hostIdentity: TEST_HOST_IDENTITY,
     host: '127.0.0.1',
     port: 0,
     homeDir: home,

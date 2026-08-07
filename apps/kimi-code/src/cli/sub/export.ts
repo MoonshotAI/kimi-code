@@ -15,6 +15,7 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 import {
   createKimiHarness,
+  createKimiHarnessV2,
   type ExportSessionInput,
   type ExportSessionResult,
   type KimiHarness,
@@ -29,6 +30,8 @@ import { createCliTelemetryBootstrap, initializeCliTelemetry } from '#/cli/telem
 import { detectInstallSource } from '#/cli/update/source';
 import { createKimiCodeHostIdentity } from '#/cli/version';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
+
+import { isKimiV2Enabled } from '../experimental-v2';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -120,15 +123,22 @@ export function registerExportCommand(parent: Command, deps?: Partial<ExportDeps
         sessionId: string | undefined,
         options: { output?: string; yes?: boolean; includeGlobalLog?: boolean },
       ) => {
-        await handleExport(createDefaultExportDeps(deps), sessionId, options.output, {
-          yes: options.yes === true,
-          includeGlobalLog: options.includeGlobalLog !== false,
-        });
+        const resolved = createDefaultExportDeps(deps);
+        try {
+          await handleExport(resolved, sessionId, options.output, {
+            yes: options.yes === true,
+            includeGlobalLog: options.includeGlobalLog !== false,
+          });
+        } finally {
+          await resolved.close();
+        }
       },
     );
 }
 
-function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDeps {
+function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDeps & {
+  readonly close: () => Promise<void>;
+} {
   let harness: KimiHarness | undefined;
   let telemetryBootstrap: ReturnType<typeof createCliTelemetryBootstrap> | undefined;
   let telemetryInitialized = false;
@@ -145,7 +155,9 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
   };
   const getHarness = (): KimiHarness => {
     const currentTelemetryBootstrap = getTelemetryBootstrap();
-    harness ??= createKimiHarness({
+    // Same engine gate as `kimi -p` / the TUI: the SDK's v2-backed harness by
+    // default, the legacy agent-core harness when KIMI_CODE_LEGACY_FLAG is set.
+    harness ??= (isKimiV2Enabled() ? createKimiHarnessV2 : createKimiHarness)({
       homeDir: currentTelemetryBootstrap.homeDir,
       identity,
       telemetry: telemetryClient,
@@ -197,6 +209,12 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
     stdout: overrides.stdout ?? process.stdout,
     stderr: overrides.stderr ?? process.stderr,
     exit: overrides.exit ?? ((code: number) => process.exit(code)),
+    // The v2 harness boots an engine whose watchers hold the event loop open;
+    // close it so a one-shot command can exit. No-op when the run never needed
+    // the harness.
+    close: async () => {
+      await harness?.close();
+    },
   };
 }
 

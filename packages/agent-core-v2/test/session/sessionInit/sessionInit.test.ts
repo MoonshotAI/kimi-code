@@ -9,13 +9,14 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInitService } from '#/session/sessionInit/sessionInit';
 import { SessionInitService } from '#/session/sessionInit/sessionInitService';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
@@ -30,6 +31,7 @@ describe('SessionInitService', () => {
   let ix: TestInstantiationService;
   let events: unknown[];
   let appendSystemReminder: ReturnType<typeof vi.fn>;
+  let seedInjected: ReturnType<typeof vi.fn>;
   let flush: ReturnType<typeof vi.fn>;
   let republishStatus: ReturnType<typeof vi.fn>;
   let create: ReturnType<typeof vi.fn>;
@@ -41,6 +43,7 @@ describe('SessionInitService', () => {
     ix = disposables.add(new TestInstantiationService());
     events = [];
     appendSystemReminder = vi.fn();
+    seedInjected = vi.fn();
     flush = vi.fn(async () => {});
     republishStatus = vi.fn(() => {
       events.push({ type: 'agent.status.updated', model: 'mock-model' });
@@ -68,7 +71,7 @@ describe('SessionInitService', () => {
     const eventBus = { publish: vi.fn((event: unknown) => events.push(event)) };
     const telemetry = { track: vi.fn(), track2: vi.fn() };
     const profile = {
-      data: () => ({ modelAlias: 'mock-model', thinkingLevel: 'off', cwd: WORK_DIR }),
+      data: () => ({ modelAlias: 'mock-model', thinkingLevel: 'off' }),
     };
     const permissionMode = { mode: 'auto', setMode: vi.fn() };
 
@@ -81,6 +84,7 @@ describe('SessionInitService', () => {
           if (id === IAgentProfileService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentSystemReminderService) return { appendSystemReminder };
+          if (id === IAgentAgentsMdReminderService) return { seedInjected };
           if (id === IWireService) return { flush };
           if (id === IEventBus) return eventBus;
           if (id === ITelemetryService) return telemetry;
@@ -93,7 +97,8 @@ describe('SessionInitService', () => {
       accessor: {
         get: (id: unknown) => {
           if (id === IAgentPermissionModeService) return permissionMode;
-          if (id === IAgentProfileService) return { republishStatus };
+          if (id === IAgentProfileService)
+            return { republishStatus, getEffectiveThinkingLevel: () => 'off' };
           return undefined;
         },
       },
@@ -122,6 +127,10 @@ describe('SessionInitService', () => {
       _serviceBrand: undefined,
       homeDir: '/home/brand',
     } as unknown as IBootstrapService);
+    ix.stub(ISessionContext, {
+      _serviceBrand: undefined,
+      cwd: WORK_DIR,
+    } as unknown as ISessionContext);
     ix.set(ISessionInitService, new SyncDescriptor(SessionInitService));
   });
 
@@ -133,7 +142,7 @@ describe('SessionInitService', () => {
 
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]![0]).toMatchObject({
-      binding: { profile: 'coder', model: 'mock-model', thinking: 'off', cwd: WORK_DIR },
+      binding: { profile: 'coder', model: 'mock-model', thinking: 'off' },
     });
 
     expect(run).toHaveBeenCalledTimes(1);
@@ -149,6 +158,8 @@ describe('SessionInitService', () => {
     expect(reminder).toContain('Latest AGENTS.md file content:');
     expect(reminder).toContain(AGENTS_MD);
 
+    expect(seedInjected).toHaveBeenCalledWith([AGENTS_MD_PATH], WORK_DIR);
+
     expect(flush).toHaveBeenCalledTimes(1);
 
     expect(events).toContainEqual(
@@ -158,6 +169,8 @@ describe('SessionInitService', () => {
         subagentName: 'coder',
         parentToolCallId: 'generate-agents-md',
         callerAgentId: 'main',
+        model: 'mock-model',
+        thinkingEffort: 'off',
       }),
     );
     expect(republishStatus).toHaveBeenCalledTimes(1);
@@ -199,8 +212,6 @@ describe('SessionInitService', () => {
     run.mockImplementationOnce((agentId: string, _req: unknown, opts: { signal: AbortSignal }) => ({
       agentId,
       turn: {},
-      // The real lifecycle rejects the run completion when the launch signal
-      // aborts; mirror that so the service-level propagation is exercised.
       completion: new Promise<{ summary: string }>((_resolve, reject) => {
         opts.signal.addEventListener('abort', () => reject(opts.signal.reason));
       }),
@@ -212,8 +223,6 @@ describe('SessionInitService', () => {
     svc.cancelInit();
 
     const error = await pending.catch((e) => e);
-    // Surfaces as a user cancellation (TUI resets quietly on isAbortError),
-    // never as SESSION_INIT_FAILED, and without a subagent.failed event.
     expect(error).toBeInstanceOf(UserCancellationError);
     expect(events).not.toContainEqual(
       expect.objectContaining({ type: 'subagent.failed', subagentId: 'agent-0' }),

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,11 +9,13 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
 import { GitService } from '#/app/git/gitService';
+import { findGitWorkTree } from '#/app/git/workTree';
 import { ErrorCodes } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
+import { normalize } from 'pathe';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, {
@@ -36,6 +38,7 @@ describe('GitService', () => {
     git(repo, 'init');
     git(repo, 'config', 'user.email', 'test@example.com');
     git(repo, 'config', 'user.name', 'Test');
+    git(repo, 'config', 'commit.gpgsign', 'false');
     disposables = new DisposableStore();
     ix = createServices(disposables, {
       additionalServices: (reg) => {
@@ -133,6 +136,85 @@ describe('GitService', () => {
       await expect(
         service.diff(repo, 'missing.txt', join(repo, 'missing.txt')),
       ).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+    });
+  });
+
+  describe('findWorkTree', () => {
+    it('finds the repo root from a nested subdirectory', async () => {
+      mkdirSync(join(repo, 'a', 'b'), { recursive: true });
+
+      const result = await service.findWorkTree(join(repo, 'a', 'b'));
+
+      expect(result).toEqual({
+        root: normalize(repo),
+        dotGitPath: normalize(join(repo, '.git')),
+        controlDirPath: normalize(join(repo, '.git')),
+      });
+    });
+
+    it('returns null when no ancestor holds a .git entry', async () => {
+      const plain = mkdtempSync(join(tmpdir(), 'git-service-plain-'));
+      try {
+        await expect(service.findWorkTree(plain)).resolves.toBeNull();
+      } finally {
+        rmSync(plain, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves an absolute gitdir pointer in a .git file', async () => {
+      const wt = mkdtempSync(join(tmpdir(), 'git-service-wt-'));
+      try {
+        const control = join(repo, '.git', 'worktrees', 'wt');
+        writeFileSync(join(wt, '.git'), `gitdir: ${control}\n`);
+
+        const result = await service.findWorkTree(wt);
+
+        expect(result?.root).toBe(normalize(wt));
+        expect(result?.dotGitPath).toBe(normalize(join(wt, '.git')));
+        expect(result?.controlDirPath).toBe(normalize(control));
+      } finally {
+        rmSync(wt, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves a relative gitdir pointer against the marker parent', async () => {
+      const wt = mkdtempSync(join(tmpdir(), 'git-service-wt-'));
+      try {
+        writeFileSync(join(wt, '.git'), 'gitdir: ../gitdir-target\n');
+
+        const result = await service.findWorkTree(wt);
+
+        expect(result?.controlDirPath).toBe(normalize(join(wt, '..', 'gitdir-target')));
+      } finally {
+        rmSync(wt, { recursive: true, force: true });
+      }
+    });
+
+    it('parses a BOM-prefixed gitdir pointer', async () => {
+      const wt = mkdtempSync(join(tmpdir(), 'git-service-wt-'));
+      try {
+        writeFileSync(join(wt, '.git'), '\uFEFFgitdir: ../target\n');
+
+        const result = await service.findWorkTree(wt);
+
+        expect(result?.controlDirPath).toBe(normalize(join(wt, '..', 'target')));
+      } finally {
+        rmSync(wt, { recursive: true, force: true });
+      }
+    });
+
+    it('skips a .git file without a gitdir pointer and keeps walking up', async () => {
+      const inner = join(repo, 'inner');
+      mkdirSync(inner, { recursive: true });
+      writeFileSync(join(inner, '.git'), 'not a pointer\n');
+
+      const result = await service.findWorkTree(inner);
+
+      expect(result?.root).toBe(normalize(repo));
+    });
+
+    it('returns null for a relative cwd', async () => {
+      await expect(findGitWorkTree(new HostFileSystem(), 'some/relative/path')).resolves.toBeNull();
     });
   });
 });

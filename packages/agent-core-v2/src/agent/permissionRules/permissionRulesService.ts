@@ -1,5 +1,5 @@
 /**
- * `permissionRules` domain (L3) — `IAgentPermissionRulesService` implementation.
+ * `permissionRules` domain — `IAgentPermissionRulesService` implementation.
  *
  * Holds the agent's permission rules and deduped session-approval patterns in the
  * `wire` `PermissionRulesModel`, mutating it only through the `permission.rules.add`
@@ -8,7 +8,9 @@
  * consumers read the getters instead. Bound at Agent scope.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IWireService } from '#/wire/wire';
 import {

@@ -1,5 +1,5 @@
 /**
- * `media` domain (L4) — `IAgentVideoResolverService` implementation.
+ * `media` domain — `IAgentVideoResolverService` implementation.
  *
  * Resolves each `kimi-file://` video reference in the projected wire messages
  * to a provider-acceptable part right before the request leaves for the wire.
@@ -24,8 +24,8 @@
  */
 
 import { createHash } from 'node:crypto';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';

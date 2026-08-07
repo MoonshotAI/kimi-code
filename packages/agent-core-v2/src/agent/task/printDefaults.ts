@@ -1,9 +1,7 @@
 /**
- * `task` domain (L5) — print-mode (`kimi -p`) config-section defaults.
+ * `task` domain — print-mode (`kimi -p`) config-section defaults.
  *
- * Ports v1's `applyPrintModeConfigDefaults`
- * (`packages/agent-core/src/config/print-defaults.ts`): a headless run should
- * not be cut short by limits meant for interactive use, so every filled value
+ * A headless run should not be cut short by limits meant for interactive use, so every filled value
  * is "effectively unbounded". Fills land in the config memory layer via
  * `IConfigService.set(…, ConfigTarget.Memory)`, never on disk.
  *
@@ -14,36 +12,25 @@
  * default). Because the memory layer shadows a whole section on read, each
  * patch spreads the section's current effective value so sibling user keys
  * stay visible. Explicit user config always wins over these defaults.
+ *
+ * The wait ceiling defaults to the host timer's maximum delay
+ * (`MAX_TIMER_DELAY_MS`, ~24.8 days) expressed in seconds: effectively
+ * unbounded, while `ceilingS * 1000` can never overflow a timer.
  */
 
+import { MAX_TIMER_DELAY_MS } from '#/_base/utils/timer';
 import { ConfigTarget, type ConfigInspectValue, type IConfigService } from '#/app/config/config';
 import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
 import { SUBAGENT_SECTION } from '#/session/subagent/configSection';
 
 import { LEGACY_BACKGROUND_SECTION, TASK_SECTION } from './configSection';
 
-/**
- * Wall-clock ceiling (seconds) for the drain/steer wait once the main turn
- * ends: 10 years ≈ unbounded.
- */
-export const PRINT_WAIT_CEILING_S_DEFAULT = 315_360_000;
+export const PRINT_WAIT_CEILING_S_DEFAULT = Math.floor(MAX_TIMER_DELAY_MS / 1000);
 
-/** Cap on extra turns steered by background-task completions: ≈ unbounded. */
 export const PRINT_MAX_TURNS_DEFAULT = 100_000;
 
-/**
- * Background Bash task timeout: `0` = no timeout (the interactive default is
- * 600s). Also covers foreground commands re-armed after being moved to the
- * background on timeout, so a headless run never kills a command it detached.
- */
 export const PRINT_BASH_TASK_TIMEOUT_S_DEFAULT = 0;
 
-/**
- * Per-subagent (`Agent` / `AgentSwarm`, foreground and background) timeout:
- * `0` = no timeout (the interactive default is 2 hours). A headless run must
- * never have a subagent killed by a wall-clock cap; only the model itself may
- * stop one.
- */
 export const PRINT_SUBAGENT_TIMEOUT_MS_DEFAULT = 0;
 
 type SectionValue = Record<string, unknown>;

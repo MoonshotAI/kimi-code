@@ -1,5 +1,5 @@
 /**
- * `goal` domain (L4) — main-agent goal lifecycle contract.
+ * `goal` domain — main-agent goal lifecycle contract.
  *
  * Defines the commands and snapshots used to create, inspect, update, and clear
  * the durable goal state. Bound at Agent scope; subagent callers are rejected

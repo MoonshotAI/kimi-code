@@ -1,5 +1,5 @@
 import type { GoalSnapshot } from '#/agent/goal/types';
-import { Disposable } from "#/_base/di/lifecycle";
+import { Service } from "#/_base/di/service";
 import { renderPrompt } from "#/_base/utils/render-prompt";
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import GOAL_ACTIVE_REMINDER from './goal-active-reminder.md?raw';
@@ -10,7 +10,7 @@ export interface GoalInjectionOptions {
   readonly getGoal: () => GoalSnapshot | null;
 }
 
-export class GoalInjection extends Disposable {
+export class GoalInjection extends Service {
   constructor(
     private readonly options: GoalInjectionOptions,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,

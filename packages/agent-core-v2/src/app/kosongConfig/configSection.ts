@@ -1,5 +1,5 @@
 /**
- * `kosongConfig` domain (L3) — config-section declarations for kosong.
+ * `kosongConfig` domain — config-section declarations for kosong.
  *
  * The persistence wrapper for kosong's provider/model registries and the
  * thinking / model-catalog / secondary-model preferences: declares every
@@ -9,16 +9,15 @@
  * is re-derived from it and pinned by an `AssertExact` assertion (schema ≡
  * type at compile time); `modelCatalog` and `secondaryModel` have no
  * kosong-side type — theirs derive from the local schemas. Self-registered
- * at module load via `registerConfigSection`, so the `config` domain never
- * imports kosong types.
+ * at module load via `registerConfigSection`.
  *
  * `ProviderTypeSchema` is deliberately free-form text: vendor identity is
  * NOT enumerated at parse time. Validation happens at resolve time against
  * kosong's provider-definition registry, which is what allows external
  * packages to register new vendors without touching this schema.
  *
- * Side-effect module: production gets it from the `src/index.ts`
- * side-effect block; tests import it on demand.
+ * Side-effect module: production imports it for the registration side
+ * effects; tests import it on demand.
  */
 
 import { z } from 'zod';
@@ -44,9 +43,6 @@ import type { ThinkingConfig } from '#/kosong/model/thinking';
 import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/kosong/provider/provider';
 import { ProtocolSchema } from '#/kosong/protocol/protocol';
 
-// ---------------------------------------------------------------------------
-// `providers` — kosong's provider registry (types: `kosong/provider/provider`)
-// ---------------------------------------------------------------------------
 
 export const PROVIDERS_SECTION = 'providers';
 
@@ -82,8 +78,6 @@ export const ProviderConfigSchema = z.object({
 
 export const ProvidersSectionSchema = z.record(z.string(), ProviderConfigSchema);
 
-// Compile-time pins: the schemas must stay in lockstep with kosong's
-// hand-written types (drift in either direction fails typecheck).
 type _AssertOAuthRef = AssertExact<Equal<z.infer<typeof OAuthRefSchema>, OAuthRef>>;
 type _AssertProviderConfig = AssertExact<
   Equal<z.infer<typeof ProviderConfigSchema>, ProviderConfig>
@@ -92,8 +86,6 @@ type _AssertProvidersSection = AssertExact<
   Equal<z.infer<typeof ProvidersSectionSchema>, ProvidersSection>
 >;
 
-// The `KIMI_MODEL_PROVIDER_TYPE` / `KIMI_MODEL_API_KEY` / `KIMI_MODEL_BASE_URL`
-// environment bindings synthesize the reserved `__kimi_env__` provider entry.
 export const providersEnvBindings = envBindings(ProvidersSectionSchema, {
   [ENV_MODEL_PROVIDER_KEY]: envBindings(ProviderConfigSchema, {
     apiKey: 'KIMI_MODEL_API_KEY',
@@ -169,19 +161,9 @@ registerConfigSection(PROVIDERS_SECTION, ProvidersSectionSchema, {
   toToml: providersToToml,
 });
 
-// ---------------------------------------------------------------------------
-// `models` — kosong's model registry (types: `kosong/model/model`)
-// ---------------------------------------------------------------------------
 
 export const MODELS_SECTION = 'models';
 
-/**
- * The global default-model pointer: a single model id from `[models.*]` used
- * whenever a call site does not name a model explicitly. Cross-domain by
- * nature — written by `IModelCatalog.setDefaultModel` and the OAuth login /
- * refresh flows (`app/auth`), read by runtime resolution fallbacks. The sole
- * owner of the key constant lives here; every consumer imports it.
- */
 export const DEFAULT_MODEL_SECTION = 'defaultModel';
 
 const ModelBaseSchema = z.object({
@@ -230,8 +212,6 @@ export const ModelRecordSchema = ModelBaseSchema.extend({
 
 export const ModelsSectionSchema = z.record(z.string(), ModelRecordSchema);
 
-// Compile-time pins: the schemas must stay in lockstep with kosong's
-// hand-written types (drift in either direction fails typecheck).
 type _AssertModelOverride = AssertExact<
   Equal<z.infer<typeof ModelOverrideSchema>, ModelOverride>
 >;
@@ -240,8 +220,6 @@ type _AssertModelsSection = AssertExact<
   Equal<z.infer<typeof ModelsSectionSchema>, ModelsSection>
 >;
 
-// The transforms preserve user-defined model ids (record keys) while
-// converting each id's fields.
 export const modelsFromToml = (rawSnake: unknown): unknown => {
   if (!isPlainObject(rawSnake)) return rawSnake;
   const out: Record<string, unknown> = {};
@@ -304,9 +282,6 @@ registerConfigSection(MODELS_SECTION, ModelsSectionSchema, {
   toToml: modelsToToml,
 });
 
-// ---------------------------------------------------------------------------
-// `thinking` — thinking defaults (type: `kosong/model/thinking`)
-// ---------------------------------------------------------------------------
 
 export const THINKING_SECTION = 'thinking';
 
@@ -317,15 +292,10 @@ export const ThinkingConfigSchema = z.object({
   keep: z.string().optional(),
 });
 
-// Compile-time pin: the schema must stay in lockstep with kosong's
-// hand-written `ThinkingConfig` type (drift in either direction fails
-// typecheck).
 type _AssertThinkingConfig = AssertExact<
   Equal<z.infer<typeof ThinkingConfigSchema>, ThinkingConfig>
 >;
 
-// The `KIMI_MODEL_THINKING_EFFORT` env binding is an env-only forcedEffort
-// override; the strip keeps it out of `config.toml`.
 export const thinkingEnvBindings = envBindings(ThinkingConfigSchema, {
   forcedEffort: 'KIMI_MODEL_THINKING_EFFORT',
 });
@@ -341,11 +311,6 @@ registerConfigSection(THINKING_SECTION, ThinkingConfigSchema, {
   stripEnv: stripThinkingEnv,
 });
 
-// `secondaryModel` — the secondary-model recipe: `model` points at a
-// `[models]` entry and every `ModelOverride` field is a subagent-only patch
-// (materialized as a synthesized derived entry by `secondaryModelOverlay`).
-// On disk `[secondary_model]`; `default_effort` doubles as the subagent
-// thinking effort. No kosong-side type — derived from the schema.
 export const SECONDARY_MODEL_SECTION = 'secondaryModel';
 
 export const SECONDARY_MODEL_ENV = 'KIMI_SECONDARY_MODEL';
@@ -372,15 +337,7 @@ registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
   stripEnv: stripEnvBoundFields(secondaryModelEnvBindings),
 });
 
-// ---------------------------------------------------------------------------
-// `modelCatalog` — provider-model catalog auto-refresh cadence (no kosong type)
-// ---------------------------------------------------------------------------
 
-// Read by the kap-server model-catalog refresh scheduler to decide the
-// refresh interval and whether to refresh once on start. Env vars
-// (`KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS`,
-// `KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START`) override these values at the
-// scheduler edge.
 export const MODEL_CATALOG_SECTION = 'modelCatalog';
 
 export const ModelCatalogConfigSchema = z.object({

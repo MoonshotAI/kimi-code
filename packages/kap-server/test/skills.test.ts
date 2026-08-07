@@ -21,14 +21,13 @@
  * `routes/skills.ts`, which must match the session listing for the same cwd.
  */
 
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
-  ISessionLifecycleService,
-  ISkillCatalogRuntimeOptions,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import {
   activateSkillResultSchema,
@@ -37,6 +36,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -62,7 +62,7 @@ describe('server-v2 /api/v1 skills', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
-    server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
   });
 
@@ -107,7 +107,7 @@ describe('server-v2 /api/v1 skills', () => {
   // The main agent scope is not created automatically on session creation
   // (server-v2 gap G10); create it here so skill activation can start a turn.
   async function createMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agents = session.accessor.get(IAgentLifecycleService);
     if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });
@@ -263,6 +263,106 @@ describe('server-v2 /api/v1 skills', () => {
       expect(body.code).toBe(40001);
       expect(body.msg).toMatch(/unsupported action/);
     });
+
+    it('carries a file attachment into the activation message', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+
+      const noteBytes = Buffer.from('hello from the attachment');
+      const form = new FormData();
+      form.set('file', new Blob([noteBytes], { type: 'text/plain' }), 'note.txt');
+      const uploadRes = await fetch(`${base}/api/v1/files`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer),
+        body: form,
+      } as never);
+      const uploaded = (await uploadRes.json()) as Envelope<{ id: string; size: number }>;
+      expect(uploaded.code).toBe(0);
+
+      const { body } = await postJson<{ activated: boolean; skill_name: string }>(
+        `/api/v1/sessions/${id}/skills/update-config:activate`,
+        {
+          args: '--help',
+          attachments: [
+            {
+              type: 'file',
+              file_id: uploaded.data.id,
+              name: 'note.txt',
+              media_type: 'text/plain',
+              size: noteBytes.length,
+            },
+          ],
+        },
+      );
+      expect(body.code).toBe(0);
+      expect(body.data).toEqual({ activated: true, skill_name: 'update-config' });
+
+      // The activation's user message carries the rendered skill prompt
+      // followed by the materialized attachment's path notice — the same
+      // pipeline a prompt submission runs through.
+      const messages = await getJson<{
+        items: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
+      }>(`/api/v1/sessions/${id}/messages`);
+      const userMsg = messages.body.data.items.find((m) => m.role === 'user');
+      expect(userMsg).toBeDefined();
+      expect(userMsg!.content[0]?.type).toBe('text');
+      expect(userMsg!.content[0]?.text).toContain('User activated the skill "update-config"');
+      const notice = userMsg!.content[1];
+      expect(notice?.type).toBe('text');
+      expect(notice?.text).toContain('Attached file "note.txt"');
+      expect(notice?.text).toContain(`${noteBytes.length} bytes`);
+      const attachedPath = /bytes\): (.+) — open it with the Read tool$/.exec(notice?.text ?? '')?.[1];
+      expect(attachedPath).toBeDefined();
+      expect(attachedPath).toContain('/attachments/');
+      expect(await readFile(attachedPath!)).toEqual(noteBytes);
+    });
+
+    it('rejects an activation with a stale attachment file_id (40407)', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+
+      const { body } = await postJson<null>(
+        `/api/v1/sessions/${id}/skills/update-config:activate`,
+        {
+          attachments: [
+            { type: 'file', file_id: 'f_does_not_exist', name: 'x.txt', media_type: 'text/plain', size: 1 },
+          ],
+        },
+      );
+      expect(body.code).toBe(40407);
+    });
+
+    it('rejects an unknown skill with attachments before materializing them (40415)', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+
+      // A real upload, so skipping the skill check would stream its bytes
+      // into the session attachments dir.
+      const noteBytes = Buffer.from('must never be materialized');
+      const form = new FormData();
+      form.set('file', new Blob([noteBytes], { type: 'text/plain' }), 'note.txt');
+      const uploadRes = await fetch(`${base}/api/v1/files`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer),
+        body: form,
+      } as never);
+      const uploaded = (await uploadRes.json()) as Envelope<{ id: string }>;
+      expect(uploaded.code).toBe(0);
+
+      const { body } = await postJson<null>(
+        `/api/v1/sessions/${id}/skills/does-not-exist:activate`,
+        {
+          attachments: [
+            { type: 'file', file_id: uploaded.data.id, name: 'note.txt', media_type: 'text/plain', size: noteBytes.length },
+          ],
+        },
+      );
+      expect(body.code).toBe(40415);
+
+      // The rejected activation left no materialized attachments on disk.
+      const sessionTree = await readdir(join(home as string, 'sessions'), { recursive: true });
+      expect(sessionTree.filter((entry) => entry.includes('attachments'))).toEqual([]);
+    });
   });
 
   describe('GET /api/v1/workspaces/{wid}/skills', () => {
@@ -307,11 +407,12 @@ describe('server-v2 /api/v1 skills', () => {
       await server!.close();
       server = undefined;
       server = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
         host: '127.0.0.1',
         port: 0,
         homeDir: home,
         logLevel: 'silent',
-        seeds: [[ISkillCatalogRuntimeOptions, { _serviceBrand: undefined, explicitDirs: [explicitDir] }]] as never,
+        skillDirs: [explicitDir],
       });
       base = `http://127.0.0.1:${server.port}`;
 

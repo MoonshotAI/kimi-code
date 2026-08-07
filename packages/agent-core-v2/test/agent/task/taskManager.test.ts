@@ -21,6 +21,7 @@ import {
 } from '#/agent/tools/agent/subagent-task';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   configServices,
   createTestAgent,
@@ -1276,11 +1277,12 @@ describe('AgentTaskService', () => {
   it('getTask on an unknown id does not create persisted state', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-mgr-missing-'));
     try {
-      const { manager, persistence } = createAgentTaskService({ sessionDir });
+      const { ctx, manager, persistence } = createAgentTaskService({ sessionDir });
 
       expect(manager.getTask('bash-bogusss0')).toBeUndefined();
 
       expect(await persistence!.listTasks()).toEqual([]);
+      await ctx.get(ISessionMetadata).ready;
     } finally {
       await rm(sessionDir, { recursive: true, force: true });
     }

@@ -8,11 +8,13 @@
  * appends the side-channel system reminder. Bound at Session scope —
  * `fork('main')` is a session-level operation, so the service injects the
  * session's `IAgentLifecycleService` directly rather than resolving it through
- * the main agent's accessor. Callers materialize the main agent first (the
- * route resumes the session); forking a missing source throws.
+ * the main agent's accessor. Callers materialize the main agent first;
+ * forking a missing source throws.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';

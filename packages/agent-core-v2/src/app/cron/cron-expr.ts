@@ -14,10 +14,11 @@
  *   2. **Termination.** Computing `next` for a legal-but-never-fires
  *      expression like `0 0 31 2 *` must not spin. We bound the search
  *      at a fixed window (5 years by default) and return `null` past
- *      that — the validator at `CronCreate` reuses this signal.
+ *      that.
  */
 
-/** A parsed cron expression. Opaque to callers — pass it back into {@link computeNextCronRun}. */
+import { Error2, ErrorCodes } from '#/errors';
+
 export interface ParsedCronExpression {
   readonly raw: string;
   readonly minutes: ReadonlySet<number>;
@@ -39,16 +40,20 @@ const MS_PER_MINUTE = 60_000;
 
 export function parseCronExpression(expr: string): ParsedCronExpression {
   if (typeof expr !== 'string') {
-    throw new TypeError('cron expression must be a string');
+    throw new Error2(ErrorCodes.CRON_EXPRESSION_INVALID, 'cron expression must be a string', {
+      details: { received: typeof expr },
+    });
   }
   const trimmed = expr.trim();
   if (trimmed === '') {
-    throw new Error('cron expression is empty');
+    throw new Error2(ErrorCodes.CRON_EXPRESSION_INVALID, 'cron expression is empty');
   }
   const fields = trimmed.split(/\s+/);
   if (fields.length !== 5) {
-    throw new Error(
+    throw new Error2(
+      ErrorCodes.CRON_EXPRESSION_INVALID,
       `cron expression must have exactly 5 fields (minute hour day-of-month month day-of-week); got ${fields.length}`,
+      { details: { fieldCount: fields.length } },
     );
   }
   const [minField, hourField, domField, monthField, dowField] = fields as [
@@ -85,18 +90,26 @@ function isWildcard(field: string): boolean {
 
 function parseField(field: string, min: number, max: number, name: string): Set<number> {
   if (field === '') {
-    throw new Error(`cron ${name} field is empty`);
+    throw new Error2(ErrorCodes.CRON_EXPRESSION_INVALID, `cron ${name} field is empty`, {
+      details: { field: name },
+    });
   }
   const out = new Set<number>();
   const terms = field.split(',');
   for (const term of terms) {
     if (term === '') {
-      throw new Error(`cron ${name} field has empty term in list`);
+      throw new Error2(
+        ErrorCodes.CRON_EXPRESSION_INVALID,
+        `cron ${name} field has empty term in list`,
+        { details: { field: name } },
+      );
     }
     addTerm(out, term, min, max, name);
   }
   if (out.size === 0) {
-    throw new Error(`cron ${name} field matches no values`);
+    throw new Error2(ErrorCodes.CRON_EXPRESSION_INVALID, `cron ${name} field matches no values`, {
+      details: { field: name },
+    });
   }
   return out;
 }
@@ -105,8 +118,10 @@ const DIGIT_ONLY = /^\d+$/;
 
 function parseCronInt(raw: string, name: string, role: string): number {
   if (!DIGIT_ONLY.test(raw)) {
-    throw new Error(
+    throw new Error2(
+      ErrorCodes.CRON_EXPRESSION_INVALID,
       `cron ${name} ${role} must be a non-negative integer with digits only (got ${JSON.stringify(raw)})`,
+      { details: { field: name, role, value: raw } },
     );
   }
   return Number.parseInt(raw, 10);
@@ -120,15 +135,25 @@ function addTerm(out: Set<number>, term: string, min: number, max: number, name:
     rangePart = term.slice(0, slash);
     const stepStr = term.slice(slash + 1);
     if (stepStr === '') {
-      throw new Error(`cron ${name} step is empty in "${term}"`);
+      throw new Error2(ErrorCodes.CRON_EXPRESSION_INVALID, `cron ${name} step is empty in "${term}"`, {
+        details: { field: name, term },
+      });
     }
     const parsedStep = parseCronInt(stepStr, name, 'step');
     if (parsedStep <= 0) {
-      throw new Error(`cron ${name} step must be a positive integer (got "${stepStr}")`);
+      throw new Error2(
+        ErrorCodes.CRON_EXPRESSION_INVALID,
+        `cron ${name} step must be a positive integer (got "${stepStr}")`,
+        { details: { field: name, term, step: stepStr } },
+      );
     }
     step = parsedStep;
     if (rangePart === '') {
-      throw new Error(`cron ${name} step needs a range or "*" before "/" in "${term}"`);
+      throw new Error2(
+        ErrorCodes.CRON_EXPRESSION_INVALID,
+        `cron ${name} step needs a range or "*" before "/" in "${term}"`,
+        { details: { field: name, term } },
+      );
     }
   }
 
@@ -142,7 +167,11 @@ function addTerm(out: Set<number>, term: string, min: number, max: number, name:
     if (dash === -1) {
       const single = parseCronInt(rangePart, name, 'value');
       if (single < min || single > max) {
-        throw new Error(`cron ${name} value ${single} out of range ${min}..${max}`);
+        throw new Error2(
+          ErrorCodes.CRON_EXPRESSION_INVALID,
+          `cron ${name} value ${single} out of range ${min}..${max}`,
+          { details: { field: name, value: single, min, max } },
+        );
       }
       if (slash !== -1) {
         lo = single;
@@ -157,8 +186,10 @@ function addTerm(out: Set<number>, term: string, min: number, max: number, name:
       lo = parseCronInt(loStr, name, 'range lower bound');
       hi = parseCronInt(hiStr, name, 'range upper bound');
       if (lo < min || hi > max || lo > hi) {
-        throw new Error(
+        throw new Error2(
+          ErrorCodes.CRON_EXPRESSION_INVALID,
           `cron ${name} range ${lo}-${hi} out of bounds (must be ${min}..${max}, ascending)`,
+          { details: { field: name, lo, hi, min, max } },
         );
       }
     }

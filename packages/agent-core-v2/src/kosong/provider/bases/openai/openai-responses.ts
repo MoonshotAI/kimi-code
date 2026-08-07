@@ -1,5 +1,5 @@
 /**
- * `kosong/provider` domain (L2) — OpenAI Responses API wire base.
+ * `kosong/provider` domain — OpenAI Responses API wire base.
  *
  * Speaks the Responses wire format: `input` items, `instructions`,
  * `reasoning` blocks with encrypted content, and the native
@@ -15,6 +15,7 @@
 
 import OpenAI from 'openai';
 
+import { Error2 } from '#/_base/errors/errors';
 import {
   APIContextOverflowError,
   APIProviderQuotaExhaustedError,
@@ -41,6 +42,7 @@ import type {
 } from '#/kosong/contract/provider';
 import type { Tool } from '#/kosong/contract/tool';
 import type { TokenUsage } from '#/kosong/contract/usage';
+import { ProtocolErrors } from '#/kosong/protocol/errors';
 
 import {
   convertOpenAIError,
@@ -1092,7 +1094,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
 
     let kwargs: Record<string, unknown> = { ...this._generationKwargs };
 
-    // Per-turn intent overlays in the fixed contract order.
     if (options?.cacheKey !== undefined) {
       kwargs = { ...kwargs, prompt_cache_key: options.cacheKey };
     }
@@ -1171,7 +1172,8 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         !('responses' in client) ||
         typeof (client as { responses?: { create?: unknown } }).responses?.create !== 'function'
       ) {
-        throw new Error(
+        throw new Error2(
+          ProtocolErrors.codes.PROVIDER_API_ERROR,
           'OpenAI SDK version does not support Responses API. Upgrade to >=4.x with responses support.',
         );
       }
@@ -1213,10 +1215,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Base capability catalog — the final fallback of capability resolution.
-// `undefined` means the base knows nothing about the model.
-// ---------------------------------------------------------------------------
 
 export function getOpenAIResponsesModelCapability(modelName: string) {
   const normalized = modelName.toLowerCase();

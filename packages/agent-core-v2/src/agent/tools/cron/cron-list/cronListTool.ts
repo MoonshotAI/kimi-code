@@ -1,13 +1,12 @@
 /**
- * `tools` domain (L7) — `ICronListTool` implementation.
+ * `tools` domain — `ICronListTool` implementation.
  *
  * CronListTool — enumerate the cron tasks currently scheduled in this
  * session.
  *
- * Read-only and side-effect-free. The output mirrors the
- * `key: value\n---\n` shape used by `task/tools/task-list.ts` so
- * the LLM sees a consistent record layout across the "list scheduled
- * work" tools.
+ * Read-only and side-effect-free. The output uses a
+ * `key: value\n---\n` record layout so the LLM sees a consistent
+ * layout across the "list scheduled work" tools.
  *
  * What each record carries:
  *
@@ -29,8 +28,7 @@
  *                       decimal places. Useful context for the `stale`
  *                       flag and for the LLM's "should I still be
  *                       running?" judgement.
- *   - `stale`         — mirrors `ISessionCronService.isStale(task)`; see that
- *                       method for the precise rules
+ *   - `stale`         — mirrors `ISessionCronService.isStale(task)`
  *                       (`recurring && age >= 7 days`, gated by
  *                       `KIMI_CRON_NO_STALE`).
  *
@@ -41,13 +39,14 @@
  * through `CronCreate` (which validates), but guards against future
  * direct `store.add(...)` inserts.
  *
- * Collaborators: `ISessionCronService` (`session/cron`) for the task list,
+ * Collaborators: `ISessionCronService` for the task list,
  * staleness and per-task next-fire reads, plus the App-scope cron helpers
- * (`app/cron`) for expression parsing and timestamp formatting. Bound at
- * Agent scope.
+ * for expression parsing and timestamp formatting. Bound at Agent scope.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ISessionCronService } from '#/session/cron/sessionCronService';

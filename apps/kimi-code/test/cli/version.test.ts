@@ -4,7 +4,6 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  buildKimiDefaultHeaders,
   createKimiCodeUserAgent,
   getHostPackageJsonPath,
   getHostPackageRoot,
@@ -19,12 +18,6 @@ describe('cli version helpers', () => {
     expect(pkgPath.endsWith(join('apps', 'kimi-code', 'package.json'))).toBe(true);
     expect(getHostPackageRoot()).toBe(dirname(pkgPath));
     expect(getVersion()).toBe(pkg.version);
-  });
-
-  it('builds default headers with the kimi-code-cli user-agent', () => {
-    const headers = buildKimiDefaultHeaders('1.2.3');
-
-    expect(headers['User-Agent']).toBe('kimi-code-cli/1.2.3');
   });
 
   it('builds the product user-agent for ad-hoc fetches', () => {

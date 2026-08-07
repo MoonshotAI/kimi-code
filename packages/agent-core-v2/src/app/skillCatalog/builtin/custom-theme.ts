@@ -1,5 +1,5 @@
 /**
- * `skillCatalog` domain (L3) — builtin `custom-theme` skill definition.
+ * `skillCatalog` domain — builtin `custom-theme` skill definition.
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';
@@ -24,4 +24,5 @@ export const CUSTOM_THEME_SKILL: SkillDefinition = {
     type: parsed.metadata.type ?? 'inline',
     disableModelInvocation: true,
   },
+  productSpecific: true,
 };

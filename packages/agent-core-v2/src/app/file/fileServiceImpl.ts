@@ -1,5 +1,5 @@
 /**
- * `file` domain (L2) — `IFileService` implementation.
+ * `file` domain — `IFileService` implementation.
  *
  * Streams uploads into the `IBlobStore` under the `files` scope and keeps a
  * JSON `FileMeta` index in the same store under the `file` scope. Uploads are
@@ -14,8 +14,8 @@ import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
 import type { FileMeta } from './fileService';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import {
   IFileService,
@@ -81,7 +81,6 @@ export class FileServiceImpl implements IFileService {
     try {
       await this.blobs.putStream(BLOB_SCOPE, id, counting());
     } catch (error) {
-      // best-effort cleanup of a partially written blob
       await this.blobs.delete(BLOB_SCOPE, id).catch(() => undefined);
       throw error;
     }

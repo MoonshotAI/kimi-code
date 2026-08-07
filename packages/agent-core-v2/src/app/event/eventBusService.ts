@@ -1,23 +1,24 @@
 /**
- * `event` domain (L1) — `IEventBus` implementation.
+ * `event` domain — `IEventBus` implementation.
  *
- * Delivers published events through the `_base/event` `Emitter` primitive: one
+ * Delivers published events through the `Emitter` primitive: one
  * full-stream emitter for `subscribe(handler)` and a lazily-created per-type
  * emitter for `subscribe(type, handler)`, so a type with no subscribers costs
  * nothing on `publish`. `publish` fires the full stream first, then the
  * per-type emitter (if any), preserving producer order within a single
  * synchronous dispatch. Bound at Agent scope and constructed when the scope is
- * created; the companion `IEventService` (`./eventService`) stays registered
- * until Phase 3.
+ * created.
  */
 
-import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { type IDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 
 import { type DomainEvent, type DomainEventMap, IEventBus } from './eventBus';
 
-export class EventBusService extends Disposable implements IEventBus {
+export class EventBusService extends Service implements IEventBus {
   declare readonly _serviceBrand: undefined;
 
   private readonly allEmitter = this._register(new Emitter<DomainEvent>());

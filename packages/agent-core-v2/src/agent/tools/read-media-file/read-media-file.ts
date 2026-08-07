@@ -1,14 +1,11 @@
 /**
- * `tools` domain (L7) — `ReadMediaFileTool` contract.
+ * `tools` domain — `ReadMediaFileTool` contract.
  *
  * Public contract of the `ReadMediaFile` tool: the input zod schema the
  * model-facing parameters are derived from, the tool-owned size constants,
- * and the `VideoUploader` channel type (consumed by
- * `#/agent/media/registerMediaTools`, which binds the provider's upload
- * hook). This tool has no DI decorator — it is a deliberate exception to
- * the `registerAgentToolService` contribution table, `new`ed by
- * `AgentMediaToolsRegistrar` at Agent scope whenever the bound model
- * changes (see `readMediaFileTool.ts`).
+ * and the `VideoUploader` channel type for the provider's upload hook. This
+ * tool has no DI decorator — it is a deliberate exception to the
+ * `registerAgentToolService` contribution table.
  */
 
 import { z } from 'zod';

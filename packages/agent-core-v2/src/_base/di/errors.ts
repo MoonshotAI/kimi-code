@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — `CyclicDependencyError` raised on DI dependency cycles.
+ * `di` domain — `CyclicDependencyError` raised on DI dependency cycles.
  */
 
 import type { Graph } from './graph';
@@ -22,5 +22,15 @@ export class CyclicDependencyError extends Error {
       this.path = cycle ? cycle.split(' -> ') : [];
     }
     this.name = 'CyclicDependencyError';
+  }
+}
+
+export class CascadeConflictError extends Error {
+  constructor(
+    readonly token: string,
+    readonly detail: string,
+  ) {
+    super(`Cascade conflict resolving '${token}': ${detail}`);
+    this.name = 'CascadeConflictError';
   }
 }

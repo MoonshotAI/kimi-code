@@ -1,5 +1,5 @@
 /**
- * `cron` domain (L5) — `SessionCronService` implementation.
+ * `cron` domain — `SessionCronService` implementation.
  *
  * Session-level scheduling engine. Holds the in-memory task map (filtered
  * from `ICronTaskPersistence` by `sessionId` tag), runs the polling timer
@@ -23,7 +23,8 @@ import type { ContentPart } from '#/kosong/contract/message';
 import type { CronJobOrigin, CronMissedOrigin } from '#/agent/contextMemory/types';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
-import { type IAgentScopeHandle, LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IntervalTimer } from '#/_base/utils/timer';
 
@@ -47,6 +48,7 @@ import { IWireService } from '#/wire/wire';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
+import { BugIndicatingError } from '#/errors';
 
 import { ICronCreateTool } from '#/agent/tools/cron/cron-create/cron-create';
 import { ICronListTool } from '#/agent/tools/cron/cron-list/cron-list';
@@ -76,6 +78,7 @@ const MAX_COALESCE_ITERATIONS = 10_000;
 const CRON_ID_REGEX: RegExp = /^(?:[0-9a-f]{8}|[0-9A-HJKMNP-TV-Z]{26})$/i;
 const MAX_ID_ATTEMPTS = 8;
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class SessionCronServiceImpl extends Disposable implements ISessionCronService {
   declare readonly _serviceBrand: undefined;
 
@@ -662,7 +665,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
       if (!CRON_ID_REGEX.test(candidate)) continue;
       if (!this.tasks.has(candidate)) return candidate;
     }
-    throw new Error(
+    throw new BugIndicatingError(
       `SessionCronService: failed to generate a unique ULID after ${MAX_ID_ATTEMPTS} attempts`,
     );
   }

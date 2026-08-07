@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — `TestInstantiationService` and scoped test-container helpers.
+ * `di` domain — `TestInstantiationService` and scoped test-container helpers.
  */
 
 import * as sinon from 'sinon';
@@ -53,7 +53,9 @@ export class TestInstantiationService extends InstantiationService implements ID
     id: ServiceIdentifier<T>,
     instanceOrDescriptor: T | SyncDescriptor<T>,
   ): T | SyncDescriptor<T> | undefined {
-    return this._serviceCollection.set(id, instanceOrDescriptor);
+    const prev = this._serviceCollection.get(id);
+    this.provide(id, instanceOrDescriptor, { activation: 'ondemand' });
+    return prev;
   }
 
   public mock<T>(id: ServiceIdentifier<T>): T | sinon.SinonMock {
@@ -269,14 +271,11 @@ export class TestInstantiationService extends InstantiationService implements ID
   }
 
   public override createChild(services: ServiceCollection): TestInstantiationService {
-    if (!(services instanceof ServiceCollection)) {
-      throw new TypeError(
-        'createChild requires a ServiceCollection instance (got something else)',
-      );
-    }
-    const child = new TestInstantiationService(services, false, this);
-    (this as unknown as { _children: Set<InstantiationService> })._children.add(child);
-    return child;
+    return super.createChild(services) as TestInstantiationService;
+  }
+
+  protected override _createChildService(services: ServiceCollection): InstantiationService {
+    return new TestInstantiationService(services, false, this);
   }
 
   public override dispose(): void {

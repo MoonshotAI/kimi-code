@@ -1,5 +1,5 @@
 /**
- * `workspaceSessions` domain (L2) — `IWorkspaceSessions` implementation.
+ * `workspaceSessions` domain — `IWorkspaceSessions` implementation.
  *
  * Answers workspace-centric read queries by composing the alias resolver
  * (`workspaceAliases`) with the persisted session index (`sessionIndex`):
@@ -9,7 +9,9 @@
  * archived sessions too. Bound at App scope.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 
@@ -25,17 +27,16 @@ export class WorkspaceSessionsService implements IWorkspaceSessions {
 
   async listRecent(workspaceId: string): Promise<readonly SessionSummary[]> {
     const workspaceIds = await this.aliases.resolveAliasIds(workspaceId);
-    const page = await this.index.list({ workspaceIds, limit: RECENT_SESSIONS_LIMIT });
+    const page = await this.index.listRecent({ workspaceIds, limit: RECENT_SESSIONS_LIMIT });
     return page.items;
   }
 
   async count(workspaceId: string): Promise<number> {
     // One set-query over the alias set (legacy split buckets): a single merged
-    // listing cannot double-count, and a singleton set behaves exactly as
+    // count cannot double-count, and a singleton set behaves exactly as
     // before.
     const workspaceIds = await this.aliases.resolveAliasIds(workspaceId);
-    const page = await this.index.list({ workspaceIds, includeArchived: true });
-    return page.items.length;
+    return this.index.count({ workspaceIds, includeArchived: true });
   }
 }
 

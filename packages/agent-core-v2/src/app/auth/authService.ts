@@ -27,6 +27,7 @@ import {
   resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  type AuthManagedUserInfoResult,
   type AuthManagedUsageResult,
   type BearerTokenProvider,
   type DeviceAuthorization,
@@ -43,7 +44,9 @@ import type {
 } from './oauthProtocol';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Error2, ErrorCodes } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
@@ -98,6 +101,7 @@ interface FlowState {
   resolvedAt: string | undefined;
 }
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class OAuthService extends Disposable implements IOAuthService {
   declare readonly _serviceBrand: undefined;
   private readonly flows = new Map<string, FlowState>();
@@ -265,15 +269,24 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   getManagedUsage(provider = KIMI_CODE_PROVIDER_NAME): Promise<AuthManagedUsageResult> {
-    // Same resolution path as the managed model refresh: env-aware base url +
-    // oauth ref, so a self-hosted/proxied login environment reports its own
-    // usage endpoint. The toolkit handles token freshness and error mapping.
     const configured = this.providerService.get(provider);
     const auth = resolveKimiCodeRuntimeAuth({
       configuredBaseUrl: configured?.baseUrl,
       configuredOAuthRef: configured?.oauth,
     });
     return this.toolkit.getManagedUsage(provider, {
+      oauthRef: auth.oauthRef,
+      baseUrl: auth.baseUrl,
+    });
+  }
+
+  getManagedUserInfo(provider = KIMI_CODE_PROVIDER_NAME): Promise<AuthManagedUserInfoResult> {
+    const configured = this.providerService.get(provider);
+    const auth = resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: configured?.baseUrl,
+      configuredOAuthRef: configured?.oauth,
+    });
+    return this.toolkit.getManagedUserInfo(provider, {
       oauthRef: auth.oauthRef,
       baseUrl: auth.baseUrl,
     });
@@ -307,7 +320,9 @@ export class OAuthService extends Disposable implements IOAuthService {
       });
       const tokenProvider = this.resolveTokenProvider(KIMI_CODE_PROVIDER_NAME, auth.oauthRef);
       if (tokenProvider === undefined) {
-        throw new Error('OAuth token provider is not configured.');
+        throw new Error2(ErrorCodes.AUTH_TOKEN_MISSING, 'OAuth token provider is not configured.', {
+          details: { provider_id: KIMI_CODE_PROVIDER_NAME },
+        });
       }
       const token = await tokenProvider.getAccessToken();
       const models = await fetchManagedKimiCodeModels({
@@ -348,9 +363,6 @@ export class OAuthService extends Disposable implements IOAuthService {
         );
         await this.config.replace(PROVIDERS_SECTION, next.providers);
         await this.config.replace(MODELS_SECTION, next.models ?? {});
-        // defaultModel/thinking hold the final computed values — write them
-        // with replace (set-undefined cannot delete; set-object would merge
-        // stale keys into the previous thinking config).
         await this.config.replace(DEFAULT_MODEL_SECTION, next.defaultModel);
         await this.config.replace(THINKING_SECTION, next.thinking);
         changed.push({
@@ -531,10 +543,6 @@ export class OAuthService extends Disposable implements IOAuthService {
       await this.config.replace(SERVICES_SECTION, next.services);
     }
     if (cleanup.defaultModelCleared) {
-      // Delete, not merge: `set(domain, undefined)` resolves back to the base
-      // value by design — only `replace(domain, undefined)` actually removes
-      // the key, and leaving defaultModel dangling to a just-removed managed
-      // model keeps /api/v1/auth reporting ready=true after logout.
       await this.config.replace(DEFAULT_MODEL_SECTION, undefined);
       await this.config.replace(THINKING_SECTION, undefined);
     }
@@ -618,10 +626,6 @@ export class AuthSummaryService implements IAuthSummaryService {
   }
 
   async ensureReady(modelOverride?: string): Promise<void> {
-    // Reload so external file edits reach the kosong registries through the
-    // persistence bridge, then read the RUNTIME state from the registries —
-    // the config sections are only their persistence and may lag a pending
-    // kosong-originated persist.
     await this.config.reload();
     const providers = this.providerService.list();
     const models = this.modelService.list();
@@ -697,12 +701,6 @@ interface ManagedModel {
   readonly displayName?: string;
 }
 
-/**
- * Whether the provider is backed by the OAuth model catalog: the vendor's
- * provider definitions declare `modelSource: 'oauth-catalog'` (a registry
- * answer, not a vendor string compare) and the provider config carries an
- * OAuth ref.
- */
 function isOAuthCatalogProvider(
   provider: ProviderConfig | Record<string, unknown> | undefined,
 ): provider is ProviderConfig & { oauth: OAuthRef } {
@@ -864,7 +862,7 @@ function managedModel(
 class OAuthToolkitService extends KimiOAuthToolkit implements IOAuthToolkit {
   declare readonly _serviceBrand: undefined;
   constructor(@IBootstrapService bootstrap: IBootstrapService) {
-    super({ homeDir: bootstrap.homeDir });
+    super({ homeDir: bootstrap.homeDir, identity: bootstrap.clientIdentity });
   }
 }
 

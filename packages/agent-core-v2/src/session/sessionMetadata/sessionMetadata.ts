@@ -1,9 +1,10 @@
 /**
- * `sessionMetadata` domain (L6) — typed session metadata.
+ * `sessionMetadata` domain — typed session metadata.
  *
  * Defines the `SessionMeta` model and the `ISessionMetadata` used by upper
  * layers to read and update the session's durable metadata (title, timestamps,
- * archived flag, fork provenance). Owns the in-memory copy, persists it as a
+ * archived flag, fork provenance, the latest main turn's terminal outcome).
+ * Owns the in-memory copy, persists it as a
  * single atomic document through `storage`, and notifies changes via
  * `onDidChangeMetadata`. Session-scoped — one instance per session. The initial
  * document is materialized when the session is created.
@@ -13,8 +14,6 @@ import type { Event } from '#/_base/event';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface AgentMeta {
-  /** Absolute standard path retained for older v1 readers. Current readers
-   * derive the agent directory from the session scope and ignore this field. */
   readonly homedir?: string;
   readonly type?: 'main' | 'sub' | 'independent';
   readonly parentAgentId?: string | null;
@@ -38,6 +37,7 @@ export interface SessionMeta {
   readonly forkedFrom?: string;
   readonly agents?: Readonly<Record<string, AgentMeta>>;
   readonly custom?: Record<string, unknown>;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export type SessionMetaPatch = Partial<Omit<SessionMeta, 'id' | 'createdAt'>>;
@@ -52,7 +52,7 @@ export interface ISessionMetadata {
   readonly ready: Promise<void>;
   readonly onDidChangeMetadata: Event<SessionMetadataChangedEvent>;
   read(): Promise<SessionMeta>;
-  update(patch: SessionMetaPatch): Promise<void>;
+  update(patch: SessionMetaPatch, opts?: { readonly touchUpdatedAt?: boolean }): Promise<void>;
   setTitle(title: string): Promise<void>;
   setArchived(archived: boolean): Promise<void>;
   registerAgent(agentId: string, meta: AgentMeta): Promise<void>;

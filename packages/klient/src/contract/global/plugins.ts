@@ -1,7 +1,7 @@
 /**
  * `pluginService` — plugin management and consumption. Mirrors
  * `agent-core-v2/app/plugin/plugin.ts` and `agent-core-v2/app/plugin/types.ts`;
- * nested `McpServerConfig` mirrors `agent-core-v2/agent/mcp/config-schema.ts`,
+ * nested `McpServerConfig` mirrors `agent-core-v2/mcpCore/config-schema.ts`,
  * `HookDefConfig` mirrors `agent-core-v2/agent/externalHooks/configSection.ts`.
  * `pluginSkillRoots`, `enabledSessionStarts`, `enabledSystemPrompts`,
  * `enabledMcpServers`, and `enabledHooks` are excluded (not part of the
@@ -44,13 +44,17 @@ const hookDefSchema = z.object({
     'PermissionRequest',
     'PermissionResult',
     'UserPromptSubmit',
+    'UserPromptQueued',
+    'TurnStarted',
     'Stop',
     'StopFailure',
     'Interrupt',
     'SessionStart',
     'SessionEnd',
+    'SessionHeartbeat',
     'SubagentStart',
     'SubagentStop',
+    'TaskStarted',
     'PreCompact',
     'PostCompact',
     'Notification',

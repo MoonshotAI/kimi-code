@@ -1,3 +1,4 @@
+import { PRINT_WAIT_CEILING_S_DEFAULT } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -423,6 +424,36 @@ describe('applyPrintBackgroundPolicy', () => {
     expect(cronFirstCallAtConsumed).toBe(2);
     expect(cronNextFireAt).toHaveBeenCalled();
   });
+
+  it('steer keeps waiting under the default ceiling with tasks pending', async () => {
+    let pending = 1;
+    const turnEndings = createPrintTurnEndings();
+    const policy = applyPrintBackgroundPolicy({
+      mode: 'steer',
+      ceilingS: PRINT_WAIT_CEILING_S_DEFAULT,
+      maxTurns: 50,
+      countPending: () => pending,
+      drain: async () => {},
+      turnEndings,
+      skipTurnId: 1,
+      warn: () => {},
+      now: () => Date.now(),
+    });
+    // The default ceiling is ~24.8 days: with tasks still pending the wait
+    // must not return null early and end the run here.
+    const early = await Promise.race([
+      policy.then(() => 'returned' as const),
+      new Promise<'waiting'>((resolve) => setTimeout(() => {
+        resolve('waiting');
+      }, 50)),
+    ]);
+    expect(early).toBe('waiting');
+    // A background task completion steered a new turn; once it ends and no
+    // tasks remain, the policy returns.
+    pending = 0;
+    turnEndings.push(ending(2));
+    await policy;
+  });
 });
 
 describe('createPrintTurnEndings', () => {
@@ -451,5 +482,23 @@ describe('createPrintTurnEndings', () => {
     endings.push(ending(1));
     endings.push(ending(4));
     await expect(pending).resolves.toMatchObject({ turnId: 4 });
+  });
+
+  it('does not resolve null early when the budget exceeds the timer ceiling', async () => {
+    const endings = createPrintTurnEndings();
+    // 10 years in ms — beyond Node's 2^31-1 ms setTimeout ceiling, which an
+    // explicit `print_wait_ceiling_s` can still reach.
+    const pending = endings.next(10 * 365 * 24 * 3600 * 1000, 1);
+    // Node clamps a >2^31-1 ms setTimeout to 1ms; the wait must ride out the
+    // overflow in chunks instead of resolving null at once.
+    const early = await Promise.race([
+      pending,
+      new Promise<'waiting'>((resolve) => setTimeout(() => {
+        resolve('waiting');
+      }, 50)),
+    ]);
+    expect(early).toBe('waiting');
+    endings.push(ending(7));
+    await expect(pending).resolves.toMatchObject({ turnId: 7 });
   });
 });

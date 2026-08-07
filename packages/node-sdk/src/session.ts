@@ -11,7 +11,9 @@ import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
+  AgentCommandInfo,
   BackgroundTaskInfo,
+  CapabilityStatus,
   CompactOptions,
   CreateGoalInput,
   GetCronTasksResult,
@@ -47,6 +49,30 @@ export interface SessionOptions {
   readonly resumeState?: ResumedSessionState | undefined;
   readonly rpc: SDKRpcClientBase;
   readonly onClose?: (() => void | Promise<void>) | undefined;
+}
+
+/**
+ * The capability surface (built-in product capabilities: kimi-cu,
+ * kimi-webbridge) exists only on the v2 engine — v1 has no capability
+ * domain. Feature-detect structurally so a Session backed by v1 fails with
+ * a clear message instead of a confusing missing-method error.
+ */
+interface CapabilityRpcSurface {
+  listCapabilities(): Promise<readonly CapabilityStatus[]>;
+  getCapability(id: string): Promise<CapabilityStatus>;
+  installCapability(id: string): Promise<CapabilityStatus>;
+}
+
+export function capabilityRpc(rpc: SDKRpcClientBase): CapabilityRpcSurface {
+  const candidate = rpc as Partial<CapabilityRpcSurface>;
+  if (
+    typeof candidate.listCapabilities !== 'function' ||
+    typeof candidate.getCapability !== 'function' ||
+    typeof candidate.installCapability !== 'function'
+  ) {
+    throw new TypeError('The capability surface is unavailable on this engine (requires v2).');
+  }
+  return candidate as CapabilityRpcSurface;
 }
 
 export class Session {
@@ -347,6 +373,15 @@ export class Session {
   }
 
   /**
+   * Contributed commands registered with this session's interactive agent
+   * (agent-core-v2 only — a v1-backed session reports the empty set).
+   */
+  async listCommands(): Promise<readonly AgentCommandInfo[]> {
+    this.ensureOpen();
+    return this.rpc.listCommands({ sessionId: this.id });
+  }
+
+  /**
    * List background tasks for this session's interactive agent.
    *
    * Defaults to all tasks (including terminal/lost). Pass
@@ -524,6 +559,27 @@ export class Session {
     await this.rpc.setPluginEnabled(id, enabled);
   }
 
+  /** Built-in capabilities with layered readiness (v2 engine only). */
+  async listCapabilities(): Promise<readonly CapabilityStatus[]> {
+    this.ensureOpen();
+    return capabilityRpc(this.rpc).listCapabilities();
+  }
+
+  /** One capability's layered readiness + live install progress. */
+  async getCapability(id: string): Promise<CapabilityStatus> {
+    this.ensureOpen();
+    return capabilityRpc(this.rpc).getCapability(id);
+  }
+
+  /**
+   * Start an idempotent capability install (binary runtime + wiring) in the
+   * background; poll `getCapability` for progress.
+   */
+  async installCapability(id: string): Promise<CapabilityStatus> {
+    this.ensureOpen();
+    return capabilityRpc(this.rpc).installCapability(id);
+  }
+
   async setPluginMcpServerEnabled(
     id: string,
     server: string,
@@ -583,6 +639,24 @@ export class Session {
       pluginId: normalizedPluginId,
       commandName: normalizedCommandName,
       ...(commandArgs !== undefined ? { args: commandArgs } : {}),
+    });
+  }
+
+  /**
+   * Run a contributed command engine-side (agent-core-v2 only — a v1-backed
+   * client rejects with `not_implemented`). Unknown names reject with the
+   * engine's `request.invalid` error.
+   */
+  async runCommand(name: string, args?: string): Promise<void> {
+    this.ensureOpen();
+    const commandName = name.trim();
+    if (commandName.length === 0) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Command name cannot be empty');
+    }
+    await this.rpc.runCommand({
+      sessionId: this.id,
+      name: commandName,
+      args: normalizeOptionalString(args),
     });
   }
 

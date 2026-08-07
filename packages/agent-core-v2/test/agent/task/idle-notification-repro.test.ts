@@ -23,8 +23,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import { LifecycleScope, type IAgentScopeHandle } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle } from '#/_base/di/scope';
 import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
@@ -253,18 +253,7 @@ describe('task notification → main agent (real Agent instance)', () => {
       } as IAgentScopeHandle;
     }
 
-    // Regression for: "manual stop of a background subagent → main
-    // auto-resumes → resume fails with 'already running and cannot run
-    // concurrently'". The killed task used to settle (and notify) the
-    // moment the abort landed — while the child loop was still unwinding,
-    // so the resume guard (`ensureOwnedIdleSubagent`, which reads
-    // `loop.status().state`) rejected the auto-resume. Settlement must
-    // wait for the loop to go idle. A turn that ignores the cancel stays
-    // bounded by the task layer's SIGTERM grace instead.
     it('stop settles killed + notifies only after the child loop goes idle', async () => {
-      // Child agent whose in-flight LLM call unwinds slowly after cancel
-      // (models a tool mid-execution / a slow request abort): it rejects
-      // 200ms after the abort lands, not immediately.
       let generateStarted!: () => void;
       const inFlight = new Promise<void>((resolve) => {
         generateStarted = resolve;
@@ -300,20 +289,15 @@ describe('task notification → main agent (real Agent instance)', () => {
         const childHandle = agentScopeHandle(child, 'agent-child');
         const childLoop = child.get(IAgentLoopService);
 
-        // Launch the subagent run (what AgentTool.launch does).
         const controller = new AbortController();
         const run = await runAgentTurn(
           childHandle,
           { kind: 'prompt', prompt: 'do background work' },
           { signal: controller.signal },
         );
-        // Mirror AgentTool.launch: the task handle maps summary → result.
         const completion = run.completion.then((r) => ({ result: r.summary, usage: r.usage }));
         void completion.catch(() => {});
 
-        // Wait until the in-flight step is genuinely parked inside the LLM
-        // call — the loop reports 'running' before the request starts, and
-        // stopping that early takes a different (already-fast) path.
         await inFlight;
         expect(childLoop.status().state).toBe('running');
 
@@ -327,20 +311,13 @@ describe('task notification → main agent (real Agent instance)', () => {
           { detached: true, timeoutMs: 0 },
         );
 
-        // The main agent is idle; the killed notification auto-launches a turn.
         main.mockNextResponse({ type: 'text', text: 'ack from main agent' });
         const notificationTurnEnd = main.untilTurnEnd();
 
-        // Manual stop (TUI / REST path — no notification suppression).
         const info = await background.stop(taskId, 'User initiated stop');
         expect(info?.status).toBe('killed');
-        // Settlement waited for the child loop to unwind — this is the
-        // assertion the old race-based implementation fails.
         expect(childLoop.status().state).toBe('idle');
 
-        // The task.killed notification reaches the main agent (this is what
-        // makes main call Agent(resume="agent-child")), and by then the
-        // resume guard's precondition already holds.
         await vi.waitFor(
           () => {
             expect(main.llmCalls.length).toBeGreaterThanOrEqual(1);

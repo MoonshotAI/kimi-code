@@ -12,27 +12,31 @@ When writing business code you declare three things; the container handles the r
 
 Classes talk only to interfaces and never care how an implementation is constructed.
 
-## The three `LifecycleScope` tiers
+## The four `LifecycleScope` tiers
 
 Lifetimes form a tree, from longest to shortest:
 
 ```text
-App (0)         process-wide, single global instance
- └── Session (1)    one session
-      └── Agent (2)    one agent
+App                 process-wide, single global instance
+ └── Workspace        one workspace handler (a materialized workspace root)
+      └── Session       one session
+           └── Agent      one agent
 ```
 
 ```ts
+// src/app/scopes.ts — the business layer declares the tiers and their order;
+// the DI kernel only knows opaque string kinds plus the declared topology.
 export enum LifecycleScope {
-  App = 0,
-  Session = 1,
-  Agent = 2,
+  App = 'app',
+  Workspace = 'workspace',
+  Session = 'session',
+  Agent = 'agent',
 }
 ```
 
-- A larger number = shorter life = closer to a leaf.
+- Later in the topology = shorter life = closer to a leaf.
 - "Singleton" means **one per scope**: `ILogService` is global once; each `Session` scope has its own `ISessionMetadata`.
-- `kind` strictly increases along the parent→child direction.
+- `kind` must advance along the declared topology in the parent→child direction.
 
 ### Visibility rule
 
@@ -45,35 +49,30 @@ A child scope sees its ancestors; a parent never sees its children. Resolution w
 
 ### Disposal order
 
-Deterministic: **child scopes die first; within one scope, instances dispose in reverse construction order** (last constructed, first disposed). Business code declares which tier it lives in and never disposes by hand.
+Deterministic: **child scopes die first; within one scope, teardown runs in strict reverse registration order, one entry at a time.** The mechanism is the Ledger (`src/_base/lifecycle/`): ordered effect bookkeeping, dual-track (sync + async disposers), serial reverse-order teardown (never parallel), with the teardown reason (`'scope-close' | 'cascade' | 'unload'`) passed through to every disposer. `Disposable` / `DisposableStore` (`src/_base/di/lifecycle.ts`) delegate to it — "reverse construction order" is a Ledger property, not a container convention. Business code declares which tier it lives in and never disposes by hand.
 
-## The `(Ln)` layer number in headers
+## Dynamic DI: units and cascades
 
-The `Ln` in a file-header identity line is the domain's **dependency layer** (L0–L7), **not** its `LifecycleScope`. They are easy to confuse because both are small integers, but they answer different questions:
+Registration is not the end of the story. Every unit a container tracks — static registrations and runtime `provide`s alike — lives in a small state machine owned by the scope's cascade engine (`src/_base/di/cascadeEngine.ts`, one per scope container, orchestrating tree-wide). Vocabulary you will meet in errors, tests, and the debug surface:
 
-- `LifecycleScope` (App=0 / Session=1 / Agent=2) — **lifetime & visibility** (this stage).
-- Dependency layer `Ln` (L0–L7) — **who may import whom**: a domain at layer `L` may import only domains at layer `<= L`. Enforced by `lint:domain` from the authoritative `DOMAIN_LAYER` map in `scripts/check-domain-layers.mjs`.
+- **Unit states** — `Pending → Activating → Active`, plus `Unloading` during teardown and a sticky `Failed`. A construction failure parks the unit in `Failed` with no auto-retry: resolving it rethrows its error; an explicit `update()` reloads it.
+- **Waiting area** — a unit whose declared dependencies are missing sits `Pending` and auto-activates when they arrive, including cross-scope wake-up when an ancestor gains the token. An `ondemand` unit counts as available: consumers pull it transitively at materialization.
+- **Cascade transaction** — every `provide` / `unprovide` / `update` runs as one tree-wide transaction: contagion set from the persistent dependency graph (instance edges, child→parent across scopes) → abort hook → global reverse-topo teardown → apply the change → waiting-area recheck fixpoint → history ring. Static bootstrap shares this path: scope creation submits the kind's whole registration batch as one `provideAll`, so registration order never matters.
 
-So a Session-scoped service is not "L1" — e.g. `session` is Session-scoped but lives at **L6**. When you write the header, read the number from the layer map, not from the scope.
+## Import boundaries
 
-| Layer | Role | Representative domains |
-|---|---|---|
-| L0 | base infrastructure | `_base`, `errors`, `llmProtocol` |
-| L1 | bridges & low-level capabilities | `log`, `telemetry`, `event`, `environment`, `bootstrap`, `storage` |
-| L2 | data & cross-cutting capabilities | `records`, `wireRecord`, `config`, `provider`, `auth`, `workspace` |
-| L3 | registries & capabilities | `tool`, `toolRegistry`, `permission*`, `flag`, `skill`, `plugin` |
-| L4 | agent behaviour | `turn`, `loop`, `prompt`, `profile`, `contextMemory`, `goal`, `plan`, `swarm` |
-| L5 | async lifecycle | `background`, `mcp`, `cron`, `agentTool` |
-| L6 | coordination | `session`, `agentLifecycle`, `sessionMetadata`, `interaction`, `terminal`, `undo` |
-| L7 | boundary / edge | `gateway`, `rpc`, `approval`, `question`, `*Legacy` |
+There is no domain-layer numbering — a domain may import any other domain, guided by the dependency-direction judgment in design.md. The only mechanically enforced import boundaries are (`lint:imports`, `scripts/check-import-boundaries.mjs`):
+
+- v2 never imports v1 (`@moonshot-ai/agent-core` or any subpath).
+- The kosong subtree (`src/kosong/{contract,protocol,provider,model}`) keeps its strict internal order (`contract ← protocol ← provider/model`), purity bans (no SDKs in `contract`/`protocol`), and the `provider/bases` registration boundary.
 
 ## File-header comment convention
 
 `packages/agent-core-v2/AGENTS.md` mandates a header-only comment style:
 
 - **Header only.** Comments live solely in the top-of-file `/** */` block — never beside functions, methods, or statements. The code is the source of truth for *how*; the header states *what the module exposes and the responsibility it owns*.
-- **Identity line first.** Start with `` `<domain>` domain (Ln) — <one-line role>. `` Keep an existing `(cross-cutting)` label as-is. Write the role as a responsibility ("drives the turn lifecycle"), not a symbol list.
-- **Scope is in the filename.** `session*.ts` = Session, `agent*.ts` = Agent, no prefix = App (see service-authoring.md). State the same scope in the header so the two never drift.
+- **Identity line first.** Start with `` `<domain>` domain — <one-line role>. `` Keep an existing `(cross-cutting)` label as-is. Write the role as a responsibility ("drives the turn lifecycle"), not a symbol list.
+- **Scope is in the filename.** `workspace*.ts` = Workspace, `session*.ts` = Session, `agent*.ts` = Agent, no prefix = App (see service-authoring.md). State the same scope in the header so the two never drift.
 - **Interface files** (`<name>.ts`) state the public contract + scope: which `IXxx` they define and what it is for.
 - **Impl files** (`<name>Service.ts`) add collaborators + scope: list every imported cross-domain collaborator as a role ("persists records through `records`"); read scope from `registerScopedService(LifecycleScope.X, …)`.
 - **Contribution files** (`<targetDomain>.ts` / `<what>.contrib.ts`) state what they register into the target domain (e.g. "registers the `log` config section into `config`").
@@ -83,7 +82,7 @@ Impl file example (`sessionMetadataService.ts`):
 
 ```ts
 /**
- * `sessionMetadata` domain (L6) — `ISessionMetadata` implementation.
+ * `sessionMetadata` domain — `ISessionMetadata` implementation.
  *
  * Persists the session metadata document (`state.json`) through the `storage`
  * access-pattern store (`IAtomicDocumentStore`), rooted at the `metaScope`
