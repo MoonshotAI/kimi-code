@@ -269,6 +269,20 @@ describe('fixBashCommand — degrade on pathological input', () => {
     const slashes = '\\'.repeat(100_000);
     expect(() => fixBashCommand(slashes, 'win32')).not.toThrow();
   });
+
+  it('returns malformed input unchanged when the parser degrades (hasError)', () => {
+    // Unterminated quotes make the parser recover partial nodes with
+    // hasError; per the tree-sitter-bash caller contract such trees are
+    // "cannot analyze", so no path rewrite or fallback prepending may happen
+    // before Bash reports the original syntax error.
+    for (const command of ['echo D:\\a "x', 'rev "x', 'echo "D:\\a']) {
+      const result = fixBashCommand(command, 'win32');
+      expect(result.command).toBe(command);
+      expect(result.replacements).toEqual([]);
+      expect(result.pathChanges).toEqual([]);
+      expect(result.changed).toBe(false);
+    }
+  });
 });
 
 describe('fixBashCommand — parser fast path', () => {

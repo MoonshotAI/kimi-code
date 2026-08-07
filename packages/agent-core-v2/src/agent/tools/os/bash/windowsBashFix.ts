@@ -14,13 +14,25 @@
  *      stay byte-for-byte;
  *   2. guarded fallback function definitions for commands Git Bash lacks
  *      (`rev`, `tree`, `zip`, `tasklist`, `copy`, ...) prepended to the
- *      command, delegating to the native binary when one exists;
+ *      command, delegating to the native binary when one exists — the bodies
+ *      are byte-for-byte ports of kimi-agent `bash_fix.py` `_FALLBACK_BODIES`
+ *      (the embedded perl / PowerShell delegate snippets must stay exact), and
+ *      `pip3` / `python3` are additionally guarded against the Microsoft Store
+ *      App Execution Alias stubs in `WindowsApps`, which satisfy `command -v`
+ *      but print an install prompt instead of running the tool, so those
+ *      fallbacks are defined even when `command -v` succeeds and never
+ *      delegate to a stub path;
  *   3. the cmd.exe-only `cd /d <path>` form loses its flag;
  *   4. the existing `>nul` → `>/dev/null` redirect rewrite (context-free
  *      regex, applied to the final assembled command);
  *   5. the `MSYSTEM` variable the Git Bash launcher injects is neutralized
  *      (`export MSYSTEM=; ` prefix) so build tools detect the true Windows
  *      MSVC environment instead of defaulting to the mingw platform.
+ *
+ * Anything other than a `win32` platform passes through byte-for-byte.
+ * Commands the parser cannot analyze — budget aborts (`{ ok: false }`) and
+ * degraded error trees (`hasError: true`) — are also returned unchanged, so a
+ * malformed command reaches Bash with its original syntax error intact.
  *
  * Out of scope (deferred from the reference port): the interactive-shell
  * compatibility prelude (the Bash tool is one-shot `bash -c`), Git Bash install
@@ -38,9 +50,6 @@ export interface BashFixResult {
   readonly changed: boolean;
 }
 
-// Fallback function bodies — static bash strings ported byte-for-byte from
-// kimi-agent `bash_fix.py` `_FALLBACK_BODIES` (including the embedded perl /
-// PowerShell delegate snippets, which must stay exact).
 const FALLBACK_BODIES: Readonly<Record<string, string>> = {
 "chdir":  "cd -- \"$@\"",
 "cls":  "clear",
@@ -123,13 +132,8 @@ const FALLBACK_BODIES: Readonly<Record<string, string>> = {
 "zip":  "local __kimix_archive='' __kimix_level=Optimal __kimix_p='' __kimix_combo='' __kimix_i=0; local -a __kimix_paths=() __kimix_wpaths=() __kimix_split=(); while (( $# )); do if [[ $1 == -[!-]* && ${#1} -gt 2 ]]; then __kimix_combo=${1#-}; __kimix_split=(); shift; for (( __kimix_i=0; __kimix_i<${#__kimix_combo}; __kimix_i++ )); do __kimix_split+=(-${__kimix_combo:__kimix_i:1}); done; set -- \"${__kimix_split[@]}\" \"$@\"; continue; fi; case $1 in -r|-R|--recurse-paths|-q|--quiet) shift;; -0) __kimix_level=NoCompression; shift;; -1) __kimix_level=Fastest; shift;; -[2-9]) shift;; -*) printf '%s\\n' \"zip: unsupported option for Compress-Archive fallback: $1\" >&2; return 1;; *) if [[ -z $__kimix_archive ]]; then __kimix_archive=$1; else __kimix_paths+=(\"$1\"); fi; shift;; esac; done; if [[ -z $__kimix_archive || ${#__kimix_paths[@]} -eq 0 ]]; then printf '%s\\n' 'zip: missing archive name or input paths' >&2; return 1; fi; for __kimix_p in \"${__kimix_paths[@]}\"; do __kimix_wpaths+=(\"$(cygpath -w -- \"$__kimix_p\")\"); done; __kimix_archive=$(cygpath -w -- \"$__kimix_archive\"); __KIMIX_ZIP_LEVEL=$__kimix_level __KIMIX_ZIP_DEST=$__kimix_archive __KIMIX_ZIP_PATHS=$(printf '%s\\n' \"${__kimix_wpaths[@]}\") powershell.exe -NoProfile -NonInteractive -Command 'Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem; $level = [System.IO.Compression.CompressionLevel]$env:__KIMIX_ZIP_LEVEL; $dest = $env:__KIMIX_ZIP_DEST; if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Force }; $zip = [System.IO.Compression.ZipFile]::Open($dest, [System.IO.Compression.ZipArchiveMode]::Create); foreach ($p in ($env:__KIMIX_ZIP_PATHS -split \"`n\")) { $item = Get-Item -LiteralPath $p; $base = $item.Name; if ($item.PSIsContainer) { $root = $item.FullName; Get-ChildItem -LiteralPath $root -Recurse -Force | ForEach-Object { $rel = $_.FullName.Substring($root.Length).TrimStart(\"\\\") -replace \"\\\\\", \"/\"; if ($_.PSIsContainer) { $zip.CreateEntry($base + \"/\" + $rel + \"/\") | Out-Null } else { [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $base + \"/\" + $rel, $level) | Out-Null } } } else { [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $item.FullName, $base, $level) | Out-Null } }; $zip.Dispose(); if (Test-Path -LiteralPath $dest) { exit 0 } else { exit 1 }'",
 };
 
-// Microsoft Store App Execution Alias stubs in `WindowsApps` satisfy
-// `command -v` but print an install prompt instead of running the tool: their
-// fallbacks are defined even when `command -v` succeeds and never delegate to
-// a stub path.
 const STUB_AWARE_FALLBACKS: ReadonlySet<string> = new Set(['pip3', 'python3']);
 
-/** Native-binary delegation prologue: run the real binary when it exists. */
 function nativeDelegate(name: string): string {
   return (
     `local __kimix_native=''; __kimix_native=$(type -P ${name}) || :; ` +
@@ -137,11 +141,6 @@ function nativeDelegate(name: string): string {
   );
 }
 
-/**
- * Build the guarded fallback definition for one command name:
- * `if ! command -v <name> >/dev/null 2>&1; then <name>() { ... }; fi`.
- * Stub-aware names get a `WindowsApps` guard instead.
- */
 function fallbackDefinition(name: string): string {
   const body = FALLBACK_BODIES[name];
   let guard: string;
@@ -158,38 +157,18 @@ function fallbackDefinition(name: string): string {
   return `${guard}${name}() { ${delegate}${body}; }; fi`;
 }
 
-// ── Windows path recognition ────────────────────────────────────────────────
-// Rewrites apply only to unquoted words that unambiguously look like Windows
-// paths; everything else (quotes, expansions, short ambiguous words) is left
-// byte-for-byte for Bash to handle.
-
-/** Drive-absolute path such as `D:\foo` or the drive root `C:\`. */
 const PATH_DRIVE_RE = /^[A-Za-z]:\\.*$/;
 
-/** Decoded value of a plausible multi-segment relative path (no spaces). */
 const PATH_SEGMENT_RE = /^[A-Za-z0-9_.~\-]+$/;
 
-/**
- * Characters that may appear unquoted in a normalized path word. Glob
- * metacharacters are included on purpose so `D:/x/*.txt` still performs
- * pathname expansion instead of being quoted into a literal name.
- */
 const PATH_SAFE_CHARS = new Set(
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./:~@%+=-#,[]*?',
 );
 
-/**
- * Chars whose backslash form is a pure Bash escape, not a path separator.
- * `\ ` (escaped space) is how a space inside an unquoted word is written;
- * normalizing it to `/ ` would invent a directory level that does not exist.
- * The backslash is dropped and the character kept inside its segment.
- */
 const ESCAPED_LITERAL_CHARS = new Set(" \t&;|()<>#'\"$`{}!");
 
-/** Bash control operators that terminate a command's argument list. */
 const OPERATOR_CHARS = new Set(';&|()<>\n');
 
-/** Node types whose subtrees must never be rewritten. */
 const SKIP_SUBTREE_TYPES: ReadonlySet<string> = new Set([
   'ERROR',
   'heredoc_body',
@@ -197,10 +176,6 @@ const SKIP_SUBTREE_TYPES: ReadonlySet<string> = new Set([
   'heredoc_end',
 ]);
 
-/**
- * Word-shaping node types that keep a word inside the command-name text
- * itself (`r""ev` is a `concatenation` under `command_name`).
- */
 const WORD_SHAPING_TYPES: ReadonlySet<string> = new Set([
   'concatenation',
   'string',
@@ -208,31 +183,14 @@ const WORD_SHAPING_TYPES: ReadonlySet<string> = new Set([
   'ansi_c_string',
 ]);
 
-/** The existing Windows `>nul` → `>/dev/null` rewrite (context-free). */
 const WINDOWS_NUL_REDIRECT = /(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/g;
 
 function nulRedirectRewrite(command: string): string {
   return command.replace(WINDOWS_NUL_REDIRECT, '$1/dev/null');
 }
 
-/**
- * The Git Bash launcher (`<root>/bin/bash.exe`) unconditionally injects
- * `MSYSTEM=MINGW64` into the shell, and the MSYS2 runtime re-injects the
- * variable into child processes when it is absent. Exporting an empty value at
- * the start of the command makes build tools detect the true Windows MSVC
- * environment instead of defaulting to the mingw platform. Limited to Git for
- * Windows bash on Windows; all other platforms and shells run the command
- * unchanged.
- */
 const MSYSTEM_NEUTRALIZE_PREFIX = 'export MSYSTEM=; ';
 
-/**
- * Return the install root of a Git-for-Windows-shaped bash path
- * (`<root>\bin\bash.exe` or `<root>\usr\bin\bash.exe`), or `null` when the
- * path does not match either layout. Purely shape-based; the caller probes the
- * `<root>\cmd\git.exe` marker to tell a real Git for Windows install apart
- * from real MSYS2 (which also ships `usr/bin/bash.exe` but has no marker).
- */
 export function gitBashInstallRoot(bashPath: string): string | null {
   if (bashPath.length === 0) return null;
   const normalized = bashPath.replace(/\//g, '\\');
@@ -252,19 +210,8 @@ export function gitBashInstallRoot(bashPath: string): string | null {
   return drive.length > 0 ? `${drive}\\${root}` : root;
 }
 
-// The Git Bash install layout is static for the lifetime of the process (the
-// environment probe resolved the shell path at startup), so the
-// `<root>\cmd\git.exe` marker probe runs once per install root and is cached:
-// per-command overhead is a Map lookup, not a filesystem stat.
 const GIT_BASH_MARKER_CACHE = new Map<string, boolean>();
 
-/**
- * Neutralize the `MSYSTEM` variable on Git Bash (see
- * {@link MSYSTEM_NEUTRALIZE_PREFIX}): prepend `export MSYSTEM=; ` only when the
- * shell is a real Git for Windows bash on Windows — probed by path shape and
- * the `<root>\cmd\git.exe` marker. Any other platform or shell returns the
- * command unchanged.
- */
 export function withMsystemNeutralized(
   command: string,
   bashPath: string,
@@ -282,13 +229,6 @@ export function withMsystemNeutralized(
   return gitBash ? MSYSTEM_NEUTRALIZE_PREFIX + command : command;
 }
 
-/**
- * Return the command name produced solely by Bash quote removal. Bash permits
- * literal command words such as `'rev'`, `\rev` and `r""ev`. Only words whose
- * value can be determined without any expansion are accepted; parameter /
- * command / arithmetic expansions, globbing, and malformed quotes return
- * `null` and are left for Bash to handle.
- */
 function literalCommandName(raw: string): string | null {
   const value: string[] = [];
   let i = 0;
@@ -346,12 +286,10 @@ function literalCommandName(raw: string): string | null {
   return value.join('');
 }
 
-/** Require at least one segment that looks like a real directory name. */
 function plausiblePathSegments(raw: string): boolean {
   return raw.split('\\').some((segment) => segment.length >= 2 && /[A-Za-z]/.test(segment[0]!));
 }
 
-/** Return the word value after Bash quote removal (unquoted form). */
 function decodeUnquotedWord(raw: string): string {
   const value: string[] = [];
   let i = 0;
@@ -368,13 +306,6 @@ function decodeUnquotedWord(raw: string): string {
   return value.join('');
 }
 
-/**
- * Rewrite backslashes as the forward slashes Git Bash understands. A leading
- * `\\` UNC prefix becomes `//`; a backslash before a char from
- * {@link ESCAPED_LITERAL_CHARS} is a pure Bash escape (the char belongs inside
- * its segment, e.g. `\ ` is a space); every other backslash separates segments
- * and becomes `/`.
- */
 function normalizeWindowsPath(raw: string): string {
   const out: string[] = [];
   let i = 0;
@@ -407,12 +338,6 @@ function normalizeWindowsPath(raw: string): string {
   return out.join('');
 }
 
-/**
- * Quote a normalized path only when unquoted emission would break it. Safe
- * characters (including glob metacharacters, so `D:/x/*.txt` keeps performing
- * pathname expansion) pass through untouched. A leading `~` stays outside the
- * quotes so tilde expansion still applies to it.
- */
 function quotePathWord(normalized: string): string {
   if ([...normalized].every((ch) => PATH_SAFE_CHARS.has(ch))) return normalized;
   if (normalized.startsWith('~')) return `~${quotePathWord(normalized.slice(1))}`;
@@ -424,15 +349,6 @@ function quotePathWord(normalized: string): string {
   return `"${escaped}"`;
 }
 
-/**
- * Return the Git Bash spelling of a Windows backslash path word, or `null`
- * when the word does not unambiguously look like a Windows path. Only
- * unquoted words are considered: quoted text is literal data that may carry
- * regexes or tool-level escape sequences. The word must look like a Windows
- * path (drive letter, UNC share, root- or home-relative, dot-relative, or a
- * multi-segment relative path); short ambiguous words such as `a\nb` and
- * `foo\bar` are left for Bash to handle.
- */
 function windowsPathReplacement(raw: string): string | null {
   if (raw.length === 0 || !raw.includes('\\')) return null;
   let backslashes = 0;
@@ -443,37 +359,25 @@ function windowsPathReplacement(raw: string): string | null {
       return null;
     }
   }
-  if (PATH_DRIVE_RE.test(raw)) {
-    // drive-absolute
-  } else if (raw.startsWith('\\\\') && raw.length > 2) {
-    // UNC
-  } else if (raw.startsWith('\\') && !raw.startsWith('\\\\') && backslashes >= 2) {
-    // Root-relative paths are not anchored like `D:\...`: an unquoted word
-    // such as `\a\b` or `\033\015` is far more likely to be a Bash escape
-    // sequence than a path, so the segments must look like real directory
-    // names before the rewrite happens.
-    if (!plausiblePathSegments(raw)) return null;
-  } else if (raw.startsWith('~\\')) {
-    // home-relative
-  } else if (raw.startsWith('.\\') || raw.startsWith('..\\')) {
-    // dot-relative
-  } else if (backslashes >= 2) {
+  const drive = PATH_DRIVE_RE.test(raw);
+  const unc = raw.startsWith('\\\\') && raw.length > 2;
+  const rootRelative =
+    raw.startsWith('\\') && !raw.startsWith('\\\\') && backslashes >= 2 && plausiblePathSegments(raw);
+  const homeRelative = raw.startsWith('~\\');
+  const dotRelative = raw.startsWith('.\\') || raw.startsWith('..\\');
+  let recognized = drive || unc || rootRelative || homeRelative || dotRelative;
+  if (!recognized && backslashes >= 2) {
     const decoded = decodeUnquotedWord(raw);
-    if (
-      decoded.length < 2 ||
-      ![...decoded].some((ch) => /[A-Za-z0-9]/.test(ch)) ||
-      !PATH_SEGMENT_RE.test(decoded) ||
-      !plausiblePathSegments(raw)
-    ) {
-      return null;
-    }
-  } else {
-    return null;
+    recognized =
+      decoded.length >= 2 &&
+      [...decoded].some((ch) => /[A-Za-z0-9]/.test(ch)) &&
+      PATH_SEGMENT_RE.test(decoded) &&
+      plausiblePathSegments(raw);
   }
+  if (!recognized) return null;
   return quotePathWord(normalizeWindowsPath(raw));
 }
 
-/** True when the node sits inside a skipped subtree (ERROR / heredoc). */
 function insideSkippedSubtree(node: SyntaxNode): boolean {
   let current: SyntaxNode | null = node.parent;
   while (current !== null) {
@@ -483,11 +387,6 @@ function insideSkippedSubtree(node: SyntaxNode): boolean {
   return false;
 }
 
-/**
- * True when the word is part of the command-name text itself (directly under
- * `command_name` or through word-shaping nodes such as a concatenation), as
- * opposed to an argument, redirect target, or the content of a substitution.
- */
 function isCommandNameWord(word: SyntaxNode): boolean {
   let current: SyntaxNode | null = word.parent;
   while (current !== null) {
@@ -498,32 +397,12 @@ function isCommandNameWord(word: SyntaxNode): boolean {
   return false;
 }
 
-// ── Blanket unquoted-backslash conversion (reference `_process_unquoted`) ──
-// Stage 1 rewrites every unquoted `\X` pair to `/X` (escaping a bash
-// metacharacter preserves the pair), so single-segment relative paths like
-// `src\a.py` work on Git Bash too — not just the conservative drive/UNC forms
-// the walker below recognizes. Quoted regions and heredoc data are never
-// touched, and command-name words are excluded so escaped spellings like
-// `\rev` keep their fallback detection.
-
-/**
- * Characters for which a backslash escape must be preserved in bash. These are
- * shell metacharacters and other special characters where converting `\X` to
- * `/X` would change shell syntax or semantics.
- */
 const BASH_METACHARACTERS = new Set("()|;&<>$\"`'*?[]{}~!#=% \t\n\r");
 
-/** In double quotes, `\` only escapes these characters. */
 const DQ_ESCAPED = new Set(['"', '\\', '$', '`']);
 
-/** Precompiled regex for the next special character in unquoted mode. */
 const UNQUOTED_SPECIAL_RE = /[\\'"$`]/g;
 
-/**
- * Return the index AFTER the closing `'` of a `$'...'` region (`start` is the
- * position right after the opening `$'`), or `-1` when unterminated. Inside
- * `$'...'` every `\X` pair is an escape and is skipped over.
- */
 function findAnsiCEnd(cmd: string, start: number): number {
   let i = start;
   const length = cmd.length;
@@ -540,11 +419,6 @@ function findAnsiCEnd(cmd: string, start: number): number {
   return -1;
 }
 
-/**
- * Return the index AFTER the closing `` ` `` of a backtick region (`start` is
- * the position right after the opening `` ` ``), or `-1` when unterminated.
- * `` \` `` inside the region is an escaped backtick.
- */
 function findBacktickEnd(cmd: string, start: number): number {
   let i = start;
   const length = cmd.length;
@@ -561,10 +435,6 @@ function findBacktickEnd(cmd: string, start: number): number {
   return -1;
 }
 
-/**
- * Return the index of the `)` matching the `(` at `cmd[openPos]`, or `-1`.
- * Tracks nested `$(...)`, quoted regions, and backticks.
- */
 function findMatchingParen(cmd: string, openPos: number): number {
   let depth = 1;
   let i = openPos + 1;
@@ -599,12 +469,6 @@ function findMatchingParen(cmd: string, openPos: number): number {
   return -1;
 }
 
-/**
- * Return the index AFTER the closing `"` of a double-quoted region (`start` is
- * the position right after the opening `"`), or `-1` when unterminated.
- * Recognises `\X` escapes (X in {@link DQ_ESCAPED}) and nested `$(...)`,
- * `$'...'`, and backtick command substitutions inside the region.
- */
 function findDqEnd(cmd: string, start: number): number {
   let i = start;
   const length = cmd.length;
@@ -633,7 +497,6 @@ function findDqEnd(cmd: string, start: number): number {
   return -1;
 }
 
-/** Return the index of the next special char in `[from, to)`, or `-1`. */
 function searchSpecial(cmd: string, from: number, to: number): number {
   UNQUOTED_SPECIAL_RE.lastIndex = from;
   const m = UNQUOTED_SPECIAL_RE.exec(cmd);
@@ -641,17 +504,6 @@ function searchSpecial(cmd: string, from: number, to: number): number {
   return m.index;
 }
 
-/**
- * Convert unquoted backslashes to forward slashes in `cmd`, quoting-aware.
- *
- * Walks the string in unquoted mode (the rules that apply at the top level of a
- * bash command): a bare `\` followed by a non-metacharacter is converted to
- * `/`, while `\` followed by a bash metacharacter, or `\` inside single /
- * double / ANSI-C quotes, is preserved. The content of `$(...)` and backtick
- * command substitutions is processed as unquoted text too (bash runs it in a
- * subshell); a top-level `$(...)` needs no recursion because the walker simply
- * keeps walking through it.
- */
 function processUnquoted(cmd: string): string {
   const result: string[] = [];
   let i = 0;
@@ -751,13 +603,10 @@ function processUnquoted(cmd: string): string {
       i = btEnd;
     } else if (char === '\\') {
       if (i + 1 < length && BASH_METACHARACTERS.has(cmd[i + 1]!)) {
-        // Backslash is escaping a bash metacharacter — preserve both, so the
-        // metacharacter (e.g. `'` `"` `$`) is not re-processed next iteration.
         result.push('\\');
         result.push(cmd[i + 1]!);
         i += 2;
       } else {
-        // Unquoted backslash in a path-like context — convert to `/`.
         result.push('/');
         i += 1;
       }
@@ -769,11 +618,6 @@ function processUnquoted(cmd: string): string {
   return result.join('');
 }
 
-/**
- * Collect the source spans that stage 1 must leave byte-for-byte: heredoc
- * data (delimiter, body, end marker), comment bodies, and command-name words
- * (so escaped spellings like `\rev` keep their fallback detection).
- */
 function collectExcludedSpans(root: SyntaxNode): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
   const stack: SyntaxNode[] = [root];
@@ -805,7 +649,6 @@ function collectExcludedSpans(root: SyntaxNode): Array<[number, number]> {
   return merged;
 }
 
-/** Apply {@link processUnquoted} to everything except the excluded spans. */
 function processUnquotedPreservingSpans(cmd: string, spans: readonly (readonly [number, number])[]): string {
   let out = '';
   let pos = 0;
@@ -818,12 +661,6 @@ function processUnquotedPreservingSpans(cmd: string, spans: readonly (readonly [
   return out;
 }
 
-/**
- * Drop the cmd.exe-only `cd /d <path>` flag form. Bash `cd` accepts a single
- * argument, so `cd /d D:\x` fails with "too many arguments". The flag is
- * deleted only when a path argument actually follows it on the same line; bare
- * `cd /d` stays untouched.
- */
 function dropCmdCdFlag(
   commandNodes: readonly SyntaxNode[],
   source: string,
@@ -835,8 +672,6 @@ function dropCmdCdFlag(
     if (nameNode === undefined || nameNode.text !== 'cd') continue;
     const firstArg = command.namedChildren.find((child) => child.startIndex >= nameNode.endIndex);
     if (firstArg === undefined) continue;
-    // The flag word comes from the stage-1 output (`cd \d` → `/d`), so compare
-    // the converted slice rather than the original node text.
     const flag = source.slice(firstArg.startIndex, firstArg.endIndex);
     if (flag !== '/d' && flag !== '/D') continue;
     let k = firstArg.endIndex;
@@ -844,35 +679,17 @@ function dropCmdCdFlag(
       k += 1;
     }
     if (k >= source.length || OPERATOR_CHARS.has(source[k]!) || source[k] === '#') continue;
-    // Delete the flag together with the separator before it so `cd /d D:\\x`
-    // becomes `cd D:/x` instead of `cd  D:/x` (the separator is always
-    // whitespace: the flag is the first argument of the `cd` command).
     edits.push([firstArg.startIndex - 1, firstArg.endIndex, '']);
     pathNotes.push('cd /d');
   }
 }
 
-// ── Parser fast path ────────────────────────────────────────────────────────
-// The tree-sitter parse allocates a fresh parser per call, so commands that
-// provably need no rewriting skip it entirely. `needsFullPipeline` is
-// deliberately conservative: any signal that could hide a rewrite — a
-// backslash, a quoting character, the `cd /d` flag, a `>nul` redirect, or a
-// fallback command word (even inside comments, heredoc delimiters or strings)
-// — sends the command through the full pipeline, which then leaves it
-// byte-for-byte unchanged. Without quotes or escapes the literal command word
-// is contiguous text, so the word-boundary name check is complete;
-// `r""ev`-style spellings contain quotes and always take the full pipeline.
-
-/** Characters that can hide a command name from the fast-path checks. */
 const QUOTE_CHARS_RE = /['"`]/;
 
-/** The `>nul` redirect forms the fixer rewrites (non-global twin of {@link WINDOWS_NUL_REDIRECT}). */
 const NUL_NEEDED_RE = /(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/;
 
-/** The cmd.exe-only `cd /d` / `cd \d` flag form. */
 const CD_D_FLAG_RE = /\bcd\s+\/?[dD]\b/;
 
-/** Any fallback command name appearing as a whole word (precompiled once). */
 const FALLBACK_NAME_RE = new RegExp(`\\b(?:${Object.keys(FALLBACK_BODIES).join('|')})\\b`);
 
 function needsFullPipeline(command: string): boolean {
@@ -883,18 +700,6 @@ function needsFullPipeline(command: string): boolean {
   return FALLBACK_NAME_RE.test(command);
 }
 
-/**
- * Fix Windows-isms in a command before `bash -c` runs on Git Bash.
- *
- * Anything other than a `win32` platform returns the input byte-for-byte
- * unchanged. On Windows the command is parsed with the pure tree-sitter bash
- * parser; quoted/escaped command words are matched against the fallback table,
- * unquoted Windows backslash paths are normalized, `cd /d` loses its flag, and
- * the `>nul` → `>/dev/null` redirect rewrite runs over the final assembled
- * command. Trees the parser cannot analyze (`{ ok: false }`) are returned
- * unchanged; error trees still get word-level rewrites, never inside `ERROR`
- * node subtrees.
- */
 export function fixBashCommand(command: string, platform?: string): BashFixResult {
   const unchanged = (): BashFixResult => ({
     command,
@@ -904,18 +709,10 @@ export function fixBashCommand(command: string, platform?: string): BashFixResul
   });
   const target = platform ?? process.platform;
   if (target !== 'win32' || command.length === 0) return unchanged();
-  // Fast path: skip the parser for commands that provably need no rewrite (the
-  // common POSIX-shaped case). `needsFullPipeline` is conservative, so this
-  // never changes behavior — the full pipeline would return the input
-  // byte-for-byte for exactly these commands.
   if (!needsFullPipeline(command)) return unchanged();
   const parsed = parse(command);
-  if (!parsed.ok) return unchanged();
+  if (!parsed.ok || parsed.hasError) return unchanged();
   const root = parsed.rootNode;
-  // Stage 1: blanket conversion of unquoted backslashes to forward slashes
-  // (reference `_prepare_bash_cmd`), so single-segment paths like `src\a.py`
-  // work too. Heredoc data and command-name words are preserved; the pass is
-  // length-preserving, so the stage-2 node offsets below stay valid.
   const converted = processUnquotedPreservingSpans(command, collectExcludedSpans(root));
   const names: string[] = [];
   const seen = new Set<string>();
@@ -933,12 +730,7 @@ export function fixBashCommand(command: string, platform?: string): BashFixResul
             seen.add(literal);
             names.push(literal);
           }
-          // The prepended function shadows the missing binary; the word itself
-          // is not rewritten.
         } else if (!insideSkippedSubtree(node)) {
-          // A command word can itself be a Windows executable path
-          // (`C:\tools\rg.exe`); Bash quote removal would eat the backslashes
-          // and lose the command, so rewrite it like an argument path.
           const replacement = windowsPathReplacement(node.text);
           if (replacement !== null) {
             edits.push([node.startIndex, node.endIndex, replacement]);
@@ -953,16 +745,9 @@ export function fixBashCommand(command: string, platform?: string): BashFixResul
       ) {
         const replacement = windowsPathReplacement(node.text);
         if (replacement !== null) {
-          // Overrides the stage-1 conversion when the conservative rule
-          // recognizes the word: re-quotes escaped-literal paths
-          // (`D:\my\ dir\x` → `"D:/my dir/x"`) and keeps glob metacharacters
-          // unquoted (`D:/x/*.txt` still globs). Stage 1 is length-preserving,
-          // so the offsets still align.
           edits.push([node.startIndex, node.endIndex, replacement]);
           pathNotes.push(node.text);
         } else if (converted.slice(node.startIndex, node.endIndex) !== node.text) {
-          // Stage 1 converted a word the conservative rule does not recognize
-          // (single-segment relative paths like `src\a.py`); record it.
           pathNotes.push(node.text);
         }
       } else if (node.type === 'command' && !insideSkippedSubtree(node)) {
@@ -974,8 +759,6 @@ export function fixBashCommand(command: string, platform?: string): BashFixResul
     }
     dropCmdCdFlag(commandNodes, converted, edits, pathNotes);
   } catch {
-    // Malformed or adversarial input must never make the Bash tool fail before
-    // Bash itself can report the syntax error.
     return unchanged();
   }
   if (converted === command && names.length === 0 && edits.length === 0) {
