@@ -26,7 +26,11 @@
  * constructed still applies.
  */
 
-import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import {
+  auth,
+  type OAuthClientProvider,
+  type OAuthDiscoveryState,
+} from '@modelcontextprotocol/sdk/client/auth.js';
 
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 
@@ -42,6 +46,7 @@ export interface McpOAuthServiceOptions {
 
 export interface BeginAuthorizationOptions {
   readonly clientLabel?: string;
+  readonly discoveryState?: OAuthDiscoveryState;
 }
 
 export interface BeginAuthorizationResult {
@@ -112,6 +117,9 @@ export class McpOAuthService {
     provider.setRedirectUrl(new URL(callbackServer.redirectUri));
     await provider.ready;
     await provider.invalidateStaleRegistration(callbackServer.redirectUri);
+    if (options.discoveryState !== undefined) {
+      await provider.saveDiscoveryState(options.discoveryState);
+    }
 
     let authorizationUrl: URL | undefined;
     try {

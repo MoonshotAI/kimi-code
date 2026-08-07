@@ -13,11 +13,16 @@ import { join } from 'node:path';
 import {
   createKimiHarness,
   KimiHarness,
+  SDKRpcClient,
   SDKRpcClientBase,
 } from '#/index';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
+import { discoverMcpOAuth as discoverMcpOAuthV1 } from '../../agent-core/src/mcp/oauth/discovery';
+import { discoverMcpOAuth as discoverMcpOAuthV2 } from '../../agent-core-v2/src/mcpCore/oauth/discovery';
+
+import { startMcpAuthStatusTestServer } from './mcp-auth-status-server';
 
 const tempDirs: string[] = [];
 const stdioFixture = join(
@@ -213,31 +218,57 @@ describe('standalone MCP check (connection result)', () => {
 });
 
 describe('MCP OAuth facade (host-controlled browser flow)', () => {
-  it('reports persisted authorization without starting an OAuth flow', async () => {
+  it('reports authorization from stored credentials and standard OAuth metadata', async () => {
     const homeDir = await makeTempDir();
-    const authorizedUrl = 'https://authorized.example.test/mcp';
+    const [rfc9728, challenge, unsupported, failure, mismatch] = await Promise.all([
+        startMcpAuthStatusTestServer({
+          mode: 'rfc9728',
+          requiredResourceHeader: ['x-api-key', 'resource-secret'],
+        }),
+        startMcpAuthStatusTestServer({ mode: 'challenge' }),
+        startMcpAuthStatusTestServer({ mode: 'unsupported' }),
+        startMcpAuthStatusTestServer({ mode: 'error' }),
+        startMcpAuthStatusTestServer({ mode: 'mismatch' }),
+      ]);
+    const storedUrl = 'http://127.0.0.1:1/stored';
     new McpOAuthService({ kimiHomeDir: homeDir })
-      .getProvider('oauth-authorized', authorizedUrl)
+      .getProvider('oauth-authorized', storedUrl)
       .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
     await writeMcpConfig(homeDir, {
       mcpServers: {
         stdio: { command: 'local-command' },
-        plain: { transport: 'http', url: 'https://plain.example.test/mcp' },
+        disabled: { transport: 'http', url: failure.url, enabled: false },
         bearer: {
           transport: 'http',
-          url: 'https://bearer.example.test/mcp',
+          url: 'http://127.0.0.1:1/bearer',
           bearerTokenEnvVar: 'EXAMPLE_MCP_TOKEN',
         },
-        'oauth-required': {
+        'authorization-header': {
           transport: 'http',
-          url: 'https://required.example.test/mcp',
-          auth: 'oauth',
+          url: 'http://127.0.0.1:1/static-authorization',
+          headers: { authorization: 'Bearer configured' },
         },
         'oauth-authorized': {
           transport: 'http',
-          url: authorizedUrl,
+          url: storedUrl,
+        },
+        'oauth-rfc9728': {
+          transport: 'http',
+          url: rfc9728.url,
+          headers: { 'X-Api-Key': 'resource-secret' },
+        },
+        'oauth-challenge': {
+          transport: 'http',
+          url: challenge.url,
+        },
+        'oauth-unsupported-marker': {
+          transport: 'http',
+          url: unsupported.url,
           auth: 'oauth',
         },
+        'oauth-mismatch': { transport: 'http', url: mismatch.url },
+        failed: { transport: 'http', url: failure.url },
+        'oauth-sse': { transport: 'sse', url: challenge.url },
       },
     });
     const harness = createKimiHarness({ homeDir });
@@ -245,13 +276,123 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
     try {
       await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
-        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'disabled', authStatus: 'not-applicable' },
         { name: 'bearer', authStatus: 'bearer-token' },
-        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'authorization-header', authStatus: 'bearer-token' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+        { name: 'oauth-rfc9728', authStatus: 'oauth-required' },
+        { name: 'oauth-challenge', authStatus: 'oauth-required' },
+        { name: 'oauth-unsupported-marker', authStatus: 'not-applicable' },
+        {
+          name: 'oauth-mismatch',
+          authStatus: 'unknown',
+          error: expect.stringMatching(/does not match expected/i),
+        },
+        {
+          name: 'failed',
+          authStatus: 'unknown',
+          error: expect.stringMatching(/HTTP 500/i),
+        },
+        { name: 'oauth-sse', authStatus: 'oauth-required' },
       ]);
+      expect(
+        rfc9728.requests
+          .filter((request) => request.side === 'resource')
+          .every((request) => request.headers['x-api-key'] === 'resource-secret'),
+      ).toBe(true);
+      expect(
+        rfc9728.requests
+          .filter((request) => request.side === 'authorization')
+          .every((request) => request.headers['x-api-key'] === undefined),
+      ).toBe(true);
     } finally {
       await harness.close();
+      await Promise.all(
+        [rfc9728, challenge, unsupported, failure, mismatch].map((server) => server.close()),
+      );
+    }
+  });
+
+  it('shares one timeout deadline across OAuth discovery redirects', async () => {
+    const server = await startMcpAuthStatusTestServer({ mode: 'slow-redirect' });
+    try {
+      await Promise.all(
+        [discoverMcpOAuthV1, discoverMcpOAuthV2].map(async (discover) => {
+          await expect(discover(server.url, undefined, { timeoutMs: 80 })).rejects.toThrow(
+            /abort|timeout/i,
+          );
+        }),
+      );
+      expect(server.requests.some((request) => request.path === '/slow-resource-metadata')).toBe(
+        true,
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects cross-origin discovery redirects without leaking configured headers', async () => {
+    const server = await startMcpAuthStatusTestServer({
+      mode: 'redirect',
+      requiredResourceHeader: ['x-api-key', 'resource-secret'],
+    });
+    try {
+      await Promise.all(
+        [discoverMcpOAuthV1, discoverMcpOAuthV2].map(async (discover) => {
+          await expect(
+            discover(server.url, { 'X-Api-Key': 'resource-secret' }),
+          ).rejects.toThrow(/non-same-origin/i);
+        }),
+      );
+      expect(
+        server.requests.some(
+          (request) => request.side === 'authorization' && request.path === '/redirect-target',
+        ),
+      ).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('begins OAuth with an auxiliary header and no auth marker without leaking the header', async () => {
+    const homeDir = await makeTempDir();
+    const server = await startMcpAuthStatusTestServer({
+      mode: 'rfc9728',
+      requiredResourceHeader: ['x-api-key', 'resource-secret'],
+    });
+    const rpc = new SDKRpcClient({ homeDir });
+    try {
+      await rpc.addGlobalMcpServer({
+        name: 'header-oauth',
+        transport: 'http',
+        url: server.url,
+        headers: { 'X-Api-Key': 'resource-secret' },
+      });
+      await rpc.addGlobalMcpServer({
+        name: 'static-authorization',
+        transport: 'http',
+        url: server.url,
+        headers: { Authorization: 'Bearer configured' },
+      });
+      await expect(rpc.beginGlobalMcpServerAuth('static-authorization')).rejects.toThrow(
+        /static Authorization header/,
+      );
+      const started = await rpc.beginGlobalMcpServerAuth('header-oauth');
+      expect(started).toMatchObject({
+        status: 'authorization-required',
+        authorizationUrl: expect.stringMatching(/\/authorize\?/),
+      });
+      if (started.status === 'authorization-required') {
+        await rpc.cancelGlobalMcpServerAuth(started.flowId);
+      }
+      expect(
+        server.requests
+          .filter((request) => request.side === 'authorization')
+          .every((request) => request.headers['x-api-key'] === undefined),
+      ).toBe(true);
+    } finally {
+      await rpc.close();
+      await server.close();
     }
   });
 

@@ -22,7 +22,11 @@
  *     `reconnect` to swap the synthetic tool out for the real MCP tools.
  */
 
-import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import {
+  auth,
+  type OAuthClientProvider,
+  type OAuthDiscoveryState,
+} from '@modelcontextprotocol/sdk/client/auth.js';
 
 import { startCallbackServer, type CallbackServer } from './callback-server';
 import { McpOAuthClientProvider } from './provider';
@@ -40,6 +44,7 @@ export interface McpOAuthServiceOptions {
 export interface BeginAuthorizationOptions {
   /** Override the `client_name` embedded in the DCR registration request. */
   readonly clientLabel?: string;
+  readonly discoveryState?: OAuthDiscoveryState;
 }
 
 export interface BeginAuthorizationResult {
@@ -130,6 +135,9 @@ export class McpOAuthService {
     // URIs no longer cover this flow's random-port callback would be rejected
     // at the authorization endpoint with an error only the browser ever sees.
     provider.invalidateStaleRegistration(callbackServer.redirectUri);
+    if (options.discoveryState !== undefined) {
+      provider.saveDiscoveryState(options.discoveryState);
+    }
 
     let authorizationUrl: URL | undefined;
     try {

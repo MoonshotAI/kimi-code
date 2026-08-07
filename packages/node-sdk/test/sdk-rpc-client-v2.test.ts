@@ -32,6 +32,7 @@ import {
 import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
 
 import { TEST_IDENTITY } from './test-identity';
+import { startMcpAuthStatusTestServer } from './mcp-auth-status-server';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 
 const tempDirs: string[] = [];
@@ -53,35 +54,35 @@ async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }>
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
-  it('reports global MCP authorization from the persisted v2 credential store', async () => {
+  it('reports global MCP authorization from stored credentials and standard metadata', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
-    const authorizedUrl = 'https://authorized.example.test/mcp';
-    const requiredUrl = 'https://required.example.test/mcp';
+    const server = await startMcpAuthStatusTestServer({
+      mode: 'rfc9728',
+      requiredResourceHeader: ['x-api-key', 'resource-secret'],
+    });
     const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
     externalOAuth
-      .getProvider('oauth-authorized', authorizedUrl)
+      .getProvider('oauth-authorized', server.url)
       .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
     await writeFile(
       join(homeDir, 'mcp.json'),
       JSON.stringify({
         mcpServers: {
           stdio: { command: 'local-command' },
-          plain: { transport: 'http', url: 'https://plain.example.test/mcp' },
-          bearer: {
+          'authorization-header': {
             transport: 'http',
-            url: 'https://bearer.example.test/mcp',
-            bearerTokenEnvVar: 'EXAMPLE_MCP_TOKEN',
-          },
-          'oauth-required': {
-            transport: 'http',
-            url: requiredUrl,
-            auth: 'oauth',
+            url: server.url,
+            headers: { AUTHORIZATION: 'Bearer configured' },
           },
           'oauth-authorized': {
             transport: 'http',
-            url: authorizedUrl,
-            auth: 'oauth',
+            url: server.url,
+          },
+          'oauth-rfc9728': {
+            transport: 'http',
+            url: server.url,
+            headers: { 'X-Api-Key': 'resource-secret' },
           },
         },
       }),
@@ -92,26 +93,61 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     try {
       await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
-        { name: 'plain', authStatus: 'not-applicable' },
-        { name: 'bearer', authStatus: 'bearer-token' },
-        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'authorization-header', authStatus: 'bearer-token' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+        { name: 'oauth-rfc9728', authStatus: 'oauth-required' },
       ]);
-
-      externalOAuth
-        .getProvider('oauth-required', requiredUrl)
-        .saveTokens({ access_token: 'new-test-access-token', token_type: 'Bearer' });
-      externalOAuth.invalidate('oauth-authorized', authorizedUrl, 'tokens');
-
-      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
-        { name: 'stdio', authStatus: 'not-applicable' },
-        { name: 'plain', authStatus: 'not-applicable' },
-        { name: 'bearer', authStatus: 'bearer-token' },
-        { name: 'oauth-required', authStatus: 'oauth-authorized' },
-        { name: 'oauth-authorized', authStatus: 'oauth-required' },
-      ]);
+      expect(
+        server.requests
+          .filter((request) => request.side === 'authorization')
+          .every((request) => request.headers['x-api-key'] === undefined),
+      ).toBe(true);
     } finally {
       await harness.close();
+      await server.close();
+    }
+  });
+
+  it('begins OAuth with an auxiliary header and no auth marker without leaking the header', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const server = await startMcpAuthStatusTestServer({
+      mode: 'rfc9728',
+      requiredResourceHeader: ['x-api-key', 'resource-secret'],
+    });
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await rpc.addGlobalMcpServer({
+        name: 'header-oauth',
+        transport: 'http',
+        url: server.url,
+        headers: { 'X-Api-Key': 'resource-secret' },
+      });
+      await rpc.addGlobalMcpServer({
+        name: 'static-authorization',
+        transport: 'http',
+        url: server.url,
+        headers: { Authorization: 'Bearer configured' },
+      });
+      await expect(rpc.beginGlobalMcpServerAuth('static-authorization')).rejects.toThrow(
+        /static Authorization header/,
+      );
+      const started = await rpc.beginGlobalMcpServerAuth('header-oauth');
+      expect(started).toMatchObject({
+        status: 'authorization-required',
+        authorizationUrl: expect.stringMatching(/\/authorize\?/),
+      });
+      if (started.status === 'authorization-required') {
+        await rpc.cancelGlobalMcpServerAuth(started.flowId);
+      }
+      expect(
+        server.requests
+          .filter((request) => request.side === 'authorization')
+          .every((request) => request.headers['x-api-key'] === undefined),
+      ).toBe(true);
+    } finally {
+      await rpc.close();
+      await server.close();
     }
   });
 

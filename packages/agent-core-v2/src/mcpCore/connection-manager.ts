@@ -31,6 +31,7 @@ import { SseMcpClient } from './client-sse';
 import type { UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
+import { discoverMcpOAuth, hasAuthorizationHeader } from '#/mcpCore/oauth/discovery';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
 
 export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
@@ -319,6 +320,7 @@ export class McpConnectionManager implements McpConnectionView {
       entry.config.startupTimeoutMs ??
       this.options.resolveDefaultTimeouts?.().startupTimeoutMs ??
       DEFAULT_STARTUP_TIMEOUT_MS;
+    const startupDeadlineMs = Date.now() + timeoutMs;
 
     let client: RuntimeMcpClient | undefined;
     try {
@@ -348,7 +350,7 @@ export class McpConnectionManager implements McpConnectionView {
         }
         return;
       }
-      if (this.shouldMarkNeedsAuth(entry, error)) {
+      if (await this.shouldMarkNeedsAuth(entry, error, startupDeadlineMs)) {
         entry.status = 'needs-auth';
         entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
       } else {
@@ -430,16 +432,36 @@ export class McpConnectionManager implements McpConnectionView {
     if (oauthService === undefined) return undefined;
     if (!isRemoteMcpConfig(config)) return undefined;
     if (config.bearerTokenEnvVar !== undefined) return undefined;
+    if (hasAuthorizationHeader(config.headers)) return undefined;
     if (!(await oauthService.hasTokens(name, config.url))) return undefined;
     return oauthService.getProvider(name, config.url);
   }
 
-  private shouldMarkNeedsAuth(entry: InternalEntry, error: unknown): boolean {
-    if (this.oauthService === undefined) return false;
+  private async shouldMarkNeedsAuth(
+    entry: InternalEntry,
+    error: unknown,
+    startupDeadlineMs: number,
+  ): Promise<boolean> {
+    const oauthService = this.oauthService;
+    if (oauthService === undefined) return false;
     if (!isRemoteMcpConfig(entry.config)) return false;
     if (entry.config.bearerTokenEnvVar !== undefined) return false;
-    if (entry.config.headers !== undefined && entry.config.auth !== 'oauth') return false;
-    return isUnauthorizedLikeError(error);
+    if (hasAuthorizationHeader(entry.config.headers)) return false;
+    if (!isUnauthorizedLikeError(error)) return false;
+    const remainingMs = startupDeadlineMs - Date.now();
+    if (remainingMs <= 0) return false;
+    try {
+      const discoveryState = await discoverMcpOAuth(entry.config.url, entry.config.headers, {
+        timeoutMs: remainingMs,
+      });
+      if (discoveryState === undefined) return false;
+      await oauthService
+        .getProvider(entry.name, entry.config.url)
+        .saveDiscoveryState(discoveryState);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async connectAndDiscoverTools(
