@@ -21,6 +21,8 @@ import {
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 
+import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
+
 import {
   createKimiHarness,
   createKimiHarnessV2,
@@ -3461,6 +3463,53 @@ async function expectSameMcpRejection(
 }
 
 describe('v1↔v2 global MCP parity', () => {
+  it('classifies global MCP authorization identically from persisted credentials', async () => {
+    const authorizedUrl = 'https://authorized.example.test/mcp';
+    const pair = await makeGlobalMcpParityPair({
+      mcpServers: {
+        stdio: { command: 'local-command' },
+        plain: { transport: 'http', url: 'https://plain.example.test/mcp' },
+        bearer: {
+          transport: 'http',
+          url: 'https://bearer.example.test/mcp',
+          bearerTokenEnvVar: 'EXAMPLE_MCP_TOKEN',
+        },
+        'oauth-required': {
+          transport: 'http',
+          url: 'https://required.example.test/mcp',
+          auth: 'oauth',
+        },
+        'oauth-authorized': {
+          transport: 'http',
+          url: authorizedUrl,
+          auth: 'oauth',
+        },
+      },
+    });
+    for (const homeDir of [pair.v1HomeDir, pair.v2HomeDir]) {
+      new McpOAuthService({ kimiHomeDir: homeDir })
+        .getProvider('oauth-authorized', authorizedUrl)
+        .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
+    }
+
+    try {
+      const [v1Statuses, v2Statuses] = await Promise.all([
+        pair.v1.listGlobalMcpServerAuthStatuses(),
+        pair.v2.listGlobalMcpServerAuthStatuses(),
+      ]);
+      expect(v2Statuses).toEqual(v1Statuses);
+      expect(v1Statuses).toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+      ]);
+    } finally {
+      await closeGlobalMcpPair(pair);
+    }
+  });
+
   it('CRUD round-trips identically and writes byte-identical mcp.json files', async () => {
     const pair = await makeGlobalMcpParityPair({
       custom: { keep: true },

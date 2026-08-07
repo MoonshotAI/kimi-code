@@ -352,6 +352,17 @@ export interface GlobalMcpServerNamePayload {
   readonly name: string;
 }
 
+export type GlobalMcpServerAuthState =
+  | 'not-applicable'
+  | 'bearer-token'
+  | 'oauth-required'
+  | 'oauth-authorized';
+
+export interface GlobalMcpServerAuthStatus {
+  readonly name: string;
+  readonly authStatus: GlobalMcpServerAuthState;
+}
+
 export type BeginGlobalMcpServerAuthResult =
   | { readonly status: 'already-authorized' }
   | {
@@ -537,6 +548,9 @@ export interface CoreAPI extends SessionAPIWithId {
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
   listGlobalMcpServers: (payload: EmptyPayload) => readonly GlobalMcpServerConfig[];
+  listGlobalMcpServerAuthStatuses: (
+    payload: EmptyPayload,
+  ) => readonly GlobalMcpServerAuthStatus[];
   addGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   updateGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   removeGlobalMcpServer: (payload: GlobalMcpServerNamePayload) => readonly GlobalMcpServerConfig[];

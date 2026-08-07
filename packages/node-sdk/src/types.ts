@@ -39,6 +39,8 @@ export type {
   GoalSnapshot,
   GoalStatus,
   GoalToolResult,
+  GlobalMcpServerAuthState,
+  GlobalMcpServerAuthStatus,
   KimiConfig,
   KimiConfigPatch,
   LoopControl,

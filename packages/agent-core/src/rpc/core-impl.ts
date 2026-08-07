@@ -100,6 +100,8 @@ import type {
   EnterSwarmPayload,
   GoalSnapshot,
   GoalToolResult,
+  GlobalMcpServerAuthState,
+  GlobalMcpServerAuthStatus,
   GlobalMcpServerConfig,
   GlobalMcpServerNamePayload,
   GlobalMcpServerTestResult,
@@ -766,6 +768,18 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.globalMcpConfig.list();
   }
 
+  async listGlobalMcpServerAuthStatuses(
+    _input?: EmptyPayload,
+  ): Promise<readonly GlobalMcpServerAuthStatus[]> {
+    const servers = await this.globalMcpConfig.list();
+    return Promise.all(
+      servers.map(async (server) => ({
+        name: server.name,
+        authStatus: await this.globalMcpServerAuthState(server),
+      })),
+    );
+  }
+
   async addGlobalMcpServer(
     { server }: PutGlobalMcpServerPayload,
   ): Promise<readonly GlobalMcpServerConfig[]> {
@@ -856,6 +870,17 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     } finally {
       await manager.shutdown();
     }
+  }
+
+  private async globalMcpServerAuthState(
+    server: GlobalMcpServerConfig,
+  ): Promise<GlobalMcpServerAuthState> {
+    if (server.transport === 'stdio') return 'not-applicable';
+    if (server.bearerTokenEnvVar !== undefined) return 'bearer-token';
+    if (server.auth !== 'oauth') return 'not-applicable';
+    return this.globalMcpOAuth.hasTokens(server.name, server.url)
+      ? 'oauth-authorized'
+      : 'oauth-required';
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {

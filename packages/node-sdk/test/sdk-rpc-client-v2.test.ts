@@ -29,6 +29,8 @@ import {
   IHostRequestHeaders,
 } from '@moonshot-ai/agent-core-v2';
 
+import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
+
 import { TEST_IDENTITY } from './test-identity';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 
@@ -51,6 +53,68 @@ async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }>
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
+  it('reports global MCP authorization from the persisted v2 credential store', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const authorizedUrl = 'https://authorized.example.test/mcp';
+    const requiredUrl = 'https://required.example.test/mcp';
+    const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
+    externalOAuth
+      .getProvider('oauth-authorized', authorizedUrl)
+      .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
+    await writeFile(
+      join(homeDir, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          stdio: { command: 'local-command' },
+          plain: { transport: 'http', url: 'https://plain.example.test/mcp' },
+          bearer: {
+            transport: 'http',
+            url: 'https://bearer.example.test/mcp',
+            bearerTokenEnvVar: 'EXAMPLE_MCP_TOKEN',
+          },
+          'oauth-required': {
+            transport: 'http',
+            url: requiredUrl,
+            auth: 'oauth',
+          },
+          'oauth-authorized': {
+            transport: 'http',
+            url: authorizedUrl,
+            auth: 'oauth',
+          },
+        },
+      }),
+      'utf-8',
+    );
+    const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+      ]);
+
+      externalOAuth
+        .getProvider('oauth-required', requiredUrl)
+        .saveTokens({ access_token: 'new-test-access-token', token_type: 'Bearer' });
+      externalOAuth.invalidate('oauth-authorized', authorizedUrl, 'tokens');
+
+      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-authorized' },
+        { name: 'oauth-authorized', authStatus: 'oauth-required' },
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('seeds the host request headers (User-Agent + X-Msh-*) into the engine', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
