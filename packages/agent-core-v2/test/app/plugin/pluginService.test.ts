@@ -16,9 +16,8 @@ import path from 'node:path';
 
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -31,7 +30,7 @@ import { IProviderService, type ProviderConfig } from '#/kosong/provider/provide
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import * as pluginStore from '#/app/plugin/store';
 import type { InstalledFile } from '#/app/plugin/store';
-import type { ReloadSummary } from '#/app/plugin/types';
+import type { PluginMutationSummary, ReloadSummary } from '#/app/plugin/types';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubProviderService } from '../provider/stubs';
@@ -257,6 +256,59 @@ describe('PluginService (plugin boundary)', () => {
         expect.objectContaining({ id: 'recovery-demo' }),
       ]);
       expect(reloads).toEqual([{ added: ['recovery-demo'], removed: [], errors: [] }]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('fires onDidReload after install / enable / disable / remove so workspace consumers refresh immediately', async () => {
+    const home = await makeHome();
+    await writeValidInstalledFile(home);
+    const pluginRoot = await makePluginDir('notify-demo', { description: 'demo plugin' });
+    createdDirs.push(pluginRoot);
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      const reloads: ReloadSummary[] = [];
+      svc.onDidReload((summary) => reloads.push(summary));
+
+      await svc.installPlugin({ source: pluginRoot });
+      await svc.setPluginEnabled({ id: 'notify-demo', enabled: false });
+      await svc.setPluginEnabled({ id: 'notify-demo', enabled: true });
+      await svc.removePlugin({ id: 'notify-demo' });
+
+      expect(reloads).toHaveLength(4);
+      await expect(svc.listPlugins()).resolves.toEqual([]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('fires onDidMutate after install / enable / disable / remove but not on an explicit reloadPlugins', async () => {
+    const home = await makeHome();
+    await writeValidInstalledFile(home);
+    const pluginRoot = await makePluginDir('mutate-demo', { description: 'demo plugin' });
+    createdDirs.push(pluginRoot);
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      const mutations: PluginMutationSummary[] = [];
+      svc.onDidMutate((summary) => mutations.push(summary));
+
+      await svc.installPlugin({ source: pluginRoot });
+      await svc.setPluginEnabled({ id: 'mutate-demo', enabled: false });
+      await svc.setPluginEnabled({ id: 'mutate-demo', enabled: true });
+      await svc.removePlugin({ id: 'mutate-demo' });
+      expect(mutations).toHaveLength(4);
+      expect(mutations.map((summary) => summary.mutation)).toEqual([
+        { kind: 'install', id: 'mutate-demo' },
+        { kind: 'disable', id: 'mutate-demo' },
+        { kind: 'enable', id: 'mutate-demo' },
+        { kind: 'remove', id: 'mutate-demo' },
+      ]);
+
+      await svc.reloadPlugins();
+      expect(mutations).toHaveLength(4);
     } finally {
       host.dispose();
     }

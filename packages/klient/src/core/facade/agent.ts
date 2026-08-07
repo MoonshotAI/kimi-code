@@ -8,8 +8,9 @@
  */
 
 import type { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
+import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
-import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
+import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
@@ -28,6 +29,7 @@ export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']
 export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
 export type UsageStatus = Awaited<ReturnType<IAgentUsageService['status']>>;
 export type AgentContextData = Awaited<ReturnType<IAgentRPCService['getContext']>>;
+export type AgentCommandInfo = Awaited<ReturnType<IAgentCommandService['list']>>[number];
 export type PlanData = Awaited<ReturnType<IAgentPlanService['status']>>;
 export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[number];
 export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
@@ -55,6 +57,8 @@ export interface AgentFacade {
   setPermission(mode: PermissionMode): Promise<void>;
   getUsage(): Promise<UsageStatus>;
   getContext(): Promise<AgentContextData>;
+  listCommands(): Promise<readonly AgentCommandInfo[]>;
+  runCommand(input: { name: string; args?: string }): Promise<void>;
   getPlan(): Promise<PlanData>;
   enterPlan(): Promise<void>;
   clearPlan(): Promise<void>;
@@ -99,6 +103,8 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     setPermission: (mode) => rpc('setPermission', { mode }) as Promise<void>,
     getUsage: () => call(scope, 'agentUsageService', 'status', []) as Promise<UsageStatus>,
     getContext: () => rpc('getContext', {}) as Promise<AgentContextData>,
+    listCommands: () => rpc('listCommands', {}) as Promise<readonly AgentCommandInfo[]>,
+    runCommand: (input) => rpc('runCommand', input) as Promise<void>,
     getPlan: () => call(scope, 'agentPlanService', 'status', []) as Promise<PlanData>,
     enterPlan: () => call(scope, 'agentPlanService', 'enter', []) as Promise<void>,
     clearPlan: () => call(scope, 'agentPlanService', 'clear', []) as Promise<void>,

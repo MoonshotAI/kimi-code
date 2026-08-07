@@ -285,6 +285,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
 
   return {
     id: 'kimi-webbridge',
+    pluginId: PLUGIN_ID,
     displayName: 'Kimi WebBridge',
     description:
       'Control your real browser (with your login sessions) — navigate, click, type, read pages, and screenshot any website.',

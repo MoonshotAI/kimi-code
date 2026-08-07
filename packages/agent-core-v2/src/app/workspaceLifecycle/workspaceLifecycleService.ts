@@ -17,12 +17,12 @@
  */
 
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { Emitter, type Event } from '#/_base/event';
+import { LifecycleScope } from '#/app/scopes';
 import {
   createScopedChildHandle,
   type IWorkspaceScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -46,7 +46,7 @@ import {
   type WorkspaceSessionRegistry,
 } from './workspaceLifecycle';
 
-export class WorkspaceLifecycleService extends Disposable implements IWorkspaceLifecycleService {
+export class WorkspaceLifecycleService extends Service implements IWorkspaceLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly live = new Map<string, IWorkspaceScopeHandle>();
   private readonly materializing = new Map<string, Promise<IWorkspaceScopeHandle>>();

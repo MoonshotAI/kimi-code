@@ -6,6 +6,70 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.34.0 (2026-08-06)
+
+### Features
+
+- web: Add a flat view to the sidebar session list.
+- The Kimi Computer Use plugin now supports Windows x64 — install it from `/plugins`.
+- Show a cache-expiry reminder when resuming or sending after a long idle. Set [`cache_expiry_hint`](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#tui-toml) to `false` to disable it.
+
+### Polish
+
+- web: Subagent tasks show their model and thinking level.
+- web: Show a failure card with one-click resume when a model request fails.
+- web: Show retry progress (attempt N of M) in the working status during automatic retries.
+- Show browser extension links and activation steps after installing Kimi WebBridge.
+
+### Bug Fixes
+
+- Fix UTF-16 LE/BE text files (with or without a BOM) failing to load.
+- web: Fix attachments being dropped when sent with a skill command.
+- web: Fix the model picker overflowing the screen when many models are available.
+- web: Fix a file path with spaces opening the Documents folder instead of the file on Windows.
+- web: Fix the thinking level resetting to the model default when a new session starts with a skill command.
+- web: Fix manually cancelled sessions showing an error marker in the sidebar; it now appears only when the last turn failed.
+- web: Fix IME composition while renaming a session — Enter and Esc no longer act mid-composition.
+- web: Fix dragging to select text while renaming moving the whole list item.
+- web: Fix the background-tasks and todos pills jumping to the top when the plan approval dialog expands.
+- web: Fix the chevron direction on the "show less" button of the changed-files summary card.
+- Fix `kimi -p` exiting before background tasks and subagents finish.
+- `/feedback` now works for signed-in users on any model; signed-out users see the sign-up page and GitHub Issues links.
+- Fix removing an MCP server breaking open sessions: its tools stay visible but calls fail with a removal notice.
+- Fix the last turn's outcome being lost across server restarts — failed turns now stay flagged in session lists and resumed sessions.
+- Fix resumed sessions showing background-task completion as raw protocol text instead of a status card.
+
+## 0.33.0 (2026-08-05)
+
+### Features
+
+- Add Kimi Computer Use and Kimi WebBridge as built-in official marketplace entries in the v2 CLI. Installing from `/plugins` sets up the latest managed runtime and plugin together, reports incomplete manual steps, and supports retrying interrupted setup.
+- web: Add and manage custom providers in settings.
+- web: Pin sessions to the top of the sidebar.
+- web: Set an emoji for the session title.
+- web: Show the signed-in account and plan usage.
+- Add /bug as an alias for the /feedback slash command. Type /bug to submit feedback.
+
+### Polish
+
+- Ask whether to trust the current folder on startup.
+- `/fork` no longer switches to the forked session: the current session stays active and its background tasks keep running. Find the fork in `/sessions`.
+- web: Overhaul the UI/UX and fix known issues.
+- Start the interactive TUI without creating a session.
+- Rename the partner plugin marketplace tab to Curated and clarify that it contains third-party plugins from Kimi partners.
+
+### Bug Fixes
+
+- Fix all tool calls failing with spawn EBADF on macOS when a skill folder contains a very large file tree.
+- Fix MCP OAuth re-authorization always failing with "Invalid redirect URI"; the stale client registration is now dropped and re-created with the current callback URI.
+- Ensure the first request waits for MCP startup to finish while the interface still opens immediately.
+- MCP tool results now surface the spec-defined `structuredContent` field and `_meta` server metadata to the model instead of silently dropping them, so servers that return their machine-readable contract in these fields work the same as on other MCP hosts.
+- Fix built-in capability availability and installed status in `/plugins`, preserve legacy WebBridge skills as backups during updates, and prevent Computer Use updates from duplicating or disconnecting MCP servers.
+
+### Refactors
+
+- Run the CLI surfaces (interactive TUI, `kimi -p`, `kimi acp`, `kimi export`, `kimi provider`) on the agent-core-v2 engine by default. Set `KIMI_CODE_LEGACY_FLAG=1` to fall back to the legacy engine.
+
 ## 0.32.0 (2026-08-04)
 
 ### Features

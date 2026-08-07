@@ -157,7 +157,8 @@ import { InstantiationType, registerSingleton } from '../../di';
 registerSingleton(IXxxService, XxxService, InstantiationType.Delayed);
 
 // v2
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 registerScopedService(LifecycleScope.Session, IXxxService, XxxService, ScopeActivation.OnDemand, 'xxx');
 ```
 

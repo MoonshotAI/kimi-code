@@ -447,8 +447,6 @@ describe('Disposable base class', () => {
       }
     }
     const o = new Owner();
-    // Ledger semantics: teardown is uninterruptible — a failing entry is
-    // reported via onUnexpectedError and teardown continues (reverse order).
     expect(() => { o.dispose(); }).not.toThrow();
     expect(events).toEqual(['tail', 'bad-attempted', 'good']);
     expect(reported).toHaveLength(1);

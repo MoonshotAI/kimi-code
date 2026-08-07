@@ -24,7 +24,9 @@
  * Bound at App scope, eager.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import { ChatProviderError } from '#/kosong/contract/errors';

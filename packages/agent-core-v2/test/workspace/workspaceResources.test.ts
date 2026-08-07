@@ -17,9 +17,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -42,7 +41,7 @@ import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
-import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
 import { InMemorySkillDiscovery } from '#/app/skillCatalog/inMemorySkillDiscovery';
@@ -307,6 +306,12 @@ describe('workspace resource sharing (handler chain)', () => {
         get: () => Promise.resolve(undefined),
         countActive: () => Promise.resolve(0),
       } as unknown as ISessionIndex),
+      stubPair(ISessionIndexMirror, {
+        _serviceBrand: undefined,
+        record: () => {},
+        pending: () => [],
+        drain: () => Promise.resolve(),
+      } as unknown as ISessionIndexMirror),
       stubPair(IAppendLogStore, {
         _serviceBrand: undefined,
         append: () => {},
@@ -472,8 +477,6 @@ describe('workspace resource sharing (handler chain)', () => {
       () => {
         expect(catalog.catalog.getSkill('watched-skill')?.description).toBe('from watch');
       },
-      // Real FSEvents delivery + the 200 ms source debounce + a real disk
-      // rescan: under high parallel load the 10 s budget flakes, so allow 30 s.
       { timeout: 30000, interval: 100 },
     );
   }, 60000);

@@ -392,6 +392,8 @@ export async function readGenerationFileCheckedAsync(
   return new ByteReader(buf.subarray(8, buf.length - 4));
 }
 
+const yieldToLoop = (): Promise<void> => new Promise((r) => setImmediate(r));
+
 /** Verify a raw file against the manifest's integrity record by streaming
  *  its bytes (bounded memory — used for the postings files, which have no
  *  envelope of their own and are otherwise only verified lazily, per-record,
@@ -414,6 +416,36 @@ export function verifyFileIntegritySync(path: string, expected: { bytes: number;
     if ((crc >>> 0) !== expected.crc32) throw new GenerationCorruptError('file crc does not match manifest record');
   } finally {
     fsSync.closeSync(fd);
+  }
+}
+
+/** The read/verify chunk size of verifyFileIntegrityAsync: one crc32 slice per
+ *  chunk, then a yield — a large postings file verifies in bounded ~ms
+ *  slices instead of one synchronous pass. */
+const VERIFY_CHUNK_BYTES = 1 << 20;
+
+/** Async sliced variant of verifyFileIntegritySync (the open-time main-thread
+ *  path): bounded 1 MiB positioned reads, a crc32 slice and an event-loop
+ *  yield per chunk, so verifying a large postings file never blocks the loop
+ *  for the whole pass. Identical error semantics. */
+export async function verifyFileIntegrityAsync(path: string, expected: { bytes: number; crc32: number }): Promise<void> {
+  const fh = await fs.open(path, 'r');
+  try {
+    const st = await fh.stat();
+    if (st.size !== expected.bytes) throw new GenerationCorruptError('file size does not match manifest record');
+    let crc = 0;
+    const buf = Buffer.allocUnsafe(Math.min(VERIFY_CHUNK_BYTES, Math.max(st.size, 1)));
+    let pos = 0;
+    while (pos < st.size) {
+      const { bytesRead } = await fh.read(buf, 0, Math.min(buf.length, st.size - pos), pos);
+      if (bytesRead === 0) throw new GenerationCorruptError('file shrank during integrity check');
+      crc = crc32(buf.subarray(0, bytesRead), crc);
+      pos += bytesRead;
+      await yieldToLoop();
+    }
+    if ((crc >>> 0) !== expected.crc32) throw new GenerationCorruptError('file crc does not match manifest record');
+  } finally {
+    await fh.close().catch(() => {});
   }
 }
 
@@ -670,6 +702,52 @@ export function readSecondaryIndexImage(r: ByteReader): SecondaryImageIndex[] {
   return out;
 }
 
+/** Sliced variant of readSecondaryIndexImage (stage 6): identical result,
+ *  with event-loop yields every `yieldEvery` parsed entries so a large image
+ *  never parses in one synchronous run. */
+export async function readSecondaryIndexImageAsync(r: ByteReader, yieldEvery = 32768): Promise<SecondaryImageIndex[]> {
+  const count = r.u32();
+  const out: SecondaryImageIndex[] = [];
+  let n = 0;
+  const tick = async (): Promise<void> => {
+    if (++n % yieldEvery === 0) await yieldToLoop();
+  };
+  for (let i = 0; i < count; i++) {
+    const name = r.text();
+    const field = r.text();
+    const typeTag = r.u8();
+    const flags = r.u8();
+    const type = typeTag === 2 ? 'range' : typeTag === 1 ? 'equality' : null;
+    if (type === null) throw new GenerationCorruptError(`secondary image: unknown index type ${typeTag}`);
+    let equality: SecondaryImageIndex['equality'] = null;
+    let range: SecondaryImageIndex['range'] = null;
+    if (type === 'equality') {
+      equality = [];
+      const valueCount = r.u64();
+      for (let v = 0; v < valueCount; v++) {
+        const scalarKey = r.text();
+        const pkCount = r.u64();
+        const pks: string[] = [];
+        for (let p = 0; p < pkCount; p++) {
+          pks.push(r.key());
+          await tick();
+        }
+        equality.push({ scalarKey, pks });
+      }
+    } else {
+      range = [];
+      const m = r.u64();
+      for (let j = 0; j < m; j++) {
+        range.push({ value: r.f64(), pk: r.key() });
+        await tick();
+      }
+    }
+    out.push({ name, field, type, unique: (flags & 1) !== 0, sparse: (flags & 2) !== 0, equality, range });
+  }
+  if (!r.done) throw new GenerationCorruptError('secondary index image: trailing bytes');
+  return out;
+}
+
 // ---- compound index image ---------------------------------------------------
 
 const COMPOUND_MAGIC = 'MDCI';
@@ -772,6 +850,41 @@ export function readCompoundIndexImage(r: ByteReader): CompoundImageIndex[] {
       for (let j = 0; j < n; j++) {
         const order = orderType === 'string' ? r.text() : r.f64();
         entries.push({ order, pk: r.key() });
+      }
+      groups.push({ group, entries });
+    }
+    out.push({ name, groupBy, orderBy, orderType, groups });
+  }
+  if (!r.done) throw new GenerationCorruptError('compound index image: trailing bytes');
+  return out;
+}
+
+/** Sliced variant of readCompoundIndexImage (stage 6): identical result, with
+ *  event-loop yields every `yieldEvery` parsed entries. */
+export async function readCompoundIndexImageAsync(r: ByteReader, yieldEvery = 32768): Promise<CompoundImageIndex[]> {
+  const count = r.u32();
+  const out: CompoundImageIndex[] = [];
+  let n = 0;
+  const tick = async (): Promise<void> => {
+    if (++n % yieldEvery === 0) await yieldToLoop();
+  };
+  for (let i = 0; i < count; i++) {
+    const name = r.text();
+    const groupBy = r.text();
+    const orderBy = r.text();
+    const ot = r.u8();
+    const orderType = ot === 2 ? 'string' : ot === 1 ? 'number' : null;
+    if (orderType === null) throw new GenerationCorruptError(`compound image: unknown order type ${ot}`);
+    const groupCount = r.u64();
+    const groups: CompoundImageIndex['groups'] = [];
+    for (let g = 0; g < groupCount; g++) {
+      const group = readGroupValue(r);
+      const m = r.u64();
+      const entries: { order: number | string; pk: string }[] = [];
+      for (let j = 0; j < m; j++) {
+        const order = orderType === 'string' ? r.text() : r.f64();
+        entries.push({ order, pk: r.key() });
+        await tick();
       }
       groups.push({ group, entries });
     }
@@ -918,6 +1031,54 @@ export function readTextDocsImage(r: ByteReader): TextDocsImage {
     const n = r.u64();
     const docs: { docID: number; freq: number }[] = [];
     for (let j = 0; j < n; j++) docs.push({ docID: r.u32(), freq: r.u32() });
+    delta.push({ term, docs });
+  }
+  if (!r.done) throw new GenerationCorruptError('text docs image: trailing bytes');
+  return { keys, docLens, liveCount, removed, delta };
+}
+
+/** Sliced variant of readTextDocsImage (stage 6): identical result, with
+ *  event-loop yields every `yieldEvery` parsed entries so a large doc table
+ *  or delta never parses in one synchronous run. */
+export async function readTextDocsImageAsync(r: ByteReader, yieldEvery = 32768): Promise<TextDocsImage> {
+  const docCount = r.u64();
+  const liveCount = r.u64();
+  const removedCount = r.u64();
+  const deltaCount = r.u64();
+  let n = 0;
+  const tick = async (): Promise<void> => {
+    if (++n % yieldEvery === 0) await yieldToLoop();
+  };
+  const keys: (string | undefined)[] = [];
+  const docLens: (number | undefined)[] = [];
+  for (let i = 0; i < docCount; i++) {
+    const present = r.u8();
+    if (present === 1) {
+      keys.push(r.key());
+      docLens.push(r.u32());
+    } else if (present === 0) {
+      keys.push(undefined);
+      const len = r.u32();
+      docLens.push(len === 0 ? undefined : len);
+    } else {
+      throw new GenerationCorruptError(`text docs image: unknown presence tag ${present}`);
+    }
+    await tick();
+  }
+  const removed: number[] = [];
+  for (let i = 0; i < removedCount; i++) {
+    removed.push(r.u32());
+    await tick();
+  }
+  const delta: TextDocsImage['delta'] = [];
+  for (let i = 0; i < deltaCount; i++) {
+    const term = r.term();
+    const m = r.u64();
+    const docs: { docID: number; freq: number }[] = [];
+    for (let j = 0; j < m; j++) {
+      docs.push({ docID: r.u32(), freq: r.u32() });
+      await tick();
+    }
     delta.push({ term, docs });
   }
   if (!r.done) throw new GenerationCorruptError('text docs image: trailing bytes');

@@ -18,20 +18,13 @@ vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
 
 const lookupMock = lookup as unknown as Mock;
 
-// The init's dispatcher property is typed by @types/node's bundled
-// undici-types, while the runtime value is the undici package's Agent —
-// convert through unknown to bridge the two declarations.
 function asUndiciAgent(dispatcher: RequestInit['dispatcher']): Agent {
   return dispatcher as unknown as Agent;
 }
 
-// Keep DNS hermetic: every hostname resolves to a public address unless a
-// test overrides it (mockReset clears per-test overrides first).
 beforeEach(() => {
   lookupMock.mockReset();
   lookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
-  // Connection pinning is skipped when a proxy is configured — keep the
-  // environment free of proxy variables so tests stay hermetic anywhere.
   for (const key of ['http_proxy', 'HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']) {
     vi.stubEnv(key, '');
   }
@@ -256,9 +249,7 @@ describe('LocalFetchURLProvider connection pinning', () => {
     const [, init] = fetchImpl.mock.calls[0]!;
     const dispatcher = (init as RequestInit).dispatcher;
     expect(dispatcher).toBeInstanceOf(Agent);
-    // The DNS answer was validated once and reused for the connection.
     expect(lookupMock).toHaveBeenCalledTimes(1);
-    // The per-hop Agent is closed once the body has been consumed.
     expect(asUndiciAgent(dispatcher).closed).toBe(true);
   });
 

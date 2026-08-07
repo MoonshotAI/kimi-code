@@ -12,15 +12,20 @@
  * default). Because the memory layer shadows a whole section on read, each
  * patch spreads the section's current effective value so sibling user keys
  * stay visible. Explicit user config always wins over these defaults.
+ *
+ * The wait ceiling defaults to the host timer's maximum delay
+ * (`MAX_TIMER_DELAY_MS`, ~24.8 days) expressed in seconds: effectively
+ * unbounded, while `ceilingS * 1000` can never overflow a timer.
  */
 
+import { MAX_TIMER_DELAY_MS } from '#/_base/utils/timer';
 import { ConfigTarget, type ConfigInspectValue, type IConfigService } from '#/app/config/config';
 import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
 import { SUBAGENT_SECTION } from '#/session/subagent/configSection';
 
 import { LEGACY_BACKGROUND_SECTION, TASK_SECTION } from './configSection';
 
-export const PRINT_WAIT_CEILING_S_DEFAULT = 315_360_000;
+export const PRINT_WAIT_CEILING_S_DEFAULT = Math.floor(MAX_TIMER_DELAY_MS / 1000);
 
 export const PRINT_MAX_TURNS_DEFAULT = 100_000;
 

@@ -3,6 +3,7 @@ import { Readable, type Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { createServices } from '#/_base/di/test';
 import type {
   ExecutableTool,
@@ -15,6 +16,7 @@ import { AgentToolActivationService } from '#/agent/toolActivation/toolActivatio
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import {
   _clearAgentToolContributionsForTests,
+  AgentToolContribution,
   getAgentToolContributions,
   registerAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
@@ -53,6 +55,15 @@ vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
 }));
 
 const signal = new AbortController().signal;
+
+class TestContributionAssembly extends Service {
+  constructor() {
+    super();
+    for (const record of getAgentToolContributions()) {
+      this.provide(AgentToolContribution, record);
+    }
+  }
+}
 const workspace: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: ['/extra'] };
 const MAX_COLUMNS_RG_ARGS = ['--max-columns', '500'] as const;
 const COMMON_RG_ARGS = [
@@ -327,6 +338,7 @@ describe('GrepTool', () => {
         },
       });
 
+      disposables.add(ix.createInstance(TestContributionAssembly));
       await ix.get(IAgentToolActivationService).activate();
       const tool = ix.get(IAgentToolRegistryService).resolve('Grep');
       const info = ix.get(IAgentToolRegistryService).list().find((entry) => entry.name === 'Grep');

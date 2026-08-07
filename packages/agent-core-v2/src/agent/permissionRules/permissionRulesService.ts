@@ -8,7 +8,9 @@
  * consumers read the getters instead. Bound at Agent scope.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IWireService } from '#/wire/wire';
 import {

@@ -10,6 +10,7 @@
 import {
   bootstrap,
   drainQueryStoreDisposals,
+  drainSessionMetadataWrites,
   drainSessionIndexMirror,
   IConfigService,
   IEventService,
@@ -38,6 +39,7 @@ import { transformOpenApiDocument } from './openapi/transforms';
 import { registerRequestLogging } from './requestLogging';
 import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
+import { registerApiV2Routes } from './routes/registerApiV2Routes';
 import { registerWebAssetRoutes } from './routes/webAssets';
 import {
   createServerLogger,
@@ -384,6 +386,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       );
     }
     try {
+      // Settle session metadata writes first: requests have stopped, and a
+      // queued write must land before the mirror flushes its summary and the
+      // scope disposal marks the service disposed.
+      await drainSessionMetadataWrites();
       // Drain the session-index mirror while the query store is still open:
       // requests have stopped, so no new summaries arrive and the queue just
       // needs its final flush to land in the read model.
@@ -396,6 +402,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
       await drainQueryStoreDisposals();
+      await drainSessionMetadataWrites();
     } finally {
       await registration.release();
     }
@@ -462,6 +469,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'models', description: 'Configured model aliases' },
           { name: 'providers', description: 'Configured providers' },
           { name: 'sessions', description: 'Session lifecycle' },
+          { name: 'v2-sessions', description: 'Domain-grouped session list query (API v2)' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
           { name: 'search', description: 'Global message search' },
@@ -504,6 +512,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
   });
+
+  // `/api/v2` — same envelope conventions as v1, domain-grouped payloads.
+  // Mounted after v1; the root auth/host/origin hooks cover it identically.
+  await registerApiV2Routes(app, core);
 
   const wssV1 = registerWsV1(core, {
     validateCredential,
