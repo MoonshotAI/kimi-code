@@ -54,10 +54,7 @@ pub fn select(
 
 /// Keep the items whose value or label contains `filter` (case-insensitive).
 /// Used by the filtered picker; exported for unit tests.
-pub fn filter_items<'a>(
-    items: &'a [(String, String)],
-    filter: &str,
-) -> Vec<(&'a str, &'a str)> {
+pub fn filter_items<'a>(items: &'a [(String, String)], filter: &str) -> Vec<(&'a str, &'a str)> {
     let filter = filter.to_lowercase();
     items
         .iter()
@@ -154,7 +151,9 @@ pub(crate) fn render(
         .map(|(i, (value, label))| {
             let text = format!("  {value}  {label}");
             let style = if i == selected {
-                Style::default().fg(theme.user).add_modifier(Modifier::REVERSED)
+                Style::default()
+                    .fg(theme.user)
+                    .add_modifier(Modifier::REVERSED)
             } else {
                 Style::default().fg(theme.status)
             };
@@ -181,21 +180,40 @@ mod tests {
         ];
         let mut terminal = Terminal::new(TestBackend::new(50, 10)).unwrap();
         terminal
-            .draw(|frame| render(frame, crate::theme::Theme::dark(), "resume a session", &items, 1))
+            .draw(|frame| {
+                render(
+                    frame,
+                    crate::theme::Theme::dark(),
+                    "resume a session",
+                    &items,
+                    1,
+                )
+            })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
         let lines: Vec<String> = (0..10)
-            .map(|y| (0..50).map(|x| buffer[(x, y)].symbol().to_string()).collect())
+            .map(|y| {
+                (0..50)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect()
+            })
             .collect();
         assert!(
             lines.iter().any(|l| l.contains("resume a session")),
             "title:\n{}",
             lines.join("\n")
         );
-        assert!(lines.iter().any(|l| l.contains("s-1") && l.contains("first")));
-        assert!(lines.iter().any(|l| l.contains("s-3") && l.contains("third")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("s-1") && l.contains("first")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("s-3") && l.contains("third")));
         // The selected entry (index 1) is highlighted with REVERSED.
-        let selected_row = lines.iter().position(|l| l.contains("second")).expect("second row");
+        let selected_row = lines
+            .iter()
+            .position(|l| l.contains("second"))
+            .expect("second row");
         let cell = &buffer[(3, selected_row as u16)];
         assert!(
             cell.style().add_modifier.contains(Modifier::REVERSED),
@@ -218,7 +236,10 @@ mod tests {
     fn filter_matches_value_or_label_case_insensitively() {
         let items = vec![
             ("kimi-k2".to_string(), "Kimi K2".to_string()),
-            ("kimi-k2-thinking".to_string(), "Kimi K2 Thinking".to_string()),
+            (
+                "kimi-k2-thinking".to_string(),
+                "Kimi K2 Thinking".to_string(),
+            ),
             ("deepseek".to_string(), "DeepSeek".to_string()),
         ];
         assert_eq!(filter_items(&items, "k2").len(), 2);

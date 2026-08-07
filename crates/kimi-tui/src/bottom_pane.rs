@@ -87,20 +87,72 @@ pub fn command_descriptions() -> Vec<(String, String)> {
 
 /// Command names for `/…` Tab completion.
 pub const SLASH_COMMANDS: &[&str] = &[
-    "/add-dir", "/approvals", "/approve", "/archive", "/auto", "/clear", "/compact", "/config",
-    "/deny", "/exit", "/export", "/fork", "/goal", "/goal-cancel", "/goal-pause", "/goal-resume",
-    "/goal-status", "/help", "/import", "/info", "/init", "/locale", "/login", "/logout", "/mcp",
-    "/model", "/models", "/new", "/permission", "/plan", "/plugins", "/quit", "/reload",
-    "/resume", "/session", "/sessions", "/settings", "/skills", "/status", "/steer", "/swarm",
-    "/tasks", "/theme", "/thinking", "/title", "/undo", "/usage", "/version", "/yolo", "/editor",
-    "/copy", "/export-md", "/discuss", "/workflow", "/provider", "/reload-tui",
+    "/add-dir",
+    "/approvals",
+    "/approve",
+    "/archive",
+    "/auto",
+    "/clear",
+    "/compact",
+    "/config",
+    "/deny",
+    "/exit",
+    "/export",
+    "/fork",
+    "/goal",
+    "/goal-cancel",
+    "/goal-pause",
+    "/goal-resume",
+    "/goal-status",
+    "/help",
+    "/import",
+    "/info",
+    "/init",
+    "/locale",
+    "/login",
+    "/logout",
+    "/mcp",
+    "/model",
+    "/models",
+    "/new",
+    "/permission",
+    "/plan",
+    "/plugins",
+    "/quit",
+    "/reload",
+    "/resume",
+    "/session",
+    "/sessions",
+    "/settings",
+    "/skills",
+    "/status",
+    "/steer",
+    "/swarm",
+    "/tasks",
+    "/theme",
+    "/thinking",
+    "/title",
+    "/undo",
+    "/usage",
+    "/version",
+    "/yolo",
+    "/editor",
+    "/copy",
+    "/export-md",
+    "/discuss",
+    "/workflow",
+    "/provider",
+    "/reload-tui",
 ];
 
 // ── Input editing (char-index based) ────────────────────────────────────
 
 /// Byte offset of the `cursor`-th char (clamped to the string end).
 fn byte_of_char(input: &str, cursor: usize) -> usize {
-    input.char_indices().nth(cursor).map_or(input.len(), |(i, _)| i)
+    input
+        .char_indices()
+        .nth(cursor)
+        .map_or(input.len(), |(i, _)| i)
 }
 
 /// Insert `ch` at the char index `cursor`; returns the new input and cursor.
@@ -288,7 +340,10 @@ pub fn complete_line(
     }
     // Command-name completion while typing `/…`.
     if base.starts_with('/') {
-        let matches: Vec<&&str> = SLASH_COMMANDS.iter().filter(|c| c.starts_with(base)).collect();
+        let matches: Vec<&&str> = SLASH_COMMANDS
+            .iter()
+            .filter(|c| c.starts_with(base))
+            .collect();
         if matches.is_empty() {
             return (base.to_string(), None);
         }
@@ -305,7 +360,11 @@ pub fn complete_from(
     options: &[&str],
     tab_idx: Option<usize>,
 ) -> Option<(String, usize)> {
-    let matches: Vec<&str> = options.iter().copied().filter(|o| o.starts_with(arg)).collect();
+    let matches: Vec<&str> = options
+        .iter()
+        .copied()
+        .filter(|o| o.starts_with(arg))
+        .collect();
     if matches.is_empty() {
         return None;
     }
@@ -322,7 +381,10 @@ pub fn complete_model_arg(
     if model_aliases.is_empty() {
         return None;
     }
-    let matches: Vec<&String> = model_aliases.iter().filter(|a| a.starts_with(prefix)).collect();
+    let matches: Vec<&String> = model_aliases
+        .iter()
+        .filter(|a| a.starts_with(prefix))
+        .collect();
     if matches.is_empty() {
         return None;
     }
@@ -493,7 +555,10 @@ mod tests {
 
         let prefix = format!("{}/al", dir.display());
         let (done, _idx) = complete_path(&prefix, None).expect("completes");
-        assert!(done.ends_with("alpha/") || done.ends_with("alpha.txt"), "done: {done}");
+        assert!(
+            done.ends_with("alpha/") || done.ends_with("alpha.txt"),
+            "done: {done}"
+        );
 
         // Directory listing when the arg ends with a slash.
         let prefix = format!("{}/", dir.display());

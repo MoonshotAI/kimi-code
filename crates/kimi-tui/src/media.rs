@@ -47,8 +47,16 @@ pub fn parse_read_media_output(output: &str) -> Option<ReadMediaSummary> {
         }
         if r#type == "image_url" || r#type == "video_url" {
             found_media = true;
-            kind = Some(if r#type == "image_url" { "image" } else { "video" });
-            let holder_key = if r#type == "image_url" { "imageUrl" } else { "videoUrl" };
+            kind = Some(if r#type == "image_url" {
+                "image"
+            } else {
+                "video"
+            });
+            let holder_key = if r#type == "image_url" {
+                "imageUrl"
+            } else {
+                "videoUrl"
+            };
             let Some(holder) = obj.get(holder_key).and_then(|v| v.as_object()) else {
                 continue;
             };
@@ -84,7 +92,10 @@ fn parse_path_tag(text: &str) -> Option<(&'static str, String)> {
         return None;
     }
     let path = rest.strip_prefix("path=\"")?.strip_suffix('"')?;
-    Some((if kind == "image" { "image" } else { "video" }, path.to_string()))
+    Some((
+        if kind == "image" { "image" } else { "video" },
+        path.to_string(),
+    ))
 }
 
 /// Split `data:mime;base64,payload`.
@@ -182,7 +193,8 @@ mod tests {
 
     #[test]
     fn summary_line_never_contains_base64() {
-        let output = r#"[{"type":"image_url","imageUrl":{"url":"data:image/png;base64,aGVsbG8="}}]"#;
+        let output =
+            r#"[{"type":"image_url","imageUrl":{"url":"data:image/png;base64,aGVsbG8="}}]"#;
         let text = media_summary_text(output).expect("summary");
         assert!(text.starts_with("image ("), "text: {text}");
         assert!(!text.contains("aGVsbG8"), "base64 must not leak: {text}");

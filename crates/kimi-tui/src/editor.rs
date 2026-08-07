@@ -55,10 +55,7 @@ pub fn edit_external(seed: &str) -> anyhow::Result<String> {
 
     // Suspend the TUI so the editor owns the terminal.
     crossterm::terminal::disable_raw_mode()?;
-    crossterm::execute!(
-        std::io::stdout(),
-        crossterm::terminal::LeaveAlternateScreen
-    )?;
+    crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
 
     // Shell out so the command string keeps its argv quoting semantics.
     let shell_cmd = format!("{cmd} \"{}\"", path.display());
@@ -67,7 +64,9 @@ pub fn edit_external(seed: &str) -> anyhow::Result<String> {
             .args(["/C", &shell_cmd])
             .status()
     } else {
-        std::process::Command::new("sh").args(["-c", &shell_cmd]).status()
+        std::process::Command::new("sh")
+            .args(["-c", &shell_cmd])
+            .status()
     };
 
     // Restore the TUI either way.
@@ -95,7 +94,10 @@ pub fn edit_external(seed: &str) -> anyhow::Result<String> {
     let text = std::fs::read_to_string(&path)?;
     let _ = std::fs::remove_file(&path);
     // Windows editors write CRLF; normalise and drop the trailing newline.
-    Ok(text.replace("\r\n", "\n").trim_end_matches('\n').to_string())
+    Ok(text
+        .replace("\r\n", "\n")
+        .trim_end_matches('\n')
+        .to_string())
 }
 
 #[cfg(test)]
@@ -124,7 +126,10 @@ mod tests {
 
     #[test]
     fn normalises_line_endings() {
-        let text = "a\r\nb\r\n".replace("\r\n", "\n").trim_end_matches('\n').to_string();
+        let text = "a\r\nb\r\n"
+            .replace("\r\n", "\n")
+            .trim_end_matches('\n')
+            .to_string();
         assert_eq!(text, "a\nb");
     }
 }

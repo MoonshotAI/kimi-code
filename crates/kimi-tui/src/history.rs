@@ -3,7 +3,7 @@
 //! `hydrateFromReplay` parity). Pure function over the wire shape, so it is
 //! unit-testable without a running engine.
 
-use crate::app::{TranscriptEntry, TranscriptLine, ToolCallEntry};
+use crate::app::{ToolCallEntry, TranscriptEntry, TranscriptLine};
 
 /// Join the text parts of an engine message's `content` array
 /// (`[{"type":"text","text":…}, …]`).
@@ -134,7 +134,10 @@ mod tests {
         let lines = render_history(&data);
         assert_eq!(lines.len(), 3, "user + tool + assistant: {lines:?}");
         // Assistant tool_calls now render as structured ToolCall cards.
-        assert!(matches!(lines[1], TranscriptEntry::ToolCall(_)), "tool card: {lines:?}");
+        assert!(
+            matches!(lines[1], TranscriptEntry::ToolCall(_)),
+            "tool card: {lines:?}"
+        );
         assert_eq!(line(&lines[2]).text, "done");
     }
 

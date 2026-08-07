@@ -21,7 +21,9 @@ pub fn append_stream(transcript: &mut Vec<TranscriptEntry>, delta: &str) {
             return;
         }
     }
-    transcript.push(TranscriptEntry::Line(TranscriptLine::streaming(delta.to_string())));
+    transcript.push(TranscriptEntry::Line(TranscriptLine::streaming(
+        delta.to_string(),
+    )));
 }
 
 /// Append a thinking delta to the trailing thinking line (same accumulate
@@ -33,16 +35,17 @@ pub fn append_thinking(transcript: &mut Vec<TranscriptEntry>, delta: &str) {
             return;
         }
     }
-    transcript.push(TranscriptEntry::Line(TranscriptLine::thinking(delta.to_string())));
+    transcript.push(TranscriptEntry::Line(TranscriptLine::thinking(
+        delta.to_string(),
+    )));
 }
 
 /// Drop trailing transient thinking lines (reasoning never enters the
 /// transcript once the turn closes).
 pub fn drop_trailing_thinking(transcript: &mut Vec<TranscriptEntry>) {
-    while transcript
-        .last()
-        .is_some_and(|e| matches!(e, TranscriptEntry::Line(l) if l.kind == TranscriptKind::Thinking))
-    {
+    while transcript.last().is_some_and(
+        |e| matches!(e, TranscriptEntry::Line(l) if l.kind == TranscriptKind::Thinking),
+    ) {
         transcript.pop();
     }
 }
@@ -83,8 +86,18 @@ mod tests {
         append_stream(&mut t, "visible");
         drop_trailing_thinking(&mut t);
         // Thinking is transient — dropping only affects trailing thinking.
-        assert_eq!(last_line(&t).map(|l| l.kind), Some(TranscriptKind::Streaming));
-        assert_eq!(t.iter().filter(|e| matches!(e, TranscriptEntry::Line(l) if l.kind == TranscriptKind::Thinking)).count(), 1);
+        assert_eq!(
+            last_line(&t).map(|l| l.kind),
+            Some(TranscriptKind::Streaming)
+        );
+        assert_eq!(
+            t.iter()
+                .filter(
+                    |e| matches!(e, TranscriptEntry::Line(l) if l.kind == TranscriptKind::Thinking)
+                )
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -93,7 +106,10 @@ mod tests {
         append_stream(&mut t, "hello");
         let replaced = finish_stream(&mut t, "hello world".into());
         assert!(replaced);
-        assert_eq!(last_line(&t).map(|l| l.kind), Some(TranscriptKind::Assistant));
+        assert_eq!(
+            last_line(&t).map(|l| l.kind),
+            Some(TranscriptKind::Assistant)
+        );
         assert_eq!(last_line(&t).map(|l| l.text.as_str()), Some("hello world"));
     }
 
@@ -102,6 +118,9 @@ mod tests {
         let mut t = Vec::new();
         let replaced = finish_stream(&mut t, "direct".into());
         assert!(!replaced);
-        assert_eq!(last_line(&t).map(|l| l.kind), Some(TranscriptKind::Assistant));
+        assert_eq!(
+            last_line(&t).map(|l| l.kind),
+            Some(TranscriptKind::Assistant)
+        );
     }
 }

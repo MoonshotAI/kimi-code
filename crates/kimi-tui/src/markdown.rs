@@ -112,7 +112,10 @@ fn render_inner(markdown: &str, theme: Theme) -> Vec<RenderLine<'static>> {
                 }
             }
             Event::Code(text) => {
-                current.push(Span::styled(text.to_string(), Style::default().fg(theme.code)));
+                current.push(Span::styled(
+                    text.to_string(),
+                    Style::default().fg(theme.code),
+                ));
             }
             Event::SoftBreak | Event::HardBreak => {
                 flush_line!();
@@ -189,7 +192,6 @@ mod tests {
     use super::*;
     use ratatui::style::Color;
 
-
     #[test]
     fn renders_plain_text() {
         let lines = render_markdown("hello world");
@@ -217,12 +219,18 @@ mod tests {
         assert_eq!(text, "bold and code");
         // Bold span carries the BOLD modifier.
         assert!(
-            lines[0].spans.iter().any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
+            lines[0]
+                .spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
             "a span is bold"
         );
         // Code span is yellow.
         assert!(
-            lines[0].spans.iter().any(|s| s.style.fg == Some(Color::Yellow)),
+            lines[0]
+                .spans
+                .iter()
+                .any(|s| s.style.fg == Some(Color::Yellow)),
             "a span is code-styled"
         );
     }
@@ -236,7 +244,9 @@ mod tests {
             .collect();
         assert!(all.contains("fn main() {}"), "code body present: {all}");
         assert!(
-            lines.iter().any(|l| l.spans.iter().any(|s| s.style.fg == Some(Color::Yellow))),
+            lines
+                .iter()
+                .any(|l| l.spans.iter().any(|s| s.style.fg == Some(Color::Yellow))),
             "code line is yellow"
         );
     }
@@ -279,4 +289,3 @@ mod tests {
         assert!(all.contains("─"), "rule dashes: {all}");
     }
 }
-

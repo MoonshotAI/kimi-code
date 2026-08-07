@@ -19,6 +19,9 @@ pub struct FooterInfo {
     pub auto: bool,
     pub yolo: bool,
     pub model: String,
+    /// Thinking effort label (`off`/`low`/`medium`/`high`/`on`), shown
+    /// next to the model when not off (TS footer thinking-label parity).
+    pub thinking: String,
     /// Context tokens as a percentage of the window (0..=100).
     pub ctx_pct: u8,
     pub cwd: String,
@@ -34,7 +37,11 @@ impl FooterInfo {
     pub fn from_status(status: &serde_json::Value) -> Self {
         let ctx = status["context_tokens"].as_u64().unwrap_or(0);
         let max = status["max_context_tokens"].as_u64().unwrap_or(0);
-        let ctx_pct = if max > 0 { ((ctx * 100) / max).min(100) as u8 } else { 0 };
+        let ctx_pct = if max > 0 {
+            ((ctx * 100) / max).min(100) as u8
+        } else {
+            0
+        };
         let permission = status["permission"].as_str().unwrap_or("");
         let cwd = std::env::current_dir()
             .ok()
@@ -46,6 +53,7 @@ impl FooterInfo {
             auto: permission == "auto",
             yolo: permission == "yolo",
             model: status["model"].as_str().unwrap_or("-").to_string(),
+            thinking: status["thinking_effort"].as_str().unwrap_or("").to_string(),
             ctx_pct,
             cwd,
             branch: current_git_branch(),
@@ -63,7 +71,10 @@ pub fn format_goal_badge(goal: &serde_json::Value) -> Option<String> {
     }
     let dot = if status == "active" { "●" } else { "○" };
     let turns = goal["turnsUsed"].as_u64().unwrap_or(0);
-    Some(format!("[goal {dot} {status} · {turns} {}]", crate::i18n::t("tui.footer.turns")))
+    Some(format!(
+        "[goal {dot} {status} · {turns} {}]",
+        crate::i18n::t("tui.footer.turns")
+    ))
 }
 
 /// The current git branch by parsing `.git/HEAD` (cheap, no subprocess).
@@ -131,7 +142,9 @@ pub fn footer_lines(info: &FooterInfo, theme: Theme, width: u16) -> Vec<RenderLi
         if on {
             spans.push(Span::styled(
                 format!("[{label}] "),
-                Style::default().fg(theme.assistant).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.assistant)
+                    .add_modifier(Modifier::BOLD),
             ));
         }
     }
@@ -145,6 +158,12 @@ pub fn footer_lines(info: &FooterInfo, theme: Theme, width: u16) -> Vec<RenderLi
         info.model.clone(),
         Style::default().fg(theme.status),
     ));
+    if !info.thinking.is_empty() && info.thinking != "off" {
+        spans.push(Span::styled(
+            format!(" ({})", info.thinking),
+            Style::default().fg(theme.thinking),
+        ));
+    }
     let cwd = shorten_cwd(&info.cwd);
     if !cwd.is_empty() {
         spans.push(Span::styled(
@@ -197,6 +216,7 @@ mod tests {
             "swarm_mode": false,
             "permission": "yolo",
             "model": "kimi-k2",
+            "thinking_effort": "high",
             "context_tokens": 300,
             "max_context_tokens": 1000,
         });
@@ -206,6 +226,7 @@ mod tests {
         assert!(info.yolo);
         assert!(!info.auto);
         assert_eq!(info.model, "kimi-k2");
+        assert_eq!(info.thinking, "high");
         assert_eq!(info.ctx_pct, 30);
     }
 
@@ -230,6 +251,7 @@ mod tests {
             auto: true,
             yolo: false,
             model: "kimi-k2".into(),
+            thinking: "high".into(),
             ctx_pct: 30,
             cwd: "/work".into(),
             branch: Some("main".into()),
@@ -241,6 +263,7 @@ mod tests {
         assert!(strip.contains("[auto]"), "strip: {strip}");
         assert!(strip.contains("[plan]"), "strip: {strip}");
         assert!(strip.contains("kimi-k2"), "strip: {strip}");
+        assert!(strip.contains("(high)"), "thinking label: {strip}");
         assert!(strip.contains("/work"), "strip: {strip}");
         assert!(strip.contains("(main)"), "strip: {strip}");
         assert!(strip.contains("[goal ● active"), "goal badge: {strip}");

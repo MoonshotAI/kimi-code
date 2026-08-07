@@ -200,7 +200,8 @@ mod tests {
         // parallel tests, so a dir-level wipe would break them.
         if let Some(path) = queue_path(session_id) {
             let _ = std::fs::remove_file(&path);
-            let _ = std::fs::remove_file(path.with_extension(format!("{}.tmp", std::process::id())));
+            let _ =
+                std::fs::remove_file(path.with_extension(format!("{}.tmp", std::process::id())));
         }
     }
 

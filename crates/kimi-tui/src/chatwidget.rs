@@ -30,10 +30,18 @@ pub fn render_frame(
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(3), Constraint::Length(2)])
+        .constraints([
+            Constraint::Min(3),
+            Constraint::Length(3),
+            Constraint::Length(2),
+        ])
         .split(frame.area());
     let chat = Paragraph::new(styled_lines(transcript, theme))
-        .block(Block::default().borders(Borders::ALL).title(t("tui.chat.title")))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(t("tui.chat.title")),
+        )
         .scroll((scroll, 0));
     // The completion popup overlays the bottom of the chat pane.
     if let Some(state) = completion {
@@ -48,18 +56,18 @@ pub fn render_frame(
                 RenderLine::from(vec![
                     Span::styled(
                         format!("  {prefix} {cmd}"),
-                        Style::default().fg(if selected { theme.assistant } else { theme.status }),
+                        Style::default().fg(if selected {
+                            theme.assistant
+                        } else {
+                            theme.status
+                        }),
                     ),
-                    Span::styled(
-                        format!("  {desc}"),
-                        Style::default().fg(theme.thinking),
-                    ),
+                    Span::styled(format!("  {desc}"), Style::default().fg(theme.thinking)),
                 ])
             })
             .collect();
-        let popup = Paragraph::new(popup_lines).block(
-            Block::default().borders(Borders::ALL).title("commands"),
-        );
+        let popup = Paragraph::new(popup_lines)
+            .block(Block::default().borders(Borders::ALL).title("commands"));
         let popup_height = (state.matches.len() as u16 + 2).min(chunks[0].height);
         let area = ratatui::layout::Rect {
             x: chunks[0].x,
@@ -99,10 +107,8 @@ pub fn max_scroll(total: usize, pane_height: u16) -> usize {
 /// Map transcript entries to styled render lines (role → prefix + style).
 /// Assistant (and live-streaming) text is markdown-rendered; everything else
 /// stays plain. Colors come from the resolved theme palette.
-pub fn styled_lines(
-    transcript: &[TranscriptEntry],
-    theme: Theme,
-) -> Vec<RenderLine<'static>> {    let mut out = Vec::new();
+pub fn styled_lines(transcript: &[TranscriptEntry], theme: Theme) -> Vec<RenderLine<'static>> {
+    let mut out = Vec::new();
     for entry in transcript {
         match entry {
             TranscriptEntry::ToolCall(tc) => {
@@ -110,7 +116,11 @@ pub fn styled_lines(
                 // AskUserQuestion), then the result when settled
                 // (collapsed -> preview + `[+]`).
                 let marker = if tc.is_question { "❓" } else { "⚙" };
-                let color = if tc.is_question { theme.status } else { theme.tool };
+                let color = if tc.is_question {
+                    theme.status
+                } else {
+                    theme.tool
+                };
                 let header = format!("{marker} {}({})", tc.tool_name, preview(&tc.args, 60));
                 out.push(RenderLine::from(Span::styled(
                     header,
@@ -120,13 +130,21 @@ pub fn styled_lines(
                     if tc.collapsed {
                         out.push(RenderLine::from(Span::styled(
                             format!("  -> {} [+]", preview(result, 100)),
-                            Style::default().fg(if tc.is_error { theme.error } else { theme.status }),
+                            Style::default().fg(if tc.is_error {
+                                theme.error
+                            } else {
+                                theme.status
+                            }),
                         )));
                     } else {
                         for (i, line) in result.lines().enumerate() {
                             out.push(RenderLine::from(Span::styled(
                                 format!("  {} {line}", if i == 0 { "->" } else { " " }),
-                                Style::default().fg(if tc.is_error { theme.error } else { theme.status }),
+                                Style::default().fg(if tc.is_error {
+                                    theme.error
+                                } else {
+                                    theme.status
+                                }),
                             )));
                         }
                     }
@@ -147,14 +165,20 @@ pub fn styled_lines(
                     let folded = fold_thinking(&line.text);
                     out.push(RenderLine::from(Span::styled(
                         folded,
-                        Style::default().fg(theme.thinking).add_modifier(Modifier::ITALIC),
+                        Style::default()
+                            .fg(theme.thinking)
+                            .add_modifier(Modifier::ITALIC),
                     )));
                 }
                 TranscriptKind::Tool => {
                     let is_question = line.text.contains("AskUserQuestion");
                     out.push(RenderLine::from(Span::styled(
                         format!("  {} {}", if is_question { "❓" } else { "⚙" }, line.text),
-                        Style::default().fg(if is_question { theme.status } else { theme.tool }),
+                        Style::default().fg(if is_question {
+                            theme.status
+                        } else {
+                            theme.tool
+                        }),
                     )));
                 }
                 TranscriptKind::Status => out.push(RenderLine::from(Span::styled(
