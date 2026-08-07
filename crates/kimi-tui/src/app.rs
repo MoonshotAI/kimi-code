@@ -1462,6 +1462,19 @@ impl App {
                     let usage = self.session.as_mut().expect("session").get_usage().await?;
                     let summary = format_usage(&usage["result"]);
                     self.push_line(TranscriptLine::status(summary));
+                    // Context window readout (TS usage-panel parity).
+                    let status = self.session.as_mut().expect("session").get_status().await;
+                    let ctx = status["result"]["context_tokens"].as_u64().unwrap_or(0);
+                    let max = status["result"]["max_context_tokens"].as_u64().unwrap_or(0);
+                    if max > 0 {
+                        let pct = (ctx * 100 / max).min(100);
+                        self.push_line(TranscriptLine::status(t!(
+                            "tui.usage.context",
+                            ctx,
+                            max,
+                            pct
+                        )));
+                    }
                 }
                 "/undo" => {
                     let undone = self.session.as_mut().expect("session").undo_history(1).await?;

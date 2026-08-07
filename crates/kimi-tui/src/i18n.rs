@@ -283,6 +283,7 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.undo.result", "undo: {0}", "撤销：{0}"),
     ("tui.usage.none", "usage: no tokens recorded", "用量：暂无 token 记录"),
     ("tui.usage.total", "usage: {0} total ({1} in / {2} out)", "用量：共 {0}（输入 {1} / 输出 {2}）"),
+    ("tui.usage.context", "context: {0}/{1} tokens ({2}%)", "上下文：{0}/{1} tokens（{2}%）"),
     ("tui.fork.usage", "usage: /fork <new-session-id>", "用法：/fork <新会话ID>"),
     ("tui.fork.done", "forked to {0}", "已分叉到 {0}"),
     ("tui.steer.usage", "usage: /steer <text>", "用法：/steer <文本>"),
