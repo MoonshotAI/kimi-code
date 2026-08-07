@@ -889,9 +889,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     // Keep status classification aligned with the existing connection manager:
     // unmarked static headers are not treated as OAuth credentials.
     if (server.headers !== undefined && server.auth !== 'oauth') return 'not-applicable';
+    if (server.transport !== 'http' && server.auth !== 'oauth') return 'not-applicable';
     if (this.globalMcpOAuth.hasTokens(server.name, server.url)) return 'oauth-authorized';
     if (server.auth === 'oauth') return 'oauth-required';
-    if (server.transport !== 'http') return 'not-applicable';
 
     return this.withGlobalMcpServerProbe(server, undefined, (manager) =>
       manager.get(server.name)?.status === 'needs-auth' ? 'oauth-required' : 'not-applicable',

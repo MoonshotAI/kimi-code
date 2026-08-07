@@ -219,9 +219,13 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
     const homeDir = await makeTempDir();
     const statusServer = await startMcpAuthStatusServer();
     const authorizedUrl = 'https://authorized.example.test/mcp';
-    new McpOAuthService({ kimiHomeDir: homeDir })
+    const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
+    externalOAuth
       .getProvider('oauth-authorized', authorizedUrl)
       .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
+    externalOAuth
+      .getProvider('sse', statusServer.oauthUrl)
+      .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
     await writeMcpConfig(homeDir, {
       mcpServers: {
         stdio: { command: 'local-command' },

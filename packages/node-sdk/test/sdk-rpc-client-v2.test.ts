@@ -64,6 +64,9 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     externalOAuth
       .getProvider('oauth-authorized', authorizedUrl)
       .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
+    externalOAuth
+      .getProvider('sse', statusServer.oauthUrl)
+      .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
     await writeFile(
       join(homeDir, 'mcp.json'),
       JSON.stringify({
