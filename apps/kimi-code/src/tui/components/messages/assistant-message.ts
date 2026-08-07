@@ -61,7 +61,14 @@ export class AssistantMessageComponent implements Component {
 
     if (this.markdown === undefined || this.markdownTransient !== transient) {
       this.contentContainer.clear();
-      this.markdown = new Markdown(displayText, 0, 0, createMarkdownTheme({ transient }));
+      this.markdown = new Markdown(
+        displayText,
+        0,
+        0,
+        createMarkdownTheme({ transient }),
+        undefined,
+        { preserveIncompleteMath: transient },
+      );
       this.markdownTransient = transient;
       this.contentContainer.addChild(this.markdown);
       return;
@@ -84,6 +91,8 @@ export class AssistantMessageComponent implements Component {
         0,
         0,
         createMarkdownTheme({ transient: this.lastTransient }),
+        undefined,
+        { preserveIncompleteMath: this.lastTransient },
       );
       this.markdownTransient = this.lastTransient;
       this.contentContainer.addChild(this.markdown);
