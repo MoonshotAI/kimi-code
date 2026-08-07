@@ -1,9 +1,11 @@
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { setKittyProtocolActive } from "./keys.ts";
 import { isNativeModifierPressed } from "./native-modifiers.ts";
+import { getRenderProfiler } from "./render-profiler.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
 
 const cjsRequire = createRequire(import.meta.url);
@@ -452,7 +454,12 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	write(data: string): void {
-		process.stdout.write(data);
+		const profiler = getRenderProfiler();
+		const start = profiler.enabled ? performance.now() : 0;
+		const ok = process.stdout.write(data);
+		if (profiler.enabled) {
+			profiler.recordWrite(performance.now() - start, Buffer.byteLength(data, "utf8"), ok);
+		}
 		if (this.writeLogPath) {
 			try {
 				fs.appendFileSync(this.writeLogPath, data, { encoding: "utf8" });
