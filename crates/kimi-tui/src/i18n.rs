@@ -312,6 +312,7 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     // ── Turn lifecycle ──────────────────────────────────────────────────
     ("tui.turn.cancelled", "turn cancelled", "已取消本轮"),
     ("tui.turn.exitConfirm", "press Ctrl-C again to exit", "再按一次 Ctrl-C 退出"),
+    ("tui.turn.summary", "… {0} tools · {1} messages", "… {0} 次工具调用 · {1} 条消息"),
     ("tui.shell.done", "command finished", "命令执行完成"),
     ("tui.err.shellFailed", "shell failed: {0}", "命令执行失败：{0}"),
     ("tui.paste.image", "pasted image #{0} (Alt-V)", "已粘贴图片 #{0}（Alt-V）"),

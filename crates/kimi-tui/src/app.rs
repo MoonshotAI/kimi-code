@@ -1953,6 +1953,7 @@ impl App {
         // events into the panel while the turn runs. The prompt future lives
         // in a block so its `&mut session` borrow ends before we read back.
         self.push_line(TranscriptLine::user(line));
+        let turn_start = self.transcript.len();
         let prompt_result = {
             // Clone the session out so the prompt future (which borrows it
             // mutably) can coexist with `self.pump_one_event` in the select.
@@ -1989,6 +1990,16 @@ impl App {
                     }
                 }
             }
+        }
+        // Turn summary (TS step-summary parity, simplified): when a turn
+        // made several tool calls, fold a one-line recap into the transcript.
+        let tools = self.transcript[turn_start..]
+            .iter()
+            .filter(|e| matches!(e, TranscriptEntry::ToolCall(_)))
+            .count();
+        let messages = self.transcript.len() - turn_start;
+        if tools >= 2 {
+            self.push_line(TranscriptLine::status(t!("tui.turn.summary", tools, messages)));
         }
         Ok(false)
         })
