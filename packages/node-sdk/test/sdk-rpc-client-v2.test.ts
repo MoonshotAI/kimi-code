@@ -111,10 +111,14 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
   it('begins OAuth with an auxiliary header and no auth marker without leaking the header', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
+    const storedUrl = 'http://127.0.0.1:1/stored';
     const server = await startMcpAuthStatusTestServer({
       mode: 'rfc9728',
       requiredResourceHeader: ['x-api-key', 'resource-secret'],
     });
+    new McpOAuthService({ kimiHomeDir: homeDir })
+      .getProvider('oauth-authorized', storedUrl)
+      .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
     const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
     try {
       await rpc.addGlobalMcpServer({
@@ -128,6 +132,14 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
         transport: 'http',
         url: server.url,
         headers: { Authorization: 'Bearer configured' },
+      });
+      await rpc.addGlobalMcpServer({
+        name: 'oauth-authorized',
+        transport: 'http',
+        url: storedUrl,
+      });
+      await expect(rpc.beginGlobalMcpServerAuth('oauth-authorized')).resolves.toEqual({
+        status: 'already-authorized',
       });
       await expect(rpc.beginGlobalMcpServerAuth('static-authorization')).rejects.toThrow(
         /static Authorization header/,

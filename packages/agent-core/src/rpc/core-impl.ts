@@ -800,16 +800,24 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const server = await this.globalMcpConfig.get(name);
     const config = requireOAuthMcpServer(server);
     try {
-      const discoveryState = await discoverMcpOAuth(config.url, config.headers);
-      if (discoveryState === undefined) {
-        throw new KimiError(
-          ErrorCodes.REQUEST_INVALID,
-          `MCP server "${server.name}" does not advertise OAuth support`,
-        );
+      if (this.globalMcpOAuth.hasTokens(server.name, config.url)) {
+        return { status: 'already-authorized' };
       }
-      const flow = await this.globalMcpOAuth.beginAuthorization(server.name, config.url, {
-        discoveryState,
-      });
+      let discoveryState = this.globalMcpOAuth.discoveryState(server.name, config.url);
+      if (discoveryState === undefined) {
+        try {
+          discoveryState = await discoverMcpOAuth(config.url, config.headers);
+        } catch {
+          // Explicit begin is a published legacy escape hatch. Automatic status
+          // and 401 handling stay strict, but begin still delegates unsupported
+          // discovery layouts to the SDK's existing compatibility fallback.
+        }
+      }
+      const flow = await this.globalMcpOAuth.beginAuthorization(
+        server.name,
+        config.url,
+        discoveryState === undefined ? {} : { discoveryState },
+      );
       const flowId = randomUUID();
       this.globalMcpOAuthFlows.set(flowId, { flow });
       return {

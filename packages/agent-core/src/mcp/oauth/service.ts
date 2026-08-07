@@ -98,6 +98,13 @@ export class McpOAuthService {
     return this.getProvider(serverName, serverUrl).tokens() !== undefined;
   }
 
+  discoveryState(
+    serverName: string,
+    serverUrl: string | URL,
+  ): OAuthDiscoveryState | undefined {
+    return this.getProvider(serverName, serverUrl).discoveryState();
+  }
+
   /**
    * Drive the SDK `auth()` orchestrator far enough to surface an
    * authorization URL. The caller is responsible for displaying the URL

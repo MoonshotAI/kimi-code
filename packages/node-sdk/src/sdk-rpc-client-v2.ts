@@ -2149,16 +2149,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const config = requireOAuthMcpServer(server);
     try {
       const oauth = await this.globalMcpOAuthService();
-      const discoveryState = await discoverMcpOAuth(config.url, config.headers);
-      if (discoveryState === undefined) {
-        throw new KimiError(
-          ErrorCodes.REQUEST_INVALID,
-          `MCP server "${server.name}" does not advertise OAuth support`,
-        );
+      if (await oauth.hasTokens(server.name, config.url)) {
+        return { status: 'already-authorized' };
       }
-      const flow = await oauth.beginAuthorization(server.name, config.url, {
-        discoveryState,
-      });
+      let discoveryState = await oauth.discoveryState(server.name, config.url);
+      if (discoveryState === undefined) {
+        try {
+          discoveryState = await discoverMcpOAuth(config.url, config.headers);
+        } catch {
+          // Keep the published explicit-begin compatibility fallback; only
+          // automatic status and 401 classification require verified metadata.
+        }
+      }
+      const flow = await oauth.beginAuthorization(
+        server.name,
+        config.url,
+        discoveryState === undefined ? {} : { discoveryState },
+      );
       const flowId = randomUUID();
       this.globalMcpOAuthFlows.set(flowId, { flow });
       return {

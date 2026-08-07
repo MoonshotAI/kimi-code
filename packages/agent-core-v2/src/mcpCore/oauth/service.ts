@@ -87,6 +87,13 @@ export class McpOAuthService {
     return (await this.getProvider(serverName, serverUrl).tokens()) !== undefined;
   }
 
+  async discoveryState(
+    serverName: string,
+    serverUrl: string | URL,
+  ): Promise<OAuthDiscoveryState | undefined> {
+    return this.getProvider(serverName, serverUrl).discoveryState();
+  }
+
   async beginAuthorization(
     serverName: string,
     serverUrl: string | URL,

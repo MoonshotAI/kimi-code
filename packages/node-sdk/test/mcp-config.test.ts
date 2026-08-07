@@ -356,10 +356,20 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
 
   it('begins OAuth with an auxiliary header and no auth marker without leaking the header', async () => {
     const homeDir = await makeTempDir();
+    const storedUrl = 'http://127.0.0.1:1/stored';
     const server = await startMcpAuthStatusTestServer({
       mode: 'rfc9728',
       requiredResourceHeader: ['x-api-key', 'resource-secret'],
     });
+    const oauth = new McpOAuthService({ kimiHomeDir: homeDir });
+    oauth
+      .getProvider('oauth-authorized', storedUrl)
+      .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
+    const cachedProvider = oauth.getProvider('cached-oauth', server.url);
+    cachedProvider.saveDiscoveryState(
+      (await discoverMcpOAuthV1(server.url, { 'X-Api-Key': 'resource-secret' }))!,
+    );
+    cachedProvider.saveClientInformation({ client_id: 'cached-test-client' });
     const rpc = new SDKRpcClient({ homeDir });
     try {
       await rpc.addGlobalMcpServer({
@@ -374,6 +384,31 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
         url: server.url,
         headers: { Authorization: 'Bearer configured' },
       });
+      await rpc.addGlobalMcpServer({
+        name: 'oauth-authorized',
+        transport: 'http',
+        url: storedUrl,
+      });
+      await rpc.addGlobalMcpServer({
+        name: 'cached-oauth',
+        transport: 'http',
+        url: server.url,
+        headers: { 'X-Api-Key': 'resource-secret' },
+      });
+      await expect(rpc.beginGlobalMcpServerAuth('oauth-authorized')).resolves.toEqual({
+        status: 'already-authorized',
+      });
+      const resourceRequestCount = server.requests.filter(
+        (request) => request.side === 'resource',
+      ).length;
+      const cachedStarted = await rpc.beginGlobalMcpServerAuth('cached-oauth');
+      expect(cachedStarted.status).toBe('authorization-required');
+      expect(
+        server.requests.filter((request) => request.side === 'resource'),
+      ).toHaveLength(resourceRequestCount);
+      if (cachedStarted.status === 'authorization-required') {
+        await rpc.cancelGlobalMcpServerAuth(cachedStarted.flowId);
+      }
       await expect(rpc.beginGlobalMcpServerAuth('static-authorization')).rejects.toThrow(
         /static Authorization header/,
       );
