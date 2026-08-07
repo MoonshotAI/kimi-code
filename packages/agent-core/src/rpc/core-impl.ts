@@ -857,7 +857,16 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     { name, cwd }: TestGlobalMcpServerPayload,
   ): Promise<GlobalMcpServerTestResult> {
     const server = await this.globalMcpConfig.get(name);
-    const config = mcpConfigWithoutName(server);
+    return this.withGlobalMcpServerProbe(server, cwd, (manager) =>
+      standaloneMcpTestResult(server.name, manager),
+    );
+  }
+
+  private async withGlobalMcpServerProbe<T>(
+    server: GlobalMcpServerConfig,
+    cwd: string | undefined,
+    inspect: (manager: McpConnectionManager) => T,
+  ): Promise<T> {
     const manager = new McpConnectionManager({
       stdioCwd: cwd,
       oauthService: this.globalMcpOAuth,
@@ -865,8 +874,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       defaultToolTimeoutMs: resolveMcpToolTimeoutMs(this.config.mcp?.toolTimeoutMs),
     });
     try {
-      await manager.connectAll({ [server.name]: config });
-      return standaloneMcpTestResult(server.name, manager);
+      await manager.connectAll({ [server.name]: mcpConfigWithoutName(server) });
+      return inspect(manager);
     } finally {
       await manager.shutdown();
     }
@@ -877,10 +886,16 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   ): Promise<GlobalMcpServerAuthState> {
     if (server.transport === 'stdio') return 'not-applicable';
     if (server.bearerTokenEnvVar !== undefined) return 'bearer-token';
-    if (server.auth !== 'oauth') return 'not-applicable';
-    return this.globalMcpOAuth.hasTokens(server.name, server.url)
-      ? 'oauth-authorized'
-      : 'oauth-required';
+    // Keep status classification aligned with the existing connection manager:
+    // unmarked static headers are not treated as OAuth credentials.
+    if (server.headers !== undefined && server.auth !== 'oauth') return 'not-applicable';
+    if (this.globalMcpOAuth.hasTokens(server.name, server.url)) return 'oauth-authorized';
+    if (server.auth === 'oauth') return 'oauth-required';
+    if (server.transport !== 'http') return 'not-applicable';
+
+    return this.withGlobalMcpServerProbe(server, undefined, (manager) =>
+      manager.get(server.name)?.status === 'needs-auth' ? 'oauth-required' : 'not-applicable',
+    );
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
