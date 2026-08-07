@@ -145,6 +145,7 @@ import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
+import { buildTextWithResolvedMentions } from './utils/file-mention-resolver';
 import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
 import type { ExtractionResult } from './utils/image-placeholder';
 import { installInputLatencyProbe } from './utils/input-latency';
@@ -1291,7 +1292,21 @@ export class KimiTUI {
         imageAttachmentIds: extraction.imageAttachmentIds,
       });
     } else {
-      this.sendMessage(session, text);
+      // `@mention` tokens are opaque text to the model — resolve any that
+      // point at a real file/dir and append the absolute path so the agent
+      // doesn't have to rediscover it with ls/find (see #2688). Only the
+      // SDK-bound text gains the annotation; the transcript entry below
+      // still records the user's original `text`.
+      const enrichedText = buildTextWithResolvedMentions(
+        text,
+        this.state.appState.workDir,
+        this.state.appState.additionalDirs,
+      );
+      if (enrichedText !== text) {
+        this.sendMessage(session, text, { parts: [{ type: 'text', text: enrichedText }] });
+      } else {
+        this.sendMessage(session, text);
+      }
     }
     this.updateQueueDisplay();
     this.state.ui.requestRender();
