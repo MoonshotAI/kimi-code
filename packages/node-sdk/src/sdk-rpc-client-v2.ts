@@ -273,7 +273,6 @@ import type {
   ForkSessionInput,
   GetConfigOptions,
   GetCronTasksResult,
-  GlobalMcpServerAuthState,
   GlobalMcpServerAuthStatus,
   GoalSnapshot,
   GoalToolResult,
@@ -319,6 +318,10 @@ import {
   requireRemoteMcpServer,
   standaloneMcpTestResult,
 } from '#/v2/global-mcp';
+import {
+  discoverMcpOAuth,
+  hasAuthorizationHeader,
+} from '@moonshot-ai/agent-core-v2/mcpCore/oauth/discovery';
 import {
   normalizeWorkDir,
   v2MetaToSessionMeta,
@@ -2112,14 +2115,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     readonly GlobalMcpServerAuthStatus[]
   > {
     const servers = await this.globalMcpConfig.list();
-    const oauth = new McpOAuthService({
-      store: createMcpOAuthStore(this.engineAccessor.get(IAtomicDocumentStore)),
-    });
+    const oauth = await this.globalMcpOAuthService();
     return Promise.all(
-      servers.map(async (server) => ({
-        name: server.name,
-        authStatus: await this.globalMcpServerAuthState(server, oauth),
-      })),
+      servers.map((server) => this.globalMcpServerAuthStatus(server, oauth)),
     );
   }
 
@@ -2151,6 +2149,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const config = requireOAuthMcpServer(server);
     try {
       const oauth = await this.globalMcpOAuthService();
+      const provider = oauth.getProvider(server.name, config.url);
+      let discoveryState = await provider.discoveryState();
+      if (discoveryState === undefined) {
+        discoveryState = await discoverMcpOAuth(config.url, config.headers);
+        if (discoveryState !== undefined) await provider.saveDiscoveryState(discoveryState);
+      }
       const flow = await oauth.beginAuthorization(server.name, config.url);
       const flowId = randomUUID();
       this.globalMcpOAuthFlows.set(flowId, { flow });
@@ -2232,16 +2236,35 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
   }
 
-  private async globalMcpServerAuthState(
+  private async globalMcpServerAuthStatus(
     server: McpServerConfig,
     oauth: McpOAuthService,
-  ): Promise<GlobalMcpServerAuthState> {
-    if (server.transport === 'stdio') return 'not-applicable';
-    if (server.bearerTokenEnvVar !== undefined) return 'bearer-token';
-    if (server.auth !== 'oauth') return 'not-applicable';
-    return (await oauth.hasTokens(server.name, server.url))
-      ? 'oauth-authorized'
-      : 'oauth-required';
+  ): Promise<GlobalMcpServerAuthStatus> {
+    if (server.enabled === false || server.transport === 'stdio') {
+      return { name: server.name, authStatus: 'not-applicable' };
+    }
+    if (server.bearerTokenEnvVar !== undefined || hasAuthorizationHeader(server.headers)) {
+      return { name: server.name, authStatus: 'bearer-token' };
+    }
+    if (await oauth.hasTokens(server.name, server.url)) {
+      return { name: server.name, authStatus: 'oauth-authorized' };
+    }
+    try {
+      const discovery = await discoverMcpOAuth(server.url, server.headers);
+      if (discovery !== undefined) {
+        await oauth.getProvider(server.name, server.url).saveDiscoveryState(discovery);
+      }
+      return {
+        name: server.name,
+        authStatus: discovery === undefined ? 'not-applicable' : 'oauth-required',
+      };
+    } catch (error) {
+      return {
+        name: server.name,
+        authStatus: 'unknown',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   /**

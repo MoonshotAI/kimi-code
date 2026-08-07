@@ -46,6 +46,66 @@ import {
   stdioFixture,
 } from './stubs';
 
+async function startOAuthProtected401Server(options: {
+  readonly resourcePath?: string;
+  readonly requiredHeader?: readonly [name: string, value: string];
+  readonly resourceDelayMs?: number;
+  readonly metadataDelayMs?: number;
+} = {}): Promise<{ readonly server: HttpServer; readonly url: string }> {
+  const resourcePath = options.resourcePath ?? '/mcp';
+  let baseUrl = '';
+  const server: HttpServer = createHttpServer((req, res) => {
+    const path = new URL(req.url ?? '/', baseUrl).pathname;
+    const requiredHeader = options.requiredHeader;
+    if (
+      requiredHeader !== undefined &&
+      (path === resourcePath || path === `/.well-known/oauth-protected-resource${resourcePath}`) &&
+      req.headers[requiredHeader[0].toLowerCase()] !== requiredHeader[1]
+    ) {
+      res.writeHead(403).end('missing resource header');
+      return;
+    }
+    if (path === `/.well-known/oauth-protected-resource${resourcePath}`) {
+      setTimeout(() => {
+        res
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(
+            JSON.stringify({
+              resource: `${baseUrl}${resourcePath}`,
+              authorization_servers: [baseUrl],
+            }),
+          );
+      }, options.metadataDelayMs ?? 0);
+      return;
+    }
+    if (path === '/.well-known/oauth-authorization-server') {
+      res
+        .writeHead(200, { 'content-type': 'application/json' })
+        .end(
+          JSON.stringify({
+            issuer: baseUrl,
+            authorization_endpoint: `${baseUrl}/authorize`,
+            token_endpoint: `${baseUrl}/token`,
+            response_types_supported: ['code'],
+            code_challenge_methods_supported: ['S256'],
+          }),
+        );
+      return;
+    }
+    if (path === resourcePath) {
+      setTimeout(() => {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unauthorized' }));
+      }, options.resourceDelayMs ?? 0);
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  baseUrl = `http://127.0.0.1:${(server.address() as HttpAddress).port}`;
+  return { server, url: `${baseUrl}${resourcePath}` };
+}
+
 function stdioConfig(args: string[] = [stdioFixture]) {
   return {
     transport: 'stdio' as const,
@@ -575,57 +635,18 @@ describe('McpConnectionManager', () => {
     }
   }, 20000);
 
-  it('flips HTTP servers into needs-auth when the server returns 401 and no static token is set', async () => {
-    const server: HttpServer = createHttpServer((_req, res) => {
-      res.writeHead(401, {
-        'content-type': 'application/json',
-        'www-authenticate':
-          'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
-      });
-      res.end(JSON.stringify({ error: 'unauthorized' }));
+  it('uses OAuth metadata after a 401 even with auxiliary headers and no auth marker', async () => {
+    const { server, url } = await startOAuthProtected401Server({
+      requiredHeader: ['x-tenant', 'example'],
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     const cm = new McpConnectionManager({ oauthService });
     try {
       await cm.connectAll({
         gated: {
           transport: 'http',
-          url: `http://127.0.0.1:${port}/mcp`,
-          startupTimeoutMs: 5_000,
-        },
-      });
-      const entry = cm.get('gated');
-      expect(entry?.status).toBe('needs-auth');
-      expect(entry?.error).toContain('run /mcp-config login gated');
-      expect(entry?.toolCount).toBe(0);
-    } finally {
-      await cm.shutdown();
-      await closeServer(server);
-    }
-  }, 15000);
-
-  it('marks an explicitly OAuth HTTP server as needs-auth when non-auth headers accompany a 401', async () => {
-    const server: HttpServer = createHttpServer((_req, res) => {
-      res.writeHead(401, {
-        'content-type': 'application/json',
-        'www-authenticate':
-          'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
-      });
-      res.end(JSON.stringify({ error: 'unauthorized' }));
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
-    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
-    const cm = new McpConnectionManager({ oauthService });
-    try {
-      await cm.connectAll({
-        gated: {
-          transport: 'http',
-          url: `http://127.0.0.1:${port}/mcp`,
+          url,
           headers: { 'X-Tenant': 'example' },
-          auth: 'oauth',
           startupTimeoutMs: 5_000,
         },
       });
@@ -633,26 +654,51 @@ describe('McpConnectionManager', () => {
       expect(entry?.status).toBe('needs-auth');
       expect(entry?.error).toContain('run /mcp-config login gated');
       expect(entry?.toolCount).toBe(0);
+      const provider = oauthService.getProvider('gated', url);
+      expect(await provider.discoveryState()).toMatchObject({
+        authorizationServerUrl: new URL(url).origin,
+      });
+      await provider.saveClientInformation({ client_id: 'manager-test-client' });
+      const flow = await oauthService.beginAuthorization('gated', url);
+      try {
+        expect(flow.authorizationUrl.toString()).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/authorize\?/);
+      } finally {
+        await flow.cancel();
+      }
     } finally {
       await cm.shutdown();
       await closeServer(server);
     }
   }, 15000);
 
-  it('keeps a headers-only HTTP server failed (not needs-auth) on 401', async () => {
-    const server: HttpServer = createHttpServer((_req, res) => {
-      res.writeHead(401, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: 'unauthorized' }));
+  it('keeps 401 metadata discovery inside the startup timeout budget', async () => {
+    const { server, url } = await startOAuthProtected401Server({
+      resourceDelayMs: 50,
+      metadataDelayMs: 50,
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = new McpConnectionManager({ oauthService });
+    try {
+      await cm.connectAll({
+        slowAuth: { transport: 'http', url, startupTimeoutMs: 80 },
+      });
+      expect(cm.get('slowAuth')?.status).toBe('failed');
+      expect(await oauthService.getProvider('slowAuth', url).discoveryState()).toBeUndefined();
+    } finally {
+      await cm.shutdown();
+      await closeServer(server);
+    }
+  }, 15000);
+
+  it('keeps static Authorization failures out of OAuth even when metadata is available', async () => {
+    const { server, url } = await startOAuthProtected401Server();
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     const cm = new McpConnectionManager({ oauthService });
     try {
       await cm.connectAll({
         keyed: {
           transport: 'http',
-          url: `http://127.0.0.1:${port}/mcp`,
+          url,
           headers: { Authorization: 'Bearer static-key' },
           startupTimeoutMs: 5_000,
         },
@@ -666,23 +712,14 @@ describe('McpConnectionManager', () => {
   }, 15000);
 
   it('flips SSE servers into needs-auth when the server returns 401 and no static token is set', async () => {
-    const server: HttpServer = createHttpServer((_req, res) => {
-      res.writeHead(401, {
-        'content-type': 'text/plain',
-        'www-authenticate':
-          'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
-      });
-      res.end('unauthorized');
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
+    const { server, url } = await startOAuthProtected401Server({ resourcePath: '/sse' });
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     const cm = new McpConnectionManager({ oauthService });
     try {
       await cm.connectAll({
         legacy: {
           transport: 'sse',
-          url: `http://127.0.0.1:${port}/sse`,
+          url,
           startupTimeoutMs: 5_000,
         },
       });
@@ -698,7 +735,29 @@ describe('McpConnectionManager', () => {
   }, 15000);
 
   it('flips cached OAuth credentials that require reauth into needs-auth', async () => {
+    let serverUrl = '';
+    let authServerUrl = '';
     const server: HttpServer = createHttpServer((req, res) => {
+      if (req.url === '/.well-known/oauth-protected-resource/mcp') {
+        res
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ resource: serverUrl, authorization_servers: [authServerUrl] }));
+        return;
+      }
+      if (req.url === '/.well-known/oauth-authorization-server') {
+        res
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(
+            JSON.stringify({
+              issuer: authServerUrl,
+              authorization_endpoint: `${authServerUrl}/authorize`,
+              token_endpoint: `${authServerUrl}/token`,
+              response_types_supported: ['code'],
+              code_challenge_methods_supported: ['S256'],
+            }),
+          );
+        return;
+      }
       if (req.url === '/token') {
         res.writeHead(400, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: 'invalid_grant' }));
@@ -712,8 +771,8 @@ describe('McpConnectionManager', () => {
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as HttpAddress).port;
-    const serverUrl = `http://127.0.0.1:${port}/mcp`;
-    const authServerUrl = `http://127.0.0.1:${port}`;
+    authServerUrl = `http://127.0.0.1:${port}`;
+    serverUrl = `${authServerUrl}/mcp`;
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
     const provider = oauthService.getProvider('notion', serverUrl);
     await provider.saveDiscoveryState({

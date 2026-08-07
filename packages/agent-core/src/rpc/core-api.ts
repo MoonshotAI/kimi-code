@@ -356,11 +356,13 @@ export type GlobalMcpServerAuthState =
   | 'not-applicable'
   | 'bearer-token'
   | 'oauth-required'
-  | 'oauth-authorized';
+  | 'oauth-authorized'
+  | 'unknown';
 
 export interface GlobalMcpServerAuthStatus {
   readonly name: string;
   readonly authStatus: GlobalMcpServerAuthState;
+  readonly error?: string;
 }
 
 export type BeginGlobalMcpServerAuthResult =

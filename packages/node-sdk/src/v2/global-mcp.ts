@@ -28,6 +28,7 @@ import {
   type McpServerConfig,
 } from '@moonshot-ai/agent-core';
 import type { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
+import { hasAuthorizationHeader } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/discovery';
 import { atomicWrite } from '@moonshot-ai/agent-core-v2/_base/utils/fs';
 
 import type { McpTestResult } from '#/types';
@@ -161,10 +162,10 @@ export function requireOAuthMcpServer(server: GlobalMcpServerConfig): McpRemoteS
       `MCP server "${server.name}" uses a static bearer token`,
     );
   }
-  if (config.headers !== undefined && config.auth !== 'oauth') {
+  if (hasAuthorizationHeader(config.headers)) {
     throw new KimiError(
       ErrorCodes.REQUEST_INVALID,
-      `MCP server "${server.name}" uses static headers and is not marked for OAuth`,
+      `MCP server "${server.name}" uses a static Authorization header`,
     );
   }
   return config;

@@ -5,11 +5,9 @@
  * the shape of MCP server entries as they appear in configuration (whether in
  * `config.toml` or an MCP-specific config file).
  *
- * Remote variants accept `auth: "oauth"`, mirroring v1: OAuth is still
- * discovered from a remote server's 401 response; the flag records that the
- * user explicitly chose OAuth, so static `headers` on the same entry are
- * treated as plain request headers (capability/identity declarations) rather
- * than as the server's credentials.
+ * Remote variants retain `auth: "oauth"` for compatibility with existing
+ * configuration and older hosts. Current OAuth discovery, status, and login
+ * do not depend on this marker.
  */
 
 import { z } from 'zod';

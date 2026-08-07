@@ -3463,27 +3463,22 @@ async function expectSameMcpRejection(
 }
 
 describe('v1↔v2 global MCP parity', () => {
-  it('classifies global MCP authorization identically from persisted credentials', async () => {
+  it('classifies stored and static MCP credentials identically', async () => {
     const authorizedUrl = 'https://authorized.example.test/mcp';
     const pair = await makeGlobalMcpParityPair({
       mcpServers: {
         stdio: { command: 'local-command' },
-        plain: { transport: 'http', url: 'https://plain.example.test/mcp' },
         bearer: {
           transport: 'http',
           url: 'https://bearer.example.test/mcp',
           bearerTokenEnvVar: 'EXAMPLE_MCP_TOKEN',
         },
-        'oauth-required': {
+        'authorization-header': {
           transport: 'http',
-          url: 'https://required.example.test/mcp',
-          auth: 'oauth',
+          url: 'https://header.example.test/mcp',
+          headers: { Authorization: 'Bearer static' },
         },
-        'oauth-authorized': {
-          transport: 'http',
-          url: authorizedUrl,
-          auth: 'oauth',
-        },
+        'oauth-authorized': { transport: 'http', url: authorizedUrl },
       },
     });
     for (const homeDir of [pair.v1HomeDir, pair.v2HomeDir]) {
@@ -3500,9 +3495,8 @@ describe('v1↔v2 global MCP parity', () => {
       expect(v2Statuses).toEqual(v1Statuses);
       expect(v1Statuses).toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
-        { name: 'plain', authStatus: 'not-applicable' },
         { name: 'bearer', authStatus: 'bearer-token' },
-        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'authorization-header', authStatus: 'bearer-token' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
       ]);
     } finally {
@@ -3675,8 +3669,8 @@ describe('v1↔v2 global MCP parity', () => {
       },
     });
     try {
-      // begin: unknown server / non-remote / static token / static headers
-      // all reject before any network I/O.
+      // begin: unknown server / non-remote / static token / static Authorization
+      // all reject before network I/O.
       await expectSameMcpRejection(
         pair,
         (client) => client.beginGlobalMcpServerAuth('missing'),

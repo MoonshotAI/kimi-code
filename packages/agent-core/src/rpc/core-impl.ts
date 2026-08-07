@@ -39,7 +39,9 @@ import {
 import type { Logger } from '../logging/types';
 import {
   AlreadyAuthorizedError,
+  discoverMcpOAuth,
   GlobalMcpConfigStore,
+  hasAuthorizationHeader,
   McpConnectionManager,
   McpOAuthService,
   resolveMcpStartupTimeoutMs,
@@ -100,7 +102,6 @@ import type {
   EnterSwarmPayload,
   GoalSnapshot,
   GoalToolResult,
-  GlobalMcpServerAuthState,
   GlobalMcpServerAuthStatus,
   GlobalMcpServerConfig,
   GlobalMcpServerNamePayload,
@@ -772,12 +773,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     _input?: EmptyPayload,
   ): Promise<readonly GlobalMcpServerAuthStatus[]> {
     const servers = await this.globalMcpConfig.list();
-    return Promise.all(
-      servers.map(async (server) => ({
-        name: server.name,
-        authStatus: await this.globalMcpServerAuthState(server),
-      })),
-    );
+    return Promise.all(servers.map((server) => this.globalMcpServerAuthStatus(server)));
   }
 
   async addGlobalMcpServer(
@@ -804,6 +800,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const server = await this.globalMcpConfig.get(name);
     const config = requireOAuthMcpServer(server);
     try {
+      const provider = this.globalMcpOAuth.getProvider(server.name, config.url);
+      let discoveryState = provider.discoveryState();
+      if (discoveryState === undefined) {
+        discoveryState = await discoverMcpOAuth(config.url, config.headers);
+        if (discoveryState !== undefined) provider.saveDiscoveryState(discoveryState);
+      }
       const flow = await this.globalMcpOAuth.beginAuthorization(server.name, config.url);
       const flowId = randomUUID();
       this.globalMcpOAuthFlows.set(flowId, { flow });
@@ -872,15 +874,34 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
   }
 
-  private async globalMcpServerAuthState(
+  private async globalMcpServerAuthStatus(
     server: GlobalMcpServerConfig,
-  ): Promise<GlobalMcpServerAuthState> {
-    if (server.transport === 'stdio') return 'not-applicable';
-    if (server.bearerTokenEnvVar !== undefined) return 'bearer-token';
-    if (server.auth !== 'oauth') return 'not-applicable';
-    return this.globalMcpOAuth.hasTokens(server.name, server.url)
-      ? 'oauth-authorized'
-      : 'oauth-required';
+  ): Promise<GlobalMcpServerAuthStatus> {
+    if (server.enabled === false || server.transport === 'stdio') {
+      return { name: server.name, authStatus: 'not-applicable' };
+    }
+    if (server.bearerTokenEnvVar !== undefined || hasAuthorizationHeader(server.headers)) {
+      return { name: server.name, authStatus: 'bearer-token' };
+    }
+    if (this.globalMcpOAuth.hasTokens(server.name, server.url)) {
+      return { name: server.name, authStatus: 'oauth-authorized' };
+    }
+    try {
+      const discovery = await discoverMcpOAuth(server.url, server.headers);
+      if (discovery !== undefined) {
+        this.globalMcpOAuth.getProvider(server.name, server.url).saveDiscoveryState(discovery);
+      }
+      return {
+        name: server.name,
+        authStatus: discovery === undefined ? 'not-applicable' : 'oauth-required',
+      };
+    } catch (error) {
+      return {
+        name: server.name,
+        authStatus: 'unknown',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
@@ -1463,10 +1484,10 @@ function requireOAuthMcpServer(server: GlobalMcpServerConfig): McpRemoteServerCo
       `MCP server "${server.name}" uses a static bearer token`,
     );
   }
-  if (config.headers !== undefined && config.auth !== 'oauth') {
+  if (hasAuthorizationHeader(config.headers)) {
     throw new KimiError(
       ErrorCodes.REQUEST_INVALID,
-      `MCP server "${server.name}" uses static headers and is not marked for OAuth`,
+      `MCP server "${server.name}" uses a static Authorization header`,
     );
   }
   return config;

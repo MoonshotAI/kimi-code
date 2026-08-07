@@ -292,9 +292,8 @@ export const McpServerHttpConfigSchema = z.object({
   transport: z.literal('http'),
   url: z.string().url(),
   headers: StringRecordSchema.optional(),
-  // Backward-compatible UI marker. OAuth is still discovered from a remote
-  // server's 401 response; this flag only records that the user explicitly
-  // chose OAuth and lets hosts expose login/reset controls before connecting.
+  // Backward-compatible marker retained for existing config round-trips and
+  // older hosts. Current OAuth discovery, status, and login do not depend on it.
   auth: z.literal('oauth').optional(),
   // Indirect secret reference: the bearer token is looked up from
   // `process.env[bearerTokenEnvVar]` at connection time, never committed.
