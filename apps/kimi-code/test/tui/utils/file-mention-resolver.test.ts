@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  buildTextWithResolvedMentions,
+  MENTIONED_FILES_PATTERN,
+  mentionGroundingPart,
   resolveFileMentions,
 } from '#/tui/utils/file-mention-resolver';
 
@@ -89,20 +90,33 @@ describe('file-mention-resolver', () => {
     expect(resolutions).toEqual([]);
   });
 
-  it('buildTextWithResolvedMentions appends a grounding block when something resolves', () => {
+  it('mentionGroundingPart returns a standalone text part when something resolves', () => {
     const workDir = makeWorkDir();
     writeFileSync(join(workDir, 'foo.zip'), '');
 
-    const text = buildTextWithResolvedMentions('unzip @foo.zip', workDir, []);
+    const part = mentionGroundingPart('unzip @foo.zip', workDir, []);
 
-    expect(text).toBe(`unzip @foo.zip\n\n<mentioned-files>\n- @foo.zip -> ${join(workDir, 'foo.zip')}\n</mentioned-files>`);
+    expect(part).toEqual({
+      type: 'text',
+      text: `<mentioned-files>\n- @foo.zip -> ${join(workDir, 'foo.zip')}\n</mentioned-files>`,
+    });
   });
 
-  it('buildTextWithResolvedMentions returns the original text unchanged when nothing resolves', () => {
+  it('mentionGroundingPart returns undefined when nothing resolves', () => {
     const workDir = makeWorkDir();
 
-    const text = buildTextWithResolvedMentions('unzip @missing.zip', workDir, []);
+    const part = mentionGroundingPart('unzip @missing.zip', workDir, []);
 
-    expect(text).toBe('unzip @missing.zip');
+    expect(part).toBeUndefined();
+  });
+
+  it('MENTIONED_FILES_PATTERN matches a grounding block produced by mentionGroundingPart', () => {
+    const workDir = makeWorkDir();
+    writeFileSync(join(workDir, 'foo.zip'), '');
+
+    const part = mentionGroundingPart('unzip @foo.zip', workDir, []);
+    const text = part?.type === 'text' ? part.text : '';
+
+    expect(text.replace(MENTIONED_FILES_PATTERN, '')).toBe('');
   });
 });

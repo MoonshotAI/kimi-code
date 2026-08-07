@@ -25,7 +25,7 @@ import {
 } from '#/tui/utils/transcript-window';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
-import type { TaskNotificationOrigin } from '#/tui/utils/message-replay';
+import { contentPartsToText, type TaskNotificationOrigin } from '#/tui/utils/message-replay';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
@@ -298,6 +298,17 @@ function backgroundTask(
     endedAt: status === 'running' ? null : 2,
   };
 }
+
+describe('contentPartsToText', () => {
+  it('strips the @mention grounding block appended at send time', () => {
+    const text = contentPartsToText([
+      { type: 'text', text: 'unzip @foo.zip' },
+      { type: 'text', text: '<mentioned-files>\n- @foo.zip -> /work/foo.zip\n</mentioned-files>' },
+    ]);
+
+    expect(text).toBe('unzip @foo.zip');
+  });
+});
 
 describe('KimiTUI resume message replay', () => {
   it('does not render legacy goal completion context reminders as transcript messages', async () => {

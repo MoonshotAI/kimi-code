@@ -48,10 +48,20 @@ export function promptMetadataTextFromText(text: string): string | undefined {
   return sanitized.slice(0, MAX_LAST_PROMPT_LENGTH);
 }
 
+/**
+ * The `@mention` grounding block kimi-code appends to prompt text (wrapped
+ * in `<mentioned-files>…</mentioned-files>`, see the CLI's
+ * `file-mention-resolver.ts`) is meant for the model, not for a session
+ * title or `lastPrompt` preview — strip it the same way image-compression
+ * captions are stripped below.
+ */
+const MENTIONED_FILES_PATTERN = /<mentioned-files>[\s\S]*?<\/mentioned-files>/g;
+
 function promptPartText(part: ContentPart): string | undefined {
   switch (part.type) {
     case 'text': {
-      const { text } = extractImageCompressionCaptions(part.text);
+      const { text: withoutCaptions } = extractImageCompressionCaptions(part.text);
+      const text = withoutCaptions.replace(MENTIONED_FILES_PATTERN, '');
       return text.trim().length === 0 ? undefined : text;
     }
     case 'image_url':
