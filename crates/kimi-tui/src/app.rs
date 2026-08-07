@@ -14,9 +14,6 @@ use crate::i18n::t;
 /// The `t!` formatting macro (exported at the crate root by `i18n`).
 use crate::t;
 
-/// All slash commands the chat surface understands (shared with `/help`).
-use crate::bottom_pane::SLASH_COMMANDS;
-
 
 
 /// The role/source of a transcript line, driving its render style.
@@ -158,14 +155,56 @@ pub fn tool_result_collapsed(text: &str) -> bool {
     text.chars().count() > TOOL_COLLAPSE_THRESHOLD
 }
 
+/// Human-readable preview lines for a pending approval's arguments: Edit
+/// renders old/new hunks, Write renders the file content, Bash renders the
+/// command (TS `approval-preview` parity, simplified — no syntax
+/// highlighting). Falls back to the raw JSON for other tools.
+fn approval_preview_lines(tool: &str, arguments: &str) -> Vec<String> {
+    let Ok(args) = serde_json::from_str::<serde_json::Value>(arguments) else {
+        return vec![arguments.to_string()];
+    };
+    match tool {
+        "Edit" => {
+            let path = args["file_path"].as_str().unwrap_or("?");
+            let mut lines = vec![format!("Edit: {path}")];
+            if let Some(old) = args["old_string"].as_str() {
+                for l in old.lines() {
+                    lines.push(format!("- {l}"));
+                }
+            }
+            if let Some(new) = args["new_string"].as_str() {
+                for l in new.lines() {
+                    lines.push(format!("+ {l}"));
+                }
+            }
+            if lines.len() == 1 {
+                lines.push("(no change)".to_string());
+            }
+            lines
+        }
+        "Write" => {
+            let path = args["file_path"].as_str().unwrap_or("?");
+            let mut lines = vec![format!("Write: {path}")];
+            if let Some(content) = args["content"].as_str() {
+                lines.extend(content.lines().map(|l| format!("  {l}")));
+            }
+            lines
+        }
+        "Bash" => {
+            let cmd = args["command"].as_str().unwrap_or("?");
+            vec![format!("Bash: {cmd}")]
+        }
+        _ => vec![arguments.to_string()],
+    }
+}
+
 /// The approval-detail modal's text lines (pure, tested).
 fn approval_modal_lines(pending: &PendingApproval) -> Vec<String> {
-    vec![
-        format!("⚙ {} ({})", pending.tool, pending.rule),
-        pending.arguments.clone(),
-        String::new(),
-        t("tui.approval.modalHint").to_string(),
-    ]
+    let mut lines = vec![format!("⚙ {} ({})", pending.tool, pending.rule)];
+    lines.extend(approval_preview_lines(&pending.tool, &pending.arguments));
+    lines.push(String::new());
+    lines.push(t("tui.approval.modalHint").to_string());
+    lines
 }
 
 /// The slash-command completion popup state for an input, or `None` when the
@@ -717,9 +756,11 @@ impl App {
                 "/quit" | "/exit" => return Ok(true),
                 "/help" => {
                     if rest.is_empty() {
-                        self.transcript.push_line(TranscriptLine::status(t!("tui.help.commands",
-                            SLASH_COMMANDS.join(" ")
-                        )));
+                        // Full command list with descriptions (TS help-panel
+                        // parity, simplified — scrollable status lines).
+                        for (name, desc) in crate::bottom_pane::command_descriptions() {
+                            self.push_line(TranscriptLine::status(format!("{name}  {desc}")));
+                        }
                         self.push_line(TranscriptLine::status(t("tui.help.detailHint")));
                     } else {
                         // `/help <command>` shows that command's description.
@@ -1074,21 +1115,43 @@ impl App {
                     }
                 }
                 "/tasks" => {
-                    let tasks = self.session.as_mut().expect("session").list_background_tasks().await;
-                    let list = tasks["tasks"]
-                        .as_array()
-                        .or_else(|| tasks["result"]["tasks"].as_array())
-                        .cloned()
-                        .unwrap_or_default();
-                    if list.is_empty() {
-                        self.push_line(TranscriptLine::status(t("tui.tasks.none")));
-                    } else {
-                        for t in list.iter().take(10) {
-                            let id = t["id"].as_str().unwrap_or("?");
-                            let label = t["label"].as_str().unwrap_or("");
-                            let state = t["state"].as_str().unwrap_or("?");
+                    if !rest.is_empty() {
+                        // `/tasks <id>` shows the task's output (TS
+                        // task-output-viewer parity, simplified — a folded
+                        // tool line, no full-screen viewer).
+                        let body = self
+                            .session
+                            .as_mut()
+                            .expect("session")
+                            .get_background_task_output(rest)
+                            .await;
+                        let output = body["result"]["output"]
+                            .as_str()
+                            .or_else(|| body["output"].as_str())
+                            .unwrap_or("");
+                        if output.is_empty() {
+                            self.push_line(TranscriptLine::status(t!("tui.tasks.noOutput", rest)));
+                        } else {
                             self.transcript
-                                .push_line(TranscriptLine::status(t!("tui.tasks.listItem", id, label, state)));
+                                .push_line(TranscriptLine::tool_collapsed(output.to_string()));
+                        }
+                    } else {
+                        let tasks = self.session.as_mut().expect("session").list_background_tasks().await;
+                        let list = tasks["tasks"]
+                            .as_array()
+                            .or_else(|| tasks["result"]["tasks"].as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        if list.is_empty() {
+                            self.push_line(TranscriptLine::status(t("tui.tasks.none")));
+                        } else {
+                            for t in list.iter().take(10) {
+                                let id = t["id"].as_str().unwrap_or("?");
+                                let label = t["label"].as_str().unwrap_or("");
+                                let state = t["state"].as_str().unwrap_or("?");
+                                self.transcript
+                                    .push_line(TranscriptLine::status(t!("tui.tasks.listItem", id, label, state)));
+                            }
                         }
                     }
                 }
@@ -1199,6 +1262,14 @@ impl App {
                         Ok(()) => self.push_line(TranscriptLine::status(t("tui.reload.ok"))),
                         Err(e) => self.push_line(TranscriptLine::error(t!("tui.err.reloadFailed", e))),
                     }
+                }
+                "/reload-tui" => {
+                    // Re-read tui.toml preferences (theme + locale).
+                    crate::i18n::reload_locale();
+                    self.theme = crate::theme::load_theme();
+                    self.dark_mode =
+                        !matches!(crate::theme::tui_theme_choice(), crate::theme::ThemeChoice::Light);
+                    self.push_line(TranscriptLine::status(t("tui.reloadTui.ok")));
                 }
                 "/resume" => {
                     if rest.is_empty() {
@@ -1709,6 +1780,126 @@ impl App {
                             .push_line(TranscriptLine::error(t!("tui.err.exportMdFailed", e))),
                     }
                 }
+                "/discuss" => {
+                    // Multi-agent discussion (TS `handleDiscussCommand`
+                    // parity, simplified): enable swarm mode, then send the
+                    // constructed prompt as a normal turn so the model runs
+                    // the SwarmDiscussion tool.
+                    let args = match parse_discuss(rest) {
+                        Ok(args) => args,
+                        Err(code) => {
+                            let msg = match code {
+                                "need-topic" => t("tui.discuss.needTopic"),
+                                "need-roles" => t("tui.discuss.needRoles"),
+                                _ => t("tui.discuss.usage"),
+                            };
+                            self.push_line(TranscriptLine::error(msg));
+                            return Ok(false);
+                        }
+                    };
+                    if let Err(e) = self
+                        .session
+                        .as_mut()
+                        .expect("session")
+                        .set_swarm_mode(true, Some("task"))
+                        .await
+                    {
+                        self.push_line(TranscriptLine::error(t!("tui.err.discussSwarm", e)));
+                        return Ok(false);
+                    }
+                    self.refresh_status().await;
+                    let mode = if args.debate { "debate" } else { "discussion" };
+                    let prompt = format!(
+                        "Start a {mode} on the following topic:\n\nTopic: {}\n\nParticipants: {}\n\nUse the SwarmDiscussion tool.",
+                        args.topic,
+                        args.roles.join(", ")
+                    );
+                    return self.dispatch(terminal, &prompt).await;
+                }
+                "/workflow" => {
+                    // Workflow tool entry (TS `handleWorkflowCommand` parity):
+                    // list / run / status / cancel all become a prompt that
+                    // asks the model to drive the Workflow tool.
+                    let trimmed = rest.trim();
+                    if trimmed.is_empty() {
+                        self.push_line(TranscriptLine::status(t("tui.workflow.usage")));
+                        return Ok(false);
+                    }
+                    let prompt = if trimmed.eq_ignore_ascii_case("list") {
+                        "List the available workflows using the Workflow tool.".to_string()
+                    } else if let Some(id) = trimmed.strip_prefix("status ") {
+                        format!("Check the status of workflow run {id} using the Workflow tool.")
+                    } else if let Some(id) = trimmed.strip_prefix("cancel ") {
+                        format!("Cancel workflow run {id} using the Workflow tool.")
+                    } else if trimmed.eq_ignore_ascii_case("status")
+                        || trimmed.eq_ignore_ascii_case("cancel")
+                    {
+                        self.push_line(TranscriptLine::status(t("tui.workflow.usage")));
+                        return Ok(false);
+                    } else {
+                        // `<name> [args...]` — run it.
+                        format!("Run the workflow \"{trimmed}\" using the Workflow tool.")
+                    };
+                    return self.dispatch(terminal, &prompt).await;
+                }
+                "/provider" => {
+                    // Provider management (TS `handleProviderCommand` parity,
+                    // simplified): list configured providers, remove one, or
+                    // point the user at /login / config.toml to add.
+                    let parts: Vec<&str> = rest.split_whitespace().collect();
+                    match parts.first().copied() {
+                        None | Some("list") => {
+                            match self.harness.config().await {
+                                Ok(cfg) => {
+                                    let providers = cfg["providers"]
+                                        .as_object()
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    if providers.is_empty() {
+                                        self.push_line(TranscriptLine::status(t("tui.provider.none")));
+                                    } else {
+                                        self.push_line(TranscriptLine::status(t!(
+                                            "tui.provider.list",
+                                            providers.len()
+                                        )));
+                                        for (name, p) in providers {
+                                            let has_key = p["apiKey"]
+                                                .as_str()
+                                                .is_some_and(|k| !k.is_empty());
+                                            let key_state = if has_key {
+                                                t("tui.provider.keySet")
+                                            } else {
+                                                t("tui.provider.keyMissing")
+                                            };
+                                            let base = p["baseUrl"].as_str().unwrap_or("");
+                                            self.push_line(TranscriptLine::status(format!(
+                                                "  {name}  {key_state}  {base}"
+                                            )));
+                                        }
+                                    }
+                                }
+                                Err(e) => self
+                                    .push_line(TranscriptLine::error(t!("tui.err.configFailed", e))),
+                            }
+                        }
+                        Some("remove") if parts.len() >= 2 => {
+                            let name = parts[1];
+                            match self
+                                .harness
+                                .set_config(serde_json::json!({ "providers": { name: null } }))
+                                .await
+                            {
+                                Ok(_) => self
+                                    .push_line(TranscriptLine::status(t!("tui.provider.removed", name))),
+                                Err(e) => self
+                                    .push_line(TranscriptLine::error(t!("tui.err.configFailed", e))),
+                            }
+                        }
+                        Some("add") => self
+                            .push_line(TranscriptLine::status(t("tui.provider.addHint"))),
+                        _ => self.push_line(TranscriptLine::status(t("tui.provider.usage"))),
+                    }
+                }
                 other => self
                     .transcript
                     .push_line(TranscriptLine::error(t!("tui.err.unknownCommand", other))),
@@ -1794,7 +1985,11 @@ impl App {
     async fn refresh_status(&mut self) {
         if let Some(session) = self.session.as_mut() {
             let status = session.get_status().await;
-            self.footer = crate::footer::FooterInfo::from_status(&status["result"]);
+            let mut footer = crate::footer::FooterInfo::from_status(&status["result"]);
+            // from_status doesn't know the goal; keep the badge from the
+            // last `session.goal.updated` event.
+            footer.goal = self.footer.goal.clone();
+            self.footer = footer;
         }
     }
 
@@ -1849,6 +2044,8 @@ impl App {
             if matches!(status, "complete" | "cancelled" | "blocked" | "failed") {
                 self.maybe_promote_goal().await;
             }
+            // Update the footer goal badge from the live snapshot.
+            self.footer.goal = crate::footer::format_goal_badge(&event["goal"]);
         }
         if r#type == "llm.delta" {
             // Live model output: thinking deltas accumulate on a transient
@@ -2232,8 +2429,56 @@ fn resolve_alias(cmd: &str) -> &str {
         "/rename" => "/title",
         "/task" => "/tasks",
         "/effort" => "/thinking",
+        "/providers" => "/provider",
         _ => cmd,
     }
+}
+
+/// Parsed `/discuss` arguments.
+#[derive(Debug)]
+struct DiscussArgs {
+    topic: String,
+    roles: Vec<String>,
+    debate: bool,
+}
+
+/// Parse `/discuss <topic> [with <r1>,<r2>,...] [--debate]` (TS
+/// `parseDiscussArgs` parity, simplified — no role stances). Defaults to
+/// the researcher/architect/engineer trio when no roles are given.
+fn parse_discuss(args: &str) -> Result<DiscussArgs, &'static str> {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        return Err("usage");
+    }
+    let (debate, remaining) = match trimmed.strip_prefix("--debate") {
+        Some(rest) => (true, rest.trim_start()),
+        None => (false, trimmed),
+    };
+    let with_re = regex::Regex::new(r"(?i)\s+with\s+").expect("valid with-regex");
+    let mut parts = with_re.splitn(remaining, 2);
+    let topic = parts.next().unwrap_or("").trim();
+    let roles_raw = parts.next().unwrap_or("");
+    if topic.is_empty() {
+        return Err("need-topic");
+    }
+    let roles: Vec<String> = if roles_raw.is_empty() {
+        vec!["researcher".into(), "architect".into(), "engineer".into()]
+    } else {
+        roles_raw
+            .split(',')
+            .map(|r| r.trim())
+            .filter(|r| !r.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    if roles.len() < 2 {
+        return Err("need-roles");
+    }
+    Ok(DiscussArgs {
+        topic: topic.to_string(),
+        roles,
+        debate,
+    })
 }
 
 /// The newest assistant reply's text (TS `findLastAssistantText` parity):
@@ -2540,8 +2785,38 @@ mod tests {
         assert_eq!(lines.len(), 4);
         assert!(lines[0].contains("Bash"), "title: {}", lines[0]);
         assert!(lines[0].contains("Ask"), "rule: {}", lines[0]);
-        assert_eq!(lines[1], r#"{"command":"ls"}"#);
+        // The Bash command is parsed into a readable preview line.
+        assert_eq!(lines[1], "Bash: ls");
         assert!(lines[3].contains("s = allow for session"), "actions: {}", lines[3]);
+    }
+
+    #[test]
+    fn approval_preview_parses_tool_arguments() {
+        // Edit renders old/new hunks.
+        let lines = approval_preview_lines(
+            "Edit",
+            r#"{"file_path":"a.txt","old_string":"old","new_string":"new line"}"#,
+        );
+        assert_eq!(lines[0], "Edit: a.txt");
+        assert!(lines.contains(&"- old".to_string()), "lines: {lines:?}");
+        assert!(lines.contains(&"+ new line".to_string()), "lines: {lines:?}");
+
+        // Write renders the file content.
+        let lines = approval_preview_lines("Write", r#"{"file_path":"b.txt","content":"hi\nbye"}"#);
+        assert_eq!(lines[0], "Write: b.txt");
+        assert!(lines.contains(&"  hi".to_string()));
+
+        // Bash shows the command.
+        let lines = approval_preview_lines("Bash", r#"{"command":"ls -la"}"#);
+        assert_eq!(lines, vec!["Bash: ls -la"]);
+
+        // Unknown tools fall back to the raw JSON.
+        let lines = approval_preview_lines("Weird", r#"{"x":1}"#);
+        assert_eq!(lines, vec![r#"{"x":1}"#]);
+
+        // Unparseable arguments fall back verbatim.
+        let lines = approval_preview_lines("Edit", "not json");
+        assert_eq!(lines, vec!["not json"]);
     }
 
     #[test]
@@ -2717,6 +2992,7 @@ mod tests {
                     ctx_pct: 0,
                     cwd: String::new(),
                     branch: None,
+                    goal: None,
                 };
                 crate::chatwidget::render_frame(
                     frame, &transcript, "/help", 2, "sess-1", 0, crate::theme::Theme::dark(),
@@ -2770,6 +3046,27 @@ mod tests {
         assert_eq!(resolve_alias("/task"), "/tasks");
         assert_eq!(resolve_alias("/effort"), "/thinking");
         assert_eq!(resolve_alias("/plan"), "/plan");
+    }
+
+    #[test]
+    fn parses_discuss_arguments() {
+        let args = parse_discuss("migration with rust,ts,architect").unwrap();
+        assert_eq!(args.topic, "migration");
+        assert_eq!(args.roles, vec!["rust", "ts", "architect"]);
+        assert!(!args.debate);
+
+        // No roles → the default trio.
+        let args = parse_discuss("just a topic").unwrap();
+        assert_eq!(args.roles, vec!["researcher", "architect", "engineer"]);
+
+        // --debate flag.
+        let args = parse_discuss("--debate api with backend,frontend").unwrap();
+        assert!(args.debate);
+        assert_eq!(args.topic, "api");
+
+        // Errors.
+        assert_eq!(parse_discuss("").unwrap_err(), "usage");
+        assert_eq!(parse_discuss("topic with solo").unwrap_err(), "need-roles");
     }
 
     #[test]

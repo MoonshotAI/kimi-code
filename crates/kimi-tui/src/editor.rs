@@ -102,8 +102,13 @@ pub fn edit_external(seed: &str) -> anyhow::Result<String> {
 mod tests {
     use super::*;
 
+    /// Serializes the env-mutating editor tests (they share the process
+    /// `KIMI_CODE_EDITOR` variable).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn resolves_from_environment() {
+        let _g = ENV_LOCK.lock().unwrap();
         // KIMI_CODE_EDITOR wins over the platform default; other tests do
         // not read it, so setting it is safe here.
         std::env::set_var("KIMI_CODE_EDITOR", "code --wait");
@@ -112,6 +117,7 @@ mod tests {
 
     #[test]
     fn empty_env_falls_back_to_default() {
+        let _g = ENV_LOCK.lock().unwrap();
         std::env::set_var("KIMI_CODE_EDITOR", "   ");
         assert!(resolve_editor().is_some(), "platform default exists");
     }

@@ -140,11 +140,16 @@ pub fn styled_lines(
                     format!("▶ {}", line.text),
                     Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
                 ))),
-                // Reasoning is transient and dimmer than the visible stream.
-                TranscriptKind::Thinking => out.push(RenderLine::from(Span::styled(
-                    line.text.clone(),
-                    Style::default().fg(theme.thinking).add_modifier(Modifier::ITALIC),
-                ))),
+                // Reasoning is transient and dimmer than the visible stream;
+                // long reasoning folds to a one-line preview so it can't
+                // monopolize the viewport.
+                TranscriptKind::Thinking => {
+                    let folded = fold_thinking(&line.text);
+                    out.push(RenderLine::from(Span::styled(
+                        folded,
+                        Style::default().fg(theme.thinking).add_modifier(Modifier::ITALIC),
+                    )));
+                }
                 TranscriptKind::Tool => {
                     let is_question = line.text.contains("AskUserQuestion");
                     out.push(RenderLine::from(Span::styled(
@@ -174,6 +179,19 @@ fn preview(text: &str, max: usize) -> String {
     } else {
         let cut: String = text.chars().take(max).collect();
         format!("{cut}…")
+    }
+}
+
+/// Reasoning longer than this many chars folds to a single-line preview.
+const THINKING_FOLD_THRESHOLD: usize = 200;
+
+/// Fold long thinking into `… (+N chars)`; short thinking passes through.
+fn fold_thinking(text: &str) -> String {
+    let chars = text.chars().count();
+    if chars <= THINKING_FOLD_THRESHOLD {
+        text.to_string()
+    } else {
+        format!("{}… (+{} chars)", preview(text, 80), chars - 80)
     }
 }
 
@@ -216,5 +234,17 @@ mod tests {
         assert_eq!(lines.len(), 4, "header + 3 result rows: {lines:?}");
         assert!(lines[1].to_string().contains("line1"));
         assert!(lines[3].to_string().contains("line3"));
+    }
+
+    #[test]
+    fn long_thinking_folds_to_preview() {
+        // Short thinking passes through verbatim.
+        assert_eq!(fold_thinking("hmm"), "hmm");
+        // Long thinking folds to a preview with a char count.
+        let long = "x".repeat(500);
+        let folded = fold_thinking(&long);
+        assert!(folded.ends_with("+420 chars)"), "folded: {folded}");
+        assert!(folded.starts_with("xxx"), "folded: {folded}");
+        assert!(!folded.contains('\n'), "single line");
     }
 }

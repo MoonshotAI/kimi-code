@@ -36,6 +36,12 @@ impl Locale {
 static LOCALE: Mutex<Locale> = Mutex::new(Locale::En);
 static LOCALE_RESOLVED: AtomicBool = AtomicBool::new(false);
 
+/// Re-read `tui.toml` on the next `active_locale()` (the `/reload-tui`
+/// command).
+pub fn reload_locale() {
+    LOCALE_RESOLVED.store(false, Ordering::Relaxed);
+}
+
 /// Override the active locale (persisted via tui.toml by the caller).
 pub fn set_locale(locale: Locale) {
     *LOCALE.lock().unwrap() = locale;
@@ -228,6 +234,7 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.err.mcpFailed", "mcp failed: {0}", "MCP 操作失败：{0}"),
     ("tui.tasks.none", "no background tasks", "没有后台任务"),
     ("tui.tasks.listItem", "{0}  {1}  [{2}]", "{0}  {1}  [{2}]"),
+    ("tui.tasks.noOutput", "task {0} has no output", "任务 {0} 没有输出"),
     ("tui.theme.set", "theme: {0}", "主题：{0}"),
     ("tui.theme.dark", "dark", "深色"),
     ("tui.theme.light", "light", "浅色"),
@@ -308,6 +315,19 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.err.shellFailed", "shell failed: {0}", "命令执行失败：{0}"),
     ("tui.paste.image", "pasted image #{0} (Alt-V)", "已粘贴图片 #{0}（Alt-V）"),
     ("tui.paste.noImage", "no image on the clipboard", "剪贴板中没有图片"),
+    ("tui.discuss.usage", "usage: /discuss <topic> [with <role1>,<role2>,...] [--debate]", "用法：/discuss <话题> [with <角色1>,<角色2>,...] [--debate]"),
+    ("tui.discuss.needTopic", "discuss: need a topic", "讨论：需要一个话题"),
+    ("tui.discuss.needRoles", "discuss: need at least 2 roles", "讨论：至少需要 2 个角色"),
+    ("tui.err.discussSwarm", "could not enable swarm mode: {0}", "无法启用群组模式：{0}"),
+    ("tui.workflow.usage", "usage: /workflow list | <name> [args...] | status <runId> | cancel <runId>", "用法：/workflow list | <名称> [参数...] | status <运行ID> | cancel <运行ID>"),
+    ("tui.provider.none", "no providers configured", "没有配置任何提供商"),
+    ("tui.provider.list", "providers ({0}):", "提供商（{0}）："),
+    ("tui.provider.keySet", "apiKey set", "已设置 apiKey"),
+    ("tui.provider.keyMissing", "no apiKey", "无 apiKey"),
+    ("tui.provider.removed", "removed provider {0}", "已移除提供商 {0}"),
+    ("tui.provider.usage", "usage: /provider [list|remove <name>|add]", "用法：/provider [list|remove <名称>|add]"),
+    ("tui.provider.addHint", "add a provider via /login or config.toml (providers.<name>)", "通过 /login 或 config.toml（providers.<名称>）添加提供商"),
+    ("tui.reloadTui.ok", "tui preferences reloaded", "界面偏好已重载"),
     ("tui.editor.noEditor", "no editor configured (set $EDITOR)", "未配置编辑器（请设置 $EDITOR）"),
     ("tui.err.editorFailed", "editor failed: {0}", "编辑器失败：{0}"),
     ("tui.editor.usage", "usage: /editor <command> (e.g. code --wait)", "用法：/editor <命令>（如 code --wait）"),
@@ -330,6 +350,7 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.chat.inputTitle", "input — {0}", "输入 — {0}"),
     ("tui.footer.model", "model: {0}", "模型：{0}"),
     ("tui.footer.ctx", "ctx: {0}%", "上下文：{0}%"),
+    ("tui.footer.turns", "turns", "轮"),
     ("tui.footer.tipPrefix", "tip: {0}", "提示：{0}"),
     ("tui.tip.0", "Press Esc or Ctrl-C to cancel a running turn", "按 Esc 或 Ctrl-C 取消进行中的回合"),
     ("tui.tip.1", "Type /help to list all commands", "输入 /help 列出全部命令"),
@@ -396,6 +417,10 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.cmd.settings", "Open the settings menu", "打开设置菜单"),
     ("tui.cmd.copy", "Copy the last assistant reply", "复制最近一条助手回复"),
     ("tui.cmd.export-md", "Export the session as Markdown", "将会话导出为 Markdown"),
+    ("tui.cmd.discuss", "Run a multi-agent discussion", "运行多智能体讨论"),
+    ("tui.cmd.workflow", "Run or manage workflows", "运行或管理工作流"),
+    ("tui.cmd.provider", "Manage AI providers", "管理 AI 提供商"),
+    ("tui.cmd.reload-tui", "Reload only the TUI preferences", "仅重载界面偏好"),
 ];
 
 #[cfg(test)]

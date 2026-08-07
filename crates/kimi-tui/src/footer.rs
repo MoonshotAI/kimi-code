@@ -23,6 +23,9 @@ pub struct FooterInfo {
     pub ctx_pct: u8,
     pub cwd: String,
     pub branch: Option<String>,
+    /// Pre-formatted goal badge (`[goal ● active · 3 turns]`), driven by
+    /// `session.goal.updated` events (TS `formatGoalBadge` parity).
+    pub goal: Option<String>,
 }
 
 impl FooterInfo {
@@ -46,8 +49,21 @@ impl FooterInfo {
             ctx_pct,
             cwd,
             branch: current_git_branch(),
+            goal: None,
         }
     }
+}
+
+/// Format a goal badge from a `session.goal.updated` payload (TS
+/// `formatGoalBadge` parity, simplified). `None` for terminal/no goal.
+pub fn format_goal_badge(goal: &serde_json::Value) -> Option<String> {
+    let status = goal["status"].as_str()?;
+    if !matches!(status, "active" | "paused" | "blocked") {
+        return None;
+    }
+    let dot = if status == "active" { "●" } else { "○" };
+    let turns = goal["turnsUsed"].as_u64().unwrap_or(0);
+    Some(format!("[goal {dot} {status} · {turns} {}]", crate::i18n::t("tui.footer.turns")))
 }
 
 /// The current git branch by parsing `.git/HEAD` (cheap, no subprocess).
@@ -118,6 +134,12 @@ pub fn footer_lines(info: &FooterInfo, theme: Theme, width: u16) -> Vec<RenderLi
                 Style::default().fg(theme.assistant).add_modifier(Modifier::BOLD),
             ));
         }
+    }
+    if let Some(goal) = &info.goal {
+        spans.push(Span::styled(
+            format!("{goal} "),
+            Style::default().fg(theme.status),
+        ));
     }
     spans.push(Span::styled(
         info.model.clone(),
@@ -211,6 +233,7 @@ mod tests {
             ctx_pct: 30,
             cwd: "/work".into(),
             branch: Some("main".into()),
+            goal: Some("[goal ● active · 3 turns]".into()),
         };
         let lines = footer_lines(&info, Theme::dark(), 80);
         assert_eq!(lines.len(), 2);
@@ -220,6 +243,7 @@ mod tests {
         assert!(strip.contains("kimi-k2"), "strip: {strip}");
         assert!(strip.contains("/work"), "strip: {strip}");
         assert!(strip.contains("(main)"), "strip: {strip}");
+        assert!(strip.contains("[goal ● active"), "goal badge: {strip}");
         // The current tip text right-aligns on line 1 (no prefix, TS parity).
         let tip_text = crate::i18n::t(TIP_KEYS[tip_index()]);
         assert!(strip.contains(tip_text), "tip on line 1: {strip}");
@@ -245,5 +269,17 @@ mod tests {
             let idx = tip_index();
             assert!(idx < TIP_KEYS.len(), "idx {idx}");
         }
+    }
+
+    #[test]
+    fn goal_badge_formats_live_goals() {
+        // Pin En so the "turns" label is stable.
+        crate::i18n::set_locale(Locale::En);
+        let goal = serde_json::json!({ "status": "active", "turnsUsed": 3 });
+        let badge = format_goal_badge(&goal).expect("badge");
+        assert_eq!(badge, "[goal ● active · 3 turns]");
+        // Terminal / no goal → None.
+        assert!(format_goal_badge(&serde_json::json!({ "status": "complete" })).is_none());
+        assert!(format_goal_badge(&serde_json::json!({})).is_none());
     }
 }

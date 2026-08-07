@@ -70,6 +70,10 @@ pub const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("/settings", "tui.cmd.settings"),
     ("/copy", "tui.cmd.copy"),
     ("/export-md", "tui.cmd.export-md"),
+    ("/discuss", "tui.cmd.discuss"),
+    ("/workflow", "tui.cmd.workflow"),
+    ("/provider", "tui.cmd.provider"),
+    ("/reload-tui", "tui.cmd.reload-tui"),
 ];
 
 /// Resolved `(command, description)` pairs for the active locale (the
@@ -89,7 +93,7 @@ pub const SLASH_COMMANDS: &[&str] = &[
     "/model", "/models", "/new", "/permission", "/plan", "/plugins", "/quit", "/reload",
     "/resume", "/session", "/sessions", "/settings", "/skills", "/status", "/steer", "/swarm",
     "/tasks", "/theme", "/thinking", "/title", "/undo", "/usage", "/version", "/yolo", "/editor",
-    "/copy", "/export-md",
+    "/copy", "/export-md", "/discuss", "/workflow", "/provider", "/reload-tui",
 ];
 
 // ── Input editing (char-index based) ────────────────────────────────────
