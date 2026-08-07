@@ -57,6 +57,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import { userCancellationReason } from '#/_base/utils/abort';
+import { fixBashCommand, withMsystemNeutralized } from './windowsBashFix';
 import bashDescriptionTemplate from './bash.md?raw';
 import { ProcessTask } from './process-task';
 import {
@@ -191,10 +192,13 @@ export class BashTool implements IBashTool {
 
   private spawn(effectiveCwd: string, command: string): Promise<IProcess> {
     const shellCwd = this.isWindowsBash ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
+    const shellCommand = `cd ${shellQuote(shellCwd)} && ${command}`;
     const shellArgs = [
       this.env.shellPath,
       '-c',
-      `cd ${shellQuote(shellCwd)} && ${command}`,
+      this.isWindowsBash
+        ? withMsystemNeutralized(shellCommand, this.env.shellPath, 'win32')
+        : shellCommand,
     ];
 
     const noninteractiveEnv: Record<string, string> = {
@@ -203,6 +207,14 @@ export class BashTool implements IBashTool {
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
       SHELL: this.env.shellPath,
     };
+
+    if (this.isWindowsBash) {
+      // MSYS path conversion mangles native-tool arguments (`/FO`, `/Create`,
+      // `/T`, ...) on Git Bash; disable it unless the user set the variables
+      // explicitly (setdefault semantics).
+      noninteractiveEnv['MSYS_NO_PATHCONV'] = process.env['MSYS_NO_PATHCONV'] ?? '1';
+      noninteractiveEnv['MSYS2_ARG_CONV_EXCL'] = process.env['MSYS2_ARG_CONV_EXCL'] ?? '*';
+    }
 
     return this.runner.exec(shellArgs, { env: noninteractiveEnv });
   }
@@ -218,7 +230,7 @@ export class BashTool implements IBashTool {
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
-    const command = this.isWindowsBash ? rewriteWindowsNullRedirect(args.command) : args.command;
+    const command = this.isWindowsBash ? fixBashCommand(args.command, 'win32').command : args.command;
     const effectiveCwd = args.cwd ?? this.ctx.cwd;
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
     const timeoutMs = startsInBackground
@@ -499,8 +511,4 @@ function windowsPathToPosixPath(path: string): string {
   return path.replaceAll('\\', '/');
 }
 
-const WINDOWS_NUL_REDIRECT = /(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/g;
 
-function rewriteWindowsNullRedirect(command: string): string {
-  return command.replace(WINDOWS_NUL_REDIRECT, '$1/dev/null');
-}
