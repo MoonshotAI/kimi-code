@@ -11,10 +11,24 @@
  * generation; the next run clears its own stragglers before writing.
  * Publishing also schedules the previous generation's drop.
  *
+ * The initial projection coincides with the first list request (read paths
+ * kick `prepare()` single-flight and fall back to the authoritative scan
+ * while unprepared). `sharedScan()` makes that ONE scan serve both: the
+ * projection joins a running scan — or reuses one that just settled within
+ * a short window — instead of enumerating every session directory a second
+ * time. Fallback reads use `sharedScanForRead()`: they join only a scan
+ * that is still in flight and otherwise drive a fresh one, so a read never
+ * serves a settled snapshot that could predate a just-created session. (A
+ * joined scan may still have started before the read; the index folds the
+ * mirror's pending queue into the result to cover that window.) A
+ * projection run consumes the slot on settle, so a later re-projection
+ * always scans fresh.
+ *
  * Reconciliation runs against the *published* generation: it re-scans the
- * authoritative set, upserts summaries that drifted (mirror loss, external
- * edits), deletes entries whose document disappeared, and rewrites every
- * counter from the authoritative scan — bounding counter drift to one
+ * authoritative set (always fresh — a stale snapshot could regress counters
+ * the mirror just updated), upserts summaries that drifted (mirror loss,
+ * external edits), deletes entries whose document disappeared, and rewrites
+ * every counter from the authoritative scan — bounding counter drift to one
  * reconcile interval.
  *
  * This is an internal collaborator of `FileSessionIndex`, not a DI service:
@@ -46,6 +60,15 @@ import {
 
 const WRITE_CHUNK = 500;
 const SCAN_CONCURRENCY = 16;
+/**
+ * How long a settled shared scan stays reusable BY A PROJECTION. The window
+ * only needs to cover the gap between a fallback read finishing its scan and
+ * the kicked projection reaching its own scan call (query-store open +
+ * collection housekeeping in between); a projection never reuses a slot
+ * older than this. Fallback reads never reuse a settled scan at all (see
+ * `sharedScanForRead`).
+ */
+const SHARED_SCAN_REUSE_MS = 30_000;
 
 export interface SessionIndexProjectorDeps {
   readonly storage: IFileSystemStorageService;
@@ -66,11 +89,87 @@ export interface ReconcileResult {
   readonly removed: number;
 }
 
+/** One consistent pass over the authoritative session metadata set. */
+export interface AuthoritativeScan {
+  readonly summaries: SessionSummary[];
+  readonly counts: Map<string, { active: number; archived: number }>;
+}
+
+interface ScanSlot {
+  readonly promise: Promise<AuthoritativeScan>;
+  readonly reusableUntil: number;
+  settled: boolean;
+}
+
 export class SessionIndexProjector {
+  private scanSlot: ScanSlot | undefined;
+
   constructor(private readonly deps: SessionIndexProjectorDeps) {}
+
+  /**
+   * The projection's scan: joins a running shared scan, reuses one that
+   * settled within the reuse window, or starts a fresh one. The projection
+   * publishes a point-in-time derived model by design, so a just-finished
+   * snapshot is safe for it (the mirror queue and reconciliation heal the
+   * gap) — and this is what keeps a fast first read + kicked projection
+   * from scanning the directory tree twice.
+   */
+  sharedScan(): Promise<AuthoritativeScan> {
+    const slot = this.scanSlot;
+    if (slot !== undefined && (!slot.settled || Date.now() < slot.reusableUntil)) {
+      return slot.promise;
+    }
+    return this.startScan();
+  }
+
+  /**
+   * A fallback read's scan: joins a scan that is still in flight or starts a
+   * fresh one. A settled snapshot is NEVER served to a read — it could
+   * predate a session this process just created, breaking read-your-writes.
+   * Joining an in-flight scan is NOT the same freshness as enumerating here
+   * and now: the scan may have started (and passed a directory) before this
+   * call, so the caller folds the mirror's pending queue into the result —
+   * every pending entry is known to be durable on disk.
+   */
+  sharedScanForRead(): Promise<AuthoritativeScan> {
+    const slot = this.scanSlot;
+    if (slot !== undefined && !slot.settled) return slot.promise;
+    return this.startScan();
+  }
+
+  private startScan(): Promise<AuthoritativeScan> {
+    const slot: ScanSlot = {
+      promise: this.scanAuthoritative(),
+      reusableUntil: Date.now() + SHARED_SCAN_REUSE_MS,
+      settled: false,
+    };
+    const markSettled = (): void => {
+      slot.settled = true;
+    };
+    void slot.promise.then(markSettled, markSettled);
+    this.scanSlot = slot;
+    return slot.promise;
+  }
 
   /** Scan the authoritative set into a fresh generation and publish it. */
   async project(generation: number): Promise<ProjectionResult> {
+    // Captured BEFORE the housekeeping below: the scan overlaps it, and the
+    // finally invalidates exactly the slot this run consumed — never a newer
+    // scan a concurrent fallback read started meanwhile.
+    const scan = this.sharedScan();
+    try {
+      return await this.doProject(generation, scan);
+    } finally {
+      // The consumed slot must not serve a LATER projection: a re-projection
+      // always scans the authoritative set fresh.
+      if (this.scanSlot?.promise === scan) this.scanSlot = undefined;
+    }
+  }
+
+  private async doProject(
+    generation: number,
+    scan: Promise<AuthoritativeScan>,
+  ): Promise<ProjectionResult> {
     const { queryStore, log } = this.deps;
     const collection = sessionCollection(generation);
     const counters = sessionCountersCollection(generation);
@@ -83,7 +182,7 @@ export class SessionIndexProjector {
       field: `custom.${PARENT_SESSION_ID_KEY}`,
     });
 
-    const { summaries, counts } = await this.scanAuthoritative();
+    const { summaries, counts } = await scan;
     await this.batchChunks(
       summaries.map((summary) => ({
         kind: 'put' as const,
@@ -156,10 +255,7 @@ export class SessionIndexProjector {
     return result;
   }
 
-  private async scanAuthoritative(): Promise<{
-    summaries: SessionSummary[];
-    counts: Map<string, { active: number; archived: number }>;
-  }> {
+  private async scanAuthoritative(): Promise<AuthoritativeScan> {
     const { storage, docs, sessionsScope } = this.deps;
     const summaries: SessionSummary[] = [];
     const counts = new Map<string, { active: number; archived: number }>();

@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -32,6 +32,7 @@ import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageSe
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import {
   IQueryStore,
+  type Checkpoint,
   type ColumnPageQuery,
   type IQuery,
   type Page,
@@ -707,6 +708,89 @@ describe('FileSessionIndex (read model)', () => {
     expect(unknown.items).toEqual([]);
   });
 
+  it('remove evicts a queued mirror entry so a deleted session stays unlisted', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
+
+    // Created after the projection: present only in the mirror queue.
+    mirror.record(summary('fresh', { createdAt: 3, updatedAt: 10 }));
+    const before = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(before.items.map((s) => s.id)).toEqual(['fresh', 'a']);
+
+    // sessionLifecycle.delete removes the authoritative doc, then evicts
+    // through remove(): the queued summary must not fold the session back in.
+    await store.remove('fresh');
+    expect(mirror.pending()).toEqual([]);
+    const after = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(after.items.map((s) => s.id)).toEqual(['a']);
+
+    // A later flush must not resurrect the evicted summary either.
+    await mirror.drain();
+    const settled = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(settled.items.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('remove waits out an in-flight mirror flush before deleting from the store', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+
+    let batchGate: Promise<void> | undefined;
+    let releaseBatch: () => void = () => {};
+    let notifyBatchEntered: (() => void) | undefined;
+    class GatedQueryStore extends MiniDbQueryStore {
+      override async batch(ops: readonly WriteOp[]): Promise<void> {
+        notifyBatchEntered?.();
+        const gate = batchGate;
+        batchGate = undefined;
+        if (gate !== undefined) await gate;
+        return super.batch(ops);
+      }
+    }
+    registerScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      GatedQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new FileStorageService(homeDir);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+    await store.prepare();
+
+    // Arm the gate, queue a summary, and start a flush that parks inside
+    // batch while still carrying the id.
+    const entered = new Promise<void>((resolve) => {
+      notifyBatchEntered = resolve;
+    });
+    batchGate = new Promise<void>((resolve) => {
+      releaseBatch = resolve;
+    });
+    mirror.record(summary('fresh', { createdAt: 3, updatedAt: 10 }));
+    const draining = mirror.drain();
+    await entered;
+
+    // remove() must block behind the in-flight flush; the flush lands first,
+    // then the store delete erases the resurrected entry.
+    const removing = store.remove('fresh');
+    releaseBatch();
+    await Promise.all([removing, draining]);
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['a']);
+  });
+
   it('count folds the mirror queue in before the flush lands', async () => {
     await seedSession('a', { createdAt: 1, updatedAt: 2 });
     await seedSession('b', { createdAt: 2, updatedAt: 3 });
@@ -765,9 +849,17 @@ describe('FileSessionIndex (read model)', () => {
     const status = await store.prepare();
     expect(status.state).toBe('degraded');
     expect(status.degradedCount).toBe(1);
+    // The degraded state stays diagnosable: the reason names the failing stage.
+    expect(status.reason).toBe('projection failed');
     // Reads still work — from the authoritative documents.
     const fallback = await store.listRecent({ workspaceIds: [workspaceId] });
     expect(fallback.items.map((s) => s.id)).toEqual(['b', 'a']);
+    // The fallback keeps serving while degraded (no silent read-model answers).
+    expect(store.status()).toEqual({
+      state: 'degraded',
+      reason: 'projection failed',
+      degradedCount: 1,
+    });
 
     const recovered = await store.prepare();
     expect(recovered).toEqual({ state: 'ready', generation: 1, degradedCount: 1 });
@@ -878,6 +970,471 @@ describe('FileSessionIndex (read model)', () => {
     expect(page.items[0]?.title).toBe('after');
     expect(await store.get('gone')).toBeUndefined();
     expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
+  });
+
+  it('the first read kicks one initial projection and shares its authoritative scan', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 3 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 2 });
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 1 });
+
+    // Counts authoritative document reads: one full scan is exactly two gets
+    // per seeded session (the `<sessionDir>/state.json` miss plus the
+    // `<sessionDir>/session-meta/state.json` fallback hit). The first list
+    // kicks the initial projection AND falls back to the authoritative path;
+    // both must be served by ONE shared scan, not one scan each.
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    const [page, status, sameFlight] = await Promise.all([
+      store.listRecent({ workspaceIds: [workspaceId] }),
+      store.prepare(),
+      store.prepare(),
+    ]);
+    expect(page.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    // Single-flight: two concurrent prepares plus the read's kick produced
+    // exactly one projection (generation 1, never 2).
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    expect(sameFlight).toEqual(status);
+    expect(docs.gets).toBe(6);
+
+    // Warm reads come from the read model — no further document reads.
+    const warm = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(warm.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(3);
+    expect(docs.gets).toBe(6);
+  });
+
+  it('serves authoritative reads immediately while preparing', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+
+    // Blocks the read-model open at the checkpoint read: prepare() stays in
+    // `preparing` until the gate is released.
+    class GatedQueryStore extends MiniDbQueryStore {
+      private gate: Promise<void> | undefined;
+      private openGate: (() => void) | undefined;
+      hold(): void {
+        this.gate = new Promise((resolve) => {
+          this.openGate = resolve;
+        });
+      }
+      release(): void {
+        this.openGate?.();
+        this.gate = undefined;
+      }
+      override async getCheckpoint(source: string): Promise<Checkpoint | undefined> {
+        await this.gate;
+        return super.getCheckpoint(source);
+      }
+    }
+    registerScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      GatedQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new FileStorageService(homeDir);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    (queryStore as GatedQueryStore).hold();
+    const preparing = store.prepare();
+    expect(store.status().state).toBe('preparing');
+
+    // Neither the list, the count, nor the point lookup waits for the blocked
+    // projection: all answer from the authoritative metadata immediately.
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
+    expect((await store.get('b'))?.title).toBe('b');
+    expect(store.status().state).toBe('preparing');
+
+    (queryStore as GatedQueryStore).release();
+    const status = await preparing;
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    const warm = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(warm.items.map((s) => s.id)).toEqual(['b', 'a']);
+  });
+
+  it('folds the mirror queue into reads that join an in-flight scan (read-your-writes)', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+
+    // Parks the shared scan mid-flight at the first document read, so a
+    // mutation landing while the scan is running is guaranteed to postdate
+    // the scan's pass over its directory.
+    class GatedDocs extends JsonAtomicDocumentStore {
+      private gate: Promise<void> | undefined;
+      private openGate: (() => void) | undefined;
+      private markFirstGet: (() => void) | undefined;
+      readonly firstGet = new Promise<void>((resolve) => {
+        this.markFirstGet = resolve;
+      });
+      hold(): void {
+        this.gate = new Promise((resolve) => {
+          this.openGate = resolve;
+        });
+      }
+      release(): void {
+        this.openGate?.();
+      }
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.markFirstGet?.();
+        await this.gate;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new GatedDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    docs.hold();
+    const first = store.listRecent({ workspaceIds: [workspaceId] });
+    await docs.firstGet; // the shared scan is now parked mid-flight
+
+    // A creation and an archive flip land while the scan is running: both
+    // state.json documents are durable and their summaries sit in the mirror
+    // queue (exactly what SessionMetadata does after persisting).
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
+    mirror.record(summary('c', { title: 'c', createdAt: 3, updatedAt: 4 }));
+    mirror.record(summary('a', { archived: true, updatedAt: 5 }));
+
+    // The second read JOINS the in-flight scan; the scan's snapshot contains
+    // neither 'c' nor the archive flip. The pending fold must restore both.
+    const second = store.listRecent({ workspaceIds: [workspaceId] });
+    docs.release();
+    const [firstPage, secondPage] = await Promise.all([first, second]);
+    for (const page of [firstPage, secondPage]) {
+      expect(page.items.map((s) => s.id)).toEqual(['c', 'b']);
+    }
+
+    // The projection publishes the scan's snapshot (without 'c'); the queued
+    // mirror entries flush into it and warm reads converge on the same view.
+    const status = await store.prepare();
+    expect(status.state).toBe('ready');
+    await mirror.drain();
+    const warm = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(warm.items.map((s) => s.id)).toEqual(['c', 'b']);
+    const all = await store.listRecent({ workspaceIds: [workspaceId], includeArchived: true });
+    expect(all.items.map((s) => s.id)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('never serves a settled shared scan to a fallback read', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+
+    // Holds prepare() at the checkpoint read so the state stays `preparing`
+    // across several reads; counts document reads to prove scan freshness.
+    class GatedQueryStore extends MiniDbQueryStore {
+      private gate: Promise<void> | undefined;
+      private openGate: (() => void) | undefined;
+      hold(): void {
+        this.gate = new Promise((resolve) => {
+          this.openGate = resolve;
+        });
+      }
+      release(): void {
+        this.openGate?.();
+        this.gate = undefined;
+      }
+      override async getCheckpoint(source: string): Promise<Checkpoint | undefined> {
+        await this.gate;
+        return super.getCheckpoint(source);
+      }
+    }
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    registerScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      GatedQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    (queryStore as GatedQueryStore).hold();
+    const preparing = store.prepare();
+    // The first fallback read drives a fresh scan (2 sessions × 2 gets).
+    const first = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(first.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(docs.gets).toBe(4);
+
+    // Written behind the mirror's back (an external-process creation): the
+    // first scan is settled by now, so the second read must scan fresh and
+    // see it — a reused snapshot would answer [b, a] forever.
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
+    const second = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(second.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
+    expect(docs.gets).toBe(10); // 3 sessions × 2 gets on the second scan
+
+    // The kicked projection still avoids a redundant pass: it reuses the
+    // just-settled second scan within the reuse window.
+    (queryStore as GatedQueryStore).release();
+    const status = await preparing;
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    expect(docs.gets).toBe(10);
+  });
+
+  it('status() walks the read-model lifecycle and stays diagnosable through degradation', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+
+    // Gate the checkpoint read so `preparing` is observable; fail one batch
+    // later so the `degraded` transition is observable in the same walk.
+    class GatedFlakyQueryStore extends MiniDbQueryStore {
+      private gate: Promise<void> | undefined;
+      private openGate: (() => void) | undefined;
+      failNextBatch = false;
+      hold(): void {
+        this.gate = new Promise((resolve) => {
+          this.openGate = resolve;
+        });
+      }
+      release(): void {
+        this.openGate?.();
+        this.gate = undefined;
+      }
+      override async getCheckpoint(source: string): Promise<Checkpoint | undefined> {
+        await this.gate;
+        return super.getCheckpoint(source);
+      }
+      override async batch(ops: readonly WriteOp[]): Promise<void> {
+        if (this.failNextBatch) {
+          this.failNextBatch = false;
+          throw new Error('injected projection crash');
+        }
+        return super.batch(ops);
+      }
+    }
+    registerScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      GatedFlakyQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new FileStorageService(homeDir);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+    const gated = queryStore as GatedFlakyQueryStore;
+
+    // uninitialized → preparing → ready, each observable through status().
+    expect(store.status()).toEqual({ state: 'uninitialized', degradedCount: 0 });
+    gated.hold();
+    const preparing = store.prepare();
+    expect(store.status()).toEqual({ state: 'preparing', degradedCount: 0 });
+    gated.release();
+    expect(await preparing).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+
+    // A failing re-projection with a published generation keeps serving it:
+    // generation failures stay local to the read model's next attempt.
+    gated.failNextBatch = true;
+    await store.reprojectNow();
+    expect(store.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+
+    // A store that lost its published base (corruption rebuild) degrades on
+    // the next prepare — diagnosably — while reads keep answering from the
+    // authoritative documents.
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+    await fsp.rm(join(homeDir, 'cache', 'query-store'), { recursive: true, force: true });
+
+    const second = build();
+    (queryStore as GatedFlakyQueryStore).failNextBatch = true;
+    const degraded = await second.prepare();
+    expect(degraded.state).toBe('degraded');
+    expect(degraded.reason).toBe('projection failed');
+    expect(degraded.degradedCount).toBe(1);
+    const fallback = await second.listRecent({ workspaceIds: [workspaceId] });
+    expect(fallback.items.map((s) => s.id)).toEqual(['a']);
+    expect(await second.prepare()).toEqual({ state: 'ready', generation: 1, degradedCount: 1 });
+  });
+
+  it('a restart loads the published generation instead of re-scanning', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 3 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 2 });
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 1 });
+
+    const first = build();
+    await first.prepare();
+    expect(first.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const second = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    // The healthy published generation attaches directly: same generation,
+    // no projection, and not a single authoritative document read.
+    const status = await second.prepare();
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    expect(docs.gets).toBe(0);
+    const warm = await second.listRecent({ workspaceIds: [workspaceId] });
+    expect(warm.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    expect(docs.gets).toBe(0);
+  });
+
+  it('the resume-startup sequence pays one scan: point lookup, projection, then warm lists', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 3 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 2 });
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 1 });
+
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    // `kimi --resume <id>`: a targeted point lookup (2 document reads), which
+    // also kicks the initial projection in the background (one shared scan =
+    // 3 sessions × 2 gets). The TUI's later fetchSessions must then be warm.
+    expect((await store.get('b'))?.title).toBe('b');
+    expect(await store.prepare()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    expect(docs.gets).toBe(8);
+
+    // fetchSessions after the resume: served by the read model — zero
+    // additional document reads, zero directory scans.
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    expect(docs.gets).toBe(8);
+  });
+
+  it('the session query-store carries no full-text index artifacts', async () => {
+    await seedSession('a', { title: 'alpha', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'beta', createdAt: 2, updatedAt: 3 });
+
+    const store = build();
+    await store.prepare();
+    mirror.record(summary('c', { title: 'gamma', createdAt: 3, updatedAt: 4 }));
+    await mirror.drain();
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(3);
+
+    // The read model is a structural store: value documents, ordered columns
+    // and secondary indexes only. No shard may carry a text-index definition
+    // sidecar, a legacy root postings file, or generation text artifacts
+    // (dictionary/docs/postings).
+    const storeDir = join(homeDir, 'cache', 'query-store');
+    const entries = await fsp.readdir(storeDir, { recursive: true, withFileTypes: true });
+    const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.filter((name) => name === 'db.textindexes.json')).toEqual([]);
+    expect(files.filter((name) => /^db\.text-.*\.postings$/.test(name))).toEqual([]);
+    expect(files.filter((name) => /^text-.*\.(dictionary|postings|docs)$/.test(name))).toEqual([]);
   });
 
   // -- stage-3 performance baselines ------------------------------------------

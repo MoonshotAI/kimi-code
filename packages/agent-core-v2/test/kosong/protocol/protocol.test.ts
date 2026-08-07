@@ -31,9 +31,7 @@ describe('ProtocolSchema', () => {
   });
 
   it('rejects vendor names and unknown values', () => {
-    // A vendor is `{ base, traits }`, never a protocol.
     expect(ProtocolSchema.safeParse('kimi').success).toBe(false);
-    // Vertex AI is a providerOptions mode of the google-genai base now.
     expect(ProtocolSchema.safeParse('vertexai').success).toBe(false);
     expect(ProtocolSchema.safeParse('azure').success).toBe(false);
     expect(ProtocolSchema.safeParse('').success).toBe(false);

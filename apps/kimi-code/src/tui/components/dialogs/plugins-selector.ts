@@ -428,9 +428,10 @@ export class PluginsPanelComponent extends Container implements Focusable {
 
   private get marketplaceEntries(): readonly PluginMarketplaceEntry[] {
     if (this.market.status !== 'loaded') return [];
-    const { installedIds } = this.opts;
     return this.market.entries.toSorted(
-      (a, b) => Number(installedIds.has(b.id)) - Number(installedIds.has(a.id)),
+      (a, b) =>
+        Number(this.isMarketplaceEntryInstalled(b)) -
+        Number(this.isMarketplaceEntryInstalled(a)),
     );
   }
 
@@ -447,6 +448,14 @@ export class PluginsPanelComponent extends Container implements Focusable {
    * capability status, matching how Enter routes them. */
   private capabilityForEntry(entry: PluginMarketplaceEntry): CapabilityStatus | undefined {
     return entry.builtIn === true ? this.capabilityFor(entry.id) : undefined;
+  }
+
+  private installedPluginId(entry: PluginMarketplaceEntry): string {
+    return this.capabilityForEntry(entry)?.pluginId ?? entry.id;
+  }
+
+  private isMarketplaceEntryInstalled(entry: PluginMarketplaceEntry): boolean {
+    return this.opts.installedIds.has(this.installedPluginId(entry));
   }
 
   private get officialEntries(): readonly PluginMarketplaceEntry[] {
@@ -668,7 +677,12 @@ export class PluginsPanelComponent extends Container implements Focusable {
     plugin: PluginSummary,
   ): { entry: PluginMarketplaceEntry; local: string; latest: string } | undefined {
     if (this.market.status !== 'loaded') return undefined;
-    const entry = this.market.entries.find((e) => e.id === plugin.id);
+    const entry = this.market.entries.find(
+      (candidate) =>
+        candidate.id === plugin.id ||
+        (candidate.builtIn === true &&
+          this.capabilityForEntry(candidate)?.pluginId === plugin.id),
+    );
     if (entry === undefined) return undefined;
     const status = computeUpdateStatus(entry.version, plugin.version, true);
     return status.kind === 'update' ? { entry, local: status.local, latest: status.latest } : undefined;
@@ -728,7 +742,9 @@ export class PluginsPanelComponent extends Container implements Focusable {
         lines.push(...this.renderMarketplaceRow(entries[i]!, i + indexOffset, width));
       }
     }
-    const installedCount = entriesForCount.filter((e) => this.opts.installedIds.has(e.id)).length;
+    const installedCount = entriesForCount.filter((entry) =>
+      this.isMarketplaceEntryInstalled(entry),
+    ).length;
     lines.push('');
     lines.push(
       mutedHintLine(
@@ -775,7 +791,11 @@ export class PluginsPanelComponent extends Container implements Focusable {
       ? 'open in browser'
       : capability?.install.running === true
         ? 'installing…'
-        : marketplaceEntryStatus(entry, this.installedVersions);
+        : marketplaceEntryStatus(
+            entry,
+            this.installedVersions,
+            this.installedPluginId(entry),
+          );
     const line =
       prefix + labelStyle(entry.displayName) + '  ' + marketplaceStatusStyle(status, colors)(status);
     const descWidth = Math.max(1, width - 4);
@@ -884,8 +904,13 @@ function installStatus(entry: PluginMarketplaceEntry): string {
 function marketplaceEntryStatus(
   entry: PluginMarketplaceEntry,
   installed: ReadonlyMap<string, string | undefined>,
+  installedPluginId = entry.id,
 ): string {
-  const status = computeUpdateStatus(entry.version, installed.get(entry.id), installed.has(entry.id));
+  const status = computeUpdateStatus(
+    entry.version,
+    installed.get(installedPluginId),
+    installed.has(installedPluginId),
+  );
   switch (status.kind) {
     case 'update':
       return `update ${status.local} → ${status.latest}`;

@@ -51,15 +51,16 @@ import type {
 import { feedBuild, StagedBuild } from './builder.js';
 import {
   attachImage as attachImageImpl,
+  attachImageAsync as attachImageAsyncImpl,
   exportImageState as exportImageStateImpl,
   exportImageStateAsync as exportImageStateAsyncImpl,
   repointPostings as repointPostingsImpl,
 } from './image.js';
-import type { TextIndexImage } from './image.js';
+import type { AttachImageRaw, TextIndexImage } from './image.js';
 
 export * from './tokenize.js';
 export * from './types.js';
-export type { TextIndexImage } from './image.js';
+export type { AttachImageRaw, TextIndexImage } from './image.js';
 
 /**
  * Raised by text searches while the index's base is (re)building. The
@@ -929,6 +930,15 @@ export class TextIndex {
    *  file is only ever read). */
   attachImage(args: { postingsPath: string } & TextIndexImage): void {
     attachImageImpl(this, args);
+  }
+
+  /** Sliced variant of attachImage (the open-time main-thread path):
+   *  identical resulting state, but every O(terms/docs) map construction is
+   *  built from the raw parsed images in slices with event-loop yields, so
+   *  attaching a large generation's base never stalls the loop for the whole
+   *  pass. */
+  async attachImageAsync(args: AttachImageRaw, opts: { sliceEvery?: number } = {}): Promise<void> {
+    await attachImageAsyncImpl(this, args, opts);
   }
 
   /** Stage-5 generation build: after the atomic publish rename, repoint the

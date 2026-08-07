@@ -13,7 +13,9 @@
  * of the workspace.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { BugIndicatingError } from '#/errors';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { type IProcess, ISessionProcessRunner, type ProcessExecOptions } from '#/session/process/processRunner';

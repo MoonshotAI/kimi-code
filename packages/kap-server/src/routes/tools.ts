@@ -35,7 +35,7 @@
  *     (bound profile policy ∩ global `[tools]` config ∩ session denylist).
  *     Deliberate v2 extension beyond the v1 wire shape — v1 had no tool gates.
  *   - MCP `status`: `pending`→`connecting`, `connected`→`connected`,
- *     `failed`/`needs-auth`→`error`, `disabled`→`disconnected`.
+ *     `failed`/`needs-auth`→`error`, `disabled`/`removed`→`disconnected`.
  *   - MCP `last_error`: carried from `entry.error` when non-empty.
  *
  * **Error mapping**:
@@ -286,6 +286,8 @@ function mapMcpStatus(status: McpEntry['status']): McpServer['status'] {
     case 'connected':
       return 'connected';
     case 'disabled':
+      return 'disconnected';
+    case 'removed':
       return 'disconnected';
     case 'failed':
       return 'error';

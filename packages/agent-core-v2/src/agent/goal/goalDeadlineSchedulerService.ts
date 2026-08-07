@@ -6,7 +6,8 @@
  */
 
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 

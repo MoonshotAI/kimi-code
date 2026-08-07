@@ -20,7 +20,13 @@ export { OpTracker } from './op-tracker.js';
 export { TextIndexBuildingError } from './text-index/index.js';
 export { normalizeLiteral, createNgramTokenizer } from './trigram.js';
 export { tokenize } from './text-index/index.js';
-export type { RecoveryInfo } from './recovery.js';
+export type { RecoveryInfo, RecoveryPhaseTimings } from './recovery.js';
+export type {
+  MiniDbLifecycleState,
+  MiniDbLifecycleStatus,
+  OpenPhaseTimings,
+  OpenTextIndexSource,
+} from './lifecycle-status.js';
 export type { IndexDef, IndexInfo, IndexType } from './index-manager.js';
 export type { CompoundIndexDef, CompoundIndexInfo } from './compound-index.js';
 export type { TextIndexTokenizerName } from './trigram.js';

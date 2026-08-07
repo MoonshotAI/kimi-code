@@ -12,6 +12,10 @@
     "./contract": {
       "types": "./src/contract.ts",
       "default": "./src/contract.ts"
+    },
+    "./search-worker-runtime": {
+      "types": "./src/search/worker/runtime.ts",
+      "default": "./src/search/worker/runtime.ts"
     }
   },
   "scripts": {

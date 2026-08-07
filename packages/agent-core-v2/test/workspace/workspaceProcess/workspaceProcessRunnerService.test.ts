@@ -4,9 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,

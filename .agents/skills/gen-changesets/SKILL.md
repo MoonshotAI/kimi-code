@@ -13,6 +13,8 @@ All other `@moonshot-ai/*` packages are treated as internal packages, including 
 
 `@moonshot-ai/pi-tui` is a special internal package: it is a private fork (`private: true`) that is never published, but it keeps its own changelog through changesets. It is an exception to Core Rule 4 — see the dedicated section below.
 
+Only the CLI changelog gets a curated, user-facing presentation (the docs-site changelog sync). The SDK and other internal package changelogs are raw changesets output kept for version history — nobody curates them, so write those entries honestly and technically; their wording does not need to suit end users.
+
 ## Core Rules
 
 1. **Inspect the actual changes first.** Use `git status` / `git diff --name-only` to identify which packages were actually changed.

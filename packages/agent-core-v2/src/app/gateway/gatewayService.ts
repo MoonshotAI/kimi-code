@@ -9,9 +9,10 @@
  * is a transport concern of the edge server, not of this module.
  */
 
+import { LifecycleScope } from '#/app/scopes';
+
 import {
   type IAgentScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';

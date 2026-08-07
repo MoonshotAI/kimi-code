@@ -11,9 +11,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
+import { LifecycleScope } from '#/app/scopes';
 import {
   _clearScopedRegistryForTests,
-  LifecycleScope,
   registerScopedService,
 } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
@@ -129,7 +129,6 @@ describe('SessionSkillCatalogService (seed view)', () => {
     const { host, catalog } = makeSession(seed.data);
     await catalog.load();
 
-    // A silent seed swap (no change event) becomes visible through reload.
     seed.replace(catalogOf(stubSkill('two')));
     const seen: string[] = [];
     const subscription = catalog.onDidChange((sourceId) => seen.push(sourceId));

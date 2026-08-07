@@ -25,6 +25,17 @@
  * model is never healed by per-request backfill. Degraded reads retry
  * `prepare()` after a short backoff.
  *
+ * The first list request coincides with the initial projection: the read is
+ * served by the authoritative fallback AND kicks `prepare()`. To keep that
+ * request from paying two full directory scans, the uninitialized/preparing
+ * fallback joins the projector's in-flight shared scan — or drives the one
+ * the projection will reuse (`SessionIndexProjector.sharedScanForRead`) — so
+ * one authoritative pass serves both, and the mirror's pending queue is
+ * folded into the result so a session created or mutated after the scan
+ * passed its directory still shows up. Flag-off hosts and the `degraded`
+ * fallback keep the targeted per-workspace enumeration (with the same
+ * pending fold).
+ *
  * Keyset pagination is canonical (`updatedAt` desc, `id` desc): a cursor is a
  * session id resolved by point lookup, and the window's boundary tie group is
  * re-fetched and merged so same-millisecond ties never lose or duplicate an
@@ -39,7 +50,8 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -330,11 +342,14 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
    * Evict a deleted session's derived state so `get` / `listRecent` stop
    * answering for the id immediately: the authoritative directory is deleted
    * by the caller (`sessionLifecycle.delete`), and the next projection would
-   * drop the entry anyway — this closes the stale-read window in between. A
-   * summary still queued in the mirror heals at the next projection. With the
-   * read model off there is no derived state to evict.
+   * drop the entry anyway — this closes the stale-read window in between. The
+   * mirror queue is evicted first (waiting out an in-flight flush): reads
+   * fold the queue in for read-your-writes, and a late flush would otherwise
+   * resurrect the entry after the store delete. With the read model off
+   * there is no derived state to evict beyond the queue.
    */
   async remove(id: string): Promise<void> {
+    await this.mirror.evict(id);
     await this.withReadModel(
       async (generation) => {
         await this.queryStore.delete(sessionCollection(generation), id);
@@ -634,17 +649,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       return { items: query.limit !== undefined ? items.slice(0, query.limit) : items };
     }
 
-    const workspaceIds = query.workspaceIds ?? (await listWorkspaceIds(this.storage, this.sessionsScope));
-    const collected: SessionSummary[] = [];
-    for (const workspaceId of workspaceIds) {
-      for (const sessionId of await listSessionIds(this.storage, this.sessionsScope, workspaceId)) {
-        const summary = await readSessionSummary(this.docs, this.sessionsScope, workspaceId, sessionId);
-        if (summary === undefined) continue;
-        if (summary.archived && query.includeArchived !== true) continue;
-        if (!summaryMatchesChildOf(summary, query.childOf)) continue;
-        collected.push(summary);
-      }
-    }
+    const collected = (await this.collectAuthoritative(query.workspaceIds)).filter(
+      (summary) =>
+        (query.includeArchived === true || !summary.archived) &&
+        summaryMatchesChildOf(summary, query.childOf),
+    );
     const items = collected.toSorted(canonicalOrder);
 
     let start = 0;
@@ -677,16 +686,57 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
   private async countLegacy(query: SessionCountQuery): Promise<number> {
     let count = 0;
-    const workspaceIds =
-      query.workspaceIds ?? (await listWorkspaceIds(this.storage, this.sessionsScope));
-    for (const workspaceId of workspaceIds) {
-      for (const sessionId of await listSessionIds(this.storage, this.sessionsScope, workspaceId)) {
-        const summary = await readSessionSummary(this.docs, this.sessionsScope, workspaceId, sessionId);
-        if (summary === undefined) continue;
-        if (query.includeArchived === true || !summary.archived) count += 1;
-      }
+    for (const summary of await this.collectAuthoritative(query.workspaceIds)) {
+      if (query.includeArchived === true || !summary.archived) count += 1;
     }
     return count;
+  }
+
+  /**
+   * Collect the authoritative summaries behind a legacy read. While the read
+   * model is enabled but not yet ready, the kicked initial projection is
+   * scanning the same authoritative set, so the read joins that in-flight
+   * scan (or drives the one the projection will reuse) instead of running a
+   * second full directory scan. Flag-off hosts and the degraded fallback
+   * keep the targeted per-workspace enumeration.
+   *
+   * Either way the mirror's pending queue is folded in by id (pending
+   * entries win): every queued summary was recorded only after its
+   * `state.json` is durable, and a scan/enumeration that started before the
+   * write may legitimately have passed the directory already — the fold is
+   * what keeps read-your-writes on this path too.
+   */
+  private async collectAuthoritative(
+    workspaceIds: readonly string[] | undefined,
+  ): Promise<SessionSummary[]> {
+    let collected: SessionSummary[];
+    if (
+      this.readModelEnabled() &&
+      (this.state === 'uninitialized' || this.state === 'preparing')
+    ) {
+      const { summaries } = await this.projector.sharedScanForRead();
+      collected =
+        workspaceIds === undefined
+          ? summaries
+          : summaries.filter((summary) => workspaceIds.includes(summary.workspaceId));
+    } else {
+      const ids = workspaceIds ?? (await listWorkspaceIds(this.storage, this.sessionsScope));
+      collected = [];
+      for (const workspaceId of ids) {
+        for (const sessionId of await listSessionIds(this.storage, this.sessionsScope, workspaceId)) {
+          const summary = await readSessionSummary(this.docs, this.sessionsScope, workspaceId, sessionId);
+          if (summary !== undefined) collected.push(summary);
+        }
+      }
+    }
+    const pending = this.mirror.pending();
+    if (pending.length === 0) return collected;
+    const byId = new Map(collected.map((summary) => [summary.id, summary]));
+    for (const summary of pending) {
+      if (workspaceIds !== undefined && !workspaceIds.includes(summary.workspaceId)) continue;
+      byId.set(summary.id, summary);
+    }
+    return [...byId.values()];
   }
 
   private readModelEnabled(): boolean {

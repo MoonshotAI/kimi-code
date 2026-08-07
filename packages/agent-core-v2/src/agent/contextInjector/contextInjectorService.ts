@@ -12,8 +12,10 @@
  * functions, not plain data). Bound at Agent scope.
  */
 
-import { Disposable, toDisposable } from "#/_base/di/lifecycle";
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { toDisposable } from "#/_base/di/lifecycle";
+import { Service } from "#/_base/di/service";
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -41,7 +43,7 @@ export const contextInjectorIsNewTurnKey = defineState<boolean>(
   () => true,
 );
 
-export class AgentContextInjectorService extends Disposable implements IAgentContextInjectorService {
+export class AgentContextInjectorService extends Service implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
 

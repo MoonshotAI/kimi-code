@@ -6,7 +6,7 @@
  *
  *   GET  /sessions/{session_id}/skills                       data: {skills: SkillDescriptor[]}
  *   GET  /workspaces/{workspace_id}/skills                   data: {skills: SkillDescriptor[]}
- *   POST /sessions/{session_id}/skills/{skill_name}:activate body: {args?}  data: {activated: true, skill_name}
+ *   POST /sessions/{session_id}/skills/{skill_name}:activate body: {args?, attachments?}  data: {activated: true, skill_name}
  *
  * The session list is session-scoped: the catalog is built per session
  * (project skills are discovered from the session cwd), so it lives under
@@ -46,6 +46,10 @@
  *                    The edge then applies the prompt-metadata update
  *                    (`applyPromptMetadataUpdate`) so a first `/<skill>`
  *                    message titles the session, matching the native RPC path.
+ *                    Optional `attachments` (image/video/file parts, same wire
+ *                    shape as prompt content) run through the shared prompt
+ *                    media pipeline (`lib/promptMedia.ts`) and are appended to
+ *                    the activation's user message after the skill prompt.
  *
  * **Model projection**: `SkillDefinition` (v2) → protocol `SkillDescriptor`,
  * byte-for-byte with v1's `toProtocolSkill`
@@ -59,6 +63,8 @@
  *   - not live / unknown session    → envelope `code: 40401 session.not_found` (see gate above).
  *   - `skill.not_found` / `skill.name_empty` → envelope `code: 40415 skill.not_found`.
  *   - `skill.type_unsupported`      → envelope `code: 40912 skill.not_activatable`.
+ *   - `file.not_found` (attachment) → envelope `code: 40407 file.not_found`.
+ *   - `validation.failed` (mis-kinded attachment) → envelope `code: 40001 validation.failed`.
  *   - malformed `{tail}` (bad action, bare)  → envelope `code: 40001 validation.failed`.
  *   - other errors → 50001 via the global `installErrorHandler`.
  *
@@ -72,20 +78,25 @@
 import {
   builtinProductSkillsEnabled,
   visibleBuiltinSkills,
+  Error2,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
   IAgentSkillService,
   IBootstrapService,
   IConfigService,
   IEventService,
+  IFileService,
   IPluginService,
+  ISessionContext,
   ISessionIndex,
   ISessionMetadata,
   ISessionSkillCatalog,
   ISkillDiscovery,
+  ITelemetryService,
   IWorkspaceService,
   InMemorySkillCatalog,
   isError2,
+  isUserActivatableSkillType,
   resumeSessionById,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
@@ -93,16 +104,24 @@ import {
   configuredRoots,
   projectRoots,
   promptMetadataTextFromSkill,
+  sessionMediaOriginalsDir,
   userRoots,
+  type ContentPart,
   type ISessionScopeHandle,
   type Scope,
   type SkillDefinition,
   type ExtraSkillDirsConfig,
   type MergeAllAvailableSkillsConfig,
 } from '@moonshot-ai/agent-core-v2';
+import { join } from 'node:path';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import {
+  assertPromptFileRefs,
+  contentToCoreParts,
+  resolvePromptMediaFiles,
+} from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
@@ -257,6 +276,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SKILL_NOT_FOUND]: {},
         [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
+        [ErrorCode.FILE_NOT_FOUND]: {},
       },
       description: 'Activate a skill in a session (REST analogue of the /<skill> slash command)',
       tags: ['skills'],
@@ -288,10 +308,48 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
       }
 
       try {
+        // Attachments run through the same edge pipeline as prompt uploads
+        // (validate → materialize → convert) BEFORE the activation starts, so
+        // a bad file_id or an unreadable upload rejects the request without
+        // launching a skill turn.
+        const attachments = req.body.attachments ?? [];
+        const attachmentParts: ContentPart[] = [];
+        if (attachments.length > 0) {
+          // Validate the skill BEFORE materializing anything: an unknown or
+          // non-user-activatable name must fail without streaming upload bytes
+          // into the session/cache dirs. activate() re-validates on its own —
+          // this is only the edge fail-fast for the side-effecting pipeline.
+          const catalog = resolved.handle.accessor.get(ISessionSkillCatalog);
+          await catalog.ready;
+          const skill = catalog.catalog.getSkill(parsed.id);
+          if (skill === undefined) {
+            throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${parsed.id}" was not found`);
+          }
+          if (!isUserActivatableSkillType(skill.metadata.type)) {
+            throw new Error2(
+              ErrorCodes.SKILL_TYPE_UNSUPPORTED,
+              `Skill "${skill.name}" cannot be activated by the user`,
+            );
+          }
+          await assertPromptFileRefs(attachments, core.accessor.get(IFileService));
+          const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
+          const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
+          const resolvedContent = await resolvePromptMediaFiles(
+            attachments,
+            core.accessor.get(IFileService),
+            core.accessor.get(IBootstrapService).cacheDir,
+            {
+              telemetry,
+              resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
+              resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
+            },
+          );
+          attachmentParts.push(...contentToCoreParts(resolvedContent));
+        }
         const agent = await ensureMainAgent(resolved.handle);
         await agent.accessor
           .get(IAgentSkillService)
-          .activate({ name: parsed.id, args: req.body.args });
+          .activate({ name: parsed.id, args: req.body.args, content: attachmentParts });
         // Keep the easy-title behavior of the native RPC / TUI path: a first
         // `/<skill>` message titles the session (same as routes/prompts.ts).
         await applyPromptMetadataUpdate(
@@ -425,6 +483,13 @@ function sendMappedError(
         return;
       case ErrorCodes.SKILL_TYPE_UNSUPPORTED:
         reply.send(errEnvelope(ErrorCode.SKILL_NOT_ACTIVATABLE, err.message, requestId, err.stack));
+        return;
+      // Attachment pipeline failures (same mapping as routes/prompts.ts).
+      case ErrorCodes.FILE_NOT_FOUND:
+        reply.send(errEnvelope(ErrorCode.FILE_NOT_FOUND, err.message, requestId, err.stack));
+        return;
+      case ErrorCodes.VALIDATION_FAILED:
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
         return;
     }
   }

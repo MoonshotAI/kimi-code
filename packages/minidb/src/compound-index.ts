@@ -292,4 +292,33 @@ export class CompoundIndexManager {
     entry.groups = groups;
     entry.byPk = byPk;
   }
+
+  /** Sliced variant of loadImage (the open-time main-thread path): identical
+   *  resulting state, but the group/byPk map construction yields to the
+   *  event loop every `sliceEvery` entries. The state swap itself stays one
+   *  synchronous segment (the containers are detached until then), and the
+   *  store is not published until open() returns, so a mid-load yield is
+   *  never observable. */
+  async loadImageAsync(image: CompoundImageIndex, opts: { sliceEvery?: number } = {}): Promise<void> {
+    const sliceEvery = opts.sliceEvery ?? 32768;
+    const entry = this.indexes.get(image.name);
+    if (!entry) throw new Error(`no such compound index: ${image.name}`);
+    const groups = new Map<unknown, SkipList<unknown, string>>();
+    const byPk = new Map<string, { group: unknown; order: unknown }>();
+    let n = 0;
+    for (const g of image.groups) {
+      const list = await SkipList.bulkLoadAsync<unknown, string>(
+        g.entries.map((e) => ({ key: e.order, val: e.pk })),
+        { compareKey: entry.cmp, compareVal: cmpString },
+        { sliceEvery },
+      );
+      groups.set(g.group, list);
+      for (const e of g.entries) {
+        byPk.set(e.pk, { group: g.group, order: e.order });
+        if (++n % sliceEvery === 0) await new Promise((r) => setImmediate(r));
+      }
+    }
+    entry.groups = groups;
+    entry.byPk = byPk;
+  }
 }

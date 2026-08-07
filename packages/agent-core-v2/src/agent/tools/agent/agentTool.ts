@@ -23,7 +23,13 @@
  * pattern used by every agent tool. The per-profile tool listings in the
  * description read the full contribution table (not the runtime registry,
  * which only holds tools the caller's own Profile activated), plus any
- * dynamically registered tools. Bound at Agent scope.
+ * dynamically registered tools. The description's catalog profile list is
+ * snapshotted once the session catalog has loaded and frozen for the agent's
+ * lifetime: plugin install / enable / disable / remove re-contributes
+ * profiles mid-session, and a live read would rewrite the tools payload of
+ * every later request — breaking the provider's prompt cache for a change a
+ * live agent must not see (new profiles take effect on `/new` or `/reload`).
+ * Bound at Agent scope.
  */
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
@@ -85,6 +91,7 @@ import {
   resolveSubagentBinding,
   resolveSubagentTimeoutMs,
   stripSubagentModelParameter,
+  subagentDisplayModel,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
@@ -112,11 +119,6 @@ export class SubagentTool implements ISubagentTool {
   declare readonly _serviceBrand: undefined;
   readonly name: string = 'Agent';
 
-  /**
-   * The `model` choice only exists while the `secondary-model` experiment is
-   * on; off, the advertised schema drops it so the concept never enters the
-   * prompt. Read live per request (same as `description`).
-   */
   get parameters(): Record<string, unknown> {
     return this.flags.enabled(SECONDARY_MODEL_FLAG_ID)
       ? SUBAGENT_TOOL_PARAMETERS
@@ -125,6 +127,8 @@ export class SubagentTool implements ISubagentTool {
 
   private readonly callerAgentId: string;
   private readonly canRunInBackground: () => boolean;
+  private catalogReady = false;
+  private frozenCatalogProfiles: readonly AgentProfile[] | undefined;
 
   constructor(
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
@@ -149,6 +153,9 @@ export class SubagentTool implements ISubagentTool {
       this.toolPolicy.isToolActive('TaskList') &&
       this.toolPolicy.isToolActive('TaskOutput') &&
       this.toolPolicy.isToolActive('TaskStop');
+    void this.catalog.ready.then(() => {
+      this.catalogReady = true;
+    });
   }
 
   get description(): string {
@@ -157,10 +164,11 @@ export class SubagentTool implements ISubagentTool {
       : AGENT_BACKGROUND_DISABLED_DESCRIPTION;
     let description = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
     const allowlist = subagentAllowlistFor(this.catalog, this.profile.data());
+    const catalogProfiles = this.catalogProfiles();
     const profiles =
       allowlist === undefined
-        ? this.catalog.list()
-        : this.catalog.list().filter((profile) => allowlist.includes(profile.name));
+        ? catalogProfiles
+        : catalogProfiles.filter((profile) => allowlist.includes(profile.name));
     const typeLines = buildProfileDescriptions(
       profiles,
       this.knownToolReferences(),
@@ -181,6 +189,15 @@ export class SubagentTool implements ISubagentTool {
       description += `\n\n${modelLines}`;
     }
     return description;
+  }
+
+  private catalogProfiles(): readonly AgentProfile[] {
+    if (this.frozenCatalogProfiles !== undefined) return this.frozenCatalogProfiles;
+    const profiles = this.catalog.list();
+    // Freeze only on a loaded catalog — a pre-ready read could pin a partial
+    // listing for the agent's lifetime.
+    if (this.catalogReady) this.frozenCatalogProfiles = profiles;
+    return profiles;
   }
 
   private knownToolReferences(): ToolReference[] {
@@ -254,6 +271,7 @@ export class SubagentTool implements ISubagentTool {
 
     let agentId: string;
     let profileName: string;
+    let displayModel: string | undefined;
     let promptText = args.prompt;
     if (isResume) {
       const target = this.lifecycle.get(resumeAgentId);
@@ -264,8 +282,12 @@ export class SubagentTool implements ISubagentTool {
       }
       await this.ensureOwnedIdleSubagent(resumeAgentId, target);
       agentId = target.id;
-      profileName =
-        target.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_LABEL;
+      const resumed = target.accessor.get(IAgentProfileService).data();
+      profileName = resumed.profileName ?? RESUMED_LABEL;
+      displayModel =
+        resumed.modelAlias === undefined
+          ? undefined
+          : subagentDisplayModel(this.config, resumed.modelAlias);
     } else {
       const requestedProfileName = args.subagent_type?.length
         ? args.subagent_type
@@ -317,6 +339,7 @@ export class SubagentTool implements ISubagentTool {
         .inheritUserTools(requester.accessor.get(IAgentUserToolService));
       agentId = created.id;
       profileName = profile.name;
+      displayModel = binding.displayModel;
       promptText = await applyProfilePromptPrefix(profile, args.prompt, {
         cwd: this.workspace.workDir,
         runner: this.processRunner,
@@ -330,6 +353,7 @@ export class SubagentTool implements ISubagentTool {
       parentToolCallId: toolCallId,
       description: args.description,
       runInBackground,
+      model: displayModel,
     });
 
     const run = await this.subagents.run(
@@ -348,6 +372,11 @@ export class SubagentTool implements ISubagentTool {
     return {
       agentId,
       profileName,
+      model: displayModel,
+      thinkingEffort: this.lifecycle
+        .get(agentId)
+        ?.accessor.get(IAgentProfileService)
+        .getEffectiveThinkingLevel(),
       completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
     };
   }

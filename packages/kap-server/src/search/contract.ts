@@ -72,6 +72,29 @@ export interface GlobalSearchQuery {
   readonly pageToken?: string;
 }
 
+// ---- errors ----------------------------------------------------------------
+
+export type GlobalSearchErrorReason =
+  | 'invalid_query'
+  | 'invalid_page_token'
+  | 'readonly_index'
+  | 'index_unavailable';
+
+/**
+ * Service-level error with a machine-readable reason. Lives in the contract
+ * (not the service module) so the search-index core — which also runs inside
+ * the search worker thread — can raise it without importing the service.
+ */
+export class GlobalSearchError extends Error {
+  constructor(
+    readonly reason: GlobalSearchErrorReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'GlobalSearchError';
+  }
+}
+
 // ---- response --------------------------------------------------------------
 
 export interface GlobalSearchHit {
