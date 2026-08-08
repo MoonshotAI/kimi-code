@@ -1,7 +1,21 @@
-import { APIEmptyResponseError } from '#/errors';
+/**
+ * kosong generate() — stream assembly, callbacks, aborts, idle deadlines, and
+ * response metadata through a fake provider boundary.
+ */
+
+import {
+  APIEmptyResponseError,
+  isRetryableGenerateError,
+  StreamIdleTimeoutError,
+} from '#/errors';
 import { generate } from '#/generate';
 import type { Message, StreamedMessagePart, ToolCall } from '#/message';
-import type { ChatProvider, StreamedMessage, ThinkingEffort } from '#/provider';
+import type {
+  ChatProvider,
+  GenerateOptions,
+  StreamedMessage,
+  ThinkingEffort,
+} from '#/provider';
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import { describe, expect, it, vi } from 'vitest';
@@ -31,7 +45,10 @@ function createMockStream(
   };
 }
 
-function createMockProvider(stream: StreamedMessage): ChatProvider {
+function createMockProvider(
+  stream: StreamedMessage,
+  onGenerate?: (options?: GenerateOptions) => void,
+): ChatProvider {
   return {
     name: 'mock',
     modelName: 'mock-model',
@@ -40,12 +57,60 @@ function createMockProvider(stream: StreamedMessage): ChatProvider {
       _systemPrompt: string,
       _tools: Tool[],
       _history: Message[],
-    ): Promise<StreamedMessage> => stream,
+      options?: GenerateOptions,
+    ): Promise<StreamedMessage> => {
+      onGenerate?.(options);
+      return stream;
+    },
     withThinking(_effort: ThinkingEffort): ChatProvider {
       return this;
     },
   };
 }
+
+function createStalledStream(
+  options: {
+    traceId?: string | null;
+    stallBeforeFirst?: boolean;
+    onStall?: () => void;
+    cancel?: () => unknown;
+    iteratorReturn?: () => Promise<IteratorResult<StreamedMessagePart>>;
+  } = {},
+): StreamedMessage {
+  let first = true;
+  const stream: StreamedMessage & { cancel(): unknown } = {
+    id: 'stalled-1',
+    usage: null,
+    finishReason: null,
+    rawFinishReason: null,
+    traceId: options.traceId,
+    cancel: () => options.cancel?.(),
+    [Symbol.asyncIterator]() {
+      return {
+        next(): Promise<IteratorResult<StreamedMessagePart>> {
+          if (first) {
+            first = false;
+            if (options.stallBeforeFirst !== true) {
+              return Promise.resolve({
+                done: false,
+                value: { type: 'think', think: 'partial' },
+              });
+            }
+          }
+          options.onStall?.();
+          return new Promise<never>(() => {});
+        },
+        return(): Promise<IteratorResult<StreamedMessagePart>> {
+          return (
+            options.iteratorReturn?.() ?? Promise.resolve({ done: true, value: undefined })
+          );
+        },
+      };
+    },
+  };
+  return stream;
+}
+
 describe('generate()', () => {
   it('omits trace metadata when the provider does not expose it', async () => {
     const onTraceId = vi.fn();
@@ -879,6 +944,100 @@ describe('generate()', () => {
     ).rejects.toMatchObject({ name: 'AbortError' });
 
     expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws a retryable stream timeout when no part arrives before the idle deadline', async () => {
+    const stream = createStalledStream({ traceId: 'trace-stalled' });
+    let caught: unknown;
+
+    try {
+      await generate(createMockProvider(stream), '', [], [], undefined, {
+        streamIdleTimeoutMs: 10,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(StreamIdleTimeoutError);
+    expect(caught).toMatchObject({
+      idleTimeoutMs: 10,
+      traceId: 'trace-stalled',
+    });
+    expect(isRetryableGenerateError(caught)).toBe(true);
+  });
+
+  it('throws a stream timeout when the first streamed part never arrives', async () => {
+    const stream = createStalledStream({ stallBeforeFirst: true });
+
+    await expect(
+      generate(createMockProvider(stream), '', [], [], undefined, {
+        streamIdleTimeoutMs: 10,
+      }),
+    ).rejects.toBeInstanceOf(StreamIdleTimeoutError);
+  });
+
+  it('does not forward the stream idle deadline to the provider', async () => {
+    let providerOptions: GenerateOptions | undefined;
+    const provider = createMockProvider(
+      createMockStream([{ type: 'text', text: 'ok' }]),
+      (options) => {
+        providerOptions = options;
+      },
+    );
+
+    await generate(provider, '', [], [], undefined, { streamIdleTimeoutMs: 10 });
+
+    expect(providerOptions).not.toHaveProperty('streamIdleTimeoutMs');
+  });
+
+  it('aborts the provider signal when the stream idle deadline expires', async () => {
+    let providerSignal: AbortSignal | undefined;
+    const provider = createMockProvider(createStalledStream(), (options) => {
+      providerSignal = options?.signal;
+    });
+
+    await expect(
+      generate(provider, '', [], [], undefined, { streamIdleTimeoutMs: 10 }),
+    ).rejects.toBeInstanceOf(StreamIdleTimeoutError);
+
+    expect(providerSignal?.aborted).toBe(true);
+    expect(providerSignal?.reason).toBeInstanceOf(StreamIdleTimeoutError);
+  });
+
+  it('reports a stream timeout without waiting for stalled cleanup', async () => {
+    const cancel = vi.fn(() => new Promise<never>(() => {}));
+    const iteratorReturn = vi.fn(
+      () => new Promise<IteratorResult<StreamedMessagePart>>(() => {}),
+    );
+    const stream = createStalledStream({ cancel, iteratorReturn });
+
+    await expect(
+      generate(createMockProvider(stream), '', [], [], undefined, {
+        streamIdleTimeoutMs: 10,
+      }),
+    ).rejects.toBeInstanceOf(StreamIdleTimeoutError);
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(iteratorReturn).toHaveBeenCalledOnce();
+  });
+
+  it('throws AbortError when the caller aborts while the stream is stalled', async () => {
+    const controller = new AbortController();
+    const stream = createStalledStream({ onStall: () => controller.abort() });
+    let caught: unknown;
+
+    try {
+      await generate(createMockProvider(stream), '', [], [], undefined, {
+        signal: controller.signal,
+        streamIdleTimeoutMs: 10,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(DOMException);
+    expect((caught as DOMException).name).toBe('AbortError');
+    expect(isRetryableGenerateError(caught)).toBe(false);
   });
 
   it('onToolCall receives tool calls in message order', async () => {
