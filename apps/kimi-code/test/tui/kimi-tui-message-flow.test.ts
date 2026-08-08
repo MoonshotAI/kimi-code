@@ -6220,6 +6220,42 @@ command = "vim"
     expect(refreshProviderModels).not.toHaveBeenCalled();
   });
 
+  it('resolves /model shorthand to the managed Kimi Code alias', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+          'kimi-code/k3': {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k3',
+            maxContextSize: 100,
+            displayName: 'K3',
+            capabilities: ['thinking'],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: false },
+      })),
+    });
+
+    driver.handleUserInput('/model k3');
+
+    await vi.waitFor(() => {
+      const picker = driver.state.editorContainer.children[0];
+      expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
+      const output = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
+      expect(output).toMatch(/❯ K3\s+Kimi Code/);
+    });
+    expect(session.setModel).not.toHaveBeenCalled();
+  });
+
   it('opens /model picker after 2s when OAuth refresh is still pending', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({

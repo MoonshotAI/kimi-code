@@ -24,6 +24,7 @@ import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
+import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
@@ -252,14 +253,23 @@ export async function handleThemeCommand(host: SlashCommandHost, args: string): 
 }
 
 export async function handleModelCommand(host: SlashCommandHost, args: string): Promise<void> {
-  const alias = args.trim();
+  const input = args.trim();
+  let alias = input;
   await refreshModelsForPicker(host);
   if (alias.length === 0) {
     showModelPicker(host);
     return;
   }
-  if (host.state.appState.availableModels[alias] === undefined) {
-    host.showError(`Unknown model alias: ${alias}`);
+  const availableModels = host.state.appState.availableModels;
+  if (availableModels[alias] === undefined && !alias.includes('/')) {
+    const managedPrefix = DEFAULT_OAUTH_PROVIDER_NAME.slice('managed:'.length);
+    const managedAlias = `${managedPrefix}/${alias}`;
+    if (availableModels[managedAlias] !== undefined) {
+      alias = managedAlias;
+    }
+  }
+  if (availableModels[alias] === undefined) {
+    host.showError(`Unknown model alias: ${input}`);
     return;
   }
   showModelPicker(host, alias);
