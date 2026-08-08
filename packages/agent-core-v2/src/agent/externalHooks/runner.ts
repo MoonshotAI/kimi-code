@@ -4,13 +4,14 @@ import { z } from 'zod';
 
 import { type IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 
-import type { HookResult } from './types';
+import type { HookFailMode, HookResult } from './types';
 
 export interface RunHookOptions {
   readonly timeout: number;
   readonly cwd?: string;
   readonly env?: Record<string, string>;
   readonly signal?: AbortSignal;
+  readonly failMode?: HookFailMode;
 }
 
 export function buildHookSpawnOptions(options: {
@@ -69,7 +70,9 @@ export async function runHook(
       env: options.env,
     });
   } catch (error) {
-    return allowResult({ stderr: errorMessage(error) });
+    return failureResult(options.failMode, `spawn failed: ${errorMessage(error)}`, {
+      stderr: errorMessage(error),
+    });
   }
 
   return new Promise<HookResult>((resolve) => {
@@ -104,17 +107,28 @@ export async function runHook(
     void Promise.all([proc.wait(), stdoutDone, stderrDone]).then(
       ([code]) => {
         proc.dispose();
-        settle(resultFromExitCode(code, stdout, stderr));
+        settle(resultFromExitCode(code, stdout, stderr, options.failMode));
       },
       (error) => {
         proc.dispose();
-        settle(allowResult({ stdout, stderr: stderr + errorMessage(error) }));
+        settle(
+          failureResult(options.failMode, `hook errored: ${errorMessage(error)}`, {
+            stdout,
+            stderr: stderr + errorMessage(error),
+          }),
+        );
       },
     );
 
     const timeout = setTimeout(() => {
       killProcess(proc);
-      settle(allowResult({ stdout, stderr, timedOut: true }));
+      settle(
+        failureResult(
+          options.failMode,
+          `timed out after ${timeoutSeconds(options.timeout)}s`,
+          { stdout, stderr, timedOut: true },
+        ),
+      );
     }, timeoutMs);
 
     const onAbort = (): void => {
@@ -137,7 +151,12 @@ function timeoutSeconds(timeout: number): number {
   return Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_TIMEOUT_SECONDS;
 }
 
-function resultFromExitCode(exitCode: number, stdout: string, stderr: string): HookResult {
+function resultFromExitCode(
+  exitCode: number,
+  stdout: string,
+  stderr: string,
+  failMode?: HookFailMode,
+): HookResult {
   if (exitCode === 2) {
     const message = stderr.trim();
     return {
@@ -148,6 +167,10 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
       stderr,
       exitCode,
     };
+  }
+
+  if (exitCode !== 0 && failMode === 'closed') {
+    return failureResult(failMode, `exit code ${exitCode}`, { stdout, stderr, exitCode });
   }
 
   const structured = exitCode === 0 ? structuredOutput(stdout) : undefined;
@@ -203,6 +226,28 @@ function structuredOutput(
   } catch {
     return undefined;
   }
+}
+
+// Abort (user interrupt) deliberately stays allow in both modes: the turn is
+// being cancelled, so nothing the hook would have gated is going to execute.
+function failureResult(
+  failMode: HookFailMode | undefined,
+  detail: string,
+  input: {
+    readonly stdout?: string;
+    readonly stderr?: string;
+    readonly exitCode?: number;
+    readonly timedOut?: boolean;
+  },
+): HookResult {
+  if (failMode !== 'closed') return allowResult(input);
+  const reason = `Hook failed (fail_mode=closed): ${detail}`;
+  return {
+    action: 'block',
+    message: reason,
+    reason,
+    ...input,
+  };
 }
 
 function allowResult(input: {

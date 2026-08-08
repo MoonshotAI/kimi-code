@@ -42,6 +42,28 @@ describe('plugin manifest parser', () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it('accepts hook fail_mode in either spelling and normalizes to failMode', async () => {
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({
+        name: 'demo',
+        hooks: [
+          { event: 'PreToolUse', matcher: 'Bash', command: 'echo a', fail_mode: 'closed' },
+          { event: 'PreToolUse', matcher: 'Write', command: 'echo b', failMode: 'closed' },
+        ],
+      }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.manifest?.hooks).toEqual([
+      { event: 'PreToolUse', matcher: 'Bash', command: 'echo a', failMode: 'closed' },
+      { event: 'PreToolUse', matcher: 'Write', command: 'echo b', failMode: 'closed' },
+    ]);
+  });
+
   it('warns on invalid hooks and command paths', async () => {
     await writeFile(
       join(dir, 'kimi.plugin.json'),
