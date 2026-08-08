@@ -31,7 +31,7 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		cleanup(): void;
 	};
 
-	function setupNegotiation(): NegotiationHarness {
+	function setupNegotiation(options?: { windowsTerminal?: boolean }): NegotiationHarness {
 		const terminal = new ProcessTerminal();
 		const writes: string[] = [];
 		let input: string | undefined;
@@ -39,6 +39,12 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		let cleaned = false;
 		const previousWrite = process.stdout.write;
 		const previousOn = process.stdin.on;
+		const previousWtSession = process.env['WT_SESSION'];
+		if (options?.windowsTerminal) {
+			process.env['WT_SESSION'] = 'test-guid-1234';
+		} else {
+			delete process.env['WT_SESSION'];
+		}
 
 		process.stdout.write = ((chunk: string | Uint8Array) => {
 			writes.push(String(chunk));
@@ -76,6 +82,11 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 				} finally {
 					process.stdout.write = previousWrite;
 					process.stdin.on = previousOn;
+					if (previousWtSession === undefined) {
+						delete process.env['WT_SESSION'];
+					} else {
+						process.env['WT_SESSION'] = previousWtSession;
+					}
 					setKittyProtocolActive(false);
 				}
 			},
@@ -88,6 +99,19 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
 			assert.equal(harness.writes.includes("\x1b[>4;2m"), false);
 			assert.equal(harness.terminal.kittyProtocolActive, false);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("skips Kitty protocol and enables modifyOtherKeys on Windows Terminal (WT_SESSION)", () => {
+		const harness = setupNegotiation({ windowsTerminal: true });
+		try {
+			// Should NOT send Kitty query; should enable modifyOtherKeys instead
+			assert.equal(harness.writes[0], "\x1b[>4;2m");
+			assert.equal(harness.writes.includes("\x1b[>7u\x1b[?u\x1b[c"), false);
+			assert.equal(harness.terminal.kittyProtocolActive, false);
+			assert.equal(harness.terminal.modifyOtherKeysActive, true);
 		} finally {
 			harness.cleanup();
 		}
