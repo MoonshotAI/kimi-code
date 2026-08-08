@@ -623,6 +623,28 @@ micro_compaction = false
     ]);
   });
 
+  it('maps deprecated max_tokens and max_output_tokens to maxOutputSize', () => {
+    const tomlWithMaxTokens = `
+[models.test]
+provider = "managed:kimi-code"
+model = "test-model"
+max_context_size = 128000
+max_tokens = 4096
+`;
+    const configWithMaxTokens = parseConfigString(tomlWithMaxTokens, 'config.toml');
+    expect(configWithMaxTokens.models?.['test']?.maxOutputSize).toBe(4096);
+
+    const tomlWithMaxOutputTokens = `
+[models.test]
+provider = "managed:kimi-code"
+model = "test-model"
+max_context_size = 128000
+max_output_tokens = 8192
+`;
+    const configWithMaxOutputTokens = parseConfigString(tomlWithMaxOutputTokens, 'config.toml');
+    expect(configWithMaxOutputTokens.models?.['test']?.maxOutputSize).toBe(8192);
+  });
+
   it('accepts maxOutputSize on a model alias and round-trips it', () => {
     const parsed = KimiConfigSchema.parse({
       providers: { local: { type: 'anthropic', apiKey: 'sk-test' } },
