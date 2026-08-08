@@ -198,17 +198,47 @@ pub fn tool_result_collapsed(text: &str) -> bool {
     text.chars().count() > TOOL_COLLAPSE_THRESHOLD
 }
 
-/// Human-readable preview lines for a pending approval's arguments: Edit
-/// renders old/new hunks, Write renders the file content, Bash renders the
-/// command (TS `approval-preview` parity, simplified — no syntax
-/// highlighting). Falls back to the raw JSON for other tools.
+/// Tool content bodies longer than this many lines are truncated in the
+/// approval preview (TS `CONTENT_SUMMARY_MAX_LINES` parity spirit).
+const PREVIEW_MAX_LINES: usize = 25;
+
+/// The first present, non-empty string field among `keys`, or `?`.
+fn first_str(args: &serde_json::Value, keys: &[&str]) -> String {
+    keys.iter()
+        .find_map(|k| {
+            args.get(k)
+                .and_then(serde_json::Value::as_str)
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("?")
+        .to_string()
+}
+
+/// Trim `lines` past `PREVIEW_MAX_LINES` (header kept), appending a
+/// `… N more lines` hint (i18n).
+fn truncate_preview(lines: &mut Vec<String>) {
+    if lines.len() <= PREVIEW_MAX_LINES {
+        return;
+    }
+    let hidden = lines.len() - PREVIEW_MAX_LINES;
+    lines.truncate(PREVIEW_MAX_LINES);
+    lines.push(format!("  {}", t!("tui.approval.moreLines", hidden)));
+}
+
+/// Human-readable preview lines for a pending approval's arguments — the
+/// tool-specific display blocks (TS `approval-panel` DisplayBlock parity,
+/// simplified — no syntax highlighting or diff clustering): Edit renders
+/// old/new hunks, Write renders the file content (truncated), Bash the
+/// command, Read/Grep/Glob/FsSearch/WebSearch/WebFetch their target,
+/// AskUserQuestion the question + options, TodoList the items. Falls back
+/// to the raw JSON for other tools.
 fn approval_preview_lines(tool: &str, arguments: &str) -> Vec<String> {
     let Ok(args) = serde_json::from_str::<serde_json::Value>(arguments) else {
         return vec![arguments.to_string()];
     };
     match tool {
         "Edit" => {
-            let path = args["file_path"].as_str().unwrap_or("?");
+            let path = first_str(&args, &["file_path", "path"]);
             let mut lines = vec![format!("Edit: {path}")];
             if let Some(old) = args["old_string"].as_str() {
                 for l in old.lines() {
@@ -223,20 +253,61 @@ fn approval_preview_lines(tool: &str, arguments: &str) -> Vec<String> {
             if lines.len() == 1 {
                 lines.push("(no change)".to_string());
             }
+            truncate_preview(&mut lines);
             lines
         }
         "Write" => {
-            let path = args["file_path"].as_str().unwrap_or("?");
+            let path = first_str(&args, &["file_path", "path"]);
             let mut lines = vec![format!("Write: {path}")];
             if let Some(content) = args["content"].as_str() {
                 lines.extend(content.lines().map(|l| format!("  {l}")));
             }
+            truncate_preview(&mut lines);
             lines
         }
         "Bash" => {
-            let cmd = args["command"].as_str().unwrap_or("?");
+            let cmd = first_str(&args, &["command"]);
             vec![format!("Bash: {cmd}")]
         }
+        "Read" => vec![format!("Read: {}", first_str(&args, &["path", "file_path"]))],
+        "Grep" => vec![format!("grep: {}", first_str(&args, &["pattern"]))],
+        "Glob" => vec![format!("glob: {}", first_str(&args, &["pattern"]))],
+        "FsSearch" | "WebSearch" => {
+            vec![format!("search: {}", first_str(&args, &["query", "pattern"]))]
+        }
+        "WebFetch" => vec![format!("GET {}", first_str(&args, &["url"]))],
+        "Task" => vec![format!(
+            "task: {}",
+            first_str(&args, &["objective", "description"])
+        )],
+        "AskUserQuestion" => {
+            let question = first_str(&args, &["question"]);
+            let mut lines = vec![format!("❓ {question}")];
+            if let Some(options) = args["options"].as_array() {
+                for (i, opt) in options.iter().enumerate().take(5) {
+                    let label = opt["label"].as_str().unwrap_or("?");
+                    lines.push(format!("  {}. {label}", i + 1));
+                }
+                if options.len() > 5 {
+                    lines.push(format!("  {}", t!("tui.approval.moreOptions", options.len() - 5)));
+                }
+            }
+            lines
+        }
+        "TodoList" => match args["todos"].as_array() {
+            Some(items) if !items.is_empty() => items
+                .iter()
+                .take(8)
+                .map(|item| {
+                    let title = item["title"].as_str().unwrap_or("?");
+                    match item["status"].as_str() {
+                        Some(status) if !status.is_empty() => format!("  - [{status}] {title}"),
+                        _ => format!("  - {title}"),
+                    }
+                })
+                .collect(),
+            _ => vec![t!("tui.approval.todoEmpty").to_string()],
+        },
         _ => vec![arguments.to_string()],
     }
 }
@@ -3305,6 +3376,58 @@ mod tests {
         // Unparseable arguments fall back verbatim.
         let lines = approval_preview_lines("Edit", "not json");
         assert_eq!(lines, vec!["not json"]);
+
+        // Read/Grep/Glob/FsSearch/WebFetch/WebSearch render their target.
+        let lines = approval_preview_lines("Read", r#"{"path":"/tmp/x"}"#);
+        assert_eq!(lines, vec!["Read: /tmp/x"]);
+        let lines = approval_preview_lines("Grep", r#"{"pattern":"fn main"}"#);
+        assert_eq!(lines, vec!["grep: fn main"]);
+        let lines = approval_preview_lines("Glob", r#"{"pattern":"**/*.rs"}"#);
+        assert_eq!(lines, vec!["glob: **/*.rs"]);
+        let lines = approval_preview_lines("FsSearch", r#"{"query":"auth"}"#);
+        assert_eq!(lines, vec!["search: auth"]);
+        let lines = approval_preview_lines("WebSearch", r#"{"query":"rust"}"#);
+        assert_eq!(lines, vec!["search: rust"]);
+        let lines = approval_preview_lines("WebFetch", r#"{"url":"https://example.com"}"#);
+        assert_eq!(lines, vec!["GET https://example.com"]);
+
+        // Task renders its objective (description as fallback).
+        let lines = approval_preview_lines("Task", r#"{"objective":"fix tests"}"#);
+        assert_eq!(lines, vec!["task: fix tests"]);
+
+        // AskUserQuestion renders the question + option list.
+        let lines = approval_preview_lines(
+            "AskUserQuestion",
+            r#"{"question":"ok?","options":[{"label":"yes"},{"label":"no"}]}"#,
+        );
+        assert_eq!(lines[0], "❓ ok?");
+        assert!(lines.contains(&"  1. yes".to_string()), "lines: {lines:?}");
+        assert!(lines.contains(&"  2. no".to_string()), "lines: {lines:?}");
+
+        // TodoList renders the items.
+        let lines = approval_preview_lines(
+            "TodoList",
+            r#"{"todos":[{"title":"A","status":"pending"},{"title":"B"}]}"#,
+        );
+        assert_eq!(lines, vec!["  - [pending] A", "  - B"]);
+    }
+
+    #[test]
+    fn approval_preview_truncates_long_contents() {
+        // Pin the locale: the truncation hint goes through the global t().
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        let content = (0..30)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let args = serde_json::json!({ "file_path": "big.txt", "content": content });
+        let lines = approval_preview_lines("Write", &args.to_string());
+        // Header + PREVIEW_MAX_LINES rows + the truncation hint.
+        assert_eq!(lines.len(), PREVIEW_MAX_LINES + 1);
+        assert_eq!(lines[0], "Write: big.txt");
+        assert_eq!(lines[1], "  line 0");
+        let hint = lines.last().unwrap();
+        assert!(hint.contains("6 more lines"), "hint: {hint}");
     }
 
     #[test]

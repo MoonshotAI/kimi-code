@@ -248,6 +248,21 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.approval.allowed", "approval allowed", "已允许该审批"),
     ("tui.approval.denied", "approval denied", "已拒绝该审批"),
     (
+        "tui.approval.moreLines",
+        "… and {0} more lines",
+        "… 还有 {0} 行",
+    ),
+    (
+        "tui.approval.moreOptions",
+        "… and {0} more options",
+        "… 还有 {0} 个选项",
+    ),
+    (
+        "tui.approval.todoEmpty",
+        "(no todos)",
+        "(无待办项)",
+    ),
+    (
         "tui.approval.notFound",
         "approval not found",
         "未找到该审批",

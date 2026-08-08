@@ -590,6 +590,14 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - **测试**：`tool_events_build_structured_cards`（started+settled → 单卡片含结果）+ tool toggle/chatwidget 卡片渲染重写 → kimi-tui **40** 全绿；workspace 0 errors
 - **注**：此重构为 chatwidget 组件树的骨架——后续可挂审批卡片/媒体块/子代理块（TS tool-call.ts 的 header/elapsed/subagent 等富结构留待继续）
 
+**2026-08-08 G-4 分片 H：审批预览显示块覆盖扩展 ✅**：
+- **背景**：TS `approval-panel` 的 `DisplayBlock`（10 种：diff/file_content/shell/file_op/url_fetch/search/invocation/…）由 **agent-core（TS 引擎）构建**、宿主仅渲染；Rust 引擎 approval 事件 payload 只有 `{tool_name, arguments, approval_rule}`（`approval_requested_event`），无 DisplayBlock → Rust 端从**工具参数推导**预览（对拍的务实简化，与既有 `approval_preview_lines` 同模式，无语法高亮/diff 聚类）
+- **`approval_preview_lines`（app.rs）3 工具 → 11 工具**：新增 Read（`Read: path`）、Grep/Glob（`grep|glob: pattern`）、FsSearch/WebSearch（`search: query`）、WebFetch（`GET url`）、Task（`task: objective`，description fallback）、AskUserQuestion（`❓ question` + 选项列表 ≤5 + `… N more options`）、TodoList（`- [status] title` ≤8，空态 `(no todos)`）——TS `renderDisplayBlock` 各分支渲染 parity 的宿主推导版
+- **内容截断**：Write/Edit 长内容 > `PREVIEW_MAX_LINES`(25) 行截断 + `… N more lines` 提示（TS `CONTENT_SUMMARY_MAX_LINES` 精神）；`first_str` 多候选字段容错（file_path|path、query|pattern、objective|description）
+- **i18n**：新增 3 key（`tui.approval.moreLines` / `moreOptions` / `todoEmpty`，en+zh 成对）
+- **测试**：`approval_preview_parses_tool_arguments` 扩 9 工具断言 + 新 `approval_preview_truncates_long_contents`（30 行 → 25 行 + "6 more lines" 提示）→ kimi-tui **85/85** 全绿；`cargo check --workspace` 0 errors
+- **待办**：真实 diff 聚类渲染（`renderDiffLinesClustered` 对拍，当前 -/+ 简化）、媒体/子代理富卡片（tool-call.ts 剩余富结构）、对拍测试
+
 **2026-08-06 CLI 续补（G-3 批次 2 + ACP 增补）**：
 - **选项冲突校验补全 ✅**（TS `validateOptions` parity）：`print` 空 prompt / 空 `--model` 报错（"Prompt/Model cannot be empty."）；`print --continue` 与全局 `-S <id>` clap `conflicts_with` 互斥；新增 2 集成测试 → cli.rs 44 全绿
 - **ACP skills 命令广告 + `/skill:` 拦截 ✅**（kimi-acp，TS `acp-adapter` parity）：
