@@ -5,6 +5,7 @@ import {
 } from './path-glob-match';
 
 const GLOB_LITERAL_SPECIAL = /[\\*?[\]{}()!+@|]/g;
+const ESCAPED_GLOB_LITERAL_SPECIAL = /\\([\\*?[\]{}()!+@|])/g;
 
 export function literalRulePattern(toolName: string, subject: string): string {
   return `${toolName}(${escapeRuleSubjectLiteral(subject)})`;
@@ -15,7 +16,9 @@ export function escapeRuleSubjectLiteral(subject: string): string {
 }
 
 export function matchesGlobRuleSubject(ruleArgs: string, subject: string): boolean {
-  return matchRuleSubjects(ruleArgs, [subject], (pattern, value) => globMatch(value, pattern));
+  return matchRuleSubjects(ruleArgs, [subject], (pattern, value) =>
+    unescapeRuleSubjectLiteral(pattern) === value || globMatch(value, pattern),
+  );
 }
 
 export function matchesPathRuleSubject(
@@ -38,4 +41,8 @@ function matchRuleSubjects(
   const positivePattern = negated ? ruleArgs.slice(1) : ruleArgs;
   const hit = subjects.some((subject) => matchesPositivePattern(positivePattern, subject));
   return negated ? !hit : hit;
+}
+
+function unescapeRuleSubjectLiteral(pattern: string): string {
+  return pattern.replace(ESCAPED_GLOB_LITERAL_SPECIAL, '$1');
 }
