@@ -31,6 +31,7 @@ import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '../../../l
 import { renderPrompt } from '../../../utils/render-prompt';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
+import { fixBashCommand, withMsystemNeutralized } from '../../support/windows-bash-fix';
 import {
   type ExecutableToolResultBuilderResult,
   ToolResultBuilder,
@@ -272,10 +273,13 @@ export class BashTool implements BuiltinTool<BashInput> {
 
   private spawn(effectiveCwd: string, command: string): Promise<KaosProcess> {
     const shellCwd = this.isWindowsBash ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
+    const shellCommand = `cd ${shellQuote(shellCwd)} && ${command}`;
     const shellArgs = [
       this.kaos.osEnv.shellPath,
       '-c',
-      `cd ${shellQuote(shellCwd)} && ${command}`,
+      this.isWindowsBash
+        ? withMsystemNeutralized(shellCommand, this.kaos.osEnv.shellPath, 'win32')
+        : shellCommand,
     ];
 
     const noninteractiveEnv: Record<string, string> = {
@@ -287,6 +291,14 @@ export class BashTool implements BuiltinTool<BashInput> {
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
       SHELL: this.kaos.osEnv.shellPath,
     };
+
+    if (this.isWindowsBash) {
+      // MSYS path conversion mangles native-tool arguments (`/FO`, `/Create`,
+      // `/T`, ...) on Git Bash; disable it unless the user set the variables
+      // explicitly (setdefault semantics).
+      noninteractiveEnv['MSYS_NO_PATHCONV'] = process.env['MSYS_NO_PATHCONV'] ?? '1';
+      noninteractiveEnv['MSYS2_ARG_CONV_EXCL'] = process.env['MSYS2_ARG_CONV_EXCL'] ?? '*';
+    }
 
     // Merge ambient env + noninteractive knobs so tools like git / node
     // don't open a pager and paints don't colour the stream.
@@ -318,7 +330,7 @@ export class BashTool implements BuiltinTool<BashInput> {
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeForegroundTimeoutMs(args.timeout);
-    const command = this.isWindowsBash ? rewriteWindowsNullRedirect(args.command) : args.command;
+    const command = this.isWindowsBash ? fixBashCommand(args.command, 'win32').command : args.command;
     const effectiveCwd = args.cwd ?? this.cwd;
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
     const timeoutMs = startsInBackground
@@ -622,8 +634,4 @@ function windowsPathToPosixPath(path: string): string {
   return path.replaceAll('\\', '/');
 }
 
-const WINDOWS_NUL_REDIRECT = /(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/g;
 
-function rewriteWindowsNullRedirect(command: string): string {
-  return command.replace(WINDOWS_NUL_REDIRECT, '$1/dev/null');
-}
