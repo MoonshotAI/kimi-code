@@ -5,7 +5,8 @@
  * and the rule-subject helpers (`literalRulePattern`,
  * `escapeRuleSubjectLiteral`, `matchesGlobRuleSubject`,
  * `matchesPathRuleSubject`) that tool implementations use to build their
- * `matchesRule` closures and canonical rule strings. Path matching compares
+ * `matchesRule` closures and canonical rule strings. Glob matching treats
+ * subjects as opaque text, so `*` crosses `/`. Path matching compares
  * normalized path variants, so `./a`, `dir/../a`, and Windows separator or
  * case variants can match the same rule. Pure functions; no scoped service.
  */
@@ -27,17 +28,49 @@ interface PathMatchSemantics {
   readonly pathClass: PathClass;
 }
 
+const SLASH_PLACEHOLDER = '\0';
+
 export function globMatch(value: string, pattern: string, options?: { nocase?: boolean }): boolean {
+  // Try the historical path-semantics match first so rules that matched
+  // before keep matching (e.g. `a/**/b` still matches `a/b`).
+  if (pathSegmentGlobMatch(value, pattern, options)) return true;
+
+  // Then match the subject as opaque text: picomatch gives wildcards path
+  // semantics (`*` stops at `/` and refuses dot segments), so rewrite `/` to
+  // a placeholder and allow dots instead.
+  const opaqueOptions = { ...options, dot: true };
+  if (picomatch.isMatch(asOpaqueText(value), asOpaqueText(pattern), opaqueOptions)) return true;
+
+  const normalizedValue = stripLeadingDotSlash(value);
+  const normalizedPattern = stripLeadingDotSlash(pattern);
+  if (normalizedValue === value && normalizedPattern === pattern) return false;
+  return picomatch.isMatch(
+    asOpaqueText(normalizedValue),
+    asOpaqueText(normalizedPattern),
+    opaqueOptions,
+  );
+}
+
+function asOpaqueText(value: string): string {
+  // Strip real NUL bytes first so one cannot be mistaken for a rewritten `/`.
+  return value.replaceAll(SLASH_PLACEHOLDER, '').replaceAll('/', SLASH_PLACEHOLDER);
+}
+
+function stripLeadingDotSlash(value: string): string {
+  return value.startsWith('./') ? value.slice(2) : value;
+}
+
+function pathSegmentGlobMatch(
+  value: string,
+  pattern: string,
+  options?: { nocase?: boolean },
+): boolean {
   if (picomatch.isMatch(value, pattern, options)) return true;
 
   const normalizedValue = stripLeadingDotSlash(value);
   const normalizedPattern = stripLeadingDotSlash(pattern);
   if (normalizedValue === value && normalizedPattern === pattern) return false;
   return picomatch.isMatch(normalizedValue, normalizedPattern, options);
-}
-
-function stripLeadingDotSlash(value: string): string {
-  return value.startsWith('./') ? value.slice(2) : value;
 }
 
 export function pathGlobMatch(
@@ -48,11 +81,11 @@ export function pathGlobMatch(
   const semantics = pathMatchSemantics(value, pattern, pathOptions);
   const nocase = pathOptions?.caseInsensitivePaths ?? true;
 
-  if (globMatch(value, pattern, { nocase })) return true;
+  if (pathSegmentGlobMatch(value, pattern, { nocase })) return true;
 
   for (const valueVariant of pathVariants(value, semantics, pathOptions)) {
     for (const patternVariant of pathVariants(pattern, semantics, pathOptions)) {
-      if (globMatch(valueVariant, patternVariant, { nocase })) return true;
+      if (pathSegmentGlobMatch(valueVariant, patternVariant, { nocase })) return true;
     }
   }
   return false;
