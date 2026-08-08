@@ -16,6 +16,7 @@ export const STATUS_LINE_MAX_CAPTURE_BYTES = 65_536;
 
 export interface StatusLinePayload {
   model: string;
+  thinkingEffort: string;
   cwd: string;
   gitBranch: string | null;
   permissionMode: string;
