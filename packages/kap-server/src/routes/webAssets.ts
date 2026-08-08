@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { extname, join, normalize, relative, resolve, sep } from 'node:path';
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
@@ -57,7 +57,17 @@ async function serveWebAsset(
   return reply
     .type(mimeType(filePath))
     .header('Content-Length', String(fileInfo.size))
+    .header('Cache-Control', cacheControl(assetsDir, filePath))
     .send(createReadStream(filePath));
+}
+
+// Vite emits content-hashed files under `assets/` — cache them forever.
+// Everything else (index.html, SPA fallback, favicon, ...) must revalidate.
+function cacheControl(assetsDir: string, filePath: string): string {
+  const rel = relative(resolve(assetsDir), filePath);
+  return rel.startsWith(`assets${sep}`)
+    ? 'public, max-age=31536000, immutable'
+    : 'no-cache';
 }
 
 async function resolveStaticFile(
