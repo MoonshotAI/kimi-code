@@ -152,7 +152,7 @@ import { startupTrace } from '#/utils/startup-trace';
 import { REPLAY_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
-import { formatBashOutputForDisplay } from './utils/shell-output';
+import { capStoredShellOutput, formatBashOutputForDisplay } from './utils/shell-output';
 import { thinkingEffortFromConfig } from './utils/thinking-config';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
@@ -1222,10 +1222,18 @@ export class KimiTUI {
       // the UI and the model notification, so there is nothing to render here.
       return;
     }
-    stream.component.finish(stdout, stderr, isError);
+    stream.component.finish(
+      capStoredShellOutput(stdout),
+      capStoredShellOutput(stderr),
+      isError,
+    );
     // Keep the transcript entry's metadata in sync for anything that reads it
     // (export / copy). The component renders itself.
-    stream.entry.content = formatBashOutputForDisplay(stdout, stderr, isError);
+    stream.entry.content = formatBashOutputForDisplay(
+      capStoredShellOutput(stdout),
+      capStoredShellOutput(stderr),
+      isError,
+    );
     this.shellOutputStreams.delete(commandId);
     // When the last shell command finishes, leave the shell streaming phase,
     // release one queued message (if any), and refresh the activity pane.
