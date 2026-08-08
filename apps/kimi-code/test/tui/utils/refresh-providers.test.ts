@@ -1,3 +1,9 @@
+/**
+ * Scenario: refresh configured provider models through the TUI refresh utility.
+ * Responsibilities: persist refreshed records without losing defaults or user aliases.
+ * Wiring: an in-memory persistence host with fetch and OAuth token resolution stubbed.
+ * Run: pnpm exec vitest run apps/kimi-code/test/tui/utils/refresh-providers.test.ts
+ */
 import {
   KIMI_CODE_PROVIDER_NAME,
   resolveKimiCodeOAuthKey,
@@ -37,6 +43,9 @@ function makeRefreshHost(initial: KimiConfig): {
     }
     persisted = { ...persisted, providers, models };
     if (defaultRemoved) persisted = { ...persisted, defaultModel: undefined };
+    if (persisted.defaultProvider === providerId) {
+      persisted = { ...persisted, defaultProvider: undefined };
+    }
     return structuredClone(persisted);
   });
   const setConfig = vi.fn(async (patch: Partial<KimiConfig>) => {
@@ -124,6 +133,63 @@ describe('refreshAllProviderModels', () => {
     expect(result.unchanged).toEqual([KIMI_CODE_PROVIDER_NAME]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(resolveOAuthToken).toHaveBeenCalledWith(KIMI_CODE_PROVIDER_NAME, envOauthRef);
+  });
+
+  it('preserves defaultProvider when refreshing the managed OAuth provider', async () => {
+    const baseUrl = 'https://api.example.test/coding/v1';
+    const host = makeRefreshHost({
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          baseUrl,
+          apiKey: '',
+          oauth: {
+            storage: 'file',
+            key: resolveKimiCodeOAuthKey({ baseUrl }),
+          },
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['tool_use'],
+          displayName: 'Old Kimi',
+        },
+      },
+      defaultProvider: KIMI_CODE_PROVIDER_NAME,
+      telemetry: true,
+    } as unknown as KimiConfig);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-for-coding',
+                context_length: 262144,
+                supports_reasoning: false,
+                display_name: 'Fresh Kimi',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    );
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(async () => 'access-token'),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toHaveLength(1);
+    expect(host.current().defaultProvider).toBe(KIMI_CODE_PROVIDER_NAME);
   });
 
   it('can refresh only the managed OAuth provider without fetching third-party registries', async () => {
