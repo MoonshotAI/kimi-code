@@ -23,7 +23,7 @@ import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
-import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
+import { currentTheme, inferBuiltInResolvedTheme, isBuiltInTheme, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
@@ -743,7 +743,7 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   }
 
   const resolved = theme === 'auto'
-    ? (currentTheme.palette === lightColors ? 'light' : 'dark')
+    ? (inferBuiltInResolvedTheme(currentTheme.palette) ?? 'dark')
     : undefined;
   await host.applyTheme(theme, resolved);
   host.refreshTerminalThemeTracking();

@@ -1,6 +1,6 @@
 import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
-import { currentTheme, lightColors } from '#/tui/theme';
+import { currentTheme, inferBuiltInResolvedTheme } from '#/tui/theme';
 import { loadTuiConfig, type TuiConfig } from '../config';
 import type { SlashCommandHost } from './dispatch';
 import { setExperimentalFeatures } from './experimental-flags';
@@ -56,7 +56,7 @@ export async function applyReloadedTuiConfig(
   config: TuiConfig,
 ): Promise<void> {
   const resolved = config.theme === 'auto'
-    ? (currentTheme.palette === lightColors ? 'light' : 'dark')
+    ? (inferBuiltInResolvedTheme(currentTheme.palette) ?? 'dark')
     : undefined;
   await host.applyTheme(config.theme, resolved);
   host.refreshTerminalThemeTracking();

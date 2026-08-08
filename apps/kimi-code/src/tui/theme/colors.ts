@@ -133,9 +133,95 @@ export const lightColors: ColorPalette = {
   shellMode: '#7C3AED',
 };
 
+/**
+ * Fallback palettes for ANSI-16 terminals (chalk level 1, e.g. `TERM=xterm`).
+ *
+ * At that color depth `chalk.hex()` quantizes aggressively: mid grays below
+ * `#808080` collapse to black (SGR 30, invisible on a dark background),
+ * desaturated hues map to white, and gray never maps to bright black — so
+ * several `darkColors` tokens become unreadable or lose their hue entirely.
+ * These variants keep every token on a hex that quantizes to a readable,
+ * hue-correct basic ANSI code; hue hierarchy is intentionally flatter than
+ * the full palettes because 16 colors cannot express it.
+ *
+ * Values were verified against chalk's level-1 rgb→ansi16 conversion:
+ * dark — neutrals land on SGR 37/97 (never 30), primary 94, accent 36,
+ * success/diffAdded 32, error/diffRemoved 91, warning/roleUser 93,
+ * shellMode 95; light — text tokens stay on 30, success/diffAdded 32,
+ * warning/borderFocus/roleUser 33, error 31, shellMode 35.
+ */
+export const basicDarkColors: ColorPalette = {
+  primary: '#5C5CFF', // → bright blue (dark #4FA8FF lands on bright cyan)
+  accent: '#5BC0BE', // → cyan
+
+  text: '#E0E0E0', // → white
+  textStrong: '#FFFFFF', // → bright white
+  textDim: '#C0C0C0', // → white
+  textMuted: '#808080', // → white (#6B6B6B quantizes to black)
+
+  border: '#808080', // → white (#5A5A5A quantizes to black)
+  borderFocus: '#E8A838', // → bright yellow
+
+  success: '#4EC87E', // → green
+  warning: '#E8A838', // → bright yellow
+  error: '#E85454', // → bright red
+
+  diffAdded: '#4EC87E', // → green
+  diffRemoved: '#E85454', // → bright red
+  diffAddedStrong: '#00FF00', // → bright green (#7AD99B lands on cyan)
+  diffRemovedStrong: '#FF5555', // → bright red (#F08585 lands on white)
+  diffGutter: '#808080', // → white (#6B6B6B quantizes to black)
+  diffMeta: '#888888', // → white
+
+  roleUser: '#FFCB6B', // → bright yellow
+  shellMode: '#FF00FF', // → bright magenta (#BD93F9 lands on white)
+};
+
+export const basicLightColors: ColorPalette = {
+  primary: '#1565C0', // → blue
+  accent: '#00838F', // → cyan
+
+  text: '#1A1A1A', // → black
+  textStrong: '#1A1A1A', // → black
+  textDim: '#454545', // → black
+  textMuted: '#5F5F5F', // → black
+
+  border: '#737373', // → black
+  borderFocus: '#808000', // → yellow (#92660A lands on red)
+
+  success: '#008000', // → green (#0E7A38 quantizes to black)
+  warning: '#808000', // → yellow (#92660A lands on red)
+  error: '#B91C1C', // → red
+
+  diffAdded: '#008000', // → green
+  diffRemoved: '#B91C1C', // → red
+  diffAddedStrong: '#008000', // → green
+  diffRemovedStrong: '#B91C1C', // → red
+  diffGutter: '#737373', // → black
+  diffMeta: '#5F5F5F', // → black
+
+  roleUser: '#808000', // → yellow (#9A4A00 lands on red)
+  shellMode: '#800080', // → magenta (#7C3AED lands on bright blue)
+};
+
 export type ResolvedTheme = 'dark' | 'light';
 
 /** Synchronous palette lookup for built-in themes only. */
 export function getBuiltInPalette(resolved: ResolvedTheme): ColorPalette {
   return resolved === 'dark' ? darkColors : lightColors;
+}
+
+/** Synchronous ANSI-16 fallback palette lookup for built-in themes only. */
+export function getBasicPalette(resolved: ResolvedTheme): ColorPalette {
+  return resolved === 'dark' ? basicDarkColors : basicLightColors;
+}
+
+/**
+ * Infer the resolved theme from a built-in palette object identity, covering
+ * the ANSI-16 `basic*` variants. Returns `null` for custom-theme palettes.
+ */
+export function inferBuiltInResolvedTheme(palette: ColorPalette): ResolvedTheme | null {
+  if (palette === darkColors || palette === basicDarkColors) return 'dark';
+  if (palette === lightColors || palette === basicLightColors) return 'light';
+  return null;
 }
