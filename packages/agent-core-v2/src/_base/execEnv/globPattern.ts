@@ -3,6 +3,12 @@
  *
  * Pure function. Mirrors Python pathlib semantics: includes dotfiles,
  * case-sensitive by default.
+ *
+ * Character classes follow POSIX / Python `fnmatch` rather than JS regex: a
+ * `]` in the first position of the class body (after an optional negating `!`)
+ * is a literal member, not the terminator, and a class that is a legal glob
+ * but an invalid JS regex — a reversed range such as `[a--]` — matches nothing
+ * instead of throwing, since callers invoke this outside a try block.
  */
 
 /**
@@ -23,12 +29,15 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
         regex += '[^/]';
         break;
       case '[': {
-        const end = pattern.indexOf(']', i + 1);
+        let scanFrom = i + 1;
+        if (pattern[scanFrom] === '!') scanFrom++;
+        if (pattern[scanFrom] === ']') scanFrom++;
+        const end = pattern.indexOf(']', scanFrom);
         if (end === -1) {
           regex += '\\[';
         } else {
           let charClass = pattern.slice(i + 1, end);
-          charClass = charClass.replace(/\\/g, '\\\\');
+          charClass = charClass.replaceAll('\\', '\\\\').replaceAll(']', '\\]');
           if (charClass.startsWith('!')) {
             charClass = '^' + charClass.slice(1);
           } else if (charClass.startsWith('^')) {
@@ -54,5 +63,10 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
     }
   }
   regex += '$';
-  return new RegExp(regex, caseSensitive ? '' : 'i');
+  const flags = caseSensitive ? '' : 'i';
+  try {
+    return new RegExp(regex, flags);
+  } catch {
+    return new RegExp('(?!)', flags);
+  }
 }
