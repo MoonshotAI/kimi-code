@@ -80,6 +80,7 @@ function grafanaClient(callLog: Array<[string, unknown]> = []): MCPClient {
       callLog.push([name, args]);
       return { content: [{ type: 'text', text: 'error_rate=0.02' }], isError: false };
     },
+    async ping() {},
   };
 }
 
@@ -795,6 +796,7 @@ describe('disclosure mode — compaction', () => {
       async callTool() {
         return { content: [{ type: 'text', text: 'ok' }], isError: false };
       },
+      async ping() {},
     };
     ctx.agent.tools.registerMcpServer(
       'grafana',

@@ -1,6 +1,7 @@
 import { getCoreVersion } from '#/version';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
-import type { MCPToolDefinition, MCPToolResult } from './types';
+import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 
 export const KIMI_MCP_CLIENT_NAME = 'kimi-code';
 // Resolved from agent-core's package.json so MCP servers see the real version
@@ -29,6 +30,56 @@ export type UnexpectedCloseListener = (reason: UnexpectedCloseReason) => void;
 export interface McpRequestOptions {
   readonly timeout?: number;
   readonly signal?: AbortSignal;
+}
+
+/**
+ * True when the SDK reports the connection itself as gone (the transport was
+ * closed, so no in-flight request can ever complete).
+ */
+export function isMcpConnectionClosedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { readonly code?: unknown }).code === ErrorCode.ConnectionClosed
+  );
+}
+
+/**
+ * True when a failed tool call might recover after a reconnect: either the
+ * connection is closed, or the error is a raw transport/fetch failure rather
+ * than a JSON-RPC answer from the server ({@link McpError}) — reconnecting
+ * would not change a server-side answer.
+ */
+export function isMcpTransportFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (isMcpConnectionClosedError(error)) return true;
+  return !(error instanceof McpError);
+}
+
+/** Bounded so a wedged server cannot stall the reconnect decision indefinitely. */
+export const MCP_LIVENESS_PROBE_TIMEOUT_MS = 5_000;
+
+/** Response failed client-side schema validation: the server answered, so it is alive. */
+export function isMcpMalformedResultError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'ZodError';
+}
+
+/**
+ * Ping the server to decide whether its transport is still usable after an
+ * ambiguous failure. A malformed answer still proves liveness; a timeout or
+ * any transport-level failure means dead.
+ */
+export async function probeMcpLiveness(client: MCPClient, signal: AbortSignal): Promise<boolean> {
+  try {
+    await client.ping(signal);
+    return true;
+  } catch (error) {
+    if (isMcpConnectionClosedError(error)) return false;
+    if (isMcpMalformedResultError(error)) return true;
+    if (error instanceof McpError) {
+      return (error as Error & { readonly code?: unknown }).code !== ErrorCode.RequestTimeout;
+    }
+    return false;
+  }
 }
 
 /**
