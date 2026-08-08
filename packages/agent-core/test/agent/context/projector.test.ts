@@ -991,8 +991,8 @@ describe('degradeOlderMediaParts', () => {
     expect(parts.filter((part) => part.type === 'image_url')).toHaveLength(1);
     expect(parts.filter((part) => part.type === 'video_url')).toHaveLength(0);
     const texts = parts.filter((part) => part.type === 'text').map((part) => part.text);
-    expect(texts.some((text) => text.startsWith('[image omitted:'))).toBe(true);
-    expect(texts.some((text) => text.startsWith('[video omitted:'))).toBe(true);
+    expect(texts.some((text) => text.startsWith('[An image attached to an earlier message'))).toBe(true);
+    expect(texts.some((text) => text.startsWith('[A video attached to an earlier message'))).toBe(true);
     // The path wrapper of the degraded image survives for readback.
     expect(texts).toContain('<image path="/ws/old.png">');
     // The surviving image is the most recent one.
@@ -1037,7 +1037,7 @@ describe('media strip snapshots', () => {
     expect(projected[0]?.content).toEqual([
       {
         type: 'text',
-        text: '[image omitted for provider compatibility; re-read the file to view it or get conversion guidance]',
+        text: '[An image attached to this message was removed before sending because the provider rejected the request (unsupported or unreadable image data, or the request exceeded its size limit). You have NOT seen this image — do not describe or guess its contents. Tell the user the image failed to reach you and suggest re-sending it as PNG or JPEG, or a smaller copy.]',
       },
     ]);
   });

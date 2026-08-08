@@ -8,7 +8,11 @@
  * too ("session poisoning"). Every ingestion point therefore refuses
  * unsupported formats instead of passing the bytes through: ReadMediaFile
  * refuses with a conversion command the model can run, and prompt/MCP
- * ingestion replaces the image with a text notice.
+ * ingestion replaces the image with a text notice. The same applies to an
+ * empty payload (`data:image/png;base64,` — a clipboard/upload failure that
+ * captured no bytes), which {@link gateImageFormatParts} replaces with a
+ * notice both at ingestion and, for histories already carrying one, at
+ * projection time.
  *
  * The policy is deliberately a closed set, not a denylist: a format is only
  * ever sent when it is known to be accepted. Supporting a new format means
@@ -27,6 +31,8 @@
  * bytes to inspect, and providers that support URL images fetch them
  * server-side; those pass through unchanged.
  */
+
+import type { ContentPart } from '@moonshot-ai/kosong';
 
 import { IMAGE_MIME_BY_SUFFIX, sniffMediaFromMagic } from './file-type';
 
@@ -267,4 +273,81 @@ export function buildMalformedImageNotice(url: string): string {
     `[Image omitted: "${shown}" is not a valid data URL (its header or payload ` +
     'could not be parsed). Re-encode the image as PNG or JPEG and try again.]'
   );
+}
+
+/**
+ * Notice standing in for an image that carried no bytes at all
+ * (`data:image/png;base64,` — a clipboard/upload failure captured nothing).
+ * Like a malformed URL it is guaranteed to fail at the provider, so it is
+ * dropped for a notice instead of poisoning the session.
+ */
+export function buildEmptyImageNotice(name?: string): string {
+  const what = name === undefined || name.length === 0 ? 'The attached image' : `"${name}"`;
+  return (
+    `[Image omitted: ${what} contained no image data (0 bytes) — the clipboard ` +
+    'or upload captured nothing. Re-paste or re-upload the image and try again.]'
+  );
+}
+
+/**
+ * Content-part format gate shared by every image ingestion point — and by the
+ * context projector, so a malformed image already sitting in an old session's
+ * history is replaced on the wire instead of poisoning every later request
+ * ("session poisoning", see the module doc). Images the provider cannot
+ * accept never pass through: each is replaced by a text notice that tells the
+ * model what happened and how to recover.
+ *
+ * A parsed data URL is still rejected when its payload is empty
+ * (`data:image/png;base64,` — a clipboard/upload failure captured no bytes).
+ */
+export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart[] {
+  const out: ContentPart[] = [];
+  for (const part of parts) {
+    if (part.type === 'image_url') {
+      const parsed = parseImageDataUrl(part.imageUrl.url);
+      if (parsed === null) {
+        // A `data:` URL that failed to parse (missing `;base64,` separator,
+        // empty MIME, …) is guaranteed to fail at the provider — Anthropic
+        // throws on it, OpenAI-compat servers 400. Drop it for a notice at
+        // ingestion instead of leaving it to poison the session and trigger
+        // the media-stripped resend on every later turn.
+        if (isDataUrl(part.imageUrl.url)) {
+          out.push({ type: 'text', text: buildMalformedImageNotice(part.imageUrl.url) });
+          continue;
+        }
+        // Remote image URL (no bytes to sniff): reject when its path
+        // extension names a format providers reject (e.g. a search-tool
+        // link ending in `.avif`) — the notice keeps the URL so the model
+        // can still fetch and convert the image. Extensionless / unknown
+        // URLs pass through to the provider — and to the 400 recovery.
+        const extMime = unsupportedImageMimeFromUrl(part.imageUrl.url);
+        if (extMime !== null) {
+          out.push({
+            type: 'text',
+            text: buildUnsupportedImageNotice(extMime, part.imageUrl.url),
+          });
+          continue;
+        }
+        out.push(part);
+        continue;
+      }
+      const head = decodeBase64Prefix(parsed.base64);
+      if (head.length === 0) {
+        out.push({ type: 'text', text: buildEmptyImageNotice() });
+        continue;
+      }
+      const effectiveMime = resolveEffectiveImageMime(parsed.mimeType, head);
+      if (!isModelAcceptedImageMime(effectiveMime)) {
+        out.push({ type: 'text', text: buildUnsupportedImageNotice(effectiveMime) });
+        continue;
+      }
+      const canonicalUrl = `data:${normalizeImageMime(effectiveMime)};base64,${parsed.base64}`;
+      if (part.imageUrl.url !== canonicalUrl) {
+        out.push({ type: 'image_url', imageUrl: { ...part.imageUrl, url: canonicalUrl } });
+        continue;
+      }
+    }
+    out.push(part);
+  }
+  return out;
 }

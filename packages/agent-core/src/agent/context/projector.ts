@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { ContentPart, Message, TextPart } from '@moonshot-ai/kosong';
 
 import { ErrorCodes, KimiError } from '../../errors';
+import { gateImageFormatParts } from '../../tools/support/image-format-policy';
 import { renderToolResultForModel } from './tool-result-render';
 import type { ContextMessage } from './types';
 
@@ -109,7 +110,15 @@ export type ProjectionAnomaly =
   | { readonly kind: 'vacuous_message_dropped'; readonly role: string };
 
 export function project(history: readonly ContextMessage[], options?: ProjectOptions): Message[] {
-  let result = mergeAdjacentUserMessages(history, options?.onAnomaly);
+  // The image format gate runs at projection time too (not only at ingestion):
+  // a malformed/undeliverable image already persisted in an old session's
+  // history is replaced by a text notice on the wire, so it can no longer
+  // poison every later request. Read-side only — the history keeps its parts.
+  const gated = history.map((message) => ({
+    ...message,
+    content: gateImageFormatParts(message.content),
+  }));
+  let result = mergeAdjacentUserMessages(gated, options?.onAnomaly);
   if (options?.dedupeDuplicateToolCalls === true) {
     result = dedupeDuplicateToolCalls(result, options.onAnomaly);
   }
@@ -523,27 +532,28 @@ export const MEDIA_DEGRADE_KEEP_RECENT = 2;
 
 const MEDIA_DEGRADED_PLACEHOLDERS = {
   image_url:
-    '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+    '[An image attached to an earlier message was removed to fit the provider request size limit. You have NOT seen this image — do not describe or guess its contents. If it matters, ask the user to re-send it or to point you at the file so you can read it with ReadMediaFile.]',
   audio_url:
-    '[audio omitted: dropped to fit the provider request size limit; re-read the file to hear it]',
+    '[An audio clip attached to an earlier message was removed to fit the provider request size limit. You have NOT heard it — do not describe or guess its contents.]',
   video_url:
-    '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+    '[A video attached to an earlier message was removed to fit the provider request size limit. You have NOT seen it — do not describe or guess its contents.]',
 } as const;
 
 /**
  * Provider-compatible markers for a resend with every media part stripped.
  * This projection recovers from both an image-format rejection and a request
  * that remains too large after retaining recent media, so the wording must
- * not diagnose either cause. Re-reading the path gives the model the relevant
- * conversion or size-reduction guidance at the tool boundary.
+ * stay cause-neutral while making the removal and its consequence explicit —
+ * a vague placeholder reads like a generic compatibility notice and invites
+ * the model to hallucinate having seen the attachment.
  */
 export const MEDIA_STRIPPED_PLACEHOLDERS = {
   image_url:
-    '[image omitted for provider compatibility; re-read the file to view it or get conversion guidance]',
+    '[An image attached to this message was removed before sending because the provider rejected the request (unsupported or unreadable image data, or the request exceeded its size limit). You have NOT seen this image — do not describe or guess its contents. Tell the user the image failed to reach you and suggest re-sending it as PNG or JPEG, or a smaller copy.]',
   audio_url:
-    '[audio omitted for provider compatibility; re-read the file to hear it]',
+    '[An audio clip attached to this message was removed before sending because the provider rejected the request. You have NOT heard it — do not describe or guess its contents.]',
   video_url:
-    '[video omitted for provider compatibility; re-read the file to view it]',
+    '[A video attached to this message was removed before sending because the provider rejected the request. You have NOT seen it — do not describe or guess its contents.]',
 } as const;
 
 type MediaPlaceholderSet = typeof MEDIA_DEGRADED_PLACEHOLDERS | typeof MEDIA_STRIPPED_PLACEHOLDERS;

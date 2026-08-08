@@ -138,7 +138,7 @@ describe('Agent turn flow', () => {
       .filter((part) => part.type === 'text')
       .map((part) => part.text)
       .join('\n');
-    expect(retryText).toContain('[image omitted:');
+    expect(retryText).toContain('removed to fit the provider request size limit');
     expect(retryText).toContain('<image path="/workspace/a.png">');
     // The real history is untouched.
     expect(
@@ -270,13 +270,15 @@ describe('Agent turn flow', () => {
     };
 
     // Simulate a legacy/pre-gate history that already carries a poisoned
-    // image. The turn.prompt gate only sanitizes NEW prompt input, not the
-    // pre-existing context, so this reaches the provider unmodified.
+    // image. The prompt/projector gates sanitize unsupported formats and
+    // empty payloads, but corrupt bytes carrying an ACCEPTED label pass both
+    // — this still reaches the provider unmodified, so the 400 strip
+    // recovery remains the backstop.
     function plantPoisonedImage(ctx: TestAgentContext): void {
       ctx.agent.context.appendUserMessage(
         [
-          { type: 'text', text: '<image path="/workspace/old.avif">' },
-          { type: 'image_url', imageUrl: { url: 'data:image/avif;base64,QUJD' } },
+          { type: 'text', text: '<image path="/workspace/old.png">' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,%%%corrupt%%%' } },
           { type: 'text', text: '</image>' },
         ],
         { kind: 'user' },
@@ -496,7 +498,7 @@ describe('Agent turn flow', () => {
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
           .join('\n'),
-      ).toContain('[image omitted for provider compatibility;');
+      ).toContain('removed before sending because the provider rejected the request');
     });
 
     it('keeps the same media stripped when a later tool result recreates its container', async () => {
@@ -509,7 +511,7 @@ describe('Agent turn flow', () => {
         finalParts
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
-          .filter((text) => text.includes('[image omitted for provider compatibility;')),
+          .filter((text) => text.includes('removed before sending because the provider rejected the request')),
       ).toHaveLength(2);
     });
   });
