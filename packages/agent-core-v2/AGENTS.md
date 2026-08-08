@@ -1,6 +1,6 @@
 # agent-core-v2 Agent Guide
 
-> New agent engine built on the DI Scope architecture — work-in-progress port of `packages/agent-core`. Design: `plan/PLAN.md`. Porting status: `GAP_ANALYSIS.md`.
+> New agent engine built on the DI Scope architecture — work-in-progress port of `packages/agent-core`. Architecture and development guides live in `docs/` below and `.agents/skills/agent-core-dev/`.
 
 ## Scopes
 
