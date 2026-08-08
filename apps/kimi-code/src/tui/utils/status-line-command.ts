@@ -25,6 +25,12 @@ export interface StatusLinePayload {
   maxContextTokens: number;
   sessionId: string;
   version: string;
+  /**
+   * Terminal width in columns, so the command can lay out full-width
+   * (left/right-justified) status lines. Piped stdio has no TTY, so
+   * `process.stdout.columns` is unavailable to the command.
+   */
+  width: number;
 }
 
 export function runStatusLineCommand(

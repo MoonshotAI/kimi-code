@@ -52,6 +52,7 @@ const payload: StatusLinePayload = {
   maxContextTokens: 8192,
   sessionId: 'ses-1',
   version: '1.2.3',
+  width: 120,
 };
 
 function plain(text: string): string {
@@ -142,6 +143,7 @@ describe('runStatusLineCommand', () => {
     expect(parsed.model).toBe('kimi-k2');
     expect(parsed.gitBranch).toBe('main');
     expect(parsed.cwd).toBe('/tmp/project');
+    expect(parsed.width).toBe(120);
   });
 
   it('returns null on a nonzero exit', async () => {
@@ -200,6 +202,20 @@ describe('FooterComponent status_line command', () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     expect(plain(footer.render(120)[0]!)).toContain('kimi-k2');
+  });
+
+  it('sends the terminal width from render() in the payload', async () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: null, command: 'cat' },
+    };
+    const footer = new FooterComponent(state);
+
+    // Wide render so the echoed payload JSON (width field last) is not truncated.
+    footer.render(500); // kicks the first run with width 500
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(plain(footer.render(500)[0]!)).toContain('"width":500');
   });
 });
 
