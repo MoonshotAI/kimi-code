@@ -786,3 +786,113 @@ describe('mcpResultToExecutableOutput', () => {
     await rm(dir, { recursive: true, force: true });
   });
 });
+
+describe('structuredContent forwarding', () => {
+  test('forwards structuredContent the content blocks only summarize', async () => {
+    // Regression: tools with an outputSchema often return a lossy summary in
+    // `content` ("returned 6 item(s)") plus the real payload in
+    // `structuredContent` — the model must see the payload, not just the
+    // summary.
+    const out = await mcpResultToExecutableOutput(
+      {
+        content: [{ type: 'text', text: 'list_projects returned 2 item(s).' }],
+        isError: false,
+        structuredContent: { projects: [{ id: 'p1' }, { id: 'p2' }] },
+      },
+      'mcp__s__list_projects',
+    );
+
+    expect(out.isError).toBe(false);
+    expect(out.output).toEqual([
+      { type: 'text', text: 'list_projects returned 2 item(s).' },
+      {
+        type: 'text',
+        text: '\n<mcp-structured-result>\n{"structuredContent":{"projects":[{"id":"p1"},{"id":"p2"}]}}\n</mcp-structured-result>',
+      },
+    ]);
+  });
+
+  test('does not double-forward structuredContent already serialized into a text block', async () => {
+    // Spec-conforming fallbacks serialize the structured payload into a text
+    // block; appending it again would double the token cost. Comparison is
+    // semantic, so serializer spacing (Python json.dumps) and key order do
+    // not matter.
+    const structuredContent = { total: 2, items: ['a', 'b'] };
+    for (const text of [
+      JSON.stringify(structuredContent),
+      JSON.stringify(structuredContent, null, 2),
+      '{"total": 2, "items": ["a", "b"]}',
+      '{"items": ["a", "b"], "total": 2}',
+    ]) {
+      const out = await mcpResultToExecutableOutput(
+        { content: [{ type: 'text', text }], isError: false, structuredContent },
+        'mcp__s__t',
+      );
+      expect(out.output).toBe(text);
+    }
+  });
+
+  test('does not mistake an inherited-property lookup for a duplicate fallback', async () => {
+    // A fallback containing "__proto__" must not be deep-matched against an
+    // unrelated one-key payload via the prototype chain.
+    const out = await mcpResultToExecutableOutput(
+      {
+        content: [{ type: 'text', text: '{"__proto__":{}}' }],
+        isError: false,
+        structuredContent: { actual: 42 },
+      },
+      'mcp__s__t',
+    );
+
+    expect(out.output).toEqual([
+      { type: 'text', text: '{"__proto__":{}}' },
+      {
+        type: 'text',
+        text: '\n<mcp-structured-result>\n{"structuredContent":{"actual":42}}\n</mcp-structured-result>',
+      },
+    ]);
+  });
+
+  test('emits structuredContent even when the content array is empty', async () => {
+    const out = await mcpResultToExecutableOutput(
+      { content: [], isError: false, structuredContent: { ok: true } },
+      'mcp__s__t',
+    );
+    expect(out).toEqual({
+      output:
+        '\n<mcp-structured-result>\n{"structuredContent":{"ok":true}}\n</mcp-structured-result>',
+      isError: false,
+    });
+  });
+
+  test('counts the forwarded structuredContent against the text budget', async () => {
+    const out = await mcpResultToExecutableOutput(
+      {
+        content: [{ type: 'text', text: 'summary' }],
+        isError: false,
+        structuredContent: { payload: 'x'.repeat(100_000) },
+      },
+      'mcp__s__t',
+    );
+
+    expect(out.truncated).toBe(true);
+    const parts = out.output as ContentPart[];
+    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+    expect(joined).toContain('summary');
+    expect(joined).toContain('Output truncated');
+  });
+
+  test('fails safe on pathologically deep structuredContent', async () => {
+    // Nesting deep enough to overflow the JSON serializer must not crash the
+    // pipeline — the content blocks still reach the model.
+    let deep: Record<string, unknown> = { leaf: true };
+    for (let i = 0; i < 200_000; i++) deep = { next: deep };
+
+    const out = await mcpResultToExecutableOutput(
+      { content: [{ type: 'text', text: 'summary' }], isError: false, structuredContent: deep },
+      'mcp__s__t',
+    );
+
+    expect(out).toEqual({ output: 'summary', isError: false });
+  });
+});
