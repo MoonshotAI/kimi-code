@@ -19,6 +19,7 @@ import type {
 } from '#/tui/types';
 
 import { modelDisplayName } from '../components/dialogs/model-selector';
+import { MENTIONED_FILES_PATTERN } from './file-mention-resolver';
 import { mediaUrlPartToText } from './media-url';
 import { nextTranscriptId } from './transcript-id';
 
@@ -309,7 +310,10 @@ function parseReplayToolArguments(value: string | null): Record<string, unknown>
 function contentPartToText(part: ContentPart): string {
   switch (part.type) {
     case 'text':
-      return part.text;
+      // Strip the `<mentioned-files>` grounding block appended at send time
+      // (see file-mention-resolver.ts) — it's for the model, not for replay
+      // display; the original text part still carries the user's message.
+      return part.text.replace(MENTIONED_FILES_PATTERN, '');
     case 'think':
       return part.think;
     case 'image_url':

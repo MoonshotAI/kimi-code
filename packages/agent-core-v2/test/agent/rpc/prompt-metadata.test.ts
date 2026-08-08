@@ -52,4 +52,18 @@ describe('promptMetadataTextFromPayload', () => {
     expect(text).not.toContain('<system>');
     expect(text).not.toContain('Image compressed');
   });
+
+  it('keeps a standalone @mention grounding block out of the metadata text', () => {
+    const text = promptMetadataTextFromPayload({
+      input: [
+        { type: 'text', text: 'unzip @foo.zip' },
+        {
+          type: 'text',
+          text: '<mentioned-files>\n- @foo.zip -> /work/foo.zip\n</mentioned-files>',
+        },
+      ],
+    });
+    expect(text).toBe('unzip @foo.zip');
+    expect(text).not.toContain('<mentioned-files>');
+  });
 });
