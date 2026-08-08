@@ -128,7 +128,7 @@ describe('AgentTool', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
     const tool = agentTool(host);
 
-    expect(tool.description).toContain('fixed 30-minute timeout');
+    expect(tool.description).toContain('fixed 2-hour timeout');
     expect(tool.description).not.toContain('operator-configured background timeout');
     expect(tool.description).not.toContain('no time limit');
     // Background guidance must steer foreground-by-default, so the model doesn't
