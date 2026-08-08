@@ -8,7 +8,11 @@
  * result invented for a lost one, an orphan/duplicate dropped, leading
  * non-user messages dropped, consecutive assistants merged, blank text
  * dropped, wholly-vacuous messages — nothing sendable was recorded, e.g. an
- * assistant step that kept only an empty thinking part — dropped whole) are
+ * assistant step that kept only an empty thinking part or only unencrypted
+ * thinking (the OpenAI bases move thinking out of `content` into
+ * `reasoning_content`, the Anthropic base into `thinking` blocks, so a
+ * thinking-only assistant would serialize with neither content nor
+ * tool_calls; signed thinking is preserved) — dropped whole) are
  * reported through an optional sink and surfaced once here as a
  * single deduped warning plus a `context_projection_repaired` telemetry event,
  * so a silently-mangled history always leaves a trace. The mutable
@@ -436,8 +440,14 @@ function project(history: readonly ContextMessage[], onAnomaly?: OnAnomaly): Mes
   const emit = (source: ContextMessage): void => {
     const content = projectedContent(source, onAnomaly);
     if (source.toolCalls.length === 0 && !hasDeclaredTools(source)) {
-      if (content.length === 0) return;
-      if (content.every(isVacuousContentPart)) {
+      const sendable = wireSendableContent(content);
+      if (sendable.length === 0) {
+        if (content.length > 0) {
+          onAnomaly?.({ kind: 'vacuous_message_dropped', role: source.role });
+        }
+        return;
+      }
+      if (sendable.every(isVacuousContentPart)) {
         onAnomaly?.({ kind: 'vacuous_message_dropped', role: source.role });
         return;
       }
@@ -603,6 +613,10 @@ function isInterruptedToolResult(message: Message | undefined): boolean {
 
 function isBlankText(part: ContentPart): boolean {
   return part.type === 'text' && part.text.trim().length === 0;
+}
+
+function wireSendableContent(content: readonly ContentPart[]): ContentPart[] {
+  return content.filter((part) => part.type !== 'think' || part.encrypted !== undefined);
 }
 
 function canMergeUserMessage(message: ContextMessage): boolean {
