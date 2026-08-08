@@ -163,15 +163,44 @@ describe('AcpServer error mapping', () => {
     ).rejects.toMatchObject({ code: -32000 });
   });
 
-  it('resolves with end_turn when turn.ended fails with a non-auth code (log-only path)', async () => {
-    // Non-auth failures stay on the existing log-and-resolve path so
-    // the client is unblocked. The error appears in the agent log;
-    // `stopReason` does not signal it (ACP spec discourages errors-via-stopReason).
+  it('preserves a context-overflow message from a failed turn', async () => {
     const sessionId = 'sess-context-overflow';
     const errorPayload: KimiErrorPayload = {
       code: ErrorCodes.CONTEXT_OVERFLOW,
-      message: 'Context window exceeded',
+      message: 'example-256k supports only 256K context.',
       retryable: true,
+    };
+    const { session, unsubscribeCount } = makeScriptedSession(sessionId, {
+      script: [
+        {
+          type: 'turn.ended',
+          sessionId,
+          agentId: 'main',
+          turnId: 1,
+          reason: 'failed',
+          error: errorPayload,
+        } as Event,
+      ],
+    });
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
+    const client = new ClientSideConnection(() => new StubClient(), clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await expect(client.prompt({ sessionId, prompt: [textBlock('hi')] })).rejects.toMatchObject({
+      code: -32603,
+      message: 'Internal error: example-256k supports only 256K context.',
+    });
+    expect(unsubscribeCount()).toBe(1);
+  });
+
+  it('resolves with end_turn when a failed turn has an unrelated error code', async () => {
+    const sessionId = 'sess-generic-failed-turn';
+    const errorPayload: KimiErrorPayload = {
+      code: ErrorCodes.COMPACTION_FAILED,
+      message: 'Compaction failed',
+      retryable: false,
     };
     const { session, unsubscribeCount } = makeScriptedSession(sessionId, {
       script: [
@@ -210,6 +239,26 @@ describe('AcpServer error mapping', () => {
     await expect(
       client.prompt({ sessionId, prompt: [textBlock('hi')] }),
     ).rejects.toMatchObject({ code: -32000 });
+  });
+
+  it('preserves a synchronous context-overflow rejection message', async () => {
+    const sessionId = 'sess-prompt-rejects-context';
+    const { session } = makeScriptedSession(sessionId, {
+      rejectWith: new KimiError(
+        ErrorCodes.CONTEXT_OVERFLOW,
+        'example-256k supports only 256K context.',
+      ),
+    });
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
+    const client = new ClientSideConnection(() => new StubClient(), clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await expect(client.prompt({ sessionId, prompt: [textBlock('hi')] })).rejects.toMatchObject({
+      code: -32603,
+      message: 'Internal error: example-256k supports only 256K context.',
+    });
   });
 
   it('maps a generic session.prompt rejection to internalError (-32603) without leaking the stack', async () => {

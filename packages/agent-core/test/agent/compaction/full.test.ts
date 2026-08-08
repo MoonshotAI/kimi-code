@@ -1053,6 +1053,31 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('preserves context.overflow when auto compaction exceeds the model window', async () => {
+    const generate: GenerateFn = async () => {
+      throw new APIStatusError(401, 'example-256k supports only 256K context.');
+    };
+    const ctx = testAgent({ generate, compactionStrategy: alwaysCompactOnce });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger overflowing compaction' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'context.overflow',
+            message: 'example-256k supports only 256K context.',
+          }),
+        }),
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
   it('names truncated compaction responses when retries are exhausted', async () => {
     vi.useFakeTimers();
     let attempts = 0;

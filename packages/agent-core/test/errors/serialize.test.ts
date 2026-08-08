@@ -47,6 +47,18 @@ describe('toKimiErrorPayload — APIStatusError message sanitization', () => {
       'provider.auth_error',
     );
   });
+
+  it('maps a context-limit 401 to context.overflow and preserves its message', () => {
+    const payload = toKimiErrorPayload(
+      new APIStatusError(401, 'example-256k supports only 256K context.'),
+    );
+
+    expect(payload).toMatchObject({
+      code: 'context.overflow',
+      message: 'example-256k supports only 256K context.',
+      details: { statusCode: 401 },
+    });
+  });
 });
 
 describe('toKimiErrorPayload — quota-exhausted 429', () => {

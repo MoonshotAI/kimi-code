@@ -85,6 +85,7 @@ const OVERFLOW_CONTEXT_SAFETY_RATIO = 0.85;
 const OVERFLOW_STATUS_RECOVERY_RATIO = 0.5;
 const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
 const COMPACTION_OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
+const COMPACTION_CONTEXT_OVERFLOW_REASON = 'compaction_context_overflow';
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {},
@@ -299,7 +300,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     error: unknown,
     estimatedRequestTokens = this.currentRequestTokens(),
   ): boolean {
-    if (isCodedError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW) return true;
+    if (isCodedError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW) {
+      return error.details?.['reason'] !== COMPACTION_CONTEXT_OVERFLOW_REASON;
+    }
     const statusError = findAPIStatusError(error);
     if (statusError instanceof APIContextOverflowError) return true;
     if (statusError === undefined || statusError.statusCode !== 413) return false;
@@ -753,6 +756,15 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         trace_id: findAPIStatusError(error)?.traceId ?? active.traceId,
       };
       this.telemetry.track2('compaction_failed', properties);
+      if (isError2(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW) {
+        throw new Error2(ErrorCodes.CONTEXT_OVERFLOW, error.message, {
+          cause: error,
+          details: {
+            ...error.details,
+            reason: COMPACTION_CONTEXT_OVERFLOW_REASON,
+          },
+        });
+      }
       if (
         isError2(error) &&
         (error.code === ErrorCodes.AUTH_LOGIN_REQUIRED ||
