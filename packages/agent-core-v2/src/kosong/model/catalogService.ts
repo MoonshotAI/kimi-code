@@ -21,8 +21,11 @@
  * referenced provider vendor's declared `baseProtocol`; endpoint and
  * credential env fallbacks resolve through `resolveProviderEndpoint` against
  * the config env bag; host-header forwarding follows the vendor definition's
- * `hostHeaders`; capability detection is `resolveCapability(protocol, name,
- * providerType)`.
+ * `hostHeaders`, scoped by `isFirstPartyBaseUrl` — a vendor's
+ * `hostHeaders: 'full'` contract covers its own endpoint only, so a provider
+ * that speaks the same protocol but points elsewhere receives just the
+ * `User-Agent`, never the device identity set; capability detection is
+ * `resolveCapability(protocol, name, providerType)`.
  *
  * Caching (load-bearing): assembled entries are invalidated ONLY by the
  * model/provider config-change events. Tests that mutate config
@@ -101,7 +104,7 @@ import {
   toProtocolProvider,
 } from './catalog';
 import { ModelCatalogErrors } from './errors';
-import { IHostRequestHeaders } from './hostRequestHeaders';
+import { IHostRequestHeaders, isFirstPartyBaseUrl } from './hostRequestHeaders';
 import {
   assembleModelInspection,
   attributeEffectiveFields,
@@ -411,6 +414,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         providerConfig?.type,
         providerConfig?.customHeaders,
         this.hostRequestHeaders,
+        resolvedBaseUrl,
       ),
       capabilities,
       maxContextSize: model.maxContextSize,
@@ -573,10 +577,12 @@ export function resolveOutboundHeaders(
   providerType: string | undefined,
   customHeaders: Readonly<Record<string, string>> | undefined,
   host: Pick<IHostRequestHeaders, 'headers' | 'thirdPartyHeaders'>,
+  baseUrl: string | undefined,
 ): Readonly<Record<string, string>> {
   const forwardsAll =
     providerType !== undefined &&
-    getProviderDefinition(providerType)?.hostHeaders === 'full';
+    getProviderDefinition(providerType)?.hostHeaders === 'full' &&
+    isFirstPartyBaseUrl(baseUrl);
   const hostLayer = forwardsAll ? host.headers : host.thirdPartyHeaders;
   return { ...parseKimiCodeCustomHeaders(), ...hostLayer, ...customHeaders };
 }
