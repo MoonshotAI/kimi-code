@@ -66,6 +66,37 @@ describe('Agent tools', () => {
     expect(JSON.stringify(ctx.agent.context.data().history)).toContain('blocked by PreToolUse');
   });
 
+  it('appends successful PreToolUse stdout to model context after the tool result', async () => {
+    const hookEngine = new HookEngine([
+      {
+        event: 'PreToolUse',
+        matcher: 'Bash',
+        command: 'node -e "process.stdout.write(\'UNTRUSTED-CONTENT-MARKER\')"',
+      },
+    ]);
+    const ctx = testAgent({
+      kaos: createCommandKaos('tool output'),
+      hookEngine,
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    ctx.mockNextResponse({ type: 'text', text: 'The command completed.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run Bash' }] });
+
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(2);
+    const history = ctx.llmCalls[1]!.history;
+    const toolResultIndex = history.findIndex((message) => message.role === 'tool');
+    const hookResultIndex = history.findIndex((message) =>
+      JSON.stringify(message).includes('UNTRUSTED-CONTENT-MARKER'),
+    );
+    expect(hookResultIndex).toBeGreaterThan(toolResultIndex);
+    expect(history[hookResultIndex]?.role).toBe('user');
+  });
+
   it('emits PostToolUse after successful tools', async () => {
     const triggered: Array<[string, string, number]> = [];
     const hookEngine = new HookEngine(

@@ -978,6 +978,21 @@ export class TurnFlow {
               return this.agent.permission.beforeToolCall(ctx);
             },
             finalizeToolResult: async (ctx) => {
+              const preToolHookResult = this.agent.permission.takeAllowedPreToolHookResult(
+                ctx.toolCall.id,
+              );
+              if (preToolHookResult !== undefined) {
+                this.agent.context.appendUserMessage(
+                  [{ type: 'text', text: preToolHookResult.text }],
+                  { kind: 'hook_result', event: 'PreToolUse' },
+                );
+                this.agent.emitEvent({
+                  type: 'hook.result',
+                  turnId,
+                  hookEvent: preToolHookResult.event,
+                  content: preToolHookResult.message,
+                });
+              }
               // Calls rejected in preflight (e.g. invalid args) never reach
               // prepareToolExecution, so register them here — otherwise the
               // repeat breaker cannot count them and the model can re-issue
