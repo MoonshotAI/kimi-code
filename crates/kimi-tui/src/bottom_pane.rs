@@ -19,8 +19,11 @@ pub const GOAL_ARGS: &[&str] = &["status", "pause", "resume", "cancel", "replace
 /// key under `tui.cmd.*` — resolve via [`command_descriptions`].
 pub const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("/quit", "tui.cmd.quit"),
+    ("/q", "tui.cmd.quit"),
     ("/exit", "tui.cmd.exit"),
     ("/help", "tui.cmd.help"),
+    ("/h", "tui.cmd.help"),
+    ("/?", "tui.cmd.help"),
     ("/approvals", "tui.cmd.approvals"),
     ("/approve", "tui.cmd.approve"),
     ("/deny", "tui.cmd.deny"),
@@ -33,14 +36,18 @@ pub const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("/plan", "tui.cmd.plan"),
     ("/swarm", "tui.cmd.swarm"),
     ("/thinking", "tui.cmd.thinking"),
+    ("/effort", "tui.cmd.thinking"),
     ("/permission", "tui.cmd.permission"),
     ("/yolo", "tui.cmd.yolo"),
+    ("/yes", "tui.cmd.yolo"),
     ("/auto", "tui.cmd.auto"),
     ("/new", "tui.cmd.new"),
     ("/init", "tui.cmd.init"),
     ("/title", "tui.cmd.title"),
+    ("/rename", "tui.cmd.title"),
     ("/mcp", "tui.cmd.mcp"),
     ("/tasks", "tui.cmd.tasks"),
+    ("/task", "tui.cmd.tasks"),
     ("/theme", "tui.cmd.theme"),
     ("/version", "tui.cmd.version"),
     ("/models", "tui.cmd.models"),
@@ -65,6 +72,7 @@ pub const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("/archive", "tui.cmd.archive"),
     ("/login", "tui.cmd.login"),
     ("/logout", "tui.cmd.logout"),
+    ("/disconnect", "tui.cmd.logout"),
     ("/locale", "tui.cmd.locale"),
     ("/editor", "tui.cmd.editor"),
     ("/settings", "tui.cmd.settings"),
@@ -73,6 +81,7 @@ pub const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("/discuss", "tui.cmd.discuss"),
     ("/workflow", "tui.cmd.workflow"),
     ("/provider", "tui.cmd.provider"),
+    ("/providers", "tui.cmd.provider"),
     ("/reload-tui", "tui.cmd.reload-tui"),
 ];
 
@@ -105,12 +114,15 @@ pub const SLASH_COMMANDS: &[&str] = &[
     "/goal-resume",
     "/goal-status",
     "/help",
+    "/h",
+    "/?",
     "/import",
     "/info",
     "/init",
     "/locale",
     "/login",
     "/logout",
+    "/disconnect",
     "/mcp",
     "/model",
     "/models",
@@ -119,6 +131,7 @@ pub const SLASH_COMMANDS: &[&str] = &[
     "/plan",
     "/plugins",
     "/quit",
+    "/q",
     "/reload",
     "/resume",
     "/session",
@@ -129,19 +142,24 @@ pub const SLASH_COMMANDS: &[&str] = &[
     "/steer",
     "/swarm",
     "/tasks",
+    "/task",
     "/theme",
     "/thinking",
+    "/effort",
     "/title",
+    "/rename",
     "/undo",
     "/usage",
     "/version",
     "/yolo",
+    "/yes",
     "/editor",
     "/copy",
     "/export-md",
     "/discuss",
     "/workflow",
     "/provider",
+    "/providers",
     "/reload-tui",
 ];
 
@@ -466,6 +484,28 @@ mod tests {
         assert!(done2.starts_with('/'), "{done2}");
         assert_ne!(done2, done, "cycle advances");
         assert!(idx2.is_some());
+    }
+
+    #[test]
+    fn aliases_appear_in_completion() {
+        // Alias entries are listed with the canonical command's description
+        // (TS registry `aliases` parity — the popup offers both spellings).
+        let descs = command_descriptions();
+        for alias in [
+            "/h", "/?", "/q", "/yes", "/rename", "/task", "/effort", "/providers",
+            "/disconnect",
+        ] {
+            let (_, desc) = descs
+                .iter()
+                .find(|(name, _)| name == alias)
+                .unwrap_or_else(|| panic!("alias {alias} missing from descriptions"));
+            assert!(!desc.is_empty(), "alias {alias} desc empty");
+        }
+        // Tab completion expands aliases to the canonical name.
+        let (done, _) = complete_line("/q", &[], None);
+        assert_eq!(done, "/quit");
+        let (done, _) = complete_line("/provid", &[], None);
+        assert_eq!(done, "/provider");
     }
 
     #[test]

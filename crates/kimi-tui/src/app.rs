@@ -2934,6 +2934,7 @@ fn resolve_alias(cmd: &str) -> &str {
         "/task" => "/tasks",
         "/effort" => "/thinking",
         "/providers" => "/provider",
+        "/disconnect" => "/logout",
         _ => cmd,
     }
 }
@@ -3703,6 +3704,8 @@ mod tests {
         assert_eq!(resolve_alias("/rename"), "/title");
         assert_eq!(resolve_alias("/task"), "/tasks");
         assert_eq!(resolve_alias("/effort"), "/thinking");
+        assert_eq!(resolve_alias("/providers"), "/provider");
+        assert_eq!(resolve_alias("/disconnect"), "/logout");
         assert_eq!(resolve_alias("/plan"), "/plan");
     }
 

@@ -607,6 +607,12 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - **测试**：diff.rs 6 测试（LCS 回溯有序性/空输入全增删/header+行格式/**远距变更分簇+分隔**/body cap+截断提示/无变更仅 header）+ app.rs Edit 断言改带 gutter 行格式 → kimi-tui **91/91** 全绿；`cargo check --workspace` 0 errors
 - **待办**：媒体/子代理富卡片（tool-call.ts 剩余富结构）、G-4 对拍测试
 
+**2026-08-08 G-4 对拍审计：命令面 + 别名（D-2/D-3 收口）✅**：
+- **命令面对比**（TS `registry.ts` 42 命令 vs Rust `SLASH_COMMANDS` 56）：TS 独有 7 个逐一判定——`effort` 已被 Rust `/thinking` 覆盖（TS alias 相同）✅；`experiments`/`feedback`/`multi-llm`/`web`/`export-debug-zip` 为计划明确不做（Rust experimental flag 门控/遥测定案不做/web 走 CLI 子命令）✅；**`btw` 为唯一真实缺口**（'Ask a forked side agent a question'）——TS 为 BtwPanelController 完整面板（start_btw → 对 `btw-<session_id>` 会话 `session.prompt` → 按 agentId 路由事件渲染），Rust 端卡点：kimi-sdk `Session::new` 为 pub(crate) 无法公开构造任意 id 会话、事件流无 agentId 路由——**需 SDK 侧新增按 id prompt 面 + 事件路由，列入后续**（非 TUI 单侧可完成）
+- **别名对齐 ✅**：TS `aliases` 13 组中 9 组已在 Rust `resolve_alias`（app.rs：/yes→/yolo、/h|/?→/help、/q→/quit、/rename→/title、/task→/tasks、/effort→/thinking、/providers→/provider）；本批补 **/disconnect→/logout** + **补全列表加 9 个别名条目**（COMMAND_DESCRIPTIONS + SLASH_COMMANDS，TS parity：补全弹窗同时提供两种拼写；Tab 补全别名展开到规范名）
+- **测试**：resolve_alias +2 断言（/providers、/disconnect）、bottom_pane 新 `aliases_appear_in_completion`（9 别名描述非空 + /q→/quit、/provid→/provider）→ kimi-tui **92/92** 全绿；workspace 0 errors
+- **待办**：`/btw`（SDK btw 面 + 事件路由）、媒体/子代理富卡片、G-4 交互对拍测试
+
 **2026-08-06 CLI 续补（G-3 批次 2 + ACP 增补）**：
 - **选项冲突校验补全 ✅**（TS `validateOptions` parity）：`print` 空 prompt / 空 `--model` 报错（"Prompt/Model cannot be empty."）；`print --continue` 与全局 `-S <id>` clap `conflicts_with` 互斥；新增 2 集成测试 → cli.rs 44 全绿
 - **ACP skills 命令广告 + `/skill:` 拦截 ✅**（kimi-acp，TS `acp-adapter` parity）：
