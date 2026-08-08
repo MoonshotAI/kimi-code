@@ -8,6 +8,7 @@ pub mod app;
 pub mod bottom_pane;
 pub mod chatwidget;
 pub mod clipboard;
+pub mod diff;
 pub mod editor;
 pub mod footer;
 pub mod goal_queue;

@@ -598,6 +598,15 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - **测试**：`approval_preview_parses_tool_arguments` 扩 9 工具断言 + 新 `approval_preview_truncates_long_contents`（30 行 → 25 行 + "6 more lines" 提示）→ kimi-tui **85/85** 全绿；`cargo check --workspace` 0 errors
 - **待办**：真实 diff 聚类渲染（`renderDiffLinesClustered` 对拍，当前 -/+ 简化）、媒体/子代理富卡片（tool-call.ts 剩余富结构）、对拍测试
 
+**2026-08-08 G-4 分片 I：审批预览 diff 聚类渲染 ✅**：
+- **新模块 `crates/kimi-tui/src/diff.rs`**（TS `media/diff-preview` parity，无 ANSI 样式——行纯文本，渲染层着色）：
+  - `compute_diff_lines`：经典 LCS DP（O(m·n)）+ 回溯，`DiffLine{kind: context/add/delete, line_num, code}`，行号对齐 TS（context/add 用新文件行号、delete 用旧文件行号）
+  - `render_diff_clustered`：`+N -M path` 统计 header（path 空时 trim 尾空格）→ 变更簇（merge gap = 2×`DIFF_CONTEXT_LINES`(3)，簇上下扩展 context）→ 簇间 gap 输出 `… N unchanged line(s) …` 分隔 → body cap `DIFF_SUMMARY_MAX_LINES`(10，TS 常量对齐) + `… N more change(s) hidden` 截断提示；mid-cluster 可截断（单大簇仍显示前导行，不劣化为全隐藏）
+- **接线**：`approval_preview_lines` Edit 分支从简化 -/+ 行 → `render_diff_clustered`（`Edit: {path}` 行承担 diff header 的 path 角色）；无 old/new 仍 `(no change)`
+- **i18n**：新增 2 key（`tui.diff.unchangedLines` / `tui.diff.moreChangesHidden`，en+zh 成对，占位符 {0}）
+- **测试**：diff.rs 6 测试（LCS 回溯有序性/空输入全增删/header+行格式/**远距变更分簇+分隔**/body cap+截断提示/无变更仅 header）+ app.rs Edit 断言改带 gutter 行格式 → kimi-tui **91/91** 全绿；`cargo check --workspace` 0 errors
+- **待办**：媒体/子代理富卡片（tool-call.ts 剩余富结构）、G-4 对拍测试
+
 **2026-08-06 CLI 续补（G-3 批次 2 + ACP 增补）**：
 - **选项冲突校验补全 ✅**（TS `validateOptions` parity）：`print` 空 prompt / 空 `--model` 报错（"Prompt/Model cannot be empty."）；`print --continue` 与全局 `-S <id>` clap `conflicts_with` 互斥；新增 2 集成测试 → cli.rs 44 全绿
 - **ACP skills 命令广告 + `/skill:` 拦截 ✅**（kimi-acp，TS `acp-adapter` parity）：

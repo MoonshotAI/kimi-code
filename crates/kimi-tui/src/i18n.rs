@@ -263,6 +263,16 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "(无待办项)",
     ),
     (
+        "tui.diff.unchangedLines",
+        "{0} unchanged line(s) …",
+        "{0} 行未变更…",
+    ),
+    (
+        "tui.diff.moreChangesHidden",
+        "… {0} more change(s) hidden",
+        "… 还有 {0} 处变更已隐藏",
+    ),
+    (
         "tui.approval.notFound",
         "approval not found",
         "未找到该审批",

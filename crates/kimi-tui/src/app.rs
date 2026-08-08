@@ -240,20 +240,16 @@ fn approval_preview_lines(tool: &str, arguments: &str) -> Vec<String> {
         "Edit" => {
             let path = first_str(&args, &["file_path", "path"]);
             let mut lines = vec![format!("Edit: {path}")];
-            if let Some(old) = args["old_string"].as_str() {
-                for l in old.lines() {
-                    lines.push(format!("- {l}"));
-                }
-            }
-            if let Some(new) = args["new_string"].as_str() {
-                for l in new.lines() {
-                    lines.push(format!("+ {l}"));
-                }
-            }
-            if lines.len() == 1 {
+            let old = args["old_string"].as_str().unwrap_or("");
+            let new = args["new_string"].as_str().unwrap_or("");
+            if old.is_empty() && new.is_empty() {
                 lines.push("(no change)".to_string());
+            } else {
+                // LCS diff with context clustering (TS `renderDiffLinesClustered`
+                // parity); the caller's `Edit: {path}` line stands in for the
+                // diff header's path.
+                lines.extend(crate::diff::render_diff_clustered(old, new, ""));
             }
-            truncate_preview(&mut lines);
             lines
         }
         "Write" => {
@@ -3348,15 +3344,19 @@ mod tests {
 
     #[test]
     fn approval_preview_parses_tool_arguments() {
-        // Edit renders old/new hunks.
+        // Edit renders an LCS diff with context clustering.
         let lines = approval_preview_lines(
             "Edit",
             r#"{"file_path":"a.txt","old_string":"old","new_string":"new line"}"#,
         );
         assert_eq!(lines[0], "Edit: a.txt");
-        assert!(lines.contains(&"- old".to_string()), "lines: {lines:?}");
+        assert_eq!(lines[1], "+1 -1", "stats header: {lines:?}");
         assert!(
-            lines.contains(&"+ new line".to_string()),
+            lines.iter().any(|l| l.ends_with("- old")),
+            "lines: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.ends_with("+ new line")),
             "lines: {lines:?}"
         );
 
