@@ -440,10 +440,38 @@ describe('downgradeUnsupportedMedia', () => {
     expect(out[0]?.content).toEqual([imagePart, videoPart]);
   });
 
-  it('does not downgrade for UNKNOWN_CAPABILITY or an undefined capability', () => {
+  it('does not downgrade when capability is undefined (host omitted matrix)', () => {
     const input = [mediaMessage([videoPart])];
-    expect(downgradeUnsupportedMedia(input, UNKNOWN_CAPABILITY)[0]?.content).toEqual([videoPart]);
     expect(downgradeUnsupportedMedia(input, undefined)[0]?.content).toEqual([videoPart]);
+  });
+
+  it('preserves media for UNKNOWN_CAPABILITY (uncatalogued ≠ text-only)', () => {
+    // UNKNOWN is the SingleModelProvider / unresolved default: the model may
+    // still be multimodal. Explicit text-only matrices are covered below.
+    const input = [mediaMessage([imagePart, videoPart, audioPart])];
+    expect(downgradeUnsupportedMedia(input, UNKNOWN_CAPABILITY)[0]?.content).toEqual([
+      imagePart,
+      videoPart,
+      audioPart,
+    ]);
+  });
+
+  it('strips images when an explicit matrix has no image_in (#2669)', () => {
+    // ProviderManager resolves declared capabilities into a plain object
+    // (not the UNKNOWN marker), e.g. capabilities = ["thinking", "tool_use"].
+    const capability: ModelCapability = {
+      image_in: false,
+      video_in: false,
+      audio_in: false,
+      thinking: true,
+      tool_use: true,
+      max_context_tokens: 128_000,
+    };
+    const input = [mediaMessage([{ type: 'text', text: 'see this' }, imagePart])];
+    expect(downgradeUnsupportedMedia(input, capability)[0]?.content).toEqual([
+      { type: 'text', text: 'see this' },
+      { type: 'text', text: '[image omitted: current model has no image input]' },
+    ]);
   });
 
   it('returns a new array and never mutates the caller input', () => {
