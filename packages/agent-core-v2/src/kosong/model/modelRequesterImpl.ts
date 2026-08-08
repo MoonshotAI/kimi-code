@@ -4,8 +4,8 @@
  * This is the ONLY production code that calls
  * `IProtocolAdapterRegistry.createChatProvider`: it lazily composes exactly
  * one immutable ChatProvider per Model (on first use) and caches it for the
- * Model's lifetime; every per-turn variation arrives as `ModelRequestParams` and
- * is mapped onto `GenerateOptions` (overlay order inside the bases:
+ * Model's lifetime; every per-turn variation arrives as `ModelRequestOptions`
+ * and is mapped onto `GenerateOptions` (overlay order inside the bases:
  * `cacheKey → sampling → thinking → maxCompletionTokens`).
  *
  * The driver itself turns per-turn input (systemPrompt / tools / messages)
@@ -38,7 +38,7 @@ import type { AuthProvider, Model } from './catalog';
 import type {
   ModelRequestEvent,
   ModelRequestInput,
-  ModelRequestParams,
+  ModelRequestOptions,
   ModelRequester,
   ModelRequestTiming,
 } from './modelRequester';
@@ -68,7 +68,7 @@ export class ModelRequesterImpl implements ModelRequester {
   request(
     input: ModelRequestInput,
     signal?: AbortSignal,
-    params?: ModelRequestParams,
+    params?: ModelRequestOptions,
   ): AsyncIterable<ModelRequestEvent> {
     const queue = new AsyncEventQueue<ModelRequestEvent>();
     void this.runRequest(input, signal, queue, params).then(
@@ -98,7 +98,7 @@ export class ModelRequesterImpl implements ModelRequester {
     input: ModelRequestInput,
     signal: AbortSignal | undefined,
     queue: AsyncEventQueue<ModelRequestEvent>,
-    params?: ModelRequestParams,
+    params?: ModelRequestOptions,
   ): Promise<void> {
     signal?.throwIfAborted();
     const provider = this.resolveChatProvider();
@@ -118,10 +118,14 @@ export class ModelRequesterImpl implements ModelRequester {
           ? undefined
           : { effort: params.thinkingEffort, keep: params.thinkingKeep },
       maxCompletionTokens: params?.maxCompletionTokens,
+      maxCompletionTokensExplicit: params?.maxCompletionTokensExplicit,
       usedContextTokens: params?.usedContextTokens,
       maxContextTokens: params?.maxContextTokens,
       onRequestStart: () => {
         requestStartedAt = Date.now();
+      },
+      onRequestPrepared: (observation) => {
+        queue.push({ type: 'request', observation });
       },
       onRequestSent: () => {
         requestSentAt = Date.now();

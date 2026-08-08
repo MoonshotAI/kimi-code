@@ -3,10 +3,11 @@
  * ChatProvider (the adapter registry is stubbed to return it, so no wire I/O
  * happens):
  *
- *  - `ModelRequestParams` map 1:1 onto `GenerateOptions` (cacheKey / sampling /
+ *  - `ModelRequestOptions` map 1:1 onto `GenerateOptions` (cacheKey / sampling /
  *    thinking effort+keep / budget + window-clamp companions), with auth
  *    threaded per attempt;
- *  - the event stream carries parts, usage, finish, and timing;
+ *  - the event stream carries the prepared-request observation, parts, usage,
+ *    finish, and timing;
  *  - a 401 against a refreshable auth provider forces one token refresh and
  *    exactly one replay; a 401 that survives the replay surfaces as
  *    `provider.auth_error`; other failures go through
@@ -31,7 +32,6 @@ import { ProtocolErrors } from '#/kosong/protocol/errors';
 import type { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import type { Model } from '#/kosong/model/catalog';
 import type { ModelRequestEvent } from '#/kosong/model/modelRequester';
-import { effectiveMaxCompletionTokens } from '#/kosong/model/modelRequester';
 import { buildStreamTiming, ModelRequesterImpl } from '#/kosong/model/modelRequesterImpl';
 
 class FakeChatProvider implements ChatProvider {
@@ -59,6 +59,7 @@ class FakeChatProvider implements ChatProvider {
   ): Promise<StreamedMessage> {
     this.calls.push({ systemPrompt, tools, history, options });
     options?.onRequestStart?.();
+    options?.onRequestPrepared?.({ maxCompletionTokens: options.maxCompletionTokens });
     options?.onRequestSent?.();
     const stream = await this.handler(this.calls.length - 1);
     return stream;
@@ -144,12 +145,12 @@ async function collect(stream: AsyncIterable<ModelRequestEvent>): Promise<ModelR
 const INPUT = { systemPrompt: 'sys', tools: [], messages: [] };
 
 describe('ModelRequesterImpl request execution', () => {
-  it('maps ModelRequestParams onto GenerateOptions 1:1', async () => {
+  it('maps ModelRequestOptions onto GenerateOptions 1:1', async () => {
     const provider = new FakeChatProvider();
     const requester = new ModelRequesterImpl(modelWith(staticAuth('sk-1')), registryReturning(provider));
     const signal = AbortSignal.timeout(1000);
 
-    await collect(
+    const events = await collect(
       requester.request(
         { ...INPUT, responseFormat: { type: 'json_object' } },
         signal,
@@ -159,6 +160,7 @@ describe('ModelRequesterImpl request execution', () => {
           thinkingEffort: 'high',
           thinkingKeep: 'all',
           maxCompletionTokens: 1024,
+          maxCompletionTokensExplicit: true,
           usedContextTokens: 5000,
           maxContextTokens: 128000,
         },
@@ -173,9 +175,14 @@ describe('ModelRequesterImpl request execution', () => {
     expect(options?.sampling).toEqual({ temperature: 0.5, topP: 0.9 });
     expect(options?.thinking).toEqual({ effort: 'high', keep: 'all' });
     expect(options?.maxCompletionTokens).toBe(1024);
+    expect(options?.maxCompletionTokensExplicit).toBe(true);
     expect(options?.usedContextTokens).toBe(5000);
     expect(options?.maxContextTokens).toBe(128000);
     expect(options?.responseFormat).toEqual({ type: 'json_object' });
+    expect(events).toContainEqual({
+      type: 'request',
+      observation: { maxCompletionTokens: 1024 },
+    });
   });
 
   it('omits the thinking intent when no effort is requested', async () => {
@@ -203,7 +210,7 @@ describe('ModelRequesterImpl request execution', () => {
     );
 
     const types = events.map((e) => e.type);
-    expect(types).toEqual(['part', 'usage', 'finish', 'timing']);
+    expect(types).toEqual(['request', 'part', 'usage', 'finish', 'timing']);
     const usage = events.find((e) => e.type === 'usage');
     expect(usage).toMatchObject({ usage: { output: 7 }, model: 'fake-model' });
     const finish = events.find((e) => e.type === 'finish');
@@ -303,14 +310,6 @@ describe('ModelRequesterImpl request execution', () => {
     const part = await requester.uploadVideo('file-id');
     expect(part).toEqual({ type: 'video_url', videoUrl: { url: 'https://cdn.example.test/v.mp4' } });
     expect(uploadCalls[0]?.auth).toEqual({ apiKey: 'sk-1' });
-  });
-});
-
-describe('effectiveMaxCompletionTokens', () => {
-  it('reads the folded budget back from the params', () => {
-    expect(effectiveMaxCompletionTokens(undefined)).toBeUndefined();
-    expect(effectiveMaxCompletionTokens({})).toBeUndefined();
-    expect(effectiveMaxCompletionTokens({ maxCompletionTokens: 512 })).toBe(512);
   });
 });
 

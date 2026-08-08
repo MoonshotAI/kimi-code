@@ -172,7 +172,7 @@ import { secondaryModelOverlay } from '#/app/kosongConfig/secondaryModelOverlay'
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ModelCatalog } from '#/kosong/model/catalogService';
 import { IModelOAuthTokens } from '#/kosong/model/modelOAuth';
-import type { ModelRequestParams, ModelRequester } from '#/kosong/model/modelRequester';
+import type { ModelRequestOptions, ModelRequester } from '#/kosong/model/modelRequester';
 import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
 import {
   IProviderService,
@@ -958,7 +958,7 @@ class ConfigBackedModelCatalog extends ModelCatalog {
       request: (
         input: Parameters<ModelRequester['request']>[0],
         signal?: AbortSignal,
-        params?: ModelRequestParams,
+        params?: ModelRequestOptions,
       ) => requester.request(input, signal, { cacheKey, ...params }),
     };
   }
@@ -2701,6 +2701,9 @@ async function generateBackedResponse(
   options?: GenerateOptions,
 ): Promise<StreamedMessage> {
   const parts: StreamedMessagePart[] = [];
+  options?.onRequestPrepared?.({
+    maxCompletionTokens: options.maxCompletionTokens,
+  });
   const result = await generateFn(
     provider,
     systemPrompt,
@@ -2718,6 +2721,7 @@ async function generateBackedResponse(
       sampling: options?.sampling,
       thinking: options?.thinking,
       maxCompletionTokens: options?.maxCompletionTokens,
+      maxCompletionTokensExplicit: options?.maxCompletionTokensExplicit,
       usedContextTokens: options?.usedContextTokens,
       maxContextTokens: options?.maxContextTokens,
       responseFormat: options?.responseFormat,

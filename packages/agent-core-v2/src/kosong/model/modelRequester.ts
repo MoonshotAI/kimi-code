@@ -1,19 +1,23 @@
 /**
  * `kosong/model` domain — the `ModelRequester` contract: per-turn input,
- * streamed events, and the per-turn intent carrier `ModelRequestParams`.
+ * streamed events, the per-turn intent carrier `ModelRequestParams`, and the
+ * execution-only hooks in `ModelRequestOptions`.
  *
  * `ModelRequestParams` is how every per-turn intent reaches the wire: prompt-cache
  * key, sampling overrides, thinking effort/keep, and the completion-token
- * budget (with its window-clamp companions). It is deliberately dialect-free —
+ * budget (with its window-clamp companions and explicit marker). It is
+ * deliberately dialect-free —
  * each wire dialect encodes (or silently drops) an intent in its own hooks.
- * The requester maps the params onto `GenerateOptions` 1:1; the fixed overlay
- * order inside the bases is `cacheKey → sampling → thinking →
+ * The requester maps the params onto `GenerateOptions` 1:1 and reports the
+ * provider's final request observation through its event stream; the fixed
+ * overlay order inside the bases is `cacheKey → sampling → thinking →
  * maxCompletionTokens`.
  */
 
 import type { Message, StreamedMessagePart, VideoURLPart } from '#/kosong/contract/message';
 import type {
   FinishReason,
+  ProviderRequestObservation,
   ResponseFormat,
   SamplingOptions,
   ThinkingEffort,
@@ -41,6 +45,7 @@ export interface ModelRequestTiming {
 }
 
 export type ModelRequestEvent =
+  | { readonly type: 'request'; readonly observation: ProviderRequestObservation }
   | { readonly type: 'part'; readonly part: StreamedMessagePart }
   | { readonly type: 'usage'; readonly usage: TokenUsage; readonly model?: string }
   | {
@@ -59,8 +64,12 @@ export interface ModelRequestParams {
   readonly thinkingEffort?: ThinkingEffort;
   readonly thinkingKeep?: string;
   readonly maxCompletionTokens?: number;
+  readonly maxCompletionTokensExplicit?: boolean;
   readonly usedContextTokens?: number;
   readonly maxContextTokens?: number;
+}
+
+export interface ModelRequestOptions extends ModelRequestParams {
   readonly onTraceId?: (traceId: string | null) => void;
 }
 
@@ -70,15 +79,11 @@ export interface ModelRequester {
   request(
     input: ModelRequestInput,
     signal?: AbortSignal,
-    params?: ModelRequestParams,
+    options?: ModelRequestOptions,
   ): AsyncIterable<ModelRequestEvent>;
 
   uploadVideo?(
     input: string | VideoUploadInput,
     options?: { readonly signal?: AbortSignal },
   ): Promise<VideoURLPart>;
-}
-
-export function effectiveMaxCompletionTokens(params?: ModelRequestParams): number | undefined {
-  return params?.maxCompletionTokens;
 }

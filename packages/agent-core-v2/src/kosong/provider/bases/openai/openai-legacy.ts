@@ -54,6 +54,7 @@ import {
   type BufferedChatCompletionToolCall,
 } from './chat-completions-stream';
 import {
+  clampCompletionTokens,
   convertContentPart,
   convertOpenAIError,
   convertToolMessageContent,
@@ -79,9 +80,6 @@ import {
   resolveAuthBackedClient,
 } from '../request-auth';
 import { normalizeToolCallIdsForProvider, sanitizeToolCallId } from '../tool-call-id';
-
-
-const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
 
 export const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
@@ -635,6 +633,13 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     try {
       const client = this._createClient(options?.auth);
+      const maxCompletionTokens =
+        typeof finalParams['max_completion_tokens'] === 'number'
+          ? finalParams['max_completion_tokens']
+          : typeof finalParams['max_tokens'] === 'number'
+            ? finalParams['max_tokens']
+            : undefined;
+      options?.onRequestPrepared?.({ maxCompletionTokens });
       options?.onRequestSent?.();
       const { data, response } = await client.chat.completions
         .create(
@@ -723,8 +728,13 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       if (hooked !== undefined) {
         kwargs = { ...kwargs, ...hooked };
       } else {
-        const capped = Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING);
-        kwargs = { ...kwargs, ...completionTokenKwargs(this._model, Math.max(1, capped)) };
+        kwargs = {
+          ...kwargs,
+          ...completionTokenKwargs(
+            this._model,
+            clampCompletionTokens(options.maxCompletionTokens, options),
+          ),
+        };
       }
     }
 

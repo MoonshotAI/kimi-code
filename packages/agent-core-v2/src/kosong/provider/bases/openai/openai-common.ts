@@ -281,3 +281,27 @@ export function isOpenAIReasoningModel(normalizedModelName: string): boolean {
 export function hasModelPrefix(modelName: string, prefixes: readonly string[]): boolean {
   return prefixes.some((prefix) => modelName.startsWith(prefix));
 }
+
+export const OPENAI_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
+
+export function clampCompletionTokens(
+  maxCompletionTokens: number,
+  options?: {
+    maxCompletionTokensExplicit?: boolean;
+    usedContextTokens?: number;
+    maxContextTokens?: number;
+  },
+): number {
+  let cap = maxCompletionTokens;
+  if (
+    options?.usedContextTokens !== undefined &&
+    options.maxContextTokens !== undefined &&
+    options.maxContextTokens > 0
+  ) {
+    cap = Math.min(cap, options.maxContextTokens - options.usedContextTokens);
+  }
+  if (options?.maxCompletionTokensExplicit === true) {
+    return Math.max(1, cap);
+  }
+  return Math.max(1, Math.min(cap, OPENAI_MAX_OUTPUT_TOKENS_CEILING));
+}
