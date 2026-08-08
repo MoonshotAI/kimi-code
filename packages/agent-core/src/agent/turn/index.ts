@@ -634,7 +634,14 @@ export class TurnFlow {
           inputData: { errorType: summary.name, errorMessage: summary.message },
         });
         ended = { type: 'turn.ended', turnId, reason: 'failed', error: summary, durationMs: Date.now() - startedAt };
-        errorEvent = { type: 'error', ...summary };
+        // A goal-driven turn cut by the per-turn step limit is expected
+        // control flow — the goal driver immediately continues with a fresh
+        // continuation turn — so it must not raise the standalone error event
+        // that hosts render as an actionable failure. `turn.ended` and the
+        // `turn.interrupted` loop event still report the cap.
+        if (!(isMaxStepsExceededError(error) && this.agent.goal.getActiveGoal() !== null)) {
+          errorEvent = { type: 'error', ...summary };
+        }
         if (this.shouldTrackApiError(turnId)) {
           const classification = classifyApiError(error, summary);
           const properties: Record<string, TelemetryPropertyValue> = {

@@ -523,6 +523,9 @@ describe('goal session end-to-end', () => {
           ErrorCodes.LOOP_MAX_STEPS_EXCEEDED,
     );
     expect(maxStepEnds).toHaveLength(2);
+    // Capped goal turns are expected control flow: no standalone error event
+    // is emitted for hosts to render as an actionable failure.
+    expect(events.filter((event) => event['type'] === 'error')).toEqual([]);
     // The cap never pauses or blocks the goal: no stopped status is ever
     // emitted, and the goal completes (record cleared) in the third turn.
     expect(
