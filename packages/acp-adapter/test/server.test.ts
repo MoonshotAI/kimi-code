@@ -81,6 +81,8 @@ describe('AcpServer + AgentSideConnection', () => {
     expect(response.agentCapabilities?.mcpCapabilities?.sse).toBe(true);
     expect(response.agentCapabilities?.sessionCapabilities?.list).toEqual({});
     expect(response.agentCapabilities?.sessionCapabilities?.resume).toEqual({});
+    // Mid-turn steering capability (issue #2370 / `_session/steering`).
+    expect(response._meta).toEqual({ steering: { supported: true } });
   });
 
   it('initialize advertises terminal-auth with id, type, args, name', async () => {

@@ -5,6 +5,7 @@ import {
   ClientSideConnection,
   ndJsonStream,
   type Client,
+  type ContentBlock,
   type ReadTextFileRequest,
   type ReadTextFileResponse,
   type RequestPermissionRequest,
@@ -13,16 +14,17 @@ import {
   type WriteTextFileRequest,
   type WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import type { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import type { Event, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { AcpServer } from '../src/server';
+import { AUTHED_STATUS } from './_helpers/harness-stubs';
 
 class StubClient implements Client {
   async requestPermission(_p: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     throw new Error('StubClient.requestPermission should not be called in ext-methods test');
   }
   async sessionUpdate(_n: SessionNotification): Promise<void> {
-    throw new Error('StubClient.sessionUpdate should not be called in ext-methods test');
+    // Steering / session-new may emit available_commands_update; ignore.
   }
   async writeTextFile(_p: WriteTextFileRequest): Promise<WriteTextFileResponse> {
     throw new Error('StubClient.writeTextFile should not be called in ext-methods test');
@@ -48,6 +50,9 @@ function makeMinimalHarness(): KimiHarness {
   // is irrelevant for these tests so the stub keeps the harness flat.
   return {} as unknown as KimiHarness;
 }
+
+const STEER_METHOD = '_session/steering';
+const textBlock = (text: string): ContentBlock => ({ type: 'text', text });
 
 describe('AcpServer ext method surface', () => {
   it('unit-level extMethod throws RequestError.methodNotFound with the method name', async () => {
@@ -78,6 +83,129 @@ describe('AcpServer ext method surface', () => {
 
     await expect(client.extMethod('myorg.unsupported', {})).rejects.toMatchObject({
       code: -32601,
+    });
+  });
+
+  it('over-the-wire _session/steering rejects when the session is idle', async () => {
+    const sessionId = 'sess-steer-idle';
+    const session = {
+      id: sessionId,
+      prompt: async () => undefined,
+      steer: async () => {
+        throw new Error('steer should not be called when idle');
+      },
+      cancel: async () => undefined,
+      onEvent: () => () => undefined,
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+
+    await expect(
+      client.extMethod(STEER_METHOD, {
+        sessionId,
+        prompt: [textBlock('follow up')],
+      }),
+    ).rejects.toMatchObject({
+      // invalidRequest — host should resubmit via session/prompt.
+      code: -32600,
+      message: expect.stringContaining('session/prompt'),
+    });
+  });
+
+  it('over-the-wire _session/steering injects into a running turn', async () => {
+    const sessionId = 'sess-steer-busy';
+    const steered: unknown[] = [];
+    let releaseTurn: (() => void) | undefined;
+    const turnGate = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    let signalPromptStarted: (() => void) | undefined;
+    const promptStarted = new Promise<void>((resolve) => {
+      signalPromptStarted = resolve;
+    });
+    const listeners = new Set<(event: Event) => void>();
+    const session = {
+      id: sessionId,
+      prompt: async () => {
+        signalPromptStarted?.();
+        // Hold the ACP prompt open until the test releases it, so
+        // `_session/steering` sees an active turn.
+        await turnGate;
+        for (const fn of listeners) {
+          fn({
+            type: 'turn.ended',
+            sessionId,
+            agentId: 'main',
+            turnId: 1,
+            reason: 'completed',
+          } as Event);
+        }
+      },
+      steer: async (input: unknown) => {
+        steered.push(input);
+      },
+      cancel: async () => undefined,
+      onEvent: (fn: (event: Event) => void) => {
+        listeners.add(fn);
+        return () => {
+          listeners.delete(fn);
+        };
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+
+    const promptPromise = client.prompt({
+      sessionId,
+      prompt: [textBlock('start')],
+    });
+    await promptStarted;
+
+    const steerResult = await client.extMethod(STEER_METHOD, {
+      sessionId,
+      prompt: [textBlock('also do this')],
+    });
+    expect(steerResult).toEqual({ outcome: 'injected' });
+    expect(steered).toEqual([[{ type: 'text', text: 'also do this' }]]);
+
+    releaseTurn?.();
+    await expect(promptPromise).resolves.toMatchObject({ stopReason: 'end_turn' });
+  });
+
+  it('over-the-wire _session/steering rejects unknown sessionId', async () => {
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => {
+        throw new Error('createSession should not be called');
+      },
+    } as unknown as KimiHarness;
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await expect(
+      client.extMethod(STEER_METHOD, {
+        sessionId: 'missing',
+        prompt: [textBlock('x')],
+      }),
+    ).rejects.toMatchObject({
+      code: -32602, // invalidParams
     });
   });
 });
