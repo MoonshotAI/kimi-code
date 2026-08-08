@@ -705,6 +705,295 @@ describe('kimi-cu entry', () => {
     expect(host.calls).toHaveLength(1);
   });
 
+  it('installs through a PowerShell 7 found only via where.exe on an MSIX-only machine', async () => {
+    const plugins = fakePlugins([]);
+    const calls: string[] = [];
+    // MSIX installs have no C:\Program Files\PowerShell\7\pwsh.exe; the
+    // working binary is the WindowsApps execution alias on PATH.
+    const alias = 'C:\\Users\\probe\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe';
+    const previousLocalAppData = process.env['LOCALAPPDATA'];
+    process.env['LOCALAPPDATA'] = 'C:\\Users\\probe\\AppData\\Local';
+    const doctorResults = [
+      { code: 3, stdout: '', stderr: '' },
+      {
+        code: 0,
+        stdout: 'version=0.2.14\r\nmcp=true\r\nhelper=embedded\r\nagent=running\r\n',
+        stderr: '',
+      },
+    ];
+    try {
+      const hostProcess = {
+        _serviceBrand: undefined,
+        spawn: (command: string, args: readonly string[] = []) => {
+          calls.push(`${command} ${args.join(' ')}`);
+          if (command === windowsPowerShell7Path()) {
+            return Promise.reject(
+              new Error(`Failed to spawn "${command}": spawn ${command} ENOENT`),
+            );
+          }
+          if (command === 'where.exe') {
+            return Promise.resolve(fakeProc(0, `${alias}\r\n`));
+          }
+          if (args.some((arg) => arg.includes('Get-FileHash'))) {
+            return Promise.resolve(
+              command === windowsPowerShellPath()
+                ? fakeProc(2, '', 'missing commands: Get-FileHash, Get-AuthenticodeSignature')
+                : fakeProc(0, 'PowerShell 7.5.2'),
+            );
+          }
+          if (args.some((arg) => arg.includes('setup_windows.ps1'))) {
+            return Promise.resolve(fakeProc(0));
+          }
+          if (args.includes('-Command')) {
+            const result = doctorResults.shift();
+            return Promise.resolve(
+              fakeProc(
+                result?.code ?? 1,
+                result?.stdout ?? '',
+                result?.stderr ?? 'unexpected doctor',
+              ),
+            );
+          }
+          return Promise.resolve(fakeProc(1));
+        },
+      } as IHostProcessService;
+      const entry = createKimiCuEntry(
+        makeCtx({
+          platform: 'win32',
+          arch: 'x64',
+          plugins: plugins.service,
+          hostProcess,
+          fetchImpl: (() =>
+            Promise.resolve(
+              new Response("Write-Host 'official setup'", {
+                headers: { 'content-length': '27' },
+              }),
+            )) as typeof fetch,
+        }),
+      );
+
+      await entry.install(() => undefined);
+
+      // The setup script ran through the WindowsApps alias.
+      expect(
+        calls.some((call) => call.startsWith(alias) && call.includes('setup_windows.ps1')),
+      ).toBe(true);
+      // The where.exe result and the explicit WindowsApps candidate dedupe
+      // into a single probe — the alias path is spawned exactly once for the
+      // installer probe, never twice as separate candidates.
+      expect(
+        calls.filter((call) => call.startsWith(alias) && call.includes('Get-FileHash')),
+      ).toHaveLength(1);
+      expect(plugins.installs).toEqual([
+        'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+      ]);
+    } finally {
+      if (previousLocalAppData === undefined) {
+        delete process.env['LOCALAPPDATA'];
+      } else {
+        process.env['LOCALAPPDATA'] = previousLocalAppData;
+      }
+    }
+  });
+
+  it('pins PSModulePath to $PSHOME before the installer probe and the setup script', async () => {
+    const plugins = fakePlugins([]);
+    const calls: string[] = [];
+    const doctorResults = [
+      { code: 3, stdout: '', stderr: '' },
+      {
+        code: 0,
+        stdout: 'version=0.2.14\r\nmcp=true\r\nhelper=embedded\r\nagent=running\r\n',
+        stderr: '',
+      },
+    ];
+    const hostProcess = {
+      _serviceBrand: undefined,
+      spawn: (command: string, args: readonly string[] = []) => {
+        calls.push(`${command} ${args.join(' ')}`);
+        if (args.some((arg) => arg.includes('Get-FileHash'))) {
+          return Promise.resolve(fakeProc(0, 'PowerShell 5.1'));
+        }
+        if (args.some((arg) => arg.includes('setup_windows.ps1'))) {
+          return Promise.resolve(fakeProc(0));
+        }
+        if (args.includes('-Command')) {
+          const result = doctorResults.shift();
+          return Promise.resolve(
+            fakeProc(
+              result?.code ?? 1,
+              result?.stdout ?? '',
+              result?.stderr ?? 'unexpected doctor',
+            ),
+          );
+        }
+        return Promise.resolve(fakeProc(1));
+      },
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(
+      makeCtx({
+        platform: 'win32',
+        arch: 'x64',
+        plugins: plugins.service,
+        hostProcess,
+        fetchImpl: (() =>
+          Promise.resolve(
+            new Response("Write-Host 'official setup'", {
+              headers: { 'content-length': '27' },
+            }),
+          )) as typeof fetch,
+      }),
+    );
+
+    await entry.install(() => undefined);
+
+    const probeCall = calls.find((call) => call.includes('Get-FileHash'))!;
+    expect(probeCall).toContain("(Join-Path $PSHOME 'Modules')");
+    expect(probeCall.indexOf("(Join-Path $PSHOME 'Modules')")).toBeLessThan(
+      probeCall.indexOf('$required'),
+    );
+    const setupCall = calls.find((call) => call.includes('setup_windows.ps1'))!;
+    expect(setupCall).toContain("(Join-Path $PSHOME 'Modules')");
+    expect(setupCall.indexOf("(Join-Path $PSHOME 'Modules')")).toBeLessThan(
+      setupCall.indexOf('setup_windows.ps1'),
+    );
+  });
+
+  it('gives the post-install doctor a longer timeout than the detect probes', async () => {
+    const plugins = fakePlugins([]);
+    const doctorResults = [{ code: 3, stdout: '', stderr: '' }];
+    const hostProcess = {
+      _serviceBrand: undefined,
+      spawn: (command: string, args: readonly string[] = []) => {
+        if (args.some((arg) => arg.includes('Get-FileHash'))) {
+          return Promise.resolve(fakeProc(0, 'PowerShell 5.1'));
+        }
+        if (args.some((arg) => arg.includes('setup_windows.ps1'))) {
+          return Promise.resolve(fakeProc(0));
+        }
+        if (args.includes('-Command')) {
+          const result = doctorResults.shift();
+          if (result !== undefined) {
+            return Promise.resolve(fakeProc(result.code, result.stdout, result.stderr));
+          }
+          // A fresh install's first `doctor` run outlives the 3s detect probe
+          // budget — the post-install check must use the longer installer one.
+          return Promise.resolve({
+            _serviceBrand: undefined,
+            pid: 1234,
+            exitCode: null,
+            stdin: new Writable({
+              write: (_c, _e, cb) => {
+                cb();
+              },
+            }),
+            stdout: Readable.from(['']),
+            stderr: Readable.from(['']),
+            wait: () => new Promise<number>(() => {}),
+            kill: () => Promise.resolve(),
+            dispose: () => undefined,
+          } as IHostProcess);
+        }
+        return Promise.resolve(fakeProc(1));
+      },
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(
+      makeCtx({
+        platform: 'win32',
+        arch: 'x64',
+        plugins: plugins.service,
+        hostProcess,
+        fetchImpl: (() =>
+          Promise.resolve(
+            new Response("Write-Host 'official setup'", {
+              headers: { 'content-length': '27' },
+            }),
+          )) as typeof fetch,
+        detectProbeTimeoutMs: 5,
+        installerProbeTimeoutMs: 50,
+      }),
+    );
+
+    const install = entry.install(() => undefined);
+    await expect(install).rejects.toThrow(/command timed out after 50ms/);
+  });
+
+  it('fails cleanly when where.exe cannot find pwsh', async () => {
+    const plugins = fakePlugins([]);
+    let downloads = 0;
+    const hostProcess = {
+      _serviceBrand: undefined,
+      spawn: (command: string, args: readonly string[] = []) => {
+        if (command === 'where.exe') {
+          return Promise.resolve(fakeProc(1));
+        }
+        if (args.some((arg) => arg.includes('Get-FileHash'))) {
+          return Promise.resolve(
+            fakeProc(2, '', `${command}: missing commands: Get-FileHash, Expand-Archive`),
+          );
+        }
+        return Promise.resolve(fakeProc(3));
+      },
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(
+      makeCtx({
+        platform: 'win32',
+        arch: 'x64',
+        plugins: plugins.service,
+        hostProcess,
+        fetchImpl: (() => {
+          downloads += 1;
+          return Promise.reject(new Error('download should not start'));
+        }) as typeof fetch,
+      }),
+    );
+
+    await expect(entry.install(() => undefined)).rejects.toThrow(
+      /requires Windows PowerShell 5\.1 or PowerShell 7.*Get-FileHash, Expand-Archive/,
+    );
+
+    expect(plugins.installs).toEqual([]);
+    expect(downloads).toBe(0);
+  });
+
+  it('fails cleanly when where.exe itself cannot be spawned', async () => {
+    const plugins = fakePlugins([]);
+    let downloads = 0;
+    const hostProcess = {
+      _serviceBrand: undefined,
+      spawn: (command: string, args: readonly string[] = []) => {
+        if (command === 'where.exe') {
+          return Promise.reject(new Error('Failed to spawn "where.exe": spawn where.exe ENOENT'));
+        }
+        if (args.some((arg) => arg.includes('Get-FileHash'))) {
+          return Promise.resolve(
+            fakeProc(2, '', `${command}: missing commands: Get-FileHash, Expand-Archive`),
+          );
+        }
+        return Promise.resolve(fakeProc(3));
+      },
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(
+      makeCtx({
+        platform: 'win32',
+        arch: 'x64',
+        plugins: plugins.service,
+        hostProcess,
+        fetchImpl: (() => {
+          downloads += 1;
+          return Promise.reject(new Error('download should not start'));
+        }) as typeof fetch,
+      }),
+    );
+
+    await expect(entry.install(() => undefined)).rejects.toThrow(
+      /requires Windows PowerShell 5\.1 or PowerShell 7.*Get-FileHash, Expand-Archive/,
+    );
+
+    expect(plugins.installs).toEqual([]);
+    expect(downloads).toBe(0);
+  });
+
   it('detects all four layers with details', async () => {
     const applicationsDir = await fakeAppBundle();
     const plugins = fakePlugins([{ id: 'kimi-cu', enabled: true, state: 'ok', version: '0.5.4' }]);

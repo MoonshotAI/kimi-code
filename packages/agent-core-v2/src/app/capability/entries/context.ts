@@ -19,5 +19,6 @@ export interface CapabilityEntryContext {
   readonly applicationsDir?: string;
   readonly webbridgeBaseUrl?: string;
   readonly detectProbeTimeoutMs?: number;
+  readonly installerProbeTimeoutMs?: number;
   readonly commandTimeoutMs?: number;
 }
