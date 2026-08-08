@@ -134,6 +134,15 @@ describe('FooterComponent status_line items', () => {
 });
 
 describe('runStatusLineCommand', () => {
+  it.runIf(process.platform === 'win32')(
+    'preserves double quotes in Windows commands',
+    async () => {
+      const command = `"${process.execPath}" -e "process.stdout.write('quoted-ok')"`;
+
+      expect(await runStatusLineCommand(command, payload, 5_000)).toBe('quoted-ok');
+    },
+  );
+
   it('passes the payload as JSON on stdin and returns the first stdout line', async () => {
     const line = await runStatusLineCommand('cat', payload);
 
