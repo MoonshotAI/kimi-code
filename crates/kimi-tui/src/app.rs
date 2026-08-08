@@ -19,7 +19,7 @@ use crate::t;
 /// The role/source of a transcript line, driving its render style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TranscriptKind {
-    /// The user's own prompt (`▶ …`).
+    /// The user's own prompt (`✨ …`).
     User,
     /// Assistant text (final transcript of a turn).
     Assistant,
@@ -61,6 +61,8 @@ pub struct ToolCallEntry {
     /// AskUserQuestion — renders with a ❓ prefix and a reply hint, since
     /// the user's answer arrives as the next message.
     pub is_question: bool,
+    /// Execution time (started → settled), when known.
+    pub duration: Option<std::time::Duration>,
     /// Long results start collapsed (`[+]`; Ctrl-O toggles).
     pub collapsed: bool,
 }
@@ -495,6 +497,8 @@ pub struct App {
     auto_allow_rules: std::collections::HashSet<String>,
     /// Pasted image attachments referenced by `[image #N]` placeholders.
     image_attachments: Vec<crate::clipboard::ImageAttachment>,
+    /// Tool start timestamps (tool_call_id → Instant) for duration display.
+    tool_started_at: std::collections::HashMap<String, std::time::Instant>,
     /// Input-editing state (prompt line, cursor, history, Tab).
     edit: EditorState,
     /// Rendering / view state (transcript, scroll, footer, theme).
@@ -519,6 +523,7 @@ impl App {
             overlay: None,
             auto_allow_rules: std::collections::HashSet::new(),
             image_attachments: Vec::new(),
+            tool_started_at: std::collections::HashMap::new(),
             edit: EditorState::default(),
             view: ViewState::default(),
         }
@@ -2488,6 +2493,11 @@ impl App {
             let args = serde_json::to_string(&event["arguments"]).unwrap_or_default();
             let collapsed = args.chars().count() > 120;
             let is_question = tool_name == "AskUserQuestion";
+            // Record the start time (empty ids don't get a duration).
+            if !tool_call_id.is_empty() {
+                self.tool_started_at
+                    .insert(tool_call_id.clone(), std::time::Instant::now());
+            }
             match find_index.and_then(|i| self.view.transcript.get_mut(i)) {
                 Some(TranscriptEntry::ToolCall(existing)) => {
                     existing.tool_name = tool_name;
@@ -2495,6 +2505,7 @@ impl App {
                     existing.result = None;
                     existing.is_error = false;
                     existing.is_question = is_question;
+                    existing.duration = None;
                     existing.collapsed = collapsed;
                 }
                 _ => {
@@ -2507,6 +2518,7 @@ impl App {
                             result: None,
                             is_error: false,
                             is_question,
+                            duration: None,
                             collapsed,
                         }));
                 }
@@ -2520,11 +2532,17 @@ impl App {
                 result = crate::media::media_summary_text(&result).unwrap_or(result);
             }
             let is_question = tool_name == "AskUserQuestion";
+            // Resolve the elapsed time from the started event.
+            let duration = self
+                .tool_started_at
+                .remove(&tool_call_id)
+                .map(|t| t.elapsed());
             match find_index.and_then(|i| self.view.transcript.get_mut(i)) {
                 Some(TranscriptEntry::ToolCall(existing)) => {
                     existing.result = Some(result);
                     existing.is_error = is_error;
                     existing.is_question = is_question;
+                    existing.duration = duration;
                 }
                 _ => {
                     // A settled event without a matching started (replay edge).
@@ -2537,6 +2555,7 @@ impl App {
                             result: Some(result),
                             is_error,
                             is_question,
+                            duration,
                             collapsed: false,
                         }));
                 }
@@ -3198,6 +3217,7 @@ mod tests {
                 is_error: false,
                 is_question: false,
                 collapsed: true,
+                duration: None,
             }),
             TranscriptEntry::Line(TranscriptLine::status("other")),
         ];
@@ -3375,7 +3395,7 @@ mod tests {
         let lines = crate::chatwidget::styled_lines(&transcript, crate::theme::Theme::dark());
         assert_eq!(lines.len(), 5);
         // User lines are prefixed and bold.
-        assert_eq!(lines[0].spans[0].content, "▶ hi");
+        assert_eq!(lines[0].spans[0].content, "✨ hi");
         assert!(lines[0].spans[0]
             .style
             .add_modifier
@@ -3501,13 +3521,14 @@ mod tests {
             "input pane title missing:\n{}",
             lines.join("\n")
         );
-        // Transcript roles render with their prefixes, in order.
+        // Transcript roles render with their prefixes, in order. (`✨` is a
+        // wide glyph; match on the text to stay buffer-width agnostic.)
         let first_visible: String = lines
             .iter()
             .filter(|l| !l.trim().is_empty())
             .cloned()
             .collect();
-        let user_at = first_visible.find("▶ hi").expect("user line missing");
+        let user_at = first_visible.find("hi").expect("user line missing");
         let tool_at = first_visible
             .find("⚙ Read started")
             .expect("tool line missing");
@@ -3518,13 +3539,16 @@ mod tests {
             user_at < assistant_at && assistant_at < tool_at,
             "role order wrong"
         );
-        // The ▶ glyph is bold; the gear glyph is blue.
-        let user_cell = buffer
-            .content
-            .iter()
-            .find(|c| c.symbol() == "▶")
-            .expect("▶ cell");
-        assert!(user_cell.style().add_modifier.contains(Modifier::BOLD));
+        // The user line is bold; the gear glyph is blue. (`✨` is a wide
+        // glyph, so assert "some bold cell exists" — the user line is the
+        // only bold content in this transcript.)
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|c| c.style().add_modifier.contains(Modifier::BOLD)),
+            "user line should be bold"
+        );
         let gear_cell = buffer
             .content
             .iter()
@@ -3616,6 +3640,7 @@ mod tests {
                 is_error: false,
                 is_question: false,
                 collapsed: false,
+                duration: None,
             }),
         ];
         let md = transcript_to_markdown(&t);

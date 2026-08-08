@@ -28,7 +28,7 @@ fn text_content(message: &serde_json::Value) -> String {
 
 /// Render the engine context data (`session/get_context` → `data()`:
 /// `{ history: […], token_count }`) as transcript entries. User prompts
-/// become `▶` lines, assistant text becomes assistant lines, and assistant
+/// become `✨` lines, assistant text becomes assistant lines, and assistant
 /// `tool_calls` / `tool` messages become structured `ToolCall` cards (TS
 /// `session-replay` parity). Empty text and system framing are skipped.
 pub fn render_history(data: &serde_json::Value) -> Vec<TranscriptEntry> {
@@ -62,6 +62,7 @@ pub fn render_history(data: &serde_json::Value) -> Vec<TranscriptEntry> {
                             result: None,
                             is_error: false,
                             is_question,
+                            duration: None,
                             collapsed,
                         }));
                     }

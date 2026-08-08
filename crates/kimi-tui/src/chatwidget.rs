@@ -52,7 +52,7 @@ pub fn render_frame(
             .map(|(i, (cmd, desc))| {
                 let selected = i == state.selected;
                 // Command + dimmed description in a second column.
-                let prefix = if selected { "▶" } else { " " };
+                let prefix = if selected { "❯" } else { " " };
                 RenderLine::from(vec![
                     Span::styled(
                         format!("  {prefix} {cmd}"),
@@ -121,7 +121,10 @@ pub fn styled_lines(transcript: &[TranscriptEntry], theme: Theme) -> Vec<RenderL
                 } else {
                     theme.tool
                 };
-                let header = format!("{marker} {}({})", tc.tool_name, preview(&tc.args, 60));
+                let mut header = format!("{marker} {}({})", tc.tool_name, preview(&tc.args, 60));
+                if let Some(duration) = tc.duration {
+                    header.push_str(&format!(" [{}]", format_duration(duration)));
+                }
                 out.push(RenderLine::from(Span::styled(
                     header,
                     Style::default().fg(color),
@@ -155,7 +158,7 @@ pub fn styled_lines(transcript: &[TranscriptEntry], theme: Theme) -> Vec<RenderL
                     out.extend(crate::markdown::render_markdown_themed(&line.text, theme));
                 }
                 TranscriptKind::User => out.push(RenderLine::from(Span::styled(
-                    format!("▶ {}", line.text),
+                    format!("✨ {}", line.text),
                     Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
                 ))),
                 // Reasoning is transient and dimmer than the visible stream;
@@ -206,6 +209,16 @@ fn preview(text: &str, max: usize) -> String {
     }
 }
 
+/// `123ms` under a second, `1.2s` above (tool-call duration label).
+fn format_duration(d: std::time::Duration) -> String {
+    let ms = d.as_millis();
+    if ms >= 1000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else {
+        format!("{ms}ms")
+    }
+}
+
 /// Reasoning longer than this many chars folds to a single-line preview.
 const THINKING_FOLD_THRESHOLD: usize = 200;
 
@@ -234,6 +247,7 @@ mod tests {
             is_error: false,
             is_question: false,
             collapsed: true,
+            duration: None,
         })];
         let lines = styled_lines(&transcript, Theme::dark());
         // Header + collapsed result preview with the expand marker.
@@ -252,6 +266,7 @@ mod tests {
             is_error: false,
             is_question: false,
             collapsed: false,
+            duration: None,
         })];
         let lines = styled_lines(&transcript, Theme::dark());
         // Header + one row per result line.
@@ -270,5 +285,34 @@ mod tests {
         assert!(folded.ends_with("+420 chars)"), "folded: {folded}");
         assert!(folded.starts_with("xxx"), "folded: {folded}");
         assert!(!folded.contains('\n'), "single line");
+    }
+
+    #[test]
+    fn durations_format_readably() {
+        assert_eq!(
+            format_duration(std::time::Duration::from_millis(250)),
+            "250ms"
+        );
+        assert_eq!(
+            format_duration(std::time::Duration::from_millis(1200)),
+            "1.2s"
+        );
+    }
+
+    #[test]
+    fn tool_card_header_shows_duration() {
+        let transcript = vec![TranscriptEntry::ToolCall(crate::app::ToolCallEntry {
+            tool_call_id: "t1".into(),
+            tool_name: "Bash".into(),
+            args: "{}".into(),
+            result: None,
+            is_error: false,
+            is_question: false,
+            duration: Some(std::time::Duration::from_millis(1200)),
+            collapsed: false,
+        })];
+        let lines = styled_lines(&transcript, Theme::dark());
+        let all: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(all.contains("[1.2s]"), "header: {all}");
     }
 }
