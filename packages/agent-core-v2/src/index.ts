@@ -289,6 +289,9 @@ export * from '#/app/flag/flagService';
 
 export * from '#/agent/activityView/activityView';
 import '#/agent/activityView/activityViewService';
+export * from '#/features/btw/btw';
+export * from '#/features/btw/btwService';
+import '#/features/btw/btwFeature';
 import '#/features/plan/profile/plan';
 export * from '#/features/plan/tools/enter-plan-mode/enter-plan-mode';
 import '#/features/plan/tools/enter-plan-mode/enterPlanModeTool';
@@ -625,8 +628,6 @@ export * from '#/agent/rpc/prompt-metadata';
 export * from '#/agent/scopeContext/scopeContext';
 export * from '#/agent/stepRetry/stepRetry';
 export * from '#/agent/stepRetry/stepRetryService';
-export * from '#/session/btw/btw';
-export * from '#/session/btw/btwService';
 export * from '#/session/sessionInit/sessionInit';
 export * from '#/session/sessionInit/sessionInitService';
 export * from '#/session/sessionInit/profile/init';
