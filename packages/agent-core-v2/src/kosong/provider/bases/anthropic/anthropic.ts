@@ -148,6 +148,7 @@ export interface AnthropicOptions {
   thinkingEffort?: ThinkingEffort | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => Anthropic;
   hooks?: AnthropicHooks | undefined;
+  filterUnsupportedRootSchemas?: boolean;
 }
 
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
@@ -395,6 +396,28 @@ function videoUrlPartToAnthropic(url: string): AnthropicVideoBlock {
 
 interface AnthropicToolParam extends AnthropicTool {
   cache_control?: { type: 'ephemeral' } | null;
+}
+
+const ANTHROPIC_UNSUPPORTED_ROOT_SCHEMA_KEYWORDS = new Set([
+  'oneOf',
+  'anyOf',
+  'allOf',
+]);
+const ANTHROPIC_API_BASE_URL = 'https://api.anthropic.com';
+const ANTHROPIC_API_BASE_URL_WITH_TRAILING_SLASH = `${ANTHROPIC_API_BASE_URL}/`;
+
+function hasAnthropicCompatibleSchema(tool: Tool): boolean {
+  return !Object.keys(tool.parameters).some((key) =>
+    ANTHROPIC_UNSUPPORTED_ROOT_SCHEMA_KEYWORDS.has(key),
+  );
+}
+
+function isOfficialAnthropicEndpoint(baseUrl: string | undefined): boolean {
+  return (
+    baseUrl === undefined ||
+    baseUrl === ANTHROPIC_API_BASE_URL ||
+    baseUrl === ANTHROPIC_API_BASE_URL_WITH_TRAILING_SLASH
+  );
 }
 
 function convertTool(tool: Tool): AnthropicToolParam {
@@ -815,6 +838,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private readonly _thinkingEffort: ThinkingEffort | undefined;
   private readonly _explicitMaxTokens: boolean;
   private readonly _hooks: AnthropicHooks | undefined;
+  private readonly _filterUnsupportedRootSchemas: boolean;
 
   constructor(options: AnthropicOptions) {
     this._model = options.model;
@@ -825,6 +849,8 @@ export class AnthropicChatProvider implements ChatProvider {
     this._betaApi = options.betaApi ?? false;
     this._thinkingEffort = options.thinkingEffort;
     this._hooks = options.hooks;
+    this._filterUnsupportedRootSchemas =
+      options.filterUnsupportedRootSchemas ?? isOfficialAnthropicEndpoint(options.baseUrl);
     this._apiKey =
       options.apiKey === undefined || options.apiKey.length === 0 ? undefined : options.apiKey;
     this._baseUrl = options.baseUrl;
@@ -974,7 +1000,11 @@ export class AnthropicChatProvider implements ChatProvider {
       extraHeaders['anthropic-beta'] = betas.join(',');
     }
 
-    const anthropicTools: AnthropicToolParam[] = tools.map((t) => convertTool(t));
+    const requestTools = this._filterUnsupportedRootSchemas
+      ? tools.filter(hasAnthropicCompatibleSchema)
+      : tools;
+    const anthropicTools: AnthropicToolParam[] = requestTools
+      .map((tool) => convertTool(tool));
     if (anthropicTools.length > 0) {
       const lastTool = anthropicTools.at(-1);
       if (lastTool !== undefined) {
