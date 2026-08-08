@@ -1,6 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { z } from 'zod';
+
 import type {
   PluginCapabilityState,
   PluginGithubMetadata,
@@ -8,6 +10,51 @@ import type {
 } from './types';
 
 const INSTALLED_REL = path.join('plugins', 'installed.json');
+
+const PluginSourceSchema: z.ZodType<PluginSource> = z.enum([
+  'local-path',
+  'zip-url',
+  'github',
+]);
+
+const PluginGithubMetadataSchema: z.ZodType<PluginGithubMetadata> = z.looseObject({
+  owner: z.string(),
+  repo: z.string(),
+  ref: z.looseObject({
+    kind: z.enum(['branch', 'tag', 'sha']),
+    value: z.string(),
+  }),
+  installedSha: z.string().optional(),
+});
+
+const PluginCapabilityStateSchema: z.ZodType<PluginCapabilityState> = z.looseObject({
+  mcpServers: z.record(z.string(), z.looseObject({ enabled: z.boolean() })).optional(),
+});
+
+/*
+  Records are validated field by field rather than trusted from disk: `installed.json`
+  is hand-editable, survives downgrades, and is written by older versions, so a
+  structurally valid file can still carry records that violate the type. Consumers
+  dereference these fields unconditionally — `PluginManager.load` reads `entry.id`
+  and `entry.root`, and the TUI renders `github.ref.value` — so an unchecked cast
+  turns a bad record into a crash far from the file that caused it.
+
+  Every level is loose, not just the top one: `readInstalled` returns what
+  `writeInstalled` later persists, so a nested `z.object` would strip fields a
+  newer client wrote — `github.ref` and the per-server capability entries most
+  of all — and the next write would drop them for good.
+*/
+const InstalledRecordSchema = z.looseObject({
+  id: z.string(),
+  root: z.string(),
+  source: PluginSourceSchema,
+  enabled: z.boolean(),
+  installedAt: z.string(),
+  updatedAt: z.string().optional(),
+  originalSource: z.string().optional(),
+  capabilities: PluginCapabilityStateSchema.optional(),
+  github: PluginGithubMetadataSchema.optional(),
+});
 
 export interface InstalledRecord {
   readonly id: string;
@@ -42,7 +89,17 @@ export async function readInstalled(kimiHomeDir: string): Promise<InstalledFile>
     if (typeof parsed !== 'object' || parsed === null || !Array.isArray(parsed.plugins)) {
       throw new Error('installed.json is not a valid InstalledFile object');
     }
-    return parsed;
+    const plugins = parsed.plugins.map((entry, index) => {
+      const record = InstalledRecordSchema.safeParse(entry);
+      if (!record.success) {
+        throw new Error(
+          `plugins[${index}] is not a valid installed record: ${record.error.message}`,
+          { cause: record.error },
+        );
+      }
+      return record.data as InstalledRecord;
+    });
+    return { ...parsed, plugins };
   } catch (error) {
     throw new Error(
       `Failed to parse ${filePath}: ${(error as Error).message}`,
