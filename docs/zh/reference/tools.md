@@ -87,7 +87,7 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 | `Agent` | 自动放行 | 派生子 Agent 执行子任务 |
 | `AgentSwarm` | swarm mode 中自动放行，否则需审批 | 启动基于 item 的子 Agent，或恢复已有子 Agent |
 | `AskUserQuestion` | 自动放行 | 向用户提问以获取结构化输入 |
-| `Skill` | 自动放行 | 调用已注册的 inline Skill |
+| `Skill` | 自动放行 | 调用已注册的 `prompt` 或 `inline` 类型 Skill |
 
 **`Agent`** 将子任务委托给子 Agent 执行。必填参数：`prompt`（完整任务描述）和 `description`（3–5 个词的简短说明）。可选参数：`subagent_type`（默认 `coder`）、`resume`（恢复已有 Agent 的 ID，与 `subagent_type` 互斥）、`run_in_background`（默认 false）和 `model`（`"secondary"` 表示 `[secondary_model] model` 配置的次主力模型，`"primary"` 表示主模型；resume 时无效；次主力模型实验功能启用后可用）。显式 `model` 会覆盖所选 [Agent profile 的 `model_preference`](../customization/agents.md#agent-文件格式)；两者均未设置时，已配置的次主力模型为默认值，未配置时则继承调用方模型。Agent 任务默认 2 小时超时，可通过 `config.toml` 的 `[subagent] timeout_ms`（`0` = 无超时，或 `KIMI_SUBAGENT_TIMEOUT_MS` 环境变量）配置，且在 print 模式（`kimi -p`）下默认无超时。前台模式下父 Agent 等待子 Agent 完成再继续；后台模式立即返回任务 ID，完成时通过合成 User 消息自动回到主 Agent。多个前台 `Agent` 调用在同一步运行时，TUI 会合并展示，并为每个子 Agent 显示运行、等待、完成或失败状态以及已耗时长。子 Agent 体系细节见 [Agent 与子 Agent](../customization/agents.md)。
 
@@ -95,7 +95,7 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 
 **`AskUserQuestion`** 以结构化多选题的形式向用户提问，适用于需要消歧或选择方案的场景。`questions` 参数接受 1–4 道题，每道题需提供 `question`（以 `?` 结尾）、`options`（2–4 个选项，每项含 `label` 和 `description`）以及可选的 `header`（最多 12 字符）和 `multi_select`（默认 false）。系统自动附加"其他"选项。`background` 为 true 时启动后台问题任务并立即返回任务 ID。宿主未实现交互式提问能力时返回失败提示，Agent 应改为在文本回复中直接提问。
 
-**`Skill`** 允许 Agent 主动调用已注册的 inline 类型 Skill。接受 `skill`（Skill 名称）和可选的 `args`（附加参数文本）。只有 `type = "inline"` 的 Skill 能通过此工具调用；`disableModelInvocation: true` 的 Skill 会被拒绝。嵌套调用深度上限 3 层。Skill 体系细节见 [Agent Skills](../customization/skills.md)。
+**`Skill`** 允许 Agent 主动调用已注册且允许模型调用的 Skill。接受 `skill`（Skill 名称）和可选的 `args`（附加参数文本）。未显式设置 `type`（默认为 `prompt`）、设置 `type = "prompt"` 或设置 `type = "inline"` 的 Skill 均可通过此工具调用。`type = "flow"` 的 Skill 只能由用户手动触发，`disableModelInvocation: true` 的 Skill 也会被拒绝。嵌套调用深度上限 3 层。Skill 体系细节见 [Agent Skills](../customization/skills.md)。
 
 ## 后台任务
 
