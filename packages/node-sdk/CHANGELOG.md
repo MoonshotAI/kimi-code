@@ -1,5 +1,13 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.15.4
+
+### Patch Changes
+
+- [#2731](https://github.com/MoonshotAI/kimi-code/pull/2731) [`437a1b8`](https://github.com/MoonshotAI/kimi-code/commit/437a1b8ba1b7e0f6662bdadc669564fdc58c3f5a) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Detect MCP servers that require OAuth by reusing the existing connection-time authorization check.
+
+- [#2706](https://github.com/MoonshotAI/kimi-code/pull/2706) [`0b2e803`](https://github.com/MoonshotAI/kimi-code/commit/0b2e803d5e71afaab45212bb2ee6117ecbf8bbc9) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Expose persisted MCP authorization status without starting an OAuth flow.
+
 ## 0.15.3
 
 ### Patch Changes
