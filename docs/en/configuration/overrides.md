@@ -66,9 +66,11 @@ Options passed at startup have the highest priority and apply only to the curren
 Mutual exclusion rules (startup fails if violated):
 
 - `--output-format` can only be used with `-p`
-- `--prompt` cannot be combined with `--yolo` or `--plan`
+- `--prompt` cannot be combined with `--yolo`, `--auto`, or `--plan`
 - `--continue` and `--session` cannot be used together
-- In non-prompt mode, `--yolo` and `--plan` cannot be combined with `--continue` or `--session`
+- `--yolo` and `--auto` cannot be used together
+
+When resuming a session, `--auto`, `--yolo`, or `--plan` can temporarily override its saved permission or plan mode.
 
 ::: tip
 `--skills-dir` is a one-shot replacement that only affects the current startup. To persistently add search directories, write `extra_skill_dirs` in `config.toml` (see [Agent Skills](../customization/skills.md)).
@@ -89,10 +91,10 @@ KIMI_CODE_HOME="$PWD/.kimi-sandbox" kimi
 KIMI_API_KEY = "sk-test"
 ```
 
-**Skip approval for batch tasks**:
+**Run a batch task non-interactively** — prompt mode uses auto permission automatically:
 
 ```sh
-kimi --yolo -p "Batch rename the following files..."
+kimi -p "Batch rename the following files..."
 ```
 
 **Enter Plan mode temporarily** (to make it permanent, set `default_plan_mode = true` in the config file):
