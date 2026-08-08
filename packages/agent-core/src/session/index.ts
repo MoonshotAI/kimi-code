@@ -778,7 +778,17 @@ export class Session {
       { additionalDirs: this.additionalDirs },
     );
     const subagentNames = Object.keys(this.agentCatalog.delegatableSubagents(profile.name));
+
+    // Apply global [tools].disabled without persisting it into the agent's
+    // profile/wire record. useProfile persists only profile.disallowedTools
+    // (replayed on resume); config denies are added via addDisallowedTools,
+    // which mutates the deny set without logging a record, so removing the
+    // config later does not leave a stale persisted deny. #2534.
+    const toolsDisabled = this.readToolsDisabled();
     agent.useProfile(profile, context, this.options.kimiHomeDir, subagentNames);
+    if (toolsDisabled.length > 0) {
+      agent.tools.addDisallowedTools(toolsDisabled);
+    }
     const { agentsMdWarning } = context;
     if (agentsMdWarning !== undefined) {
       this.agentsMdWarning = agentsMdWarning;
@@ -789,6 +799,22 @@ export class Session {
         code: 'agents-md-oversized',
       });
     }
+  }
+
+  /**
+   * Read the `[tools].disabled` array from the raw config. v1's
+   * KimiConfigSchema does not have a typed `tools` section (v2 uses a
+   * dedicated toolPolicy service), so unknown sections land in
+   * `config.raw`. This extracts the disabled tool names safely. #2534.
+   */
+  readToolsDisabled(): string[] {
+    const raw = this.kimiConfig?.raw;
+    if (!raw) return [];
+    const toolsSection = raw['tools'];
+    if (typeof toolsSection !== 'object' || toolsSection === null) return [];
+    const disabled = (toolsSection as Record<string, unknown>)['disabled'];
+    if (!Array.isArray(disabled)) return [];
+    return disabled.filter((v): v is string => typeof v === 'string');
   }
 
   async getSessionWarnings(): Promise<readonly SessionWarning[]> {
@@ -1315,7 +1341,18 @@ export class Session {
     if (agent.config.systemPrompt === '') return;
     const profile = this.resolvePersistedProfile(agent, meta, parentAgent);
     if (profile === undefined) return;
+    // Apply global [tools].disabled to resumed/reloaded agents too. The
+    // bootstrap path (bootstrapAgentProfile) merges it at session start, but
+    // restoreAgentProfileHandle only calls setActiveProfile - which does not
+    // re-apply the tool denylist. agent.resume() has already replayed
+    // persisted tool state, so add the denylist without replacing the
+    // replayed enabled set (which would drop unrelated runtime selections).
+    // #2534.
     agent.setActiveProfile(profile, this.options.kimiHomeDir);
+    const toolsDisabled = this.readToolsDisabled();
+    if (toolsDisabled.length > 0) {
+      agent.tools.addDisallowedTools(toolsDisabled);
+    }
   }
 
   private resolvePersistedProfile(

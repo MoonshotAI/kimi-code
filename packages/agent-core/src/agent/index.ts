@@ -450,7 +450,33 @@ export class Agent {
   ): void {
     this.setActiveProfile(profile, brandHome);
     this.updateSystemPromptFromProfile(profile, context, subagentNames);
+    // Persist only the profile's own denylist via setActiveTools (it is
+    // replayed on resume). The global [tools].disabled denylist is applied
+    // separately via addDisallowedTools, which mutates the deny set without
+    // logging a set_active_tools record - otherwise a config deny added at
+    // startup would be written into the wire record and survive a later
+    // config removal on cold resume. #2534.
     this.tools.setActiveTools(profile.tools, profile.disallowedTools);
+    const toolsDisabled = this.configDisabledTools();
+    if (toolsDisabled.length > 0) {
+      this.tools.addDisallowedTools(toolsDisabled);
+    }
+  }
+
+  /** Global [tools].disabled from options.config.raw, if provided. #2534. */
+  private configDisabledTools(): string[] {
+    const tools = this.kimiConfig?.raw?.['tools'];
+    if (
+      tools === undefined ||
+      typeof tools !== 'object' ||
+      tools === null ||
+      !Array.isArray((tools as Record<string, unknown>)['disabled'])
+    ) {
+      return [];
+    }
+    return ((tools as Record<string, unknown>)['disabled'] as string[]).filter(
+      (v): v is string => typeof v === 'string',
+    );
   }
 
   /** Push a refreshed session config snapshot and rebuild config-dependent builtin tools. */
@@ -532,6 +558,15 @@ export class Agent {
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
     const result = await this.records.replay(options);
+    // A standalone Agent (no Session) replays persisted tool state here but
+    // never routes through Session.restoreAgentProfileHandle, so re-apply the
+    // global [tools].disabled denylist non-persistently (mirrors useProfile).
+    // Without this a config deny added before resuming an existing Agent has
+    // no effect until the next useProfile / setActiveTools RPC. #2534.
+    const toolsDisabled = this.configDisabledTools();
+    if (toolsDisabled.length > 0) {
+      this.tools.addDisallowedTools(toolsDisabled);
+    }
     this.flushPendingAnthropicThinkingEffortWarnings();
     try {
       this.replayBuilder.postRestoring = true;
@@ -648,7 +683,16 @@ export class Agent {
         this.tools.unregisterUserTool(payload.name);
       },
       setActiveTools: (payload) => {
+        // Persist the runtime selection only. The global [tools].disabled
+        // denylist is re-applied via addDisallowedTools (no record) so a
+        // runtime selection cannot reactivate a disabled tool, while keeping
+        // config-only denies out of the persisted set_active_tools record.
+        // #2534.
         this.tools.setActiveTools(payload.names);
+        const toolsDisabled = this.configDisabledTools();
+        if (toolsDisabled.length > 0) {
+          this.tools.addDisallowedTools(toolsDisabled);
+        }
       },
       stopBackground: (payload) => {
         void this.background.stop(payload.taskId, payload.reason);
