@@ -65,7 +65,10 @@ export function resolveModelAuthMaterial(
   const providerEndpoint =
     providerAuthType === undefined
       ? {}
-      : explainProviderEndpoint(providerAuthType, args.provider?.env ?? {});
+      : explainProviderEndpoint(providerAuthType, {
+          ...process.env,
+          ...args.provider?.env,
+        });
   const providerApiKey = nonEmpty(args.provider?.apiKey) ?? nonEmpty(providerEndpoint.apiKey);
   if (providerApiKey !== undefined && args.provider?.oauth !== undefined) {
     throw authConflictError('Provider', args.providerName);
@@ -77,7 +80,12 @@ export function resolveModelAuthMaterial(
         ? { kind: 'config', detail: `provider '${args.providerName}' apiKey` }
         : {
             kind: 'env',
-            detail: `${providerEndpoint.apiKeyEnvName ?? '?'} (provider '${args.providerName}' env bag)`,
+            detail: `${providerEndpoint.apiKeyEnvName ?? '?'} (${
+              providerEndpoint.apiKeyEnvName !== undefined &&
+              args.provider?.env?.[providerEndpoint.apiKeyEnvName] !== undefined
+                ? `provider '${args.providerName}' env bag`
+                : 'process env'
+            })`,
           },
     );
     return { apiKey: providerApiKey };

@@ -12,7 +12,7 @@
  *    profile — inferred only for vendors whose thinking is not trait-driven.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ConfigErrors } from '#/app/config/errors';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
@@ -101,9 +101,43 @@ describe('resolveModelAuthMaterial', () => {
     ).toEqual({ apiKey: 'vertex-env-key' });
   });
 
+  it('falls back to the process environment when the provider declares no env bag', () => {
+    vi.stubEnv('OPENAI_API_KEY', 'process-env-key');
+    expect(authMaterial({ model: { model: 'm' }, provider: { type: 'openai' } })).toEqual({
+      apiKey: 'process-env-key',
+    });
+  });
+
+  it('prefers the provider env bag and inline apiKey over the process environment', () => {
+    vi.stubEnv('OPENAI_API_KEY', 'process-env-key');
+    expect(
+      authMaterial({
+        model: { model: 'm' },
+        provider: { type: 'openai', env: { OPENAI_API_KEY: 'bag-key' } },
+      }),
+    ).toEqual({ apiKey: 'bag-key' });
+    expect(
+      authMaterial({
+        model: { model: 'm' },
+        provider: { type: 'openai', apiKey: 'inline-key' },
+      }),
+    ).toEqual({ apiKey: 'inline-key' });
+  });
+
+  it('does not leak an unrelated vendor key from the process environment', () => {
+    vi.stubEnv('OPENAI_API_KEY', 'process-env-key');
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    expect(authMaterial({ model: { model: 'm' }, provider: { type: 'anthropic' } })).toEqual({});
+  });
+
   it('returns empty material when nothing is configured', () => {
+    vi.stubEnv('OPENAI_API_KEY', '');
     expect(authMaterial({ model: { model: 'm' }, provider: { type: 'openai' } })).toEqual({});
     expect(authMaterial({ model: { model: 'm' } })).toEqual({});
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 });
 
