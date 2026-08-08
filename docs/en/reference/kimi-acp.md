@@ -30,9 +30,9 @@ The table below lists the capabilities declared by the current ACP adapter layer
 
 The spec divides methods into a **stable** surface and an evolving **unstable** surface (handlers mounted with the `unstable_*` prefix in `@agentclientprotocol/sdk@0.23.0`). The two have entirely different stability guarantees — the stable surface covers methods every production ACP client uses, while the unstable surface covers experimental extensions (inline-edit prediction, document buffer sync, provider management, elicitation, etc.) — so they are tracked separately.
 
-**Summary: stable agent-side 10/12 (83%) + client reverse-RPC 4/9 (44%); unstable surface has only `session/set_model` (1/19).** All methods needed for a normal agent flow (initialize → auth → new/load/resume → prompt → cancel + file I/O + tool approval) are implemented.
+**Summary: stable agent-side 12/12 (100%) + client reverse-RPC 4/9 (44%); unstable surface has only `session/set_model` (1/19).** All methods needed for a normal agent flow (initialize → auth → new/load/resume → prompt → cancel + file I/O + tool approval) are implemented.
 
-### Stable agent-side — IDE → agent (10 / 12)
+### Stable agent-side — IDE → agent (12 / 12)
 
 | Method | Implemented | Description |
 | --- | --- | --- |
@@ -46,8 +46,8 @@ The spec divides methods into a **stable** surface and an evolving **unstable** 
 | `session/list` | Yes | Enumerates sessions on disk (advertised via `sessionCapabilities.list = {}`) |
 | `session/set_mode` | Yes | Compatibility path; dispatches to the same handler as `set_config_option({configId:'mode'})` |
 | `session/set_config_option` | Yes | Unified model / thinking / mode picker dispatcher |
-| `session/close` | No | |
-| `logout` | No | |
+| `session/close` | Yes | Closes the specified session and removes it from the server's in-memory map |
+| `logout` | Yes | Calls `harness.auth.logout` to clear the current authentication state |
 
 ### Stable client-side reverse-RPC — agent → IDE (4 / 9)
 
