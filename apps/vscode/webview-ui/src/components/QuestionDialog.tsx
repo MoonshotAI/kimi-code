@@ -1,51 +1,69 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useChatStore } from "@/stores";
 import { cn } from "@/lib/utils";
+import {
+  answerQuestionWithCustom,
+  canAdvanceQuestion,
+  createQuestionFlow,
+  moveQuestion,
+  toggleQuestionOption,
+} from "./question-flow";
 
 export function QuestionDialog() {
   const { pendingQuestion, respondQuestion } = useChatStore();
   const [customInput, setCustomInput] = useState("");
   const [showCustom, setShowCustom] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState(1);
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [flow, setFlow] = useState(() => createQuestionFlow([]));
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   const questions = pendingQuestion?.questions ?? [];
-  const question = questions[questionIndex];
+  const question = questions[flow.questionIndex];
 
   useEffect(() => {
     if (pendingQuestion) {
       setShowCustom(false);
       setCustomInput("");
-      setSelectedIndex(1);
-      setQuestionIndex(0);
-      setAnswers({});
+      setFlow(createQuestionFlow(pendingQuestion.questions));
+      setSubmitting(false);
+      submittingRef.current = false;
     }
   }, [pendingQuestion?.id]);
 
   if (!pendingQuestion || !question) return null;
 
-  // Step through the questions one by one; submit all answers after the last.
-  const handleAnswer = async (answer: string) => {
-    const nextAnswers = { ...answers, [question.question]: answer };
-    if (questionIndex + 1 < questions.length) {
-      setAnswers(nextAnswers);
-      setQuestionIndex(questionIndex + 1);
-      setShowCustom(false);
-      setCustomInput("");
-      setSelectedIndex(1);
-    } else {
-      await respondQuestion(nextAnswers);
+  const handleSelect = (optionLabel: string) => {
+    setFlow((current) => toggleQuestionOption(current, question, optionLabel));
+  };
+
+  const handleCustomSubmit = () => {
+    const normalizedInput = customInput.trim();
+    if (!normalizedInput && !flow.customAnswers[question.question]) return;
+    setFlow((current) => answerQuestionWithCustom(current, question, normalizedInput));
+    setShowCustom(false);
+  };
+
+  const openCustom = () => {
+    setCustomInput(flow.customAnswers[question.question] ?? "");
+    setShowCustom(true);
+  };
+
+  const submitAnswers = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      await respondQuestion(flow.answers);
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   };
 
-  const handleSelect = async (optionLabel: string) => {
-    await handleAnswer(optionLabel);
-  };
-
-  const handleCustomSubmit = async () => {
-    if (!customInput.trim()) return;
-    await handleAnswer(customInput.trim());
+  const move = (offset: number) => {
+    setFlow((current) => moveQuestion(current, offset, questions.length));
+    setShowCustom(false);
+    setCustomInput("");
   };
 
   const options = question.options || [];
@@ -56,7 +74,7 @@ export function QuestionDialog() {
       <div className="p-2 space-y-2">
         {questions.length > 1 && (
           <div className="text-[10px] text-muted-foreground">
-            Question {questionIndex + 1} of {questions.length}
+            Question {flow.questionIndex + 1} of {questions.length}
           </div>
         )}
         {question.header && <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{question.header}</div>}
@@ -66,19 +84,38 @@ export function QuestionDialog() {
             <button
               key={idx}
               onClick={() => {
-                void handleSelect(option.label);
+                handleSelect(option.label);
               }}
-              onMouseEnter={() => setSelectedIndex(idx + 1)}
               className={cn(
                 "w-full text-left px-2 py-1 rounded-md text-xs transition-colors",
                 "border border-border cursor-pointer",
-                selectedIndex === idx + 1 ? "bg-blue-500 text-white border-blue-500" : "bg-background hover:bg-muted/50",
+                flow.selections[question.question]?.includes(option.label)
+                  ? "bg-blue-500 text-white border-blue-500"
+                  : "bg-background hover:bg-muted/50",
               )}
             >
-              <span className={cn("mr-2", selectedIndex === idx + 1 ? "text-blue-200" : "text-muted-foreground")}>{idx + 1}</span>
+              <span
+                className={cn(
+                  "mr-2",
+                  flow.selections[question.question]?.includes(option.label)
+                    ? "text-blue-200"
+                    : "text-muted-foreground",
+                )}
+              >
+                {idx + 1}
+              </span>
               <span className="font-medium">{option.label}</span>
               {option.description && (
-                <span className={cn("ml-2", selectedIndex === idx + 1 ? "text-blue-200" : "text-muted-foreground")}>- {option.description}</span>
+                <span
+                  className={cn(
+                    "ml-2",
+                    flow.selections[question.question]?.includes(option.label)
+                      ? "text-blue-200"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  - {option.description}
+                </span>
               )}
             </button>
           ))}
@@ -87,9 +124,11 @@ export function QuestionDialog() {
               <input
                 autoFocus
                 value={customInput}
-                onChange={(e) => setCustomInput(e.target.value)}
+                onChange={(e) => {
+                  setCustomInput(e.target.value);
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleCustomSubmit();
+                  if (e.key === "Enter") handleCustomSubmit();
                   if (e.key === "Escape") setShowCustom(false);
                 }}
                 placeholder="Enter your response..."
@@ -97,9 +136,9 @@ export function QuestionDialog() {
               />
               <button
                 onClick={() => {
-                  void handleCustomSubmit();
+                  handleCustomSubmit();
                 }}
-                disabled={!customInput.trim()}
+                disabled={!customInput.trim() && !flow.customAnswers[question.question]}
                 className="px-2 py-1 rounded-md text-xs bg-blue-500 text-white disabled:opacity-50 cursor-pointer"
               >
                 Send
@@ -107,16 +146,64 @@ export function QuestionDialog() {
             </div>
           ) : (
             <button
-              onClick={() => setShowCustom(true)}
-              onMouseEnter={() => setSelectedIndex(customIndex)}
+              onClick={() => {
+                openCustom();
+              }}
               className={cn(
-                "w-full text-left px-2 py-1 rounded-md text-xs transition-colors",
-                "border border-border cursor-pointer",
-                selectedIndex === customIndex ? "bg-blue-500 text-white border-blue-500" : "bg-background hover:bg-muted/50",
+                "w-full text-left px-2 py-1 rounded-md text-xs transition-colors border border-border cursor-pointer",
+                flow.customAnswers[question.question]
+                  ? "bg-blue-500 text-white border-blue-500"
+                  : "bg-background hover:bg-muted/50",
               )}
             >
-              <span className={cn("mr-2", selectedIndex === customIndex ? "text-blue-200" : "text-muted-foreground")}>{customIndex}</span>
-              <span className="font-medium">Custom response...</span>
+              <span
+                className={cn(
+                  "mr-2",
+                  flow.customAnswers[question.question]
+                    ? "text-blue-200"
+                    : "text-muted-foreground",
+                )}
+              >
+                {customIndex}
+              </span>
+              <span className="font-medium">
+                {flow.customAnswers[question.question] ?? "Custom response..."}
+              </span>
+            </button>
+          )}
+        </div>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <button
+            type="button"
+            disabled={flow.questionIndex === 0}
+            onClick={() => {
+              move(-1);
+            }}
+            className="px-2 py-1 rounded-md text-xs border border-border disabled:opacity-50"
+          >
+            Back
+          </button>
+          {flow.questionIndex + 1 < questions.length ? (
+            <button
+              type="button"
+              disabled={!canAdvanceQuestion(flow, question)}
+              onClick={() => {
+                move(1);
+              }}
+              className="px-2 py-1 rounded-md text-xs bg-blue-500 text-white disabled:opacity-50"
+            >
+              Next
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={!canAdvanceQuestion(flow, question) || submitting}
+              onClick={() => {
+                void submitAnswers();
+              }}
+              className="px-2 py-1 rounded-md text-xs bg-blue-500 text-white disabled:opacity-50"
+            >
+              {submitting ? "Submitting..." : "Submit answers"}
             </button>
           )}
         </div>
