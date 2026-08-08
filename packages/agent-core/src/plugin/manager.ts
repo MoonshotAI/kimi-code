@@ -64,81 +64,106 @@ export class PluginManager {
   async install(source: string): Promise<PluginRecord> {
     const resolved = resolveInstallSource(source);
 
-    let normalizedRoot: string;
+    let managedCopy: ManagedPluginCopy | undefined;
     let originalSource: string;
     let sourceType: PluginSource;
     let parsed: ParsedManifestResult;
     let id: string;
     let github: PluginGithubMetadata | undefined;
+    let zipTmpDir: string | undefined;
 
-    if (resolved.kind === 'local-path') {
-      const sourceRoot = await normalizeInstallRoot(resolved.path);
-      originalSource = resolved.path;
-      sourceType = 'local-path';
-      parsed = await parseManifest(sourceRoot);
-      if (parsed.manifest === undefined) {
-        const msg = parsed.diagnostics.find((d) => d.severity === 'error')?.message ?? 'no manifest';
-        throw new Error(`Cannot install plugin at ${sourceRoot}: ${msg}`);
-      }
-      id = normalizePluginId(parsed.manifest.name);
-      normalizedRoot = await copyPluginToManagedRoot(this.kimiHomeDir, id, sourceRoot);
-      parsed = await parseManifest(normalizedRoot);
-    } else {
-      let zipUrl: string;
-      if (resolved.kind === 'github') {
-        const githubResolution = await resolveGithubSource(resolved);
-        zipUrl = githubResolution.tarballUrl;
-        originalSource = source.trim();
-        sourceType = 'github';
-        github = {
-          owner: resolved.owner,
-          repo: resolved.repo,
-          ref: githubResolution.ref,
-        };
-      } else {
-        zipUrl = resolved.path;
+    try {
+      if (resolved.kind === 'local-path') {
+        const sourceRoot = await normalizeInstallRoot(resolved.path);
         originalSource = resolved.path;
-        sourceType = 'zip-url';
-      }
-      const buffer = await downloadZip(zipUrl);
-      const tmpDir = await mkdtemp(path.join(tmpdir(), 'kimi-plugin-zip-'));
-      try {
-        const detectedRoot = await extractZip(buffer, tmpDir);
+        sourceType = 'local-path';
+        parsed = await parseManifest(sourceRoot);
+        if (parsed.manifest === undefined) {
+          const msg = parsed.diagnostics.find((d) => d.severity === 'error')?.message ?? 'no manifest';
+          throw new Error(`Cannot install plugin at ${sourceRoot}: ${msg}`);
+        }
+        id = normalizePluginId(parsed.manifest.name);
+        managedCopy = await copyPluginToManagedRoot(this.kimiHomeDir, id, sourceRoot);
+        parsed = await parseManifest(managedCopy.root);
+      } else {
+        let zipUrl: string;
+        if (resolved.kind === 'github') {
+          const githubResolution = await resolveGithubSource(resolved);
+          zipUrl = githubResolution.tarballUrl;
+          originalSource = source.trim();
+          sourceType = 'github';
+          github = {
+            owner: resolved.owner,
+            repo: resolved.repo,
+            ref: githubResolution.ref,
+          };
+        } else {
+          zipUrl = resolved.path;
+          originalSource = resolved.path;
+          sourceType = 'zip-url';
+        }
+        const buffer = await downloadZip(zipUrl);
+        zipTmpDir = await mkdtemp(path.join(tmpdir(), 'kimi-plugin-zip-'));
+        const detectedRoot = await extractZip(buffer, zipTmpDir);
         parsed = await parseManifest(detectedRoot);
         if (parsed.manifest === undefined) {
           const msg = parsed.diagnostics.find((d) => d.severity === 'error')?.message ?? 'no manifest';
           throw new Error(`Cannot install plugin from ${originalSource}: ${msg}`);
         }
         id = normalizePluginId(parsed.manifest.name);
-        normalizedRoot = await copyPluginToManagedRoot(this.kimiHomeDir, id, detectedRoot);
-        parsed = await parseManifest(normalizedRoot);
-      } finally {
-        await rm(tmpDir, { recursive: true, force: true });
+        managedCopy = await copyPluginToManagedRoot(this.kimiHomeDir, id, detectedRoot);
+        parsed = await parseManifest(managedCopy.root);
+      }
+
+      if (parsed.manifest === undefined) {
+        const msg = parsed.diagnostics.find((d) => d.severity === 'error')?.message ?? 'no manifest';
+        throw new Error(`Cannot install plugin at ${managedCopy.root}: ${msg}`);
+      }
+      id = normalizePluginId(parsed.manifest.name);
+      const existing = this.records.get(id);
+      const now = new Date().toISOString();
+      const record = await recordFrom({
+        id,
+        root: managedCopy.root,
+        enabled: existing?.enabled ?? true,
+        installedAt: existing?.installedAt ?? now,
+        updatedAt: now,
+        originalSource,
+        source: sourceType,
+        capabilities: existing?.capabilities,
+        github,
+        parsed,
+      });
+      // Persist from a candidate map, then publish it. Never leave this.records
+      // pointing at a tree that the outer catch rolls back on write failure.
+      const next = new Map(this.records);
+      next.set(id, record);
+      await this.persist(next);
+      this.records = next;
+      await discardPreviousManagedRoot(managedCopy.previousRoot);
+      managedCopy = undefined;
+      return record;
+    } catch (error) {
+      if (managedCopy !== undefined) {
+        try {
+          await rm(managedCopy.root, { recursive: true, force: true });
+          if (managedCopy.previousRoot !== undefined) {
+            await rename(managedCopy.previousRoot, managedCopy.root);
+          }
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            'Plugin installation failed and the previous managed copy could not be restored',
+            { cause: error },
+          );
+        }
+      }
+      throw error;
+    } finally {
+      if (zipTmpDir !== undefined) {
+        await rm(zipTmpDir, { recursive: true, force: true });
       }
     }
-
-    if (parsed.manifest === undefined) {
-      const msg = parsed.diagnostics.find((d) => d.severity === 'error')?.message ?? 'no manifest';
-      throw new Error(`Cannot install plugin at ${normalizedRoot}: ${msg}`);
-    }
-    id = normalizePluginId(parsed.manifest.name);
-    const existing = this.records.get(id);
-    const now = new Date().toISOString();
-    const record = await recordFrom({
-      id,
-      root: normalizedRoot,
-      enabled: existing?.enabled ?? true,
-      installedAt: existing?.installedAt ?? now,
-      updatedAt: now,
-      originalSource,
-      source: sourceType,
-      capabilities: existing?.capabilities,
-      github,
-      parsed,
-    });
-    this.records.set(id, record);
-    await this.persist();
-    return record;
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<void> {
@@ -306,8 +331,8 @@ export class PluginManager {
     return record === undefined ? undefined : recordToInfo(record);
   }
 
-  private async persist(): Promise<void> {
-    const installed: InstalledRecord[] = [...this.records.values()].map((record) => ({
+  private async persist(records: ReadonlyMap<string, PluginRecord> = this.records): Promise<void> {
+    const installed: InstalledRecord[] = [...records.values()].map((record) => ({
       id: record.id,
       root: record.root,
       source: record.source,
@@ -355,24 +380,55 @@ async function normalizeInstallRoot(rootPath: string): Promise<string> {
   return resolved;
 }
 
+interface ManagedPluginCopy {
+  readonly root: string;
+  readonly previousRoot?: string;
+}
+
+/**
+ * Publish a plugin into the managed root without deleting the live directory
+ * in-place. On Windows, an MCP child whose cwd is the managed root holds the
+ * directory busy (`EBUSY` on `rmdir`); renaming it aside usually succeeds, and
+ * the previous tree can be deleted later (best-effort) once nothing holds it.
+ */
 async function copyPluginToManagedRoot(
   kimiHomeDir: string,
   id: string,
   sourceRoot: string,
-): Promise<string> {
+): Promise<ManagedPluginCopy> {
   const managedRoot = path.join(kimiHomeDir, 'plugins', 'managed', id);
   const managedDir = path.dirname(managedRoot);
   await mkdir(managedDir, { recursive: true });
   const stagingRoot = await mkdtemp(path.join(managedDir, `${id}-`));
+  const previousRoot = `${stagingRoot}-previous`;
+  let movedPreviousRoot = false;
+  let published = false;
   try {
     await cp(sourceRoot, stagingRoot, { recursive: true });
-    await rm(managedRoot, { recursive: true, force: true });
+    try {
+      await rename(managedRoot, previousRoot);
+      movedPreviousRoot = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
     await rename(stagingRoot, managedRoot);
+    published = true;
+    return {
+      root: await realpath(managedRoot),
+      previousRoot: movedPreviousRoot ? previousRoot : undefined,
+    };
   } catch (error) {
-    await rm(stagingRoot, { recursive: true, force: true });
+    await rm(published ? managedRoot : stagingRoot, { recursive: true, force: true });
+    if (movedPreviousRoot) await rename(previousRoot, managedRoot);
     throw error;
   }
-  return realpath(managedRoot);
+}
+
+async function discardPreviousManagedRoot(previousRoot: string | undefined): Promise<void> {
+  if (previousRoot === undefined) return;
+  // MCP children (or Windows AV) may still hold the old tree; never fail the
+  // install because deferred cleanup could not finish immediately.
+  await rm(previousRoot, { recursive: true, force: true }).catch(() => undefined);
 }
 
 async function recordFrom(input: {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import yazl from 'yazl';
 
 import { PluginManager } from '../../src/plugin/manager';
+import * as pluginStore from '../../src/plugin/store';
 
 async function makeKimiHome(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'kimi-home-'));
@@ -325,6 +326,28 @@ describe('PluginManager', () => {
     expect(updated.updatedAt).not.toBe(first.updatedAt);
     expect(updated.originalSource).toBe(updatedRoot);
     expect(manager.info('demo')?.mcpServers[0]?.enabled).toBe(false);
+    // Rename-swap publish must not leave sibling `*-previous` trees behind when
+    // the old managed root is free to delete (Windows EBUSY path defers this).
+    const managedDir = path.join(home, 'plugins', 'managed');
+    const leftover = (await readdir(managedDir)).filter((name) => name.includes('-previous'));
+    expect(leftover).toEqual([]);
+  });
+
+  it('install() does not publish in-memory records when persistence fails', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', { version: '1.0.0' });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    expect(manager.get('demo')?.manifest?.version).toBe('1.0.0');
+
+    const updatedRoot = await makePlugin('demo', { version: '2.0.0' });
+    const persist = vi.spyOn(pluginStore, 'writeInstalled').mockRejectedValueOnce(new Error('disk full'));
+    await expect(manager.install(updatedRoot)).rejects.toThrow(/disk full/);
+    persist.mockRestore();
+
+    expect(manager.get('demo')?.manifest?.version).toBe('1.0.0');
+    expect(manager.list()).toHaveLength(1);
   });
 
   it('keeps a plugin in error state instead of losing it on a broken manifest', async () => {
