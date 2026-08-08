@@ -62,33 +62,35 @@ export function resolveModelAuthMaterial(
   }
 
   const providerAuthType = args.provider?.type ?? args.model.protocol;
-  const providerEndpoint =
+
+  // Explicitly configured credentials are resolved first and in isolation: the
+  // provider's own `env` bag must not have to compete with ambient process env,
+  // or a vendor whose endpoint chain declares several keys (google-genai lists
+  // VERTEXAI_API_KEY ahead of GOOGLE_API_KEY) could resolve an ambient key in
+  // preference to the one the user configured.
+  const configuredEndpoint =
     providerAuthType === undefined
       ? {}
-      : explainProviderEndpoint(providerAuthType, {
-          ...process.env,
-          ...args.provider?.env,
-        });
-  const providerApiKey = nonEmpty(args.provider?.apiKey) ?? nonEmpty(providerEndpoint.apiKey);
-  if (providerApiKey !== undefined && args.provider?.oauth !== undefined) {
+      : explainProviderEndpoint(providerAuthType, args.provider?.env ?? {});
+  const configuredApiKey = nonEmpty(args.provider?.apiKey) ?? nonEmpty(configuredEndpoint.apiKey);
+
+  // Only explicitly configured credentials participate in the apiKey/oauth
+  // conflict check. An unrelated key that merely happens to exist in the shell
+  // must never invalidate a working oauth provider.
+  if (configuredApiKey !== undefined && args.provider?.oauth !== undefined) {
     throw authConflictError('Provider', args.providerName);
   }
-  if (providerApiKey !== undefined) {
+  if (configuredApiKey !== undefined) {
     trace?.record(
       'resolved.auth',
       nonEmpty(args.provider?.apiKey) !== undefined
         ? { kind: 'config', detail: `provider '${args.providerName}' apiKey` }
         : {
             kind: 'env',
-            detail: `${providerEndpoint.apiKeyEnvName ?? '?'} (${
-              providerEndpoint.apiKeyEnvName !== undefined &&
-              args.provider?.env?.[providerEndpoint.apiKeyEnvName] !== undefined
-                ? `provider '${args.providerName}' env bag`
-                : 'process env'
-            })`,
+            detail: `${configuredEndpoint.apiKeyEnvName ?? '?'} (provider '${args.providerName}' env bag)`,
           },
     );
-    return { apiKey: providerApiKey };
+    return { apiKey: configuredApiKey };
   }
   if (args.provider?.oauth !== undefined) {
     trace?.record('resolved.auth', {
@@ -99,6 +101,20 @@ export function resolveModelAuthMaterial(
       oauth: args.provider.oauth,
       oauthProviderKey: args.model.providerId ?? args.model.provider,
     };
+  }
+
+  // Nothing was configured anywhere. Fall back to the ambient process env, which
+  // is what the adapters themselves read when they construct the request; without
+  // this the readiness gate is stricter than the code it guards.
+  const ambientEndpoint =
+    providerAuthType === undefined ? {} : explainProviderEndpoint(providerAuthType, process.env);
+  const ambientApiKey = nonEmpty(ambientEndpoint.apiKey);
+  if (ambientApiKey !== undefined) {
+    trace?.record('resolved.auth', {
+      kind: 'env',
+      detail: `${ambientEndpoint.apiKeyEnvName ?? '?'} (process env)`,
+    });
+    return { apiKey: ambientApiKey };
   }
   trace?.record('resolved.auth', {
     kind: 'none',

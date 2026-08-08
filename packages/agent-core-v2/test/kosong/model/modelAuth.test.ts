@@ -124,6 +124,47 @@ describe('resolveModelAuthMaterial', () => {
     ).toEqual({ apiKey: 'inline-key' });
   });
 
+  it('prefers a configured env-bag key over an ambient key declared earlier in the chain', () => {
+    // google-genai declares VERTEXAI_API_KEY ahead of GOOGLE_API_KEY, so an
+    // ambient Vertex key must not outrank the Gemini key the user configured.
+    vi.stubEnv('VERTEXAI_API_KEY', 'ambient-vertex-key');
+    expect(
+      authMaterial({
+        model: { model: 'm' },
+        provider: { type: 'google-genai', env: { GOOGLE_API_KEY: 'configured-google-key' } },
+      }),
+    ).toEqual({ apiKey: 'configured-google-key' });
+  });
+
+  it('does not let an ambient key invalidate a provider configured for oauth', () => {
+    vi.stubEnv('OPENAI_API_KEY', 'ambient-unrelated-key');
+    expect(
+      authMaterial({
+        model: { model: 'm', providerId: 'p1' },
+        provider: { type: 'openai', oauth: { storage: 'file', key: 'k' } },
+      }),
+    ).toEqual({ oauth: { storage: 'file', key: 'k' }, oauthProviderKey: 'p1' });
+  });
+
+  it('still rejects a configured apiKey alongside oauth', () => {
+    expect(() =>
+      authMaterial({
+        model: { model: 'm' },
+        provider: { type: 'openai', apiKey: 'k', oauth: { storage: 'file', key: 'k' } },
+      }),
+    ).toThrowError(expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }));
+    expect(() =>
+      authMaterial({
+        model: { model: 'm' },
+        provider: {
+          type: 'openai',
+          env: { OPENAI_API_KEY: 'bag-key' },
+          oauth: { storage: 'file', key: 'k' },
+        },
+      }),
+    ).toThrowError(expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }));
+  });
+
   it('does not leak an unrelated vendor key from the process environment', () => {
     vi.stubEnv('OPENAI_API_KEY', 'process-env-key');
     vi.stubEnv('ANTHROPIC_API_KEY', '');
