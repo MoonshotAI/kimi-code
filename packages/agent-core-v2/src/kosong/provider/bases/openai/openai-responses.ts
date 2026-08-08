@@ -3,8 +3,8 @@
  *
  * Speaks the Responses wire format: `input` items, `instructions`,
  * `reasoning` blocks with encrypted content, and the native
- * `prompt_cache_key` field (a cache key is encoded directly — no hook
- * needed). Per-turn intents are encoded inline in the fixed contract order;
+ * needed — and only for official `api.openai.com` hosts, via
+ * `isOfficialOpenAIBaseUrl`). Per-turn intents are encoded inline in the fixed contract order;
  * the base's only hook surface is the trait-composed `convertError` option,
  * consulted with each raw failure exactly once — the SDK error on HTTP
  * paths, the raw event on in-stream error paths — before the base's own
@@ -49,6 +49,7 @@ import {
   hasModelPrefix,
   isMediaPart,
   isOpenAIInsufficientQuotaCode,
+  isOfficialOpenAIBaseUrl,
   isOpenAIReasoningModel,
   OPENAI_REASONING_CAPABILITY,
   OPENAI_VISION_TOOL_CAPABILITY,
@@ -1094,7 +1095,8 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
 
     let kwargs: Record<string, unknown> = { ...this._generationKwargs };
 
-    if (options?.cacheKey !== undefined) {
+    // Per-turn intent overlays in the fixed contract order.
+    if (options?.cacheKey !== undefined && isOfficialOpenAIBaseUrl(this._baseUrl)) {
       kwargs = { ...kwargs, prompt_cache_key: options.cacheKey };
     }
     if (options?.sampling?.temperature !== undefined) {

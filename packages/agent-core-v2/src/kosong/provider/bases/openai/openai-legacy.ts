@@ -9,6 +9,9 @@
  *
  * Per-turn intent assembly (`_resolveRequestKwargs`) applies overlays in the
  * fixed contract order: cacheKey → sampling → thinking → maxCompletionTokens.
+ * The bare `prompt_cache_key` cacheKey fallback is gated by
+ * `isOfficialOpenAIBaseUrl`; vendors that support the field on other hosts
+ * encode it through their `cacheKey` hook.
  * The context-window clamp on the completion budget (floor 1) runs BEFORE any
  * hook and cannot be skipped; the 128k ceiling clamp can be taken over by the
  * `withMaxCompletionTokens` hook.
@@ -60,6 +63,7 @@ import {
   extractUsage,
   hasModelPrefix,
   isFunctionToolCall,
+  isOfficialOpenAIBaseUrl,
   isOpenAIReasoningModel,
   normalizeOpenAIFinishReason,
   OPENAI_REASONING_CAPABILITY,
@@ -665,7 +669,11 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     if (options?.cacheKey !== undefined) {
       const hooked = this._hooks?.cacheKey?.(options.cacheKey);
-      kwargs = { ...kwargs, ...(hooked ?? { prompt_cache_key: options.cacheKey }) };
+      if (hooked !== undefined) {
+        kwargs = { ...kwargs, ...hooked };
+      } else if (isOfficialOpenAIBaseUrl(this._baseUrl)) {
+        kwargs = { ...kwargs, prompt_cache_key: options.cacheKey };
+      }
     }
 
     if (options?.sampling?.temperature !== undefined) {

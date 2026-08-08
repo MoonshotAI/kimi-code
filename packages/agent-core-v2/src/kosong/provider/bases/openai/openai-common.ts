@@ -1,9 +1,15 @@
 /**
  * `kosong/provider` domain — shared OpenAI-family wire mechanics.
  *
- * The shared pieces: content-part and tool conversion, usage extraction,
- * finish-reason normalization, the capability constants, and the error
- * converter.
+ * Everything the Chat Completions and Responses bases share: content-part and
+ * tool conversion, usage extraction, finish-reason normalization, the
+ * capability constants, the error converter, and the official-endpoint gate
+ * for the OpenAI-only `prompt_cache_key` request field
+ * (`isOfficialOpenAIBaseUrl`): the bases only fall back to that field when
+ * the effective base URL targets `api.openai.com` or a regional
+ * `*.api.openai.com` variant (or is unset, which the client defaults there),
+ * because strictly-validating OpenAI-compatible endpoints reject unknown
+ * parameters with a 400.
  *
  * `convertOpenAIError`'s FIRST line is the contract's `throwIfAbortError`
  * guard: a user cancellation (SDK `APIUserAbortError`, bare `AbortError`, the
@@ -280,4 +286,16 @@ export function isOpenAIReasoningModel(normalizedModelName: string): boolean {
 
 export function hasModelPrefix(modelName: string, prefixes: readonly string[]): boolean {
   return prefixes.some((prefix) => modelName.startsWith(prefix));
+}
+
+export function isOfficialOpenAIBaseUrl(baseUrl: string | undefined): boolean {
+  if (baseUrl === undefined) {
+    return true;
+  }
+  try {
+    const hostname = new URL(baseUrl).hostname;
+    return hostname === 'api.openai.com' || hostname.endsWith('.api.openai.com');
+  } catch {
+    return false;
+  }
 }
