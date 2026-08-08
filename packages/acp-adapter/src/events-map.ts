@@ -21,6 +21,34 @@ import type {
 import { displayBlockToAcpContent, toolResultToAcpContent } from './convert';
 import type { AcpStopReason } from './types';
 
+export type KimiCodeBillingMode = 'coding_plan' | 'api_key';
+
+export interface KimiCodeUsageRow {
+  readonly name?: string;
+  readonly window?: {
+    readonly duration: number;
+    readonly unit: 'minute' | 'hour' | 'day' | 'week';
+  };
+  readonly used: number;
+  readonly limit: number;
+  readonly resetAt?: string;
+}
+
+export interface KimiCodeBoosterWallet {
+  readonly balanceCents: number;
+  readonly totalCents: number;
+  readonly currency: string;
+}
+
+export interface KimiCodeUsageMeta {
+  readonly billingMode: KimiCodeBillingMode;
+  readonly rateLimits?: {
+    readonly summary: KimiCodeUsageRow | null;
+    readonly limits: readonly KimiCodeUsageRow[];
+    readonly booster: KimiCodeBoosterWallet | null;
+  };
+}
+
 /**
  * Build an ACP `session/update` notification with an
  * `agent_message_chunk` payload from an SDK `assistant.delta` event.
@@ -522,6 +550,30 @@ export function configOptionUpdateNotification(
     update: {
       sessionUpdate: 'config_option_update',
       configOptions: [...configOptions],
+    },
+  };
+}
+
+/**
+ * Build the standard ACP context-usage update and attach Kimi Code account
+ * usage as namespaced metadata. Clients that only understand ACP still get
+ * `used` / `size`; clients that opt into Kimi Code's metadata can distinguish
+ * Coding Plan rate limits from API-key billing without reading local config or
+ * credentials.
+ */
+export function usageReportToSessionUpdate(
+  sessionId: string,
+  used: number,
+  size: number,
+  kimiCode?: KimiCodeUsageMeta,
+): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'usage_update',
+      used,
+      size,
+      ...(kimiCode === undefined ? {} : { _meta: { kimiCode } }),
     },
   };
 }

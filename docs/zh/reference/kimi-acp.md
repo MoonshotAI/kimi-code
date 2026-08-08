@@ -53,7 +53,7 @@ kimi acp
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
-| `session/update` | 是 | 流式推送 `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
+| `session/update` | 是 | 流式推送 `agent_message_chunk` / `tool_call*` / `plan` / `usage_update` / `config_option_update` / `available_commands_update` |
 | `session/request_permission` | 是 | 工具审批和问题 elicitation 共用此通道 |
 | `fs/read_text_file` | 是 | kaos 层文件读取路由到客户端（通过 `fsCapabilities` 公告） |
 | `fs/write_text_file` | 是 | kaos 层文件写入路由到客户端 |
@@ -67,6 +67,43 @@ kimi acp
 | 其余 18 个方法 | 否 | 包括 session 生命周期扩展、缓冲区同步、inline-edit 预测、provider 管理等 |
 
 上述未列出的方法一律返回 `methodNotFound`。
+
+## 账号用量更新
+
+会话打开时以及主 Agent 每轮结束后，适配器都会发送标准 ACP
+`usage_update`。其中 `used` 和 `size` 表示当前上下文窗口；Kimi Code
+账号信息放在 `_meta.kimiCode` 下，客户端可以按需读取，不会改变标准
+ACP 字段：
+
+```json
+{
+  "sessionUpdate": "usage_update",
+  "used": 25000,
+  "size": 262144,
+  "_meta": {
+    "kimiCode": {
+      "billingMode": "coding_plan",
+      "rateLimits": {
+        "summary": { "used": 33, "limit": 100, "resetAt": "..." },
+        "limits": [
+          {
+            "window": { "duration": 5, "unit": "hour" },
+            "used": 20,
+            "limit": 100,
+            "resetAt": "..."
+          }
+        ],
+        "booster": null
+      }
+    }
+  }
+}
+```
+
+托管 OAuth 账号的 `billingMode` 为 `coding_plan`，API Key Provider 为
+`api_key`。通知中绝不会包含 API Key。托管套餐额度采用尽力而为的方式
+获取，并缓存一分钟；账号接口暂时不可用时，适配器仍会上报
+`coding_plan`，但不会沿用或伪造额度。
 
 ## MCP 转发
 
