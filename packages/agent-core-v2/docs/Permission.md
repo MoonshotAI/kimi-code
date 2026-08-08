@@ -211,7 +211,7 @@ this.policies = registry.list()
 **Harness 约束与产物审批不再上链。** 拥有它们的 domain 注册一个 `onBeforeExecuteTool` veto 监听器，通过事件对象自行裁决：
 
 ```ts
-// src/plan/planService.ts —— 构造函数
+// src/agent/plan/planService.ts —— 构造函数
 constructor(@IAgentToolExecutorService executor, ...) {
   executor.onBeforeExecuteTool((event) => this.guardToolExecution(event));
 }
