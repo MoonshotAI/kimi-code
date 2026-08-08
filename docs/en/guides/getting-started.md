@@ -105,6 +105,8 @@ On first launch you need to configure an API source. In the interactive UI, ente
 - **Kimi Code (OAuth)** — device-code flow; open the link on any device, sign in, and enter the code to authorize
 - **Kimi Platform API key** — enter an API key from `platform.kimi.com` or `platform.kimi.ai`
 
+You can also run `kimi login` directly from a terminal. It opens the same selector without creating a chat session, which is also the flow used when an IDE asks Kimi Code CLI to authenticate.
+
 To sign out, enter `/logout` to clear the current credentials.
 
 ::: tip Using other AI providers

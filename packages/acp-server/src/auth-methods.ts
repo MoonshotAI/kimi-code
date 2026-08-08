@@ -36,8 +36,8 @@ export function buildTerminalAuthMethod(
   const method: AuthMethod = {
     id: 'login',
     type: 'terminal',
-    name: 'Login with Kimi account',
-    description: 'Open the device-code login flow in a terminal.',
+    name: 'Set up Kimi Code',
+    description: 'Choose Kimi Code OAuth or a Kimi Platform API key in a terminal.',
     args: ['--login'],
     env: { ...env },
   };
@@ -45,7 +45,7 @@ export function buildTerminalAuthMethod(
     (method as AuthMethod & { _meta: { 'terminal-auth': unknown } })._meta = {
       'terminal-auth': {
         type: 'terminal',
-        label: 'Login with Kimi account',
+        label: 'Set up Kimi Code',
         command: opts.legacyCommand,
         args: ['login'],
         env: { ...env },

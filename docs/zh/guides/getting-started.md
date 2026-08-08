@@ -105,6 +105,8 @@ kimi -c
 - **Kimi Code（OAuth）** — 验证码流程，在任意设备打开链接、登录并输入验证码即可授权
 - **Kimi Platform API 密钥** — 输入来自 `platform.kimi.com` 或 `platform.kimi.ai` 的 API 密钥
 
+也可以直接在终端中运行 `kimi login`。该命令会打开同一个选择器，但不会创建聊天会话；IDE 请求 Kimi Code CLI 认证时也会使用这个流程。
+
 需要退出登录时，输入 `/logout` 清除当前凭证。
 
 ::: tip 使用其他 AI 供应商

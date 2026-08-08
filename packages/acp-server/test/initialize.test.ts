@@ -158,11 +158,13 @@ describe('acp-server initialize handshake', () => {
         const authMethods = (response.result as { authMethods?: unknown[] })?.authMethods;
         expect(Array.isArray(authMethods)).toBe(true);
         const method = authMethods?.[0] as {
+          name: string;
           type: string;
           args: string[];
           env: Record<string, string>;
           _meta?: { 'terminal-auth'?: { command: string; args: string[]; env: Record<string, string> } };
         };
+        expect(method.name).toBe('Set up Kimi Code');
         expect(method.type).toBe('terminal');
         expect(method.args).toEqual(['--login']);
         expect(method.env).toEqual({ KIMI_CODE_HOME: '/tmp/sandbox' });

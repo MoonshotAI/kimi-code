@@ -133,17 +133,17 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（交互式认证）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
 
 ### `kimi login`
 
-通过 RFC 8628 device-code 流程登录 Kimi Code OAuth，无需进入 TUI。命令会发起一次 device authorization 请求，将验证地址和用户码打印到 stderr，然后轮询直到浏览器侧完成授权。生成的 token 写入与 TUI `/login` 相同的本地位置，下次启动 `kimi` 时会自动加载。
+打开与 TUI `/login` 相同的认证选择器，但不会创建聊天会话。选择 Kimi Code OAuth 后会继续进入验证码流程；选择 Kimi Platform 区域后，可以输入 API 密钥、校验可用模型并设置默认模型。生成的凭证和模型配置会写入与 TUI 相同的本地位置，下次启动 `kimi` 时会自动加载。
 
 ```sh
 kimi login
 ```
 
-该子命令没有任何 flag。在轮询期间随时按 `Ctrl-C` 可取消登录；取消或失败时退出码为 `1`，成功为 `0`。
+该子命令没有任何 flag。取消选择器或进行中的登录时退出码为 `1`；完成 OAuth 或 API 密钥配置后退出码为 `0`。
 
 ### `kimi acp`
 

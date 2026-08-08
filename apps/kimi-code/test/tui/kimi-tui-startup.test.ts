@@ -37,7 +37,7 @@ const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
 interface StartupDriver {
   state: TUIState;
   init(): Promise<boolean>;
-  handleLoginCommand(): Promise<void>;
+  handleLoginCommand(): Promise<'success' | 'cancelled' | 'failed'>;
   handleLogoutCommand(): Promise<void>;
   stop(exitCode?: number): Promise<void>;
 }
@@ -243,6 +243,57 @@ function captureInputListeners(driver: StartupDriver) {
 }
 
 describe('KimiTUI startup', () => {
+  it('initializes login-only mode without creating a chat session', async () => {
+    const harness = makeHarness();
+    const driver = makeDriver(harness, { ...makeStartupInput(), loginOnly: true });
+    const refreshProviderModels = vi.spyOn((driver as any).authFlow, 'refreshProviderModels');
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(harness.resumeSession).not.toHaveBeenCalled();
+    expect(refreshProviderModels).not.toHaveBeenCalled();
+    expect(driver.state.startupState).toBe('ready');
+    expect(driver.state.appState.sessionId).toBe('');
+  });
+
+  it('exits login-only mode with a failure code when platform selection is cancelled', async () => {
+    const harness = makeHarness();
+    const driver = makeDriver(harness, { ...makeStartupInput(), loginOnly: true });
+    const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
+    vi.mocked(promptPlatformSelection).mockResolvedValue(undefined);
+
+    await expect(driver.init()).resolves.toBe(false);
+    await (
+      driver as unknown as { finishStartup(shouldReplayHistory: boolean): Promise<void> }
+    ).finishStartup(false);
+
+    expect(stop).toHaveBeenCalledWith(1);
+    expect(harness.createSession).not.toHaveBeenCalled();
+  });
+
+  it('completes OAuth in login-only mode without creating a chat session', async () => {
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: { 'managed:kimi-code': { type: 'kimi' } },
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      })),
+    });
+    const driver = makeDriver(harness, { ...makeStartupInput(), loginOnly: true });
+    const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+
+    await expect(driver.init()).resolves.toBe(false);
+    await (
+      driver as unknown as { finishStartup(shouldReplayHistory: boolean): Promise<void> }
+    ).finishStartup(false);
+
+    expect(harness.auth.login).toHaveBeenCalledOnce();
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(stop).toHaveBeenCalledWith(0);
+  });
+
   it('creates a fresh session from startup flags and syncs runtime state', async () => {
     const session = makeSession({
       getStatus: vi.fn(async () => ({

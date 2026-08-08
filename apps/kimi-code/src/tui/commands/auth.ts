@@ -26,21 +26,22 @@ import type { SlashCommandHost } from './dispatch';
 // Auth: login / logout
 // ---------------------------------------------------------------------------
 
-export async function handleLoginCommand(host: SlashCommandHost): Promise<void> {
+export type LoginCommandOutcome = 'success' | 'cancelled' | 'failed';
+
+export async function handleLoginCommand(host: SlashCommandHost): Promise<LoginCommandOutcome> {
   const platformId = await promptPlatformSelection(host);
-  if (platformId === undefined) return;
+  if (platformId === undefined) return 'cancelled';
 
   if (platformId === 'kimi-code') {
-    await handleKimiCodeOAuthLogin(host);
-    return;
+    return handleKimiCodeOAuthLogin(host);
   }
 
   const platform = getOpenPlatformById(platformId);
-  if (platform === undefined) return;
-  await handleOpenPlatformLogin(host, platform);
+  if (platform === undefined) return 'failed';
+  return handleOpenPlatformLogin(host, platform);
 }
 
-async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
+async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<LoginCommandOutcome> {
   const status = await host.harness.auth.status(DEFAULT_OAUTH_PROVIDER_NAME);
   const alreadyLoggedIn = status.providers.some(
     (provider) => provider.providerName === DEFAULT_OAUTH_PROVIDER_NAME && provider.hasToken,
@@ -66,7 +67,7 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
     } catch (refreshError) {
       const message = formatErrorMessage(refreshError);
       host.showError(`Authentication successful, but failed to refresh config: ${message}`);
-      return;
+      return 'failed';
     }
     host.track('login', {
       provider: DEFAULT_OAUTH_PROVIDER_NAME,
@@ -76,6 +77,7 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
     if (alreadyLoggedIn) {
       host.showStatus('Already logged in. Model configuration refreshed.', 'success');
     }
+    return 'success';
   } catch (error) {
     const cancelled = controller.signal.aborted;
     spinner?.stop({
@@ -83,7 +85,7 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
       label: cancelled ? 'Login cancelled.' : 'Login failed.',
     });
     spinner = undefined;
-    if (cancelled) return;
+    if (cancelled) return 'cancelled';
     log.warn('login failed', {
       providerName: DEFAULT_OAUTH_PROVIDER_NAME,
       alreadyLoggedIn,
@@ -92,6 +94,7 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
     });
     const message = formatErrorMessage(error);
     host.showError(`Login failed: ${message}`);
+    return 'failed';
   } finally {
     if (host.cancelInFlight === cancelLogin) {
       host.cancelInFlight = undefined;
@@ -102,7 +105,7 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
 async function handleOpenPlatformLogin(
   host: SlashCommandHost,
   platform: OpenPlatformDefinition,
-): Promise<void> {
+): Promise<LoginCommandOutcome> {
   const consoleHost = platform.consoleUrl?.replace(/^https?:\/\//, '') ?? '';
   const platformName = consoleHost.length > 0 ? `Kimi Platform (${consoleHost})` : 'Kimi Platform';
   const subtitleLines = [
@@ -110,7 +113,7 @@ async function handleOpenPlatformLogin(
     `${'saved to'.padEnd(12)}~/.kimi-code/config.toml`,
   ];
   const apiKey = await promptApiKey(host, platformName, subtitleLines);
-  if (apiKey === undefined) return;
+  if (apiKey === undefined) return 'cancelled';
 
   const controller = new AbortController();
   const cancelLogin = (): void => {
@@ -123,7 +126,7 @@ async function handleOpenPlatformLogin(
     models = await fetchOpenPlatformModels(platform, apiKey, fetch, controller.signal);
     models = filterModelsByPrefix(models, platform);
   } catch (error) {
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted) return 'cancelled';
     const msg = formatErrorMessage(error);
     host.showError(`Failed to verify API key: ${msg}`);
     if (
@@ -134,7 +137,7 @@ async function handleOpenPlatformLogin(
         'Hint: If your API key was obtained from Kimi Code, please select "Kimi Code" instead.',
       );
     }
-    return;
+    return 'failed';
   } finally {
     if (host.cancelInFlight === cancelLogin) {
       host.cancelInFlight = undefined;
@@ -143,11 +146,11 @@ async function handleOpenPlatformLogin(
 
   if (models.length === 0) {
     host.showError('No models available for this platform.');
-    return;
+    return 'failed';
   }
 
   const selection = await promptModelSelectionForOpenPlatform(host, models, platform);
-  if (selection === undefined) return;
+  if (selection === undefined) return 'cancelled';
 
   const existingConfig = await host.harness.getConfig();
   if (existingConfig.providers[platform.id] !== undefined) {
@@ -177,6 +180,7 @@ async function handleOpenPlatformLogin(
   await host.authFlow.refreshConfigAfterLogin();
   host.track('login', { provider: platform.id, method: 'api_key' });
   host.showStatus(`Setup complete: ${platform.name} · ${selection.model.id}`);
+  return 'success';
 }
 
 export async function handleLogoutCommand(host: SlashCommandHost): Promise<void> {
