@@ -1361,6 +1361,32 @@ describe('OpenAILegacyChatProvider', () => {
   });
 
   describe('default reasoning protocol (no explicit reasoningKey)', () => {
+    it('omits an assistant message with only non-empty reasoning from request history', async () => {
+      const provider = createProvider({ model: 'deepseek-reasoner' });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Write a plan' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'think',
+              think: 'The plan is written. I should request approval.',
+            },
+          ],
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'Continue' }], toolCalls: [] },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        { role: 'user', content: 'Write a plan' },
+        { role: 'user', content: 'Continue' },
+      ]);
+      expect(body['reasoning_effort']).toBeUndefined();
+    });
+
     it('serializes ThinkPart back to reasoning_content even without reasoningKey', async () => {
       // The whole point of issue #69: a hand-written config.toml never sets
       // reasoningKey, but the round-trip must still work against DeepSeek-style
@@ -1404,9 +1430,16 @@ describe('OpenAILegacyChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
       const messages = body['messages'] as Record<string, unknown>[];
 
-      expect(messages[0]).toMatchObject({
+      expect(messages[0]).toEqual({
         role: 'assistant',
         reasoning_content: '',
+        tool_calls: [
+          {
+            type: 'function',
+            id: 'call_1',
+            function: { name: 'lookup', arguments: '{"q":"test"}' },
+          },
+        ],
       });
     });
 
