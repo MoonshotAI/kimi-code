@@ -155,6 +155,7 @@ export interface WorkspaceStateSnapshot {
           readonly type?: string;
           readonly whenToUse?: string;
           readonly disableModelInvocation?: boolean;
+          readonly allowActivationWhileBusy?: boolean;
           readonly isSubSkill?: boolean;
           readonly safe?: boolean;
           readonly arguments?: string | readonly unknown[];
@@ -191,6 +192,7 @@ export interface WorkspaceStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -217,6 +219,7 @@ export interface WorkspaceStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -251,6 +254,7 @@ export interface WorkspaceStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -277,6 +281,7 @@ export interface WorkspaceStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -303,6 +308,7 @@ export interface WorkspaceStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -331,6 +337,7 @@ export interface WorkspaceStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -357,6 +364,7 @@ export interface WorkspaceStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -482,6 +490,7 @@ export interface SessionStateSnapshot {
           readonly type?: string;
           readonly whenToUse?: string;
           readonly disableModelInvocation?: boolean;
+          readonly allowActivationWhileBusy?: boolean;
           readonly isSubSkill?: boolean;
           readonly safe?: boolean;
           readonly arguments?: string | readonly unknown[];
@@ -518,6 +527,7 @@ export interface SessionStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -544,6 +554,7 @@ export interface SessionStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -578,6 +589,7 @@ export interface SessionStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -604,6 +616,7 @@ export interface SessionStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -630,6 +643,7 @@ export interface SessionStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -658,6 +672,7 @@ export interface SessionStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];
@@ -684,6 +699,7 @@ export interface SessionStateSnapshot {
         readonly type?: string;
         readonly whenToUse?: string;
         readonly disableModelInvocation?: boolean;
+        readonly allowActivationWhileBusy?: boolean;
         readonly isSubSkill?: boolean;
         readonly safe?: boolean;
         readonly arguments?: string | readonly unknown[];

@@ -663,6 +663,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.activeToolNamesOverlay = activeToolNames.filter((candidate) => candidate !== name);
   }
 
+  activateTools(names: readonly string[]): void {
+    const activeToolNames = this.activeToolNames;
+    if (activeToolNames === undefined) return;
+    this.setActiveTools([...new Set([...activeToolNames, ...names])]);
+  }
+
   private resolveConfigPayload(
     changed: Omit<ProfileUpdateData, 'activeToolNames'>,
   ): PayloadOf<typeof configUpdate> {

@@ -80,7 +80,12 @@ export class SkillManager {
       });
     }
     if (input !== undefined) {
-      this.agent.turn.prompt(input, origin);
+      // Steer, never prompt: an activation that arrives while a turn is
+      // running is buffered into that turn (slash commands like /tower stay
+      // issuable while the agent is busy); with no active turn, steer launches
+      // a new turn exactly like prompt would. turn.steer records are
+      // first-class for undo and replay, same as turn.prompt.
+      this.agent.turn.steer(input, origin);
     }
   }
 }

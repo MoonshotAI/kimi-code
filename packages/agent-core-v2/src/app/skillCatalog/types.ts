@@ -6,6 +6,12 @@
  * themes, MCP setup — rather than a capability the agent applies to the user's
  * work, which is what the `builtin_product_skills` switch excludes; those
  * names and descriptions otherwise sit in the system prompt every turn.
+ *
+ * `allowActivationWhileBusy` is a frontmatter opt-in (consumed by clients such
+ * as the TUI, not by the engine): a slash activation entered while a turn is
+ * running may steer into the running turn instead of queueing behind it.
+ * Reserve it for coordination-style skills (e.g. `tower`) whose whole point is
+ * mid-turn intervention.
  */
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
@@ -16,6 +22,7 @@ export interface SkillMetadata {
   readonly type?: string | undefined;
   readonly whenToUse?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
+  readonly allowActivationWhileBusy?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;
   readonly safe?: boolean | undefined;
   readonly arguments?: readonly unknown[] | string | undefined;
@@ -43,6 +50,7 @@ export interface SkillSummary {
   readonly source: SkillSource;
   readonly type?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
+  readonly allowActivationWhileBusy?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;
 }
 
@@ -102,6 +110,7 @@ export function summarizeSkill(skill: SkillDefinition): SkillSummary {
     source: skill.source,
     type: skill.metadata.type,
     disableModelInvocation: skill.metadata.disableModelInvocation,
+    allowActivationWhileBusy: skill.metadata.allowActivationWhileBusy,
     isSubSkill: skill.metadata.isSubSkill,
   };
 }

@@ -6,6 +6,13 @@ export interface SkillMetadata {
   readonly type?: string | undefined;
   readonly whenToUse?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
+  /**
+   * When `true`, a slash activation of this skill entered while a turn is
+   * running is steered into the running turn (taking effect at the next step
+   * boundary) instead of queueing behind it. Reserve for coordination-style
+   * skills (e.g. `tower`) whose whole point is mid-turn intervention.
+   */
+  readonly allowActivationWhileBusy?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;
   readonly safe?: boolean | undefined;
   readonly arguments?: readonly unknown[] | string | undefined;
@@ -32,6 +39,7 @@ export interface SkillSummary {
   readonly source: SkillSource;
   readonly type?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
+  readonly allowActivationWhileBusy?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;
 }
 
@@ -82,6 +90,7 @@ export function summarizeSkill(skill: SkillDefinition): SkillSummary {
     source: skill.source,
     type: skill.metadata.type,
     disableModelInvocation: skill.metadata.disableModelInvocation,
+    allowActivationWhileBusy: skill.metadata.allowActivationWhileBusy,
     isSubSkill: skill.metadata.isSubSkill,
   };
 }
