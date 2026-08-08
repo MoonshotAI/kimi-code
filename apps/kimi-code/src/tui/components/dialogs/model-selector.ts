@@ -9,9 +9,9 @@ import {
   type Focusable,
 } from '@moonshot-ai/pi-tui';
 
-import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import { providerDisplayName } from '#/tui/utils/provider-label';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 import type { ChoiceOption } from './choice-picker';
@@ -40,12 +40,6 @@ export interface ModelSelection {
 export function modelDisplayName(alias: string, model: ModelAlias | undefined): string {
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
   return effective?.displayName ?? effective?.model ?? alias;
-}
-
-export function providerDisplayName(provider: string): string {
-  if (provider === DEFAULT_OAUTH_PROVIDER_NAME) return PRODUCT_NAME;
-  if (provider.startsWith('managed:')) return provider.slice('managed:'.length);
-  return provider;
 }
 
 export function createModelChoiceOptions(
