@@ -439,6 +439,7 @@ export class FooterComponent implements Component {
     const state = this.state;
     return {
       model: modelDisplayName(state),
+      thinkingEffort: state.thinkingEffort,
       cwd: state.workDir,
       gitBranch: this.gitCache.getStatus()?.branch ?? null,
       permissionMode: state.permissionMode,
