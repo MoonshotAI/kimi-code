@@ -21,6 +21,15 @@ import { isHideOutputMarker } from './marker';
  * Image parts are built from the client-declared MIME verbatim; run the
  * result through {@link compressPromptImageParts} before submitting so
  * unsupported formats are dropped and MIME aliases canonicalized.
+ *
+ * Whitespace-only text blocks are treated as separators, not standalone
+ * parts: they are appended to the preceding text-producing part when one
+ * exists, and otherwise dropped. Clients such as Zed emit prompts where
+ * standalone `text(" ")` blocks separate resource attachments
+ * (`[resource, text(" "), resource, text(" "), text("todo:...")]`), and the
+ * SDK's per-part `text.trim().length === 0` validation would otherwise
+ * reject the whole prompt with `Prompt input cannot contain empty text
+ * parts`. See #1777.
  */
 export function acpBlocksToPromptParts(
   blocks: readonly ContentBlock[],
@@ -28,6 +37,15 @@ export function acpBlocksToPromptParts(
   const out: PromptPart[] = [];
   for (const block of blocks) {
     if (block.type === 'text') {
+      // Whitespace-only text blocks are separators — attach to the previous
+      // text-producing part if one exists, otherwise drop. They must never
+      // become their own PromptPart, because the SDK rejects any part whose
+      // trimmed text is empty (see #1777).
+      if (block.text.trim().length === 0) {
+        const last = out[out.length - 1];
+        if (last?.type === 'text') last.text += block.text;
+        continue;
+      }
       out.push({ type: 'text', text: block.text });
       continue;
     }
