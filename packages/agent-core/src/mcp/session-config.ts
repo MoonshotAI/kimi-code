@@ -1,9 +1,10 @@
 import type { McpServerConfig } from '#/config/schema';
 
-import { loadMcpServers } from './config-loader';
+import { loadMcpServersWithDiagnostics } from './config-loader';
 
 export interface SessionMcpConfig {
   readonly servers: Record<string, McpServerConfig>;
+  readonly warnings?: readonly string[];
 }
 
 export interface ResolveSessionMcpConfigInput {
@@ -14,12 +15,13 @@ export interface ResolveSessionMcpConfigInput {
 export async function resolveSessionMcpConfig(
   input: ResolveSessionMcpConfigInput,
 ): Promise<SessionMcpConfig | undefined> {
-  const servers = await loadMcpServers({
+  const result = await loadMcpServersWithDiagnostics({
     cwd: input.cwd,
     homeDir: input.homeDir,
   });
+  const servers = result.servers;
   if (Object.keys(servers).length === 0) return undefined;
-  return { servers };
+  return { servers, warnings: result.warnings };
 }
 
 export function mergeCallerMcpServers(
@@ -34,5 +36,6 @@ export function mergeCallerMcpServers(
       ...base?.servers,
       ...callerServers,
     },
+    warnings: base?.warnings,
   };
 }
