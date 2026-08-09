@@ -69,6 +69,11 @@ export async function runShell(
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     skillDirs: opts.skillsDirs,
+    // `--agent-file` registers the file for this launch; the harness is built
+    // before any session exists, and the v2 engine reads explicit agent files
+    // from its own bootstrap arguments, so the registration has to happen here.
+    // Selecting the profile it defines stays per-session (`agentProfile`).
+    agentFiles: opts.agentFiles,
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {
