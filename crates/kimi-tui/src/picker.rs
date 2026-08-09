@@ -297,11 +297,9 @@ pub fn select_picker(
                     return Ok(None);
                 }
                 KeyCode::Esc => return Ok(None),
-                KeyCode::Char(ch) => {
-                    if opts.filterable {
-                        filter.push(ch);
-                        selected = 0;
-                    }
+                KeyCode::Char(ch) if opts.filterable => {
+                    filter.push(ch);
+                    selected = 0;
                 }
                 _ => {}
             }

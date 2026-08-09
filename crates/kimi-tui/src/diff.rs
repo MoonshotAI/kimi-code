@@ -172,12 +172,11 @@ pub fn render_diff_clustered(old_text: &str, new_text: &str, path: &str) -> Vec<
                 body += 1;
             }
         }
-        for i in start..=end {
+        for (i, line) in diff.iter().enumerate().skip(start).take(end - start + 1) {
             if body >= DIFF_SUMMARY_MAX_LINES {
                 truncated = true;
                 break 'outer;
             }
-            let line = &diff[i];
             let marker = match line.kind {
                 DiffKind::Add => "+",
                 DiffKind::Delete => "-",

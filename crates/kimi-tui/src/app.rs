@@ -385,14 +385,15 @@ impl HelpPanel {
 /// The `/help` panel rows: a shortcuts section, then every slash command
 /// with its description (pure, tested).
 fn build_help_rows() -> Vec<String> {
-    let mut rows = Vec::new();
-    rows.push(t("tui.help.shortcuts").to_string());
-    rows.push("  Ctrl-C ×2   quit".to_string());
-    rows.push("  Ctrl-O      toggle tool card".to_string());
-    rows.push("  Ctrl-G      external editor".to_string());
-    rows.push("  Ctrl-S      steer / queue".to_string());
-    rows.push("  PageUp/Dn   scroll (in lists)".to_string());
-    rows.push(String::new());
+    let mut rows = vec![
+        t("tui.help.shortcuts").to_string(),
+        "  Ctrl-C ×2   quit".to_string(),
+        "  Ctrl-O      toggle tool card".to_string(),
+        "  Ctrl-G      external editor".to_string(),
+        "  Ctrl-S      steer / queue".to_string(),
+        "  PageUp/Dn   scroll (in lists)".to_string(),
+        String::new(),
+    ];
     rows.push(t!("tui.help.commands", crate::bottom_pane::command_descriptions().len()));
     for (name, desc) in crate::bottom_pane::command_descriptions() {
         rows.push(format!("{name}  {desc}"));
@@ -700,7 +701,7 @@ pub fn upsert_task_card(transcript: &mut Vec<TranscriptEntry>, event: &serde_jso
 /// with a long argument preview or an already-collapsed state participate;
 /// short running cards stay put.
 pub fn toggle_last_tool_collapse(transcript: &mut [TranscriptEntry]) {
-    if let Some(entry) = transcript.iter_mut().rev().find(|e| match e {
+    if let Some(TranscriptEntry::ToolCall(tc)) = transcript.iter_mut().rev().find(|e| match e {
         TranscriptEntry::ToolCall(tc) => {
             tc.collapsed
                 || tc.args.chars().count() > TOOL_COLLAPSE_THRESHOLD
@@ -711,9 +712,7 @@ pub fn toggle_last_tool_collapse(transcript: &mut [TranscriptEntry]) {
         }
         _ => false,
     }) {
-        if let TranscriptEntry::ToolCall(tc) = entry {
-            tc.collapsed = !tc.collapsed;
-        }
+        tc.collapsed = !tc.collapsed;
     }
 }
 
@@ -841,7 +840,7 @@ fn build_mcp_report(servers: &[serde_json::Value]) -> Vec<String> {
     }
     servers
         .iter()
-        .filter_map(|s| {
+        .map(|s| {
             let name = s["name"]
                 .as_str()
                 .or_else(|| s["server_name"].as_str())
@@ -856,7 +855,7 @@ fn build_mcp_report(servers: &[serde_json::Value]) -> Vec<String> {
             if tools > 0 {
                 line.push_str(&format!("  {tools} tools"));
             }
-            Some(line)
+            line
         })
         .collect()
 }
@@ -916,7 +915,7 @@ fn interrupt_action(code: KeyCode, modifiers: event::KeyModifiers) -> Option<Int
 // only at edit boundaries. Every function clamps an out-of-range cursor.
 
 /// Input-editing state (the prompt line, its cursor, history, Tab cycle).
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct EditorState {
     /// The user's current input line (multi-line capable).
     text: String,
@@ -927,18 +926,6 @@ pub struct EditorState {
     history_idx: Option<usize>,
     /// Active Tab completion cycle, if any.
     tab: Option<TabState>,
-}
-
-impl Default for EditorState {
-    fn default() -> Self {
-        Self {
-            text: String::new(),
-            cursor: 0,
-            history: Vec::new(),
-            history_idx: None,
-            tab: None,
-        }
-    }
 }
 
 /// Rendering / view state (transcript, scroll, footer, theme).
@@ -2137,8 +2124,9 @@ impl App {
                             let items: Vec<crate::picker::PickerItem> = self
                                 .model_aliases
                                 .iter()
-                                .cloned()
-                                .map(|alias| crate::picker::PickerItem::new(alias.clone(), String::new()))
+                                .map(|alias| {
+                                    crate::picker::PickerItem::new(alias.clone(), String::new())
+                                })
                                 .collect();
                             if items.is_empty() {
                                 self.push_line(TranscriptLine::status(t("tui.models.none")));
@@ -2467,7 +2455,11 @@ impl App {
                         let ctx = status["result"]["context_tokens"].as_u64().unwrap_or(0);
                         let max = status["result"]["max_context_tokens"].as_u64().unwrap_or(0);
                         if max > 0 {
-                            let pct = (ctx * 100 / max).min(100);
+                            let pct = ctx
+                                .checked_mul(100)
+                                .map(|v| v / max)
+                                .unwrap_or(0)
+                                .min(100);
                             self.push_line(TranscriptLine::status(t!(
                                 "tui.usage.context",
                                 ctx,
@@ -3792,7 +3784,7 @@ impl App {
         let rows: Vec<crate::modal::ModalRow> = panel
             .rows()
             .into_iter()
-            .map(|row| crate::modal::ModalRow::new(row))
+            .map(crate::modal::ModalRow::new)
             .collect();
         crate::modal::render_modal(frame, t("tui.question.title"), &rows, self.view.theme);
     }

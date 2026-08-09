@@ -38,7 +38,10 @@ impl FooterInfo {
         let ctx = status["context_tokens"].as_u64().unwrap_or(0);
         let max = status["max_context_tokens"].as_u64().unwrap_or(0);
         let ctx_pct = if max > 0 {
-            ((ctx * 100) / max).min(100) as u8
+            ctx.checked_mul(100)
+                .map(|v| (v / max) as u8)
+                .unwrap_or(0)
+                .min(100)
         } else {
             0
         };

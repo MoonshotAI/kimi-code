@@ -17,6 +17,7 @@ use crate::theme::Theme;
 /// input line (with the session id) below, and the footer status bar at the
 /// bottom, with the cursor at the editing position. When a slash-command
 /// completion popup is active it is drawn over the bottom of the chat pane.
+#[allow(clippy::too_many_arguments)]
 pub fn render_frame(
     frame: &mut ratatui::Frame<'_>,
     transcript: &[TranscriptEntry],

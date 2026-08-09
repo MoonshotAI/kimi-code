@@ -149,9 +149,12 @@ pub fn t_fmt_for(locale: Locale, key: &str, args: &[String]) -> String {
 /// this macro instead.
 #[macro_export]
 macro_rules! t {
-    ($key:expr $(, $arg:expr)* $(,)?) => {
-        $crate::i18n::t_fmt($key, &[$( $arg.to_string() ),*])
-    };
+    ($key:expr $(, $arg:expr)* $(,)?) => {{
+        // Arguments are heterogeneous (&str, numbers, owned strings);
+        // `format!` converts through Display for all of them.
+        let args = &[$( format!("{}", $arg) ),*];
+        $crate::i18n::t_fmt($key, args)
+    }};
 }
 
 /// `(key, en, zh)`, sorted by key for binary search. Placeholders use

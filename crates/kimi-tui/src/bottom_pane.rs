@@ -368,7 +368,7 @@ pub fn argument_hint(input: &str, model_aliases: &[String]) -> Option<String> {
 /// History entries matching the current input mode: bash drafts
 /// (`!`-prefixed) recall only `!`-prefixed entries (TS editor
 /// history-filter parity). Plain drafts see the whole history.
-pub fn filtered_history<'a>(history: &'a [String], bash: bool) -> Vec<&'a String> {
+pub fn filtered_history(history: &[String], bash: bool) -> Vec<&String> {
     history
         .iter()
         .filter(|h| !bash || h.starts_with('!'))

@@ -6,7 +6,7 @@ use crate::app::{TranscriptEntry, TranscriptKind, TranscriptLine};
 
 /// The trailing plain line, if the transcript ends on one (tool cards don't
 /// accumulate streamed text).
-fn last_line_mut(transcript: &mut Vec<TranscriptEntry>) -> Option<&mut TranscriptLine> {
+fn last_line_mut(transcript: &mut [TranscriptEntry]) -> Option<&mut TranscriptLine> {
     transcript.last_mut().and_then(|e| match e {
         TranscriptEntry::Line(line) => Some(line),
         _ => None,
@@ -84,7 +84,7 @@ pub fn finish_stream(transcript: &mut Vec<TranscriptEntry>, final_text: String) 
 /// answer (the side agent's context is not the session's, so there is no
 /// transcript to read back) — promote it to an assistant line keeping its
 /// accumulated text. Returns whether a streamed line was promoted.
-pub fn finish_side_turn(transcript: &mut Vec<TranscriptEntry>) -> bool {
+pub fn finish_side_turn(transcript: &mut [TranscriptEntry]) -> bool {
     if let Some(last) = last_line_mut(transcript) {
         if last.kind == TranscriptKind::Streaming {
             last.kind = TranscriptKind::Assistant;
