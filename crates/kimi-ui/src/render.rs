@@ -150,8 +150,36 @@ pub fn render_event(event: &serde_json::Value) -> Option<String> {
             let total = event.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
             Some(format!("usage: {total} tokens"))
         }
-        "session.task.started" => Some(format!("task {} started", field("task_id"))),
-        "session.task.terminated" => Some(format!("task {} terminated", field("task_id"))),
+        "session.task.started" => {
+            let description = field("description");
+            let kind = field("kind");
+            if description.is_empty() {
+                Some(format!("task {} ({kind}) started", field("task_id")))
+            } else {
+                Some(format!("task {} ({kind}) started: {description}", field("task_id")))
+            }
+        }
+        "session.task.terminated" => {
+            let status = field("status");
+            let description = field("description");
+            if description.is_empty() {
+                Some(format!("task {} {status}", field("task_id")))
+            } else {
+                Some(format!("task {} {status}: {description}", field("task_id")))
+            }
+        }
+        "tool.native" => {
+            // A native tool's final result (the engine executed it in
+            // process): render like a settled tool call.
+            let ok = !event.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+            let label = if ok { "ok" } else { "error" };
+            let content = compact_event_value(event.get("content"));
+            if content.is_empty() {
+                Some(format!("tool {} -> {label}", field("tool_name")))
+            } else {
+                Some(format!("tool {} -> {label}: {content}", field("tool_name")))
+            }
+        }
         "session.shell.output" => {
             let text = field("content");
             let text = if text.len() > 80 { format!("{}…", &text[..80]) } else { text.to_string() };
@@ -271,6 +299,7 @@ pub fn last_assistant_text(context: &serde_json::Value) -> Option<String> {
 mod tests {
     use super::{
         last_assistant_text, render_event, render_prompt_block, stream_delta, stream_thinking,
+        stream_tool_call,
     };
 
     #[test]
@@ -319,6 +348,18 @@ mod tests {
             (
                 serde_json::json!({ "type": "session.tool.settled", "tool_name": "Read", "is_error": false, "content": "file contents" }),
                 "tool Read -> ok: file contents",
+            ),
+            (
+                serde_json::json!({ "type": "tool.native", "tool_name": "Bash", "is_error": true, "content": "boom" }),
+                "tool Bash -> error: boom",
+            ),
+            (
+                serde_json::json!({ "type": "session.task.started", "task_id": "t1", "kind": "agent", "description": "review the diff" }),
+                "task t1 (agent) started: review the diff",
+            ),
+            (
+                serde_json::json!({ "type": "session.task.terminated", "task_id": "t1", "kind": "agent", "status": "completed" }),
+                "task t1 completed",
             ),
             (
                 serde_json::json!({

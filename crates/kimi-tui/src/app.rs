@@ -37,14 +37,36 @@ pub enum TranscriptKind {
     Error,
 }
 
-/// A structured transcript entry: a plain line, or a tool-call card (the
-/// chatwidget component-tree step — TS `tool-call.ts` parity).
+/// A structured transcript entry: a plain line, a tool-call card (the
+/// chatwidget component-tree step — TS `tool-call.ts` parity), or a
+/// background-task / subagent card (TS `background-agent-status` parity).
 #[derive(Debug, Clone, PartialEq)]
 pub enum TranscriptEntry {
     /// A role-styled line (user/assistant/status/…).
     Line(TranscriptLine),
     /// A structured tool call with args + optional result (collapsible).
     ToolCall(ToolCallEntry),
+    /// A background task / subagent with lifecycle status (started →
+    /// terminated; kind `agent` is a subagent).
+    Task(TaskEntry),
+}
+
+/// One background task in the transcript: created on `session.task.started`,
+/// gains its terminal status on `session.task.terminated`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskEntry {
+    pub task_id: String,
+    /// Human description (the tool objective / command).
+    pub description: String,
+    /// 'agent' | 'process' | 'question' (wire `kind`).
+    pub kind: String,
+    /// Running status while live; the terminal status once terminated.
+    pub status: String,
+    /// Terminal status landed (None while running).
+    pub ended: bool,
+    /// Started timestamp (epoch ms from the wire) for duration display.
+    pub started_at_ms: Option<u64>,
+    pub ended_at_ms: Option<u64>,
 }
 
 /// One tool invocation in the transcript: starts on `session.tool.started`,
@@ -335,6 +357,58 @@ pub fn completion_for_input(input: &str) -> Option<CompletionState> {
             matches,
             selected: 0,
         })
+    }
+}
+
+/// Upsert the background-task / subagent card from `session.task.started` /
+/// `session.task.terminated` events (TS `background-agent-status` parity,
+/// simplified): started creates the card, terminated lands its terminal
+/// status + duration. A terminated ghost without a started event still
+/// shows as ended.
+pub fn upsert_task_card(transcript: &mut Vec<TranscriptEntry>, event: &serde_json::Value) {
+    let task_id = event["task_id"].as_str().unwrap_or("").to_string();
+    let description = event["description"].as_str().unwrap_or("").to_string();
+    let kind = event["kind"].as_str().unwrap_or("").to_string();
+    let r#type = event["type"].as_str().unwrap_or("");
+    let index = transcript.iter().position(|e| match e {
+        TranscriptEntry::Task(t) => t.task_id == task_id,
+        _ => false,
+    });
+    if r#type == "session.task.started" {
+        let entry = TaskEntry {
+            task_id,
+            description,
+            kind,
+            status: "running".to_string(),
+            ended: false,
+            started_at_ms: event["started_at_ms"].as_u64(),
+            ended_at_ms: None,
+        };
+        match index {
+            Some(i) => transcript[i] = TranscriptEntry::Task(entry),
+            None => transcript.push(TranscriptEntry::Task(entry)),
+        }
+        return;
+    }
+    // terminated — land the terminal status.
+    let status = event["status"].as_str().unwrap_or("terminated").to_string();
+    match index.and_then(|i| transcript.get_mut(i)) {
+        Some(TranscriptEntry::Task(task)) => {
+            task.status = status;
+            task.ended = true;
+            task.ended_at_ms = event["ended_at_ms"].as_u64();
+        }
+        _ => {
+            transcript.push(TranscriptEntry::Task(TaskEntry {
+                task_id,
+                description,
+                kind,
+                status,
+                ended: true,
+                started_at_ms: None,
+                ended_at_ms: event["ended_at_ms"].as_u64(),
+            }));
+        }
     }
 }
 
@@ -2591,9 +2665,19 @@ impl App {
         let line = kimi_ui::render_event(&event).unwrap_or_else(|| event.to_string());
         // Tool progress is structured into tool-call cards (started/settled
         // update one ToolCallEntry by id); everything else is a status line.
-        let is_tool = r#type.starts_with("session.tool.");
+        // Tool progress is structured into tool-call cards (started/settled
+        // update one ToolCallEntry by id; `tool.native` carries a native
+        // tool's final result — same settled semantics); background
+        // tasks / subagents get lifecycle cards; everything else is a status
+        // line.
+        let is_tool =
+            r#type.starts_with("session.tool.") || r#type == "tool.native";
         if is_tool {
             self.handle_tool_event(&event);
+            return;
+        }
+        if r#type == "session.task.started" || r#type == "session.task.terminated" {
+            self.handle_task_event(&event);
             return;
         }
         self.view.transcript.push_line(TranscriptLine::status(line));
@@ -2651,7 +2735,7 @@ impl App {
                         }));
                 }
             }
-        } else if r#type == "session.tool.settled" {
+        } else if r#type == "session.tool.settled" || r#type == "tool.native" {
             let mut result = event["content"].as_str().unwrap_or("").to_string();
             let is_error = event["is_error"].as_bool().unwrap_or(false);
             // ReadMediaFile results embed the full base64 in `content`;
@@ -2694,6 +2778,14 @@ impl App {
                 self.push_line(TranscriptLine::status(t("tui.question.replyHint")));
             }
         }
+    }
+
+    /// Upsert the background-task / subagent card from
+    /// `session.task.started` / `session.task.terminated` events (TS
+    /// `background-agent-status` parity, simplified): started creates the
+    /// card, terminated lands its terminal status + duration.
+    fn handle_task_event(&mut self, event: &serde_json::Value) {
+        upsert_task_card(&mut self.view.transcript, event);
     }
 
     /// Fetch pending approvals after an `approval.requested` event and queue
@@ -3103,6 +3195,15 @@ fn transcript_to_markdown(transcript: &[TranscriptEntry]) -> String {
                 }
                 md.push_str("\n```\n\n");
             }
+            TranscriptEntry::Task(task) => {
+                let status = if task.ended { task.status.as_str() } else { "running" };
+                let description = if task.description.is_empty() {
+                    task.task_id.clone()
+                } else {
+                    task.description.clone()
+                };
+                md.push_str(&format!("## Task: {description} ({status})\n\n"));
+            }
         }
     }
     md
@@ -3273,6 +3374,99 @@ mod tests {
                 assert!(!tc.is_error);
             }
             _ => panic!("expected a ToolCall card"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_native_lands_on_card() {
+        // A native tool result (engine executed it in-process) carries the
+        // settled semantics — result lands on the matching card.
+        let mut app = App::new(
+            kimi_sdk::Harness::embedded().expect("harness"),
+            Some("s-tool3"),
+        );
+        app.handle_tool_event(&serde_json::json!({
+            "type": "tool.native",
+            "tool_call_id": "t5",
+            "tool_name": "Grep",
+            "arguments": { "pattern": "foo" },
+            "content": "a.txt:1:foo",
+            "is_error": false,
+        }));
+        match &app.view.transcript[0] {
+            TranscriptEntry::ToolCall(tc) => {
+                assert_eq!(tc.tool_name, "Grep");
+                assert_eq!(tc.result.as_deref(), Some("a.txt:1:foo"));
+                assert!(!tc.is_error);
+            }
+            _ => panic!("expected a ToolCall card for tool.native"),
+        }
+    }
+
+    #[test]
+    fn task_events_build_lifecycle_cards() {
+        // started creates a running card; terminated lands the status +
+        // duration on the same card (TS background-agent-status parity).
+        let mut transcript = Vec::new();
+        upsert_task_card(
+            &mut transcript,
+            &serde_json::json!({
+                "type": "session.task.started",
+                "session_id": "s1",
+                "task_id": "task-1",
+                "description": "review the diff",
+                "kind": "agent",
+                "started_at_ms": 1000,
+            }),
+        );
+        upsert_task_card(
+            &mut transcript,
+            &serde_json::json!({
+                "type": "session.task.terminated",
+                "session_id": "s1",
+                "task_id": "task-1",
+                "status": "completed",
+                "description": "review the diff",
+                "kind": "agent",
+                "ended_at_ms": 3500,
+            }),
+        );
+        assert_eq!(transcript.len(), 1, "one card, updated in place");
+        match &transcript[0] {
+            TranscriptEntry::Task(task) => {
+                assert_eq!(task.task_id, "task-1");
+                assert_eq!(task.description, "review the diff");
+                assert_eq!(task.kind, "agent");
+                assert_eq!(task.status, "completed");
+                assert!(task.ended);
+                assert_eq!(
+                    (task.started_at_ms, task.ended_at_ms),
+                    (Some(1000), Some(3500))
+                );
+            }
+            _ => panic!("expected a Task card"),
+        }
+
+        // A terminated ghost without a started event still shows as ended.
+        let mut ghost = Vec::new();
+        upsert_task_card(
+            &mut ghost,
+            &serde_json::json!({
+                "type": "session.task.terminated",
+                "task_id": "ghost-1",
+                "description": "restored",
+                "kind": "process",
+                "status": "failed",
+                "ended_at_ms": 7,
+            }),
+        );
+        match &ghost[0] {
+            TranscriptEntry::Task(task) => {
+                assert_eq!(task.status, "failed");
+                assert!(task.ended);
+                assert_eq!(task.started_at_ms, None);
+            }
+            _ => panic!("expected a Task card for the ghost"),
         }
     }
 

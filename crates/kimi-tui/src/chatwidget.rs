@@ -111,6 +111,33 @@ pub fn styled_lines(transcript: &[TranscriptEntry], theme: Theme) -> Vec<RenderL
     let mut out = Vec::new();
     for entry in transcript {
         match entry {
+            TranscriptEntry::Task(task) => {
+                // Task / subagent card: `⚙ task <id> <description> — <status>`
+                // with an elapsed duration once terminated (TS
+                // `background-agent-status` parity, simplified).
+                let mut header = format!("⚙ task {}", task.task_id);
+                if !task.description.is_empty() {
+                    header.push_str(&format!(" {}", task.description));
+                }
+                let status = if task.ended {
+                    task.status.as_str()
+                } else {
+                    "running"
+                };
+                header.push_str(&format!(" — {status}"));
+                if let (Some(started), Some(ended)) = (task.started_at_ms, task.ended_at_ms) {
+                    header.push_str(&format!(
+                        " [{}]",
+                        format_duration(std::time::Duration::from_millis(
+                            ended.saturating_sub(started)
+                        ))
+                    ));
+                }
+                out.push(RenderLine::from(Span::styled(
+                    header,
+                    Style::default().fg(theme.tool),
+                )));
+            }
             TranscriptEntry::ToolCall(tc) => {
                 // Tool-call card: `⚙ name(args)` header (or `❓` for
                 // AskUserQuestion), then the result when settled

@@ -95,7 +95,9 @@ mod tests {
     fn line(entry: &TranscriptEntry) -> &TranscriptLine {
         match entry {
             TranscriptEntry::Line(l) => l,
-            TranscriptEntry::ToolCall(_) => panic!("expected a Line entry"),
+            TranscriptEntry::ToolCall(_) | TranscriptEntry::Task(_) => {
+                panic!("expected a Line entry")
+            }
         }
     }
 

@@ -513,6 +513,13 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 ## 9. 迁移推进会话快照（2026-08，分支 feat/rust-agent-engine-migration）
 
+**2026-08-09 G-4 分片 K：后台任务/子代理卡片 + tool.native 渲染修复**：
+- **根因**：① `tool.native` 事件（引擎原生工具执行的最终结果：Bash 后台任务、原生工具集）不在 kimi-ui `render_event` 匹配列表 → TUI 显示**裸 JSON**；② `session.task.started/terminated` 只渲染 "task xxx started" 状态行（无 description/kind/status），子代理（kind=agent）无生命周期展示（TS `background-agent-status`/tool-call 子代理窗口的简化缺口）
+- **修复**：`TranscriptEntry::Task(TaskEntry)` 变体（task_id/description/kind/status/ended/起止时间戳）；`upsert_task_card` 纯函数（started 建卡、terminated 落终态+时长、ghost 兜底）；pump 分发 task 事件；`tool.native` 归入工具卡片 settled 语义（结果落卡）；chatwidget 渲染 `⚙ task <id> <desc> — <status> [时长]`；`/export-md` 加 Task 块；kimi-ui render.rs 的 task 渲染增强（description/kind/status）+ `tool.native` 分支（CLI --verbose 兜底）
+- **顺带修复预存编译错误**：render.rs 测试漏 import `stream_tool_call`（08-08 流式工具参数批次遗留，`cargo check --workspace` 不查测试目标未暴露——`cargo check --all-targets` 才暴露；补 import）
+- **测试**：`tool_native_lands_on_card`、`task_events_build_lifecycle_cards`（upsert/ghost）、render case 3 个（tool.native/task started/terminated）——kimi-tui 99/99、kimi-ui 11/11 全绿；`cargo check --workspace --all-targets` 0 errors；clippy 0 新警告（预存警告核对）
+- **G-4 剩余**：媒体富卡片（终端图形协议渲染，依赖终端支持，另议）、交互路径对拍测试（D-5）
+
 **2026-08-09 G-4 分片 J：`/btw` 旁路子代理命令（Rust kimi-tui）**：
 - **背景**：G-4 对拍审计（08-08）判定 `/btw` 为唯一真实命令缺口（TS BtwPanelController 完整面板 vs Rust 无）。卡点：kimi-sdk `Session::new` pub(crate) 无法公开构造任意 id 会话 + prompt 无 agent_id 路由——实际上引擎 `session/start_btw`/`end_btw` + prompt 的 `agent_id`（`btw-<sid>` 路由）早已支持，缺的是 SDK 暴露与 TUI 命令
 - **kimi-sdk**：`prompt_parts_as(parts, agent_id)` + `prompt_as(text, agent_id)`（主 prompt 委托 None）；测试：start_btw 后 prompt_as 路由到 side agent（错误为 LLM 门而非 "no side agent"），end_btw 后同 id 报 "no side agent"（证明 wire 路由生效）
