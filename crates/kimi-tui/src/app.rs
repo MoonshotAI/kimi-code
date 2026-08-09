@@ -1856,16 +1856,46 @@ impl App {
                             if list.is_empty() {
                                 self.push_line(TranscriptLine::status(t("tui.tasks.none")));
                             } else {
-                                for t in list.iter().take(10) {
-                                    let id = t["id"].as_str().unwrap_or("?");
-                                    let label = t["label"].as_str().unwrap_or("");
-                                    let state = t["state"].as_str().unwrap_or("?");
-                                    self.view.transcript.push_line(TranscriptLine::status(t!(
-                                        "tui.tasks.listItem",
-                                        id,
-                                        label,
-                                        state
-                                    )));
+                                // Interactive task browser (TS tasks-browser
+                                // parity, picker-based): pick a task to view
+                                // its output (re-dispatches `/tasks <id>`).
+                                let items: Vec<crate::picker::PickerItem> = list
+                                    .iter()
+                                    .filter_map(|t| {
+                                        let id = t["id"].as_str()?.to_string();
+                                        let label = t["label"].as_str().unwrap_or("").to_string();
+                                        let state = t["state"].as_str().unwrap_or("?");
+                                        let mut item = crate::picker::PickerItem::new(
+                                            id.clone(),
+                                            format!("{id}  [{state}]"),
+                                        );
+                                        if !label.is_empty() {
+                                            item = item.with_description(label);
+                                        }
+                                        Some(item)
+                                    })
+                                    .collect();
+                                let opts = crate::picker::PickerOptions::new(t!(
+                                    "tui.picker.selectTask"
+                                ))
+                                .filterable()
+                                .paged(10);
+                                match crate::picker::select_picker(
+                                    terminal,
+                                    self.view.theme,
+                                    &opts,
+                                    &items,
+                                )? {
+                                    Some(id) => {
+                                        return self
+                                            .dispatch(terminal, &format!("/tasks {id}"))
+                                            .await;
+                                    }
+                                    None => {
+                                        self.push_line(TranscriptLine::status(t(
+                                            "tui.tasks.cancelled",
+                                        )))
+                                    }
                                 }
                             }
                         }

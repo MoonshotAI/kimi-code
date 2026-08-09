@@ -513,6 +513,8 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.mcp.list", "MCP servers: {0}", "MCP 服务器：{0}"),
     ("tui.err.mcpFailed", "mcp failed: {0}", "MCP 操作失败：{0}"),
     ("tui.tasks.none", "no background tasks", "没有后台任务"),
+    ("tui.picker.selectTask", "select a task", "选择一个任务"),
+    ("tui.tasks.cancelled", "task selection cancelled", "已取消任务选择"),
     ("tui.tasks.listItem", "{0}  {1}  [{2}]", "{0}  {1}  [{2}]"),
     (
         "tui.tasks.noOutput",
