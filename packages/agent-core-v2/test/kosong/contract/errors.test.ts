@@ -22,6 +22,7 @@ import {
   classifyApiError,
   createAbortError,
   isAbortError,
+  isImageFormatError,
   isRetryableGenerateError,
   normalizeAPIStatusError,
   throwIfAbortError,
@@ -128,6 +129,17 @@ describe('isRetryableGenerateError', () => {
   it('does not retry deterministic client failures', () => {
     expect(isRetryableGenerateError(new APIStatusError(400, 'Bad request'))).toBe(false);
     expect(isRetryableGenerateError(new APIStatusError(401, 'Unauthorized'))).toBe(false);
+  });
+});
+
+describe('isImageFormatError', () => {
+  it('recognizes providers that reject the image_url content variant', () => {
+    const error = new APIStatusError(
+      400,
+      'messages[124]: unknown variant image_url, expected text at line 1 column 811568',
+    );
+
+    expect(isImageFormatError(error)).toBe(true);
   });
 });
 

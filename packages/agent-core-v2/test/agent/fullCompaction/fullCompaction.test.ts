@@ -649,7 +649,7 @@ describe('FullCompaction', () => {
       );
       if (hasMedia) {
         sawMedia = true;
-        throw new APIStatusError(400, 'unsupported image format: image/avif');
+        throw new APIStatusError(400, 'unknown variant image_url, expected text');
       }
       sawStrippedResend = true;
       return textResult('Recovered compacted summary.');

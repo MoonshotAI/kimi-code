@@ -229,6 +229,7 @@ const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
 
 const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
   /unsupported image (?:url|format|type)/,
+  /unknown variant [`'"]?image_url[`'"]?/,
   /does not represent a valid image/,
   /could not (?:process|decode) (?:the |input )?image/,
   /unable to process (?:the |input )?image/,
