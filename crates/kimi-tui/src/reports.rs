@@ -81,9 +81,24 @@ pub(crate) fn build_status_report(status: &serde_json::Value, version: &str, ses
         t!("tui.status.reportMode", mode),
         t!("tui.status.reportPermission", permission),
         t!("tui.status.reportThinking", thinking),
-        t!("tui.status.reportCtx", ctx, max_ctx),
+        format!(
+            "{} {}",
+            ctx_bar(ctx, max_ctx),
+            t!("tui.status.reportCtx", ctx, max_ctx)
+        ),
         t!("tui.status.reportSession", session_id),
     ]
+}
+
+/// A 20-cell ASCII context bar (`[████░░░░░░░░░░░░░░░░]`) — the TS
+/// status-panel progress-bar parity. Empty when `max_ctx` is 0.
+fn ctx_bar(ctx: u64, max_ctx: u64) -> String {
+    if max_ctx == 0 {
+        return String::new();
+    }
+    let filled = ((ctx as f64 / max_ctx as f64) * 20.0).round() as usize;
+    let filled = filled.min(20);
+    format!("[{}{}]", "█".repeat(filled), "░".repeat(20 - filled))
 }
 
 
@@ -347,5 +362,33 @@ mod tests {
         assert!(lines[0].contains("v0.3.0"));
         assert!(lines[1].contains("[off]"), "{}", lines[1]);
         assert!(!lines[1].contains('v'), "no version: {}", lines[1]);
+    }
+
+    #[test]
+    fn ctx_bar_scales_and_clamps() {
+        // Full, half, empty, and unknown-max cases.
+        assert_eq!(ctx_bar(128_000, 128_000), "[████████████████████]");
+        assert_eq!(
+            ctx_bar(64_000, 128_000),
+            "[██████████░░░░░░░░░░]"
+        );
+        assert_eq!(ctx_bar(0, 128_000), "[░░░░░░░░░░░░░░░░░░░░]");
+        // Unknown max -> no bar.
+        assert_eq!(ctx_bar(100, 0), "");
+        // Overflow clamps to full.
+        assert_eq!(ctx_bar(200_000, 128_000), "[████████████████████]");
+        // The /status report embeds the bar before the token readout.
+        let status = serde_json::json!({
+            "model": "kimi-k2",
+            "permission": "auto",
+            "plan_mode": false,
+            "swarm_mode": false,
+            "thinking_effort": "high",
+            "context_tokens": 64_000,
+            "max_context_tokens": 128_000,
+        });
+        let lines = build_status_report(&status, "0.1.0", "sess-1");
+        assert!(lines[4].contains('█'), "bar: {}", lines[4]);
+        assert!(lines[4].contains("64000/128000"), "{}", lines[4]);
     }
 }
