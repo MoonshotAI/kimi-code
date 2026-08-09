@@ -341,6 +341,16 @@ pub fn complete_line(
     model_aliases: &[String],
     tab_idx: Option<usize>,
 ) -> (String, Option<usize>) {
+    // @mention takes priority (TS file-mention parity: typing `@` inside a
+    // slash command's argument text — e.g. `/goal Fix the @checkout` — must
+    // complete files, not the command's argument set). The token is replaced
+    // in place; the rest of the input is preserved.
+    if let Some(token) = at_mention_token(base) {
+        if let Some((done, i)) = complete_mention(token, tab_idx) {
+            let head = &base[..base.len() - token.len()];
+            return (format!("{head}{done}"), Some(i));
+        }
+    }
     // Argument completion: `/plan `, `/swarm `, `/thinking `, `/model `,
     // `/permission `, `/session `, `/goal `, plus filesystem paths.
     if let Some((cmd, arg)) = base.split_once(' ') {
@@ -448,12 +458,21 @@ pub fn complete_path(arg: &str, tab_idx: Option<usize>) -> Option<(String, usize
         Some(i) => (expanded[..=i].to_string(), expanded[i + 1..].to_string()),
         None => (String::new(), expanded.clone()),
     };
-    let entries: Vec<String> = std::fs::read_dir(&dir)
+    let entries = fs_entries(&dir, &partial)?;
+    let idx = tab_idx.map_or(0, |i| (i + 1) % entries.len());
+    Some((format!("{dir}{}", entries[idx]), idx))
+}
+
+/// Directory entries under `dir` whose name starts with `partial` (hidden
+/// files only when `partial` explicitly asks for them; directories get a
+/// trailing `/` so a completed directory can be extended with the next `/`).
+fn fs_entries(dir: &str, partial: &str) -> Option<Vec<String>> {
+    let entries: Vec<String> = std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            if !name.starts_with(&partial) {
+            if !name.starts_with(partial) {
                 return None;
             }
             // Hidden files only when the partial explicitly asks for them.
@@ -464,11 +483,37 @@ pub fn complete_path(arg: &str, tab_idx: Option<usize>) -> Option<(String, usize
             Some(if is_dir { format!("{name}/") } else { name })
         })
         .collect();
-    if entries.is_empty() {
-        return None;
-    }
+    (!entries.is_empty()).then_some(entries)
+}
+
+/// The last whitespace-delimited token when it starts with `@` — the
+/// @mention trigger (TS `extractAtPrefix` parity: the token spans path
+/// separators, so `@src/main` is one token).
+fn at_mention_token(base: &str) -> Option<&str> {
+    let token = base.split_whitespace().next_back()?;
+    token.starts_with('@').then_some(token)
+}
+
+/// Complete an `@token` file mention against the current directory (TS
+/// file-mention parity: directories get a trailing `/` so the next Tab
+/// extends the path, paths containing spaces are quoted `@"…"`). Returns
+/// the full `@…` replacement and the next cycle index, or `None` when no
+/// entry matches.
+pub fn complete_mention(token: &str, tab_idx: Option<usize>) -> Option<(String, usize)> {
+    let query = &token[1..];
+    let (dir, partial) = match query.rfind(['/', '\\']) {
+        Some(i) => (query[..=i].to_string(), query[i + 1..].to_string()),
+        None => (String::new(), query.to_string()),
+    };
+    let entries = fs_entries(&dir, &partial)?;
     let idx = tab_idx.map_or(0, |i| (i + 1) % entries.len());
-    Some((format!("{dir}{}", entries[idx]), idx))
+    let path = format!("{dir}{}", entries[idx]);
+    let done = if path.contains(' ') {
+        format!("@\"{path}\"")
+    } else {
+        format!("@{path}")
+    };
+    Some((done, idx))
 }
 
 #[cfg(test)]
@@ -613,6 +658,56 @@ mod tests {
         // Non-path args do not trigger.
         assert!(complete_path("plain-arg", None).is_none());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn completes_at_mentions() {
+        // A temp dir with known entries; `@` mention completes file paths
+        // (TS file-mention parity).
+        let dir = std::env::temp_dir().join(format!("kimi-mention-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("main.rs"), b"fn main() {}").unwrap();
+        std::fs::write(dir.join(".hidden"), b"x").unwrap();
+        let root = dir.to_string_lossy().to_string();
+
+        // File completion via the last token.
+        let token = format!("@{root}/main");
+        let (done, idx) = complete_line(&token, &[], None);
+        assert_eq!(done, format!("@{root}/main.rs"), "done: {done}");
+        assert!(idx.is_some());
+
+        // Directory candidates carry a trailing `/` so the next Tab extends.
+        let token = format!("@{root}/s");
+        let (done, _) = complete_line(&token, &[], None);
+        assert_eq!(done, format!("@{root}/sub/"), "done: {done}");
+
+        // Hidden files are skipped unless requested.
+        let token = format!("@{root}/.");
+        let (done, _) = complete_line(&token, &[], None);
+        assert!(done.contains(".hidden"), "done: {done}");
+
+        // Mention takes priority over slash-command argument completion
+        // (TS parity: `@` inside argument text completes files).
+        let input = format!("/goal fix the @{root}/main");
+        let (done, _) = complete_line(&input, &[], None);
+        assert_eq!(done, format!("/goal fix the @{root}/main.rs"), "done: {done}");
+
+        // A bare `@` with no match is left alone (no crash, no fallback).
+        let (done, _) = complete_line(&format!("@{root}/nope"), &[], None);
+        assert_eq!(done, format!("@{root}/nope"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mention_paths_with_spaces_are_quoted() {
+        let dir = std::env::temp_dir().join(format!("kimi-mention-sp-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("my dir")).unwrap();
+        let root = dir.to_string_lossy().to_string();
+        let (done, _) = complete_line(&format!("@{root}/my"), &[], None);
+        // Directory completion keeps the trailing `/`; spaces quote the path.
+        assert_eq!(done, format!("@\"{root}/my dir/\""), "done: {done}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -227,6 +227,24 @@ pub fn stream_thinking(event: &serde_json::Value) -> Option<&str> {
     part.get("think").and_then(|t| t.as_str())
 }
 
+/// A tool-call argument preview streamed via `llm.delta` (`part.type ==
+/// "tool_call"`): `(id, name, args)` with `args` the accumulated partial
+/// JSON so far — hosts replace the running preview, never append.
+pub fn stream_tool_call(event: &serde_json::Value) -> Option<(&str, &str, &str)> {
+    if event.get("type").and_then(|t| t.as_str()) != Some("llm.delta") {
+        return None;
+    }
+    let part = event.get("part")?;
+    if part.get("type").and_then(|t| t.as_str()) != Some("tool_call") {
+        return None;
+    }
+    Some((
+        part.get("id")?.as_str()?,
+        part.get("name")?.as_str()?,
+        part.get("args")?.as_str()?,
+    ))
+}
+
 /// Extract the last assistant message's text from a `session/get_context`
 /// result (print-mode parity: the CLI renders the transcript, not the RPC
 /// envelope). Returns `None` when the context has no assistant text.
@@ -384,6 +402,33 @@ mod tests {
         // Non-stream events and malformed payloads are ignored.
         assert_eq!(stream_delta(&serde_json::json!({ "type": "session.turn.started" })), None);
         assert_eq!(stream_delta(&serde_json::json!({ "type": "llm.delta" })), None);
+    }
+
+    #[test]
+    fn stream_tool_call_extracts_tool_call_part_only() {
+        let tc = serde_json::json!({
+            "type": "llm.delta",
+            "part": { "type": "tool_call", "id": "call_1", "name": "Read", "args": "{\"path\":" }
+        });
+        assert_eq!(
+            stream_tool_call(&tc),
+            Some(("call_1", "Read", "{\"path\":"))
+        );
+        // Text / think / non-delta events are not tool-call previews.
+        assert_eq!(
+            stream_tool_call(&serde_json::json!({ "type": "llm.delta", "part": { "type": "text", "text": "hi" } })),
+            None
+        );
+        assert_eq!(
+            stream_tool_call(&serde_json::json!({ "type": "llm.delta", "part": { "type": "think", "think": "hmm" } })),
+            None
+        );
+        assert_eq!(stream_tool_call(&serde_json::json!({ "type": "session.turn.started" })), None);
+        // A tool_call part missing a field is malformed → None.
+        assert_eq!(
+            stream_tool_call(&serde_json::json!({ "type": "llm.delta", "part": { "type": "tool_call", "id": "x", "name": "Read" } })),
+            None
+        );
     }
 
     #[test]

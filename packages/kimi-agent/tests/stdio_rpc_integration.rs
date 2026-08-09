@@ -789,6 +789,7 @@ fn session_prompt_drives_the_goal_and_persists() {
         // threads, and a shared default home (the SQLite sessions store)
         // races concurrent create/save/destroy across child processes.
         .env("KIMI_AGENT_HOME", &goal_home)
+        .env("KIMI_CODE_HOME", &goal_home)
         .spawn()
         .expect("spawn kimi-agent");
     let mut stdin = child.stdin.take().expect("stdin");
@@ -891,6 +892,7 @@ fn session_list_reports_workdir_and_resume_restores_context() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env("KIMI_AGENT_HOME", &home)
+        .env("KIMI_CODE_HOME", &home)
         .spawn()
         .expect("spawn kimi-agent");
     let mut stdin = child.stdin.take().expect("stdin");
@@ -4161,6 +4163,7 @@ fn cron_survives_restart() {
     let _ = std::fs::create_dir_all(&home);
     let mut env = std::collections::HashMap::new();
     env.insert("KIMI_AGENT_HOME", home.to_string_lossy().to_string());
+    env.insert("KIMI_CODE_HOME", home.to_string_lossy().to_string());
 
     let mut client = RpcClient::start_with_env(env.clone());
     require_binary!(client);
@@ -4200,6 +4203,7 @@ fn bg_output_readable_after_restart() {
     let _ = std::fs::create_dir_all(&home);
     let mut env = std::collections::HashMap::new();
     env.insert("KIMI_AGENT_HOME", home.to_string_lossy().to_string());
+    env.insert("KIMI_CODE_HOME", home.to_string_lossy().to_string());
 
     let mut client = RpcClient::start_with_env(env.clone());
     require_binary!(client);
@@ -4827,6 +4831,7 @@ fn session_destroy_tears_down_and_load_recovers() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env("KIMI_AGENT_HOME", &home)
+        .env("KIMI_CODE_HOME", &home)
         .spawn()
         .expect("spawn kimi-agent");
     let mut stdin = child.stdin.take().expect("stdin");
@@ -5037,6 +5042,7 @@ fn native_memory_tool_persists_and_searches() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env("KIMI_AGENT_HOME", &home)
+        .env("KIMI_CODE_HOME", &home)
         .spawn()
         .expect("spawn kimi-agent");
     let mut stdin = child.stdin.take().expect("stdin");
@@ -5347,6 +5353,7 @@ fn spawn_engine(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env("KIMI_AGENT_HOME", home)
+        .env("KIMI_CODE_HOME", home)
         .spawn()
         .expect("spawn kimi-agent");
     let stdin = child.stdin.take().expect("stdin");

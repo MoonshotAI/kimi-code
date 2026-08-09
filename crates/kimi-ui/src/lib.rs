@@ -8,4 +8,5 @@ pub mod render;
 pub use event::EventSource;
 pub use render::{
     last_assistant_text, render_event, render_prompt_block, stream_delta, stream_thinking,
+    stream_tool_call,
 };

@@ -179,6 +179,15 @@ mod tests {
 
     #[tokio::test]
     async fn typed_methods_round_trip() {
+        // config_get parses the merged engine config, which reads the
+        // user-level `$KIMI_CODE_HOME/config.toml` — isolate from the real
+        // user config so a broken/duplicate-key file cannot fail this test.
+        // (Same-process sibling tests never read the config, so restoring the
+        // var is unnecessary — the test binary exits with it.)
+        let home = std::env::temp_dir().join(format!("kimi-server-client-{}", std::process::id()));
+        std::fs::create_dir_all(&home).expect("create test home");
+        std::env::set_var("KIMI_CODE_HOME", &home);
+
         let server = Server::build().expect("server");
         let client = AppServerClient::InProcess(kimi_server::in_process::spawn(server.processor));
 

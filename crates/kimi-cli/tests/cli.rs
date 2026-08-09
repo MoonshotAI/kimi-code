@@ -1063,3 +1063,159 @@ fn server_mode_verbose_emits_events() {
     let _ = child.wait();
     assert!(seen, "expected a rendered progress line on stderr");
 }
+
+#[test]
+fn provider_catalog_add_imports_models_and_sets_default() {
+    use std::io::{Read, Write};
+    // A one-shot local fixture catalog server (no network dependency).
+    let fixture = r#"{
+      "acme": {
+        "id": "acme",
+        "name": "Acme",
+        "api": "https://acme.example/v1",
+        "env": ["ACME_API_KEY"],
+        "models": {
+          "acme-1": { "id": "acme-1", "name": "Acme 1", "status": "active",
+            "limit": { "context": 128000, "input": 100000, "output": 8192 },
+            "tool_call": true, "reasoning": true,
+            "modalities": { "input": ["text", "image"], "output": ["text"] },
+            "reasoning_options": [{ "type": "effort", "values": ["low", "high", "none"] }] },
+          "old": { "id": "old", "name": "Old", "status": "deprecated",
+            "limit": { "context": 8000 },
+            "modalities": { "input": ["text"], "output": ["text"] } }
+        }
+      }
+    }"#;
+    let body = fixture.to_string();
+    let listener = match std::net::TcpListener::bind("127.0.0.1:0") {
+        Ok(l) => l,
+        Err(e) => panic!("fixture bind: {e}"),
+    };
+    let addr = listener.local_addr().expect("addr");
+    std::thread::spawn(move || {
+        match listener.accept() {
+            Ok((mut stream, _peer)) => {
+                // Consume the request first: dropping a TcpStream with
+                // unread data sends RST on Windows, which surfaces in the
+                // client as "error sending request".
+                let mut buf = [0u8; 8192];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+                // Drain until the client closes so the drop never RSTs.
+                let mut drain = [0u8; 1024];
+                let _ = stream.read(&mut drain);
+            }
+            Err(e) => eprintln!("fixture: accept error: {e}"),
+        }
+    });
+
+    let home = temp_dir("provider-add");
+    let url = format!("http://{addr}");
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let output = run(
+        &home,
+        &[
+            "provider", "catalog", "add", "acme", "--api-key", "sk-test", "--default-model",
+            "acme-1", "--url", &url,
+        ],
+    );
+    assert!(output.status.success(), "add: {}", stderr(&output));
+    assert!(
+        stdout(&output).contains("default model acme/acme-1"),
+        "stdout: {}",
+        stdout(&output)
+    );
+
+    // Read the config back and verify the full import shape.
+    let cfg = run(&home, &["config"]);
+    assert!(cfg.status.success(), "config: {}", stderr(&cfg));
+    let value: serde_json::Value =
+        serde_json::from_str(stdout(&cfg).trim()).expect("config JSON");
+    assert_eq!(value["providers"]["acme"]["type"], "openai");
+    assert_eq!(value["providers"]["acme"]["apiKey"], "sk-test");
+    assert_eq!(value["providers"]["acme"]["baseUrl"], "https://acme.example/v1");
+    assert_eq!(value["defaultModel"], "acme/acme-1");
+    assert_eq!(value["models"]["acme/acme-1"]["model"], "acme-1");
+    assert_eq!(value["models"]["acme/acme-1"]["max_tokens"], 128000);
+    assert!(
+        value["models"].get("acme/old").is_none(),
+        "deprecated model must not be imported"
+    );
+    // Note: the engine has no global `[thinking]` config domain (thinking is
+    // session-level); `apply_catalog_provider` still accepts the flag for
+    // node-sdk parity, and the engine's serde simply ignores it on merge.
+}
+
+#[test]
+fn provider_catalog_add_requires_base_url_when_catalog_has_none() {
+    use std::io::{Read, Write};
+    // A provider with no `api` and a non-official npm needs an explicit
+    // base URL (the fallback default would point at the wrong host).
+    let fixture = r#"{
+      "gateway": {
+        "id": "gateway",
+        "name": "Gateway",
+        "npm": "acme-gateway-sdk",
+        "models": {
+          "g-1": { "id": "g-1", "name": "G 1", "status": "active",
+            "limit": { "context": 64000 },
+            "modalities": { "input": ["text"], "output": ["text"] } }
+        }
+      }
+    }"#;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let body = fixture.to_string();
+    std::thread::spawn(move || {
+        // The test drives two imports against the same fixture.
+        for _ in 0..2 {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 8192];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+                let mut drain = [0u8; 1024];
+                let _ = stream.read(&mut drain);
+            }
+        }
+    });
+    let url = format!("http://{addr}");
+
+    // Without --base-url the import refuses with a hint.
+    let home = temp_dir("provider-add-nourl");
+    let output = run(&home, &["provider", "catalog", "add", "gateway", "--url", &url]);
+    assert!(!output.status.success(), "must refuse: {}", stdout(&output));
+    assert!(
+        stderr(&output).contains("--base-url"),
+        "hint: {}",
+        stderr(&output)
+    );
+
+    // With --base-url the import proceeds (provider-only — the gateway
+    // entry's model carries no context limit, so no aliases are written).
+    let home2 = temp_dir("provider-add-url");
+    let output = run(
+        &home2,
+        &[
+            "provider", "catalog", "add", "gateway", "--base-url",
+            "https://gateway.example/v1", "--url", &url,
+        ],
+    );
+    assert!(output.status.success(), "add: {}", stderr(&output));
+    let cfg = run(&home2, &["config"]);
+    let value: serde_json::Value =
+        serde_json::from_str(stdout(&cfg).trim()).expect("config JSON");
+    assert_eq!(value["providers"]["gateway"]["type"], "openai");
+    assert_eq!(value["providers"]["gateway"]["baseUrl"], "https://gateway.example/v1");
+}

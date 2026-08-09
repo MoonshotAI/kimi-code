@@ -202,7 +202,7 @@ function logEvent(event: Event): void {
     case 'llm.delta':
       if (event.part.type === 'think') {
         if (event.part.think) process.stderr.write(event.part.think);
-      } else if (event.part.text) {
+      } else if (event.part.type === 'text' && event.part.text) {
         process.stdout.write(event.part.text);
       }
       break;

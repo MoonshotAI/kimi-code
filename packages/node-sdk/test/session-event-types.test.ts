@@ -16,9 +16,16 @@ describe('Event public types', () => {
 
   it('narrows llm stream events by type', () => {
     expectTypeOf<EventByType<'llm.step.begin'>['model']>().toEqualTypeOf<string>();
-    expectTypeOf<EventByType<'llm.delta'>['part']['type']>().toEqualTypeOf<'text' | 'think'>();
-    expectTypeOf<EventByType<'llm.delta'>['part']['text']>().toEqualTypeOf<string | undefined>();
-    expectTypeOf<EventByType<'llm.delta'>['part']['think']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<EventByType<'llm.delta'>['part']['type']>().toEqualTypeOf<
+      'text' | 'think' | 'tool_call'
+    >();
+    type TextPart = Extract<EventByType<'llm.delta'>['part'], { type: 'text' }>;
+    type ThinkPart = Extract<EventByType<'llm.delta'>['part'], { type: 'think' }>;
+    type ToolCallPart = Extract<EventByType<'llm.delta'>['part'], { type: 'tool_call' }>;
+    expectTypeOf<TextPart['text']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<ThinkPart['think']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<ToolCallPart['id']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<ToolCallPart['args']>().toEqualTypeOf<string | undefined>();
     expectTypeOf<EventByType<'llm.step.end'>['content']>().toEqualTypeOf<string>();
   });
 

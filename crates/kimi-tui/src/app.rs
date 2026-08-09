@@ -2511,8 +2511,11 @@ impl App {
         }
         if r#type == "llm.delta" {
             // Live model output: thinking deltas accumulate on a transient
-            // dimmed line; text deltas stream into the assistant line.
-            if let Some(think) = kimi_ui::stream_thinking(&event) {
+            // dimmed line; text deltas stream into the assistant line;
+            // tool_call deltas update a running card's argument preview.
+            if let Some((id, _name, args)) = kimi_ui::stream_tool_call(&event) {
+                crate::streaming::update_tool_args(&mut self.view.transcript, id, args);
+            } else if let Some(think) = kimi_ui::stream_thinking(&event) {
                 crate::streaming::append_thinking(&mut self.view.transcript, think);
             } else if let Some(delta) = kimi_ui::stream_delta(&event) {
                 crate::streaming::append_stream(&mut self.view.transcript, delta);

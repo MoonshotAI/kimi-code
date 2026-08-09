@@ -639,11 +639,17 @@ enum CatalogCmd {
         /// Print the matching catalog slice as JSON.
         #[arg(long)]
         json: bool,
+        /// Catalog URL override (tests / mirrors).
+        #[arg(long)]
+        url: Option<String>,
     },
     /// Search catalog providers/models by keyword.
     Search {
         /// Keyword to match against provider and model names.
         query: String,
+        /// Catalog URL override (tests / mirrors).
+        #[arg(long)]
+        url: Option<String>,
     },
     /// Import one catalog provider into the engine config.
     Add {
@@ -655,6 +661,13 @@ enum CatalogCmd {
         /// Set this model as the engine default.
         #[arg(long)]
         default_model: Option<String>,
+        /// Catalog URL override (tests / mirrors).
+        #[arg(long)]
+        url: Option<String>,
+        /// Explicit base URL (required when the import resolution reports
+        /// `needs-base-url`; wins over the catalog endpoint otherwise).
+        #[arg(long)]
+        base_url: Option<String>,
     },
 }
 
@@ -2428,8 +2441,10 @@ async fn main() -> anyhow::Result<()> {
                 ProviderCmd::Catalog { cmd } => match cmd {
                     // `kimi provider catalog list [id] [--filter]` — browse
                     // the models.dev catalog.
-                    CatalogCmd::List { provider_id, filter, json } => {
-                        match kimi_sdk::catalog::fetch_catalog(kimi_sdk::catalog::DEFAULT_CATALOG_URL).await {
+                    CatalogCmd::List { provider_id, filter, json, url } => {
+                        let catalog_url =
+                            url.as_deref().unwrap_or(kimi_sdk::catalog::DEFAULT_CATALOG_URL);
+                        match kimi_sdk::catalog::fetch_catalog(catalog_url).await {
                             Ok(catalog) => {
                                 if let Some(pid) = provider_id {
                                     let Some(provider) = catalog.get(&pid) else {
@@ -2486,9 +2501,11 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                     // `kimi provider catalog search <q>` — keyword search.
-                    CatalogCmd::Search { query } => {
+                    CatalogCmd::Search { query, url } => {
                         let query = query.to_lowercase();
-                        match kimi_sdk::catalog::fetch_catalog(kimi_sdk::catalog::DEFAULT_CATALOG_URL).await {
+                        let catalog_url =
+                            url.as_deref().unwrap_or(kimi_sdk::catalog::DEFAULT_CATALOG_URL);
+                        match kimi_sdk::catalog::fetch_catalog(catalog_url).await {
                             Ok(catalog) => {
                                 let mut matched = 0usize;
                                 let mut providers: Vec<_> = catalog.into_iter().collect();
@@ -2527,9 +2544,11 @@ async fn main() -> anyhow::Result<()> {
                     }
                     // `kimi provider catalog add <id>` — import one catalog
                     // provider into the engine config.
-                    CatalogCmd::Add { id, api_key, default_model } => {
+                    CatalogCmd::Add { id, api_key, default_model, url, base_url } => {
+                        let catalog_url =
+                            url.as_deref().unwrap_or(kimi_sdk::catalog::DEFAULT_CATALOG_URL);
                         let catalog =
-                            match kimi_sdk::catalog::fetch_catalog(kimi_sdk::catalog::DEFAULT_CATALOG_URL).await {
+                            match kimi_sdk::catalog::fetch_catalog(catalog_url).await {
                                 Ok(c) => c,
                                 Err(e) => {
                                     eprintln!("error: catalog fetch failed — {e}");
@@ -2548,52 +2567,89 @@ async fn main() -> anyhow::Result<()> {
                                 .first()
                                 .and_then(|env| std::env::var(env).ok())
                         });
-                        let base_url = provider.api.clone().unwrap_or_default();
-                        // models.dev omits `api` for hosted providers; fall
-                        // back to well-known endpoints for the majors.
-                        let base_url = if base_url.is_empty() {
-                            match id.as_str() {
-                                "openai" => "https://api.openai.com/v1".to_string(),
-                                "anthropic" => "https://api.anthropic.com".to_string(),
-                                "google-genai" => {
-                                    "https://generativelanguage.googleapis.com".to_string()
-                                }
-                                _ => String::new(),
+                        // Wire + endpoint decision (kosong
+                        // `resolveCatalogImport` parity).
+                        let resolution =
+                            kimi_sdk::catalog::resolve_catalog_import(provider, base_url.as_deref());
+                        let (wire, resolved_base_url) = match &resolution.kind {
+                            kimi_sdk::catalog::CatalogImportKind::Ok => {
+                                (resolution.wire.clone().expect("ok has wire"), resolution.base_url)
                             }
-                        } else {
-                            base_url
+                            kimi_sdk::catalog::CatalogImportKind::NeedsBaseUrl => {
+                                eprintln!(
+                                    "error: provider \"{id}\" needs an explicit base URL — pass --base-url <url>"
+                                );
+                                std::process::exit(1);
+                            }
+                            kimi_sdk::catalog::CatalogImportKind::Invalid(reason) => {
+                                eprintln!(
+                                    "error: provider \"{id}\" cannot be imported: {reason:?}"
+                                );
+                                std::process::exit(1);
+                            }
                         };
-                        if base_url.is_empty() {
-                            eprintln!("error: provider \"{id}\" has no api endpoint in the catalog");
-                            std::process::exit(1);
-                        }
-                        let provider_type = if id == "anthropic" { "anthropic" } else { "openai" };
-                        let mut patch = serde_json::json!({
-                            "providers": {
-                                id.clone(): {
-                                    "type": provider_type,
-                                    "baseUrl": base_url,
-                                }
-                            }
+                        // Normalize the provider's models (models.dev shape →
+                        // importable chat models); the aliases are written into
+                        // the config so context/capability metadata rides along
+                        // without hand-writing.
+                        let models = kimi_sdk::catalog::catalog_provider_models(provider);
+                        let selected_model_id = default_model
+                            .as_deref()
+                            .map(str::to_string)
+                            .or_else(|| models.first().map(|m| m.id.clone()));
+                        let mut config = serde_json::json!({
+                            "providers": {},
+                            "models": {},
+                            "thinking": { "enabled": false },
                         });
-                        if let Some(key) = resolved_key {
-                            patch["providers"][&id]["apiKey"] = serde_json::json!(key);
-                        }
-                        if let Some(model) = default_model {
-                            patch["defaultModel"] = serde_json::json!(model);
-                        }
+                        let default_model_key = match (selected_model_id.as_deref(), models.is_empty()) {
+                            (Some(selected), false) => kimi_sdk::catalog::apply_catalog_provider(
+                                &mut config,
+                                &id,
+                                &wire,
+                                resolved_base_url.as_deref(),
+                                resolved_key.as_deref(),
+                                &models,
+                                selected,
+                                true,
+                            ),
+                            _ => {
+                                // No importable models: fall back to the
+                                // provider-only write (key-less providers and
+                                // catalog entries without a usable list).
+                                let mut provider_cfg = serde_json::json!({ "type": wire });
+                                if let Some(base_url) = &resolved_base_url {
+                                    provider_cfg["baseUrl"] = serde_json::json!(base_url);
+                                }
+                                if let Some(key) = resolved_key {
+                                    provider_cfg["apiKey"] = serde_json::json!(key);
+                                }
+                                config["providers"][&id] = provider_cfg;
+                                if let Some(model) = &default_model {
+                                    config["defaultModel"] = serde_json::json!(model);
+                                }
+                                default_model.unwrap_or_default()
+                            }
+                        };
                         let client = connect(&server)?;
                         let body = client
                             .call(
                                 kimi_protocol::methods::CONFIG_SET,
-                                serde_json::json!({ "patch": patch }),
+                                serde_json::json!({ "patch": config }),
                             )
                             .await;
                         if let Some(error) = body.get("error") {
                             eprintln!("error: {}", error["message"].as_str().unwrap_or("unknown"));
                             std::process::exit(1);
                         }
-                        println!("provider {id} added (baseUrl {base_url})");
+                        if default_model_key.is_empty() {
+                            println!("provider {id} added (baseUrl {})", resolved_base_url.unwrap_or_default());
+                        } else {
+                            println!(
+                                "provider {id} added (baseUrl {}, default model {default_model_key})",
+                                resolved_base_url.unwrap_or_default()
+                            );
+                        }
                     }
                 },
             }

@@ -50,6 +50,21 @@ pub fn drop_trailing_thinking(transcript: &mut Vec<TranscriptEntry>) {
     }
 }
 
+/// Update a running tool card's argument preview from a streamed
+/// `llm.delta` tool_call part. Only cards whose call id matches and that
+/// are still running (no settled result) are updated — a settled card keeps
+/// the final arguments from `session.tool.started`.
+pub fn update_tool_args(transcript: &mut [TranscriptEntry], call_id: &str, args: &str) {
+    if let Some(entry) = transcript.iter_mut().find_map(|e| match e {
+        TranscriptEntry::ToolCall(tc) if tc.tool_call_id == call_id && tc.result.is_none() => {
+            Some(tc)
+        }
+        _ => None,
+    }) {
+        entry.args = args.to_string();
+    }
+}
+
 /// Close a streaming turn: replace the trailing streaming line with the final
 /// assistant text (or push it when nothing streamed). Returns whether a line
 /// was replaced.
@@ -122,5 +137,46 @@ mod tests {
             last_line(&t).map(|l| l.kind),
             Some(TranscriptKind::Assistant)
         );
+    }
+
+    #[test]
+    fn tool_args_preview_updates_running_card_only() {
+        use crate::app::ToolCallEntry;
+        let mut t = vec![TranscriptEntry::ToolCall(ToolCallEntry {
+            tool_call_id: "call_1".into(),
+            tool_name: "Read".into(),
+            args: "".into(),
+            result: None,
+            is_error: false,
+            is_question: false,
+            duration: None,
+            collapsed: false,
+        })];
+        // A streamed args delta replaces the running card's preview.
+        update_tool_args(&mut t, "call_1", "{\"path\": \"a.txt\"}");
+        if let TranscriptEntry::ToolCall(tc) = &t[0] {
+            assert_eq!(tc.args, "{\"path\": \"a.txt\"}");
+        } else {
+            panic!("expected tool card");
+        }
+        // A settled card is left alone (final args come from tool.started).
+        t[0] = TranscriptEntry::ToolCall(ToolCallEntry {
+            tool_call_id: "call_1".into(),
+            tool_name: "Read".into(),
+            args: "{\"path\": \"a.txt\"}".into(),
+            result: Some("ok".into()),
+            is_error: false,
+            is_question: false,
+            duration: None,
+            collapsed: false,
+        });
+        update_tool_args(&mut t, "call_1", "{\"path\": \"changed\"}");
+        if let TranscriptEntry::ToolCall(tc) = &t[0] {
+            assert_eq!(tc.args, "{\"path\": \"a.txt\"}");
+        } else {
+            panic!("expected tool card");
+        }
+        // Unknown ids are a no-op.
+        update_tool_args(&mut t, "nope", "x");
     }
 }

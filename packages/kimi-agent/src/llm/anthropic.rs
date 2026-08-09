@@ -356,13 +356,22 @@ impl StreamAccumulator {
                         Some(StreamDelta::Thinking(thinking.to_string()))
                     }
                     Some("input_json_delta") => {
-                        if let Some(Some(PartialBlock::ToolUse { input_json, .. })) =
+                        if let Some(Some(PartialBlock::ToolUse { id, name, input_json })) =
                             self.blocks.get_mut(index)
                         {
                             if let Some(fragment) =
                                 delta.get("partial_json").and_then(|x| x.as_str())
                             {
                                 input_json.push_str(fragment);
+                            }
+                            // Surface the accumulated partial arguments so a
+                            // host can preview the tool call while forming.
+                            if !name.is_empty() {
+                                return Some(StreamDelta::ToolCall {
+                                    id: id.clone(),
+                                    name: name.clone(),
+                                    args: input_json.clone(),
+                                });
                             }
                         }
                         None
@@ -584,8 +593,25 @@ mod tests {
         acc.feed(&json!({ "type": "content_block_stop", "index": 0 }));
 
         acc.feed(&json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "tool_use", "id": "tu_1", "name": "Read" } }));
-        acc.feed(&json!({ "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "{\"path\":" } }));
-        acc.feed(&json!({ "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "\"a.txt\"}" } }));
+        // Each input_json_delta surfaces the accumulated partial arguments.
+        let d3 = acc.feed(&json!({ "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "{\"path\":" } }));
+        match d3 {
+            Some(crate::llm::StreamDelta::ToolCall { id, name, args }) => {
+                assert_eq!(id, "tu_1");
+                assert_eq!(name, "Read");
+                assert_eq!(args, "{\"path\":");
+            }
+            other => panic!("expected ToolCall delta, got {other:?}"),
+        }
+        let d4 = acc.feed(&json!({ "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "\"a.txt\"}" } }));
+        match d4 {
+            Some(crate::llm::StreamDelta::ToolCall { id, name, args }) => {
+                assert_eq!(id, "tu_1");
+                assert_eq!(name, "Read");
+                assert_eq!(args, "{\"path\":\"a.txt\"}");
+            }
+            other => panic!("expected ToolCall delta, got {other:?}"),
+        }
         acc.feed(&json!({ "type": "content_block_stop", "index": 1 }));
 
         acc.feed(&json!({ "type": "message_delta", "delta": { "stop_reason": "tool_use" }, "usage": { "output_tokens": 9 } }));

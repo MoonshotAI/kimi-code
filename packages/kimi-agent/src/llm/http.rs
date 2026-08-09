@@ -188,6 +188,17 @@ impl NativeHttpLlm {
         }
     }
 
+    /// Forward an accumulated tool-call argument preview (partial JSON so
+    /// far) as `{ "type": "llm.delta", "part": { "type": "tool_call", … } }`.
+    fn emit_tool_call(&self, id: &str, name: &str, args: &str) {
+        if let Some(ref sink) = self.sink {
+            sink(serde_json::json!({
+                "type": "llm.delta",
+                "part": { "type": "tool_call", "id": id, "name": name, "args": args },
+            }));
+        }
+    }
+
     fn emit(&self, event: serde_json::Value) {
         if let Some(ref sink) = self.sink {
             sink(event);
@@ -339,6 +350,17 @@ impl NativeHttpLlm {
                                 }
                                 last_text_flush = std::time::Instant::now();
                                 self.emit_thinking(&thinking);
+                            }
+                            crate::llm::StreamDelta::ToolCall { id, name, args } => {
+                                // Tool-argument preview: flush pending text
+                                // first (same ordering rule as thinking), then
+                                // forward the accumulated partial arguments.
+                                if !text_buf.is_empty() {
+                                    self.emit_delta(&text_buf);
+                                    text_buf.clear();
+                                }
+                                last_text_flush = std::time::Instant::now();
+                                self.emit_tool_call(&id, &name, &args);
                             }
                         }
                     }

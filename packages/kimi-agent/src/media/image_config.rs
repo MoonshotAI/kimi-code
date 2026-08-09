@@ -12,6 +12,7 @@
 /// (TOML-based) and exposes it through a typed API.
 
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,16 @@ pub const DEFAULT_MAX_IMAGE_DECODE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Default JPEG quality for compression.
 pub const DEFAULT_JPEG_QUALITY: u8 = 85;
+
+/// Env var overriding the default max image edge in pixels.
+///
+/// Mirrors `MAX_IMAGE_EDGE_ENV` in the TS `image-compress.ts` module.
+pub const MAX_IMAGE_EDGE_ENV: &str = "KIMI_IMAGE_MAX_EDGE_PX";
+
+/// Env var overriding the default image byte budget.
+///
+/// Mirrors `READ_IMAGE_BYTE_BUDGET_ENV` in the TS `image-compress.ts` module.
+pub const READ_IMAGE_BYTE_BUDGET_ENV: &str = "KIMI_IMAGE_READ_BYTE_BUDGET";
 
 // ---------------------------------------------------------------------------
 // Strategy enum
@@ -68,7 +79,7 @@ impl Default for ImageStrategy {
 /// Image processing configuration.
 ///
 /// Mirrors the TS `ImageConfig` type in `imageConfigBridge.ts`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImageConfig {
     /// Image processing strategy.
     #[serde(default)]
@@ -141,6 +152,27 @@ impl ImageConfig {
         Self::default()
     }
 
+    /// Create a config from built-in defaults overridden by the `KIMI_IMAGE_*`
+    /// env vars, mirroring the TS `ImageLimits` env resolution
+    /// (`image-limits.ts`): `KIMI_IMAGE_MAX_EDGE_PX` overrides `max_edge_px`
+    /// and `KIMI_IMAGE_READ_BYTE_BUDGET` overrides `byte_budget`. Unset or
+    /// invalid values are ignored and the built-in default is kept.
+    pub fn from_env() -> Self {
+        Self::from_env_with(|name| std::env::var(name).ok())
+    }
+
+    /// Like [`Self::from_env`], but with an injected env lookup (testable).
+    pub fn from_env_with(env: impl Fn(&str) -> Option<String>) -> Self {
+        let mut config = Self::default();
+        if let Some(px) = positive_int_from_env::<u32>(&env, MAX_IMAGE_EDGE_ENV) {
+            config.max_edge_px = px;
+        }
+        if let Some(budget) = positive_int_from_env::<usize>(&env, READ_IMAGE_BYTE_BUDGET_ENV) {
+            config.byte_budget = budget;
+        }
+        config
+    }
+
     /// Merge another `ImageConfig` into this one, taking non-default values.
     ///
     /// Fields with `None` in the overlay are skipped (the receiver's value is kept).
@@ -171,6 +203,23 @@ impl ImageConfig {
             self.full_resolution = full_res;
         }
     }
+}
+
+/// Parse a positive-integer env var, mirroring the TS `positiveIntFromEnv`
+/// semantics (`image-compress.ts`): unset, empty, non-digit, zero, or
+/// out-of-range values are ignored (`None`). Values are trimmed before
+/// validation.
+fn positive_int_from_env<T>(env: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<T>
+where
+    T: FromStr + PartialOrd + From<u8>,
+{
+    let raw = env(name)?;
+    let raw = raw.trim();
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let parsed: T = raw.parse().ok()?;
+    (parsed > T::from(0u8)).then_some(parsed)
 }
 
 /// Partial overlay for merging into an `ImageConfig`.
@@ -230,8 +279,11 @@ impl ImageConfigBridge {
     }
 
     /// Create a bridge with default config values.
+    ///
+    /// `KIMI_IMAGE_*` env overrides are applied on top of the built-in
+    /// defaults (see [`ImageConfig::from_env`]).
     pub fn default_config() -> Self {
-        Self::new(ImageConfig::default())
+        Self::new(ImageConfig::from_env())
     }
 
     /// Get the current image configuration.
@@ -587,5 +639,71 @@ mod tests {
         assert_eq!(deserialized.strategy, Some("auto".to_string()));
         assert_eq!(deserialized.max_edge_px, Some(2000));
         assert_eq!(deserialized.byte_budget, Some(3_750_000));
+    }
+
+    /// Env lookup returning the given overrides; everything else is unset.
+    fn env_with<'a>(overrides: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        let map: std::collections::HashMap<&str, &str> = overrides.iter().copied().collect();
+        move |name| map.get(name).map(|v| v.to_string())
+    }
+
+    #[test]
+    fn test_from_env_applies_valid_overrides() {
+        let config = ImageConfig::from_env_with(env_with(&[
+            (MAX_IMAGE_EDGE_ENV, "1024"),
+            (READ_IMAGE_BYTE_BUDGET_ENV, "512000"),
+        ]));
+        assert_eq!(config.max_edge_px, 1024);
+        assert_eq!(config.byte_budget, 512_000);
+        // Fields without an env override keep their defaults.
+        assert_eq!(config.strategy, ImageStrategy::Auto);
+        assert_eq!(config.max_decode_pixels, DEFAULT_MAX_DECODE_PIXELS);
+        assert_eq!(config.jpeg_quality, DEFAULT_JPEG_QUALITY);
+    }
+
+    #[test]
+    fn test_from_env_unset_returns_defaults() {
+        assert_eq!(ImageConfig::from_env_with(|_| None), ImageConfig::default());
+        assert_eq!(
+            ImageConfig::from_env_with(env_with(&[])),
+            ImageConfig::default()
+        );
+    }
+
+    #[test]
+    fn test_from_env_invalid_values_fall_back_to_default() {
+        // Non-numeric, zero, negative, empty, and out-of-range values are
+        // ignored, matching the TS `positiveIntFromEnv` semantics.
+        let invalid = ["abc", "0", "-1", "", "+512", "1_000", "99999999999999999999"];
+        for max_edge in invalid {
+            let config = ImageConfig::from_env_with(env_with(&[(MAX_IMAGE_EDGE_ENV, max_edge)]));
+            assert_eq!(config, ImageConfig::default(), "max_edge={max_edge:?}");
+        }
+        for budget in invalid {
+            let config = ImageConfig::from_env_with(env_with(&[(READ_IMAGE_BYTE_BUDGET_ENV, budget)]));
+            assert_eq!(config, ImageConfig::default(), "budget={budget:?}");
+        }
+    }
+
+    #[test]
+    fn test_from_env_overrides_are_independent() {
+        // Each variable is parsed independently: an invalid value falls back
+        // without affecting a valid sibling.
+        let config = ImageConfig::from_env_with(env_with(&[
+            (MAX_IMAGE_EDGE_ENV, "bad"),
+            (READ_IMAGE_BYTE_BUDGET_ENV, "512000"),
+        ]));
+        assert_eq!(config.max_edge_px, DEFAULT_MAX_IMAGE_EDGE_PX);
+        assert_eq!(config.byte_budget, 512_000);
+    }
+
+    #[test]
+    fn test_from_env_trims_whitespace() {
+        let config = ImageConfig::from_env_with(env_with(&[
+            (MAX_IMAGE_EDGE_ENV, " 1024 "),
+            (READ_IMAGE_BYTE_BUDGET_ENV, "512000"),
+        ]));
+        assert_eq!(config.max_edge_px, 1024);
+        assert_eq!(config.byte_budget, 512_000);
     }
 }

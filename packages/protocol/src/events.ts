@@ -591,7 +591,15 @@ export interface EngineLlmStepBeginEvent {
 
 export interface EngineLlmDeltaEvent {
   readonly type: 'llm.delta';
-  readonly part: { readonly type: 'text' | 'think'; readonly text?: string; readonly think?: string };
+  readonly part:
+    | { readonly type: 'text'; readonly text?: string }
+    | { readonly type: 'think'; readonly think?: string }
+    | {
+        readonly type: 'tool_call';
+        readonly id?: string;
+        readonly name?: string;
+        readonly args?: string;
+      };
 }
 
 export interface EngineLlmStepEndEvent {
@@ -1526,9 +1534,12 @@ export const engineLlmStepBeginEventSchema = z.object({
 export const engineLlmDeltaEventSchema = z.object({
   type: z.literal('llm.delta'),
   part: z.object({
-    type: z.enum(['text', 'think']),
+    type: z.enum(['text', 'think', 'tool_call']),
     text: z.string().optional(),
     think: z.string().optional(),
+    id: z.string().optional(),
+    name: z.string().optional(),
+    args: z.string().optional(),
   }),
 }) satisfies z.ZodType<EngineLlmDeltaEvent>;
 

@@ -18,4 +18,14 @@ pub enum StreamDelta {
     Text(String),
     /// Model reasoning (`reasoning_content` / `thinking_delta` / `thought`).
     Thinking(String),
+    /// A tool call whose arguments are streaming in: `args` is the
+    /// **accumulated** partial JSON so far (each event carries the full
+    /// running value, not a fragment — hosts replace, not append). Surfaced
+    /// to the host as `llm.delta` with `part.type == "tool_call"` so the TUI
+    /// can preview arguments while the call is still forming.
+    ToolCall {
+        id: String,
+        name: String,
+        args: String,
+    },
 }

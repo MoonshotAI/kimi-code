@@ -229,6 +229,9 @@ impl StreamAccumulator {
         let candidates = v.get("candidates").and_then(|c| c.as_array())?;
         let mut delta = String::new();
         let mut thinking = String::new();
+        // The last tool call advanced this chunk (parallel calls share one
+        // chunk) — surfaced after the loop with its accumulated arguments.
+        let mut tool_call_delta: Option<(String, String, String)> = None;
 
         for candidate in candidates {
             // Early chunks carry FINISH_REASON_UNSPECIFIED while the model
@@ -270,15 +273,23 @@ impl StreamAccumulator {
                     };
                     let index = self.tool_calls.len();
                     let entropy = fastrand::u32(..);
+                    let arguments = fc.get("args").cloned().unwrap_or_else(|| json!({}));
+                    let id = format!("{name}_{index}_{entropy:08x}");
                     self.tool_calls.push(ToolCall {
-                        id: format!("{name}_{index}_{entropy:08x}"),
+                        id: id.clone(),
                         name: name.to_string(),
-                        arguments: fc.get("args").cloned().unwrap_or_else(|| json!({})),
+                        arguments: arguments.clone(),
                     });
+                    // Gemini streams whole functionCall parts (no argument
+                    // deltas) — surface the complete call once per part.
+                    tool_call_delta = Some((id, name.to_string(), arguments.to_string()));
                 }
             }
         }
 
+        if let Some((id, name, args)) = tool_call_delta {
+            return Some(StreamDelta::ToolCall { id, name, args });
+        }
         if !delta.is_empty() {
             Some(StreamDelta::Text(delta))
         } else if !thinking.is_empty() {
@@ -435,6 +446,8 @@ mod tests {
         }));
         assert_eq!(d2, Some(crate::llm::StreamDelta::Text("there".into())));
 
+        // Gemini streams whole functionCall parts — surfaced once as a
+        // ToolCall delta with the complete arguments.
         let d3 = acc.feed(&json!({
             "candidates": [{
                 "content": { "parts": [
@@ -444,7 +457,14 @@ mod tests {
             }],
             "usageMetadata": { "promptTokenCount": 25, "candidatesTokenCount": 9 }
         }));
-        assert_eq!(d3, None);
+        match d3 {
+            Some(crate::llm::StreamDelta::ToolCall { id, name, args }) => {
+                assert!(id.starts_with("Read_0_"), "id: {id}");
+                assert_eq!(name, "Read");
+                assert!(args.contains("a.txt"), "args: {args}");
+            }
+            other => panic!("expected ToolCall delta, got {other:?}"),
+        }
 
         let resp = acc.finish();
         assert_eq!(resp.content, "Hi there");

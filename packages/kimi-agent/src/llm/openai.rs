@@ -267,23 +267,37 @@ impl StreamAccumulator {
         let delta = choice.get("delta")?;
 
         if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+            // Process every tool call in the chunk (parallel calls share a
+            // chunk); surface the last one that advanced so a host can
+            // preview accumulated arguments while they form.
+            let mut advanced_slot: Option<(String, String, String)> = None;
             for tc in tcs {
                 let index = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
                 while self.tool_calls.len() <= index {
                     self.tool_calls.push(PartialToolCall::default());
                 }
                 let slot = &mut self.tool_calls[index];
+                let mut advanced = false;
                 if let Some(id) = tc.get("id").and_then(|x| x.as_str()) {
                     slot.id.push_str(id);
+                    advanced = true;
                 }
                 if let Some(func) = tc.get("function") {
                     if let Some(name) = func.get("name").and_then(|x| x.as_str()) {
                         slot.name.push_str(name);
+                        advanced = true;
                     }
                     if let Some(args) = func.get("arguments").and_then(|x| x.as_str()) {
                         slot.arguments.push_str(args);
+                        advanced = true;
                     }
                 }
+                if advanced && !slot.name.is_empty() {
+                    advanced_slot = Some((slot.id.clone(), slot.name.clone(), slot.arguments.clone()));
+                }
+            }
+            if let Some((id, name, args)) = advanced_slot {
+                return Some(StreamDelta::ToolCall { id, name, args });
             }
         }
 
@@ -561,5 +575,52 @@ mod tests {
         assert_eq!(resp.tool_calls.len(), 2);
         assert_eq!(resp.tool_calls[0].name, "Read");
         assert_eq!(resp.tool_calls[1].name, "Glob");
+    }
+
+    #[test]
+    fn tool_call_deltas_surface_accumulated_partial_args() {
+        let mut acc = StreamAccumulator::new();
+        // First chunk: id + name arrive; args are still empty.
+        let d = acc.feed(&json!({ "choices": [{ "delta": { "tool_calls": [
+            { "index": 0, "id": "call_1", "function": { "name": "Read", "arguments": "" } }
+        ] } }] }));
+        match d {
+            Some(crate::llm::StreamDelta::ToolCall { id, name, args }) => {
+                assert_eq!(id, "call_1");
+                assert_eq!(name, "Read");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected ToolCall delta, got {other:?}"),
+        }
+        // Second chunk: argument fragment arrives; the delta carries the
+        // accumulated value, not just the fragment.
+        let d = acc.feed(&json!({ "choices": [{ "delta": { "tool_calls": [
+            { "index": 0, "function": { "arguments": "{\"path\":" } }
+        ] } }] }));
+        match d {
+            Some(crate::llm::StreamDelta::ToolCall { id, name, args }) => {
+                assert_eq!(id, "call_1");
+                assert_eq!(name, "Read");
+                assert_eq!(args, "{\"path\":" );
+            }
+            other => panic!("expected ToolCall delta, got {other:?}"),
+        }
+        // Third chunk: more args; still accumulated.
+        let d = acc.feed(&json!({ "choices": [{ "delta": { "tool_calls": [
+            { "index": 0, "function": { "arguments": " \"a.txt\"}" } }
+        ] } }] }));
+        match d {
+            Some(crate::llm::StreamDelta::ToolCall { id, name, args }) => {
+                assert_eq!(id, "call_1");
+                assert_eq!(name, "Read");
+                assert_eq!(args, "{\"path\": \"a.txt\"}");
+            }
+            other => panic!("expected ToolCall delta, got {other:?}"),
+        }
+        // Finish yields the complete, parsed call.
+        let resp = acc.finish();
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].name, "Read");
+        assert_eq!(resp.tool_calls[0].arguments, json!({ "path": "a.txt" }));
     }
 }

@@ -244,6 +244,16 @@ fn read_exif_orientation(data: &[u8], _max_len: usize) -> Option<u8> {
     None
 }
 
+/// Apply an EXIF orientation value (1-8) to a decoded image via the
+/// `image` crate's standard mapping (native codec `apply_orientation`
+/// parity); invalid values are left untouched.
+fn apply_exif_orientation(mut img: image::DynamicImage, orientation: u8) -> image::DynamicImage {
+    if let Some(o) = image::metadata::Orientation::from_exif(orientation) {
+        img.apply_orientation(o);
+    }
+    img
+}
+
 /// Parse image dimensions from GIF header bytes.
 ///
 /// GIF header: 6 bytes signature + 7 bytes Logical Screen Descriptor.
@@ -567,7 +577,7 @@ fn try_compress_with_image_crate(
     let exif_transposed = dims.map(|d| d.transposed).unwrap_or(false);
 
     // Load the image using the `image` crate
-    let img = match image::load_from_memory(data) {
+    let mut img = match image::load_from_memory(data) {
         Ok(img) => img,
         Err(_) => {
             // Cannot decode; pass through unchanged
@@ -586,6 +596,15 @@ fn try_compress_with_image_crate(
             };
         }
     };
+
+    // Apply the EXIF orientation parsed from the JPEG header — the `image`
+    // crate decoder does not auto-apply it, so portrait photos taken on
+    // phones/cameras would be compressed in their physical orientation
+    // (native codec parity). Dimensions bookkeeping above already swaps
+    // w/h via `exif_transposed` for orientations 5-8.
+    if let Some(dims) = dims {
+        img = apply_exif_orientation(img, dims.orientation);
+    }
 
     let (orig_w, orig_h) = (img.width(), img.height());
 
@@ -1518,5 +1537,28 @@ mod tests {
     fn compress_content_parts_empty() {
         let parts = compress_image_content_parts(&[], FALLBACK_EDGES_PX, JPEG_QUALITY_STEPS, false);
         assert!(parts.is_empty());
+    }
+
+    #[test]
+    fn exif_orientation_transforms_dimensions() {
+        use image::{ImageBuffer, Rgb};
+        let img = ImageBuffer::from_fn(8, 4, |x, y| Rgb([x as u8, y as u8, 0]));
+        let img = image::DynamicImage::ImageRgb8(img);
+
+        // Orientation 1 (normal) leaves the image untouched.
+        let out = apply_exif_orientation(img.clone(), 1);
+        assert_eq!((out.width(), out.height()), (8, 4));
+        // Orientation 6 (90° CW) swaps width and height.
+        let out = apply_exif_orientation(img.clone(), 6);
+        assert_eq!((out.width(), out.height()), (4, 8));
+        // Orientation 3 (180°) keeps dimensions.
+        let out = apply_exif_orientation(img.clone(), 3);
+        assert_eq!((out.width(), out.height()), (8, 4));
+        // Orientation 5 (transpose) swaps dimensions.
+        let out = apply_exif_orientation(img.clone(), 5);
+        assert_eq!((out.width(), out.height()), (4, 8));
+        // Out-of-range values are a no-op.
+        let out = apply_exif_orientation(img, 9);
+        assert_eq!((out.width(), out.height()), (8, 4));
     }
 }

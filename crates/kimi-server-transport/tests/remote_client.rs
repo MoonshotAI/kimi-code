@@ -8,8 +8,20 @@ fn serve_bin() -> &'static str {
     env!("CARGO_BIN_EXE_kimi-server-serve")
 }
 
+/// Point `KIMI_CODE_HOME`/`KIMI_AGENT_HOME` at a scratch dir so the spawned
+/// server never reads the real user config — `config/get` would otherwise
+/// fail on any broken `~/.kimi-code/config.toml` (or race it across tests).
+fn isolate_home() {
+    let home = std::env::temp_dir().join(format!("kimi-remote-client-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("mkdir");
+    std::env::set_var("KIMI_CODE_HOME", &home);
+    std::env::set_var("KIMI_AGENT_HOME", &home);
+}
+
 #[tokio::test]
 async fn remote_client_round_trip() {
+    isolate_home();
     let client = AppServerClient::Remote(Box::new(
         kimi_server_client::stdio_client::StdioClient::spawn(serve_bin())
             .expect("spawn kimi-server-serve"),
@@ -40,6 +52,7 @@ async fn remote_client_round_trip() {
 /// wire shapes through the exact process boundary a host would use.
 #[tokio::test]
 async fn remote_client_method_family_smoke() {
+    isolate_home();
     let client = AppServerClient::Remote(Box::new(
         kimi_server_client::stdio_client::StdioClient::spawn(serve_bin())
             .expect("spawn kimi-server-serve"),
@@ -75,6 +88,7 @@ async fn remote_client_method_family_smoke() {
 /// awaited concurrently without blocking each other.
 #[tokio::test]
 async fn remote_client_concurrent_calls() {
+    isolate_home();
     let client = AppServerClient::Remote(Box::new(
         kimi_server_client::stdio_client::StdioClient::spawn(serve_bin())
             .expect("spawn kimi-server-serve"),
@@ -93,6 +107,7 @@ async fn remote_client_concurrent_calls() {
 
 #[tokio::test]
 async fn serve_bin_over_websocket() {
+    isolate_home();
     use tokio::io::AsyncBufReadExt;
 
     // Probe a free port, then hand it to the binary.

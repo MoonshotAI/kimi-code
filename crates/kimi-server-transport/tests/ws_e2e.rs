@@ -14,6 +14,10 @@ async fn ws_client_drives_full_server() {
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).expect("mkdir");
     std::env::set_var("KIMI_AGENT_HOME", &home);
+    // Isolate the user-level engine config too (config-loading RPCs read
+    // `$KIMI_CODE_HOME/config.toml` — without this, tests read the real user
+    // config and fail on any broken file there).
+    std::env::set_var("KIMI_CODE_HOME", &home);
 
     let server = Server::build().expect("server");
     let processor = Arc::new(server.processor);
@@ -57,6 +61,10 @@ async fn ws_client_concurrent_calls() {
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).expect("mkdir");
     std::env::set_var("KIMI_AGENT_HOME", &home);
+    // Isolate the user-level engine config too (config-loading RPCs read
+    // `$KIMI_CODE_HOME/config.toml` — without this, tests read the real user
+    // config and fail on any broken file there).
+    std::env::set_var("KIMI_CODE_HOME", &home);
 
     let server = Server::build().expect("server");
     let processor = Arc::new(server.processor);

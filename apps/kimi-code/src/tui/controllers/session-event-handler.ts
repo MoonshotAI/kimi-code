@@ -240,6 +240,11 @@ export class SessionEventHandler {
       case 'llm.delta':
         if (event.part.type === 'think') {
           this.handleThinkingDelta(event);
+        } else if (event.part.type === 'tool_call') {
+          // Streamed tool-argument preview (Rust native-LLM turns). The TS
+          // hosts render arguments from `session.tool.started`, so the
+          // preview carries nothing to do here.
+          break;
         } else {
           this.handleAssistantDelta(event);
         }
@@ -336,7 +341,9 @@ export class SessionEventHandler {
 
   private handleThinkingDelta(event: EngineLlmDeltaEvent): void {
     const { state, streamingUI } = this.host;
-    const delta = event.part.think ?? '';
+    const part = event.part;
+    if (part.type !== 'think') return;
+    const delta = part.think ?? '';
     // Encrypted / redacted reasoning (e.g. Kimi over the Anthropic-compatible
     // protocol) streams thinking deltas whose visible text is empty — only an
     // opaque signature rides along. Models also occasionally stream whitespace-
@@ -357,7 +364,9 @@ export class SessionEventHandler {
 
   private handleAssistantDelta(event: EngineLlmDeltaEvent): void {
     const { state, streamingUI } = this.host;
-    const delta = event.part.text ?? '';
+    const part = event.part;
+    if (part.type !== 'text') return;
+    const delta = part.text ?? '';
     if (streamingUI.hasThinkingDraft()) {
       streamingUI.flushThinkingToTranscript('idle');
     }
@@ -782,7 +791,7 @@ export class SessionEventHandler {
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
     });
-    this.host.streamingUI.beginCompaction(undefined);
+    this.host.streamingUI.beginCompaction();
   }
 
   private handleUsageUpdated(event: EngineUsageUpdatedEvent): void {
