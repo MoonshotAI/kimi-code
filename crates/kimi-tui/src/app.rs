@@ -4384,6 +4384,29 @@ mod tests {
         let lines = approval_preview_lines("Edit", "not json");
         assert_eq!(lines, vec!["not json"]);
 
+        // AskUserQuestion renders the question + numbered options.
+        let lines = approval_preview_lines(
+            "AskUserQuestion",
+            r#"{"question":"Which?","options":[{"label":"A"},{"label":"B","description":"bee"}]}"#,
+        );
+        assert!(lines[0].starts_with("❓ Which?"), "{}", lines[0]);
+        assert!(lines.iter().any(|l| l.contains("1. A")));
+        assert!(lines.iter().any(|l| l.contains("2. B")));
+
+        // TodoList renders up to 8 rows with status markers.
+        let lines = approval_preview_lines(
+            "TodoList",
+            r#"{"todos":[{"title":"t1","status":"done"},{"title":"t2"}]}"#,
+        );
+        assert!(lines.iter().any(|l| l.contains("[done] t1")));
+        assert!(lines.iter().any(|l| l.contains("t2")));
+
+        // WebFetch / Task render their target line.
+        let lines = approval_preview_lines("WebFetch", r#"{"url":"https://example.com"}"#);
+        assert_eq!(lines, vec!["GET https://example.com"]);
+        let lines = approval_preview_lines("Task", r#"{"objective":"do the thing"}"#);
+        assert_eq!(lines, vec!["task: do the thing"]);
+
         // Read/Grep/Glob/FsSearch/WebFetch/WebSearch render their target.
         let lines = approval_preview_lines("Read", r#"{"path":"/tmp/x"}"#);
         assert_eq!(lines, vec!["Read: /tmp/x"]);

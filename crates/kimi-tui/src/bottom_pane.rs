@@ -653,6 +653,24 @@ mod tests {
     }
 
     #[test]
+    fn kill_edits_cover_regions_and_words() {
+        // kill_to_start removes everything before the cursor.
+        assert_eq!(kill_to_start("hello world", 5), (" world".to_string(), 0));
+        assert_eq!(kill_to_start("hello", 0), ("hello".to_string(), 0));
+        // kill_to_end removes everything from the cursor on (returns the
+        // remaining text).
+        assert_eq!(kill_to_end("hello world", 6), "hello ");
+        assert_eq!(kill_to_end("hello", 5), "hello");
+        // kill_word removes the word before the cursor (TS Ctrl-W parity).
+        assert_eq!(kill_word("hello world", 11), ("hello ".to_string(), 6));
+        assert_eq!(kill_word("hello world", 6), ("world".to_string(), 0));
+        // Multi-byte safety: cursor counts chars, not bytes.
+        let (text, cursor) = kill_word("你好 world", 8);
+        assert_eq!(text, "你好 ".to_string());
+        assert_eq!(cursor, 3);
+    }
+
+    #[test]
     fn multiline_cursor_navigates_lines() {
         // "ab\ncd\nef" — cursor at index 3 ('c').
         let input = "ab\ncd\nef";
