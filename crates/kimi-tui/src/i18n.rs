@@ -175,6 +175,8 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ),
     // ── General / help ─────────────────────────────────────────────────
     ("tui.help.commands", "commands: {0}", "命令：{0}"),
+    ("tui.help.title", "help", "帮助"),
+    ("tui.help.shortcuts", "shortcuts", "快捷键"),
     (
         "tui.help.detailHint",
         "type /help <command> for a command's description",
@@ -261,6 +263,53 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "tui.approval.todoEmpty",
         "(no todos)",
         "(无待办项)",
+    ),
+    // ── Relative time (session picker rows) ─────────────────────────────
+    ("tui.time.sAgo", "{0}s ago", "{0}秒前"),
+    ("tui.time.mAgo", "{0}m ago", "{0}分钟前"),
+    ("tui.time.hAgo", "{0}h ago", "{0}小时前"),
+    ("tui.time.dAgo", "{0}d ago", "{0}天前"),
+    // ── Dangerous-command detection (TS `tui.dangerPatterns` parity) ─────
+    (
+        "tui.dangerPatterns.recursiveDelete",
+        "recursive delete",
+        "递归删除",
+    ),
+    ("tui.dangerPatterns.sudo", "sudo", "sudo"),
+    (
+        "tui.dangerPatterns.pipeToShell",
+        "pipe to shell",
+        "管道至 shell",
+    ),
+    ("tui.dangerPatterns.ddWrite", "dd write", "dd 写入"),
+    ("tui.dangerPatterns.mkfs", "mkfs", "mkfs"),
+    (
+        "tui.dangerPatterns.writeToRawDevice",
+        "write to raw device",
+        "写入裸设备",
+    ),
+    ("tui.dangerPatterns.chmod777", "chmod 777", "chmod 777"),
+    ("tui.dangerPatterns.forkBomb", "fork bomb", "fork 炸弹"),
+    // ── Permission-mode descriptions (picker rows) ──────────────────────
+    (
+        "tui.permission.descManual",
+        "approve each tool call",
+        "每个工具调用需要批准",
+    ),
+    (
+        "tui.permission.descPlan",
+        "propose changes, approve execution",
+        "先提出方案，再批准执行",
+    ),
+    (
+        "tui.permission.descAuto",
+        "auto-approve safe operations",
+        "自动批准安全操作",
+    ),
+    (
+        "tui.permission.descYolo",
+        "skip all approvals",
+        "跳过所有批准",
     ),
     (
         "tui.diff.unchangedLines",

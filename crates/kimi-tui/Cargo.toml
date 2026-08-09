@@ -8,6 +8,7 @@ description = "Kimi Code interactive TUI — stage D (ratatui + crossterm), driv
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
+chrono = "0.4"
 crossterm = "0.28"
 kimi-protocol = { path = "../kimi-protocol" }
 kimi-sdk = { path = "../kimi-sdk" }

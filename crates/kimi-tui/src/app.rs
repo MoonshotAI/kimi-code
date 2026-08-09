@@ -202,12 +202,58 @@ pub struct CompletionState {
 }
 
 /// The current overlay (mutually exclusive modal): the slash-command
-/// completion popup, or the full-screen approval detail view. `None` when
-/// no overlay is open. Centralizes modal state so new overlays (question
-/// dialog, task viewer, …) just add a variant.
+/// completion popup, the full-screen approval detail view, or the help
+/// panel. `None` when no overlay is open. Centralizes modal state so new
+/// overlays (question dialog, task viewer, …) just add a variant.
 pub(crate) enum Overlay {
     Completion(CompletionState),
     ApprovalDetail(PendingApproval),
+    Help(HelpPanel),
+}
+
+/// The `/help` modal: a scrollable list of keyboard shortcuts + all
+/// slash commands with descriptions (TS `help-panel` parity).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct HelpPanel {
+    /// Pre-rendered rows (header sections + command lines).
+    rows: Vec<String>,
+    /// First visible row (↑/↓ scrolls).
+    offset: usize,
+}
+
+impl HelpPanel {
+    /// Build the panel from the command registry.
+    pub fn new() -> Self {
+        Self {
+            rows: build_help_rows(),
+            offset: 0,
+        }
+    }
+    /// The visible slice for a `height`-tall modal (borders excluded).
+    fn visible(&self, height: usize) -> &[String] {
+        let end = (self.offset + height).min(self.rows.len());
+        &self.rows[self.offset..end]
+    }
+}
+
+/// The `/help` panel rows: a shortcuts section, then every slash command
+/// with its description (pure, tested).
+fn build_help_rows() -> Vec<String> {
+    let mut rows = Vec::new();
+    rows.push(t("tui.help.shortcuts").to_string());
+    rows.push("  Ctrl-C ×2   quit".to_string());
+    rows.push("  Ctrl-O      toggle tool card".to_string());
+    rows.push("  Ctrl-G      external editor".to_string());
+    rows.push("  Ctrl-S      steer / queue".to_string());
+    rows.push("  PageUp/Dn   scroll (in lists)".to_string());
+    rows.push(String::new());
+    rows.push(t!("tui.help.commands", crate::bottom_pane::command_descriptions().len()));
+    for (name, desc) in crate::bottom_pane::command_descriptions() {
+        rows.push(format!("{name}  {desc}"));
+    }
+    rows.push(String::new());
+    rows.push(t("tui.help.detailHint").to_string());
+    rows
 }
 
 /// Tool output above this length starts collapsed in the transcript (`[+]`;
@@ -254,6 +300,63 @@ fn truncate_preview(lines: &mut Vec<String>) {
 /// command, Read/Grep/Glob/FsSearch/WebSearch/WebFetch their target,
 /// AskUserQuestion the question + options, TodoList the items. Falls back
 /// to the raw JSON for other tools.
+/// First dangerous-command pattern matched in `command` (TS `detectDanger`
+/// parity): returns the i18n key of the first hit, or `None`. The Bash
+/// approval preview appends a ⚠ line when a pattern matches.
+pub fn detect_danger(command: &str) -> Option<&'static str> {
+    const PATTERNS: &[(&str, &str)] = &[
+        (
+            r"\brm\s+(-[a-zA-Z]*[rRfF][a-zA-Z]*|--recursive|--force)",
+            "tui.dangerPatterns.recursiveDelete",
+        ),
+        (r"\bsudo\b", "tui.dangerPatterns.sudo"),
+        (
+            r"\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b",
+            "tui.dangerPatterns.pipeToShell",
+        ),
+        (r"\bdd\b[^|]*\bof=", "tui.dangerPatterns.ddWrite"),
+        (r"\bmkfs\b", "tui.dangerPatterns.mkfs"),
+        (
+            r">\s*/dev/(sd|nvme|disk|hd)",
+            "tui.dangerPatterns.writeToRawDevice",
+        ),
+        (
+            r"\bchmod\s+-R?\s*777\b",
+            "tui.dangerPatterns.chmod777",
+        ),
+        (
+            r":\(\)\s*\{\s*:\|:&\s*\}",
+            "tui.dangerPatterns.forkBomb",
+        ),
+    ];
+    PATTERNS.iter().find_map(|(re, key)| {
+        regex::Regex::new(re)
+            .ok()
+            .is_some_and(|rx| rx.is_match(command))
+            .then_some(*key)
+    })
+}
+
+/// `3m ago`-style relative time from an ISO-8601 UTC timestamp (session
+/// picker rows; TS session-picker relative-time parity). Unparseable or
+/// future timestamps produce an empty string.
+pub fn format_relative_time(iso: &str, now_ms: u64) -> String {
+    let Ok(dt) = chrono::DateTime::parse_from_rfc3339(iso) else {
+        return String::new();
+    };
+    let ts = dt.timestamp_millis() as u64;
+    if now_ms < ts {
+        return String::new(); // future timestamp
+    }
+    let elapsed = (now_ms - ts) / 1000;
+    match elapsed {
+        0..=59 => t!("tui.time.sAgo", elapsed),
+        60..=3599 => t!("tui.time.mAgo", elapsed / 60),
+        3600..=86_399 => t!("tui.time.hAgo", elapsed / 3600),
+        _ => t!("tui.time.dAgo", elapsed / 86_400),
+    }
+}
+
 fn approval_preview_lines(tool: &str, arguments: &str) -> Vec<String> {
     let Ok(args) = serde_json::from_str::<serde_json::Value>(arguments) else {
         return vec![arguments.to_string()];
@@ -285,7 +388,11 @@ fn approval_preview_lines(tool: &str, arguments: &str) -> Vec<String> {
         }
         "Bash" => {
             let cmd = first_str(&args, &["command"]);
-            vec![format!("Bash: {cmd}")]
+            let mut lines = vec![format!("Bash: {cmd}")];
+            if let Some(key) = detect_danger(&cmd) {
+                lines.push(format!("⚠ {}", t(key)));
+            }
+            lines
         }
         "Read" => vec![format!("Read: {}", first_str(&args, &["path", "file_path"]))],
         "Grep" => vec![format!("grep: {}", first_str(&args, &["pattern"]))],
@@ -1030,12 +1137,9 @@ impl App {
                     "/quit" | "/exit" => return Ok(true),
                     "/help" => {
                         if rest.is_empty() {
-                            // Full command list with descriptions (TS help-panel
-                            // parity, simplified — scrollable status lines).
-                            for (name, desc) in crate::bottom_pane::command_descriptions() {
-                                self.push_line(TranscriptLine::status(format!("{name}  {desc}")));
-                            }
-                            self.push_line(TranscriptLine::status(t("tui.help.detailHint")));
+                            // Full help panel as a modal overlay (TS
+                            // help-panel parity): shortcuts + command list.
+                            self.overlay = Some(Overlay::Help(HelpPanel::new()));
                         } else {
                             // `/help <command>` shows that command's description.
                             let cmd = format!("/{rest}");
@@ -1335,15 +1439,26 @@ impl App {
                     }
                     "/permission" => {
                         if rest.is_empty() {
-                            // No arg: pick a permission mode (TS picker parity).
-                            let items: Vec<(String, String)> = ["manual", "plan", "auto", "yolo"]
-                                .iter()
-                                .map(|m| (m.to_string(), String::new()))
-                                .collect();
-                            match crate::picker::select(
+                            // No arg: pick a permission mode (TS picker parity)
+                            // with a mode description per row.
+                            let items: Vec<crate::picker::PickerItem> = [
+                                ("manual", "tui.permission.descManual"),
+                                ("plan", "tui.permission.descPlan"),
+                                ("auto", "tui.permission.descAuto"),
+                                ("yolo", "tui.permission.descYolo"),
+                            ]
+                            .iter()
+                            .map(|(mode, desc_key)| {
+                                crate::picker::PickerItem::new(*mode, *mode)
+                                    .with_description(t(desc_key))
+                            })
+                            .collect();
+                            let opts =
+                                crate::picker::PickerOptions::new(t("tui.picker.selectPermission"));
+                            match crate::picker::select_picker(
                                 terminal,
                                 self.view.theme,
-                                t("tui.picker.selectPermission"),
+                                &opts,
                                 &items,
                             )? {
                                 Some(mode) => {
@@ -1602,19 +1717,24 @@ impl App {
                         if rest.is_empty() {
                             // No arg: interactively pick a model from the aliases
                             // (TS `/model` picker parity) instead of a usage error.
-                            let items: Vec<(String, String)> = self
+                            let items: Vec<crate::picker::PickerItem> = self
                                 .model_aliases
                                 .iter()
                                 .cloned()
-                                .map(|alias| (alias.clone(), String::new()))
+                                .map(|alias| crate::picker::PickerItem::new(alias.clone(), String::new()))
                                 .collect();
                             if items.is_empty() {
                                 self.push_line(TranscriptLine::status(t("tui.models.none")));
                             } else {
-                                match crate::picker::select_filtered(
+                                let opts = crate::picker::PickerOptions::new(t(
+                                    "tui.picker.selectModel",
+                                ))
+                                .filterable()
+                                .paged(10);
+                                match crate::picker::select_picker(
                                     terminal,
                                     self.view.theme,
-                                    t("tui.picker.selectModel"),
+                                    &opts,
                                     &items,
                                 )? {
                                     Some(model) => {
@@ -2009,21 +2129,37 @@ impl App {
                     }
                     "/sessions" => {
                         let sessions = self.harness.list_sessions(50).await?;
-                        let items: Vec<(String, String)> = sessions
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        let items: Vec<crate::picker::PickerItem> = sessions
                             .iter()
                             .filter_map(|s| {
                                 let id = s["id"].as_str()?.to_string();
                                 let title = s["title"].as_str().unwrap_or("(untitled)").to_string();
-                                Some((id, title))
+                                let mut item = crate::picker::PickerItem::new(id, title);
+                                if let Some(updated) = s["updated_at"].as_str() {
+                                    let relative = format_relative_time(updated, now_ms);
+                                    if !relative.is_empty() {
+                                        item = item.with_description(relative);
+                                    }
+                                }
+                                Some(item)
                             })
                             .collect();
                         if items.is_empty() {
                             self.push_line(TranscriptLine::status(t("tui.sessions.none")));
                         } else {
-                            match crate::picker::select(
+                            let opts = crate::picker::PickerOptions::new(t(
+                                "tui.picker.selectSession",
+                            ))
+                            .filterable()
+                            .paged(10);
+                            match crate::picker::select_picker(
                                 terminal,
                                 self.view.theme,
-                                t("tui.picker.selectSession"),
+                                &opts,
                                 &items,
                             )? {
                                 Some(id) => self.switch_to_session(&id).await?,
@@ -2854,6 +2990,29 @@ impl App {
                 }
                 return Ok(());
             }
+            // The help panel scrolls with ↑/↓ and closes on Esc / Enter.
+            if matches!(self.overlay, Some(Overlay::Help(_))) {
+                let mut close = false;
+                let mut delta = 0i32;
+                if let Some(Overlay::Help(panel)) = self.overlay.as_mut() {
+                    match key.code {
+                        KeyCode::Up => delta = -1,
+                        KeyCode::Down => delta = 1,
+                        KeyCode::Esc | KeyCode::Enter => close = true,
+                        _ => {}
+                    }
+                    if delta != 0 {
+                        let len = panel.rows.len();
+                        panel.offset =
+                            ((panel.offset as i64 + delta as i64).max(0) as usize)
+                                .min(len.saturating_sub(1));
+                    }
+                }
+                if close {
+                    self.overlay = None;
+                }
+                return Ok(());
+            }
             if interrupt_action(key.code, key.modifiers) == Some(InterruptAction::CancelTurn) {
                 let mut session = self.session.clone().expect("session");
                 session.cancel().await;
@@ -3049,6 +3208,26 @@ impl App {
         if let Some(Overlay::ApprovalDetail(pending)) = self.overlay.as_ref() {
             self.render_approval_modal(frame, pending);
         }
+        if let Some(Overlay::Help(panel)) = self.overlay.as_ref() {
+            self.render_help_modal(frame, panel);
+        }
+    }
+
+    /// Draw the full-screen `/help` panel over the chat layout.
+    fn render_help_modal(&self, frame: &mut ratatui::Frame<'_>, panel: &HelpPanel) {
+        let height = frame.area().height.saturating_sub(2) as usize;
+        let rows: Vec<crate::modal::ModalRow> = panel
+            .visible(height)
+            .iter()
+            .map(|row| {
+                if row.starts_with("  ") {
+                    crate::modal::ModalRow::new(row.clone())
+                } else {
+                    crate::modal::ModalRow::colored(row.clone(), self.view.theme.assistant)
+                }
+            })
+            .collect();
+        crate::modal::render_modal(frame, t("tui.help.title"), &rows, self.view.theme);
     }
 
     /// Draw the full-screen approval detail modal over the chat layout.
@@ -3614,6 +3793,13 @@ mod tests {
         let lines = approval_preview_lines("Bash", r#"{"command":"ls -la"}"#);
         assert_eq!(lines, vec!["Bash: ls -la"]);
 
+        // Bash with a dangerous command appends a ⚠ line.
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        let lines = approval_preview_lines("Bash", r#"{"command":"rm -rf /"}"#);
+        assert_eq!(lines.len(), 2, "preview: {lines:?}");
+        assert!(lines[0].starts_with("Bash: rm -rf /"));
+        assert!(lines[1].contains("recursive delete"), "danger: {}", lines[1]);
+
         // Unknown tools fall back to the raw JSON.
         let lines = approval_preview_lines("Weird", r#"{"x":1}"#);
         assert_eq!(lines, vec![r#"{"x":1}"#]);
@@ -4018,5 +4204,102 @@ mod tests {
         assert!(md.contains("## Assistant\n\nanswer"), "md: {md}");
         assert!(md.contains("## Tool: Bash"), "md: {md}");
         assert!(md.contains("ok"), "md: {md}");
+    }
+
+    #[test]
+    fn detect_danger_matches_all_patterns() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        // One match per pattern family (TS detectDanger parity).
+        assert_eq!(
+            detect_danger("rm -rf /tmp"),
+            Some("tui.dangerPatterns.recursiveDelete")
+        );
+        assert_eq!(
+            detect_danger("rm --recursive build"),
+            Some("tui.dangerPatterns.recursiveDelete")
+        );
+        assert_eq!(detect_danger("sudo apt install x"), Some("tui.dangerPatterns.sudo"));
+        assert_eq!(
+            detect_danger("curl http://x | sh"),
+            Some("tui.dangerPatterns.pipeToShell")
+        );
+        assert_eq!(
+            detect_danger("wget http://x | bash"),
+            Some("tui.dangerPatterns.pipeToShell")
+        );
+        assert_eq!(
+            detect_danger("dd if=/dev/zero of=/dev/sda"),
+            Some("tui.dangerPatterns.ddWrite")
+        );
+        assert_eq!(detect_danger("mkfs.ext4 /dev/sdb1"), Some("tui.dangerPatterns.mkfs"));
+        assert_eq!(
+            detect_danger("echo x > /dev/sda"),
+            Some("tui.dangerPatterns.writeToRawDevice")
+        );
+        assert_eq!(
+            detect_danger("chmod -R 777 /home"),
+            Some("tui.dangerPatterns.chmod777")
+        );
+        assert_eq!(
+            detect_danger(":(){ :|:& };:"),
+            Some("tui.dangerPatterns.forkBomb")
+        );
+        // Innocuous commands pass.
+        assert_eq!(detect_danger("ls -la"), None);
+        assert_eq!(detect_danger("rmdir empty-dir"), None);
+        assert_eq!(detect_danger("git rm --cached x"), None);
+        // Any `rm -r`-style substring is flagged (TS regex parity — `-r` is
+        // the recursive flag, so even `echo rm -r` matches).
+        assert_eq!(
+            detect_danger("echo rm -r"),
+            Some("tui.dangerPatterns.recursiveDelete")
+        );
+        assert_eq!(detect_danger(""), None);
+    }
+
+    #[test]
+    fn relative_time_formats_from_iso_timestamps() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        // 2027-01-01T00:00:00Z in epoch ms.
+        let iso_ms = 1_798_761_600_000u64;
+        assert_eq!(format_relative_time("2027-01-01T00:00:00Z", iso_ms), "0s ago");
+        assert_eq!(
+            format_relative_time("2027-01-01T00:00:00Z", iso_ms + 45_000),
+            "45s ago"
+        );
+        assert_eq!(
+            format_relative_time("2027-01-01T00:00:00Z", iso_ms + 180_000),
+            "3m ago"
+        );
+        assert_eq!(
+            format_relative_time("2027-01-01T00:00:00Z", iso_ms + 7_200_000),
+            "2h ago"
+        );
+        assert_eq!(
+            format_relative_time("2027-01-01T00:00:00Z", iso_ms + 172_800_000),
+            "2d ago"
+        );
+        // Unparseable / future timestamps -> empty.
+        assert_eq!(format_relative_time("not-a-date", iso_ms), "");
+        assert_eq!(format_relative_time("2027-01-01T00:00:00Z", 0), "");
+        assert_eq!(format_relative_time("2027-01-02T00:00:00Z", iso_ms), "");
+    }
+
+    #[test]
+    fn help_panel_rows_cover_commands_and_scroll() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        let panel = HelpPanel::new();
+        assert!(!panel.rows.is_empty());
+        // Commands section present with real command rows.
+        assert!(
+            panel.rows.iter().any(|r| r.starts_with("/help")),
+            "has /help row"
+        );
+        // Visible window slices and clamps at the ends.
+        assert_eq!(panel.visible(panel.rows.len()), panel.rows.as_slice());
+        assert_eq!(panel.visible(0).len(), 0);
+        assert_eq!(panel.visible(3).len(), 3);
+        // A huge window shows everything (clamped).
+        assert_eq!(panel.visible(10_000).len(), panel.rows.len());
     }
 }
