@@ -202,13 +202,159 @@ pub struct CompletionState {
 }
 
 /// The current overlay (mutually exclusive modal): the slash-command
-/// completion popup, the full-screen approval detail view, or the help
-/// panel. `None` when no overlay is open. Centralizes modal state so new
-/// overlays (question dialog, task viewer, …) just add a variant.
+/// completion popup, the full-screen approval detail view, the help panel,
+/// or the AskUserQuestion dialog. `None` when no overlay is open.
+/// Centralizes modal state so new overlays just add a variant.
 pub(crate) enum Overlay {
     Completion(CompletionState),
     ApprovalDetail(PendingApproval),
     Help(HelpPanel),
+    Question(QuestionPanel),
+}
+
+/// The AskUserQuestion modal (TS `question-dialog` parity): the engine stops
+/// the turn with a formatted question result; the TUI parses the structured
+/// args and collects the answer — option pick (single or multi) or free
+/// text — which is sent back as the next user message.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct QuestionPanel {
+    tool_call_id: String,
+    header: String,
+    question: String,
+    options: Vec<(String, String)>,
+    multi_select: bool,
+    draft: String,
+    selected: Vec<usize>,
+}
+
+impl QuestionPanel {
+    /// Parse the structured `AskUserQuestion` arguments (the same JSON the
+    /// engine received on `session.tool.started`).
+    pub fn from_args(args: &serde_json::Value) -> Self {
+        let question = args["question"].as_str().unwrap_or("?").to_string();
+        let header = args["header"].as_str().unwrap_or("").to_string();
+        let multi_select = args["multi_select"].as_bool().unwrap_or(false);
+        let options = args["options"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|o| {
+                        let label = o["label"].as_str()?.to_string();
+                        let desc = o["description"].as_str().unwrap_or("").to_string();
+                        Some((label, desc))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            tool_call_id: String::new(),
+            header,
+            question,
+            options,
+            multi_select,
+            draft: String::new(),
+            selected: Vec::new(),
+        }
+    }
+
+    /// The modal text rows (pure, tested): header + question + numbered
+    /// options + the answer draft + an action hint.
+    pub fn rows(&self) -> Vec<String> {
+        let mut rows = Vec::new();
+        if !self.header.is_empty() {
+            rows.push(self.header.clone());
+        }
+        rows.push(self.question.clone());
+        if !self.options.is_empty() {
+            rows.push(String::new());
+            rows.push(t("tui.question.options").to_string());
+        }
+        for (i, (label, desc)) in self.options.iter().enumerate() {
+            let mark = if self.multi_select && self.selected.contains(&i) {
+                "✓"
+            } else {
+                " "
+            };
+            let line = if desc.is_empty() {
+                format!("  {mark} {}. {label}", i + 1)
+            } else {
+                format!("  {mark} {}. {label} — {desc}", i + 1)
+            };
+            rows.push(line);
+        }
+        rows.push(String::new());
+        rows.push(format!("{} {}", t("tui.question.answer"), self.draft));
+        rows.push(String::new());
+        rows.push(
+            t(if self.multi_select {
+                "tui.question.multiHint"
+            } else {
+                "tui.question.hint"
+            })
+            .to_string(),
+        );
+        rows
+    }
+
+    /// The answer the current state would submit: the picked option label
+    /// (single), picked labels joined (multi), or the free-text draft.
+    pub fn answer(&self) -> String {
+        if self.multi_select {
+            let picked: Vec<String> = self
+                .selected
+                .iter()
+                .filter_map(|&i| self.options.get(i))
+                .map(|(label, _)| label.clone())
+                .collect();
+            if picked.is_empty() {
+                self.draft.clone()
+            } else {
+                picked.join(", ")
+            }
+        } else if let Some(&i) = self.selected.first() {
+            self.options
+                .get(i)
+                .map(|(label, _)| label.clone())
+                .unwrap_or_default()
+        } else {
+            self.draft.clone()
+        }
+    }
+
+    /// Handle one key press; returns the answer to submit, or `None` to keep
+    /// the panel open.
+    pub fn key(&mut self, code: KeyCode) -> Option<String> {
+        match code {
+            KeyCode::Esc => Some(String::new()),
+            KeyCode::Enter => Some(self.answer()),
+            KeyCode::Backspace => {
+                self.draft.pop();
+                None
+            }
+            KeyCode::Char(ch) if ch.is_ascii_digit() && ch != '0' => {
+                let idx = ch.to_digit(10).unwrap() as usize - 1;
+                if idx < self.options.len() {
+                    if self.multi_select {
+                        if let Some(pos) = self.selected.iter().position(|&s| s == idx) {
+                            self.selected.remove(pos);
+                        } else {
+                            self.selected.push(idx);
+                        }
+                    } else {
+                        self.selected = vec![idx];
+                    }
+                } else {
+                    self.draft.push(ch);
+                }
+                None
+            }
+            KeyCode::Char(ch) => {
+                self.draft.push(ch);
+                None
+            }
+            _ => None,
+        }
+    }
 }
 
 /// The `/help` modal: a scrollable list of keyboard shortcuts + all
@@ -970,7 +1116,13 @@ impl App {
                     self.edit.cursor = cursor;
                     self.refresh_completion();
                 }
-                Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    // Overlays own the keys while open (question dialog after
+                    // a stopped turn, help panel, approval detail).
+                    if self.handle_overlay_key(key.code).await? {
+                        continue;
+                    }
+                    match key.code {
                     KeyCode::Char('v') if key.modifiers.contains(event::KeyModifiers::ALT) => {
                         // Paste an image from the clipboard (Alt-V on
                         // Windows — Ctrl-V is usually reserved by the
@@ -1214,7 +1366,8 @@ impl App {
                         return Ok(());
                     }
                     _ => {}
-                },
+                }
+                }
                 _ => {}
             }
         }
@@ -3225,6 +3378,27 @@ impl App {
                 result = crate::media::media_summary_text(&result).unwrap_or(result);
             }
             let is_question = tool_name == "AskUserQuestion";
+            // AskUserQuestion stops the turn: open the question dialog so
+            // the user can answer with an option or free text (the answer
+            // goes back as the next user message).
+            if is_question && !is_error {
+                let args = event
+                    .get("arguments")
+                    .cloned()
+                    .or_else(|| {
+                        self.view.transcript.iter().rev().find_map(|e| match e {
+                            TranscriptEntry::ToolCall(tc) if tc.is_question => {
+                                serde_json::from_str(&tc.args).ok()
+                            }
+                            _ => None,
+                        })
+                    });
+                if let Some(args) = args {
+                    let mut panel = QuestionPanel::from_args(&args);
+                    panel.tool_call_id = tool_call_id.clone();
+                    self.overlay = Some(Overlay::Question(panel));
+                }
+            }
             // Resolve the elapsed time from the started event.
             let duration = self
                 .tool_started_at
@@ -3306,6 +3480,83 @@ impl App {
     /// Poll one key while a turn runs. Esc/Ctrl-C cancels the turn; with an
     /// approval pending, y/n resolves the front of the queue. A single read
     /// so y/n and interrupt keys never swallow each other.
+    /// Handle one key press against the active overlay (question dialog /
+    /// help panel / approval detail). Returns `true` when the key was
+    /// consumed. Approval actions hit the engine; the question dialog may
+    /// start a new turn (its answer is a prompt). Shared by the main loop
+    /// (idle) and `poll_prompt_keys` (mid-turn) so overlays close anywhere.
+    async fn handle_overlay_key(&mut self, code: KeyCode) -> anyhow::Result<bool> {
+        enum OverlayAction {
+            None,
+            Close,
+            Approve,
+            Deny,
+            Session,
+        }
+        let mut action = OverlayAction::None;
+        let mut answer: Option<String> = None;
+        match &mut self.overlay {
+            Some(Overlay::Question(panel)) => {
+                answer = panel.key(code);
+            }
+            Some(Overlay::Help(panel)) => {
+                let delta = match code {
+                    KeyCode::Up => -1i32,
+                    KeyCode::Down => 1,
+                    KeyCode::Esc | KeyCode::Enter => {
+                        action = OverlayAction::Close;
+                        0
+                    }
+                    _ => 0,
+                };
+                if delta != 0 {
+                    let len = panel.rows.len();
+                    panel.offset =
+                        ((panel.offset as i64 + delta as i64).max(0) as usize)
+                            .min(len.saturating_sub(1));
+                }
+            }
+            Some(Overlay::ApprovalDetail(_)) => {
+                match code {
+                    KeyCode::Char('y') => action = OverlayAction::Approve,
+                    KeyCode::Char('n') => action = OverlayAction::Deny,
+                    KeyCode::Char('s') => action = OverlayAction::Session,
+                    KeyCode::Esc => action = OverlayAction::Close,
+                    _ => {}
+                }
+            }
+            // The completion popup is editor-owned (the main loop handles
+            // its Up/Down/Enter); every other overlay consumes the key.
+            Some(Overlay::Completion(_)) => return Ok(false),
+            None => return Ok(false),
+        }
+        if let Some(a) = answer {
+            self.overlay = None;
+            if !a.trim().is_empty() {
+                let fut = self.run_turn(&a);
+                Box::pin(fut).await?;
+            }
+            return Ok(true);
+        }
+        match action {
+            OverlayAction::Close => self.overlay = None,
+            OverlayAction::Approve => {
+                self.answer_approval(true).await?;
+                self.overlay = None;
+            }
+            OverlayAction::Deny => {
+                self.answer_approval(false).await?;
+                self.overlay = None;
+            }
+            OverlayAction::Session => {
+                self.approve_for_session().await?;
+                self.overlay = None;
+            }
+            OverlayAction::None => {}
+        }
+        Ok(true)
+    }
+
     async fn poll_prompt_keys(&mut self) -> anyhow::Result<()> {
         if !event::poll(std::time::Duration::from_millis(0))? {
             return Ok(());
@@ -3314,48 +3565,9 @@ impl App {
             if key.kind != KeyEventKind::Press {
                 return Ok(());
             }
-            // The approval-detail overlay owns the keys while it is open:
-            // y/n/s decide (and close), Esc closes, anything else is ignored.
-            if matches!(self.overlay, Some(Overlay::ApprovalDetail(_))) {
-                match key.code {
-                    KeyCode::Char('y') => {
-                        self.answer_approval(true).await?;
-                        self.overlay = None;
-                    }
-                    KeyCode::Char('n') => {
-                        self.answer_approval(false).await?;
-                        self.overlay = None;
-                    }
-                    KeyCode::Char('s') => {
-                        self.approve_for_session().await?;
-                        self.overlay = None;
-                    }
-                    KeyCode::Esc => self.overlay = None,
-                    _ => {}
-                }
-                return Ok(());
-            }
-            // The help panel scrolls with ↑/↓ and closes on Esc / Enter.
-            if matches!(self.overlay, Some(Overlay::Help(_))) {
-                let mut close = false;
-                let mut delta = 0i32;
-                if let Some(Overlay::Help(panel)) = self.overlay.as_mut() {
-                    match key.code {
-                        KeyCode::Up => delta = -1,
-                        KeyCode::Down => delta = 1,
-                        KeyCode::Esc | KeyCode::Enter => close = true,
-                        _ => {}
-                    }
-                    if delta != 0 {
-                        let len = panel.rows.len();
-                        panel.offset =
-                            ((panel.offset as i64 + delta as i64).max(0) as usize)
-                                .min(len.saturating_sub(1));
-                    }
-                }
-                if close {
-                    self.overlay = None;
-                }
+            // Overlays own the keys while open (approval y/n/s, question
+            // dialog, help panel).
+            if self.handle_overlay_key(key.code).await? {
                 return Ok(());
             }
             if interrupt_action(key.code, key.modifiers) == Some(InterruptAction::CancelTurn) {
@@ -3570,6 +3782,19 @@ impl App {
         if let Some(Overlay::Help(panel)) = self.overlay.as_ref() {
             self.render_help_modal(frame, panel);
         }
+        if let Some(Overlay::Question(panel)) = self.overlay.as_ref() {
+            self.render_question_modal(frame, panel);
+        }
+    }
+
+    /// Draw the full-screen AskUserQuestion dialog over the chat layout.
+    fn render_question_modal(&self, frame: &mut ratatui::Frame<'_>, panel: &QuestionPanel) {
+        let rows: Vec<crate::modal::ModalRow> = panel
+            .rows()
+            .into_iter()
+            .map(|row| crate::modal::ModalRow::new(row))
+            .collect();
+        crate::modal::render_modal(frame, t("tui.question.title"), &rows, self.view.theme);
     }
 
     /// Draw the full-screen `/help` panel over the chat layout.
@@ -4710,6 +4935,61 @@ mod tests {
             .contains("failed"));
         // Unknown tools fall back (None).
         assert_eq!(tool_result_chip("WebSearch", "results", false), None);
+    }
+
+    #[test]
+    fn question_panel_parses_args_and_answers() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        let args = serde_json::json!({
+            "question": "Which approach?",
+            "options": [
+                { "label": "Rust" },
+                { "label": "TS", "description": "keep TS" }
+            ],
+            "header": "Architecture",
+            "multi_select": false,
+        });
+        let mut panel = QuestionPanel::from_args(&args);
+        // Rows: header + question + options + draft + hint.
+        let rows = panel.rows();
+        assert!(rows.iter().any(|r| r.contains("Architecture")));
+        assert!(rows.iter().any(|r| r.contains("Which approach?")));
+        assert!(rows.iter().any(|r| r.contains("1. Rust")));
+        assert!(rows.iter().any(|r| r.contains("2. TS — keep TS")));
+        // Digit picks the option; the answer is its label.
+        assert_eq!(panel.key(KeyCode::Char('2')), None);
+        assert_eq!(panel.answer(), "TS");
+        // Enter submits the picked label.
+        assert_eq!(panel.key(KeyCode::Enter).as_deref(), Some("TS"));
+        // Esc submits an empty answer (skip).
+        let mut skip = QuestionPanel::from_args(&args);
+        assert_eq!(skip.key(KeyCode::Esc).as_deref(), Some(""));
+        // Free text works when nothing is picked.
+        let mut free = QuestionPanel::from_args(&args);
+        assert_eq!(free.key(KeyCode::Char('h')), None);
+        assert_eq!(free.key(KeyCode::Char('i')), None);
+        assert_eq!(free.key(KeyCode::Enter).as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn question_panel_multi_select_joins_labels() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        let args = serde_json::json!({
+            "question": "Pick?",
+            "options": [ { "label": "a" }, { "label": "b" }, { "label": "c" } ],
+            "multi_select": true,
+        });
+        let mut panel = QuestionPanel::from_args(&args);
+        assert_eq!(panel.key(KeyCode::Char('1')), None);
+        assert_eq!(panel.key(KeyCode::Char('3')), None);
+        // Toggle off the first pick.
+        assert_eq!(panel.key(KeyCode::Char('1')), None);
+        assert_eq!(panel.answer(), "c");
+        assert_eq!(panel.key(KeyCode::Enter).as_deref(), Some("c"));
+        // Missing digits fall back to the draft.
+        let mut panel = QuestionPanel::from_args(&args);
+        assert_eq!(panel.key(KeyCode::Char('9')), None);
+        assert_eq!(panel.key(KeyCode::Enter).as_deref(), Some("9"));
     }
 
     #[test]

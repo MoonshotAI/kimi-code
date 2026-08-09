@@ -237,6 +237,19 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "reply with a number, or free text",
         "输入数字或自由文本回答",
     ),
+    ("tui.question.title", "question", "提问"),
+    ("tui.question.options", "options:", "选项："),
+    ("tui.question.answer", "answer:", "回答："),
+    (
+        "tui.question.hint",
+        "number = pick · Enter = send · Esc = skip",
+        "数字=选择 · Enter=发送 · Esc=跳过",
+    ),
+    (
+        "tui.question.multiHint",
+        "numbers = toggle · Enter = send · Esc = skip",
+        "数字=多选 · Enter=发送 · Esc=跳过",
+    ),
     (
         "tui.approval.approveUsage",
         "usage: /approve <approval-id>",
