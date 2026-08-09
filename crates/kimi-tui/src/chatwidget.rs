@@ -170,7 +170,7 @@ pub fn styled_lines(transcript: &[TranscriptEntry], theme: Theme) -> Vec<RenderL
                     if tc.collapsed {
                         // Collapsed body: the tool-result chip when the tool
                         // has one, else the plain preview.
-                        let body = crate::app::tool_result_chip(&tc.tool_name, result, tc.is_error)
+                        let body = crate::reports::tool_result_chip(&tc.tool_name, result, tc.is_error)
                             .unwrap_or_else(|| preview(result, 100));
                         out.push(RenderLine::from(Span::styled(
                             format!("  -> {body} [+]"),

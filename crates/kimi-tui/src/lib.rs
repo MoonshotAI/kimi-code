@@ -19,6 +19,8 @@ pub mod media;
 pub mod modal;
 pub mod panel;
 pub mod picker;
+pub mod question;
+pub mod reports;
 pub mod streaming;
 pub mod theme;
 
