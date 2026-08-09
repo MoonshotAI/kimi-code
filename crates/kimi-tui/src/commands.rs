@@ -829,205 +829,8 @@ impl super::app::App {
                             self.push_line(TranscriptLine::status(t!("tui.resume.switched", rest)));
                         }
                     }
-                    "/goal" => {
-                        // TS parity: `/goal <subcommand>` manages the goal;
-                        // anything else is the objective of a new goal.
-                        let (cmd, objective) = match rest.split_once(char::is_whitespace) {
-                            Some((c, o)) => (c, o.trim()),
-                            None => (rest, ""),
-                        };
-                        let session = self.session.as_mut().expect("session");
-                        match cmd {
-                            "" => {
-                                self.push_line(TranscriptLine::status(t("tui.goal.usage")));
-                            }
-                            "status" => {
-                                // Full goal panel (TS goal-panel parity,
-                                // simplified): objective + status + usage.
-                                let goal = session.goal().await?;
-                                let g = &goal["result"]["goal"];
-                                if g.is_null() || g.as_object().is_none() {
-                                    self.push_line(TranscriptLine::status(t("tui.goal.none")));
-                                } else {
-                                    for line in build_goal_report(g) {
-                                        self.push_line(TranscriptLine::status(line));
-                                    }
-                                }
-                            }
-                            "pause" => {
-                                session.pause_goal(Some(objective)).await?;
-                                self.push_line(TranscriptLine::status(t("tui.goal.paused")));
-                            }
-                            "resume" => {
-                                session.resume_goal(Some(objective)).await?;
-                                self.push_line(TranscriptLine::status(t("tui.goal.resumed")));
-                            }
-                            "cancel" => {
-                                session.cancel_goal().await?;
-                                self.push_line(TranscriptLine::status(t("tui.goal.cancelled")));
-                            }
-                            "replace" => {
-                                if objective.is_empty() {
-                                    self.push_line(TranscriptLine::status(t(
-                                        "tui.goal.replaceUsage",
-                                    )));
-                                } else {
-                                    let snapshot = session.create_goal(objective).await?;
-                                    self.push_line(TranscriptLine::status(t!(
-                                        "tui.goal.replaced",
-                                        snapshot["objective"]
-                                    )));
-                                }
-                            }
-                            "next" => {
-                                // Goal queueing (TS `goal-queue-store` parity):
-                                // a bare objective appends; subcommands manage
-                                // the queue. Auto-promotion on goal completion is
-                                // not wired yet.
-                                let parts: Vec<&str> = objective.split_whitespace().collect();
-                                match parts.first().copied() {
-                                    None => self.push_line(TranscriptLine::status(t(
-                                        "tui.goal.queueUsage",
-                                    ))),
-                                    Some("manage") => {
-                                        match crate::goal_queue::read_queue(&self.session_id) {
-                                            Ok(goals) if goals.is_empty() => self.push_line(
-                                                TranscriptLine::status(t("tui.goal.queueEmpty")),
-                                            ),
-                                            Ok(goals) => {
-                                                self.push_line(TranscriptLine::status(t!(
-                                                    "tui.goal.queueList",
-                                                    goals.len()
-                                                )));
-                                                for g in goals {
-                                                    self.push_line(TranscriptLine::status(t!(
-                                                        "tui.goal.queueItem",
-                                                        g.id,
-                                                        g.objective
-                                                    )));
-                                                }
-                                            }
-                                            Err(e) => self.push_line(TranscriptLine::error(
-                                                format!("goal queue: {e}"),
-                                            )),
-                                        }
-                                    }
-                                    Some("remove") if parts.len() >= 2 => {
-                                        match crate::goal_queue::remove_goal(
-                                            &self.session_id,
-                                            parts[1],
-                                        ) {
-                                            Ok(true) => self.push_line(TranscriptLine::status(t!(
-                                                "tui.goal.removed",
-                                                parts[1]
-                                            ))),
-                                            _ => self.push_line(TranscriptLine::status(t!(
-                                                "tui.goal.removedNotFound",
-                                                parts[1]
-                                            ))),
-                                        }
-                                    }
-                                    Some("move") if parts.len() >= 3 => {
-                                        let up = match parts[2] {
-                                            "up" => true,
-                                            "down" => false,
-                                            _ => {
-                                                self.push_line(TranscriptLine::status(t(
-                                                    "tui.goal.queueUsage",
-                                                )));
-                                                return Ok(false);
-                                            }
-                                        };
-                                        match crate::goal_queue::move_goal(
-                                            &self.session_id,
-                                            parts[1],
-                                            up,
-                                        ) {
-                                            Ok(true) => self.push_line(TranscriptLine::status(t!(
-                                                "tui.goal.moved",
-                                                parts[1]
-                                            ))),
-                                            _ => self.push_line(TranscriptLine::status(t!(
-                                                "tui.goal.removedNotFound",
-                                                parts[1]
-                                            ))),
-                                        }
-                                    }
-                                    Some("promote") => {
-                                        match crate::goal_queue::promote_top(&self.session_id) {
-                                            Ok(Some(g)) => {
-                                                let snapshot =
-                                                    session.create_goal(&g.objective).await?;
-                                                self.push_line(TranscriptLine::status(t!(
-                                                    "tui.goal.promoted",
-                                                    snapshot["objective"]
-                                                )));
-                                            }
-                                            Ok(None) => self.push_line(TranscriptLine::status(t(
-                                                "tui.goal.noQueued",
-                                            ))),
-                                            Err(e) => self.push_line(TranscriptLine::error(
-                                                format!("goal queue: {e}"),
-                                            )),
-                                        }
-                                    }
-                                    Some(_) => {
-                                        // A bare objective queues it.
-                                        match crate::goal_queue::append_goal(
-                                            &self.session_id,
-                                            objective,
-                                        ) {
-                                            Ok(goal) => {
-                                                let count =
-                                                    crate::goal_queue::read_queue(&self.session_id)
-                                                        .map(|g| g.len())
-                                                        .unwrap_or(0);
-                                                self.push_line(TranscriptLine::status(t!(
-                                                    "tui.goal.queued",
-                                                    goal.objective,
-                                                    count
-                                                )));
-                                            }
-                                            Err(e) => self.push_line(TranscriptLine::error(
-                                                format!("goal queue: {e}"),
-                                            )),
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {
-                                // A bare objective creates a goal (TS parity).
-                                let snapshot = session.create_goal(rest).await?;
-                                self.push_line(TranscriptLine::status(t!(
-                                    "tui.goal.created",
-                                    snapshot["objective"]
-                                )));
-                            }
-                        }
-                    }
-                    "/goal-cancel" => {
-                        self.session
-                            .as_mut()
-                            .expect("session")
-                            .cancel_goal()
-                            .await?;
-                        self.push_line(TranscriptLine::status(t("tui.goal.cancelled")));
-                    }
-                    "/goal-pause" => {
-                        self.session
-                            .as_mut()
-                            .expect("session")
-                            .pause_goal(Some(rest))
-                            .await?;
-                        self.push_line(TranscriptLine::status(t("tui.goal.paused")));
-                    }
-                    "/goal-resume" => {
-                        self.session
-                            .as_mut()
-                            .expect("session")
-                            .resume_goal(Some(rest))
-                            .await?;
-                        self.push_line(TranscriptLine::status(t("tui.goal.resumed")));
+                    "/goal" | "/goal-cancel" | "/goal-pause" | "/goal-resume" | "/goal-status" => {
+                        return self.cmd_goal(terminal, cmd, rest).await;
                     }
                     "/add-dir" => {
                         if rest.is_empty() {
@@ -1148,13 +951,6 @@ impl super::app::App {
                                 rest.chars().count()
                             )));
                         }
-                    }
-                    "/goal-status" => {
-                        let goal = self.session.as_mut().expect("session").goal().await?;
-                        self.push_line(TranscriptLine::status(t!(
-                            "tui.goal.show",
-                            serde_json::to_string(&goal["goal"]).unwrap_or_default()
-                        )));
                     }
                     "/sessions" => {
                         let sessions = self.harness.list_sessions(50).await?;
@@ -1750,3 +1546,225 @@ impl super::app::App {
             Ok(false)
         })
     }}
+
+impl super::app::App {
+    /// `goal` command group (extracted from dispatch for readability).
+    async fn cmd_goal(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        cmd: &str,
+        rest: &str,
+    ) -> anyhow::Result<bool> {
+        match cmd {
+            "/goal" => {
+    // TS parity: `/goal <subcommand>` manages the goal;
+    // anything else is the objective of a new goal.
+    let (cmd, objective) = match rest.split_once(char::is_whitespace) {
+        Some((c, o)) => (c, o.trim()),
+        None => (rest, ""),
+    };
+    let session = self.session.as_mut().expect("session");
+    match cmd {
+        "" => {
+            self.push_line(TranscriptLine::status(t("tui.goal.usage")));
+        }
+        "status" => {
+            // Full goal panel (TS goal-panel parity,
+            // simplified): objective + status + usage.
+            let goal = session.goal().await?;
+            let g = &goal["result"]["goal"];
+            if g.is_null() || g.as_object().is_none() {
+                self.push_line(TranscriptLine::status(t("tui.goal.none")));
+            } else {
+                for line in build_goal_report(g) {
+                    self.push_line(TranscriptLine::status(line));
+                }
+            }
+        }
+        "pause" => {
+            session.pause_goal(Some(objective)).await?;
+            self.push_line(TranscriptLine::status(t("tui.goal.paused")));
+        }
+        "resume" => {
+            session.resume_goal(Some(objective)).await?;
+            self.push_line(TranscriptLine::status(t("tui.goal.resumed")));
+        }
+        "cancel" => {
+            session.cancel_goal().await?;
+            self.push_line(TranscriptLine::status(t("tui.goal.cancelled")));
+        }
+        "replace" => {
+            if objective.is_empty() {
+                self.push_line(TranscriptLine::status(t(
+                    "tui.goal.replaceUsage",
+                )));
+            } else {
+                let snapshot = session.create_goal(objective).await?;
+                self.push_line(TranscriptLine::status(t!(
+                    "tui.goal.replaced",
+                    snapshot["objective"]
+                )));
+            }
+        }
+        "next" => {
+            // Goal queueing (TS `goal-queue-store` parity):
+            // a bare objective appends; subcommands manage
+            // the queue. Auto-promotion on goal completion is
+            // not wired yet.
+            let parts: Vec<&str> = objective.split_whitespace().collect();
+            match parts.first().copied() {
+                None => self.push_line(TranscriptLine::status(t(
+                    "tui.goal.queueUsage",
+                ))),
+                Some("manage") => {
+                    match crate::goal_queue::read_queue(&self.session_id) {
+                        Ok(goals) if goals.is_empty() => self.push_line(
+                            TranscriptLine::status(t("tui.goal.queueEmpty")),
+                        ),
+                        Ok(goals) => {
+                            self.push_line(TranscriptLine::status(t!(
+                                "tui.goal.queueList",
+                                goals.len()
+                            )));
+                            for g in goals {
+                                self.push_line(TranscriptLine::status(t!(
+                                    "tui.goal.queueItem",
+                                    g.id,
+                                    g.objective
+                                )));
+                            }
+                        }
+                        Err(e) => self.push_line(TranscriptLine::error(
+                            format!("goal queue: {e}"),
+                        )),
+                    }
+                }
+                Some("remove") if parts.len() >= 2 => {
+                    match crate::goal_queue::remove_goal(
+                        &self.session_id,
+                        parts[1],
+                    ) {
+                        Ok(true) => self.push_line(TranscriptLine::status(t!(
+                            "tui.goal.removed",
+                            parts[1]
+                        ))),
+                        _ => self.push_line(TranscriptLine::status(t!(
+                            "tui.goal.removedNotFound",
+                            parts[1]
+                        ))),
+                    }
+                }
+                Some("move") if parts.len() >= 3 => {
+                    let up = match parts[2] {
+                        "up" => true,
+                        "down" => false,
+                        _ => {
+                            self.push_line(TranscriptLine::status(t(
+                                "tui.goal.queueUsage",
+                            )));
+                            return Ok(false);
+                        }
+                    };
+                    match crate::goal_queue::move_goal(
+                        &self.session_id,
+                        parts[1],
+                        up,
+                    ) {
+                        Ok(true) => self.push_line(TranscriptLine::status(t!(
+                            "tui.goal.moved",
+                            parts[1]
+                        ))),
+                        _ => self.push_line(TranscriptLine::status(t!(
+                            "tui.goal.removedNotFound",
+                            parts[1]
+                        ))),
+                    }
+                }
+                Some("promote") => {
+                    match crate::goal_queue::promote_top(&self.session_id) {
+                        Ok(Some(g)) => {
+                            let snapshot =
+                                session.create_goal(&g.objective).await?;
+                            self.push_line(TranscriptLine::status(t!(
+                                "tui.goal.promoted",
+                                snapshot["objective"]
+                            )));
+                        }
+                        Ok(None) => self.push_line(TranscriptLine::status(t(
+                            "tui.goal.noQueued",
+                        ))),
+                        Err(e) => self.push_line(TranscriptLine::error(
+                            format!("goal queue: {e}"),
+                        )),
+                    }
+                }
+                Some(_) => {
+                    // A bare objective queues it.
+                    match crate::goal_queue::append_goal(
+                        &self.session_id,
+                        objective,
+                    ) {
+                        Ok(goal) => {
+                            let count =
+                                crate::goal_queue::read_queue(&self.session_id)
+                                    .map(|g| g.len())
+                                    .unwrap_or(0);
+                            self.push_line(TranscriptLine::status(t!(
+                                "tui.goal.queued",
+                                goal.objective,
+                                count
+                            )));
+                        }
+                        Err(e) => self.push_line(TranscriptLine::error(
+                            format!("goal queue: {e}"),
+                        )),
+                    }
+                }
+            }
+        }
+        _ => {
+            // A bare objective creates a goal (TS parity).
+            let snapshot = session.create_goal(rest).await?;
+            self.push_line(TranscriptLine::status(t!(
+                "tui.goal.created",
+                snapshot["objective"]
+            )));
+        }
+    }
+            }
+            "/goal-cancel" => {
+    self.session
+        .as_mut()
+        .expect("session")
+        .cancel_goal()
+        .await?;
+    self.push_line(TranscriptLine::status(t("tui.goal.cancelled")));
+            }
+            "/goal-pause" => {
+    self.session
+        .as_mut()
+        .expect("session")
+        .pause_goal(Some(rest))
+        .await?;
+    self.push_line(TranscriptLine::status(t("tui.goal.paused")));
+            }
+            "/goal-resume" => {
+    self.session
+        .as_mut()
+        .expect("session")
+        .resume_goal(Some(rest))
+        .await?;
+    self.push_line(TranscriptLine::status(t("tui.goal.resumed")));
+            }
+            "/goal-status" => {
+    let goal = self.session.as_mut().expect("session").goal().await?;
+    self.push_line(TranscriptLine::status(t!(
+        "tui.goal.show",
+        serde_json::to_string(&goal["goal"]).unwrap_or_default()
+    )));
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+}
