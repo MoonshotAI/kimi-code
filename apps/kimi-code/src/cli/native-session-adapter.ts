@@ -1,35 +1,30 @@
 /**
- * native-session-adapter.ts — a session façade over the native Rust engine.
+ * native-session-adapter.ts — a session façade over `kimi-server-serve`.
  *
- * This is the first slice of Track D (interactive adoption): it packages
- * {@link SessionEngineController} behind a small, host-facing surface that adds
- * the two things the controller lacks for interactive use — **dynamic**
- * `onEvent` (multiple listeners, subscribe/unsubscribe at any time) and
- * **dynamic** `setApprovalHandler` (set/replace after the session starts). The
- * TUI registers its event renderer and approval UI after `createSession`, so
- * these must be mutable post-start.
+ * This is the first slice of Track D (interactive adoption): it packages the
+ * pull-style engine RPC surface behind a small, host-facing surface with
+ * **dynamic** `onEvent` (multiple listeners, subscribe/unsubscribe at any
+ * time) and **dynamic** `setApprovalHandler` (set/replace after the session
+ * starts). The TUI registers its event renderer and approval UI after
+ * `createSession`, so these must be mutable post-start.
  *
- * Scope (deliberate): this backs the operations the engine's `session/*` and
- * `permission/*` RPCs support today — prompt, cancel, save, onEvent, approval,
- * permission mode. The full SDK `Session` surface (steer, runShellCommand,
- * setModel/setThinking, reloadSession, addAdditionalDir, swarm, …) needs new
- * engine RPCs + Agent features and is the tracked remainder before the TUI can
- * consume this in place of `harness.createSession`.
+ * Rewritten for the pull-style protocol (2026-08-09, G-1 `/rust` consumption
+ * rewrite): the engine's turn loop runs inside `kimi-server-serve`, so the
+ * old `SessionEngineController` (host-callback `authorize_tool` gate) is
+ * gone. Events arrive as `[event] {json}` stderr lines (routed by
+ * `session_id`), and tool approvals are decided through the shared
+ * `ApprovalStore`: the engine publishes `session.approval.requested`, the
+ * host handler decides, and `session/approval_resolve` feeds the decision
+ * back into the waiting tool call. No handler → auto-allow (permission
+ * `auto`), mirroring the old controller's behavior.
  *
  * Approval semantics: the adapter targets interactive/manual permission, where
- * a handler is set before prompting. When no handler is set, it allows (mirrors
- * the print pilot's `auto`); wire `permissionMode: 'manual'` + a handler for
- * real gating.
+ * a handler is set before prompting. When no handler is set, it allows
+ * (mirrors the print pilot's `auto`); wire `permissionMode: 'manual'` + a
+ * handler for real gating.
  */
 import type { Event } from '@moonshot-ai/kimi-code-sdk';
 
-import {
-  SessionEngineController,
-  type SessionClientFactory,
-  type SessionEngineStartOptions,
-  type SessionPromptOutcome,
-  type ToolApprovalRequest,
-} from '@moonshot-ai/kimi-code-sdk/rust';
 import type {
   EngineMcpServerInfo,
   EnginePluginInfo,
@@ -39,7 +34,11 @@ import type {
   EngineSessionUsage,
   EngineSessionWarning,
   EngineSkillSummary,
-} from '@moonshot-ai/kimi-code-sdk/rust';
+  HookDefInput,
+  McpServerInput,
+  NativeLlmDef,
+  NativeServerClientLike,
+} from './native-server-client';
 
 // Engine wire shapes — single mirror in the SDK; re-exported so hosts that
 // shaped their adapter signatures against these keep compiling unchanged.
@@ -52,133 +51,18 @@ export type {
   EngineSessionUsage,
   EngineSessionWarning,
   EngineSkillSummary,
-} from '@moonshot-ai/kimi-code-sdk/rust';
+} from './native-server-client';
 
 export type NativePermissionMode = 'manual' | 'auto' | 'yolo';
 
 /** A host approval decision callback: resolve true to allow, false to deny. */
 export type NativeApprovalHandler = (request: ToolApprovalRequest) => Promise<boolean>;
 
-/**
- * Session-scoped engine operations, shaped like the `rustLoop` session
- * functions (each takes the session id). Production wires this directly to
- * `rustLoop` (`sessionSetModel`/`sessionSetThinking`/`sessionRunShell`/
- * `sessionSetPermission`); tests pass a fake. The adapter supplies its own
- * session id at call time, so this can be injected before `start` resolves it.
- */
-export interface SessionEngineOps {
-  setModel?: (sessionId: string, model: string) => Promise<unknown>;
-  setThinking?: (sessionId: string, effort: string | null) => Promise<unknown>;
-  runShell?: (
-    sessionId: string,
-    command: string,
-    timeoutS?: number,
-    commandId?: string,
-  ) => Promise<{ output: string | null; is_error: boolean; unavailable?: boolean } | null>;
-  cancelShellCommand?: (
-    sessionId: string,
-    commandId: string,
-  ) => Promise<{ cancelled: boolean } | null>;
-  setPermissionMode?: (sessionId: string, mode: NativePermissionMode) => Promise<unknown>;
-  steer?: (sessionId: string, input: { type: 'text'; text: string }[]) => Promise<unknown>;
-  addAdditionalDir?: (sessionId: string, path: string) => Promise<{ success: boolean; additional_dirs: string[] } | null>;
-  removeAdditionalDir?: (sessionId: string, path: string) => Promise<{ success: boolean; additional_dirs: string[] } | null>;
-  updateMetadata?: (sessionId: string, metadata: Record<string, unknown>) => Promise<{ ok: boolean; metadata: Record<string, unknown> } | null>;
-  goalCreate?: (
-    sessionId: string,
-    input: { objective: string; completionCriterion?: string; replace?: boolean },
-  ) => Promise<EngineGoalSnapshot | null>;
-  goalGet?: (sessionId: string) => Promise<{ goal: EngineGoalSnapshot | null } | null>;
-  goalPause?: (sessionId: string, reason?: string) => Promise<EngineGoalSnapshot | null>;
-  goalResume?: (sessionId: string, reason?: string) => Promise<EngineGoalSnapshot | null>;
-  goalCancel?: (sessionId: string) => Promise<EngineGoalSnapshot | null>;
-  setSwarmMode?: (
-    sessionId: string,
-    enabled: boolean,
-    trigger?: 'manual' | 'task' | 'tool',
-  ) => Promise<{ active: boolean } | null>;
-  setPlanMode?: (sessionId: string, enabled: boolean) => Promise<{ plan_mode: boolean } | null>;
-  getStatus?: (sessionId: string) => Promise<EngineSessionStatus | null>;
-  listMcpServers?: (sessionId: string) => Promise<{ servers: EngineMcpServerInfo[] } | null>;
-  listSkills?: (sessionId: string) => Promise<{ skills: EngineSkillSummary[] } | null>;
-  getWarnings?: (sessionId: string) => Promise<{ warnings: EngineSessionWarning[] } | null>;
-  getUsage?: (sessionId: string) => Promise<EngineSessionUsage | null>;
-  compact?: (
-    sessionId: string,
-    instruction?: string,
-  ) => Promise<{ compacted: boolean; summary?: string; tokens_before?: number; tokens_after?: number } | null>;
-  /** Cancel an in-flight compaction (SDK `cancelCompaction` parity; the
-   *  engine's compaction is synchronous, so this is a no-op success). */
-  cancelCompaction?: (sessionId: string) => Promise<unknown>;
-  getContext?: (sessionId: string) => Promise<EngineContextData | null>;
-  clearContext?: (sessionId: string) => Promise<{ cleared: boolean } | null>;
-  importContext?: (
-    sessionId: string,
-    content: string,
-    source: string,
-  ) => Promise<{ imported: boolean } | null>;
-  undoHistory?: (
-    sessionId: string,
-    count: number,
-  ) => Promise<{ undone_turns: number; cut_index: number | null } | null>;
-  getPlan?: (sessionId: string) => Promise<EnginePlanInfo | null>;
-  clearPlan?: (sessionId: string) => Promise<{ cleared: boolean } | null>;
-  activateSkill?: (
-    sessionId: string,
-    name: string,
-    args?: string,
-  ) => Promise<{ stop_reason: string; steps: number } | null>;
-  reconnectMcpServer?: (
-    sessionId: string,
-    name: string,
-  ) => Promise<{ name: string; status: string; tool_count: number } | null>;
-  getMcpStartupMetrics?: (sessionId: string) => Promise<{ duration_ms: number } | null>;
-  /** Generate AGENTS.md via an init subagent (SDK `Session.init` parity). */
-  init?: (sessionId: string) => Promise<{ ok: boolean } | null>;
-  /** Process-global cron listing (SDK `getCronTasks`); session id ignored. */
-  getCronTasks?: () => Promise<{ tasks: EngineCronTask[] } | null>;
-  /** Process-global background-task output (SDK `getBackgroundTaskOutput`). */
-  getBackgroundTaskOutput?: (taskId: string) => Promise<{ preview: string; error?: string } | null>;
-  /** Process-global background-task stop (SDK `stopBackgroundTask`). */
-  stopBackgroundTask?: (taskId: string, reason?: string) => Promise<{ ok: boolean } | null>;
-  /** Process-global background-task listing (SDK `listBackgroundTasks`);
-   *  returns the raw engine wire records (mapped to SDK by `NativeSession`). */
-  listBackgroundTasks?: () => Promise<unknown[] | null>;
-  /** Persisted engine sessions (SDK `listSessions` parity). */
-  listSessions?: (
-    limit?: number,
-    offset?: number,
-  ) => Promise<{ sessions: EngineSessionRecord[] } | null>;
-  /** Installed-plugin summaries (SDK `listPlugins`). */
-  listPlugins?: () => Promise<{ plugins: EnginePluginSummary[] } | null>;
-  /** One installed plugin's detail (SDK `getPluginInfo`). */
-  getPluginInfo?: (id: string) => Promise<EnginePluginInfo | null>;
-  /** Install a plugin from a source (SDK `installPlugin`). */
-  installPlugin?: (source: string) => Promise<EnginePluginSummary | null>;
-  /** Enable or disable an installed plugin (SDK `setPluginEnabled`). */
-  setPluginEnabled?: (id: string, enabled: boolean) => Promise<EnginePluginSummary | null>;
-  /** Toggle one of a plugin's MCP servers (SDK `setPluginMcpServerEnabled`). */
-  setPluginMcpServerEnabled?: (
-    id: string,
-    server: string,
-    enabled: boolean,
-  ) => Promise<EnginePluginInfo | null>;
-  /** Remove an installed plugin (SDK `removePlugin`). */
-  removePlugin?: (id: string) => Promise<{ removed: boolean } | null>;
-  /** Reload plugins from disk (SDK `reloadPlugins`). */
-  reloadPlugins?: () => Promise<{ ok: boolean } | null>;
-  /** List a plugin's slash-style commands (SDK `listPluginCommands`). */
-  listPluginCommands?: (pluginId: string) => Promise<EnginePluginCommand[]>;
-  /** Activate a plugin command (SDK `activatePluginCommand`). */
-  activatePluginCommand?: (
-    sessionId: string,
-    pluginId: string,
-    commandName: string,
-    args?: string,
-  ) => Promise<unknown>;
-  /** Detach a background task from its foreground tool call (SDK
-   *  `detachBackgroundTask`); returns the raw engine wire record or null. */
-  detachBackgroundTask?: (taskId: string) => Promise<Record<string, unknown> | null>;
+/** The engine tool-approval request the host is asked to decide on. */
+export interface ToolApprovalRequest {
+  readonly toolName: string;
+  readonly toolCallId: string;
+  readonly args: unknown;
 }
 
 /** Engine cron task wire shape (serde snake_case; SDK `CronTaskSnapshot`). */
@@ -221,90 +105,108 @@ export interface EngineGoalSnapshot {
   [key: string]: unknown;
 }
 
+/** Session creation options (the engine-side subset the adapter forwards). */
+export interface SessionEngineStartOptions {
+  readonly sessionId: string;
+  readonly systemPrompt?: string;
+  readonly model?: string;
+  readonly goalEnabled?: boolean;
+  readonly homedir?: string;
+  readonly nativeLlm?: unknown;
+  readonly mcpServers?: McpServerInput[];
+  readonly hooks?: HookDefInput[];
+  /**
+   * Native permission mode for the session gate. `auto`/`yolo` approve gated
+   * tools locally (no host authorize round-trip); `manual` keeps interactive
+   * approval on the host via `setApprovalHandler`.
+   */
+  readonly permissionMode?: NativePermissionMode;
+}
+
+/** The prompt outcome the engine reports at turn end. */
+export interface SessionPromptOutcome {
+  readonly stopReason: string;
+  readonly steps: number;
+  readonly totalTokens: number;
+}
+
 export interface NativeSessionAdapterOptions {
-  /** Real: `rustLoop.createSessionClient`; a fake in tests. */
-  readonly createClient: SessionClientFactory;
-  /**
-   * Session-scoped engine ops (production: `rustLoop`). Preferred over the
-   * pre-bound setters below; called with this adapter's session id.
-   */
-  readonly engine?: SessionEngineOps;
-  /**
-   * Optional runtime permission-mode setter (engine `permission/set_mode`).
-   * When omitted, `setPermission` is a no-op (mode is fixed at `start`).
-   */
-  readonly setPermissionMode?: (mode: NativePermissionMode) => Promise<void>;
-  /**
-   * Optional runtime model setter (engine `session/set_model`). Bound to the
-   * session id by the caller. When omitted, `setModel` is a no-op.
-   */
-  readonly setModel?: (model: string) => Promise<void>;
-  /**
-   * Optional runtime reasoning-effort setter (engine `session/set_thinking`),
-   * bound to the session id. When omitted, `setThinking` is a no-op.
-   */
-  readonly setThinking?: (effort: string | null) => Promise<void>;
-  /**
-   * Optional native `!` shell runner (engine `session/run_shell`), bound to the
-   * session id. When omitted, `runShellCommand` reports unavailable so the host
-   * runs it instead.
-   */
-  readonly runShell?: (
-    command: string,
-    timeoutS?: number,
-  ) => Promise<{ output: string | null; isError: boolean; unavailable?: boolean }>;
+  /** The `kimi-server-serve` client (production) or a fake (tests). */
+  readonly client: NativeServerClientLike;
   /** Optional tap on raw engine wire events (e.g. `session.goal.updated`). */
   readonly onRawEvent?: (event: unknown) => void;
   readonly agentId?: string;
 }
 
 /**
- * A session handle over the native engine with dynamic event/approval wiring.
- * Not (yet) a drop-in for the SDK `Session` — see the file header for the
- * remaining surface. Intended to be consumed by the interactive integration
- * layer once the engine RPC gaps are filled.
+ * A session handle over `kimi-server-serve` with dynamic event/approval
+ * wiring. Not (yet) a drop-in for the SDK `Session` — see the file header for
+ * the remaining surface. Intended to be consumed by the interactive
+ * integration layer.
  */
 export class NativeSessionAdapter {
-  private readonly controller: SessionEngineController;
+  private readonly client: NativeServerClientLike;
   private readonly listeners = new Set<(event: Event) => void>();
   private approvalHandler: NativeApprovalHandler | undefined;
+  private sessionId: string | null = null;
+  /** Agent id stamped onto engine events (side-agent turns switch this for
+   *  the duration of their prompt; the wire carries no agent id). */
+  private currentAgentId: string;
+  private readonly unsubscribe: () => void;
 
   constructor(private readonly options: NativeSessionAdapterOptions) {
-    this.controller = new SessionEngineController({
-      createClient: options.createClient,
-      emitEvent: (event) => {
-        // Fan out to every current listener; a throwing listener must not
-        // starve the others or the engine event pump.
-        for (const listener of this.listeners) {
-          try {
-            listener(event);
-          } catch {
-            // Ignore a misbehaving renderer; keep delivering.
-          }
-        }
-      },
-      onRawEvent: options.onRawEvent,
-      // Always provide an approver so manual-mode gating reaches the host; the
-      // delegate reads the current handler (or allows when none is set).
-      requestApproval: (request) =>
-        this.approvalHandler === undefined
-          ? Promise.resolve(true)
-          : this.approvalHandler(request),
-      agentId: options.agentId,
+    this.client = options.client;
+    this.currentAgentId = options.agentId ?? 'main';
+    // The event loop: every engine event line is filtered by session id,
+    // stamped with the routing fields, and fanned out to listeners.
+    this.unsubscribe = this.client.onEvent((raw) => {
+      this.options.onRawEvent?.(raw);
+      const event = raw as { type?: string; session_id?: string | null };
+      const wireSessionId = event.session_id ?? null;
+      if (wireSessionId !== null && this.sessionId !== null && wireSessionId !== this.sessionId) {
+        return;
+      }
+      // Approval requests are resolved through the handler seam, not the
+      // event stream; every other event is translated and delivered.
+      if (event.type === 'session.approval.requested') {
+        void this.handleApprovalRequested(raw);
+        return;
+      }
+      const { session_id: _drop, ...payload } = event;
+      this.emit({
+        ...payload,
+        sessionId: wireSessionId ?? this.sessionId ?? '',
+        agentId: this.currentAgentId,
+      } as never);
     });
   }
 
-  /** Create the engine session and wire the sinks. False → engine unavailable. */
-  start(init: SessionEngineStartOptions): Promise<boolean> {
-    return this.controller.start(init);
+  /** Create the engine session under the server. True when created. */
+  async start(init: SessionEngineStartOptions): Promise<boolean> {
+    this.currentAgentId = this.options.agentId ?? 'main';
+    const created = await this.client.sessionCreate({
+      sessionId: init.sessionId,
+      homedir: init.homedir,
+      systemPrompt: init.systemPrompt,
+      model: init.model,
+      goalEnabled: init.goalEnabled,
+      nativeLlm: init.nativeLlm as NativeLlmDef | undefined,
+      mcpServers: init.mcpServers,
+      hooks: init.hooks,
+    });
+    this.sessionId = created.session_id;
+    // Permission mode is a process-wide gate shared by every session agent;
+    // set it at start so the host's interactive mode applies from turn one.
+    await this.client.call('permission/set_mode', { mode: init.permissionMode ?? 'manual' });
+    return true;
   }
 
-  get sessionId(): string | undefined {
-    return this.controller.sessionId;
+  get id(): string | undefined {
+    return this.sessionId ?? undefined;
   }
 
   get isStarted(): boolean {
-    return this.controller.isStarted;
+    return this.sessionId !== null;
   }
 
   /** Subscribe to translated SDK events; returns an unsubscribe function. */
@@ -321,28 +223,71 @@ export class NativeSessionAdapter {
   }
 
   /** Run one prompt; goal continuations run inside the engine. */
-  prompt(text: string, agentId?: string): Promise<SessionPromptOutcome | null> {
-    return this.controller.prompt(text, agentId);
+  async prompt(text: string, agentId?: string): Promise<SessionPromptOutcome | null> {
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    // Events for a side-agent turn arrive in-band during its prompt RPC but
+    // carry no agent id on the wire; stamp them with the driving agent id
+    // for the duration of the call, then restore the main-agent stamp.
+    const previousAgentId = this.currentAgentId;
+    if (agentId !== undefined) {
+      this.currentAgentId = agentId;
+    }
+    try {
+      const result = (await this.client.sessionPrompt(sid, [{ type: 'text', text }], agentId)) as {
+        stop_reason?: string;
+        steps?: number;
+        usage?: { total?: { total_tokens?: number } };
+      } | null;
+      if (result === null) return null;
+      return {
+        stopReason: result.stop_reason ?? '',
+        steps: result.steps ?? 0,
+        totalTokens: result.usage?.total?.total_tokens ?? 0,
+      };
+    } finally {
+      if (agentId !== undefined) {
+        this.currentAgentId = previousAgentId;
+      }
+    }
   }
 
   /** Spawn a side-question subagent; returns its id (`btw-<sessionId>`). */
-  startBtw(): Promise<string | null> {
-    return this.controller.startBtw();
+  async startBtw(): Promise<string | null> {
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    const result = (await this.client.call('session/start_btw', { session_id: sid })) as {
+      btw_id: string;
+    } | null;
+    return result?.btw_id ?? null;
   }
 
   /** Destroy the active side-question subagent. */
-  endBtw(): Promise<boolean> {
-    return this.controller.endBtw();
+  async endBtw(): Promise<boolean> {
+    const sid = this.sessionId;
+    if (sid === null) return false;
+    const result = (await this.client.call('session/end_btw', { session_id: sid })) as {
+      ended: boolean;
+    } | null;
+    return result?.ended ?? false;
   }
 
   /** Stop the running prompt at the next step boundary. */
-  cancel(): Promise<boolean> {
-    return this.controller.cancel();
+  async cancel(): Promise<boolean> {
+    const sid = this.sessionId;
+    if (sid === null) return false;
+    const result = await this.client.sessionCancel(sid);
+    return result?.cancelled ?? false;
   }
 
   /** Persist context + goal under this session id. */
-  save(): Promise<boolean> {
-    return this.controller.save();
+  async save(): Promise<boolean> {
+    const sid = this.sessionId;
+    if (sid === null) return false;
+    const result = (await this.client.call('session/save', { session_id: sid })) as {
+      ok: boolean;
+    } | null;
+    return result?.ok ?? false;
   }
 
   /**
@@ -350,94 +295,90 @@ export class NativeSessionAdapter {
    * goal comes back paused). Named `reloadSession` to match the SDK `Session`
    * surface the TUI expects.
    */
-  reloadSession(): Promise<boolean> {
-    return this.controller.load();
+  async reloadSession(): Promise<boolean> {
+    const sid = this.sessionId;
+    if (sid === null) return false;
+    const result = (await this.client.call('session/load', { session_id: sid })) as {
+      found: boolean;
+    } | null;
+    return result?.found ?? false;
   }
 
-  /** Change the engine's permission mode at runtime (no-op without a setter). */
+  /** Change the engine's permission mode at runtime (process-wide gate). */
   async setPermission(mode: NativePermissionMode): Promise<void> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.setPermissionMode !== undefined && id !== undefined) {
-      await this.options.engine.setPermissionMode(id, mode);
-      return;
-    }
-    await this.options.setPermissionMode?.(mode);
+    await this.client.call('permission/set_mode', { mode });
   }
 
-  /** Switch the session's model from the next turn (no-op without a setter). */
+  /** Switch the session's model from the next turn. */
   async setModel(model: string): Promise<void> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.setModel !== undefined && id !== undefined) {
-      await this.options.engine.setModel(id, model);
-      return;
-    }
-    await this.options.setModel?.(model);
+    const sid = this.sessionId;
+    if (sid === null) return;
+    await this.client.call('session/set_model', { session_id: sid, model });
   }
 
-  /** Set reasoning effort from the next turn (no-op without a setter). */
+  /** Set reasoning effort from the next turn (`null` clears). */
   async setThinking(effort: string | null): Promise<void> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.setThinking !== undefined && id !== undefined) {
-      await this.options.engine.setThinking(id, effort);
-      return;
-    }
-    await this.options.setThinking?.(effort);
+    const sid = this.sessionId;
+    if (sid === null) return;
+    await this.client.call('session/set_thinking', { session_id: sid, effort });
   }
 
   /**
    * Queue steer input; the engine drains it at the start of the next turn
-   * (including a goal-continuation turn). No-op without an engine steer op.
+   * (including a goal-continuation turn).
    */
   async steer(text: string): Promise<void> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.steer !== undefined && id !== undefined) {
-      await this.options.engine.steer(id, [{ type: 'text', text }]);
-    }
+    const sid = this.sessionId;
+    if (sid === null) return;
+    await this.client.call('session/steer', {
+      session_id: sid,
+      input: [{ type: 'text', text }],
+    });
   }
 
   /**
    * Run a user-initiated `!` shell command natively. Returns the combined
-   * output and an error flag; `unavailable` true means no native runner is
-   * wired (or the engine has no shell) — the caller should run it on the host.
+   * output and an error flag; `unavailable` true means the engine has no
+   * shell — the caller should run it on the host.
    */
   async runShellCommand(
     command: string,
     timeoutS?: number,
     commandId?: string,
   ): Promise<{ output: string | null; isError: boolean; unavailable: boolean }> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.runShell !== undefined && id !== undefined) {
-      const r = await this.options.engine.runShell(id, command, timeoutS, commandId);
-      if (r === null) return { output: null, isError: false, unavailable: true };
-      return { output: r.output, isError: r.is_error, unavailable: r.unavailable ?? false };
-    }
-    if (this.options.runShell === undefined) {
-      return { output: null, isError: false, unavailable: true };
-    }
-    const result = await this.options.runShell(command, timeoutS);
-    return { output: result.output, isError: result.isError, unavailable: result.unavailable ?? false };
+    const sid = this.sessionId;
+    if (sid === null) return { output: null, isError: false, unavailable: true };
+    const result = (await this.client.call('session/run_shell', {
+      session_id: sid,
+      command,
+      timeout_s: timeoutS ?? null,
+      command_id: commandId ?? null,
+    })) as { output: string | null; is_error: boolean; unavailable?: boolean } | null;
+    if (result === null) return { output: null, isError: false, unavailable: true };
+    return { output: result.output, isError: result.is_error, unavailable: result.unavailable ?? false };
   }
 
   /** Cancel a streaming `!` shell command by its commandId. */
   async cancelShellCommand(commandId: string): Promise<void> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.cancelShellCommand === undefined || id === undefined) return;
-    await this.options.engine.cancelShellCommand(id, commandId);
+    const sid = this.sessionId;
+    if (sid === null) return;
+    await this.client.call('session/cancel_shell_command', { session_id: sid, command_id: commandId });
   }
 
   /**
    * Add an additional directory to the session's workspace allowlist.
-   * Returns the updated list of additional dirs, or null if the engine is
+   * Returns the updated list of additional dirs, or null when the engine is
    * unavailable or the path is invalid.
    */
   async addAdditionalDir(path: string): Promise<string[] | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.addAdditionalDir !== undefined && id !== undefined) {
-      const r = await this.options.engine.addAdditionalDir(id, path);
-      if (r === null) return null;
-      return r.success ? r.additional_dirs : null;
-    }
-    return null;
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    const result = (await this.client.call('session/add_additional_dir', {
+      session_id: sid,
+      path,
+    })) as { success: boolean; additional_dirs: string[] } | null;
+    if (result === null) return null;
+    return result.success ? result.additional_dirs : null;
   }
 
   /**
@@ -446,32 +387,33 @@ export class NativeSessionAdapter {
    * unavailable or the dir was not in the list.
    */
   async removeAdditionalDir(path: string): Promise<string[] | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.removeAdditionalDir !== undefined && id !== undefined) {
-      const r = await this.options.engine.removeAdditionalDir(id, path);
-      if (r === null) return null;
-      return r.success ? r.additional_dirs : null;
-    }
-    return null;
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    const result = (await this.client.call('session/remove_additional_dir', {
+      session_id: sid,
+      path,
+    })) as { success: boolean; additional_dirs: string[] } | null;
+    if (result === null) return null;
+    return result.success ? result.additional_dirs : null;
   }
 
   /**
    * Shallow-merge a JSON object into the session's custom metadata.
-   * Returns the merged metadata, or null if the engine is unavailable.
+   * Returns the merged metadata, or null when unavailable.
    */
   async updateMetadata(patch: Record<string, unknown>): Promise<Record<string, unknown> | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.updateMetadata !== undefined && id !== undefined) {
-      const r = await this.options.engine.updateMetadata(id, patch);
-      if (r === null) return null;
-      return r.metadata;
-    }
-    return null;
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    const result = (await this.client.call('session/update_metadata', {
+      session_id: sid,
+      metadata: patch,
+    })) as { ok: boolean; metadata: Record<string, unknown> } | null;
+    return result?.metadata ?? null;
   }
 
   // ── Goal lifecycle (SDK `Session` parity: createGoal/getGoal/…) ─────────
-  // Each op forwards to the engine's `session/goal_*` RPC; a missing op or
-  // unstarted session yields null so callers can fall back gracefully.
+  // Each op forwards to the engine's `session/goal_*` RPC; an unstarted
+  // session yields null so callers can fall back gracefully.
 
   /** Create (or with `replace` swap) the session goal as the user. */
   async createGoal(input: {
@@ -479,147 +421,193 @@ export class NativeSessionAdapter {
     completionCriterion?: string;
     replace?: boolean;
   }): Promise<EngineGoalSnapshot | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.goalCreate === undefined || id === undefined) return null;
-    return this.options.engine.goalCreate(id, input);
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    return (await this.client.call('session/goal_create', {
+      session_id: sid,
+      objective: input.objective,
+      completion_criterion: input.completionCriterion ?? null,
+      replace: input.replace ?? false,
+    })) as EngineGoalSnapshot | null;
   }
 
   /** The current goal record (`{ goal: null }` when none). */
   async getGoal(): Promise<{ goal: EngineGoalSnapshot | null }> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.goalGet === undefined || id === undefined) return { goal: null };
-    return (await this.options.engine.goalGet(id)) ?? { goal: null };
+    const sid = this.sessionId;
+    if (sid === null) return { goal: null };
+    return (await this.client.call('session/goal_get', { session_id: sid })) as {
+      goal: EngineGoalSnapshot | null;
+    };
   }
 
   /** Pause the active goal as the user. */
   async pauseGoal(reason?: string): Promise<EngineGoalSnapshot | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.goalPause === undefined || id === undefined) return null;
-    return this.options.engine.goalPause(id, reason);
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    return (await this.client.call('session/goal_pause', {
+      session_id: sid,
+      reason: reason ?? null,
+    })) as EngineGoalSnapshot | null;
   }
 
   /** Resume a paused goal as the user. */
   async resumeGoal(reason?: string): Promise<EngineGoalSnapshot | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.goalResume === undefined || id === undefined) return null;
-    return this.options.engine.goalResume(id, reason);
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    return (await this.client.call('session/goal_resume', {
+      session_id: sid,
+      reason: reason ?? null,
+    })) as EngineGoalSnapshot | null;
   }
 
   /** Cancel the goal as the user. */
   async cancelGoal(): Promise<EngineGoalSnapshot | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.goalCancel === undefined || id === undefined) return null;
-    return this.options.engine.goalCancel(id);
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    return (await this.client.call('session/goal_cancel', { session_id: sid })) as
+      | EngineGoalSnapshot
+      | null;
   }
 
   /**
    * Toggle swarm mode (SDK `setSwarmMode` parity). Returns whether the mode
-   * is active afterwards, or null when the engine op is unavailable.
+   * is active afterwards, or null when the session is unstarted.
    */
   async setSwarmMode(
     enabled: boolean,
     trigger?: 'manual' | 'task' | 'tool',
   ): Promise<boolean | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.setSwarmMode === undefined || id === undefined) return null;
-    const r = await this.options.engine.setSwarmMode(id, enabled, trigger);
-    return r === null ? null : r.active;
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    const result = (await this.client.call('session/set_swarm_mode', {
+      session_id: sid,
+      enabled,
+      trigger: trigger ?? null,
+    })) as { active: boolean } | null;
+    return result?.active ?? null;
   }
 
   /**
    * Toggle plan mode (SDK `setPlanMode` parity). Returns the plan-mode state
-   * afterwards, or null when the engine op is unavailable. Rejects (propagates)
+   * afterwards, or null when the session is unstarted. Rejects (propagates)
    * when re-entering an already-active plan mode.
    */
   async setPlanMode(enabled: boolean): Promise<boolean | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.setPlanMode === undefined || id === undefined) return null;
-    const r = await this.options.engine.setPlanMode(id, enabled);
-    return r === null ? null : r.plan_mode;
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    const result = (await this.client.call('session/set_plan_mode', {
+      session_id: sid,
+      enabled,
+    })) as { plan_mode: boolean } | null;
+    return result?.plan_mode ?? null;
   }
 
-  /**
-   * Live session status snapshot (SDK `getStatus` parity). Null when the
-   * engine op is unavailable — the caller keeps its own state then.
-   */
+  /** Live session status snapshot (SDK `getStatus` parity). Null when the
+   *  session is unstarted — the caller keeps its own state then. */
   async getStatus(): Promise<EngineSessionStatus | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.getStatus === undefined || id === undefined) return null;
-    return this.options.engine.getStatus(id);
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    return (await this.client.call('session/get_status', { session_id: sid })) as
+      | EngineSessionStatus
+      | null;
   }
 
-  /** Per-server MCP views (SDK `listMcpServers` parity); [] when unavailable. */
+  /** Per-server MCP views (SDK `listMcpServers` parity); [] when unstarted. */
   async listMcpServers(): Promise<EngineMcpServerInfo[]> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.listMcpServers === undefined || id === undefined) return [];
-    const r = await this.options.engine.listMcpServers(id);
-    return r?.servers ?? [];
+    const sid = this.sessionId;
+    if (sid === null) return [];
+    const result = (await this.client.call('session/list_mcp_servers', { session_id: sid })) as {
+      servers: EngineMcpServerInfo[];
+    } | null;
+    return result?.servers ?? [];
   }
 
-  /** Registered skills (SDK `listSkills` parity); [] when unavailable. */
+  /** Registered skills (SDK `listSkills` parity); [] when unstarted. */
   async listSkills(): Promise<EngineSkillSummary[]> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.listSkills === undefined || id === undefined) return [];
-    const r = await this.options.engine.listSkills(id);
-    return r?.skills ?? [];
+    const sid = this.sessionId;
+    if (sid === null) return [];
+    const result = (await this.client.call('session/list_skills', { session_id: sid })) as {
+      skills: EngineSkillSummary[];
+    } | null;
+    return result?.skills ?? [];
   }
 
-  /** Session warnings (SDK `getSessionWarnings` parity); [] when unavailable. */
+  /** Session warnings (SDK `getSessionWarnings` parity); [] when unstarted. */
   async getSessionWarnings(): Promise<EngineSessionWarning[]> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.getWarnings === undefined || id === undefined) return [];
-    const r = await this.options.engine.getWarnings(id);
-    return r?.warnings ?? [];
+    const sid = this.sessionId;
+    if (sid === null) return [];
+    const result = (await this.client.call('session/get_warnings', { session_id: sid })) as {
+      warnings: EngineSessionWarning[];
+    } | null;
+    return result?.warnings ?? [];
   }
 
-  /** Cumulative usage snapshot (SDK `getUsage` parity); null when unavailable. */
+  /** Cumulative usage snapshot (SDK `getUsage` parity); null when unstarted. */
   async getUsage(): Promise<EngineSessionUsage | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.getUsage === undefined || id === undefined) return null;
-    return this.options.engine.getUsage(id);
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    return (await this.client.call('session/get_usage', { session_id: sid })) as
+      | EngineSessionUsage
+      | null;
   }
 
   /**
    * Manually compact the context (SDK `compact` parity). Resolves to the
-   * engine's report ({ compacted, summary, … }), or null when the engine op
-   * is unavailable. Rejects (propagates) when the engine has no summarizer.
+   * engine's report ({ compacted, summary, … }), or null when the session is
+   * unstarted. Rejects (propagates) when the engine has no summarizer.
    */
   async compact(
     instruction?: string,
   ): Promise<{ compacted: boolean; summary?: string; tokens_before?: number; tokens_after?: number } | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.compact === undefined || id === undefined) return null;
-    return this.options.engine.compact(id, instruction);
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    return (await this.client.call('session/compact', {
+      session_id: sid,
+      instruction: instruction ?? null,
+    })) as {
+      compacted: boolean;
+      summary?: string;
+      tokens_before?: number;
+      tokens_after?: number;
+    } | null;
   }
 
   /** Cancel an in-flight compaction (SDK `cancelCompaction` parity). */
   async cancelCompaction(): Promise<void> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.cancelCompaction === undefined || id === undefined) return;
-    await this.options.engine.cancelCompaction(id);
+    const sid = this.sessionId;
+    if (sid === null) return;
+    await this.client.call('session/cancel_compaction', { session_id: sid });
   }
 
-  /** Full context snapshot (SDK `getContext` parity); null when unavailable. */
+  /** Full context snapshot (SDK `getContext` parity); null when unstarted. */
   async getContext(): Promise<EngineContextData | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.getContext === undefined || id === undefined) return null;
-    return this.options.engine.getContext(id);
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    return (await this.client.call('session/get_context', { session_id: sid })) as
+      | EngineContextData
+      | null;
   }
 
   /** Clear the session's model context (SDK `clearContext` parity). */
   async clearContext(): Promise<boolean> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.clearContext === undefined || id === undefined) return false;
-    const r = await this.options.engine.clearContext(id);
-    return r?.cleared ?? false;
+    const sid = this.sessionId;
+    if (sid === null) return false;
+    const result = (await this.client.call('session/clear_context', { session_id: sid })) as {
+      cleared: boolean;
+    } | null;
+    return result?.cleared ?? false;
   }
 
   /** Append imported transcript text (SDK `importContext` parity). */
   async importContext(content: string, source: string): Promise<boolean> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.importContext === undefined || id === undefined) return false;
-    const r = await this.options.engine.importContext(id, content, source);
-    return r?.imported ?? false;
+    const sid = this.sessionId;
+    if (sid === null) return false;
+    const result = (await this.client.call('session/import_context', {
+      session_id: sid,
+      content,
+      source,
+    })) as { imported: boolean } | null;
+    return result?.imported ?? false;
   }
 
   /**
@@ -627,23 +615,23 @@ export class NativeSessionAdapter {
    * (propagates) when the count is not fully available.
    */
   async undoHistory(count: number): Promise<void> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.undoHistory === undefined || id === undefined) return;
-    await this.options.engine.undoHistory(id, count);
+    const sid = this.sessionId;
+    if (sid === null) return;
+    await this.client.call('session/undo_history', { session_id: sid, count });
   }
 
-  /** Active plan snapshot (SDK `getPlan` parity); null when no plan / unavailable. */
+  /** Active plan snapshot (SDK `getPlan` parity); null when no plan / unstarted. */
   async getPlan(): Promise<EnginePlanInfo | null> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.getPlan === undefined || id === undefined) return null;
-    return this.options.engine.getPlan(id);
+    const sid = this.sessionId;
+    if (sid === null) return null;
+    return (await this.client.call('session/get_plan', { session_id: sid })) as EnginePlanInfo | null;
   }
 
   /** Clear the active plan's file content (SDK `clearPlan` parity). */
   async clearPlan(): Promise<void> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.clearPlan === undefined || id === undefined) return;
-    await this.options.engine.clearPlan(id);
+    const sid = this.sessionId;
+    if (sid === null) return;
+    await this.client.call('session/clear_plan', { session_id: sid });
   }
 
   /**
@@ -652,113 +640,122 @@ export class NativeSessionAdapter {
    * resolves when the turn completes.
    */
   async activateSkill(name: string, args?: string): Promise<void> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.activateSkill === undefined || id === undefined) return;
-    await this.options.engine.activateSkill(id, name, args);
+    const sid = this.sessionId;
+    if (sid === null) return;
+    await this.client.call('session/activate_skill', {
+      session_id: sid,
+      name,
+      args: args ?? null,
+    });
   }
 
   /** Reconnect a single MCP server (SDK `reconnectMcpServer` parity). */
   async reconnectMcpServer(name: string): Promise<void> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.reconnectMcpServer === undefined || id === undefined) return;
-    await this.options.engine.reconnectMcpServer(id, name);
+    const sid = this.sessionId;
+    if (sid === null) return;
+    await this.client.call('session/reconnect_mcp_server', { session_id: sid, name });
   }
 
   /** MCP startup connect duration in ms (SDK `getMcpStartupMetrics` parity). */
   async getMcpStartupMetrics(): Promise<number> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.getMcpStartupMetrics === undefined || id === undefined) return 0;
-    const r = await this.options.engine.getMcpStartupMetrics(id);
-    return r?.duration_ms ?? 0;
+    const sid = this.sessionId;
+    if (sid === null) return 0;
+    const result = (await this.client.call('session/get_mcp_startup_metrics', {
+      session_id: sid,
+    })) as { duration_ms: number } | null;
+    return result?.duration_ms ?? 0;
   }
 
   /** Generate AGENTS.md via an init subagent (SDK `Session.init` parity). */
   async init(): Promise<void> {
-    const id = this.controller.sessionId;
-    if (this.options.engine?.init === undefined || id === undefined) return;
-    await this.options.engine.init(id);
+    const sid = this.sessionId;
+    if (sid === null) return;
+    await this.client.call('session/init', { session_id: sid });
   }
 
-  /** Process-global cron listing (SDK `getCronTasks` parity); [] when unavailable. */
+  /** Process-global cron listing (SDK `getCronTasks` parity); [] when unstarted. */
   async getCronTasks(): Promise<EngineCronTask[]> {
-    if (this.options.engine?.getCronTasks === undefined) return [];
-    const r = await this.options.engine.getCronTasks();
-    return r?.tasks ?? [];
+    const result = (await this.client.call('cron/list')) as { tasks: EngineCronTask[] } | null;
+    return result?.tasks ?? [];
   }
 
   /** Background-task captured output (SDK `getBackgroundTaskOutput` parity). */
   async getBackgroundTaskOutput(taskId: string): Promise<string> {
-    if (this.options.engine?.getBackgroundTaskOutput === undefined) return '';
-    const r = await this.options.engine.getBackgroundTaskOutput(taskId);
-    return r?.preview ?? '';
+    const result = (await this.client.call('bg/output', { task_id: taskId })) as {
+      preview: string;
+      error?: string;
+    } | null;
+    return result?.preview ?? '';
   }
 
   /** Request a background task to stop (SDK `stopBackgroundTask` parity). */
   async stopBackgroundTask(taskId: string, reason?: string): Promise<void> {
-    if (this.options.engine?.stopBackgroundTask === undefined) return;
-    await this.options.engine.stopBackgroundTask(taskId, reason);
+    await this.client.call('bg/stop', { task_id: taskId, reason: reason ?? null });
   }
 
   /** Raw background-task wire records (SDK `listBackgroundTasks` parity); the
    *  higher `NativeSession` maps them onto the SDK union. */
   async listBackgroundTasks(): Promise<unknown[]> {
-    if (this.options.engine?.listBackgroundTasks === undefined) return [];
-    return (await this.options.engine.listBackgroundTasks()) ?? [];
+    const result = (await this.client.call('bg/list')) as { tasks: unknown[] } | null;
+    return result?.tasks ?? [];
   }
 
   /** Persisted engine sessions (SDK `listSessions` parity); [] when
    *  unavailable. Workdir filtering happens at the caller. */
   async listSessions(): Promise<EngineSessionRecord[]> {
-    if (this.options.engine?.listSessions === undefined) return [];
-    return (await this.options.engine.listSessions())?.sessions ?? [];
+    const result = (await this.client.call('session/list')) as {
+      sessions: EngineSessionRecord[];
+    } | null;
+    return result?.sessions ?? [];
   }
 
   /** Installed-plugin summaries (SDK `listPlugins` parity). */
   async listPlugins(): Promise<EnginePluginSummary[]> {
-    if (this.options.engine?.listPlugins === undefined) return [];
-    return (await this.options.engine.listPlugins())?.plugins ?? [];
+    const result = (await this.client.call('plugin/list')) as {
+      plugins: EnginePluginSummary[];
+    } | null;
+    return result?.plugins ?? [];
   }
 
   /** One installed plugin's detail (SDK `getPluginInfo` parity); null if unknown. */
   async getPluginInfo(id: string): Promise<EnginePluginInfo | null> {
-    if (this.options.engine?.getPluginInfo === undefined) return null;
-    return this.options.engine.getPluginInfo(id);
+    return (await this.client.call('plugin/get', { id })) as EnginePluginInfo | null;
   }
 
   /** Install a plugin from a source (SDK `installPlugin` parity). */
   async installPlugin(source: string): Promise<EnginePluginSummary | null> {
-    if (this.options.engine?.installPlugin === undefined) return null;
-    return this.options.engine.installPlugin(source);
+    return (await this.client.call('plugin/install', { source })) as EnginePluginSummary | null;
   }
 
   /** Enable or disable an installed plugin (SDK `setPluginEnabled` parity). */
   async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
-    if (this.options.engine?.setPluginEnabled === undefined) return;
-    await this.options.engine.setPluginEnabled(id, enabled);
+    await this.client.call('plugin/set_enabled', { id, enabled });
   }
 
   /** Toggle one of a plugin's MCP servers (SDK `setPluginMcpServerEnabled` parity). */
   async setPluginMcpServerEnabled(id: string, server: string, enabled: boolean): Promise<void> {
-    if (this.options.engine?.setPluginMcpServerEnabled === undefined) return;
-    await this.options.engine.setPluginMcpServerEnabled(id, server, enabled);
+    await this.client.call('plugin/set_mcp_enabled', { id, server, enabled });
   }
 
   /** Remove an installed plugin (SDK `removePlugin` parity). */
   async removePlugin(id: string): Promise<boolean> {
-    if (this.options.engine?.removePlugin === undefined) return false;
-    return (await this.options.engine.removePlugin(id))?.removed ?? false;
+    const result = (await this.client.call('plugin/remove', { id })) as {
+      removed: boolean;
+    } | null;
+    return result?.removed ?? false;
   }
 
   /** Reload plugins from disk (SDK `reloadPlugins` parity). */
   async reloadPlugins(): Promise<void> {
-    if (this.options.engine?.reloadPlugins === undefined) return;
-    await this.options.engine.reloadPlugins();
+    await this.client.call('plugin/reload');
   }
 
   /** List a plugin's slash-style commands (SDK `listPluginCommands` parity). */
   async listPluginCommands(pluginId: string): Promise<EnginePluginCommand[]> {
-    if (this.options.engine?.listPluginCommands === undefined) return [];
-    return this.options.engine.listPluginCommands(pluginId);
+    const result = (await this.client.call('plugin/list_commands', { id: pluginId })) as {
+      commands: EnginePluginCommand[];
+    } | null;
+    return result?.commands ?? [];
   }
 
   /** Activate a plugin command (SDK `activatePluginCommand` parity). */
@@ -768,193 +765,59 @@ export class NativeSessionAdapter {
     commandName: string,
     args?: string,
   ): Promise<void> {
-    if (this.options.engine?.activatePluginCommand === undefined) return;
-    await this.options.engine.activatePluginCommand(sessionId, pluginId, commandName, args);
+    await this.client.call('plugin/activate_command', {
+      session_id: sessionId,
+      plugin_id: pluginId,
+      command_name: commandName,
+      args: args ?? null,
+    });
   }
 
   /** Detach a background task (SDK `detachBackgroundTask` parity); returns the
    *  raw engine wire record (mapped by `NativeSession`) or null. */
   async detachBackgroundTask(taskId: string): Promise<Record<string, unknown> | null> {
-    if (this.options.engine?.detachBackgroundTask === undefined) return null;
-    return this.options.engine.detachBackgroundTask(taskId);
+    const result = (await this.client.call('bg/detach', { task_id: taskId })) as
+      | Record<string, unknown>
+      | null;
+    return result ?? null;
   }
-}
 
-/**
- * The subset of the `@moonshot-ai/kimi-agent/rust-loop` module the adapter's
- * engine ops bind to. Declared structurally so callers can pass the real module
- * (or a fake in tests) without a hard import cycle.
- */
-export interface RustLoopSessionApi {
-  sessionSetModel(sessionId: string, model: string): Promise<unknown>;
-  sessionSetThinking(sessionId: string, effort: string | null): Promise<unknown>;
-  sessionRunShell(
-    sessionId: string,
-    command: string,
-    timeoutS?: number,
-    commandId?: string,
-  ): Promise<{ output: string | null; is_error: boolean; unavailable?: boolean } | null>;
-  sessionCancelShellCommand(
-    sessionId: string,
-    commandId: string,
-  ): Promise<{ cancelled: boolean } | null>;
-  sessionSteer(sessionId: string, input: { type: 'text'; text: string }[]): Promise<unknown>;
-  sessionAddAdditionalDir(
-    sessionId: string,
-    path: string,
-  ): Promise<{ success: boolean; additional_dirs: string[] } | null>;
-  sessionRemoveAdditionalDir(
-    sessionId: string,
-    path: string,
-  ): Promise<{ success: boolean; additional_dirs: string[] } | null>;
-  sessionUpdateMetadata(
-    sessionId: string,
-    metadata: Record<string, unknown>,
-  ): Promise<{ ok: boolean; metadata: Record<string, unknown> } | null>;
-  sessionGoalCreate(
-    sessionId: string,
-    input: { objective: string; completionCriterion?: string; replace?: boolean },
-  ): Promise<EngineGoalSnapshot | null>;
-  sessionGoalGet(sessionId: string): Promise<{ goal: EngineGoalSnapshot | null } | null>;
-  sessionGoalPause(sessionId: string, reason?: string): Promise<EngineGoalSnapshot | null>;
-  sessionGoalResume(sessionId: string, reason?: string): Promise<EngineGoalSnapshot | null>;
-  sessionGoalCancel(sessionId: string): Promise<EngineGoalSnapshot | null>;
-  sessionSetSwarmMode(
-    sessionId: string,
-    enabled: boolean,
-    trigger?: 'manual' | 'task' | 'tool',
-  ): Promise<{ active: boolean } | null>;
-  sessionSetPlanMode(sessionId: string, enabled: boolean): Promise<{ plan_mode: boolean } | null>;
-  sessionGetStatus(sessionId: string): Promise<EngineSessionStatus | null>;
-  sessionListMcpServers(
-    sessionId: string,
-  ): Promise<{ servers: EngineMcpServerInfo[] } | null>;
-  sessionListSkills(sessionId: string): Promise<{ skills: EngineSkillSummary[] } | null>;
-  sessionGetWarnings(sessionId: string): Promise<{ warnings: EngineSessionWarning[] } | null>;
-  sessionGetUsage(sessionId: string): Promise<EngineSessionUsage | null>;
-  sessionCompact(
-    sessionId: string,
-    instruction?: string,
-  ): Promise<{ compacted: boolean; summary?: string; tokens_before?: number; tokens_after?: number } | null>;
-  sessionCancelCompaction(sessionId: string): Promise<{ cancelled: boolean } | null>;
-  sessionGetContext(sessionId: string): Promise<EngineContextData | null>;
-  sessionClearContext(sessionId: string): Promise<{ cleared: boolean } | null>;
-  sessionImportContext(
-    sessionId: string,
-    content: string,
-    source: string,
-  ): Promise<{ imported: boolean } | null>;
-  sessionUndoHistory(
-    sessionId: string,
-    count: number,
-  ): Promise<{ undone_turns: number; cut_index: number | null } | null>;
-  sessionGetPlan(sessionId: string): Promise<EnginePlanInfo | null>;
-  sessionClearPlan(sessionId: string): Promise<{ cleared: boolean } | null>;
-  sessionActivateSkill(
-    sessionId: string,
-    name: string,
-    args?: string,
-  ): Promise<{ stop_reason: string; steps: number } | null>;
-  sessionReconnectMcpServer(
-    sessionId: string,
-    name: string,
-  ): Promise<{ name: string; status: string; tool_count: number } | null>;
-  sessionGetMcpStartupMetrics(sessionId: string): Promise<{ duration_ms: number } | null>;
-  sessionInit(sessionId: string): Promise<{ ok: boolean } | null>;
-  cronList(): Promise<{ tasks: EngineCronTask[] } | null>;
-  bgOutput(taskId: string): Promise<{ preview: string; error?: string } | null>;
-  bgStop(taskId: string, reason?: string): Promise<{ ok: boolean } | null>;
-  bgList(): Promise<unknown[] | null>;
-  /** Persisted engine sessions (SDK `listSessions` parity). */
-  sessionList(limit?: number, offset?: number): Promise<{ sessions: EngineSessionRecord[] } | null>;
-  pluginList(): Promise<{ plugins: EnginePluginSummary[] } | null>;
-  pluginGet(id: string): Promise<EnginePluginInfo | null>;
-  pluginInstall(source: string): Promise<EnginePluginSummary | null>;
-  pluginSetEnabled(id: string, enabled: boolean): Promise<EnginePluginSummary | null>;
-  pluginSetMcpEnabled(
-    id: string,
-    server: string,
-    enabled: boolean,
-  ): Promise<EnginePluginInfo | null>;
-  pluginRemove(id: string): Promise<{ removed: boolean } | null>;
-  pluginReload(): Promise<{ ok: boolean } | null>;
-  pluginListCommands(id: string): Promise<{ commands: EnginePluginCommand[] } | null>;
-  pluginActivateCommand(input: {
-    sessionId: string;
-    pluginId: string;
-    commandName: string;
-    args?: string;
-  }): Promise<{ accepted: boolean } | null>;
-  bgDetach(taskId: string): Promise<Record<string, unknown> | null>;
-  permissionSetMode(mode: NativePermissionMode): Promise<unknown>;
-}
+  private async handleApprovalRequested(raw: Record<string, unknown>): Promise<void> {
+    const approvalId = typeof raw['approval_id'] === 'string' ? raw['approval_id'] : undefined;
+    if (approvalId === undefined) return;
+    const handler = this.approvalHandler;
+    // No host approver → permission `auto`: the decision is final, so the
+    // engine gate does not fall back to host execution.
+    if (handler === undefined) {
+      await this.client.approvalResolve(approvalId, true);
+      return;
+    }
+    // Fail closed: a throwing/cancelled approval prompt must deny, never
+    // propagate into the engine's lifecycle RPC (which would hang or abort
+    // the turn). This keeps the interactive seam safe when the host
+    // approver errors.
+    let allowed: boolean;
+    try {
+      allowed = await handler({
+        toolName: typeof raw['tool_name'] === 'string' ? raw['tool_name'] : '',
+        toolCallId: typeof raw['tool_call_id'] === 'string' ? raw['tool_call_id'] : '',
+        args: raw['arguments'],
+      });
+    } catch {
+      allowed = false;
+    }
+    await this.client.approvalResolve(approvalId, allowed);
+  }
 
-/**
- * Bind a `SessionEngineOps` to the real rust-loop session functions. This is
- * the production wiring: each op forwards the adapter's session id (permission
- * is process-wide, so its op ignores the id and drives the shared gate). Pass
- * the result as `NativeSessionAdapterOptions.engine`.
- */
-export function nativeEngineOpsFromRustLoop(rustLoop: RustLoopSessionApi): SessionEngineOps {
-  return {
-    setModel: (sessionId, model) => rustLoop.sessionSetModel(sessionId, model),
-    setThinking: (sessionId, effort) => rustLoop.sessionSetThinking(sessionId, effort),
-    runShell: (sessionId, command, timeoutS, commandId) =>
-      rustLoop.sessionRunShell(sessionId, command, timeoutS, commandId),
-    cancelShellCommand: (sessionId, commandId) =>
-      rustLoop.sessionCancelShellCommand(sessionId, commandId),
-    steer: (sessionId, input) => rustLoop.sessionSteer(sessionId, input),
-    addAdditionalDir: (sessionId, path) => rustLoop.sessionAddAdditionalDir(sessionId, path),
-    removeAdditionalDir: (sessionId, path) => rustLoop.sessionRemoveAdditionalDir(sessionId, path),
-    updateMetadata: (sessionId, metadata) => rustLoop.sessionUpdateMetadata(sessionId, metadata),
-    goalCreate: (sessionId, input) => rustLoop.sessionGoalCreate(sessionId, input),
-    goalGet: (sessionId) => rustLoop.sessionGoalGet(sessionId),
-    goalPause: (sessionId, reason) => rustLoop.sessionGoalPause(sessionId, reason),
-    goalResume: (sessionId, reason) => rustLoop.sessionGoalResume(sessionId, reason),
-    goalCancel: (sessionId) => rustLoop.sessionGoalCancel(sessionId),
-    setSwarmMode: (sessionId, enabled, trigger) =>
-      rustLoop.sessionSetSwarmMode(sessionId, enabled, trigger),
-    setPlanMode: (sessionId, enabled) => rustLoop.sessionSetPlanMode(sessionId, enabled),
-    getStatus: (sessionId) => rustLoop.sessionGetStatus(sessionId),
-    listMcpServers: (sessionId) => rustLoop.sessionListMcpServers(sessionId),
-    listSkills: (sessionId) => rustLoop.sessionListSkills(sessionId),
-    getWarnings: (sessionId) => rustLoop.sessionGetWarnings(sessionId),
-    getUsage: (sessionId) => rustLoop.sessionGetUsage(sessionId),
-    compact: (sessionId, instruction) => rustLoop.sessionCompact(sessionId, instruction),
-    cancelCompaction: (sessionId) => rustLoop.sessionCancelCompaction(sessionId),
-    getContext: (sessionId) => rustLoop.sessionGetContext(sessionId),
-    clearContext: (sessionId) => rustLoop.sessionClearContext(sessionId),
-    importContext: (sessionId, content, source) =>
-      rustLoop.sessionImportContext(sessionId, content, source),
-    undoHistory: (sessionId, count) => rustLoop.sessionUndoHistory(sessionId, count),
-    getPlan: (sessionId) => rustLoop.sessionGetPlan(sessionId),
-    clearPlan: (sessionId) => rustLoop.sessionClearPlan(sessionId),
-    activateSkill: (sessionId, name, args) =>
-      rustLoop.sessionActivateSkill(sessionId, name, args),
-    reconnectMcpServer: (sessionId, name) =>
-      rustLoop.sessionReconnectMcpServer(sessionId, name),
-    getMcpStartupMetrics: (sessionId) => rustLoop.sessionGetMcpStartupMetrics(sessionId),
-    init: (sessionId) => rustLoop.sessionInit(sessionId),
-    getCronTasks: () => rustLoop.cronList(),
-    getBackgroundTaskOutput: (taskId) => rustLoop.bgOutput(taskId),
-    stopBackgroundTask: (taskId, reason) => rustLoop.bgStop(taskId, reason),
-    listBackgroundTasks: () => rustLoop.bgList(),
-    listSessions: (limit, offset) => rustLoop.sessionList(limit, offset),
-    listPlugins: () => rustLoop.pluginList(),
-    getPluginInfo: (id) => rustLoop.pluginGet(id),
-    installPlugin: (source) => rustLoop.pluginInstall(source),
-    setPluginEnabled: (id, enabled) => rustLoop.pluginSetEnabled(id, enabled),
-    setPluginMcpServerEnabled: (id, server, enabled) =>
-      rustLoop.pluginSetMcpEnabled(id, server, enabled),
-    removePlugin: (id) => rustLoop.pluginRemove(id),
-    reloadPlugins: () => rustLoop.pluginReload(),
-    listPluginCommands: (pluginId) =>
-      rustLoop.pluginListCommands(pluginId).then((r) => r?.commands ?? []),
-    activatePluginCommand: (sessionId, pluginId, commandName, args) =>
-      rustLoop.pluginActivateCommand({ sessionId, pluginId, commandName, args }),
-    detachBackgroundTask: (taskId) => rustLoop.bgDetach(taskId),
-    // Permission mode is a process-wide gate; the session id is not part of the
-    // engine RPC, so it is ignored here.
-    setPermissionMode: (_sessionId, mode) => rustLoop.permissionSetMode(mode),
-  };
+  private emit(event: Event): void {
+    // Fan out to every current listener; a throwing listener must not
+    // starve the others or the engine event pump.
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch {
+        // Ignore a misbehaving renderer; keep delivering.
+      }
+    }
+  }
 }

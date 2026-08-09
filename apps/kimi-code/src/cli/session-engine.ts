@@ -12,13 +12,16 @@
  * out. When on but the provider isn't native-LLM-capable, or the engine binary
  * is unavailable, it falls back to the harness — so the flip never hard-breaks.
  *
- * Boundaries (deliberate):
- * - Print mode is permission `auto`, so the tool approval gate auto-allows;
- *   interactive approval UI arrives with the TUI integration.
+ * Transport (G-1 `/rust` consumption rewrite, 2026-08-09): the engine runs as
+ * a `kimi-server-serve` subprocess (pull-style RPC; events on stderr), not
+ * through the retired rust-loop bridge. Print mode is permission `auto`, so
+ * the tool approval gate auto-allows; interactive approval UI arrives with the
+ * TUI integration.
  */
-import { loadNativeLlmDef, loadSessionHooks, loadSessionMcpServers, loadSessionSystemPrompt } from './rust-engine';
-import { SessionEngineController } from '@moonshot-ai/kimi-code-sdk/rust';
 import type { Event } from '@moonshot-ai/kimi-code-sdk';
+import { loadNativeLlmDef, loadSessionHooks, loadSessionMcpServers, loadSessionSystemPrompt } from './rust-engine';
+import { NativeSessionAdapter } from './native-session-adapter';
+import { NativeServerClient } from './native-server-client';
 
 interface SessionEngineIo {
   stdout: { write(chunk: string): unknown };
@@ -107,10 +110,17 @@ export async function tryRunSessionEnginePrompt(
     return false;
   }
 
-  // The session surface is stdio-only; skip a present napi addon. Must be
-  // set before the adapter module initializes the engine.
-  process.env['KIMI_AGENT_FORCE_STDIO'] = '1';
-  const rustLoop = await import('@moonshot-ai/kimi-agent/rust-loop');
+  // One server process per print run: it owns the engine, the approval store,
+  // and the event stream for the whole prompt.
+  let client: NativeServerClient;
+  try {
+    client = new NativeServerClient();
+  } catch {
+    args.stderr.write(
+      'session engine: kimi-server-serve binary unavailable; falling back to the normal engine.\n',
+    );
+    return false;
+  }
 
   // Load the user's MCP servers (user-global only — headless runs never
   // auto-start untrusted project stdio commands). The engine connects them
@@ -131,36 +141,8 @@ export async function tryRunSessionEnginePrompt(
 
   let sawText = false;
   const toolNames = new Map<string, string>();
-  const controller = new SessionEngineController({
-    // Wrap the real engine client factory. The captured native-LLM config is
-    // typed, so it rides here rather than through the controller's opaque
-    // `nativeLlm` option.
-    createClient: (clientOptions) =>
-      rustLoop.createSessionClient({
-        sessionId: clientOptions.sessionId,
-        systemPrompt: clientOptions.systemPrompt,
-        model: clientOptions.model,
-        goalEnabled: clientOptions.goalEnabled,
-        homedir: clientOptions.homedir,
-        nativeLlm,
-        mcpServers,
-        hooks,
-        permissionMode: clientOptions.permissionMode,
-        onEvent: clientOptions.onEvent,
-        lifecycle: clientOptions.lifecycle,
-      }),
-    emitEvent: (event) => {
-      // Native-LLM mode streams provider deltas as assistant text (stdout) and
-      // tool activity as diagnostics (stderr); goal updates ride the raw tap.
-      const out = formatSessionPrintEvent(event, toolNames);
-      if (out.stdout !== undefined) {
-        sawText = true;
-        args.stdout.write(out.stdout);
-      }
-      if (out.stderr !== undefined) {
-        args.stderr.write(out.stderr);
-      }
-    },
+  const adapter = new NativeSessionAdapter({
+    client,
     onRawEvent: (raw) => {
       const e = raw as { type?: string; status?: string };
       if (e.type === 'session.goal.updated' && e.status !== undefined && e.status !== 'none') {
@@ -168,37 +150,55 @@ export async function tryRunSessionEnginePrompt(
       }
     },
     // Print mode is permission `auto`: no approver is supplied, so the
-    // engine's tool gate auto-allows (see SessionEngineController.authorize).
+    // engine's tool gate auto-allows (see NativeSessionAdapter).
+  });
+  adapter.onEvent((event) => {
+    // Native-LLM mode streams provider deltas as assistant text (stdout) and
+    // tool activity as diagnostics (stderr); goal updates ride the raw tap.
+    const out = formatSessionPrintEvent(event, toolNames);
+    if (out.stdout !== undefined) {
+      sawText = true;
+      args.stdout.write(out.stdout);
+    }
+    if (out.stderr !== undefined) {
+      args.stderr.write(out.stderr);
+    }
   });
 
-  const started = await controller.start({
-    sessionId: `print-${String(Date.now())}`,
-    systemPrompt,
-    model: nativeLlm.model,
-    goalEnabled: true,
-    homedir: args.workDir,
-    nativeLlm,
-    // Print mode is permission `auto`: configure the native gate so gated
-    // tools (write/bash) are approved locally, with no host authorize
-    // round-trip — the headless run needs no interactive approver.
-    permissionMode: 'auto',
-  });
-  if (!started) {
+  try {
+    const started = await adapter.start({
+      sessionId: `print-${String(Date.now())}`,
+      systemPrompt,
+      model: nativeLlm.model,
+      goalEnabled: true,
+      homedir: args.workDir,
+      nativeLlm,
+      mcpServers,
+      hooks,
+      // Print mode is permission `auto`: configure the native gate so gated
+      // tools (write/bash) are approved locally, with no host authorize
+      // round-trip — the headless run needs no interactive approver.
+      permissionMode: 'auto',
+    });
+    if (!started) {
+      args.stderr.write(
+        'session engine: engine unavailable; falling back to the normal engine.\n',
+      );
+      return false;
+    }
+
+    const outcome = await adapter.prompt(args.prompt);
+    if (outcome === null) {
+      args.stderr.write('session engine: prompt failed\n');
+      return true; // handled (as a failure) — do not double-run on the fallback
+    }
+    if (sawText) args.stdout.write('\n');
     args.stderr.write(
-      'session engine: stdio engine unavailable (no kimi-agent binary); falling back to the normal engine.\n',
+      `[session-engine] stop=${outcome.stopReason} steps=${String(outcome.steps)} tokens=${String(outcome.totalTokens)}\n`,
     );
-    return false;
+    await adapter.save();
+    return true;
+  } finally {
+    client.close();
   }
-
-  const outcome = await controller.prompt(args.prompt);
-  if (outcome === null) {
-    args.stderr.write('session engine: prompt failed\n');
-    return true; // handled (as a failure) — do not double-run on the fallback
-  }
-  if (sawText) args.stdout.write('\n');
-  args.stderr.write(
-    `[session-engine] stop=${outcome.stopReason} steps=${String(outcome.steps)} tokens=${String(outcome.totalTokens)}\n`,
-  );
-  await controller.save();
-  return true;
 }

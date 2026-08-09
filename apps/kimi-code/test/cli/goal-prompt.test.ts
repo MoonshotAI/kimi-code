@@ -177,6 +177,10 @@ describe('runPrompt headless goal mode', () => {
     // run-prompt.test.ts). With the flag on, runPrompt dispatches to the
     // native v2 runner, which ignores these mocks and hangs the test.
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
+    // Same for the session-owned engine path: this suite mocks the v1
+    // harness, so the pull-style engine (spawned kimi-server-serve) must be
+    // opted out or the tests hit the real engine + real LLM config.
+    vi.stubEnv('KIMI_SESSION_ENGINE', '0');
     savedExitCode = process.exitCode;
     mocks.experimentalFeatures = [{ id: 'micro_compaction', enabled: true }];
     mocks.sessions = [];

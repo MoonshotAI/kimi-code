@@ -13,8 +13,9 @@ import {
   createNativeTuiSession,
   isNativeTuiEngineEnabled,
   listNativeSessions,
-  type NativeTuiRustLoop,
 } from '../cli/native-session';
+import { NativeServerClient } from '../cli/native-server-client';
+import { loadNativeLlmDef } from '../cli/rust-engine';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import {
   deleteAllKittyImages,
@@ -311,6 +312,13 @@ export class KimiTUI {
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
+  /**
+   * Process-level `kimi-server-serve` client shared by every native session
+   * (one server process owns the engine for the whole TUI lifetime). Lazy —
+   * stays null when no binary is found, so the harness fallback path is the
+   * default and this can never hard-break startup.
+   */
+  private nativeClient: NativeServerClient | null = null;
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
   private pluginCommands: readonly KimiSlashCommand[] = [];
@@ -783,8 +791,9 @@ export class KimiTUI {
         // binary, id not in the engine store) falls through to the harness
         // path below, so the flag can never hard-break startup.
         if (nativeTuiEnabled) {
-          const rustLoop = (await import('@moonshot-ai/kimi-agent/rust-loop')) as NativeTuiRustLoop;
-          const nativeTargets = await listNativeSessions(rustLoop, workDir);
+          const client = this.getNativeClient();
+          const nativeTargets =
+            client === null ? [] : await listNativeSessions(client, workDir);
           const nativeTarget =
             startup.sessionFlag !== undefined
               ? nativeTargets.find((s) => s.id === startup.sessionFlag)
@@ -879,6 +888,17 @@ export class KimiTUI {
     return shouldReplayHistory;
   }
 
+  /** Resolve the shared native server client (or null when unavailable). */
+  private getNativeClient(): NativeServerClient | null {
+    if (this.nativeClient !== null) return this.nativeClient;
+    try {
+      this.nativeClient = new NativeServerClient();
+    } catch {
+      this.nativeClient = null; // no kimi-server-serve binary — harness path
+    }
+    return this.nativeClient;
+  }
+
   /**
    * Create a native-engine session behind `KIMI_SESSION_ENGINE_TUI`. Pass
    * `resume` to restore a persisted engine session (context + goal; the
@@ -891,14 +911,21 @@ export class KimiTUI {
     resume?: { sessionId: string },
   ): Promise<TuiSession | null> {
     try {
-      const rustLoop = (await import('@moonshot-ai/kimi-agent/rust-loop')) as NativeTuiRustLoop;
+      const client = this.getNativeClient();
+      if (client === null) return null;
+      // The kimi-server channel has no host LLM callback (turn loop is
+      // engine-native), so a native session needs a native-LLM-capable
+      // provider; otherwise defer to the harness path.
+      const nativeLlm = loadNativeLlmDef(this.harness.homeDir);
+      if (nativeLlm === undefined) return null;
       const native = await createNativeTuiSession(
-        rustLoop,
+        client,
         {
           sessionId: `tui-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
           workDir: options.workDir,
           model: options.model,
           goalEnabled: true,
+          nativeLlm,
           permissionMode:
             options.permission === 'auto'
               ? 'auto'
@@ -950,6 +977,9 @@ export class KimiTUI {
       await this.closeSession('shutting down');
       await this.harness.close();
     } finally {
+      // Terminate the shared native server process (if one was started).
+      this.nativeClient?.close();
+      this.nativeClient = null;
       this.sessionEventHandler.stopAllMcpServerStatusSpinners();
       this.uninstallRainbowDance();
       try {
@@ -1781,18 +1811,20 @@ export class KimiTUI {
       // hide harness rows (the flag-off path runs exactly one listSessions).
       if (isNativeTuiEngineEnabled()) {
         try {
-          const rustLoop = (await import('@moonshot-ai/kimi-agent/rust-loop')) as NativeTuiRustLoop;
-          const nativeRows = nativeSessionRowsForPicker(
-            await listNativeSessions(rustLoop, scope === 'all' ? undefined : workDir),
-            workDir,
-            currentSessionId,
-            currentSessionHasContent,
-          );
-          const seen = new Set(rows.map((row) => row.id));
-          for (const row of nativeRows) {
-            if (seen.has(row.id)) continue;
-            seen.add(row.id);
-            rows.push(row);
+          const client = this.getNativeClient();
+          if (client !== null) {
+            const nativeRows = nativeSessionRowsForPicker(
+              await listNativeSessions(client, scope === 'all' ? undefined : workDir),
+              workDir,
+              currentSessionId,
+              currentSessionHasContent,
+            );
+            const seen = new Set(rows.map((row) => row.id));
+            for (const row of nativeRows) {
+              if (seen.has(row.id)) continue;
+              seen.add(row.id);
+              rows.push(row);
+            }
           }
           // The engine store sorts by updated_at; keep the merged list ordered
           // by recency so the freshest session stays at the top.
@@ -1868,8 +1900,9 @@ export class KimiTUI {
       // Any miss (engine unavailable, id not in the engine store) falls
       // through to the harness below.
       if (isNativeTuiEngineEnabled()) {
-        const rustLoop = (await import('@moonshot-ai/kimi-agent/rust-loop')) as NativeTuiRustLoop;
-        const nativeTargets = await listNativeSessions(rustLoop, this.state.appState.workDir);
+        const client = this.getNativeClient();
+        const nativeTargets =
+          client === null ? [] : await listNativeSessions(client, this.state.appState.workDir);
         const nativeTarget = nativeTargets.find((s) => s.id === targetSessionId);
         if (nativeTarget !== undefined) {
           const native = await this.maybeCreateNativeSession(

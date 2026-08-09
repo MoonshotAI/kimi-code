@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { log, type GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import { BannerProvider } from '#/tui/banner/banner-provider';
 import { readBannerDisplayState } from '#/tui/banner/state';
@@ -243,6 +243,18 @@ function captureInputListeners(driver: StartupDriver) {
 }
 
 describe('KimiTUI startup', () => {
+  beforeEach(() => {
+    // The native session path (spawned `kimi-server-serve`) must stay off:
+    // this suite drives the harness path with fakes, and a real engine
+    // binary on the dev machine would otherwise take over the picker /
+    // resume flows and break the assertions.
+    vi.stubEnv('KIMI_SESSION_ENGINE_TUI', '0');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('creates a fresh session from startup flags and syncs runtime state', async () => {
     const session = makeSession({
       getStatus: vi.fn(async () => ({

@@ -4,7 +4,7 @@
 //! cannot embed the engine (separate process, language boundary) spawn this
 //! binary and talk to it through `kimi-server-client`'s Remote variant.
 //!
-//! Engine events are fanned out to stderr as JSON lines (bounded) so a
+//! Engine events are fanned out to stderr as JSON lines (unbounded) so a
 //! `--verbose` host sees progress without a second channel; the request
 //! stream on stdout stays untouched.
 
@@ -129,20 +129,12 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Fan engine events out to stderr (fire-and-forget; bounded so a chatty
-    // turn cannot flood the host terminal). StdioClient spawns with stderr
-    // inherited, so Remote hosts get the stream for free.
-    let mut events = server.state.subscribe_events();
-    let event_printer = tokio::spawn(async move {
-        let mut lines = 0usize;
-        while let Ok(event) = events.recv().await {
-            eprintln!("[event] {}", serde_json::to_string(&event).unwrap_or_default());
-            lines += 1;
-            if lines >= 512 {
-                break; // bound verbose output
-            }
-        }
-    });
+    // Fan engine events out to stderr. Unbounded: a long-lived host (TUI,
+    // harness, `--verbose` CLI) consumes the stream for the whole process
+    // lifetime, so a line cap would silently cut its event stream. StdioClient
+    // spawns with stderr inherited, so Remote hosts get the stream for free.
+    let events = server.state.subscribe_events();
+    let event_printer = kimi_server_transport::stdio::spawn_event_printer(events, tokio::io::stderr());
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();

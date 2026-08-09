@@ -74,10 +74,8 @@ import type { TuiSession } from '#/tui/tui-session';
 
 import {
   NativeSessionAdapter,
-  nativeEngineOpsFromRustLoop,
   type EngineSessionRecord,
   type NativePermissionMode,
-  type RustLoopSessionApi,
 } from './native-session-adapter';
 import {
   mapBackgroundTask,
@@ -89,19 +87,14 @@ import {
   mapStatus,
   mapUsage,
   promptText,
-} from '@moonshot-ai/kimi-code-sdk/rust';
-import type { SessionClientFactoryOptions, SessionClientHandle } from '@moonshot-ai/kimi-code-sdk/rust';
+  type HookDefInput,
+  type McpServerInput,
+  type NativeServerClientLike,
+  type NativeLlmDef,
+} from './native-server-client';
 
-/** The rust-loop surface the native TUI session factory needs. */
-export interface NativeTuiRustLoop extends RustLoopSessionApi {
-  createSessionClient(
-    options: SessionClientFactoryOptions & {
-      nativeLlm?: unknown;
-      mcpServers?: unknown;
-      hooks?: unknown;
-    },
-  ): Promise<SessionClientHandle | null>;
-}
+/** The `kimi-server-serve` client surface the native TUI session needs. */
+export type NativeTuiServerClient = NativeServerClientLike;
 
 /** Inputs to build + start a native TUI session. */
 export interface NativeTuiSessionInit {
@@ -111,9 +104,9 @@ export interface NativeTuiSessionInit {
   readonly model?: string;
   readonly goalEnabled?: boolean;
   readonly homedir?: string;
-  readonly nativeLlm?: unknown;
-  readonly mcpServers?: unknown;
-  readonly hooks?: unknown;
+  readonly nativeLlm?: NativeLlmDef;
+  readonly mcpServers?: McpServerInput[];
+  readonly hooks?: HookDefInput[];
   /** Interactive default is `manual` so the host approval UI gates tools. */
   readonly permissionMode?: NativePermissionMode;
 }
@@ -600,28 +593,12 @@ export class NativeSession implements TuiSession {
  * harness.
  */
 export async function createNativeTuiSession(
-  rustLoop: NativeTuiRustLoop,
+  client: NativeTuiServerClient,
   init: NativeTuiSessionInit,
   resume?: { sessionId: string },
 ): Promise<NativeSession | null> {
   const sessionId = resume?.sessionId ?? init.sessionId;
-  const adapter = new NativeSessionAdapter({
-    createClient: (clientOptions) =>
-      rustLoop.createSessionClient({
-        sessionId: clientOptions.sessionId,
-        systemPrompt: clientOptions.systemPrompt,
-        model: clientOptions.model,
-        goalEnabled: clientOptions.goalEnabled,
-        homedir: clientOptions.homedir,
-        nativeLlm: init.nativeLlm,
-        mcpServers: init.mcpServers,
-        hooks: init.hooks,
-        permissionMode: clientOptions.permissionMode,
-        onEvent: clientOptions.onEvent,
-        lifecycle: clientOptions.lifecycle,
-      }),
-    engine: nativeEngineOpsFromRustLoop(rustLoop),
-  });
+  const adapter = new NativeSessionAdapter({ client });
 
   const started = await adapter.start({
     sessionId,
@@ -630,6 +607,8 @@ export async function createNativeTuiSession(
     goalEnabled: init.goalEnabled ?? true,
     homedir: init.homedir ?? init.workDir,
     nativeLlm: init.nativeLlm,
+    mcpServers: init.mcpServers,
+    hooks: init.hooks,
     // Interactive mode: `manual` so gated tools route to the host approval UI
     // wired via `setApprovalHandler`.
     permissionMode: init.permissionMode ?? 'manual',
@@ -658,10 +637,12 @@ export async function createNativeTuiSession(
  * every persisted engine session (used by the picker's "all" scope).
  */
 export async function listNativeSessions(
-  rustLoop: NativeTuiRustLoop,
+  client: NativeTuiServerClient,
   workDir?: string,
 ): Promise<EngineSessionRecord[]> {
-  const result = await rustLoop.sessionList(50, 0);
+  const result = (await client.call('session/list', { limit: 50, offset: 0 })) as {
+    sessions: EngineSessionRecord[];
+  } | null;
   const sessions = result?.sessions ?? [];
   const normalized = workDir === undefined ? undefined : resolve(workDir);
   return sessions

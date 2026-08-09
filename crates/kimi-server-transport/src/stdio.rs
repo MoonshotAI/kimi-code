@@ -20,6 +20,35 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 /// same pipe. Responses are written under a shared lock (one whole line each,
 /// the same atomicity `println!` gives the engine), and clients correlate
 /// them by request id.
+/// Spawn a task that fans engine events out as `[event] {json}` lines.
+///
+/// Unbounded by design: hosts (a TUI, a harness, `--verbose` CLIs) consume
+/// this stream for the whole process lifetime, so a line cap would silently
+/// cut their event stream mid-session. Backpressure comes from the pipe
+/// itself — a non-reading host blocks this task (never the RPC loop), and a
+/// closed pipe (host exited) stops the printer. A broadcast lag (host slower
+/// than the bus) drops the oldest event, matching the bus's own semantics.
+pub fn spawn_event_printer<W>(
+    mut events: tokio::sync::broadcast::Receiver<serde_json::Value>,
+    mut writer: W,
+) -> tokio::task::JoinHandle<()>
+where
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        while let Ok(event) = events.recv().await {
+            let line = format!(
+                "[event] {}\n",
+                serde_json::to_string(&event).unwrap_or_default()
+            );
+            if writer.write_all(line.as_bytes()).await.is_err() {
+                break; // pipe closed — the host is gone
+            }
+            let _ = writer.flush().await;
+        }
+    })
+}
+
 pub async fn serve<R, W>(processor: &Arc<MessageProcessor>, reader: R, writer: W)
 where
     R: AsyncRead + Unpin,
@@ -183,5 +212,62 @@ mod tests {
             }
         }
         serde_json::from_slice(&buf).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// The event stream is unbounded — a long-lived host (TUI, harness) must
+    /// receive events beyond the old 512-line cap. Regression anchor: the
+    /// printer used to stop after 512 lines, silently cutting every long
+    /// session's event stream. 600 events all arrive; ordering is preserved.
+    #[tokio::test]
+    async fn event_printer_is_unbounded() {
+        let (tx, rx) = tokio::sync::broadcast::channel::<serde_json::Value>(2048);
+        let (sink, mut reader) = duplex(256 * 1024);
+        let handle = spawn_event_printer(rx, sink);
+
+        for i in 0..600 {
+            tx.send(serde_json::json!({ "type": "probe", "n": i })).unwrap();
+        }
+        drop(tx);
+
+        let mut lines = 0usize;
+        let mut expected = 0usize;
+        let mut byte = [0u8; 1];
+        let mut buf = Vec::new();
+        loop {
+            if reader.read(&mut byte).await.unwrap_or(0) == 0 {
+                break;
+            }
+            buf.push(byte[0]);
+            if byte[0] == b'\n' {
+                let text = String::from_utf8_lossy(&buf);
+                let json = text.strip_prefix("[event] ").unwrap_or(&text);
+                let line: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+                assert_eq!(line["type"], "probe", "unparsed line: {text:?}");
+                assert_eq!(line["n"], expected, "out of order at line {lines}");
+                expected += 1;
+                lines += 1;
+                buf.clear();
+                if lines >= 600 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(lines, 600, "all events must reach the host, not just the first 512");
+        handle.abort();
+    }
+
+    /// A closed pipe (host exited) stops the printer instead of panicking —
+    /// the correct backpressure terminal for an unbounded stream.
+    #[tokio::test]
+    async fn event_printer_stops_on_closed_pipe() {
+        let (tx, rx) = tokio::sync::broadcast::channel::<serde_json::Value>(64);
+        let (sink, reader) = duplex(1024);
+        let handle = spawn_event_printer(rx, sink);
+        drop(reader); // host closes the pipe immediately
+
+        tx.send(serde_json::json!({ "type": "probe", "n": 1 })).unwrap();
+        // Give the printer a chance to hit the closed pipe; it must terminate
+        // quietly (no panic), not keep spinning.
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(200), handle).await;
     }
 }

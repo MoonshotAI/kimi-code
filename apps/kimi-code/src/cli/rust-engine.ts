@@ -24,7 +24,7 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 import type { McpServerConfigEntry } from '@moonshot-ai/kimi-code-sdk';
 import { LocalKaos } from '@moonshot-ai/kaos';
-import type { HookDefInput, McpServerInput } from '@moonshot-ai/kimi-agent/rust-loop';
+import type { HookDefInput, McpServerInput } from './native-server-client';
 
 interface NativeLlmDef {
   protocol: 'openai' | 'anthropic' | 'google';

@@ -1,71 +1,54 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  createNativeTuiSession,
-  listNativeSessions,
-  type NativeTuiRustLoop,
-} from '#/cli/native-session';
-import type { NativePermissionMode, RustLoopSessionApi } from '#/cli/native-session-adapter';
-import type { SessionClientFactoryOptions } from '@moonshot-ai/kimi-code-sdk/rust';
+import { createNativeTuiSession, listNativeSessions } from '#/cli/native-session';
+import type { NativePermissionMode } from '#/cli/native-session-adapter';
+import type { NativeServerClientLike } from '#/cli/native-server-client';
 
-/** A fake rust-loop whose session ops return canned engine wire data. */
-function fakeRustLoop(options: {
+/** A fake `kimi-server-serve` client returning canned engine wire data. */
+function fakeClient(options: {
   loadFound?: boolean;
   contextHistory?: unknown[];
   status?: Record<string, unknown>;
   usage?: Record<string, unknown>;
   plan?: Record<string, unknown> | null;
   sessions?: Array<{ id: string; created_at: string; updated_at: string; work_dir?: string }>;
-} = {}): NativeTuiRustLoop {
-  const record = (ret: unknown = null) => () => Promise.resolve(ret) as never;
-  const sessionRecord =
-    (ret: unknown = null) =>
-    () =>
-      Promise.resolve(ret) as never;
-  const rustLoop: Partial<RustLoopSessionApi> = {
-    sessionList: sessionRecord({ sessions: options.sessions ?? [] }),
-    sessionGetStatus: sessionRecord(
-      options.status ?? {
-        model: 'kimi-k2',
-        thinking_effort: 'high',
-        permission: 'manual',
-        plan_mode: false,
-        swarm_mode: false,
-        goal_enabled: true,
-        context_tokens: 5,
-        max_context_tokens: 100,
-        context_usage: 0.05,
-      },
-    ),
-    sessionGetContext: sessionRecord({
-      history: options.contextHistory ?? [],
-      token_count: 5,
-    }),
-    sessionGetUsage: sessionRecord(
-      options.usage ?? { total: { input_tokens: 5, output_tokens: 2, total_tokens: 7 } },
-    ),
-    sessionGetPlan: sessionRecord(options.plan ?? null),
-    bgList: sessionRecord([]),
-    permissionSetMode: record({ ok: true }),
+} = {}): NativeServerClientLike {
+  const responses: Record<string, unknown> = {
+    'session/list': { sessions: options.sessions ?? [] },
+    'session/get_status': options.status ?? {
+      model: 'kimi-k2',
+      thinking_effort: 'high',
+      permission: 'manual',
+      plan_mode: false,
+      swarm_mode: false,
+      goal_enabled: true,
+      context_tokens: 5,
+      max_context_tokens: 100,
+      context_usage: 0.05,
+    },
+    'session/get_context': { history: options.contextHistory ?? [], token_count: 5 },
+    'session/get_usage': options.usage ?? { total: { input_tokens: 5, output_tokens: 2, total_tokens: 7 } },
+    'session/get_plan': options.plan ?? null,
+    'session/load': { found: options.loadFound ?? true },
+    'bg/list': { tasks: [] },
   };
   return {
-    ...rustLoop,
-    createSessionClient: (clientOptions: SessionClientFactoryOptions) =>
-      Promise.resolve({
-        sessionId: clientOptions.sessionId ?? 'fake',
-        prompt: () => Promise.resolve({ stop_reason: 'EndTurn', steps: 1, usage: { total_tokens: 1 } }),
-        cancel: () => Promise.resolve(true),
-        save: () => Promise.resolve(true),
-        load: () => Promise.resolve(options.loadFound ?? true),
-        startBtw: () => Promise.resolve(null),
-        endBtw: () => Promise.resolve(true),
-      }),
-  } as NativeTuiRustLoop;
+    call: (method: string) => Promise.resolve(responses[method] ?? { ok: true }),
+    sessionCreate: (init) => Promise.resolve({ session_id: init.sessionId ?? 'fake' }),
+    sessionPrompt: () =>
+      Promise.resolve({ stop_reason: 'EndTurn', steps: 1, usage: { total: { total_tokens: 1 } } }),
+    sessionCancel: () => Promise.resolve({ cancelled: true }),
+    approvalList: () => Promise.resolve([]),
+    approvalResolve: () => Promise.resolve(true),
+    onEvent: () => () => {},
+    onSessionEvent: () => () => {},
+    close: () => {},
+  };
 }
 
 describe('listNativeSessions', () => {
   it('filters to the workspace and sorts by updated_at (newest first)', async () => {
-    const rustLoop = fakeRustLoop({
+    const client = fakeClient({
       sessions: [
         { id: 'old', created_at: '1', updated_at: '1', work_dir: '/w' },
         { id: 'new', created_at: '2', updated_at: '3', work_dir: '/w' },
@@ -73,14 +56,14 @@ describe('listNativeSessions', () => {
         { id: 'noworkdir', created_at: '5', updated_at: '5' },
       ],
     });
-    const found = await listNativeSessions(rustLoop, '/w');
+    const found = await listNativeSessions(client, '/w');
     expect(found.map((s) => s.id)).toEqual(['new', 'old']);
   });
 });
 
 describe('createNativeTuiSession', () => {
   it('resumes a persisted session: load restores state and getResumeState replays it', async () => {
-    const rustLoop = fakeRustLoop({
+    const client = fakeClient({
       contextHistory: [
         {
           role: 'user',
@@ -94,7 +77,7 @@ describe('createNativeTuiSession', () => {
       ],
     });
     const session = await createNativeTuiSession(
-      rustLoop,
+      client,
       { sessionId: 'tui-fresh', workDir: '/w', model: 'kimi-k2' },
       { sessionId: 'saved-s1' },
     );
@@ -118,9 +101,9 @@ describe('createNativeTuiSession', () => {
   });
 
   it('returns null when the resumed id is not in the engine store', async () => {
-    const rustLoop = fakeRustLoop({ loadFound: false });
+    const client = fakeClient({ loadFound: false });
     const session = await createNativeTuiSession(
-      rustLoop,
+      client,
       { sessionId: 'tui-fresh', workDir: '/w' },
       { sessionId: 'missing' },
     );
@@ -128,8 +111,8 @@ describe('createNativeTuiSession', () => {
   });
 
   it('creates a fresh session without a resume snapshot', async () => {
-    const rustLoop = fakeRustLoop();
-    const session = await createNativeTuiSession(rustLoop, {
+    const client = fakeClient();
+    const session = await createNativeTuiSession(client, {
       sessionId: 'tui-fresh',
       workDir: '/w',
     });
