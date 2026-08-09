@@ -191,10 +191,29 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIStatusError) {
+    const message = error.message ?? '';
+    // Content-moderation rejections are deterministic — never retry even on
+    // a retryable status code.
+    if (MODERATION_MESSAGE_PATTERNS.some((re) => re.test(message))) {
+      return false;
+    }
     // Transient statuses worth retrying: 408 (request timeout), 409
     // (lock/conflict timeout), 429 (rate limit), 5xx (server errors) and 529
     // (provider overloaded — the "engine is currently overloaded" case).
-    return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
+    if (RETRYABLE_STATUS_CODES.has(error.statusCode)) {
+      return true;
+    }
+    // Some reverse proxies (e.g. Xunfei) wrap upstream transient failures
+    // with non-5xx status codes while putting the real failure in the body.
+    // Match on message so those still get retried.
+    const code = message.match(/code:\s*(\d+)/)?.[1];
+    if (code !== undefined && XUNFEI_TRANSIENT_CODES.has(code)) {
+      return true;
+    }
+    if (TRANSIENT_MESSAGE_PATTERNS.some((re) => re.test(message))) {
+      return true;
+    }
+    return false;
   }
   // Fallback safety net: an unclassified provider failure — typically an
   // upstream gateway that forwards the original error only as text, with no
@@ -208,8 +227,57 @@ export function isRetryableGenerateError(error: unknown): boolean {
   // they are deterministic per history and recovered by the media-stripped
   // resend (see isImageFormatError), so retrying the identical request first
   // would only burn the retry budget.
-  return error instanceof ChatProviderError && !isImageFormatError(error);
+  if (error instanceof ChatProviderError && !isImageFormatError(error)) {
+    // Xunfei error codes are decisive even without an HTTP status: their
+    // non-transient codes (invalid key, insufficient balance, blacklist)
+    // must not be retried; transient codes retry.
+    const message = errorMessage(error);
+    const code = message.match(/code:\s*(\d+)/)?.[1];
+    if (code !== undefined) {
+      return XUNFEI_TRANSIENT_CODES.has(code) && !XUNFEI_NON_TRANSIENT_CODES.has(code);
+    }
+    // Deterministic failure wording never retries; everything else falls
+    // through the safety net (retry beats failing the run on a transient
+    // blip).
+    if (DETERMINISTIC_CHAT_PROVIDER_PATTERNS.some((p) => p.test(message))) {
+      return false;
+    }
+    return true;
+  }
+  return false;
 }
+
+const RETRYABLE_STATUS_CODES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+
+const MODERATION_MESSAGE_PATTERNS = [
+  /sensitive_words_detected/i,
+  /content filter/i,
+  /blocked by safety policy/i,
+];
+
+/** Xunfei wraps upstream transient failures as non-5xx statuses with the
+ *  real cause in `code: N, msg: ...`. */
+const XUNFEI_TRANSIENT_CODES = new Set([
+  '10006', '10007', '10008', '10009', '10010', '10011', '10012', '10110',
+  '10222', '10223', '11202', '11203', '11210',
+]);
+
+/** Xunfei error codes that are deterministic — never retried. */
+const XUNFEI_NON_TRANSIENT_CODES = new Set(['10001', '10002', '10015']);
+
+/** `ChatProviderError` messages that are deterministic — never retried. */
+const DETERMINISTIC_CHAT_PROVIDER_PATTERNS = [
+  /invalid api key/i,
+  /insufficient balance/i,
+  /appid in blacklist/i,
+  /something went wrong/i,
+];
+
+const TRANSIENT_MESSAGE_PATTERNS = [/server is overloaded/i];
+
+/** Xunfei reverse-proxy rate-limit codes (the real signal when the status
+ *  code is not 429): 11202 second-level, 11203 concurrent, 11210 upstream. */
+const XUNFEI_RATE_LIMIT_MESSAGE_PATTERNS = [/code:\s*(?:11202|11203|11210)/];
 
 // Client-side image rejections thrown before the request is sent (kosong's
 // own media whitelist in the Anthropic adapter).
@@ -390,7 +458,7 @@ export function normalizeAPIStatusError(
   retryAfterMs?: number | null,
   traceId?: string | null,
 ): APIStatusError {
-  if (statusCode === 429) {
+  if (statusCode === 429 || XUNFEI_RATE_LIMIT_MESSAGE_PATTERNS.some((p) => p.test(message))) {
     return new APIProviderRateLimitError(message, requestId, retryAfterMs, traceId);
   }
   // Context overflow first: Vertex returns prompt-too-long as a 413, and a
@@ -554,9 +622,14 @@ export function isProviderRateLimitError(error: unknown): boolean {
   if (error instanceof APIProviderRateLimitError) return true;
 
   const statusCode = getStatusCode(error);
-  if (statusCode !== undefined) return statusCode === 429;
-
   const lowerMessage = errorMessage(error).toLowerCase();
+  if (statusCode !== undefined) {
+    if (statusCode === 429) return true;
+    // Xunfei wraps upstream rate limits in arbitrary statuses; the 11210
+    // code in the message is the signal (a generic 'rate limit' message on
+    // a non-429 status is NOT treated as a rate limit — deterministic 4xx).
+    return XUNFEI_RATE_LIMIT_MESSAGE_PATTERNS.some((p) => p.test(lowerMessage));
+  }
   return PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 

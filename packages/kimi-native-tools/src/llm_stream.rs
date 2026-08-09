@@ -55,6 +55,7 @@ pub struct StreamMetadata {
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub cached_tokens: u32,
+    pub cache_creation_tokens: u32,
     pub trace_id: Option<String>,
     /// Internal counter for synthesizing Gemini tool-call stream indices
     /// (Gemini events carry no tool-call index of their own).
@@ -440,6 +441,8 @@ fn decode_anthropic_event(event: &Value, metadata: &mut StreamMetadata) -> Vec<S
                     metadata.input_tokens = usage.get("input_tokens")
                         .and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                     metadata.output_tokens = usage.get("output_tokens")
+                        .and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                    metadata.cache_creation_tokens = usage.get("cache_creation_input_tokens")
                         .and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                     metadata.cached_tokens = usage.get("cache_read_input_tokens")
                         .and_then(|v| v.as_u64()).unwrap_or(0) as u32;

@@ -1,5 +1,7 @@
 import {
   APIConnectionError,
+  APIProviderRateLimitError,
+  APIStatusError,
   APITimeoutError,
   ChatProviderError,
   classifyBaseApiError,
@@ -583,6 +585,28 @@ function shouldKeepConvertedMessage(message: MessageParam): boolean {
   return message.role !== 'assistant' || message.content.length > 0;
 }
 
+/** Xunfei reverse-proxy rate-limit codes (upgrade to a typed 429). */
+const XUNFEI_RATE_LIMIT_CODES = new Set(['11202', '11203', '11210']);
+
+/** Xunfei codes that are deterministic — auth/config failures, never retried. */
+const XUNFEI_NON_TRANSIENT_CODES = new Set(['10001', '10002', '10015']);
+
+/** Message patterns that map a status-less AnthropicError to a 503. */
+const ANTHROPIC_TRANSIENT_PATTERNS = [
+  /engine busy/i,
+  /server is overloaded/i,
+  /too much load/i,
+  /upstream stream (?:ended|closed)/i,
+  /stream terminated/i,
+];
+
+/** Message patterns that map a status-less AnthropicError to a 429. */
+const ANTHROPIC_RATE_LIMIT_PATTERNS = [
+  /rate[ _-]?limit(?:ed)?/i,
+  /too many requests/i,
+  /quota exceeded/i,
+];
+
 export function convertAnthropicError(error: unknown): ChatProviderError {
   // Abort guard FIRST: throws (never returns) the standard abort DOMException
   // for any abort shape, so a user cancellation is never misclassified as a
@@ -606,7 +630,28 @@ export function convertAnthropicError(error: unknown): ChatProviderError {
     );
   }
   if (error instanceof AnthropicError) {
-    return new ChatProviderError(`Anthropic error: ${error.message}`);
+    const message = `Anthropic error: ${error.message}`;
+    // Xunfei wraps upstream failures in AnthropicError with no HTTP status;
+    // the error code in the message is the signal. Rate-limit codes upgrade
+    // to a typed 429; deterministic codes (auth) stay a plain provider error.
+    const code = error.message.match(/code:\s*(\d+)/)?.[1];
+    if (code !== undefined) {
+      if (XUNFEI_RATE_LIMIT_CODES.has(code)) {
+        return new APIProviderRateLimitError(message);
+      }
+      if (XUNFEI_NON_TRANSIENT_CODES.has(code)) {
+        return new ChatProviderError(message);
+      }
+    }
+    // Message-pattern heuristics: transient server conditions map to 503,
+    // rate-limit wording to 429.
+    if (ANTHROPIC_TRANSIENT_PATTERNS.some((p) => p.test(error.message))) {
+      return new APIStatusError(503, message);
+    }
+    if (ANTHROPIC_RATE_LIMIT_PATTERNS.some((p) => p.test(error.message))) {
+      return new APIStatusError(429, message);
+    }
+    return new ChatProviderError(message);
   }
   // Raw, non-SDK errors (e.g. undici's `TypeError: terminated` raised when a
   // streaming response body is dropped mid-flight) are never wrapped by the
@@ -1091,15 +1136,39 @@ export class AnthropicChatProvider implements ChatProvider {
     // ── Native stream fast-path ────────────────────────────────────────
     // Attempt the Rust native SSE pipeline before falling back to the SDK.
     if (this._stream && this._apiKey !== undefined) {
+      // Mirror the SDK client's effective headers on the native fast path:
+      // default headers (minus the explicitly-disabled credential channels —
+      // `authorization` and ANTHROPIC_CUSTOM_HEADERS names are nulled in
+      // `_buildDefaultHeaders`), then request-level auth headers, then the
+      // beta feature header. `x-api-key` is injected by the native pipeline
+      // itself, so it is omitted here.
       const nativeHeaders: Array<{ key: string; value: string }> = [];
+      for (const [k, v] of Object.entries(this._buildDefaultHeaders(this._apiKey))) {
+        if (v !== null && k !== 'x-api-key') {
+          nativeHeaders.push({ key: k, value: v });
+        }
+      }
+      for (const [k, v] of Object.entries(options?.auth?.headers ?? {})) {
+        nativeHeaders.push({ key: k, value: v });
+      }
       for (const [k, v] of Object.entries(extraHeaders)) {
         nativeHeaders.push({ key: k, value: v });
+      }
+      // The native pipeline bypasses the SDK, which would set the beta header
+      // itself on the beta API — mirror it here.
+      if (this._betaApi) {
+        const betas = this._generationKwargs.betaFeatures ?? [];
+        if (betas.length > 0) {
+          nativeHeaders.push({ key: 'anthropic-beta', value: betas.join(',') });
+        }
       }
       try {
         options?.onRequestSent?.();
         const nativeResult = await tryNativeLlmStream({
           provider: 'anthropic',
-          url: `${this._baseUrl ?? 'https://api.anthropic.com'}/v1/messages`,
+          url: `${this._baseUrl ?? 'https://api.anthropic.com'}/v1/messages${
+            this._betaApi ? '?beta=true' : ''
+          }`,
           apiKey: this._apiKey,
           model: this._model,
           requestBody: JSON.stringify({ ...createParams, stream: true }),

@@ -35,6 +35,7 @@ interface NativeStreamMetadata {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  cacheCreationTokens: number;
   traceId?: string;
 }
 
@@ -163,10 +164,13 @@ class NativeStreamedMessage implements StreamedMessage {
     this._rawFinishReason = result.metadata.finishReason ?? null;
     this._traceId = result.metadata.traceId ?? null;
     this._usage = {
-      inputOther: result.metadata.inputTokens - result.metadata.cachedTokens,
+      // The native pipeline reports `inputTokens` as the API's raw
+      // `input_tokens` value, which excludes cached / cache-creation
+      // portions — mirror that directly into `inputOther`.
+      inputOther: result.metadata.inputTokens,
       output: result.metadata.outputTokens,
       inputCacheRead: result.metadata.cachedTokens,
-      inputCacheCreation: 0,
+      inputCacheCreation: result.metadata.cacheCreationTokens,
     };
   }
 
