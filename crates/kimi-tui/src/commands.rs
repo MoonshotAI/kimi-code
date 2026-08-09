@@ -37,561 +37,17 @@ impl super::app::App {
                 // Alias resolution (TS registry aliases parity).
                 let cmd = resolve_alias(cmd);
                 match cmd {
-                    "/quit" | "/exit" => return Ok(true),
-                    "/help" => {
-                        if rest.is_empty() {
-                            // Full help panel as a modal overlay (TS
-                            // help-panel parity): shortcuts + command list.
-                            self.overlay = Some(Overlay::Help(HelpPanel::new()));
-                        } else {
-                            // `/help <command>` shows that command's description.
-                            let cmd = format!("/{rest}");
-                            let found = crate::bottom_pane::command_descriptions()
-                                .into_iter()
-                                .find(|(name, _)| *name == cmd);
-                            match found {
-                                Some((name, desc)) => self
-                                    .push_line(TranscriptLine::status(format!("{name}  {desc}"))),
-                                None => self
-                                    .push_line(TranscriptLine::error(t!("tui.help.unknown", cmd))),
-                            }
-                        }
+                    "/quit" | "/help" | "/approvals" | "/approve" | "/deny" | "/status" | "/info" | "/plugins" | "/skills" | "/swarm" | "/mcp" | "/tasks" | "/version" | "/add-dir" | "/compact" | "/usage" | "/undo" | "/steer" | "/discuss" | "/workflow" | "/exit" => {
+                        return self.cmd_resource(terminal, cmd, rest).await;
                     }
-                    "/approvals" => {
-                        let items = self.harness.approvals(Some(&self.session_id)).await?;
-                        if items.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.approval.none")));
-                        }
-                        for item in items.iter().take(10) {
-                            let id = item["id"].as_str().unwrap_or("?");
-                            let tool = item["tool_name"].as_str().unwrap_or("?");
-                            let rule = item["approval_rule"].as_str().unwrap_or("?");
-                            self.push_line(TranscriptLine::status(t!(
-                                "tui.approval.listItem",
-                                id,
-                                tool,
-                                rule
-                            )));
-                        }
-                    }
-                    "/approve" => {
-                        if rest.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.approval.approveUsage")));
-                        } else {
-                            let resolved = self.harness.resolve_approval(rest, true, None).await?;
-                            self.push_line(TranscriptLine::status(if resolved {
-                                t("tui.approval.allowed")
-                            } else {
-                                t("tui.approval.notFound")
-                            }));
-                        }
-                    }
-                    "/deny" => {
-                        if rest.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.approval.denyUsage")));
-                        } else {
-                            let resolved = self
-                                .harness
-                                .resolve_approval(rest, false, Some("denied by user"))
-                                .await?;
-                            self.push_line(TranscriptLine::status(if resolved {
-                                t("tui.approval.denied")
-                            } else {
-                                t("tui.approval.notFound")
-                            }));
-                        }
-                    }
-                    "/status" => {
-                        let status = self.session.as_mut().expect("session").get_status().await;
-                        let version = self
-                            .harness
-                            .core_version()
-                            .await
-                            .unwrap_or_else(|_| "?".to_string());
-                        for line in build_status_report(&status["result"], &version, &self.session_id)
-                        {
-                            self.push_line(TranscriptLine::status(line));
-                        }
-                    }
-                    "/info" => match self.harness.core_version().await {
-                        Ok(v) => self.push_line(TranscriptLine::status(t!(
-                            "tui.info.version",
-                            v,
-                            self.session_id
-                        ))),
-                        Err(e) => self
-                            .view
-                            .transcript
-                            .push_line(TranscriptLine::error(t!("tui.err.infoFailed", e))),
-                    },
                     "/session" | "/new" | "/init" | "/title" | "/resume" | "/clear" | "/fork" | "/import" | "/sessions" | "/export" | "/archive" | "/btw" | "/endbtw" | "/copy" | "/export-md" => {
                         return self.cmd_session(terminal, cmd, rest).await;
-                    }
-                    "/plugins" => {
-                        let parts: Vec<&str> = rest.split_whitespace().collect();
-                        match parts.first().copied() {
-                            None => {
-                                // Interactive plugin browser (TS plugins panel
-                                // parity, picker-based): pick a plugin, then an
-                                // action; the action re-dispatches `/plugins
-                                // <action> <id>` to reuse the command paths.
-                                let plugins = self.harness.list_plugins().await?;
-                                if plugins.is_empty() {
-                                    self.push_line(TranscriptLine::status(t("tui.plugins.none")));
-                                } else {
-                                    let items: Vec<crate::picker::PickerItem> = plugins
-                                        .iter()
-                                        .filter_map(|p| {
-                                            let id = p["id"].as_str()?.to_string();
-                                            let enabled = p["enabled"].as_bool().unwrap_or(false);
-                                            let state = if enabled {
-                                                t("tui.status.on")
-                                            } else {
-                                                t("tui.status.off")
-                                            };
-                                            let version = p["version"].as_str().unwrap_or("");
-                                            let mut item = crate::picker::PickerItem::new(
-                                                id.clone(),
-                                                format!("{id} [{state}]"),
-                                            );
-                                            if !version.is_empty() {
-                                                item = item.with_description(version);
-                                            }
-                                            Some(item)
-                                        })
-                                        .collect();
-                                    let opts = crate::picker::PickerOptions::new(t(
-                                        "tui.picker.selectPlugin",
-                                    ))
-                                    .filterable()
-                                    .paged(10);
-                                    match crate::picker::select_picker(
-                                        terminal,
-                                        self.view.theme,
-                                        &opts,
-                                        &items,
-                                    )? {
-                                        Some(plugin_id) => {
-                                            let actions: Vec<crate::picker::PickerItem> = [
-                                                ("enable", "enable"),
-                                                ("disable", "disable"),
-                                                ("reload", "reload"),
-                                                ("remove", "remove"),
-                                            ]
-                                            .iter()
-                                            .map(|(v, l)| {
-                                                crate::picker::PickerItem::new(*v, *l)
-                                            })
-                                            .collect();
-                                            let action_opts = crate::picker::PickerOptions::new(t!(
-                                                "tui.picker.selectAction",
-                                                plugin_id
-                                            ));
-                                            if let Some(action) = crate::picker::select_picker(
-                                                terminal,
-                                                self.view.theme,
-                                                &action_opts,
-                                                &actions,
-                                            )? {
-                                                if action == "remove"
-                                                    && !self
-                                                        .confirm(
-                                                            terminal,
-                                                            &t!(
-                                                                "tui.plugins.confirmRemove",
-                                                                plugin_id
-                                                            ),
-                                                        )
-                                                        .await?
-                                                {
-                                                    return Ok(false);
-                                                }
-                                                return self
-                                                    .dispatch(
-                                                        terminal,
-                                                        &format!("/plugins {action} {plugin_id}"),
-                                                    )
-                                                    .await;
-                                            }
-                                        }
-                                        None => self.push_line(TranscriptLine::status(t(
-                                            "tui.plugins.cancelled",
-                                        ))),
-                                    }
-                                }
-                            }
-                            Some("list") => match self.harness.list_plugins().await {
-                                Ok(plugins) => {
-                                    let lines = build_plugins_report(&plugins);
-                                    for line in lines {
-                                        self.push_line(TranscriptLine::status(line));
-                                    }
-                                }
-                                Err(e) => self.view.transcript.push_line(TranscriptLine::error(
-                                    t!("tui.err.pluginsFailed", e),
-                                )),
-                            },
-                            Some(action) => {
-                                let id = parts.get(1).copied().unwrap_or("");
-                                let result = match action {
-                                    "enable" if !id.is_empty() => self
-                                        .harness
-                                        .set_plugin_enabled(id, true)
-                                        .await
-                                        .map(|_| t!("tui.plugins.enabled", id)),
-                                    "disable" if !id.is_empty() => self
-                                        .harness
-                                        .set_plugin_enabled(id, false)
-                                        .await
-                                        .map(|_| t!("tui.plugins.disabled", id)),
-                                    "remove" if !id.is_empty() => {
-                                        self.harness.remove_plugin(id).await.map(|removed| {
-                                            if removed {
-                                                t!("tui.plugins.removed", id)
-                                            } else {
-                                                t!("tui.plugins.notFound", id)
-                                            }
-                                        })
-                                    }
-                                    "reload" => self
-                                        .harness
-                                        .reload_plugins()
-                                        .await
-                                        .map(|_| t("tui.plugins.reloaded").to_string()),
-                                    "install" if !id.is_empty() => {
-                                        let source =
-                                            parts.get(1).copied().unwrap_or("").to_string();
-                                        self.harness
-                                            .install_plugin(&source)
-                                            .await
-                                            .map(|_| t!("tui.plugins.installed", source))
-                                    }
-                                    _ => Err(anyhow::anyhow!(t("tui.plugins.usage"))),
-                                };
-                                match result {
-                                    Ok(msg) => self.push_line(TranscriptLine::status(msg)),
-                                    Err(e) => self.view.transcript.push_line(
-                                        TranscriptLine::error(t!("tui.err.pluginsFailed", e)),
-                                    ),
-                                }
-                            }
-                        }
                     }
                     "/config" | "/plan" | "/thinking" | "/permission" | "/yolo" | "/auto" | "/theme" | "/models" | "/model" | "/reload" | "/reload-tui" | "/locale" | "/editor" | "/settings" | "/provider" | "/experiments" | "/multi-llm" | "/feedback" | "/web" => {
                         return self.cmd_config(terminal, cmd, rest).await;
                     }
-                    "/skills" => {
-                        let skills = self.session.as_mut().expect("session").list_skills().await;
-                        match skills {
-                            Ok(skills) => {
-                                let entries: Vec<(String, String)> = skills["skills"]
-                                    .as_array()
-                                    .map(|arr| {
-                                        arr.iter()
-                                            .map(|s| {
-                                                let name =
-                                                    s["name"].as_str().unwrap_or("?").to_string();
-                                                let desc = s["description"]
-                                                    .as_str()
-                                                    .unwrap_or("")
-                                                    .to_string();
-                                                (name, desc)
-                                            })
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
-                                if entries.is_empty() {
-                                    self.push_line(TranscriptLine::status(t("tui.skills.none")));
-                                } else {
-                                    let items: Vec<crate::picker::PickerItem> = entries
-                                        .into_iter()
-                                        .map(|(name, desc)| {
-                                            let mut item =
-                                                crate::picker::PickerItem::new(name.clone(), name);
-                                            if !desc.is_empty() {
-                                                item = item.with_description(desc);
-                                            }
-                                            item
-                                        })
-                                        .collect();
-                                    let opts = crate::picker::PickerOptions::new(t(
-                                        "tui.picker.selectSkill",
-                                    ))
-                                    .filterable()
-                                    .paged(10);
-                                    match crate::picker::select_picker(
-                                        terminal,
-                                        self.view.theme,
-                                        &opts,
-                                        &items,
-                                    )? {
-                                        Some(name) => {
-                                            let desc = items
-                                                .iter()
-                                                .find(|it| it.value == name)
-                                                .and_then(|it| it.description.clone())
-                                                .unwrap_or_default();
-                                            self.push_line(TranscriptLine::status(t!(
-                                                "tui.skills.selected",
-                                                name,
-                                                desc
-                                            )));
-                                        }
-                                        None => self.view.transcript.push_line(
-                                            TranscriptLine::status(t("tui.skills.cancelled")),
-                                        ),
-                                    }
-                                }
-                            }
-                            Err(e) => self
-                                .view
-                                .transcript
-                                .push_line(TranscriptLine::error(t!("tui.err.skillsFailed", e))),
-                        }
-                    }
-                    "/swarm" => {
-                        let enabled = rest == "on" || rest.is_empty();
-                        self.session
-                            .as_mut()
-                            .expect("session")
-                            .set_swarm_mode(enabled, None)
-                            .await?;
-                        self.push_line(TranscriptLine::status(t!(
-                            "tui.status.swarm",
-                            t(if enabled {
-                                "tui.status.on"
-                            } else {
-                                "tui.status.off"
-                            })
-                        )));
-                        self.refresh_status().await;
-                    }
-                    "/mcp" => {
-                        match self
-                            .session
-                            .as_mut()
-                            .expect("session")
-                            .list_mcp_servers()
-                            .await
-                        {
-                            Ok(servers) => {
-                                let list = servers["mcp_servers"]
-                                    .as_array()
-                                    .or_else(|| servers["result"]["mcp_servers"].as_array())
-                                    .or_else(|| servers["servers"].as_array())
-                                    .cloned()
-                                    .unwrap_or_default();
-                                let names: Vec<&str> = list
-                                    .iter()
-                                    .filter_map(|s| {
-                                        s["name"].as_str().or_else(|| s["server_name"].as_str())
-                                    })
-                                    .collect();
-                                if names.is_empty() {
-                                    self.view
-                                        .transcript
-                                        .push_line(TranscriptLine::status(t("tui.mcp.none")));
-                                } else {
-                                    // Full report: reuse the parsed list for
-                                    // the structured rows.
-                                    let list: Vec<serde_json::Value> = servers["mcp_servers"]
-                                        .as_array()
-                                        .or_else(|| servers["result"]["mcp_servers"].as_array())
-                                        .or_else(|| servers["servers"].as_array())
-                                        .cloned()
-                                        .unwrap_or_default();
-                                    for line in build_mcp_report(&list) {
-                                        self.push_line(TranscriptLine::status(line));
-                                    }
-                                }
-                            }
-                            Err(e) => self
-                                .view
-                                .transcript
-                                .push_line(TranscriptLine::error(t!("tui.err.mcpFailed", e))),
-                        }
-                    }
-                    "/tasks" => {
-                        if !rest.is_empty() {
-                            // `/tasks <id>` shows the task's output (TS
-                            // task-output-viewer parity, simplified — a folded
-                            // tool line, no full-screen viewer).
-                            let body = self
-                                .session
-                                .as_mut()
-                                .expect("session")
-                                .get_background_task_output(rest)
-                                .await;
-                            let output = body["result"]["output"]
-                                .as_str()
-                                .or_else(|| body["output"].as_str())
-                                .unwrap_or("");
-                            if output.is_empty() {
-                                self.push_line(TranscriptLine::status(t!(
-                                    "tui.tasks.noOutput",
-                                    rest
-                                )));
-                            } else {
-                                self.view
-                                    .transcript
-                                    .push_line(TranscriptLine::tool_collapsed(output.to_string()));
-                            }
-                        } else {
-                            let tasks = self
-                                .session
-                                .as_mut()
-                                .expect("session")
-                                .list_background_tasks()
-                                .await;
-                            let list = tasks["tasks"]
-                                .as_array()
-                                .or_else(|| tasks["result"]["tasks"].as_array())
-                                .cloned()
-                                .unwrap_or_default();
-                            if list.is_empty() {
-                                self.push_line(TranscriptLine::status(t("tui.tasks.none")));
-                            } else {
-                                // Interactive task browser (TS tasks-browser
-                                // parity, picker-based): pick a task to view
-                                // its output (re-dispatches `/tasks <id>`).
-                                let items: Vec<crate::picker::PickerItem> = list
-                                    .iter()
-                                    .filter_map(|t| {
-                                        let id = t["id"].as_str()?.to_string();
-                                        let label = t["label"].as_str().unwrap_or("").to_string();
-                                        let state = t["state"].as_str().unwrap_or("?");
-                                        let mut item = crate::picker::PickerItem::new(
-                                            id.clone(),
-                                            format!("{id}  [{state}]"),
-                                        );
-                                        if !label.is_empty() {
-                                            item = item.with_description(label);
-                                        }
-                                        Some(item)
-                                    })
-                                    .collect();
-                                let opts = crate::picker::PickerOptions::new(t!(
-                                    "tui.picker.selectTask"
-                                ))
-                                .filterable()
-                                .paged(10);
-                                match crate::picker::select_picker(
-                                    terminal,
-                                    self.view.theme,
-                                    &opts,
-                                    &items,
-                                )? {
-                                    Some(id) => {
-                                        return self
-                                            .dispatch(terminal, &format!("/tasks {id}"))
-                                            .await;
-                                    }
-                                    None => {
-                                        self.push_line(TranscriptLine::status(t(
-                                            "tui.tasks.cancelled",
-                                        )))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    "/version" => match self.harness.core_version().await {
-                        Ok(v) => self
-                            .view
-                            .transcript
-                            .push_line(TranscriptLine::status(t!("tui.version.show", v))),
-                        Err(e) => self
-                            .view
-                            .transcript
-                            .push_line(TranscriptLine::error(t!("tui.err.versionFailed", e))),
-                    },
                     "/goal" | "/goal-cancel" | "/goal-pause" | "/goal-resume" | "/goal-status" => {
                         return self.cmd_goal(terminal, cmd, rest).await;
-                    }
-                    "/add-dir" => {
-                        if rest.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.addDir.usage")));
-                        } else {
-                            match self
-                                .session
-                                .as_mut()
-                                .expect("session")
-                                .add_additional_dir(rest)
-                                .await
-                            {
-                                Ok(_) => self.push_line(TranscriptLine::status(t!(
-                                    "tui.addDir.added",
-                                    rest
-                                ))),
-                                Err(e) => self.push_line(TranscriptLine::error(t!(
-                                    "tui.err.addDirFailed",
-                                    e
-                                ))),
-                            }
-                        }
-                    }
-                    "/compact" => {
-                        // `/compact <instruction>` passes a custom compaction
-                        // instruction (TS `compact({ instruction })` parity).
-                        let instruction = (!rest.is_empty()).then_some(rest);
-                        let result = self
-                            .session
-                            .as_mut()
-                            .expect("session")
-                            .compact_with_instruction(instruction)
-                            .await;
-                        match result {
-                            Ok(_) => self.push_line(TranscriptLine::status(t("tui.compact.ok"))),
-                            Err(e) => self
-                                .push_line(TranscriptLine::error(t!("tui.err.compactFailed", e))),
-                        }
-                    }
-                    "/usage" => {
-                        let usage = self.session.as_mut().expect("session").get_usage().await?;
-                        for line in build_usage_report(&usage["result"]) {
-                            self.push_line(TranscriptLine::status(line));
-                        }
-                        // Context window readout (TS usage-panel parity).
-                        let status = self.session.as_mut().expect("session").get_status().await;
-                        let ctx = status["result"]["context_tokens"].as_u64().unwrap_or(0);
-                        let max = status["result"]["max_context_tokens"].as_u64().unwrap_or(0);
-                        if max > 0 {
-                            let pct = ctx
-                                .checked_mul(100)
-                                .map(|v| v / max)
-                                .unwrap_or(0)
-                                .min(100);
-                            self.push_line(TranscriptLine::status(format!(
-                                "{} {}",
-                                crate::reports::ctx_bar(ctx, max),
-                                t!("tui.usage.context", ctx, max, pct)
-                            )));
-                        }
-                    }
-                    "/undo" => {
-                        let undone = self
-                            .session
-                            .as_mut()
-                            .expect("session")
-                            .undo_history(1)
-                            .await?;
-                        self.push_line(TranscriptLine::status(t!(
-                            "tui.undo.result",
-                            serde_json::to_string(&undone).unwrap_or_default()
-                        )));
-                    }
-                    "/steer" => {
-                        if rest.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.steer.usage")));
-                        } else {
-                            let queued = self
-                                .session
-                                .as_mut()
-                                .expect("session")
-                                .steer(serde_json::json!([{ "type": "text", "text": rest }]))
-                                .await?;
-                            self.push_line(TranscriptLine::status(t!("tui.steer.queued", queued)));
-                        }
                     }
                     "/login" => {
                         // Managed kimi auth: run the device flow, surface the
@@ -676,70 +132,6 @@ impl super::app::App {
                             self.push_line(TranscriptLine::error(t!("tui.err.logoutFailed", e)))
                         }
                     },
-                    "/discuss" => {
-                        // Multi-agent discussion (TS `handleDiscussCommand`
-                        // parity, simplified): enable swarm mode, then send the
-                        // constructed prompt as a normal turn so the model runs
-                        // the SwarmDiscussion tool.
-                        let args = match parse_discuss(rest) {
-                            Ok(args) => args,
-                            Err(code) => {
-                                let msg = match code {
-                                    "need-topic" => t("tui.discuss.needTopic"),
-                                    "need-roles" => t("tui.discuss.needRoles"),
-                                    _ => t("tui.discuss.usage"),
-                                };
-                                self.push_line(TranscriptLine::error(msg));
-                                return Ok(false);
-                            }
-                        };
-                        if let Err(e) = self
-                            .session
-                            .as_mut()
-                            .expect("session")
-                            .set_swarm_mode(true, Some("task"))
-                            .await
-                        {
-                            self.push_line(TranscriptLine::error(t!("tui.err.discussSwarm", e)));
-                            return Ok(false);
-                        }
-                        self.refresh_status().await;
-                        let mode = if args.debate { "debate" } else { "discussion" };
-                        let prompt = format!(
-                        "Start a {mode} on the following topic:\n\nTopic: {}\n\nParticipants: {}\n\nUse the SwarmDiscussion tool.",
-                        args.topic,
-                        args.roles.join(", ")
-                    );
-                        return self.dispatch(terminal, &prompt).await;
-                    }
-                    "/workflow" => {
-                        // Workflow tool entry (TS `handleWorkflowCommand` parity):
-                        // list / run / status / cancel all become a prompt that
-                        // asks the model to drive the Workflow tool.
-                        let trimmed = rest.trim();
-                        if trimmed.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.workflow.usage")));
-                            return Ok(false);
-                        }
-                        let prompt = if trimmed.eq_ignore_ascii_case("list") {
-                            "List the available workflows using the Workflow tool.".to_string()
-                        } else if let Some(id) = trimmed.strip_prefix("status ") {
-                            format!(
-                                "Check the status of workflow run {id} using the Workflow tool."
-                            )
-                        } else if let Some(id) = trimmed.strip_prefix("cancel ") {
-                            format!("Cancel workflow run {id} using the Workflow tool.")
-                        } else if trimmed.eq_ignore_ascii_case("status")
-                            || trimmed.eq_ignore_ascii_case("cancel")
-                        {
-                            self.push_line(TranscriptLine::status(t("tui.workflow.usage")));
-                            return Ok(false);
-                        } else {
-                            // `<name> [args...]` — run it.
-                            format!("Run the workflow \"{trimmed}\" using the Workflow tool.")
-                        };
-                        return self.dispatch(terminal, &prompt).await;
-                    }
                     other => self
                         .view
                         .transcript
@@ -1800,6 +1192,638 @@ impl super::app::App {
             }
             "/web" => {
     self.push_line(TranscriptLine::status(t("tui.web.hint")));
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+}
+
+impl super::app::App {
+    /// `resource` command group (extracted from dispatch for readability).
+    async fn cmd_resource(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        cmd: &str,
+        rest: &str,
+    ) -> anyhow::Result<bool> {
+        match cmd {
+            "/quit" => {
+                return Ok(true);
+            }
+            "/help" => {
+    if rest.is_empty() {
+        // Full help panel as a modal overlay (TS
+        // help-panel parity): shortcuts + command list.
+        self.overlay = Some(Overlay::Help(HelpPanel::new()));
+    } else {
+        // `/help <command>` shows that command's description.
+        let cmd = format!("/{rest}");
+        let found = crate::bottom_pane::command_descriptions()
+            .into_iter()
+            .find(|(name, _)| *name == cmd);
+        match found {
+            Some((name, desc)) => self
+                .push_line(TranscriptLine::status(format!("{name}  {desc}"))),
+            None => self
+                .push_line(TranscriptLine::error(t!("tui.help.unknown", cmd))),
+        }
+    }
+            }
+            "/approvals" => {
+    let items = self.harness.approvals(Some(&self.session_id)).await?;
+    if items.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.approval.none")));
+    }
+    for item in items.iter().take(10) {
+        let id = item["id"].as_str().unwrap_or("?");
+        let tool = item["tool_name"].as_str().unwrap_or("?");
+        let rule = item["approval_rule"].as_str().unwrap_or("?");
+        self.push_line(TranscriptLine::status(t!(
+            "tui.approval.listItem",
+            id,
+            tool,
+            rule
+        )));
+    }
+            }
+            "/approve" => {
+    if rest.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.approval.approveUsage")));
+    } else {
+        let resolved = self.harness.resolve_approval(rest, true, None).await?;
+        self.push_line(TranscriptLine::status(if resolved {
+            t("tui.approval.allowed")
+        } else {
+            t("tui.approval.notFound")
+        }));
+    }
+            }
+            "/deny" => {
+    if rest.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.approval.denyUsage")));
+    } else {
+        let resolved = self
+            .harness
+            .resolve_approval(rest, false, Some("denied by user"))
+            .await?;
+        self.push_line(TranscriptLine::status(if resolved {
+            t("tui.approval.denied")
+        } else {
+            t("tui.approval.notFound")
+        }));
+    }
+            }
+            "/status" => {
+    let status = self.session.as_mut().expect("session").get_status().await;
+    let version = self
+        .harness
+        .core_version()
+        .await
+        .unwrap_or_else(|_| "?".to_string());
+    for line in build_status_report(&status["result"], &version, &self.session_id)
+    {
+        self.push_line(TranscriptLine::status(line));
+    }
+            }
+            "/info" => {
+                match self.harness.core_version().await {
+    Ok(v) => self.push_line(TranscriptLine::status(t!(
+        "tui.info.version",
+        v,
+        self.session_id
+    ))),
+    Err(e) => self
+        .view
+        .transcript
+        .push_line(TranscriptLine::error(t!("tui.err.infoFailed", e))),
+                }
+            }
+            "/plugins" => {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    match parts.first().copied() {
+        None => {
+            // Interactive plugin browser (TS plugins panel
+            // parity, picker-based): pick a plugin, then an
+            // action; the action re-dispatches `/plugins
+            // <action> <id>` to reuse the command paths.
+            let plugins = self.harness.list_plugins().await?;
+            if plugins.is_empty() {
+                self.push_line(TranscriptLine::status(t("tui.plugins.none")));
+            } else {
+                let items: Vec<crate::picker::PickerItem> = plugins
+                    .iter()
+                    .filter_map(|p| {
+                        let id = p["id"].as_str()?.to_string();
+                        let enabled = p["enabled"].as_bool().unwrap_or(false);
+                        let state = if enabled {
+                            t("tui.status.on")
+                        } else {
+                            t("tui.status.off")
+                        };
+                        let version = p["version"].as_str().unwrap_or("");
+                        let mut item = crate::picker::PickerItem::new(
+                            id.clone(),
+                            format!("{id} [{state}]"),
+                        );
+                        if !version.is_empty() {
+                            item = item.with_description(version);
+                        }
+                        Some(item)
+                    })
+                    .collect();
+                let opts = crate::picker::PickerOptions::new(t(
+                    "tui.picker.selectPlugin",
+                ))
+                .filterable()
+                .paged(10);
+                match crate::picker::select_picker(
+                    terminal,
+                    self.view.theme,
+                    &opts,
+                    &items,
+                )? {
+                    Some(plugin_id) => {
+                        let actions: Vec<crate::picker::PickerItem> = [
+                            ("enable", "enable"),
+                            ("disable", "disable"),
+                            ("reload", "reload"),
+                            ("remove", "remove"),
+                        ]
+                        .iter()
+                        .map(|(v, l)| {
+                            crate::picker::PickerItem::new(*v, *l)
+                        })
+                        .collect();
+                        let action_opts = crate::picker::PickerOptions::new(t!(
+                            "tui.picker.selectAction",
+                            plugin_id
+                        ));
+                        if let Some(action) = crate::picker::select_picker(
+                            terminal,
+                            self.view.theme,
+                            &action_opts,
+                            &actions,
+                        )? {
+                            if action == "remove"
+                                && !self
+                                    .confirm(
+                                        terminal,
+                                        &t!(
+                                            "tui.plugins.confirmRemove",
+                                            plugin_id
+                                        ),
+                                    )
+                                    .await?
+                            {
+                                return Ok(false);
+                            }
+                            return self
+                                .dispatch(
+                                    terminal,
+                                    &format!("/plugins {action} {plugin_id}"),
+                                )
+                                .await;
+                        }
+                    }
+                    None => self.push_line(TranscriptLine::status(t(
+                        "tui.plugins.cancelled",
+                    ))),
+                }
+            }
+        }
+        Some("list") => match self.harness.list_plugins().await {
+            Ok(plugins) => {
+                let lines = build_plugins_report(&plugins);
+                for line in lines {
+                    self.push_line(TranscriptLine::status(line));
+                }
+            }
+            Err(e) => self.view.transcript.push_line(TranscriptLine::error(
+                t!("tui.err.pluginsFailed", e),
+            )),
+        },
+        Some(action) => {
+            let id = parts.get(1).copied().unwrap_or("");
+            let result = match action {
+                "enable" if !id.is_empty() => self
+                    .harness
+                    .set_plugin_enabled(id, true)
+                    .await
+                    .map(|_| t!("tui.plugins.enabled", id)),
+                "disable" if !id.is_empty() => self
+                    .harness
+                    .set_plugin_enabled(id, false)
+                    .await
+                    .map(|_| t!("tui.plugins.disabled", id)),
+                "remove" if !id.is_empty() => {
+                    self.harness.remove_plugin(id).await.map(|removed| {
+                        if removed {
+                            t!("tui.plugins.removed", id)
+                        } else {
+                            t!("tui.plugins.notFound", id)
+                        }
+                    })
+                }
+                "reload" => self
+                    .harness
+                    .reload_plugins()
+                    .await
+                    .map(|_| t("tui.plugins.reloaded").to_string()),
+                "install" if !id.is_empty() => {
+                    let source =
+                        parts.get(1).copied().unwrap_or("").to_string();
+                    self.harness
+                        .install_plugin(&source)
+                        .await
+                        .map(|_| t!("tui.plugins.installed", source))
+                }
+                _ => Err(anyhow::anyhow!(t("tui.plugins.usage"))),
+            };
+            match result {
+                Ok(msg) => self.push_line(TranscriptLine::status(msg)),
+                Err(e) => self.view.transcript.push_line(
+                    TranscriptLine::error(t!("tui.err.pluginsFailed", e)),
+                ),
+            }
+        }
+    }
+            }
+            "/skills" => {
+    let skills = self.session.as_mut().expect("session").list_skills().await;
+    match skills {
+        Ok(skills) => {
+            let entries: Vec<(String, String)> = skills["skills"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|s| {
+                            let name =
+                                s["name"].as_str().unwrap_or("?").to_string();
+                            let desc = s["description"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string();
+                            (name, desc)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if entries.is_empty() {
+                self.push_line(TranscriptLine::status(t("tui.skills.none")));
+            } else {
+                let items: Vec<crate::picker::PickerItem> = entries
+                    .into_iter()
+                    .map(|(name, desc)| {
+                        let mut item =
+                            crate::picker::PickerItem::new(name.clone(), name);
+                        if !desc.is_empty() {
+                            item = item.with_description(desc);
+                        }
+                        item
+                    })
+                    .collect();
+                let opts = crate::picker::PickerOptions::new(t(
+                    "tui.picker.selectSkill",
+                ))
+                .filterable()
+                .paged(10);
+                match crate::picker::select_picker(
+                    terminal,
+                    self.view.theme,
+                    &opts,
+                    &items,
+                )? {
+                    Some(name) => {
+                        let desc = items
+                            .iter()
+                            .find(|it| it.value == name)
+                            .and_then(|it| it.description.clone())
+                            .unwrap_or_default();
+                        self.push_line(TranscriptLine::status(t!(
+                            "tui.skills.selected",
+                            name,
+                            desc
+                        )));
+                    }
+                    None => self.view.transcript.push_line(
+                        TranscriptLine::status(t("tui.skills.cancelled")),
+                    ),
+                }
+            }
+        }
+        Err(e) => self
+            .view
+            .transcript
+            .push_line(TranscriptLine::error(t!("tui.err.skillsFailed", e))),
+    }
+            }
+            "/swarm" => {
+    let enabled = rest == "on" || rest.is_empty();
+    self.session
+        .as_mut()
+        .expect("session")
+        .set_swarm_mode(enabled, None)
+        .await?;
+    self.push_line(TranscriptLine::status(t!(
+        "tui.status.swarm",
+        t(if enabled {
+            "tui.status.on"
+        } else {
+            "tui.status.off"
+        })
+    )));
+    self.refresh_status().await;
+            }
+            "/mcp" => {
+    match self
+        .session
+        .as_mut()
+        .expect("session")
+        .list_mcp_servers()
+        .await
+    {
+        Ok(servers) => {
+            let list = servers["mcp_servers"]
+                .as_array()
+                .or_else(|| servers["result"]["mcp_servers"].as_array())
+                .or_else(|| servers["servers"].as_array())
+                .cloned()
+                .unwrap_or_default();
+            let names: Vec<&str> = list
+                .iter()
+                .filter_map(|s| {
+                    s["name"].as_str().or_else(|| s["server_name"].as_str())
+                })
+                .collect();
+            if names.is_empty() {
+                self.view
+                    .transcript
+                    .push_line(TranscriptLine::status(t("tui.mcp.none")));
+            } else {
+                // Full report: reuse the parsed list for
+                // the structured rows.
+                let list: Vec<serde_json::Value> = servers["mcp_servers"]
+                    .as_array()
+                    .or_else(|| servers["result"]["mcp_servers"].as_array())
+                    .or_else(|| servers["servers"].as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                for line in build_mcp_report(&list) {
+                    self.push_line(TranscriptLine::status(line));
+                }
+            }
+        }
+        Err(e) => self
+            .view
+            .transcript
+            .push_line(TranscriptLine::error(t!("tui.err.mcpFailed", e))),
+    }
+            }
+            "/tasks" => {
+    if !rest.is_empty() {
+        // `/tasks <id>` shows the task's output (TS
+        // task-output-viewer parity, simplified — a folded
+        // tool line, no full-screen viewer).
+        let body = self
+            .session
+            .as_mut()
+            .expect("session")
+            .get_background_task_output(rest)
+            .await;
+        let output = body["result"]["output"]
+            .as_str()
+            .or_else(|| body["output"].as_str())
+            .unwrap_or("");
+        if output.is_empty() {
+            self.push_line(TranscriptLine::status(t!(
+                "tui.tasks.noOutput",
+                rest
+            )));
+        } else {
+            self.view
+                .transcript
+                .push_line(TranscriptLine::tool_collapsed(output.to_string()));
+        }
+    } else {
+        let tasks = self
+            .session
+            .as_mut()
+            .expect("session")
+            .list_background_tasks()
+            .await;
+        let list = tasks["tasks"]
+            .as_array()
+            .or_else(|| tasks["result"]["tasks"].as_array())
+            .cloned()
+            .unwrap_or_default();
+        if list.is_empty() {
+            self.push_line(TranscriptLine::status(t("tui.tasks.none")));
+        } else {
+            // Interactive task browser (TS tasks-browser
+            // parity, picker-based): pick a task to view
+            // its output (re-dispatches `/tasks <id>`).
+            let items: Vec<crate::picker::PickerItem> = list
+                .iter()
+                .filter_map(|t| {
+                    let id = t["id"].as_str()?.to_string();
+                    let label = t["label"].as_str().unwrap_or("").to_string();
+                    let state = t["state"].as_str().unwrap_or("?");
+                    let mut item = crate::picker::PickerItem::new(
+                        id.clone(),
+                        format!("{id}  [{state}]"),
+                    );
+                    if !label.is_empty() {
+                        item = item.with_description(label);
+                    }
+                    Some(item)
+                })
+                .collect();
+            let opts = crate::picker::PickerOptions::new(t!(
+                "tui.picker.selectTask"
+            ))
+            .filterable()
+            .paged(10);
+            match crate::picker::select_picker(
+                terminal,
+                self.view.theme,
+                &opts,
+                &items,
+            )? {
+                Some(id) => {
+                    return self
+                        .dispatch(terminal, &format!("/tasks {id}"))
+                        .await;
+                }
+                None => {
+                    self.push_line(TranscriptLine::status(t(
+                        "tui.tasks.cancelled",
+                    )))
+                }
+            }
+        }
+    }
+            }
+            "/version" => {
+                match self.harness.core_version().await {
+    Ok(v) => self
+        .view
+        .transcript
+        .push_line(TranscriptLine::status(t!("tui.version.show", v))),
+    Err(e) => self
+        .view
+        .transcript
+        .push_line(TranscriptLine::error(t!("tui.err.versionFailed", e))),
+                }
+            }
+            "/add-dir" => {
+    if rest.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.addDir.usage")));
+    } else {
+        match self
+            .session
+            .as_mut()
+            .expect("session")
+            .add_additional_dir(rest)
+            .await
+        {
+            Ok(_) => self.push_line(TranscriptLine::status(t!(
+                "tui.addDir.added",
+                rest
+            ))),
+            Err(e) => self.push_line(TranscriptLine::error(t!(
+                "tui.err.addDirFailed",
+                e
+            ))),
+        }
+    }
+            }
+            "/compact" => {
+    // `/compact <instruction>` passes a custom compaction
+    // instruction (TS `compact({ instruction })` parity).
+    let instruction = (!rest.is_empty()).then_some(rest);
+    let result = self
+        .session
+        .as_mut()
+        .expect("session")
+        .compact_with_instruction(instruction)
+        .await;
+    match result {
+        Ok(_) => self.push_line(TranscriptLine::status(t("tui.compact.ok"))),
+        Err(e) => self
+            .push_line(TranscriptLine::error(t!("tui.err.compactFailed", e))),
+    }
+            }
+            "/usage" => {
+    let usage = self.session.as_mut().expect("session").get_usage().await?;
+    for line in build_usage_report(&usage["result"]) {
+        self.push_line(TranscriptLine::status(line));
+    }
+    // Context window readout (TS usage-panel parity).
+    let status = self.session.as_mut().expect("session").get_status().await;
+    let ctx = status["result"]["context_tokens"].as_u64().unwrap_or(0);
+    let max = status["result"]["max_context_tokens"].as_u64().unwrap_or(0);
+    if max > 0 {
+        let pct = ctx
+            .checked_mul(100)
+            .map(|v| v / max)
+            .unwrap_or(0)
+            .min(100);
+        self.push_line(TranscriptLine::status(format!(
+            "{} {}",
+            crate::reports::ctx_bar(ctx, max),
+            t!("tui.usage.context", ctx, max, pct)
+        )));
+    }
+            }
+            "/undo" => {
+    let undone = self
+        .session
+        .as_mut()
+        .expect("session")
+        .undo_history(1)
+        .await?;
+    self.push_line(TranscriptLine::status(t!(
+        "tui.undo.result",
+        serde_json::to_string(&undone).unwrap_or_default()
+    )));
+            }
+            "/steer" => {
+    if rest.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.steer.usage")));
+    } else {
+        let queued = self
+            .session
+            .as_mut()
+            .expect("session")
+            .steer(serde_json::json!([{ "type": "text", "text": rest }]))
+            .await?;
+        self.push_line(TranscriptLine::status(t!("tui.steer.queued", queued)));
+    }
+            }
+            "/discuss" => {
+    // Multi-agent discussion (TS `handleDiscussCommand`
+    // parity, simplified): enable swarm mode, then send the
+    // constructed prompt as a normal turn so the model runs
+    // the SwarmDiscussion tool.
+    let args = match parse_discuss(rest) {
+        Ok(args) => args,
+        Err(code) => {
+            let msg = match code {
+                "need-topic" => t("tui.discuss.needTopic"),
+                "need-roles" => t("tui.discuss.needRoles"),
+                _ => t("tui.discuss.usage"),
+            };
+            self.push_line(TranscriptLine::error(msg));
+            return Ok(false);
+        }
+    };
+    if let Err(e) = self
+        .session
+        .as_mut()
+        .expect("session")
+        .set_swarm_mode(true, Some("task"))
+        .await
+    {
+        self.push_line(TranscriptLine::error(t!("tui.err.discussSwarm", e)));
+        return Ok(false);
+    }
+    self.refresh_status().await;
+    let mode = if args.debate { "debate" } else { "discussion" };
+    let prompt = format!(
+    "Start a {mode} on the following topic:\n\nTopic: {}\n\nParticipants: {}\n\nUse the SwarmDiscussion tool.",
+    args.topic,
+    args.roles.join(", ")
+);
+    return self.dispatch(terminal, &prompt).await;
+            }
+            "/workflow" => {
+    // Workflow tool entry (TS `handleWorkflowCommand` parity):
+    // list / run / status / cancel all become a prompt that
+    // asks the model to drive the Workflow tool.
+    let trimmed = rest.trim();
+    if trimmed.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.workflow.usage")));
+        return Ok(false);
+    }
+    let prompt = if trimmed.eq_ignore_ascii_case("list") {
+        "List the available workflows using the Workflow tool.".to_string()
+    } else if let Some(id) = trimmed.strip_prefix("status ") {
+        format!(
+            "Check the status of workflow run {id} using the Workflow tool."
+        )
+    } else if let Some(id) = trimmed.strip_prefix("cancel ") {
+        format!("Cancel workflow run {id} using the Workflow tool.")
+    } else if trimmed.eq_ignore_ascii_case("status")
+        || trimmed.eq_ignore_ascii_case("cancel")
+    {
+        self.push_line(TranscriptLine::status(t("tui.workflow.usage")));
+        return Ok(false);
+    } else {
+        // `<name> [args...]` — run it.
+        format!("Run the workflow \"{trimmed}\" using the Workflow tool.")
+    };
+    return self.dispatch(terminal, &prompt).await;
             }
             _ => {}
         }
