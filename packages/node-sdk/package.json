@@ -33,10 +33,6 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
-    },
-    "./rust": {
-      "types": "./src/rust/index.ts",
-      "default": "./src/rust/index.ts"
     }
   },
   "publishConfig": {

@@ -299,9 +299,6 @@ importers:
       '@hono/node-server':
         specifier: '>=2.0.5'
         version: 2.0.11(hono@4.12.32)
-      '@moonshot-ai/kosong':
-        specifier: workspace:^
-        version: link:../../../packages/kosong
       '@moonshot-ai/protocol':
         specifier: workspace:^
         version: link:../../../packages/protocol
@@ -558,9 +555,6 @@ importers:
       '@moonshot-ai/kimi-code-sdk':
         specifier: workspace:^
         version: link:../node-sdk
-      '@moonshot-ai/kosong':
-        specifier: workspace:^
-        version: link:../kosong
     devDependencies:
       jimp:
         specifier: ^1.6.1
@@ -776,9 +770,6 @@ importers:
 
   packages/oauth:
     dependencies:
-      '@moonshot-ai/kosong':
-        specifier: workspace:*
-        version: link:../kosong
       proper-lockfile:
         specifier: ^4.1.2
         version: 4.1.2
