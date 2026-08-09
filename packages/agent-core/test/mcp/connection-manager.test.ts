@@ -1128,7 +1128,7 @@ describe('Session MCP startup', () => {
     }
   }, 7000);
 
-  it('emits tool.list.updated(mcp.disconnected) when reconnect drops the live tools', async () => {
+  it('keeps tools registered through a manual reconnect (no mcp.disconnected)', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-reconnect-'));
     const events: SessionRpcEvent[] = [];
     const session = new Session({
@@ -1165,16 +1165,18 @@ describe('Session MCP startup', () => {
 
       events.length = 0;
       await session.mcp.reconnect('good');
-      // The reconnect cycle: pending (tools cleared) → connected (tools back).
-      // Both transitions must surface as tool.list.updated so SDK consumers
-      // watching that event don't see stale tools mid-cycle.
+      // The reconnect cycle keeps the existing tools registered through
+      // `pending` and only swaps them when `connected` re-registers: the
+      // tool list never gaps mid-cycle, so no mcp.disconnected is emitted
+      // and a failed attempt cannot strand the session without the tools
+      // (#2742).
       const disconnects = events.filter(
         (e) => e.type === 'tool.list.updated' && e.reason === 'mcp.disconnected',
       );
       const connects = events.filter(
         (e) => e.type === 'tool.list.updated' && e.reason === 'mcp.connected',
       );
-      expect(disconnects.length).toBeGreaterThanOrEqual(1);
+      expect(disconnects).toHaveLength(0);
       expect(connects.length).toBeGreaterThanOrEqual(1);
     } finally {
       await session.close();

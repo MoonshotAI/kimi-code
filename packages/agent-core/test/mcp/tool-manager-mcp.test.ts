@@ -1033,6 +1033,89 @@ describe('ToolManager MCP reconnect-on-call', () => {
       await server.close();
     }
   }, 20000);
+
+  it('keeps tools registered when a call-driven reconnect fails, so a later call re-drives it (#2742)', async () => {
+    let server = await startHttpEchoServer();
+    const url = `http://127.0.0.1:${server.port}/mcp`;
+
+    const manager = new McpConnectionManager();
+    const agent = fakeAgentWithMcp(manager);
+    const emittedEvents: Array<{ type?: string; reason?: string }> = [];
+    agent.emitEvent = (event) => {
+      emittedEvents.push(event as { type?: string; reason?: string });
+    };
+    const tm = new ToolManager(agent);
+    tm.setActiveTools(['mcp__*']);
+    try {
+      await manager.connectAll({ srv: { transport: 'http', url } });
+      await manager.waitForInitialLoad();
+      expect(manager.get('srv')?.status).toBe('connected');
+
+      const echo = tm.loopTools.find((t) => t.name === 'mcp__srv__echo');
+      expect(echo).toBeDefined();
+      const context = toolCallContext();
+
+      const first = await executeTool(echo!, { ...context, args: { text: 'before' } });
+      expect(first.isError).toBe(false);
+      expect(first.output).toBe('before');
+
+      // The server goes DOWN and stays down: the call drives a reconnect that
+      // fails, taking the entry through pending (where the tools used to be
+      // unregistered) into failed.
+      await server.close();
+      const eventsBeforeDownCall = emittedEvents.length;
+
+      const rejection = await executeTool(echo!, { ...context, args: { text: 'while down' } }).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      // The original transport error surfaces: a failed reconnect attempt is
+      // recorded as the entry's `failed` status, not thrown through.
+      expect(rejection).toBeInstanceOf(Error);
+      // The transport's own error text reaches the caller (failure
+      // classification stays byte-equivalent) — not a rewritten wrapper.
+      expect((rejection as Error).message).toMatch(/fetch failed|ECONNREFUSED|socket hang up/);
+      expect((rejection as Error).message).not.toContain(
+        'reconnecting the MCP server also failed',
+      );
+      expect(manager.get('srv')?.status).toBe('failed');
+      // Regression: the failed recovery must not strand the session without
+      // the tools — they stay registered so the NEXT call can drive another
+      // reconnect attempt.
+      expect(tm.loopTools.map((t) => t.name)).toContain('mcp__srv__echo');
+      // The other half of the removed `pending` branch: no tool-list update
+      // (in particular no `mcp.disconnected`) is emitted while the server is
+      // down — the tool list genuinely did not change.
+      expect(
+        emittedEvents.slice(eventsBeforeDownCall).filter((e) => e.type === 'tool.list.updated'),
+      ).toHaveLength(0);
+
+      // The server comes back; the next call re-drives the reconnect and heals.
+      server = await startHttpEchoServer(server.port);
+
+      const healed = await executeTool(echo!, { ...context, args: { text: 'back again' } });
+      expect(healed.isError).toBe(false);
+      expect(healed.output).toBe('back again');
+      expect(manager.get('srv')?.status).toBe('connected');
+      expect(tm.loopTools.map((t) => t.name)).toContain('mcp__srv__echo');
+
+      // The re-listed handle (what the agent loop reads on the next prompt)
+      // works too — not just the stale one captured before the outage.
+      const relisted = tm.loopTools.find((t) => t.name === 'mcp__srv__echo');
+      expect(relisted).toBeDefined();
+      const relistedResult = await executeTool(relisted!, {
+        ...context,
+        args: { text: 'relisted' },
+      });
+      expect(relistedResult.isError).toBe(false);
+      expect(relistedResult.output).toBe('relisted');
+    } finally {
+      await manager.shutdown();
+      // Whichever server generation is current; earlier ones were already
+      // closed (idempotently) above.
+      await server.close();
+    }
+  }, 20000);
 });
 
 async function startHttpEchoServer(
@@ -1053,10 +1136,14 @@ async function startHttpEchoServer(
   });
   await new Promise<void>((resolve) => httpServer.listen(port, '127.0.0.1', resolve));
   const boundPort = (httpServer.address() as AddressInfo).port;
+  let closePromise: Promise<void> | undefined;
   return {
     port: boundPort,
-    close: () =>
-      new Promise((resolve, reject) => {
+    close: () => {
+      // Idempotent: cleanup paths must not mask an earlier test failure with
+      // ERR_SERVER_NOT_RUNNING. The promise is cached so a concurrent second
+      // call waits for the same shutdown instead of resolving early.
+      closePromise ??= new Promise((resolve, reject) => {
         httpServer.close((err) => {
           if (err) {
             reject(err);
@@ -1067,6 +1154,8 @@ async function startHttpEchoServer(
         // Force-close the client's keep-alive / SSE sockets so `close()`
         // returns even while a long-lived streamable-HTTP stream is open.
         httpServer.closeAllConnections();
-      }),
+      });
+      return closePromise;
+    },
   };
 }

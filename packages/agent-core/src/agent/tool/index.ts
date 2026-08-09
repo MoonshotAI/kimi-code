@@ -409,7 +409,7 @@ export class ToolManager {
       // `tool.list.updated` event is emitted.
       return;
     }
-    if (entry.status === 'disabled' || entry.status === 'pending') {
+    if (entry.status === 'disabled') {
       const removed = this.unregisterMcpServer(entry.name);
       if (removed) {
         this.agent.emitEvent({
@@ -419,6 +419,14 @@ export class ToolManager {
         });
       }
     }
+    // `pending` is deliberately NOT handled: it precedes every (re)connect
+    // attempt, so unregistering here would drop the tools mid-reconnect —
+    // and after a failed recovery they would stay gone for the rest of the
+    // session, leaving later calls unable to drive another reconnect (#2742).
+    // Keeping them is safe because both re-registration paths above start by
+    // unregistering the server's tools (`registerMcpServer` and
+    // `registerNeedsAuthMcpServer`), so a `connected` or `needs-auth`
+    // transition fully replaces the tool set rather than merging into it.
   }
 
   private registerNeedsAuthMcpServer(mcp: McpConnectionManager, entry: McpServerEntry): void {
