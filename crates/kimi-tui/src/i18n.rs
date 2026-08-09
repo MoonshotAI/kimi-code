@@ -253,6 +253,7 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "numbers = toggle · Enter = send · Esc = skip",
         "数字=多选 · Enter=发送 · Esc=跳过",
     ),
+    ("tui.question.more", "{0} more options", "还有 {0} 个选项"),
     (
         "tui.approval.approveUsage",
         "usage: /approve <approval-id>",

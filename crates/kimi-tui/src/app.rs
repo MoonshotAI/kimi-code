@@ -225,6 +225,8 @@ pub(crate) struct QuestionPanel {
     multi_select: bool,
     draft: String,
     selected: Vec<usize>,
+    /// First visible option row (↑/↓ scrolls when options overflow).
+    offset: usize,
 }
 
 impl QuestionPanel {
@@ -254,12 +256,46 @@ impl QuestionPanel {
             multi_select,
             draft: String::new(),
             selected: Vec::new(),
+            offset: 0,
         }
     }
 
+    /// The visible option slice for a modal `height`-tall (borders excluded):
+    /// header + question + options + draft + hint rows need to fit.
+    fn visible_options(&self, height: usize) -> (usize, usize) {
+        // Rows before the options: header?, question, blank, "options:".
+        let prefix = 2 + usize::from(!self.header.is_empty()) + 1;
+        // Rows after the options: blank + draft + blank + hint.
+        let suffix = 4;
+        let available = height.saturating_sub(prefix + suffix);
+        let count = self.options.len().min(available);
+        let start = self.offset.min(self.options.len().saturating_sub(count));
+        (start, start + count)
+    }
+
     /// The modal text rows (pure, tested): header + question + numbered
-    /// options + the answer draft + an action hint.
+    /// options + the answer draft + an action hint. The live renderer uses
+    /// [`Self::rows_visible`]; the full layout is kept for tests.
+    #[cfg(test)]
     pub fn rows(&self) -> Vec<String> {
+        self.build_rows(0..self.options.len())
+    }
+
+    /// Rows clipped to a `height`-tall modal (borders excluded): the option
+    /// window scrolls (↑/↓) when options overflow.
+    pub fn rows_visible(&self, height: usize) -> Vec<String> {
+        let (start, end) = self.visible_options(height);
+        let mut rows = self.build_rows(start..end);
+        if end - start < self.options.len() {
+            rows.push(t!(
+                "tui.question.more",
+                self.options.len() - (end - start)
+            ));
+        }
+        rows
+    }
+
+    fn build_rows(&self, options: std::ops::Range<usize>) -> Vec<String> {
         let mut rows = Vec::new();
         if !self.header.is_empty() {
             rows.push(self.header.clone());
@@ -269,7 +305,7 @@ impl QuestionPanel {
             rows.push(String::new());
             rows.push(t("tui.question.options").to_string());
         }
-        for (i, (label, desc)) in self.options.iter().enumerate() {
+        for (i, (label, desc)) in self.options.iter().enumerate().skip(options.start).take(options.end - options.start) {
             let mark = if self.multi_select && self.selected.contains(&i) {
                 "✓"
             } else {
@@ -327,6 +363,14 @@ impl QuestionPanel {
         match code {
             KeyCode::Esc => Some(String::new()),
             KeyCode::Enter => Some(self.answer()),
+            KeyCode::Up => {
+                self.offset = self.offset.saturating_sub(1);
+                None
+            }
+            KeyCode::Down => {
+                self.offset = self.offset.saturating_add(1);
+                None
+            }
             KeyCode::Backspace => {
                 self.draft.pop();
                 None
@@ -3781,8 +3825,9 @@ impl App {
 
     /// Draw the full-screen AskUserQuestion dialog over the chat layout.
     fn render_question_modal(&self, frame: &mut ratatui::Frame<'_>, panel: &QuestionPanel) {
+        let height = frame.area().height.saturating_sub(2) as usize;
         let rows: Vec<crate::modal::ModalRow> = panel
-            .rows()
+            .rows_visible(height)
             .into_iter()
             .map(crate::modal::ModalRow::new)
             .collect();
@@ -5005,6 +5050,39 @@ mod tests {
         let mut panel = QuestionPanel::from_args(&args);
         assert_eq!(panel.key(KeyCode::Char('9')), None);
         assert_eq!(panel.key(KeyCode::Enter).as_deref(), Some("9"));
+    }
+
+    #[test]
+    fn question_panel_scrolls_overflowing_options() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        let mut options = Vec::new();
+        for i in 0..12 {
+            options.push(serde_json::json!({ "label": format!("opt-{i}") }));
+        }
+        let args = serde_json::json!({
+            "question": "Pick one?",
+            "options": options,
+        });
+        let mut panel = QuestionPanel::from_args(&args);
+        // A short modal clips the options and reports the hidden count.
+        let visible = panel.rows_visible(10);
+        assert!(visible.iter().any(|r| r.contains("opt-0")));
+        assert!(!visible.iter().any(|r| r.contains("opt-11")));
+        assert!(visible.iter().any(|r| r.contains("more options")));
+        // ↑/↓ move the window; the selection still maps to absolute indices.
+        assert_eq!(panel.key(KeyCode::Down), None);
+        let visible = panel.rows_visible(10);
+        assert!(visible.iter().any(|r| r.contains("opt-1")));
+        // A tall modal shows everything without the "more" hint.
+        let tall = panel.rows_visible(10_000);
+        assert!(tall.iter().any(|r| r.contains("opt-11")));
+        assert!(!tall.iter().any(|r| r.contains("more options")));
+        // Scrolling never underflows.
+        for _ in 0..5 {
+            assert_eq!(panel.key(KeyCode::Up), None);
+        }
+        let visible = panel.rows_visible(10);
+        assert!(visible.iter().any(|r| r.contains("opt-0")));
     }
 
     #[test]
