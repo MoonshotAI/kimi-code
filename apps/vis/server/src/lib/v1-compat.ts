@@ -9,7 +9,7 @@
  * protocol, so a local copy stays in sync by definition.
  */
 
-import type { ContentPart, FinishReason, Message, TokenUsage } from '@moonshot-ai/kosong';
+import type { ContentPart, FinishReason, Message, TokenUsage } from './wire-types';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -594,9 +594,9 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
   let start = text.length;
   for (let i = text.length - 1; i >= 0; i--) {
     let isAscii = false;
-    const code = text.charCodeAt(i);
+    const code = text.codePointAt(i);
     if (code >= 0xdc00 && code <= 0xdfff && i > 0) {
-      const high = text.charCodeAt(i - 1);
+      const high = text.codePointAt(i - 1);
       if (high >= 0xd800 && high <= 0xdbff) {
         i--;
       }

@@ -1,15 +1,14 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Readable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
 
-const tsxCli = join(
-  dirname(fileURLToPath(import.meta.resolve('tsx/package.json'))),
-  'dist',
-  'cli.mjs',
-);
+// `import.meta.resolve` is unavailable inside the vitest module runner;
+// resolve the tsx CLI through createRequire instead.
+const nodeRequire = createRequire(import.meta.url);
+const tsxCli = join(dirname(nodeRequire.resolve('tsx/package.json')), 'dist', 'cli.mjs');
 
 export interface TempDirHandle {
   readonly path: string;

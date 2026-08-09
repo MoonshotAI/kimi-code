@@ -40,7 +40,6 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@moonshot-ai/kosong": "workspace:*",
     "proper-lockfile": "^4.1.2"
   },
   "devDependencies": {

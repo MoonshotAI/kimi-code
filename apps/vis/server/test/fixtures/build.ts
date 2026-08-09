@@ -1,6 +1,7 @@
 import { cp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 /** Copy a fixture session into a temporary KIMI_CODE_HOME. */
 export async function buildSessionFixture(name: string): Promise<{
@@ -8,7 +9,9 @@ export async function buildSessionFixture(name: string): Promise<{
   sessionDir: string;
   cleanup: () => Promise<void>;
 }> {
-  const src = new URL(`./sessions/${name}`, import.meta.url).pathname;
+  // `URL.pathname` on Windows yields `/G:/…` which fs resolves to a doubled
+  // drive (`G:\G:\…`) — decode via fileURLToPath instead.
+  const src = fileURLToPath(new URL(`./sessions/${name}`, import.meta.url));
   const home = await mkdtemp();
   const sessionsDir = join(home, 'sessions', 'wd_test_000000000000');
   const sessionDir = join(sessionsDir, 'session_fixture');

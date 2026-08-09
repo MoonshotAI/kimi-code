@@ -7,7 +7,7 @@ import {
   ASTRON_MODEL_DEFS,
   ASTRON_REASONING_EFFORT_MODEL_IDS,
   type AstronModelDef,
-} from '@moonshot-ai/kosong/providers/astron-models';
+} from './astron-models';
 import { readApiErrorMessage } from './api-error';
 import { isRecord } from './utils';
 import { parseKimiCodeCustomHeaders } from './identity';

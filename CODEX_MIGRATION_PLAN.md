@@ -513,6 +513,20 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 ## 9. 迁移推进会话快照（2026-08，分支 feat/rust-agent-engine-migration）
 
+**2026-08-09 G-5 评估 + 外围消费面收敛（kosong 收编第一步）**：
+- **评估结论**（explore 子代理全量调查 + 引擎对照）：kosong（32 源文件 7.4k）的**核心能力 Rust 引擎已独立覆盖**——三协议（openai/anthropic/google，http.rs Protocol 枚举）+ SSE 流式 + 事件发射 + 重试（retry.rs 与 TS 侧 retired retry.ts 参数同构：429→15s/60s、503→5s/30s、±25% jitter）+ Moonshot prompt_cache_key + usage 提取（"kosong parity"注释）。**无需搬运**；kosong 独有缺口（kimi-schema $ref 规范化、anthropic-profile、kimi-files 上传、capability 矩阵、reasoning-key、Astron）多为数据/方言适配，消费方仅 node-sdk（深度依赖，随 G-6 退役）
+- **外围消费面收敛**（本批）：oauth（ASTRON_MODEL_DEFS 等纯常量，astron-models.ts 42 行复制本地化）、acp-adapter（anthropic-profile.ts 174 行纯函数复制本地化）、vis-server（ContentPart/Message/FinishReason/TokenUsage/ToolCall 纯类型 → 新建 `wire-types.ts` 本地定义，注释声明冻结）；3 包删 `@moonshot-ai/kosong` 依赖 + pnpm install 重链
+- **顺带修复 2 个预存 Windows bug（测试侧）**：① vis-server `buildSessionFixture` 用 `new URL().pathname` → Windows 双盘符 `G:\G:\…`（CI Ubuntu 未暴露）→ `fileURLToPath`；② oauth 多进程测试 `import.meta.resolve` 在 vitest module runner 不可用 → `createRequire` 替代；③ vis import-store 测试硬编码 POSIX 路径断言 → `resolve` 构造期望（Windows 下 path.resolve 映射盘符）
+- **验证**：vis-server 143/143（原 53 挂清零）、oauth/acp 50 文件 580 全绿（原 1 suite 挂清零）、5 包 typecheck 0 errors
+- **kosong 剩余消费面**：node-sdk（catalog/errors/profile——活跃，随 G-6）+ kimi-agent TS 桥 rust-loop（错误分类函数，随 rust-loop 退役）+ vscode 测试夹具（测试资产，退役时处理）——**kosong 本身退役 = node-sdk 退役（G-6）时**
+
+**2026-08-09 真实 LLM 端到端验证 + node-sdk/rust 桥面清理**：
+- **真实 LLM 端到端（A）✅**：隔离配置（临时 KIMI_CODE_HOME + 干净 config，未碰用户配置）实测——`kimi doctor` 全 OK；`kimi print "reply with exactly: pong"` → `• pong`（块渲染 + resume 提示）；`--output-format stream-json` → `{"content":"pong","role":"assistant"}`（流式 JSONL）；引擎事件流（llm.delta）此前已验。**Rust kimi-cli print 全链路（配置→引擎→native LLM→渲染）首次真实打通**
+- **用户配置诊断**：真实 config.toml 的 `duplicate defaultModel`（defaultModel 与 default_model 并存）导致 Rust TOML 严格解析拒绝整个配置（`kimi doctor` 报错）——**这是用户机器上 native LLM/MCP/hooks 全部失效的根因**（2026-08-08 会话已记录，用户禁止修改真实文件）；隔离配置验证绕开。建议用户侧删除 camelCase 行
+- **B（rust-loop 退役）阻塞分析**：apps/kimi-code 已零依赖（08-09 会话），但 **kap-server 仍真实运行时依赖 rust-loop**（rustSessionService/start.ts 动态 import，KIMI_WEB_RUST_SERVER 门控默认 kap-server）——rust-loop 退役被 G-6 鸡生蛋闭环挡住，前置 = kap-server 切 Rust server（G-2 默认切换，产品决策待定）
+- **B 替代完成：node-sdk/rust 桥面清理**：`@moonshot-ai/kimi-code-sdk/rust` 子路径外部消费者已清零（apps/vscode 全无），删 `src/rust/index.ts`（子路径入口）+ `controller.ts`（SessionEngineController，map* 已本地化进 kimi-code）+ `wire-writer.ts`（零引用）+ package.json exports "./rust"；**保留** `rust/rpc-client.ts`（node-sdk 主面 `createKimiHarness` 经 `sdk-rpc-client` 依赖它）+ 其测试。typecheck 0、node-sdk 34 文件 429 测试全绿
+- **教训（误删回滚）**：首次删除误删 sdk-rpc-client.ts——`index.ts:5 export { createKimiHarness } from '#/sdk-rpc-client'` 经 `#/` 子路径别名引用（grep pattern 未匹配）→ createKimiHarness 类型断裂 → kimi-code run-prompt/run-shell/export 3 文件 cascade 报错。恢复后按完整引用链（index → sdk-rpc-client → rust/rpc-client → wire）精确重删
+
 **2026-08-09 引擎修复：`prompt_cache_key` 无条件发送破坏非 Moonshot 端点（真实 400）**：
 - **现象**：真实冒烟（spawn kimi-server-serve + 用户 native LLM 端点 tokenrhythm/DeepSeek）prompt 报 `400 UNKNOWN_FIELD prompt_cache_key`——native LLM 路径对非 Moonshot 端点**必然失败**
 - **根因**（GitHub 上游代码比对证实）：`prompt_cache_key` 是 **Kimi 官方 API 专属**的 prompt 前缀缓存命名空间（上游 TS 侧仅 kimi provider 条件发送，openai-legacy/responses 经 `cacheKey` 选项可选传入；kimi.contrib 测试断言该字段仅 Kimi wire 编码）。本 fork 的 Rust 引擎（08-05 会话引入，注释声称 "Moonshot/OpenAI" 属**未验证假设**）在 `openai.rs::build_request_with_options` **无条件**对一切 OpenAI-compatible 请求发该字段——DeepSeek/第三方代理严格拒绝未知字段，OpenAI 官方也无此字段

@@ -26,7 +26,7 @@ export type {
   QuestionBackgroundTaskInfo,
 } from './v1-compat';
 export { AGENT_WIRE_PROTOCOL_VERSION } from './v1-compat';
-export type { Message, ContentPart, ToolCall, TokenUsage } from '@moonshot-ai/kosong';
+export type { Message, ContentPart, ToolCall, TokenUsage } from './wire-types';
 
 // Local bindings for the upstream types referenced by the vis-only DTOs
 // below. The `export type { … }` re-export above forwards the names to

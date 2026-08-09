@@ -39,8 +39,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.23.0",
     "@moonshot-ai/kaos": "workspace:^",
-    "@moonshot-ai/kimi-code-sdk": "workspace:^",
-    "@moonshot-ai/kosong": "workspace:^"
+    "@moonshot-ai/kimi-code-sdk": "workspace:^"
   },
   "devDependencies": {
     "jimp": "^1.6.1"

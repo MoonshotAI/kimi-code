@@ -16,7 +16,7 @@ import {
   BUDGET_THINKING_EFFORTS,
   matchKnownAnthropicModelProfile,
   matchUnknownClaudeProfile,
-} from '@moonshot-ai/kosong/providers/anthropic-profile';
+} from './anthropic-profile';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ProviderType } from './legacy-types.js';
