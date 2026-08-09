@@ -1626,6 +1626,137 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('blocks the turn while lower-ratio auto compaction is in flight', async () => {
+    const compactionRequested = deferred<void>();
+    const releaseCompaction = deferred<void>();
+    let llmCallCount = 0;
+    let ctx!: TestAgentContext;
+    const generate: GenerateFn = async () => {
+      llmCallCount += 1;
+      if (llmCallCount === 1) {
+        compactionRequested.resolve();
+        await releaseCompaction.promise;
+        return textResult('Lower-ratio compacted summary.');
+      }
+      if (llmCallCount === 2) {
+        return textResult('I can answer after lower-ratio compaction.');
+      }
+      throw new Error(`Unexpected generate call ${String(llmCallCount)}`);
+    };
+    ctx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        loopControl: {
+          compactionTriggerRatio: 0.6,
+          reservedContextSize: 0,
+        },
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 1_000_000,
+      },
+      tools: SNAPSHOT_VISIBLE_TOOLS,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 610_000);
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Answer after compacting' }] });
+    await compactionRequested.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(llmCallCount).toBe(1);
+
+    releaseCompaction.resolve();
+    const events = await ctx.untilTurnEnd();
+
+    expect(llmCallCount).toBe(2);
+    expect(countEvents(events, 'full_compaction.cancel')).toBe(0);
+    expect(eventIndex(events, 'full_compaction.complete')).toBeLessThan(
+      eventIndex(events, 'turn.step.started'),
+    );
+    await ctx.expectResumeMatches();
+  });
+
+  it('lets a tool continuation consume fresh results before soft auto compaction', async () => {
+    const largeResult = 'important-tool-result';
+    const phases: string[] = [];
+    let continuationHistory: readonly Message[] = [];
+    let agentCallCount = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      const isCompaction = history.some((message) =>
+        messageText(message).includes('first-person handoff note'),
+      );
+      if (isCompaction) {
+        phases.push('compaction');
+        return textResult('Compacted after consuming the tool result.');
+      }
+      agentCallCount += 1;
+      if (agentCallCount === 2) {
+        phases.push('continuation');
+        continuationHistory = history;
+        return {
+          ...textResult('Consumed the fresh tool result.'),
+          usage: { inputOther: 13_000, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        };
+      }
+      phases.push('agent');
+      return {
+        ...textResult(''),
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_large_result',
+              name: 'mcp__srv__large_result',
+              arguments: '{}',
+            },
+          ],
+        },
+        usage: { inputOther: 13_000, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'tool_calls',
+        rawFinishReason: 'tool_calls',
+      };
+    };
+    const ctx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        loopControl: {
+          compactionTriggerRatio: 0.6,
+          reservedContextSize: 0,
+        },
+      },
+    });
+    ctx
+      .get(IAgentToolRegistryService)
+      .register(mcpTool('mcp__srv__large_result', {}, largeResult), { source: 'mcp' });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 20_000,
+      },
+      tools: ['mcp__srv__large_result'],
+    });
+    const compacted = ctx.once('compaction.completed');
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Inspect the large result' }] });
+    await ctx.untilApproval(true);
+    await ctx.untilTurnEnd();
+    await compacted;
+
+    expect(phases).toEqual(['agent', 'continuation', 'compaction']);
+    expect(continuationHistory.some((message) => messageText(message).includes(largeResult))).toBe(
+      true,
+    );
+    await ctx.expectResumeMatches();
+  });
+
   it('attributes background auto compaction to the turn that started it', async () => {
     const compactionRequested = deferred<void>();
     const releaseCompaction = deferred<void>();
@@ -3116,6 +3247,7 @@ function textMessage(role: 'user' | 'assistant', text: string): Message {
 function mcpTool(
   name: string,
   parameters: Record<string, unknown>,
+  output: string = 'mcp ok',
 ): ExecutableTool<Record<string, unknown>> {
   return {
     name,
@@ -3124,7 +3256,7 @@ function mcpTool(
     resolveExecution(): ToolExecution {
       return {
         approvalRule: name,
-        execute: async () => ({ output: 'mcp ok' }),
+        execute: async () => ({ output }),
       };
     },
   };
