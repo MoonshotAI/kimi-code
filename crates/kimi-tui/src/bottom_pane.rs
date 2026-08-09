@@ -344,6 +344,37 @@ pub fn kill_word(input: &str, cursor: usize) -> (String, usize) {
 
 /// Resolve a Tab press against `base` (the input when the cycle started, or
 /// the current input). Returns the completed input and the next cycle index.
+/// The dim argument hint shown right after `/cmd ` while the argument is
+/// still empty (TS custom-editor `computeArgumentHint` parity): the closed
+/// argument set for commands that have one, model aliases for `/model `.
+/// Returns `None` outside a command argument (or once the user typed one).
+pub fn argument_hint(input: &str, model_aliases: &[String]) -> Option<String> {
+    let (cmd, arg) = input.split_once(' ')?;
+    if !arg.is_empty() {
+        return None;
+    }
+    let joined = match cmd {
+        "/plan" | "/swarm" => ON_OFF_ARGS.join("|"),
+        "/thinking" => THINKING_ARGS.join("|"),
+        "/permission" => PERMISSION_ARGS.join("|"),
+        "/goal" => GOAL_ARGS.join("|"),
+        "/session" => "set".to_string(),
+        "/model" => model_aliases.join("|"),
+        _ => return None,
+    };
+    Some(joined)
+}
+
+/// History entries matching the current input mode: bash drafts
+/// (`!`-prefixed) recall only `!`-prefixed entries (TS editor
+/// history-filter parity). Plain drafts see the whole history.
+pub fn filtered_history<'a>(history: &'a [String], bash: bool) -> Vec<&'a String> {
+    history
+        .iter()
+        .filter(|h| !bash || h.starts_with('!'))
+        .collect()
+}
+
 pub fn complete_line(
     base: &str,
     model_aliases: &[String],
@@ -413,8 +444,7 @@ pub fn complete_model_arg(
     prefix: &str,
     model_aliases: &[String],
     tab_idx: Option<usize>,
-) -> Option<(String, usize)> {
-    if model_aliases.is_empty() {
+) -> Option<(String, usize)> {    if model_aliases.is_empty() {
         return None;
     }
     let matches: Vec<&String> = model_aliases
@@ -735,5 +765,53 @@ mod tests {
         // Directory completion keeps the trailing `/`; spaces quote the path.
         assert_eq!(done, format!("@\"{root}/my dir/\""), "done: {done}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn argument_hint_shows_closed_sets_after_command() {
+        let aliases = vec!["kimi-k2".to_string(), "kimi-k2-thinking".to_string()];
+        // Empty argument right after `/cmd ` shows the set.
+        assert_eq!(
+            argument_hint("/permission ", &aliases).as_deref(),
+            Some("manual|plan|auto|yolo")
+        );
+        assert_eq!(
+            argument_hint("/thinking ", &aliases).as_deref(),
+            Some("low|medium|high")
+        );
+        assert_eq!(
+            argument_hint("/model ", &aliases).as_deref(),
+            Some("kimi-k2|kimi-k2-thinking")
+        );
+        assert_eq!(
+            argument_hint("/goal ", &aliases).as_deref(),
+            Some("status|pause|resume|cancel|replace|next")
+        );
+        // Once an argument is typed the hint disappears.
+        assert_eq!(argument_hint("/permission m", &aliases), None);
+        // Unknown commands / plain text have no hint.
+        assert_eq!(argument_hint("/zzz ", &aliases), None);
+        assert_eq!(argument_hint("hello ", &aliases), None);
+        assert_eq!(argument_hint("/permission", &aliases), None);
+    }
+
+    #[test]
+    fn filtered_history_recalls_bash_entries_only_in_bash_mode() {
+        let history = vec![
+            "plain prompt".to_string(),
+            "!git status".to_string(),
+            "another prompt".to_string(),
+            "!ls".to_string(),
+        ];
+        // Bash drafts see only `!` entries, in order.
+        let bash = filtered_history(&history, true);
+        assert_eq!(bash.len(), 2);
+        assert_eq!(bash[0].as_str(), "!git status");
+        assert_eq!(bash[1].as_str(), "!ls");
+        // Plain drafts see everything.
+        let all = filtered_history(&history, false);
+        assert_eq!(all.len(), 4);
+        // Empty history never panics.
+        assert!(filtered_history(&[], true).is_empty());
     }
 }

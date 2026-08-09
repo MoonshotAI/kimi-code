@@ -27,6 +27,7 @@ pub fn render_frame(
     theme: Theme,
     footer: &crate::footer::FooterInfo,
     completion: Option<&crate::app::CompletionState>,
+    input_hint: Option<&str>,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -81,7 +82,15 @@ pub fn render_frame(
     } else {
         frame.render_widget(chat, chunks[0]);
     }
-    let input_widget = Paragraph::new(input).block(
+    // Input line: the draft plus an optional dim argument hint (`/cmd `).
+    let mut input_spans = vec![Span::raw(input.to_string())];
+    if let Some(hint) = input_hint {
+        input_spans.push(Span::styled(
+            hint.to_string(),
+            Style::default().fg(theme.thinking),
+        ));
+    }
+    let input_widget = Paragraph::new(RenderLine::from(input_spans)).block(
         Block::default()
             .borders(Borders::ALL)
             .title(t!("tui.chat.inputTitle", session_id)),

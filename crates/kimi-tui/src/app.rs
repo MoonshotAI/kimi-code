@@ -3474,19 +3474,30 @@ impl App {
     }
 
     fn history_back(&mut self) {
-        let idx = self.edit.history_idx.map_or(self.edit.history.len(), |i| i);
+        // Bash mode (`!`-prefixed drafts) only recalls `!`-prefixed history
+        // (TS editor history-filter parity).
+        let items = crate::bottom_pane::filtered_history(&self.edit.history, self.edit.text.starts_with('!'));
+        if items.is_empty() {
+            return;
+        }
+        let idx = self
+            .edit
+            .history_idx
+            .unwrap_or(items.len())
+            .min(items.len());
         if idx > 0 {
             self.edit.history_idx = Some(idx - 1);
-            self.edit.text = self.edit.history[idx - 1].clone();
+            self.edit.text = items[idx - 1].clone();
             self.edit.cursor = self.edit.text.chars().count();
         }
     }
 
     fn history_forward(&mut self) {
+        let items = crate::bottom_pane::filtered_history(&self.edit.history, self.edit.text.starts_with('!'));
         if let Some(idx) = self.edit.history_idx {
-            if idx + 1 < self.edit.history.len() {
+            if idx + 1 < items.len() {
                 self.edit.history_idx = Some(idx + 1);
-                self.edit.text = self.edit.history[idx + 1].clone();
+                self.edit.text = items[idx + 1].clone();
             } else {
                 self.edit.history_idx = None;
                 self.edit.text.clear();
@@ -3509,6 +3520,8 @@ impl App {
             Some(Overlay::Completion(state)) => Some(state),
             _ => None,
         };
+        let input_hint =
+            crate::bottom_pane::argument_hint(&self.edit.text, &self.model_aliases);
         crate::chatwidget::render_frame(
             frame,
             &self.view.transcript,
@@ -3519,6 +3532,7 @@ impl App {
             self.view.theme,
             &self.view.footer,
             completion,
+            input_hint.as_deref(),
         );
         if let Some(Overlay::ApprovalDetail(pending)) = self.overlay.as_ref() {
             self.render_approval_modal(frame, pending);
@@ -4333,6 +4347,7 @@ mod tests {
                     0,
                     crate::theme::Theme::dark(),
                     &footer,
+                    None,
                     None,
                 );
             })
