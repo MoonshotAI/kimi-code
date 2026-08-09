@@ -17,11 +17,16 @@ pub struct ParsedPattern {
 #[napi]
 pub fn native_parse_permission_pattern(pattern: String) -> String {
     match parse_pattern(&pattern) {
-        Ok(p) => serde_json::json!({
-            "toolName": p.tool_name,
-            "argPattern": p.arg_pattern,
-        })
-        .to_string(),
+        Ok(p) => match p.arg_pattern {
+            Some(arg) => serde_json::json!({
+                "toolName": p.tool_name,
+                "argPattern": arg,
+            })
+            .to_string(),
+            // No argument pattern: omit the field entirely (the JS
+            // contract expects `argPattern` to be undefined).
+            None => serde_json::json!({ "toolName": p.tool_name }).to_string(),
+        },
         Err(e) => format!("ERROR: {e}"),
     }
 }

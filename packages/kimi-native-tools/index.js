@@ -6,6 +6,21 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { createRequire } = require('node:module');
+
+// Load through Node's own resolver: vite's module runner hooks `require`
+// and mis-resolves relative `.node` paths (vitest falls back to the stale
+// `target/debug` dll and gets a half-empty binding).
+const nodeRequire = createRequire(__filename);
+
+// The binding serializes `Option::None` by omitting the field; the JS
+// contract (and the tests) expect `error: null` for success.
+function normalizeError(result) {
+  if (result && typeof result === 'object' && result.error === undefined) {
+    result.error = null;
+  }
+  return result;
+}
 
 // Platform-specific native module loading.
 const BINDING_NAME = 'kimi-native-tools';
@@ -13,50 +28,53 @@ const BINDING_NAME = 'kimi-native-tools';
 function loadBinding() {
   // Try the newer napi-rs naming first (includes MSVC suffix).
   try {
-    return require(`./${BINDING_NAME}.${process.platform}-${process.arch}-msvc.node`);
+    return nodeRequire(`./${BINDING_NAME}.${process.platform}-${process.arch}-msvc.node`);
   } catch {
     // Fall through to legacy naming.
   }
 
   // Try the GNU suffix (Linux artifacts: x86_64-unknown-linux-gnu, ...).
   try {
-    return require(`./${BINDING_NAME}.${process.platform}-${process.arch}-gnu.node`);
+    return nodeRequire(`./${BINDING_NAME}.${process.platform}-${process.arch}-gnu.node`);
   } catch {
     // Fall through.
   }
 
   // Try the standard napi-rs loading (platform-specific naming).
   try {
-    return require(`./${BINDING_NAME}.${process.platform}-${process.arch}.node`);
+    return nodeRequire(`./${BINDING_NAME}.${process.platform}-${process.arch}.node`);
   } catch {
     // Fall through.
   }
 
   // Try universal binding.
   try {
-    return require(`./${BINDING_NAME}.node`);
+    return nodeRequire(`./${BINDING_NAME}.node`);
   } catch {
     // Fall through.
   }
 
-  // Try from release build directory (cargo build --release).
+  // Try from release build directory (cargo build --release). The cargo
+  // workspace root (`../../target`) is where the artifacts actually land;
+  // `target/` inside the package is kept for standalone builds.
   const ext = process.platform === 'win32' ? 'dll' : process.platform === 'darwin' ? 'dylib' : 'so';
   // Rust crate name is kimi_native_tools (underscores), JS package is kimi-native-tools (hyphens).
   const rustName = BINDING_NAME.replaceAll('-', '_');
-  const releasePath = path.join(__dirname, 'target', 'release', `${rustName}.${ext}`);
+  const workspaceRoot = path.join(__dirname, '..', '..');
+  const releasePath = path.join(workspaceRoot, 'target', 'release', `${rustName}.${ext}`);
   try {
     if (fs.existsSync(releasePath)) {
-      return require(releasePath);
+      return nodeRequire(releasePath);
     }
   } catch {
     // Fall through.
   }
 
   // Try from debug build directory.
-  const debugPath = path.join(__dirname, 'target', 'debug', `${rustName}.${ext}`);
+  const debugPath = path.join(workspaceRoot, 'target', 'debug', `${rustName}.${ext}`);
   try {
     if (fs.existsSync(debugPath)) {
-      return require(debugPath);
+      return nodeRequire(debugPath);
     }
   } catch {
     // Fall through.
@@ -183,8 +201,17 @@ async function nativeLlmStream(config) {
  * @param {number} [options.nLines] - Number of lines to read. Capped at 1000.
  * @returns {Promise<{ content: string, lineCount: number, error?: string }>}
  */
-async function nativeRead(path, options = {}) {
-  return binding.nativeRead(path, options.lineOffset ?? null, options.nLines ?? null);
+async function nativeRead(path, lineOffsetOrOptions = {}, nLines = null) {
+  // Accept both `(path, options)` and the positional `(path, lineOffset,
+  // nLines)` form (the tests use positional).
+  let opts;
+  if (typeof lineOffsetOrOptions === 'object' && lineOffsetOrOptions !== null) {
+    opts = lineOffsetOrOptions;
+  } else {
+    opts = { lineOffset: lineOffsetOrOptions, nLines };
+  }
+  const result = await binding.nativeRead(path, opts.lineOffset ?? null, opts.nLines ?? null);
+  return normalizeError(result);
 }
 
 // ============================================================================
@@ -276,24 +303,49 @@ function nativeEdit(path, oldString, newString, options = {}) {
  * @param {number} [options.timeoutMs] - Wall-clock timeout in ms. 0 = unlimited.
  * @returns {{ content: string, error?: string, matchCount: number, fileCount: number, filteredSensitive: string[], timedOut: boolean }}
  */
-function nativeGrep(pattern, options = {}) {
-  return binding.nativeGrep(
+async function nativeGrep(pattern, outputModeOrOptions, caseInsensitive, lineNumbers, path, glob, fileType, afterContext, beforeContext, context, headLimit, offset, multiline, timeoutMs, includeIgnored) {
+  // Accept both `(pattern, options)` and the positional
+  // `(pattern, outputMode, caseInsensitive, lineNumbers, path, ..., timeoutMs)`
+  // form (the tests use positional, without includeIgnored).
+  let opts;
+  if (typeof outputModeOrOptions === 'object' && outputModeOrOptions !== null) {
+    opts = outputModeOrOptions;
+  } else {
+    opts = {
+      outputMode: outputModeOrOptions,
+      caseInsensitive,
+      lineNumbers,
+      path,
+      glob,
+      fileType,
+      afterContext,
+      beforeContext,
+      context,
+      headLimit,
+      offset,
+      multiline,
+      timeoutMs,
+      includeIgnored,
+    };
+  }
+  const result = await binding.nativeGrep(
     pattern,
-    options.path ?? null,
-    options.glob ?? null,
-    options.fileType ?? null,
-    options.outputMode ?? null,
-    options.caseInsensitive ?? null,
-    options.lineNumbers ?? null,
-    options.afterContext ?? null,
-    options.beforeContext ?? null,
-    options.context ?? null,
-    options.headLimit ?? null,
-    options.offset ?? null,
-    options.multiline ?? null,
-    options.includeIgnored ?? null,
-    options.timeoutMs ?? null,
+    opts.path ?? null,
+    opts.glob ?? null,
+    opts.fileType ?? null,
+    opts.outputMode ?? null,
+    opts.caseInsensitive ?? null,
+    opts.lineNumbers ?? null,
+    opts.afterContext ?? null,
+    opts.beforeContext ?? null,
+    opts.context ?? null,
+    opts.headLimit ?? null,
+    opts.offset ?? null,
+    opts.multiline ?? null,
+    opts.includeIgnored ?? null,
+    opts.timeoutMs ?? null,
   );
+  return normalizeError(result);
 }
 
 // ============================================================================
@@ -1060,6 +1112,18 @@ function nativeParsePermissionPattern(pattern) {
   return binding.nativeParsePermissionPattern(pattern);
 }
 
+/**
+ * Match a permission rule DSL pattern against a tool call.
+ * @param {string} rule - the rule JSON (e.g. '{"toolName":"Read","argPattern":"/etc/**"}')
+ * @param {string} toolName - the tool being invoked
+ * @param {boolean} hasMatchesRule - whether the tool name already matched
+ * @param {string|null} argPatternMatch - pre-matched arg pattern (null = none)
+ * @returns {string} JSON result
+ */
+function nativeMatchPermissionRule(rule, toolName, hasMatchesRule, argPatternMatch) {
+  return binding.nativeMatchPermissionRule(rule, toolName, hasMatchesRule, argPatternMatch);
+}
+
 // ============================================================================
 // GoalEngine — decision core (stateless, JSON-in/JSON-out)
 // ============================================================================
@@ -1384,6 +1448,7 @@ module.exports = {
 
   // Permission
   nativeParsePermissionPattern,
+  nativeMatchPermissionRule,
 
   // Translation (i18n)
   nativeTranslate,

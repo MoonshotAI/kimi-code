@@ -418,6 +418,11 @@ pub fn is_sensitive_file_bytes(path: &[u8]) -> bool {
         || name.eq_ignore_ascii_case(b"id_ed25519")
         || name.eq_ignore_ascii_case(b"id_ecdsa")
         || name.eq_ignore_ascii_case(b"credentials")
+        || name.eq_ignore_ascii_case(b".git-credentials")
+        || name.eq_ignore_ascii_case(b".ppk")
+        || name.eq_ignore_ascii_case(b".p12")
+        || name.eq_ignore_ascii_case(b".pfx")
+        || name.eq_ignore_ascii_case(b"kubeconfig")
     {
         return true;
     }
@@ -453,12 +458,42 @@ pub fn is_sensitive_file_bytes(path: &[u8]) -> bool {
         }
     }
 
-    // ── Path suffix checks: .aws/credentials, .gcp/credentials ─────
+    // ── Path suffix checks: .aws/credentials, .gcp/credentials, ──────────
+    //    .docker/config.json, .kube/config, .ssh/config (same set as the
+    //    str version — keep the two in sync).
 
     if path_ends_with(path, b"/.aws/credentials") || path_contains(path, b"/.aws/credentials/") {
         return true;
     }
     if path_ends_with(path, b"/.gcp/credentials") || path_contains(path, b"/.gcp/credentials/") {
+        return true;
+    }
+    if path_ends_with(path, b"/.docker/config.json")
+        || path_contains(path, b"/.docker/config.json/")
+    {
+        return true;
+    }
+    if path_ends_with(path, b"/.kube/config") || path_contains(path, b"/.kube/config/") {
+        return true;
+    }
+    if path_ends_with(path, b"/.config/kube/config")
+        || path_contains(path, b"/.config/kube/config/")
+    {
+        return true;
+    }
+    if path_ends_with(path, b"/.ssh/config") || path_contains(path, b"/.ssh/config/") {
+        return true;
+    }
+
+    // ── Keyfile extensions: .jks, .p12, .pfx, .keystore, .ppk ──────
+    // (the str version checks these too; keep the two in sync)
+
+    if path_ends_with(path, b".ppk")
+        || path_ends_with(path, b".p12")
+        || path_ends_with(path, b".pfx")
+        || path_ends_with(path, b".keystore")
+        || path_ends_with(path, b".jks")
+    {
         return true;
     }
 

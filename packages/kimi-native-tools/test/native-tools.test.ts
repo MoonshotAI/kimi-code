@@ -12,7 +12,9 @@ import { join } from 'node:path';
 
 import { describe, it, expect, afterAll } from 'vitest';
 
-// Load the native module
+// Load the native module. vite's module runner transforms this CJS loader
+// but preserves `__filename`, so the loader's own createRequire-based
+// `.node` load still resolves through Node's native path.
 const native = require('../index');
 
 // ── Test helpers ───────────────────────────────────────────────────────────
