@@ -84,6 +84,10 @@ pub const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("/workflow", "tui.cmd.workflow"),
     ("/provider", "tui.cmd.provider"),
     ("/providers", "tui.cmd.provider"),
+    ("/experiments", "tui.cmd.experiments"),
+    ("/multi-llm", "tui.cmd.multi-llm"),
+    ("/feedback", "tui.cmd.feedback"),
+    ("/web", "tui.cmd.web"),
     ("/reload-tui", "tui.cmd.reload-tui"),
 ];
 

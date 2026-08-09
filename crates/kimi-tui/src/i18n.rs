@@ -377,6 +377,7 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.status.modeSummary", "mode: {0}", "模式：{0}"),
     // ── Plugins ─────────────────────────────────────────────────────────
     ("tui.plugins.none", "no plugins installed", "未安装插件"),
+    ("tui.plugins.cancelled", "plugin selection cancelled", "已取消插件选择"),
     ("tui.plugins.list", "plugins ({0}): {1}", "插件（{0}）：{1}"),
     (
         "tui.err.pluginsFailed",
@@ -392,7 +393,38 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "已移除 {0}（未找到）",
     ),
     ("tui.plugins.reloaded", "plugins reloaded", "插件已重载"),
+    (
+        "tui.plugins.confirmRemove",
+        "remove plugin {0}? (y/N)",
+        "移除插件 {0}？(y/N)",
+    ),
+    (
+        "tui.provider.confirmRemove",
+        "remove provider {0}? (y/N)",
+        "移除供应商 {0}？(y/N)",
+    ),
     ("tui.plugins.installed", "installed {0}", "已安装 {0}"),
+    // ── Informational commands (no engine data source in Rust yet) ──────
+    (
+        "tui.experiments.hint",
+        "experimental flags are managed in config.toml",
+        "实验性功能开关在 config.toml 中管理",
+    ),
+    (
+        "tui.multiLlm.hint",
+        "multi-LLM providers are configured in config.toml",
+        "多 LLM 供应商在 config.toml 中配置",
+    ),
+    (
+        "tui.feedback.hint",
+        "feedback is collected by the CLI — run `kimi --feedback`",
+        "反馈由 CLI 收集 — 运行 `kimi --feedback`",
+    ),
+    (
+        "tui.web.hint",
+        "run `kimi web` in the terminal to start the web UI",
+        "在终端运行 `kimi web` 启动 Web UI",
+    ),
     (
         "tui.plugins.usage",
         "usage: /plugins [list|enable|disable|remove|reload|install <source>]",
@@ -764,6 +796,8 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "no providers configured",
         "没有配置任何提供商",
     ),
+    ("tui.provider.select", "select a provider", "选择一个供应商"),
+    ("tui.provider.cancelled", "provider selection cancelled", "已取消供应商选择"),
     ("tui.provider.list", "providers ({0}):", "提供商（{0}）："),
     ("tui.provider.keySet", "apiKey set", "已设置 apiKey"),
     ("tui.provider.keyMissing", "no apiKey", "无 apiKey"),
@@ -875,6 +909,8 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ),
     ("tui.picker.selectSkill", "select a skill", "选择一个技能"),
     ("tui.picker.selectModel", "select a model", "选择一个模型"),
+    ("tui.picker.selectPlugin", "select a plugin", "选择一个插件"),
+    ("tui.picker.selectAction", "select an action", "选择一个操作"),
     (
         "tui.picker.selectSession",
         "select a session",
@@ -1026,6 +1062,18 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "运行或管理工作流",
     ),
     ("tui.cmd.provider", "Manage AI providers", "管理 AI 提供商"),
+    (
+        "tui.cmd.experiments",
+        "Toggle experimental features",
+        "实验性功能开关",
+    ),
+    (
+        "tui.cmd.multi-llm",
+        "Configure multi-LLM providers",
+        "配置多 LLM 供应商",
+    ),
+    ("tui.cmd.feedback", "Send feedback", "发送反馈"),
+    ("tui.cmd.web", "Open the web UI", "打开 Web UI"),
     (
         "tui.cmd.reload-tui",
         "Reload only the TUI preferences",

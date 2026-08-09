@@ -1120,6 +1120,36 @@ impl App {
     /// Handle one submitted line (slash command or prompt). Returns `true`
     /// when the app should quit. Boxed so `/settings` can re-enter it
     /// (async recursion needs indirection).
+    /// Ask a y/N confirmation via the keyboard (provider / plugin removal).
+    /// Repaints so the prompt is visible; `true` only on y/Y, anything else
+    /// (n/N/Esc/Enter) → `false`.
+    async fn confirm(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        prompt: &str,
+    ) -> anyhow::Result<bool> {
+        self.push_line(TranscriptLine::status(prompt.to_string()));
+        terminal.draw(|frame| self.draw(frame))?;
+        loop {
+            if !event::poll(Duration::from_millis(100))? {
+                continue;
+            }
+            if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => return Ok(true),
+                    KeyCode::Char('n')
+                    | KeyCode::Char('N')
+                    | KeyCode::Esc
+                    | KeyCode::Enter => return Ok(false),
+                    _ => {}
+                }
+            }
+        }
+    }
+
     fn dispatch<'a>(
         &'a mut self,
         terminal: &'a mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -1242,7 +1272,97 @@ impl App {
                     "/plugins" => {
                         let parts: Vec<&str> = rest.split_whitespace().collect();
                         match parts.first().copied() {
-                            None | Some("list") => match self.harness.list_plugins().await {
+                            None => {
+                                // Interactive plugin browser (TS plugins panel
+                                // parity, picker-based): pick a plugin, then an
+                                // action; the action re-dispatches `/plugins
+                                // <action> <id>` to reuse the command paths.
+                                let plugins = self.harness.list_plugins().await?;
+                                if plugins.is_empty() {
+                                    self.push_line(TranscriptLine::status(t("tui.plugins.none")));
+                                } else {
+                                    let items: Vec<crate::picker::PickerItem> = plugins
+                                        .iter()
+                                        .filter_map(|p| {
+                                            let id = p["id"].as_str()?.to_string();
+                                            let enabled = p["enabled"].as_bool().unwrap_or(false);
+                                            let state = if enabled {
+                                                t("tui.status.on")
+                                            } else {
+                                                t("tui.status.off")
+                                            };
+                                            let version = p["version"].as_str().unwrap_or("");
+                                            let mut item = crate::picker::PickerItem::new(
+                                                id.clone(),
+                                                format!("{id} [{state}]"),
+                                            );
+                                            if !version.is_empty() {
+                                                item = item.with_description(version);
+                                            }
+                                            Some(item)
+                                        })
+                                        .collect();
+                                    let opts = crate::picker::PickerOptions::new(t(
+                                        "tui.picker.selectPlugin",
+                                    ))
+                                    .filterable()
+                                    .paged(10);
+                                    match crate::picker::select_picker(
+                                        terminal,
+                                        self.view.theme,
+                                        &opts,
+                                        &items,
+                                    )? {
+                                        Some(plugin_id) => {
+                                            let actions: Vec<crate::picker::PickerItem> = [
+                                                ("enable", "enable"),
+                                                ("disable", "disable"),
+                                                ("reload", "reload"),
+                                                ("remove", "remove"),
+                                            ]
+                                            .iter()
+                                            .map(|(v, l)| {
+                                                crate::picker::PickerItem::new(*v, *l)
+                                            })
+                                            .collect();
+                                            let action_opts = crate::picker::PickerOptions::new(t!(
+                                                "tui.picker.selectAction",
+                                                plugin_id
+                                            ));
+                                            if let Some(action) = crate::picker::select_picker(
+                                                terminal,
+                                                self.view.theme,
+                                                &action_opts,
+                                                &actions,
+                                            )? {
+                                                if action == "remove"
+                                                    && !self
+                                                        .confirm(
+                                                            terminal,
+                                                            &t!(
+                                                                "tui.plugins.confirmRemove",
+                                                                plugin_id
+                                                            ),
+                                                        )
+                                                        .await?
+                                                {
+                                                    return Ok(false);
+                                                }
+                                                return self
+                                                    .dispatch(
+                                                        terminal,
+                                                        &format!("/plugins {action} {plugin_id}"),
+                                                    )
+                                                    .await;
+                                            }
+                                        }
+                                        None => self.push_line(TranscriptLine::status(t(
+                                            "tui.plugins.cancelled",
+                                        ))),
+                                    }
+                                }
+                            }
+                            Some("list") => match self.harness.list_plugins().await {
                                 Ok(plugins) => {
                                     if plugins.is_empty() {
                                         self.view.transcript.push_line(TranscriptLine::status(t(
@@ -1354,17 +1474,33 @@ impl App {
                                 if entries.is_empty() {
                                     self.push_line(TranscriptLine::status(t("tui.skills.none")));
                                 } else {
-                                    match crate::picker::select(
+                                    let items: Vec<crate::picker::PickerItem> = entries
+                                        .into_iter()
+                                        .map(|(name, desc)| {
+                                            let mut item =
+                                                crate::picker::PickerItem::new(name.clone(), name);
+                                            if !desc.is_empty() {
+                                                item = item.with_description(desc);
+                                            }
+                                            item
+                                        })
+                                        .collect();
+                                    let opts = crate::picker::PickerOptions::new(t(
+                                        "tui.picker.selectSkill",
+                                    ))
+                                    .filterable()
+                                    .paged(10);
+                                    match crate::picker::select_picker(
                                         terminal,
                                         self.view.theme,
-                                        t("tui.picker.selectSkill"),
-                                        &entries,
+                                        &opts,
+                                        &items,
                                     )? {
                                         Some(name) => {
-                                            let desc = entries
+                                            let desc = items
                                                 .iter()
-                                                .find(|(n, _)| *n == name)
-                                                .map(|(_, d)| d.clone())
+                                                .find(|it| it.value == name)
+                                                .and_then(|it| it.description.clone())
                                                 .unwrap_or_default();
                                             self.push_line(TranscriptLine::status(t!(
                                                 "tui.skills.selected",
@@ -2523,11 +2659,86 @@ impl App {
                     }
                     "/provider" => {
                         // Provider management (TS `handleProviderCommand` parity,
-                        // simplified): list configured providers, remove one, or
-                        // point the user at /login / config.toml to add.
+                        // simplified): interactive picker, or list / remove /
+                        // add as commands.
                         let parts: Vec<&str> = rest.split_whitespace().collect();
                         match parts.first().copied() {
-                            None | Some("list") => match self.harness.config().await {
+                            None => {
+                                // Interactive provider browser: pick a provider
+                                // to remove it (with a y/N confirm); adding is
+                                // pointed at /login / config.toml.
+                                match self.harness.config().await {
+                                    Ok(cfg) => {
+                                        let providers =
+                                            cfg["providers"].as_object().cloned().unwrap_or_default();
+                                        if providers.is_empty() {
+                                            self.push_line(TranscriptLine::status(t(
+                                                "tui.provider.none",
+                                            )));
+                                        } else {
+                                            let items: Vec<crate::picker::PickerItem> = providers
+                                                .iter()
+                                                .map(|(name, p)| {
+                                                    let has_key = p["apiKey"]
+                                                        .as_str()
+                                                        .is_some_and(|k| !k.is_empty());
+                                                    let key_state = if has_key {
+                                                        t("tui.provider.keySet")
+                                                    } else {
+                                                        t("tui.provider.keyMissing")
+                                                    };
+                                                    let base =
+                                                        p["baseUrl"].as_str().unwrap_or("");
+                                                    crate::picker::PickerItem::new(
+                                                        name.clone(),
+                                                        format!("{name}  {key_state}"),
+                                                    )
+                                                    .with_description(base)
+                                                })
+                                                .collect();
+                                            let opts = crate::picker::PickerOptions::new(t!(
+                                                "tui.provider.select"
+                                            ))
+                                            .filterable()
+                                            .paged(10);
+                                            match crate::picker::select_picker(
+                                                terminal,
+                                                self.view.theme,
+                                                &opts,
+                                                &items,
+                                            )? {
+                                                Some(name) => {
+                                                    if self
+                                                        .confirm(
+                                                            terminal,
+                                                            &t!(
+                                                                "tui.provider.confirmRemove",
+                                                                name
+                                                            ),
+                                                        )
+                                                        .await?
+                                                    {
+                                                        return self
+                                                            .dispatch(
+                                                                terminal,
+                                                                &format!("/provider remove {name}"),
+                                                            )
+                                                            .await;
+                                                    }
+                                                }
+                                                None => self.push_line(TranscriptLine::status(t(
+                                                    "tui.provider.cancelled",
+                                                ))),
+                                            }
+                                        }
+                                    }
+                                    Err(e) => self.push_line(TranscriptLine::error(t!(
+                                        "tui.err.configFailed",
+                                        e
+                                    ))),
+                                }
+                            }
+                            Some("list") => match self.harness.config().await {
                                 Ok(cfg) => {
                                     let providers =
                                         cfg["providers"].as_object().cloned().unwrap_or_default();
@@ -2582,6 +2793,21 @@ impl App {
                             }
                             _ => self.push_line(TranscriptLine::status(t("tui.provider.usage"))),
                         }
+                    }
+                    "/experiments" => {
+                        // No engine data source in Rust yet (TS FlagId registry
+                        // is retired with agent-core); point at config.toml.
+                        self.push_line(TranscriptLine::status(t("tui.experiments.hint")));
+                    }
+                    "/multi-llm" => {
+                        // Concurrent-provider settings live in config.toml.
+                        self.push_line(TranscriptLine::status(t("tui.multiLlm.hint")));
+                    }
+                    "/feedback" => {
+                        self.push_line(TranscriptLine::status(t("tui.feedback.hint")));
+                    }
+                    "/web" => {
+                        self.push_line(TranscriptLine::status(t("tui.web.hint")));
                     }
                     other => self
                         .view
