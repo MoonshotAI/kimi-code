@@ -4,6 +4,7 @@
 //! terminal, event loop (keyboard + engine events), and a scrollable chat
 //! view. The full chatwidget/bottom-pane surface lands incrementally.
 
+pub mod approval;
 pub mod app;
 pub mod bottom_pane;
 pub mod chatwidget;
