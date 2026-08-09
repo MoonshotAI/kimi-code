@@ -22,6 +22,8 @@
 
 **明确不建** `sdk/typescript`——外部消费者使用 `kimi-sdk`(Rust) 或 HTTP 协议。`i18n` 文案沉淀为 JSON 数据文件。
 
+**TS 冻结已落地（2026-08-10）**：`node-sdk` / `kosong` / `kap-server` / `oauth` / `acp-adapter` / `protocol` / `kaos` / `transcript` / `telemetry` / `migration-legacy` / `pi-tui` / `kimi-agent/rust-loop.ts` / `apps/kimi-code` 剩余 TS 一律**冻结**——入口文件带 FROZEN banner，规则见根 AGENTS.md「TS 冻结清单」。只允许关键 bug 修复（崩溃/数据丢失/安全/日志污染）与测试基线适配；新能力一律写 Rust。
+
 ## 1.2 完成度（2026-08-10 实测）
 
 | 域 | 状态 |
@@ -182,7 +184,7 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 
 | 步 | 内容 | 状态 |
 |---|---|---|
-| G-0 | 基线锁定（cargo 全绿 + vitest 收敛 + TS 存量冻结） | 🔶 2026-08-10：vitest 143→2 failed（kosong flaky）；引擎宿主面 4 项修复完成 |
+| G-0 | 基线锁定（cargo 全绿 + vitest 收敛 + TS 存量冻结） | 🔶 2026-08-10：vitest 143→2 failed（kosong flaky）；引擎宿主面 4 项修复完成；TS 存量冻结 ✅（入口 FROZEN banner + 根 AGENTS.md 冻结清单） |
 | G-1 | node-sdk → kimi-sdk 补齐 + apps 消费面切换 | 🔶 进行中（/rust 子路径消费已重写为 kimi-server RPC 拉取式；catalog/config/errors/图片面已补；剩余 session/harness/auth/legacy 面） |
 | G-2 | kap-server → kimi-server + 前端直连 | ✅ 主体（Rust server 前端零改动；v1 wire 契约字段级对拍完成，遗留投影批次见 §7） |
 | G-3 | apps/kimi-code CLI 消费面切 kimi-cli | 🔶 native-session 已完成 plugin/cron/archive；auth/provider/telemetry 面待续 |

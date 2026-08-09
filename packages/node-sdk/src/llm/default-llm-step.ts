@@ -227,14 +227,12 @@ export function createDefaultLlmStep(
 
     let response: globalThis.Response;
     try {
-      console.log('PROBE LLMSTEP: fetch start', joinUrl(provider.baseUrl, CHAT_COMPLETIONS_PATH));
       response = await fetch(joinUrl(provider.baseUrl, CHAT_COMPLETIONS_PATH), {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(LLM_STEP_TIMEOUT_MS),
       });
-      console.log('PROBE LLMSTEP: fetch resolved', response.status);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(`LLM provider request failed: ${detail}`, { cause: error });
@@ -255,7 +253,6 @@ export function createDefaultLlmStep(
     }
 
     const { content, toolCalls, finishReason, usage } = await collectChatCompletions(response);
-    console.log('PROBE LLMSTEP: parsed', JSON.stringify({ content, finishReason, toolCalls: [...toolCalls.keys()], usage }));
 
     const tool_calls = [...toolCalls.values()].map((tc) => ({
       id: tc.id ?? '',

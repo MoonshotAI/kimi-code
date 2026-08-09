@@ -91,6 +91,30 @@ This is a TypeScript monorepo built for agent-assisted development. This file is
 
 Before writing any TS change, ask: *is this engine functionality?* If yes → implement in Rust. If it is host/UI → TS is fine **for now, but prefer Rust** (see `CODEX_MIGRATION_PLAN.md`).
 
+### TS 冻结清单（FROZEN）— 2026-08-10 生效
+
+> 冻结 = **废弃标记**（G-6 物理退役前置未满足，先冻结防扩散）。下列 TS 包/文件一律视为**冻结**：任何会话不得在其中新增功能、引擎逻辑、行为修补或边缘语义打磨。冻结包入口的 FROZEN banner 不得删除。
+
+**允许**：关键 bug 修复（崩溃 / 数据丢失 / 安全 / 生产日志污染）；测试基线必要适配（2026-08-05 测试策略："TS 层仅做基线必要适配，不深挖过渡层边缘行为"）。
+**禁止**：新增功能、引擎逻辑、行为修补、UI 微调。新能力一律写 Rust（`kimi-sdk` / `kimi-agent` / `crates/*`）；修 TS bug 前先核对 Rust 侧是否已有等价能力或修复。
+
+| 冻结包 | 目标 Rust | 备注 |
+|---|---|---|
+| `packages/node-sdk` | kimi-sdk | G-1 主攻在 Rust 侧 |
+| `packages/kosong` | kimi-sdk LLM 面 | 随 G-6 退役 |
+| `packages/kap-server` | kimi-server | Rust server 已主体 |
+| `packages/oauth` | kimi-oauth | 授权码流做在 Rust |
+| `packages/acp-adapter` | kimi-acp | — |
+| `packages/protocol` | kimi-protocol | — |
+| `packages/kaos` | 裁并评估 | — |
+| `packages/transcript` / `packages/telemetry` | 收编/退役 | — |
+| `packages/migration-legacy` | 退役 | 一次性数据迁移 |
+| `packages/pi-tui` | 退役 | — |
+| `packages/kimi-agent/rust-loop.ts` | Rust transport | 被 kap-server 运行时依赖阻塞 |
+| `apps/kimi-code` 剩余 TS（`src/main.ts` 入口） | kimi-cli | G-3 切换中 |
+
+**保留 TS（不受冻结）**：`kimi-web` / `kimi-inspect` / `vis/web`（web 前端）、`apps/vscode`（壳）、npm 薄壳（`kimi.mjs`）——仍遵守"引擎逻辑不得写 TS"白名单。
+
 ---
 
 ## Project Structure

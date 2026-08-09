@@ -1,4 +1,10 @@
 /**
+ * @deprecated FROZEN — TS 迁移冻结（2026-08-10）。
+ * 允许：关键 bug 修复（崩溃/数据丢失/安全/日志污染）与测试基线适配。
+ * 禁止：新增功能、引擎逻辑、行为修补。新能力一律写 Rust（kimi-sdk / kimi-agent / crates/*）。
+ * 依据：根 AGENTS.md「TS 冻结清单」+ CODEX_MIGRATION_PLAN.md §5。目标：kimi-cli（G-3 切换中）。
+ */
+/**
  * Kimi Code entry point.
  *
  * Parses CLI arguments via Commander.js, validates options, runs the
