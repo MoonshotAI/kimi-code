@@ -51,7 +51,7 @@
 3. **vscode legacy backfill 链路未闭环**：`kimi_cli_source_path` → `vscode_legacy_approval` metadata 回填（测试已跳过）
 4. **`apps/vscode` typecheck 遗留**：`replay-adapter.ts` 未迁移（旧文件错误，非新引入）
 5. **kosong 2 测试全量并发 flaky**（openai-legacy parallel tool args / openai-responses streaming，隔离跑全绿）
-6. **发布打包缺 kimi-server-serve**：kimi-code-rust-bin pack.mjs 只打 `kimi` 主二进制——TS 宿主发布态找不到 server 二进制（回退 harness）；`KIMI_SERVER_BIN` 可显式指定
+6. **发布打包补 kimi-server-serve**：已修（2026-08-10，pack.mjs 随主二进制打包 serve；缺失时警告）；`KIMI_SERVER_BIN` 仍可显式指定
 7. **用户真实 config.toml 损坏**：`duplicate defaultModel`（defaultModel 与 default_model 并存）导致 Rust TOML 严格解析拒绝整个配置（用户禁止修改真实文件，隔离配置验证绕开；建议用户侧删 camelCase 行）
 
 ---
@@ -101,7 +101,7 @@
 | `kimi-sdk` | 🔶 | Session 45/45 + Harness + catalog（models.dev 归一化）+ config/errors + /btw 旁路 + EXIF 图片面；**G-1 补齐中** |
 | `kimi-acp` | ✅ | stdio 适配器 + set_mode/set_model + session/update 通知回放 |
 | `kimi-oauth` | ✅ | device flow（authorize/poll/refresh）+ `kimi login`（自动开浏览器） |
-| `kimi-config` | 🔶 | catalog ✅；TOML/env/diagnostics 细化未做（随 G-1/G-5） |
+| `kimi-config` | — | **定案（2026-08-10）：不建独立 crate**——catalog 已内联于 kimi-sdk（`catalog.rs`）、config TOML/env/合并于引擎 `kimi-agent/src/config/`、diagnostics 于 kimi-sdk `config.rs`；§3 原"已建"描述作废，见 §8 |
 | `utils/*` | 搁置 | 并入 kimi-native-tools/kimi-shared（path/cache/output_truncation/fuzzy/pty/token_count 均有 Rust 实现） |
 
 **未拆分项**：`kimi-core`/`kimi-state`（保留 `packages/kimi-agent` 未拆分，计划与现状偏差，如需拆分再更新）；`crates/utils/*` 并入 native-tools/kimi-shared。
@@ -203,13 +203,14 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 - [x] kimi-sdk 大块（2026-08-10）：事件广播（subscribe/on_event/EventSubscription）、approval handler 事件驱动自动 resolve、tool handler（embedded HostCallbacks 注入）、MCP 全局配置（mcp.json store + OAuth flow + stdio 探测）、workspace skills、config diagnostics/ensure/removeProvider/getExperimentalFeatures（stub）、auth status 泛化 + getManagedUsage/submitFeedback/upload 三件套
 - [ ] kimi-sdk 补齐 session/harness 剩余面（API 差异表：Session 51 方法 ~70% 对应，TOP 缺口为 onEvent/setApprovalHandler——**已完成**（事件驱动）；`set_question_handler` 定案不实现——引擎 AskUserQuestion 走 stop_turn + 下一条消息（§8））
 - [ ] vscode 面：21 类型本地化（wire 生成或局部定义）后 `@moonshot-ai/kimi-code-sdk` 依赖可彻底删除（运行时可整体移除：isKimiError/createKimiHarness/effectiveModelAlias 已识别）
-- [ ] 发布打包补 kimi-server-serve（pack.mjs）
+- [x] 发布打包补 kimi-server-serve（pack.mjs，2026-08-10：存在时随主二进制一起打包，缺失时警告并提示构建命令）
 
 ## G-2 — Rust server v1 wire 遗留投影
 
-- [ ] config snake_case 投影、wire_message_from_context 的 ContentPart→WireMessageContent 映射（think/tool_use/tool_result/image）、thinking_level 字段、usage/goal/compaction 事件投影（多数有 REST 补偿）
-- [ ] tasks cancel 走 task 域（当前 bg/stop）
-- [ ] code review 遗留：v1 #2（take_turn 100ms 与投影器竞争，慢客户端丢收尾）、#3（usage 事件被前端 turn.ended 全零覆盖）、#5（消息 status 恒 pending）、MINOR 批
+- [x] config snake_case 投影、wire_message_from_context 的 ContentPart→WireMessageContent 映射（think/tool_use/tool_result/image）、thinking_level 字段、usage/goal/turn.ended 事件投影（2026-08-10 复核：均已实现且有测试）
+- [x] **compaction 事件投影**（2026-08-10：`session.compaction.started` → `event.session.compaction_started`；引擎无完成事件，`session/compact` RPC resolve 判定）
+- [x] **tasks cancel 走 task 域**（2026-08-10：`task/cancel` 方法 + 处理器 + client typed；bg/stop 保留给后台任务）
+- [ ] code review 遗留：v1 #2（take_turn 100ms 与投影器竞争，慢客户端丢收尾）、#3（usage 事件被前端 turn.ended 全零覆盖——Rust 侧已投影真实 usage，剩余是 kimi-web 消费端）、#5（消息 status 恒 pending）、MINOR 批
 
 ## G-3 — CLI 消费面
 
@@ -251,6 +252,8 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 - **kimi-sdk tool handler 仅 embedded 生效**（2026-08-10 定案）：引擎 `HostCallbacks::execute_tool` 是进程内 trait 调用，stdio 传输无反向通道——与 node-sdk napi 嵌入模式一致；Remote harness 注册 handler 保持 API 对称但引擎侧不可达
 - **MCP MRTR + CacheableResult 落地**（2026-07-28 协议，2026-08-10）：`inputRequests` 按 schema map 形状解析（修正 draft 数组偏差）；`roots/list` 自动应答（空 roots）+ 重试一次，sampling/elicitation 报描述性错误；`tools/list` 解析 `ttlMs`/`cacheScope` 提示（引擎不缓存，供宿主）
 - **`get_experimental_features` 保持 stub**（2026-08-10 定案）：引擎 flags 无 RPC，node-sdk 侧也是空列表 stub，不新增协议面
+- **`kimi-config` 不建独立 crate**（2026-08-10 定案）：catalog 内联 kimi-sdk、config TOML/env/合并在引擎、diagnostics 在 kimi-sdk config.rs——§3 crate 表该项改"不建"，避免重复实现
+- **`task/cancel` 落 task 域**（2026-08-10）：TaskService::stop 走 `task/cancel`（bg/stop 保留给后台任务）；未知 id 报错而非假装成功
 
 ## 迁移发现并修复的真实 bug（节选）
 - `session/export` 丢失 base64 编码；`config/set` 不建父目录；`CronProcessor` 未 start；`session/fs` Glob pattern 丢失

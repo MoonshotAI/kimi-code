@@ -5559,3 +5559,128 @@ fn native_full_chain_self_served_persists_and_resumes() {
     let _ = child2.wait();
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// 1e019baf0 regression: `work_dir` (host authority) wins over `homedir`,
+/// custom metadata persists across save/reopen and surfaces on
+/// `session/list`, and `session/cancel_compact` is a no-op success.
+#[test]
+fn work_dir_metadata_persistence_and_cancel_compact() {
+    let binary = match find_binary() {
+        Some(b) => b,
+        None => {
+            eprintln!("Skipping test: kimi-agent binary not built.");
+            return;
+        }
+    };
+    let home = std::env::temp_dir().join(format!(
+        "kimi-agent-it-workmeta-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::create_dir_all(&home);
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("KIMI_AGENT_HOME", &home)
+        .env("KIMI_CODE_HOME", &home)
+        .spawn()
+        .expect("spawn kimi-agent");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
+
+    let mut client_like = |id: u32, method: &str, params: serde_json::Value| {
+        let req = serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        writeln!(stdin, "{req}").unwrap();
+        stdin.flush().unwrap();
+        let mut buf = String::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            assert!(Instant::now() <= deadline, "timed out on {method}");
+            buf.clear();
+            if stdout.read_line(&mut buf).unwrap_or(0) == 0 {
+                panic!("stdout closed during {method}");
+            }
+            let Ok(msg) = serde_json::from_str::<serde_json::Value>(buf.trim()) else {
+                continue;
+            };
+            if msg.get("method").is_none() && msg.get("id") == Some(&serde_json::json!(id)) {
+                return msg;
+            }
+        }
+    };
+
+    // Create with an explicit work_dir (no homedir): the host workspace must
+    // win over any fallback.
+    let created = client_like(
+        1,
+        "session/create",
+        serde_json::json!({
+            "session_id": "it-workmeta",
+            "work_dir": "/work/host-authoritative",
+            "system_prompt": "test",
+            "model": "mock",
+            "goal_enabled": false,
+        }),
+    );
+    assert!(created.get("error").is_none(), "create failed: {created}");
+
+    // Attach custom metadata, persist, and list: both work_dir and metadata
+    // must be on the record.
+    let updated = client_like(
+        2,
+        "session/update_metadata",
+        serde_json::json!({
+            "session_id": "it-workmeta",
+            "metadata": { "custom": { "approval": "remembered" } },
+        }),
+    );
+    assert!(updated.get("error").is_none(), "update_metadata failed: {updated}");
+    let saved = client_like(3, "session/save", serde_json::json!({"session_id": "it-workmeta"}));
+    assert_eq!(saved["result"]["ok"], true);
+    let listed = client_like(4, "session/list", serde_json::json!({}));
+    let record = listed["result"]["sessions"]
+        .as_array()
+        .expect("sessions array")
+        .iter()
+        .find(|r| r["id"] == "it-workmeta")
+        .expect("session listed");
+    assert_eq!(record["work_dir"], "/work/host-authoritative");
+    assert_eq!(record["metadata"]["custom"]["approval"], "remembered");
+
+    // Re-create the same id (resume path): the persisted work_dir and
+    // metadata survive.
+    let recreated = client_like(
+        5,
+        "session/create",
+        serde_json::json!({
+            "session_id": "it-workmeta",
+            "system_prompt": "test",
+            "model": "mock",
+            "goal_enabled": false,
+        }),
+    );
+    assert!(recreated.get("error").is_none(), "re-create failed: {recreated}");
+    let relisted = client_like(6, "session/list", serde_json::json!({}));
+    let record = relisted["result"]["sessions"]
+        .as_array()
+        .expect("sessions array")
+        .iter()
+        .find(|r| r["id"] == "it-workmeta")
+        .expect("session listed after resume");
+    assert_eq!(record["work_dir"], "/work/host-authoritative");
+    assert_eq!(record["metadata"]["custom"]["approval"], "remembered");
+
+    // cancel_compact is a no-op success (compaction is synchronous).
+    let cancelled = client_like(
+        7,
+        "session/cancel_compact",
+        serde_json::json!({"session_id": "it-workmeta"}),
+    );
+    assert!(
+        cancelled.get("error").is_none(),
+        "cancel_compact must not error: {cancelled}"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+}

@@ -591,6 +591,20 @@ fn project_event(
                 json!({ "snapshot": ev["snapshot"] }),
             )]
         }
+        "session.compaction.started" => {
+            // Engine event (agent.rs `run_compaction`): `source` +
+            // `tokens_before`. Projected so the web client can surface
+            // compaction progress (the engine emits no completion event —
+            // the `session/compact` RPC resolves when it finishes).
+            vec![(
+                sid,
+                "event.session.compaction_started".into(),
+                json!({
+                    "source": ev["source"],
+                    "tokens_before": ev["tokens_before"],
+                }),
+            )]
+        }
         "session.approval.requested" => {
             // Engine event (approval/mod.rs): approval_id / tool_call_id /
             // tool_name / arguments / approval_rule / created_at_ms. The wire
@@ -1330,6 +1344,21 @@ mod tests {
     }
 
     #[test]
+    fn compaction_started_projects_to_v1_envelope() {
+        let shared = V1Shared::new();
+        let mut local = HashMap::new();
+        let out = project_event(&shared, &mut local, &json!({
+            "type": "session.compaction.started",
+            "session_id": "sess_1",
+            "source": "manual",
+            "tokens_before": 12345,
+        }));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].1, "event.session.compaction_started");
+        let p = &out[0].2;
+        assert_eq!(p["source"], json!("manual"));
+        assert_eq!(p["tokens_before"], json!(12345));
+    }
     fn goal_updated_projects_snapshot() {
         let shared = V1Shared::new();
         let mut local = HashMap::new();

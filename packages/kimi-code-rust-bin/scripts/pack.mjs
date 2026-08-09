@@ -35,3 +35,23 @@ const target = join(PACKAGE, 'bin', targetName);
 mkdirSync(dirname(target), { recursive: true });
 copyFileSync(source, target);
 console.log(`packed ${source} -> ${target}`);
+
+// Also pack the kimi-server-serve binary (the stdio/WS/HTTP server host) when
+// present. It is optional — hosts can point KIMI_SERVER_BIN at a build — but
+// shipping it removes the TS-host fallback-to-harness path in release
+// packaging (CODEX_MIGRATION_PLAN §1.4 gap 6).
+const serveSource = join(ROOT, 'target', 'release', `kimi-server-serve${exe}`);
+if (existsSync(serveSource)) {
+  const serveTarget = join(
+    PACKAGE,
+    'bin',
+    `kimi-server-serve-${process.platform}-${process.arch}${exe}`,
+  );
+  copyFileSync(serveSource, serveTarget);
+  console.log(`packed ${serveSource} -> ${serveTarget}`);
+} else {
+  console.warn(
+    'kimi-server-serve not found; skipped. Build it with: ' +
+      '`cargo build --release -p kimi-server-transport --bin kimi-server-serve`',
+  );
+}

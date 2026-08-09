@@ -225,6 +225,9 @@
     /// List tracked tasks (live + restored ghosts) — the engine side of the
     /// host's task registry surface.
     pub const TASK_LIST: &str = "task/list";
+    /// Cancel a tracked task (task-domain stop; background jobs keep using
+    /// `bg/stop`).
+    pub const TASK_CANCEL: &str = "task/cancel";
 
     // ── Config domain methods ───────────────────────────────────────────────────
     /// Read the global Kimi configuration (the engine's parsed `config.toml`).

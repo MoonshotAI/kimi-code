@@ -144,6 +144,15 @@ impl AppServerClient {
         };
         self.call(kimi_protocol::methods::SESSION_APPROVAL_RESOLVE, params).await
     }
+
+    /// Typed: cancel a tracked task (task-domain stop).
+    pub async fn task_cancel(&self, task_id: &str, reason: Option<&str>) -> serde_json::Value {
+        let mut params = serde_json::json!({ "task_id": task_id });
+        if let Some(reason) = reason {
+            params["reason"] = serde_json::json!(reason);
+        }
+        self.call(kimi_protocol::methods::TASK_CANCEL, params).await
+    }
 }
 
 #[cfg(test)]

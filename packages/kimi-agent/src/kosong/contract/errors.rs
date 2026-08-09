@@ -81,8 +81,18 @@ impl ChatProviderError {
         match self {
             ChatProviderError::ApiConnection(_) | ChatProviderError::ApiTimeout(_) => true,
             ChatProviderError::ApiEmptyResponse { .. } => true,
-            ChatProviderError::ApiStatus { status_code, .. } => {
-                matches!(status_code, 408 | 409 | 429 | 500 | 502 | 503 | 504 | 529)
+            ChatProviderError::ApiStatus { status_code, message, .. } => {
+                if matches!(status_code, 408 | 409 | 429 | 500 | 502 | 503 | 504 | 529) {
+                    return true;
+                }
+                // Some reverse proxies (e.g. Xunfei) wrap upstream transient
+                // failures with non-5xx status codes while putting the real
+                // failure in the body — match on `code: N` so those still
+                // get retried (kosong `errors.ts` parity).
+                if let Some(code) = extract_message_code(message) {
+                    return is_transient_xunfei_code(&code);
+                }
+                false
             }
             ChatProviderError::ApiRateLimit(_) | ChatProviderError::ApiProviderOverloaded(_) => true,
             // Quota exhaustion (billing/balance) can never succeed on retry —
@@ -92,6 +102,12 @@ impl ChatProviderError {
             ChatProviderError::ApiRequestTooLarge(_) => false,
             ChatProviderError::VideoUploadUnsupported(_) => false,
             ChatProviderError::Provider(msg) => {
+                // Xunfei error codes are decisive even without an HTTP
+                // status: transient codes retry, non-transient (invalid key,
+                // insufficient balance, blacklist) never do.
+                if let Some(code) = extract_message_code(msg) {
+                    return is_transient_xunfei_code(&code);
+                }
                 let lower = msg.to_lowercase();
                 !(lower.contains("unsupported media type for base64 image")
                     || lower.contains("invalid data url for image"))
@@ -204,6 +220,22 @@ pub fn normalize_api_status_error(
 ) -> ChatProviderError {
     let msg = message.to_string();
 
+    // Xunfei reverse-proxy rate-limit codes are the real signal when the
+    // status code is not 429: 11202 second-level, 11203 concurrent, 11210
+    // upstream (kosong `errors.ts` parity — the code check runs ahead of the
+    // status classification).
+    if let Some(code) = extract_message_code(message) {
+        if XUNFEI_RATE_LIMIT_CODES.contains(&code.as_str()) {
+            return ChatProviderError::ApiProviderOverloaded(ApiStatusPayload {
+                status_code,
+                message: msg,
+                request_id,
+                retry_after_ms,
+                trace_id,
+            });
+        }
+    }
+
     match status_code {
         429 => {
             if is_quota_exhausted_status_error(status_code, message) {
@@ -264,6 +296,39 @@ pub fn normalize_api_status_error(
 // ---------------------------------------------------------------------------
 // Error classification helpers
 // ---------------------------------------------------------------------------
+
+/// Xunfei wraps upstream transient failures as non-5xx statuses with the
+/// real cause in `code: N, msg: ...` (kosong `errors.ts` parity).
+const XUNFEI_TRANSIENT_CODES: &[&str] = &[
+    "10006", "10007", "10008", "10009", "10010", "10011", "10012", "10110", "10222", "10223",
+    "11202", "11203", "11210",
+];
+
+/// Xunfei error codes that are deterministic — never retried.
+const XUNFEI_NON_TRANSIENT_CODES: &[&str] = &["10001", "10002", "10015"];
+
+/// Xunfei reverse-proxy rate-limit codes: 11202 second-level, 11203
+/// concurrent, 11210 upstream.
+const XUNFEI_RATE_LIMIT_CODES: &[&str] = &["11202", "11203", "11210"];
+
+/// Whether a `code: N` message code is transient and retryable (transient
+/// wins only when not also listed as deterministic).
+fn is_transient_xunfei_code(code: &str) -> bool {
+    XUNFEI_TRANSIENT_CODES.contains(&code) && !XUNFEI_NON_TRANSIENT_CODES.contains(&code)
+}
+
+/// Extract the `code: N` value a reverse proxy (Xunfei) embeds in an error
+/// message; `None` when the message carries no such code.
+pub fn extract_message_code(message: &str) -> Option<String> {
+    let idx = message.find("code:")?;
+    let rest = message[idx + "code:".len()..].trim_start();
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        None
+    } else {
+        Some(digits)
+    }
+}
 
 fn message_contains_any(message: &str, patterns: &[&str]) -> bool {
     let lower = message.to_lowercase();
@@ -542,3 +607,55 @@ mod tests {
         assert!(is_tool_exchange_adjacency_error(&err));
     }
 }
+    #[test]
+    fn test_xunfei_transient_codes_retry_on_non_5xx_status() {
+        for code in ["10006", "10012", "10222", "11202"] {
+            let err = ChatProviderError::ApiStatus {
+                status_code: 400,
+                message: format!("code: {code}, msg: upstream transient"),
+                request_id: None,
+                retry_after_ms: None,
+                trace_id: None,
+            };
+            assert!(err.is_retryable(), "code {code} should retry");
+        }
+    }
+
+    #[test]
+    fn test_xunfei_non_transient_codes_never_retry() {
+        for code in ["10001", "10002", "10015"] {
+            let err = ChatProviderError::ApiStatus {
+                status_code: 400,
+                message: format!("code: {code}, msg: deterministic"),
+                request_id: None,
+                retry_after_ms: None,
+                trace_id: None,
+            };
+            assert!(!err.is_retryable(), "code {code} must not retry");
+            // Also decisive without an HTTP status (bare provider error).
+            let err = ChatProviderError::Provider(format!("code: {code}, msg: deterministic"));
+            assert!(!err.is_retryable(), "provider code {code} must not retry");
+        }
+    }
+
+    #[test]
+    fn test_xunfei_rate_limit_codes_normalize_to_overloaded() {
+        for code in ["11202", "11203", "11210"] {
+            let err = normalize_api_status_error(400, &format!("code: {code}, msg: rate limited"), None, None, None);
+            assert!(
+                matches!(err, ChatProviderError::ApiProviderOverloaded(_)),
+                "code {code} should classify as overloaded"
+            );
+        }
+        // A transient-but-not-rate-limit code keeps its status classification.
+        let err = normalize_api_status_error(400, "code: 10006, msg: upstream", None, None, None);
+        assert!(matches!(err, ChatProviderError::ApiStatus { .. }));
+    }
+
+    #[test]
+    fn test_extract_message_code() {
+        assert_eq!(extract_message_code("code: 11202, msg: x"), Some("11202".to_string()));
+        assert_eq!(extract_message_code("code:12345"), Some("12345".to_string()));
+        assert_eq!(extract_message_code("no code here"), None);
+        assert_eq!(extract_message_code("code: abc"), None);
+    }
