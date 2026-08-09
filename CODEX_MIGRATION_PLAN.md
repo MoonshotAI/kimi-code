@@ -940,6 +940,7 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 **简化项（对拍矩阵记录，非缺失）**：agent-group/read-group 组卡片（Rust 单卡片渲染，不合并同 step 多调用）；banner 网络拉取（footer 本地 tips 轮换）；experiments/multi-llm/feedback/web 为提示命令；easter-eggs 未迁移。
 
 ### 剩余（P6）
-- [ ] TS TUI 删除（apps/kimi-code/src/tui → 移除，run-shell.ts 改走 Rust bin）
-- [ ] TS 侧 tui 测试退役（test/tui/** 随目录删除）
-- [ ] 手动冒烟（真实终端）与 i18n 覆盖核对（Rust 内置 en/zh vs TS 1637 key 已对齐关键文案，非关键保留回退显示）
+- [x] **TS TUI 删除（2026-08-09，commit cba21d159）**：src/tui 189 文件 + test/tui 123 文件删除；共享工具上移 src/shared/（theme/tui-config/tui-session/slash-command 类型与 skills/goal-command 解析器/terminal 常量）；run-shell.ts 改 Rust bin 转发器；消费方更新（doctor/preflight/web/migration/acp/goal-prompt/native-session）；feedback-attachments 随 TUI 删除；apps/kimi-code 不再 import src/tui/*；oxlint 0 errors + tsc 通过 + build 通过
+- [x] **TS 侧 tui 测试退役（随目录删除）**
+- [x] **i18n 覆盖核对**：Rust 内置 en/zh 已对齐全部关键文案（dangerPatterns/permission/status/usage/goal/时间/picker/help/chip），缺失 key 回退显示
+- [ ] **手动冒烟（真实终端）**：本机 headless 无法真实交互；以 128 测试（kimi-tui 117 + kimi-ui 11，含 TestBackend 渲染冒烟）替代，真实终端冒烟清单见对拍矩阵（恢复会话/审批/@mention//plugins//tasks//goal next/Ctrl-G/图片粘贴）
