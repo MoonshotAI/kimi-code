@@ -92,7 +92,7 @@ pub(crate) fn build_status_report(status: &serde_json::Value, version: &str, ses
 
 /// A 20-cell ASCII context bar (`[████░░░░░░░░░░░░░░░░]`) — the TS
 /// status-panel progress-bar parity. Empty when `max_ctx` is 0.
-fn ctx_bar(ctx: u64, max_ctx: u64) -> String {
+pub(crate) fn ctx_bar(ctx: u64, max_ctx: u64) -> String {
     if max_ctx == 0 {
         return String::new();
     }

@@ -1090,11 +1090,10 @@ impl super::app::App {
                                 .map(|v| v / max)
                                 .unwrap_or(0)
                                 .min(100);
-                            self.push_line(TranscriptLine::status(t!(
-                                "tui.usage.context",
-                                ctx,
-                                max,
-                                pct
+                            self.push_line(TranscriptLine::status(format!(
+                                "{} {}",
+                                crate::reports::ctx_bar(ctx, max),
+                                t!("tui.usage.context", ctx, max, pct)
                             )));
                         }
                     }
