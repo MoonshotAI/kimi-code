@@ -270,6 +270,37 @@ pub fn tool_result_collapsed(text: &str) -> bool {
 /// approval preview (TS `CONTENT_SUMMARY_MAX_LINES` parity spirit).
 const PREVIEW_MAX_LINES: usize = 25;
 
+/// One-line tool-result summary for the collapsed card body (TS `chip.ts`
+/// parity, simplified). Returns `None` for tools without a meaningful
+/// summary — the caller falls back to the plain preview.
+pub fn tool_result_chip(tool: &str, result: &str, is_error: bool) -> Option<String> {
+    if is_error {
+        return Some(t!("tui.chip.failed", tool));
+    }
+    let body = result.trim();
+    match tool {
+        "Edit" => {
+            let first = body.lines().next().unwrap_or("");
+            if first.starts_with('+') || first.starts_with('-') {
+                Some(t!("tui.chip.edit", first))
+            } else {
+                Some(t("tui.chip.editOk").to_string())
+            }
+        }
+        "Write" => Some(t!("tui.chip.write", body.lines().count())),
+        "Read" => Some(t!("tui.chip.read", body.lines().count())),
+        "Bash" => {
+            if body.is_empty() {
+                Some(t("tui.chip.bashOk").to_string())
+            } else {
+                let preview: String = body.chars().take(60).collect();
+                Some(format!("Bash → {preview}"))
+            }
+        }
+        _ => None,
+    }
+}
+
 /// The first present, non-empty string field among `keys`, or `?`.
 fn first_str(args: &serde_json::Value, keys: &[&str]) -> String {
     keys.iter()
@@ -597,9 +628,9 @@ enum InterruptAction {
     CancelTurn,
 }
 
-/// Render a `session/get_status` result as a one-line human summary
-/// (model · mode · permission · thinking · context) instead of raw JSON.
-fn format_status(status: &serde_json::Value) -> String {
+/// Multi-line `/status` report (TS `status-panel` parity, simplified): one
+/// labeled line per field instead of the single-line summary.
+fn build_status_report(status: &serde_json::Value, version: &str, session_id: &str) -> Vec<String> {
     let model = status["model"].as_str().unwrap_or("-");
     let permission = status["permission"].as_str().unwrap_or("-");
     let plan = status["plan_mode"].as_bool().unwrap_or(false);
@@ -613,20 +644,18 @@ fn format_status(status: &serde_json::Value) -> String {
     };
     let ctx = status["context_tokens"].as_u64().unwrap_or(0);
     let max_ctx = status["max_context_tokens"].as_u64().unwrap_or(0);
-    t!(
-        "tui.status.summary",
-        model,
-        mode,
-        permission,
-        thinking,
-        ctx,
-        max_ctx
-    )
+    vec![
+        t!("tui.status.reportModel", version, model),
+        t!("tui.status.reportMode", mode),
+        t!("tui.status.reportPermission", permission),
+        t!("tui.status.reportThinking", thinking),
+        t!("tui.status.reportCtx", ctx, max_ctx),
+        t!("tui.status.reportSession", session_id),
+    ]
 }
 
-/// Render a token-usage snapshot (`{total: {input/output/total_tokens}}`) as
-/// a one-line summary instead of raw JSON.
-fn format_usage(usage: &serde_json::Value) -> String {
+/// Multi-line `/usage` report (TS `usage-panel` parity, simplified).
+fn build_usage_report(usage: &serde_json::Value) -> Vec<String> {
     let field = |name: &str| -> u64 { usage["total"][name].as_u64().unwrap_or(0) };
     let (input, output, total) = (
         field("input_tokens"),
@@ -634,10 +663,28 @@ fn format_usage(usage: &serde_json::Value) -> String {
         field("total_tokens"),
     );
     if total == 0 && input == 0 && output == 0 {
-        t("tui.usage.none").to_string()
+        vec![t("tui.usage.none").to_string()]
     } else {
-        t!("tui.usage.total", total, input, output)
+        vec![
+            t!("tui.usage.reportTotal", total),
+            t!("tui.usage.reportInput", input),
+            t!("tui.usage.reportOutput", output),
+        ]
     }
+}
+
+/// Multi-line `/goal status` report (TS `goal-panel` parity, simplified).
+fn build_goal_report(goal: &serde_json::Value) -> Vec<String> {
+    let objective = goal["objective"].as_str().unwrap_or("?");
+    let status = goal["status"].as_str().unwrap_or("?");
+    let turns = goal["turnsUsed"].as_u64().unwrap_or(0);
+    let tokens = goal["tokensUsed"].as_u64().unwrap_or(0);
+    vec![
+        t!("tui.goal.reportObjective", objective),
+        t!("tui.goal.reportStatus", status),
+        t!("tui.goal.reportTurns", turns),
+        t!("tui.goal.reportTokens", tokens),
+    ]
 }
 
 /// Generate a fresh session id for `/new` (timestamp-based, unique enough for
@@ -1230,8 +1277,15 @@ impl App {
                     }
                     "/status" => {
                         let status = self.session.as_mut().expect("session").get_status().await;
-                        let summary = format_status(&status["result"]);
-                        self.push_line(TranscriptLine::status(summary));
+                        let version = self
+                            .harness
+                            .core_version()
+                            .await
+                            .unwrap_or_else(|_| "?".to_string());
+                        for line in build_status_report(&status["result"], &version, &self.session_id)
+                        {
+                            self.push_line(TranscriptLine::status(line));
+                        }
                     }
                     "/info" => match self.harness.core_version().await {
                         Ok(v) => self.push_line(TranscriptLine::status(t!(
@@ -1950,19 +2004,9 @@ impl App {
                                 if g.is_null() || g.as_object().is_none() {
                                     self.push_line(TranscriptLine::status(t("tui.goal.none")));
                                 } else {
-                                    let objective = g["objective"].as_str().unwrap_or("?");
-                                    let status = g["status"].as_str().unwrap_or("?");
-                                    let turns = g["turnsUsed"].as_u64().unwrap_or(0);
-                                    let tokens = g["tokensUsed"].as_u64().unwrap_or(0);
-                                    self.push_line(TranscriptLine::status(format!(
-                                        "objective: {objective}"
-                                    )));
-                                    self.push_line(TranscriptLine::status(t!(
-                                        "tui.goal.panelStatus",
-                                        status,
-                                        turns,
-                                        tokens
-                                    )));
+                                    for line in build_goal_report(g) {
+                                        self.push_line(TranscriptLine::status(line));
+                                    }
                                 }
                             }
                             "pause" => {
@@ -2188,8 +2232,9 @@ impl App {
                     }
                     "/usage" => {
                         let usage = self.session.as_mut().expect("session").get_usage().await?;
-                        let summary = format_usage(&usage["result"]);
-                        self.push_line(TranscriptLine::status(summary));
+                        for line in build_usage_report(&usage["result"]) {
+                            self.push_line(TranscriptLine::status(line));
+                        }
                         // Context window readout (TS usage-panel parity).
                         let status = self.session.as_mut().expect("session").get_status().await;
                         let ctx = status["result"]["context_tokens"].as_u64().unwrap_or(0);
@@ -4210,46 +4255,6 @@ mod tests {
     }
 
     #[test]
-    fn status_summary_is_readable() {
-        // Pin the locale (global t(); dev tui.toml may be zh).
-        crate::i18n::set_locale(crate::i18n::Locale::En);
-        let status = serde_json::json!({
-            "model": "kimi-k2",
-            "permission": "manual",
-            "plan_mode": true,
-            "swarm_mode": false,
-            "thinking_effort": "high",
-            "context_tokens": 120,
-            "max_context_tokens": 1000,
-        });
-        let line = format_status(&status);
-        assert!(line.contains("model: kimi-k2"), "line: {line}");
-        assert!(line.contains("mode: plan"), "line: {line}");
-        assert!(line.contains("permission: manual"), "line: {line}");
-        assert!(line.contains("thinking: high"), "line: {line}");
-        assert!(line.contains("ctx: 120/1000"), "line: {line}");
-
-        let bare = format_status(&serde_json::json!({}));
-        assert!(bare.contains("mode: chat"), "bare: {bare}");
-        assert!(bare.contains("model: -"), "bare: {bare}");
-    }
-
-    #[test]
-    fn usage_summary_is_readable() {
-        // Pin the locale (global t(); dev tui.toml may be zh).
-        crate::i18n::set_locale(crate::i18n::Locale::En);
-        let usage = serde_json::json!({
-            "total": { "input_tokens": 10, "output_tokens": 20, "total_tokens": 30 },
-        });
-        let line = format_usage(&usage);
-        assert_eq!(line, "usage: 30 total (10 in / 20 out)");
-        assert_eq!(
-            format_usage(&serde_json::json!({})),
-            "usage: no tokens recorded"
-        );
-    }
-
-    #[test]
     fn smoke_renders_two_panes() {
         use ratatui::backend::TestBackend;
 
@@ -4527,5 +4532,94 @@ mod tests {
         assert_eq!(panel.visible(3).len(), 3);
         // A huge window shows everything (clamped).
         assert_eq!(panel.visible(10_000).len(), panel.rows.len());
+    }
+
+    #[test]
+    fn status_report_renders_labeled_lines() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        let status = serde_json::json!({
+            "model": "kimi-k2",
+            "permission": "auto",
+            "plan_mode": true,
+            "swarm_mode": false,
+            "thinking_effort": "high",
+            "context_tokens": 1200,
+            "max_context_tokens": 128000,
+        });
+        let lines = build_status_report(&status, "0.1.0", "sess-1");
+        assert_eq!(lines.len(), 6);
+        assert!(lines[0].contains("kimi 0.1.0"), "{}", lines[0]);
+        assert!(lines[0].contains("kimi-k2"));
+        assert!(lines[1].contains("plan"), "mode: {}", lines[1]);
+        assert!(lines[2].contains("auto"), "permission: {}", lines[2]);
+        assert!(lines[3].contains("high"), "thinking: {}", lines[3]);
+        assert!(lines[4].contains("1200/128000"), "ctx: {}", lines[4]);
+        assert!(lines[5].contains("sess-1"), "session: {}", lines[5]);
+    }
+
+    #[test]
+    fn usage_report_renders_three_lines_or_none() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        let usage = serde_json::json!({
+            "total": { "input_tokens": 10, "output_tokens": 20, "total_tokens": 30 }
+        });
+        let lines = build_usage_report(&usage);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].contains("30"), "{}", lines[0]);
+        assert!(lines[1].contains("10"));
+        assert!(lines[2].contains("20"));
+        // Empty usage -> single "none" line.
+        let empty = build_usage_report(&serde_json::json!({ "total": {} }));
+        assert_eq!(empty.len(), 1);
+        assert!(empty[0].contains("no"), "{}", empty[0]);
+    }
+
+    #[test]
+    fn goal_report_renders_objective_status_and_counts() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        let goal = serde_json::json!({
+            "objective": "fix the build",
+            "status": "active",
+            "turnsUsed": 3,
+            "tokensUsed": 9000,
+        });
+        let lines = build_goal_report(&goal);
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].contains("fix the build"), "{}", lines[0]);
+        assert!(lines[1].contains("active"));
+        assert!(lines[2].contains("3"));
+        assert!(lines[3].contains("9000"));
+    }
+
+    #[test]
+    fn tool_chip_summarizes_results() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        // Edit: stats header passes through.
+        assert!(tool_result_chip("Edit", "+2 -1\n a.txt", false)
+            .unwrap()
+            .contains("+2 -1"));
+        assert!(tool_result_chip("Edit", "done", false)
+            .unwrap()
+            .contains("ok"));
+        // Write / Read: line counts.
+        assert!(tool_result_chip("Write", "a\nb\nc", false)
+            .unwrap()
+            .contains("3 lines"));
+        assert!(tool_result_chip("Read", "one\ntwo", false)
+            .unwrap()
+            .contains("2 lines"));
+        // Bash: preview of the tail.
+        assert!(tool_result_chip("Bash", "hello world", false)
+            .unwrap()
+            .contains("hello world"));
+        assert!(tool_result_chip("Bash", "", false)
+            .unwrap()
+            .contains("ok"));
+        // Errors mark the tool failed.
+        assert!(tool_result_chip("Bash", "boom", true)
+            .unwrap()
+            .contains("failed"));
+        // Unknown tools fall back (None).
+        assert_eq!(tool_result_chip("WebSearch", "results", false), None);
     }
 }

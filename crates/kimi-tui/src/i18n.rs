@@ -269,6 +269,13 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.time.mAgo", "{0}m ago", "{0}分钟前"),
     ("tui.time.hAgo", "{0}h ago", "{0}小时前"),
     ("tui.time.dAgo", "{0}d ago", "{0}天前"),
+    // ── Tool-result chips (collapsed card summaries) ────────────────────
+    ("tui.chip.editOk", "Edit ok", "编辑成功"),
+    ("tui.chip.edit", "Edit {0}", "编辑 {0}"),
+    ("tui.chip.write", "Write {0} lines", "写入 {0} 行"),
+    ("tui.chip.read", "Read {0} lines", "读取 {0} 行"),
+    ("tui.chip.bashOk", "Bash ok", "命令成功"),
+    ("tui.chip.failed", "{0} failed", "{0} 失败"),
     // ── Dangerous-command detection (TS `tui.dangerPatterns` parity) ─────
     (
         "tui.dangerPatterns.recursiveDelete",
@@ -355,6 +362,20 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "model: {0} | mode: {1} | permission: {2} | thinking: {3} | ctx: {4}/{5}",
         "模型：{0} | 模式：{1} | 权限：{2} | 思考：{3} | 上下文：{4}/{5}",
     ),
+    (
+        "tui.status.reportModel",
+        "kimi {0} · model: {1}",
+        "kimi {0} · 模型：{1}",
+    ),
+    ("tui.status.reportMode", "mode: {0}", "模式：{0}"),
+    ("tui.status.reportPermission", "permission: {0}", "权限：{0}"),
+    ("tui.status.reportThinking", "thinking: {0}", "思考：{0}"),
+    (
+        "tui.status.reportCtx",
+        "context: {0}/{1} tokens",
+        "上下文：{0}/{1} tokens",
+    ),
+    ("tui.status.reportSession", "session: {0}", "会话：{0}"),
     (
         "tui.info.version",
         "kimi {0} — session {1}",
@@ -560,6 +581,10 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "status: {0} · {1} turns · {2} tokens",
         "状态：{0} · {1} 轮 · {2} tokens",
     ),
+    ("tui.goal.reportObjective", "objective: {0}", "目标：{0}"),
+    ("tui.goal.reportStatus", "status: {0}", "状态：{0}"),
+    ("tui.goal.reportTurns", "turns: {0}", "轮次：{0}"),
+    ("tui.goal.reportTokens", "tokens: {0}", "Token：{0}"),
     ("tui.goal.paused", "goal paused", "目标已暂停"),
     ("tui.goal.resumed", "goal resumed", "目标已恢复"),
     ("tui.goal.cancelled", "goal cancelled", "目标已取消"),
@@ -648,6 +673,9 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "usage: {0} total ({1} in / {2} out)",
         "用量：共 {0}（输入 {1} / 输出 {2}）",
     ),
+    ("tui.usage.reportTotal", "total: {0}", "总计：{0}"),
+    ("tui.usage.reportInput", "input: {0}", "输入：{0}"),
+    ("tui.usage.reportOutput", "output: {0}", "输出：{0}"),
     (
         "tui.usage.context",
         "context: {0}/{1} tokens ({2}%)",
