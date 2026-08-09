@@ -513,6 +513,13 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 ## 9. 迁移推进会话快照（2026-08，分支 feat/rust-agent-engine-migration）
 
+**2026-08-09 kimi-schema 规范化移植 Rust（G-5 能力并入）**：
+- **缺口**：评估确认 Rust 引擎把 MCP 工具 schema 直传 LLM（openai.rs "parameters": t.input_schema 透传）——Moonshot 校验器拒绝含本地 `$ref` 或缺嵌套 `type` 的 schema（MCP server 常发两者；Xcode MCP 26.5 还有 type 与 enum 矛盾的生成 bug）
+- **移植**（`llm/schema.rs`，对齐 kosong `kimi-schema.ts`）：`deref_json_schema`（本地 JSON-pointer `$ref` 内联 + 循环引用保留 + 兄弟键合并（2020-12 语义）+ 未解引用桶保留）+ `complete_schema_types`（嵌套属性缺 type 时按 enum/const 值或结构键推断、缺省 string；显式 type 与 enum 矛盾时修复 + 删不相关结构键）；`normalize_tool_schema` = 两者组合；root 视为容器不规范化
+- **接入**：openai.rs 工具转换处统一调用（Moonshot 走 OpenAI 协议；anthropic/google 无此校验器问题，不动）
+- **测试**：7 个单测（deref/循环/兄弟键/未知 ref 透传/结构推断/enum 矛盾修复/幂等）——kimi-agent lib llm 109 全绿、clippy 0 新警告、workspace --all-targets 0 errors
+- **G-5 状态**：kosong 独有能力仅剩 kimi-files 上传（引擎无对应需求）、capability 矩阵（数据）、Astron（数据）——无引擎缺口；kosong 退役随 node-sdk（G-6）
+
 **2026-08-09 G-5 评估 + 外围消费面收敛（kosong 收编第一步）**：
 - **评估结论**（explore 子代理全量调查 + 引擎对照）：kosong（32 源文件 7.4k）的**核心能力 Rust 引擎已独立覆盖**——三协议（openai/anthropic/google，http.rs Protocol 枚举）+ SSE 流式 + 事件发射 + 重试（retry.rs 与 TS 侧 retired retry.ts 参数同构：429→15s/60s、503→5s/30s、±25% jitter）+ Moonshot prompt_cache_key + usage 提取（"kosong parity"注释）。**无需搬运**；kosong 独有缺口（kimi-schema $ref 规范化、anthropic-profile、kimi-files 上传、capability 矩阵、reasoning-key、Astron）多为数据/方言适配，消费方仅 node-sdk（深度依赖，随 G-6 退役）
 - **外围消费面收敛**（本批）：oauth（ASTRON_MODEL_DEFS 等纯常量，astron-models.ts 42 行复制本地化）、acp-adapter（anthropic-profile.ts 174 行纯函数复制本地化）、vis-server（ContentPart/Message/FinishReason/TokenUsage/ToolCall 纯类型 → 新建 `wire-types.ts` 本地定义，注释声明冻结）；3 包删 `@moonshot-ai/kosong` 依赖 + pnpm install 重链

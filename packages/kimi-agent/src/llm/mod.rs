@@ -6,6 +6,7 @@ pub mod openai;
 pub mod proxy;
 pub mod request_logger;
 pub mod request_recorder;
+pub mod schema;
 pub mod wire;
 
 /// A streaming delta produced by a provider accumulator, tagged with its

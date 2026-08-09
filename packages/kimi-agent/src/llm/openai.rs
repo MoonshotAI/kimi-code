@@ -67,7 +67,10 @@ pub fn build_request_with_options(
                     "function": {
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.input_schema,
+                        // Normalize the schema for strict provider validators
+                        // (Moonshot rejects $refs and typeless nested
+                        // properties — MCP servers commonly emit both).
+                        "parameters": crate::llm::schema::normalize_tool_schema(&t.input_schema),
                     }
                 })
             })
