@@ -373,7 +373,7 @@ describe('sanitizeMcpSchema — recursive / circular schemas', () => {
     expect(branches[1]!['type']).toBe('object');
     
     // Drill down to the circular reference
-    const nestedChildren = prop(branches[1], 'children');
+    const nestedChildren = prop(branches[1]!, 'children');
     expect(nestedChildren['type']).toBe('array');
     const nestedItems = nestedChildren['items'] as Schema;
     const nestedBranches = nestedItems['anyOf'] as Schema[];
