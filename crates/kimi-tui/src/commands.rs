@@ -124,30 +124,8 @@ impl super::app::App {
                             .transcript
                             .push_line(TranscriptLine::error(t!("tui.err.infoFailed", e))),
                     },
-                    "/session" => {
-                        let parts: Vec<&str> = rest.split_whitespace().collect();
-                        match parts.first().copied() {
-                            Some("set") if parts.len() >= 2 => {
-                                let title = parts[1..].join(" ");
-                                match self.harness.rename_session(&self.session_id, &title).await {
-                                    Ok(()) => self.push_line(TranscriptLine::status(t!(
-                                        "tui.status.sessionSet",
-                                        title
-                                    ))),
-                                    Err(e) => self.view.transcript.push_line(
-                                        TranscriptLine::error(t!("tui.err.renameFailed", e)),
-                                    ),
-                                }
-                            }
-                            _ => {
-                                let msg = if parts.is_empty() {
-                                    t!("tui.status.sessionId", self.session_id)
-                                } else {
-                                    t("tui.usage.session").to_string()
-                                };
-                                self.push_line(TranscriptLine::status(msg));
-                            }
-                        }
+                    "/session" | "/new" | "/init" | "/title" | "/resume" | "/clear" | "/fork" | "/import" | "/sessions" | "/export" | "/archive" | "/btw" | "/endbtw" | "/copy" | "/export-md" => {
+                        return self.cmd_session(terminal, cmd, rest).await;
                     }
                     "/plugins" => {
                         let parts: Vec<&str> = rest.split_whitespace().collect();
@@ -519,28 +497,6 @@ impl super::app::App {
                             })
                         )));
                     }
-                    "/new" => {
-                        let fresh = format!("session-{}", fresh_session_id());
-                        self.switch_to_session(&fresh).await?;
-                    }
-                    "/init" => {
-                        self.session.as_mut().expect("session").init().await?;
-                        self.view
-                            .transcript
-                            .push_line(TranscriptLine::status(t("tui.session.initialized")));
-                    }
-                    "/title" => {
-                        if rest.is_empty() {
-                            self.view
-                                .transcript
-                                .push_line(TranscriptLine::status(t("tui.title.usage")));
-                        } else {
-                            self.session.as_mut().expect("session").rename(rest).await?;
-                            self.view
-                                .transcript
-                                .push_line(TranscriptLine::status(t!("tui.title.set", rest)));
-                        }
-                    }
                     "/mcp" => {
                         match self
                             .session
@@ -817,18 +773,6 @@ impl super::app::App {
                         );
                         self.push_line(TranscriptLine::status(t("tui.reloadTui.ok")));
                     }
-                    "/resume" => {
-                        if rest.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.resume.usage")));
-                        } else {
-                            let mut new_session = self.harness.create_session(rest).await?;
-                            // Restore the persisted state of the resumed session.
-                            let _ = new_session.load().await;
-                            self.session = Some(new_session);
-                            self.session_id = rest.to_string();
-                            self.push_line(TranscriptLine::status(t!("tui.resume.switched", rest)));
-                        }
-                    }
                     "/goal" | "/goal-cancel" | "/goal-pause" | "/goal-resume" | "/goal-status" => {
                         return self.cmd_goal(terminal, cmd, rest).await;
                     }
@@ -853,14 +797,6 @@ impl super::app::App {
                                 ))),
                             }
                         }
-                    }
-                    "/clear" => {
-                        self.session
-                            .as_mut()
-                            .expect("session")
-                            .clear_context()
-                            .await?;
-                        self.push_line(TranscriptLine::status(t("tui.clear.ok")));
                     }
                     "/compact" => {
                         // `/compact <instruction>` passes a custom compaction
@@ -912,18 +848,6 @@ impl super::app::App {
                             serde_json::to_string(&undone).unwrap_or_default()
                         )));
                     }
-                    "/fork" => {
-                        if rest.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.fork.usage")));
-                        } else {
-                            self.session
-                                .as_mut()
-                                .expect("session")
-                                .fork(rest, None, None)
-                                .await?;
-                            self.push_line(TranscriptLine::status(t!("tui.fork.done", rest)));
-                        }
-                    }
                     "/steer" => {
                         if rest.is_empty() {
                             self.push_line(TranscriptLine::status(t("tui.steer.usage")));
@@ -935,135 +859,6 @@ impl super::app::App {
                                 .steer(serde_json::json!([{ "type": "text", "text": rest }]))
                                 .await?;
                             self.push_line(TranscriptLine::status(t!("tui.steer.queued", queued)));
-                        }
-                    }
-                    "/import" => {
-                        if rest.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.import.usage")));
-                        } else {
-                            self.session
-                                .as_mut()
-                                .expect("session")
-                                .import_context(rest, "tui")
-                                .await?;
-                            self.view.transcript.push_line(TranscriptLine::status(t!(
-                                "tui.import.done",
-                                rest.chars().count()
-                            )));
-                        }
-                    }
-                    "/sessions" => {
-                        let sessions = self.harness.list_sessions(50).await?;
-                        let now_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0);
-                        let items: Vec<crate::picker::PickerItem> = sessions
-                            .iter()
-                            .filter_map(|s| {
-                                let id = s["id"].as_str()?.to_string();
-                                let title = s["title"].as_str().unwrap_or("(untitled)").to_string();
-                                let mut item = crate::picker::PickerItem::new(id, title);
-                                if let Some(updated) = s["updated_at"].as_str() {
-                                    let relative = format_relative_time(updated, now_ms);
-                                    if !relative.is_empty() {
-                                        item = item.with_description(relative);
-                                    }
-                                }
-                                Some(item)
-                            })
-                            .collect();
-                        if items.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.sessions.none")));
-                        } else {
-                            let opts = crate::picker::PickerOptions::new(t(
-                                "tui.picker.selectSession",
-                            ))
-                            .filterable()
-                            .paged(10);
-                            match crate::picker::select_picker(
-                                terminal,
-                                self.view.theme,
-                                &opts,
-                                &items,
-                            )? {
-                                Some(id) => self.switch_to_session(&id).await?,
-                                None => self
-                                    .view
-                                    .transcript
-                                    .push_line(TranscriptLine::status(t("tui.sessions.cancelled"))),
-                            }
-                        }
-                    }
-                    "/export" => match self.harness.export_session(&self.session_id).await {
-                        Ok(zip) => {
-                            let path = format!("{}.zip", self.session_id);
-                            match std::fs::write(&path, &zip) {
-                                Ok(()) => self.push_line(TranscriptLine::status(t!(
-                                    "tui.export.done",
-                                    path,
-                                    zip.len()
-                                ))),
-                                Err(e) => self
-                                    .push_line(TranscriptLine::error(t!("tui.err.exportWrite", e))),
-                            }
-                        }
-                        Err(e) => {
-                            self.push_line(TranscriptLine::error(t!("tui.err.exportFailed", e)))
-                        }
-                    },
-                    "/archive" => {
-                        let Some(session) = self.session.as_mut() else {
-                            self.push_line(TranscriptLine::error(t("tui.err.archiveNoSession")));
-                            return Ok(false);
-                        };
-                        match session.archive().await {
-                            Ok(true) => self
-                                .view
-                                .transcript
-                                .push_line(TranscriptLine::status(t("tui.archive.ok"))),
-                            Ok(false) => self
-                                .view
-                                .transcript
-                                .push_line(TranscriptLine::error(t("tui.err.archiveNotFound"))),
-                            Err(e) => self
-                                .view
-                                .transcript
-                                .push_line(TranscriptLine::error(t!("tui.err.archiveFailed", e))),
-                        }
-                    }
-                    "/btw" => {
-                        // TS parity: spawn a side-question agent and route the
-                        // prompt to it; the answer streams into the transcript
-                        // (`[btw]`-prefixed user line). While the agent is
-                        // active, every prompt routes to it until `/endbtw`.
-                        let question = rest.trim();
-                        if question.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.btw.usage")));
-                        } else if self.btw_agent.is_some() {
-                            self.push_line(TranscriptLine::status(t("tui.btw.alreadyActive")));
-                        } else {
-                            match self.session.as_mut().expect("session").start_btw().await {
-                                Ok(id) => {
-                                    self.btw_agent = Some(id.clone());
-                                    self.push_line(TranscriptLine::status(t!("tui.btw.started", id)));
-                                    return self.run_turn(question).await.map(|_| false);
-                                }
-                                Err(e) => {
-                                    self.push_line(TranscriptLine::error(t!("tui.err.generic", e)));
-                                }
-                            }
-                        }
-                    }
-                    "/endbtw" => {
-                        match self.session.as_mut().expect("session").end_btw().await {
-                            Ok(()) => {
-                                self.btw_agent = None;
-                                self.push_line(TranscriptLine::status(t("tui.btw.ended")));
-                            }
-                            Err(e) => {
-                                self.push_line(TranscriptLine::error(t!("tui.err.generic", e)));
-                            }
                         }
                     }
                     "/login" => {
@@ -1252,34 +1047,6 @@ impl super::app::App {
                             None => {
                                 self.push_line(TranscriptLine::status(t("tui.settings.cancelled")))
                             }
-                        }
-                    }
-                    "/copy" => {
-                        // Copy the last assistant reply to the clipboard (TS
-                        // `handleCopyCommand` parity — sourced from the rendered
-                        // transcript so it survives compaction).
-                        match find_last_assistant_text(&self.view.transcript) {
-                            Some(text) => match copy_to_clipboard(&text) {
-                                Ok(()) => self.push_line(TranscriptLine::status(t!(
-                                    "tui.copy.ok",
-                                    text.chars().count()
-                                ))),
-                                Err(e) => self
-                                    .push_line(TranscriptLine::error(t!("tui.err.copyFailed", e))),
-                            },
-                            None => self.push_line(TranscriptLine::status(t("tui.copy.none"))),
-                        }
-                    }
-                    "/export-md" => {
-                        // Export the visible transcript as a Markdown file (TS
-                        // `/export-md` parity, simplified).
-                        let path = format!("{}.md", self.session_id);
-                        let markdown = transcript_to_markdown(&self.view.transcript);
-                        match std::fs::write(&path, markdown) {
-                            Ok(()) => self
-                                .push_line(TranscriptLine::status(t!("tui.exportMd.done", path))),
-                            Err(e) => self
-                                .push_line(TranscriptLine::error(t!("tui.err.exportMdFailed", e))),
                         }
                     }
                     "/discuss" => {
@@ -1762,6 +1529,259 @@ impl super::app::App {
         "tui.goal.show",
         serde_json::to_string(&goal["goal"]).unwrap_or_default()
     )));
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+}
+
+impl super::app::App {
+    /// `session` command group (extracted from dispatch for readability).
+    async fn cmd_session(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        cmd: &str,
+        rest: &str,
+    ) -> anyhow::Result<bool> {
+        match cmd {
+            "/session" => {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    match parts.first().copied() {
+        Some("set") if parts.len() >= 2 => {
+            let title = parts[1..].join(" ");
+            match self.harness.rename_session(&self.session_id, &title).await {
+                Ok(()) => self.push_line(TranscriptLine::status(t!(
+                    "tui.status.sessionSet",
+                    title
+                ))),
+                Err(e) => self.view.transcript.push_line(
+                    TranscriptLine::error(t!("tui.err.renameFailed", e)),
+                ),
+            }
+        }
+        _ => {
+            let msg = if parts.is_empty() {
+                t!("tui.status.sessionId", self.session_id)
+            } else {
+                t("tui.usage.session").to_string()
+            };
+            self.push_line(TranscriptLine::status(msg));
+        }
+    }
+            }
+            "/new" => {
+    let fresh = format!("session-{}", fresh_session_id());
+    self.switch_to_session(&fresh).await?;
+            }
+            "/init" => {
+    self.session.as_mut().expect("session").init().await?;
+    self.view
+        .transcript
+        .push_line(TranscriptLine::status(t("tui.session.initialized")));
+            }
+            "/title" => {
+    if rest.is_empty() {
+        self.view
+            .transcript
+            .push_line(TranscriptLine::status(t("tui.title.usage")));
+    } else {
+        self.session.as_mut().expect("session").rename(rest).await?;
+        self.view
+            .transcript
+            .push_line(TranscriptLine::status(t!("tui.title.set", rest)));
+    }
+            }
+            "/resume" => {
+    if rest.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.resume.usage")));
+    } else {
+        let mut new_session = self.harness.create_session(rest).await?;
+        // Restore the persisted state of the resumed session.
+        let _ = new_session.load().await;
+        self.session = Some(new_session);
+        self.session_id = rest.to_string();
+        self.push_line(TranscriptLine::status(t!("tui.resume.switched", rest)));
+    }
+            }
+            "/clear" => {
+    self.session
+        .as_mut()
+        .expect("session")
+        .clear_context()
+        .await?;
+    self.push_line(TranscriptLine::status(t("tui.clear.ok")));
+            }
+            "/fork" => {
+    if rest.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.fork.usage")));
+    } else {
+        self.session
+            .as_mut()
+            .expect("session")
+            .fork(rest, None, None)
+            .await?;
+        self.push_line(TranscriptLine::status(t!("tui.fork.done", rest)));
+    }
+            }
+            "/import" => {
+    if rest.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.import.usage")));
+    } else {
+        self.session
+            .as_mut()
+            .expect("session")
+            .import_context(rest, "tui")
+            .await?;
+        self.view.transcript.push_line(TranscriptLine::status(t!(
+            "tui.import.done",
+            rest.chars().count()
+        )));
+    }
+            }
+            "/sessions" => {
+    let sessions = self.harness.list_sessions(50).await?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let items: Vec<crate::picker::PickerItem> = sessions
+        .iter()
+        .filter_map(|s| {
+            let id = s["id"].as_str()?.to_string();
+            let title = s["title"].as_str().unwrap_or("(untitled)").to_string();
+            let mut item = crate::picker::PickerItem::new(id, title);
+            if let Some(updated) = s["updated_at"].as_str() {
+                let relative = format_relative_time(updated, now_ms);
+                if !relative.is_empty() {
+                    item = item.with_description(relative);
+                }
+            }
+            Some(item)
+        })
+        .collect();
+    if items.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.sessions.none")));
+    } else {
+        let opts = crate::picker::PickerOptions::new(t(
+            "tui.picker.selectSession",
+        ))
+        .filterable()
+        .paged(10);
+        match crate::picker::select_picker(
+            terminal,
+            self.view.theme,
+            &opts,
+            &items,
+        )? {
+            Some(id) => self.switch_to_session(&id).await?,
+            None => self
+                .view
+                .transcript
+                .push_line(TranscriptLine::status(t("tui.sessions.cancelled"))),
+        }
+    }
+            }
+            "/export" => {
+                match self.harness.export_session(&self.session_id).await {
+    Ok(zip) => {
+        let path = format!("{}.zip", self.session_id);
+        match std::fs::write(&path, &zip) {
+            Ok(()) => self.push_line(TranscriptLine::status(t!(
+                "tui.export.done",
+                path,
+                zip.len()
+            ))),
+            Err(e) => self
+                .push_line(TranscriptLine::error(t!("tui.err.exportWrite", e))),
+        }
+    }
+    Err(e) => {
+        self.push_line(TranscriptLine::error(t!("tui.err.exportFailed", e)))
+    }
+                }
+            }
+            "/archive" => {
+    let Some(session) = self.session.as_mut() else {
+        self.push_line(TranscriptLine::error(t("tui.err.archiveNoSession")));
+        return Ok(false);
+    };
+    match session.archive().await {
+        Ok(true) => self
+            .view
+            .transcript
+            .push_line(TranscriptLine::status(t("tui.archive.ok"))),
+        Ok(false) => self
+            .view
+            .transcript
+            .push_line(TranscriptLine::error(t("tui.err.archiveNotFound"))),
+        Err(e) => self
+            .view
+            .transcript
+            .push_line(TranscriptLine::error(t!("tui.err.archiveFailed", e))),
+    }
+            }
+            "/btw" => {
+    // TS parity: spawn a side-question agent and route the
+    // prompt to it; the answer streams into the transcript
+    // (`[btw]`-prefixed user line). While the agent is
+    // active, every prompt routes to it until `/endbtw`.
+    let question = rest.trim();
+    if question.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.btw.usage")));
+    } else if self.btw_agent.is_some() {
+        self.push_line(TranscriptLine::status(t("tui.btw.alreadyActive")));
+    } else {
+        match self.session.as_mut().expect("session").start_btw().await {
+            Ok(id) => {
+                self.btw_agent = Some(id.clone());
+                self.push_line(TranscriptLine::status(t!("tui.btw.started", id)));
+                return self.run_turn(question).await.map(|_| false);
+            }
+            Err(e) => {
+                self.push_line(TranscriptLine::error(t!("tui.err.generic", e)));
+            }
+        }
+    }
+            }
+            "/endbtw" => {
+    match self.session.as_mut().expect("session").end_btw().await {
+        Ok(()) => {
+            self.btw_agent = None;
+            self.push_line(TranscriptLine::status(t("tui.btw.ended")));
+        }
+        Err(e) => {
+            self.push_line(TranscriptLine::error(t!("tui.err.generic", e)));
+        }
+    }
+            }
+            "/copy" => {
+    // Copy the last assistant reply to the clipboard (TS
+    // `handleCopyCommand` parity — sourced from the rendered
+    // transcript so it survives compaction).
+    match find_last_assistant_text(&self.view.transcript) {
+        Some(text) => match copy_to_clipboard(&text) {
+            Ok(()) => self.push_line(TranscriptLine::status(t!(
+                "tui.copy.ok",
+                text.chars().count()
+            ))),
+            Err(e) => self
+                .push_line(TranscriptLine::error(t!("tui.err.copyFailed", e))),
+        },
+        None => self.push_line(TranscriptLine::status(t("tui.copy.none"))),
+    }
+            }
+            "/export-md" => {
+    // Export the visible transcript as a Markdown file (TS
+    // `/export-md` parity, simplified).
+    let path = format!("{}.md", self.session_id);
+    let markdown = transcript_to_markdown(&self.view.transcript);
+    match std::fs::write(&path, markdown) {
+        Ok(()) => self
+            .push_line(TranscriptLine::status(t!("tui.exportMd.done", path))),
+        Err(e) => self
+            .push_line(TranscriptLine::error(t!("tui.err.exportMdFailed", e))),
+    }
             }
             _ => {}
         }
