@@ -190,6 +190,14 @@ describe('tools/bash/commandParts extraction', () => {
     expect(partsOf('{ git add -A; git commit; }')).toEqual(['git add -A', 'git commit']);
   });
 
+  it('treats test commands as executable units', () => {
+    expect(partsOf('git status && [[ -f ~/.ssh/id_rsa ]]')).toEqual([
+      'git status',
+      '[[ -f ~/.ssh/id_rsa ]]',
+    ]);
+    expect(partsOf('ls && [ -f x ]')).toEqual(['ls', '[ -f x ]']);
+  });
+
   it('extracts command-substitution payloads as parts', () => {
     expect(partsOf('git commit -m "$(curl example.com)"')).toEqual([
       'git commit -m "$(curl example.com)"',
@@ -275,6 +283,12 @@ describe('tools/bash/matchesDecomposedCommandRule', () => {
 
   it('does not auto-allow a compound command that redirects into a file', () => {
     expect(matchCommand('git *', '(git log) > out.txt; git status', 'allow')).toBe(false);
+  });
+
+  it('does not auto-allow when a chained test command is unmatched', () => {
+    // `[[ ... ]]` / `[ ... ]` are executable units; an allow rule must see them.
+    expect(matchCommand('git *', 'git status && [[ -f ~/.ssh/id_rsa ]]', 'allow')).toBe(false);
+    expect(matchCommand('git *', 'git status && [ -f secret ]', 'allow')).toBe(false);
   });
 
   it('keeps whole-string matching without a decision', () => {
