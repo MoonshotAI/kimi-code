@@ -68,10 +68,14 @@ describe('server-v2 GET /api/v1/auth', () => {
     return authSummarySchema.parse(body.data);
   }
 
-  it('returns ready=false with an empty snapshot on empty config', async () => {
-    await boot();
+  it('returns ready=false with a provider but no default model', async () => {
+    // The Rust engine validates configs and rejects an empty provider set,
+    // so the "not ready" case is a provider without a default model.
+    await boot(`
+      [providers.kimi]
+      api_key = "sk-test"
+    `);
     const summary = await getAuth();
-    // The engine config always carries its built-in models.dev providers.
     expect(summary.ready).toBe(false);
     expect(summary.providers_count).toBeGreaterThanOrEqual(1);
     expect(summary.default_model).toBeNull();
