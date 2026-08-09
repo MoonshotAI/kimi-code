@@ -167,9 +167,9 @@ interface TurnDriver {
   cancelRequested?: boolean;
   /**
    * Turn-scoped events that arrived while `turnId` was still unknown. Once
-   * the launch resolves, the entries matching the driver's turn are replayed
-   * in arrival order; the rest (a still-draining prior turn) are dropped —
-   * the same verdict the live path would have given.
+   * the launch resolves, all entries are replayed in arrival order. Only the
+   * matching turn may settle the driver; every event still belongs to this
+   * session's main-agent stream and must reach the ACP client.
    */
   early: Array<{ readonly turnId: number; readonly dispatch: () => void }>;
 }
@@ -639,9 +639,9 @@ export class AcpSession {
 
   /**
    * Submit the prompt and drive the turn to completion: `agent.prompt()`
-   * returns the launched turn id, which the session-level event handlers use
-   * to attribute events to this driver. Settles on `turn.ended`; a no-launch
-   * result (hook-blocked / not runnable) settles with `end_turn`.
+   * returns the launched turn id, which identifies the `turn.ended` event that
+   * settles this driver. A no-launch result (hook-blocked / not runnable)
+   * settles with `end_turn`.
    */
   private driveTurn(input: readonly ContentPart[]): Promise<PromptResponse> {
     this.assertNoActiveTurn();
@@ -650,8 +650,8 @@ export class AcpSession {
 
   /**
    * Shared turn settlement for every launch path (`agent.prompt`,
-   * `agent.activateSkill`): the returned turn id attributes subsequent events
-   * to this driver; `undefined` means no turn launched (hook-blocked / not
+   * `agent.activateSkill`): the returned turn id identifies which turn may
+   * settle this driver; `undefined` means no turn launched (hook-blocked / not
    * runnable — the busy case never gets this far, see
    * {@link assertNoActiveTurn}), so the prompt settles gracefully with
    * `end_turn`.
@@ -664,6 +664,7 @@ export class AcpSession {
         (launched) => {
           if (driver.settled) return;
           if (launched === undefined) {
+            this.replayEarlyEvents(driver);
             // No turn will emit `turn.ended`, so settle gracefully. The engine
             // publishes a `prompt.completed` with reason 'blocked' for the
             // hook-blocked case; the wire carries no blocking message to
@@ -688,11 +689,10 @@ export class AcpSession {
           // Replay the events the turn emitted before its id arrived (a fast
           // turn can outrun the launch round-trip — `activateSkill` returns
           // only after the prompt-metadata update).
-          for (const early of driver.early.splice(0)) {
-            if (early.turnId === driver.turnId) early.dispatch();
-          }
+          this.replayEarlyEvents(driver);
         },
         (error) => {
+          this.replayEarlyEvents(driver);
           this.settleDriver(driver, () => {
             reject(mapPromptLaunchError(error, this.sessionId));
           });
@@ -714,9 +714,13 @@ export class AcpSession {
     dispatch();
   }
 
+  private replayEarlyEvents(driver: TurnDriver): void {
+    for (const early of driver.early.splice(0)) early.dispatch();
+  }
+
   /**
    * Settle the driver exactly once and detach it from the session so later
-   * events of its turn are ignored.
+   * events cannot affect the client prompt response.
    */
   private settleDriver(driver: TurnDriver, action: () => void): void {
     if (driver.settled) return;
@@ -725,7 +729,7 @@ export class AcpSession {
     action();
   }
 
-  /** The active driver, but only for events of ITS turn. */
+  /** The active driver, but only for settling its client-initiated turn. */
   private driverFor(turnId: number): TurnDriver | undefined {
     const driver = this.driver;
     if (driver === undefined || driver.turnId === undefined || driver.turnId !== turnId) {
@@ -735,17 +739,14 @@ export class AcpSession {
   }
 
   private onAssistantDelta(event: AgentEventPayloads['assistant.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     this.emit(assistantDeltaToSessionUpdate(this.sessionId, event));
   }
 
   private onThinkingDelta(event: AgentEventPayloads['thinking.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     this.emit(thinkingDeltaToSessionUpdate(this.sessionId, event));
   }
 
   private onToolCallStarted(event: AgentEventPayloads['tool.call.started']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     // The klient payload mirrors `ToolCallStartedEvent` (`args` / `display`
     // arrive as `unknown` — cast at this seam).
     const mapped = event as unknown as ToolCallStartedEvent;
@@ -787,7 +788,6 @@ export class AcpSession {
   }
 
   private onToolCallDelta(event: AgentEventPayloads['tool.call.delta']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     // The klient payload mirrors `ToolCallDeltaEvent` field-for-field.
     const mapped = event as unknown as ToolCallDeltaEvent;
     const key = acpToolCallId(event.turnId, event.toolCallId);
@@ -809,7 +809,6 @@ export class AcpSession {
   }
 
   private onToolProgress(event: AgentEventPayloads['tool.progress']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     // The klient payload mirrors `ToolProgressEvent` field-for-field; the
     // helper forwards only `status` updates with text (as a title refresh)
     // and returns null for everything else, which `emit` drops.
@@ -817,7 +816,6 @@ export class AcpSession {
   }
 
   private onToolResult(event: AgentEventPayloads['tool.result']): void {
-    if (this.driverFor(event.turnId) === undefined) return;
     const key = acpToolCallId(event.turnId, event.toolCallId);
     const locations = this.toolLocations.get(key);
     this.toolLocations.delete(key);
@@ -906,17 +904,20 @@ export class AcpSession {
 
   private onTurnEnded(event: AgentEventPayloads['turn.ended']): void {
     const driver = this.driverFor(event.turnId);
-    if (driver === undefined) return;
-    const error = event.error as { readonly code: string; readonly message?: string } | undefined;
-    this.settleDriver(driver, () => {
-      // Auth failures must surface as a JSON-RPC `auth_required` error
-      // so the client triggers its re-auth flow, not a silent `end_turn`.
-      if (event.reason === 'failed' && isAuthError(error)) {
-        driver.reject(RequestError.authRequired(undefined, error?.message));
-        return;
-      }
-      driver.resolve({ stopReason: turnEndReasonToStopReason(event.reason, error) });
-    });
+    if (driver !== undefined) {
+      const error = event.error as
+        | { readonly code: string; readonly message?: string }
+        | undefined;
+      this.settleDriver(driver, () => {
+        // Auth failures must surface as a JSON-RPC `auth_required` error
+        // so the client triggers its re-auth flow, not a silent `end_turn`.
+        if (event.reason === 'failed' && isAuthError(error)) {
+          driver.reject(RequestError.authRequired(undefined, error?.message));
+          return;
+        }
+        driver.resolve({ stopReason: turnEndReasonToStopReason(event.reason, error) });
+      });
+    }
     void this.emitUsageUpdate();
   }
 

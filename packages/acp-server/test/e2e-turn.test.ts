@@ -15,9 +15,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { mapPromptLaunchError } from '../src/session';
+import { AcpSession, mapPromptLaunchError } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { writeFakeModelConfig } from './_helpers/fakeModelConfig';
 import { solidPngBase64 } from './_helpers/png';
@@ -27,6 +27,72 @@ import { createScriptedProvider, type ScriptedProvider } from './_helpers/script
 const STDIO_MCP_FIXTURE = fileURLToPath(
   new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url),
 );
+
+interface TurnDriverHarness {
+  driveLaunch(
+    launch: Promise<{ readonly turn_id: number } | undefined>,
+  ): Promise<{ readonly stopReason: string }>;
+  dispatchTurnEvent(turnId: number, dispatch: () => void): void;
+  onTurnEnded(event: { readonly turnId: number; readonly reason: 'completed' }): void;
+}
+
+function createTurnDriverHarness(): TurnDriverHarness {
+  const session = Object.create(AcpSession.prototype) as AcpSession;
+  Object.defineProperty(session, 'emitUsageUpdate', {
+    value: async (): Promise<void> => {},
+  });
+  return session as unknown as TurnDriverHarness;
+}
+
+describe('AcpSession turn driver buffering', () => {
+  it('replays unrelated events without letting them settle the client prompt', async () => {
+    const session = createTurnDriverHarness();
+    let resolveLaunch!: (result: { readonly turn_id: number }) => void;
+    const prompt = session.driveLaunch(
+      new Promise((resolve) => {
+        resolveLaunch = resolve;
+      }),
+    );
+    let promptSettled = false;
+    void prompt.then(() => {
+      promptSettled = true;
+    });
+    const delivered: string[] = [];
+
+    session.dispatchTurnEvent(99, () => delivered.push('background message'));
+    session.dispatchTurnEvent(99, () => {
+      session.onTurnEnded({ turnId: 99, reason: 'completed' });
+    });
+    resolveLaunch({ turn_id: 100 });
+
+    await vi.waitFor(() => {
+      expect(delivered).toEqual(['background message']);
+    });
+    expect(promptSettled).toBe(false);
+
+    session.dispatchTurnEvent(100, () => {
+      session.onTurnEnded({ turnId: 100, reason: 'completed' });
+    });
+    await expect(prompt).resolves.toEqual({ stopReason: 'end_turn' });
+  });
+
+  it('replays buffered events when the client prompt launches no turn', async () => {
+    const session = createTurnDriverHarness();
+    let resolveLaunch!: (result: undefined) => void;
+    const prompt = session.driveLaunch(
+      new Promise((resolve) => {
+        resolveLaunch = resolve;
+      }),
+    );
+    const delivered: string[] = [];
+
+    session.dispatchTurnEvent(99, () => delivered.push('background message'));
+    resolveLaunch(undefined);
+
+    await expect(prompt).resolves.toEqual({ stopReason: 'end_turn' });
+    expect(delivered).toEqual(['background message']);
+  });
+});
 
 describe('acp-server real prompt turn (scripted LLM)', () => {
   let homeDir: string | undefined;
@@ -89,6 +155,78 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(usageUpdate?.size).toBe(8192);
     expect(usageUpdate?.used).toBeGreaterThan(0);
     expect(usageUpdate?.cost).toBeUndefined();
+  }, 30_000);
+
+  it('streams an engine-triggered follow-up turn after the client prompt settles', async () => {
+    const c = await boot();
+    scripted!.mockNextText('background task started');
+
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+      sessionId: string;
+    };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+
+    const result = (await c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'start a background task' }],
+    })) as { stopReason: string };
+    expect(result.stopReason).toBe('end_turn');
+
+    const updatesBeforeFollowUp = c.sessionUpdates().length;
+    const session = getLiveSessionById(c.server.core.accessor, created.sessionId);
+    const agentHandle = session?.accessor.get(IAgentLifecycleService).get('main');
+    const bus = agentHandle?.accessor.get(IEventBus);
+    expect(bus).toBeDefined();
+
+    bus!.publish({
+      type: 'assistant.delta',
+      turnId: 99,
+      delta: 'background task finished',
+    });
+    bus!.publish({
+      type: 'tool.call.started',
+      turnId: 99,
+      toolCallId: 'background-read',
+      name: 'Read',
+      args: { path: '/tmp/background-output.log' },
+    });
+    bus!.publish({
+      type: 'tool.result',
+      turnId: 99,
+      toolCallId: 'background-read',
+      output: 'done',
+    });
+    bus!.publish({ type: 'turn.ended', turnId: 99, reason: 'completed' });
+
+    await vi.waitFor(() => {
+      const updates = c
+        .sessionUpdates()
+        .slice(updatesBeforeFollowUp)
+        .map((message) => message.params as { update?: Record<string, unknown> });
+      expect(updates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: 'background task finished' },
+            }),
+          }),
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'tool_call',
+              toolCallId: '99:background-read',
+            }),
+          }),
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'tool_call_update',
+              toolCallId: '99:background-read',
+              status: 'completed',
+            }),
+          }),
+        ]),
+      );
+    });
   }, 30_000);
 
   it('runs a tool call and bridges the approval request to the client', async () => {
