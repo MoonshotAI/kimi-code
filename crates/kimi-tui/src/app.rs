@@ -232,6 +232,7 @@ fn build_help_rows() -> Vec<String> {
         t("tui.help.shortcuts").to_string(),
         "  Ctrl-C ×2   quit".to_string(),
         "  Ctrl-O      toggle tool card".to_string(),
+        "  Ctrl-B      background tasks".to_string(),
         "  Ctrl-G      external editor".to_string(),
         "  Ctrl-S      steer / queue".to_string(),
         "  PageUp/Dn   scroll (in lists)".to_string(),
@@ -635,6 +636,12 @@ impl App {
                                 }
                             }
                             'o' => self.toggle_last_tool_collapse(),
+                            'b' => {
+                                // Background-task browser (TS Ctrl-B parity):
+                                // delegate to `/tasks` (picker over the
+                                // running tasks, output viewer on pick).
+                                self.dispatch(terminal, "/tasks").await?;
+                            }
                             'g' => {
                                 // External editor (Ctrl-G): suspend the TUI,
                                 // edit a temp file seeded with the input,
