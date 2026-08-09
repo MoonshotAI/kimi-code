@@ -3,7 +3,7 @@ import {
   MigrationScreenComponent,
   type MigrationScreenResult,
 } from '#/migration/migration-screen';
-import { darkColors } from '#/tui/theme/colors';
+import { darkColors } from '#/shared/theme/colors';
 import type {
   MigrationPlan,
   MigrationReport,

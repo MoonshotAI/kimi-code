@@ -1,6 +1,6 @@
 import type { GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
 import { t } from '#/i18n';
-import { parseGoalCommand } from '#/tui/commands/index';
+import { parseGoalCommand } from '#/shared/goal-command';
 
 /**
  * Headless goal-mode support for the `kimi -p "/goal <objective>"` prompt path.

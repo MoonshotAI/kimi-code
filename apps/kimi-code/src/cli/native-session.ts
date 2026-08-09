@@ -70,7 +70,7 @@ type SessionWarning = Awaited<ReturnType<Session['getSessionWarnings']>>[number]
 
 import { resolve } from 'pathe';
 
-import type { TuiSession } from '#/tui/tui-session';
+import type { TuiSession } from '#/shared/tui-session';
 
 import {
   NativeSessionAdapter,

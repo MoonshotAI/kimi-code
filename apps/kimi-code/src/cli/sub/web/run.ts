@@ -20,7 +20,7 @@ import { type Command } from 'commander';
 import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
 import { t } from '#/i18n';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
-import { darkColors } from '#/tui/theme/colors';
+import { darkColors } from '#/shared/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
 

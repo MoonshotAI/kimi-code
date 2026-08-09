@@ -11,7 +11,7 @@ import type { Command } from 'commander';
 import { z } from 'zod';
 
 import { t } from '#/i18n';
-import { getTuiConfigPath, parseTuiConfig } from '#/tui/config';
+import { getTuiConfigPath, parseTuiConfig } from '#/shared/tui-config';
 
 interface WritableLike {
   write(chunk: string): boolean;

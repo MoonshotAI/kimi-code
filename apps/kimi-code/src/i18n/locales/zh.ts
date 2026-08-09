@@ -1315,6 +1315,7 @@ export default {
       printSteerMaxTurns: '引导打印达到最大轮次（{{maxTurns}}），正在结束',
       // run-shell.ts
       shellNothingToMigrate: '  没有需要从 ~/.kimi/ 迁移的内容。',
+      shellNoRustBinary: 'TypeScript TUI 已退役 — 请安装 Rust 二进制（或设置 KIMI_RUST_BIN）。',
       shellBye: '再见！',
       shellResumeHint: '恢复此会话：kimi -r {{sessionId}}',
       // goal-prompt.ts

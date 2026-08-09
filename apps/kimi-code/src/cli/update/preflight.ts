@@ -8,7 +8,7 @@ import {
   NATIVE_INSTALL_COMMAND_UNIX,
   NATIVE_INSTALL_COMMAND_WIN,
 } from '#/constant/app';
-import { loadTuiConfig } from '#/tui/config';
+import { loadTuiConfig } from '#/shared/tui-config';
 
 import { readUpdateCache } from './cache';
 import { tryAcquireUpdateInstallLock } from './install-lock';

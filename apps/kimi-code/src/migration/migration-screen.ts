@@ -14,8 +14,8 @@
 import { Container, matchesKey, Key, truncateToWidth, type Focusable } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
-import type { ColorPalette } from '#/tui/theme/colors';
-import { currentTheme } from '#/tui/theme';
+import type { ColorPalette } from '#/shared/theme/colors';
+import { currentTheme } from '#/shared/theme';
 import { t } from '#/i18n';
 import {
   resolveMigrationScope,

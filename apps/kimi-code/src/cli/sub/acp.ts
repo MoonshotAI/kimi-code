@@ -30,7 +30,7 @@ import { createKimiHarness, type Session, type SkillSummary } from '@moonshot-ai
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { createKimiCodeHostIdentity, getVersion } from '#/cli/version';
 import { t } from '#/i18n';
-import { buildSkillSlashCommands } from '#/tui/commands/skills';
+import { buildSkillSlashCommands } from '#/shared/slash-command-skills';
 
 import { runLoginFlow } from './login-flow';
 

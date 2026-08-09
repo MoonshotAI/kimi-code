@@ -19,7 +19,7 @@ import { registerWebCommand } from '#/cli/sub/web';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type { WebCommandDeps } from '#/cli/sub/web/run';
 import type { ParsedServerOptions } from '#/cli/sub/web/shared';
-import { darkColors } from '#/tui/theme/colors';
+import { darkColors } from '#/shared/theme/colors';
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
@@ -127,7 +127,7 @@ describe('kimi web', () => {
       });
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
         exitCalls.push(code ?? 0);
-        return undefined;
+        return;
       }) as never);
 
       await program.parseAsync(argv);
@@ -366,7 +366,7 @@ describe('`kimi web` opens the browser', () => {
       { port: '58627', open: true },
       {
         startServerForeground: runner,
-        resolveToken: () => undefined,
+        resolveToken: () => {},
         openUrl,
         stdout,
         stderr,
@@ -521,7 +521,7 @@ describe('shared parsers stay strict', () => {
   it('rejects unknown --log-level values', async () => {
     const { parseLogLevel } = await import('#/cli/sub/web/shared');
     expect(() => parseLogLevel('shout')).toThrow(/invalid --log-level/);
-    expect(parseLogLevel(undefined)).toBe('info');
+    expect(parseLogLevel()).toBe('info');
     expect(parseLogLevel('debug')).toBe('debug');
   });
 });
@@ -552,14 +552,14 @@ function makeLegacyKillDeps(overrides: Partial<LegacyKillDeps> = {}): {
   const state = { shutdownCalls: 0, removeCalls: 0 };
   const clock = { t: 0 };
   const deps: LegacyKillDeps = {
-    readLock: async () => undefined,
+    readLock: async () => {},
     removeLock: async () => {
       state.removeCalls += 1;
     },
     requestShutdown: async () => {
       state.shutdownCalls += 1;
     },
-    resolveToken: () => undefined,
+    resolveToken: () => {},
     signalPid: (pid, signal) => {
       signals.push({ pid, signal });
       return true;
@@ -610,7 +610,7 @@ describe('`kimi server kill` (deprecated, legacy servers only)', () => {
 
   it('prints "No running legacy Kimi server." and sends no signal when no lock exists', async () => {
     const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
-    const { deps, writes, signals } = makeLegacyKillDeps({ readLock: async () => undefined });
+    const { deps, writes, signals } = makeLegacyKillDeps({ readLock: async () => {} });
 
     await handleLegacyKillCommand(deps);
 
@@ -711,7 +711,7 @@ describe('`kimi server kill` (deprecated, legacy servers only)', () => {
     let seenToken: string | undefined = 'unset';
     const { deps, clock } = makeLegacyKillDeps({
       readLock: async () => legacyLock,
-      resolveToken: () => undefined,
+      resolveToken: () => {},
       requestShutdown: async (_origin, token) => {
         seenToken = token;
       },
@@ -845,7 +845,7 @@ describe('accessUrlLines', () => {
 
   it('returns a single URL line for a specific host (no token)', async () => {
     const { accessUrlLines } = await import('#/cli/sub/web/access-urls');
-    const lines = accessUrlLines('192.168.1.5', 58627, undefined);
+    const lines = accessUrlLines('192.168.1.5', 58627);
     expect(lines).toEqual([{ label: 'URL:      ', url: 'http://192.168.1.5:58627/' }]);
   });
 

@@ -23,7 +23,7 @@ import {
   type UpdateInstallState,
   type UpdateManifest,
 } from '#/cli/update/types';
-import type { TuiConfig } from '#/tui/config';
+import type { TuiConfig } from '#/shared/tui-config';
 
 const mocks = vi.hoisted(() => ({
   readUpdateCache: vi.fn(),

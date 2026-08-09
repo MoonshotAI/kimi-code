@@ -1352,6 +1352,7 @@ export default {
       printSteerMaxTurns: 'print steer max turns reached ({{maxTurns}}), finishing',
       // run-shell.ts
       shellNothingToMigrate: '  Nothing to migrate from ~/.kimi/.',
+      shellNoRustBinary: 'The TypeScript TUI is retired — install the Rust binary (or set KIMI_RUST_BIN).',
       shellBye: 'Bye!',
       shellResumeHint: 'To resume this session: kimi -r {{sessionId}}',
       // goal-prompt.ts

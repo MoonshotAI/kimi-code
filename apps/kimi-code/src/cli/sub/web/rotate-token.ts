@@ -11,7 +11,7 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 
 import { t } from '#/i18n';
-import { darkColors } from '#/tui/theme/colors';
+import { darkColors } from '#/shared/theme/colors';
 import { getDataDir } from '#/utils/paths';
 
 import { accessUrlLines, splitTokenFragment } from './access-urls';
