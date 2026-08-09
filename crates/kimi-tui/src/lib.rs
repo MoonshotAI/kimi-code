@@ -24,5 +24,6 @@ pub mod question;
 pub mod reports;
 pub mod streaming;
 pub mod theme;
+pub mod util;
 
 pub use app::App;
