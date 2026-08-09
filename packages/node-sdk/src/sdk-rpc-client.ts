@@ -13,6 +13,7 @@ import * as rustLoop from '@moonshot-ai/kimi-agent/rust-loop';
 
 import { KimiAuthFacade } from '#/auth';
 import { KimiHarness } from '#/kimi-harness';
+import { createDefaultLlmStep } from '#/llm/default-llm-step';
 import type { KimiHarnessOptions } from '#/types';
 import { resolveConfigPath, resolveKimiHome } from '#/legacy/config';
 
@@ -33,7 +34,9 @@ export function createKimiHarness(options: KimiHarnessOptions): KimiHarness {
     configPath,
     identity: options.identity,
     telemetry: options.telemetry,
-    llmStep: options.llmStep,
+    // Hosts may supply their own LLM bridge; without one the SDK answers
+    // engine model requests through the provider configured in config.toml.
+    llmStep: options.llmStep ?? createDefaultLlmStep({ configPath, identity: options.identity }),
   });
   const auth = new KimiAuthFacade({
     homeDir,

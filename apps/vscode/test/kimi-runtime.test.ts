@@ -238,9 +238,9 @@ function createRuntime(
   const runtime = new KimiRuntime({
     version: "0.6.0",
     harness: sdk.harness,
-    broadcast: () => undefined,
-    captureBaseline: () => undefined,
-    log: () => undefined,
+    broadcast: () => {},
+    captureBaseline: () => {},
+    log: () => {},
   });
   return { runtime, sdk };
 }
@@ -372,8 +372,8 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       broadcast: (event, data, webviewId) => {
         broadcasts.push({ event, data, webviewId });
       },
-      captureBaseline: () => undefined,
-      log: () => undefined,
+      captureBaseline: () => {},
+      log: () => {},
     });
     sdk.addSession("saved-1", "/workspace", {
       model: "kimi-test",
@@ -573,8 +573,8 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       broadcast: (event, data) => {
         broadcasts.push({ event, data });
       },
-      captureBaseline: () => undefined,
-      log: () => undefined,
+      captureBaseline: () => {},
+      log: () => {},
     });
     return { runtime, sdk, broadcasts };
   }
@@ -589,7 +589,12 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       releaseTurn = resolve;
     }));
     const first = opened.prompt("first message");
-    boundary.emit({ type: "turn.started", agentId: "main", sessionId: opened.id, turnId: "t1" } as unknown as Event);
+    boundary.emit({
+      type: "session.turn.started",
+      agentId: "main",
+      sessionId: opened.id,
+      turn_id: 7,
+    } as unknown as Event);
     expect(opened.isBusy).toBe(true);
 
     await expect(opened.prompt("concurrent message")).resolves.toEqual({ status: "failed" });
@@ -604,7 +609,14 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       terminal: false,
     });
 
-    boundary.emit({ type: "turn.ended", agentId: "main", sessionId: opened.id, turnId: "t1", reason: "completed" } as unknown as Event);
+    boundary.emit({
+      type: "session.turn.ended",
+      agentId: "main",
+      sessionId: opened.id,
+      turn_id: 7,
+      stop_reason: "EndTurn",
+      steps: 1,
+    } as unknown as Event);
     releaseTurn();
     await expect(first).resolves.toEqual({ status: "finished" });
     expect(opened.isBusy).toBe(false);
@@ -644,7 +656,12 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       releaseTurn = resolve;
     }));
     const first = opened.prompt("first message");
-    boundary.emit({ type: "turn.started", agentId: "main", sessionId: opened.id, turnId: "t1" } as unknown as Event);
+    boundary.emit({
+      type: "session.turn.started",
+      agentId: "main",
+      sessionId: opened.id,
+      turn_id: 7,
+    } as unknown as Event);
 
     boundary.emit({
       type: "error",
@@ -664,7 +681,14 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       terminal: false,
     });
 
-    boundary.emit({ type: "turn.ended", agentId: "main", sessionId: opened.id, turnId: "t1", reason: "completed" } as unknown as Event);
+    boundary.emit({
+      type: "session.turn.ended",
+      agentId: "main",
+      sessionId: opened.id,
+      turn_id: 7,
+      stop_reason: "EndTurn",
+      steps: 1,
+    } as unknown as Event);
     releaseTurn();
     await expect(first).resolves.toEqual({ status: "finished" });
     expect(opened.isBusy).toBe(false);

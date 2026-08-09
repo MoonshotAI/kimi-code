@@ -184,7 +184,7 @@ function createRuntime(legacyApproval = DEFAULT_LEGACY_APPROVAL) {
     captureBaseline: (session, filePath, webviewIds) => {
       baselines.push({ session, filePath, webviewIds });
     },
-    log: () => undefined,
+    log: () => {},
   });
   runtime.subscribe("view-1");
   return { runtime, sdk, broadcasts, baselines };
@@ -196,25 +196,21 @@ function streamData(records: readonly BroadcastRecord[]): unknown[] {
 
 function turnStarted(): Event {
   return {
-    type: "turn.started",
+    type: "session.turn.started",
     sessionId: "session-1",
     agentId: "main",
-    turnId: 7,
-    origin: { kind: "user" },
+    turn_id: 7,
   };
 }
 
-function turnEnded(
-  reason: "completed" | "cancelled" | "failed",
-  error?: Extract<Event, { type: "turn.ended" }>["error"],
-): Event {
+function turnEnded(stopReason: string): Event {
   return {
-    type: "turn.ended",
+    type: "session.turn.ended",
     sessionId: "session-1",
     agentId: "main",
-    turnId: 7,
-    reason,
-    error,
+    turn_id: 7,
+    stop_reason: stopReason,
+    steps: 1,
   };
 }
 
@@ -297,7 +293,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     expect(operationStarted).toBe(false);
     expect(runtime.isBusy).toBe(true);
 
-    sdk.emit(turnEnded("cancelled"));
+    sdk.emit(turnEnded("Aborted"));
 
     await expect(prompt).resolves.toEqual({ status: "cancelled" });
     await expect(operation).resolves.toBe("forked");
@@ -310,7 +306,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
 
     const result = runtime.runTurnAction("/skill:review carefully", async () => {
       sdk.emit(turnStarted());
-      sdk.emit(turnEnded("completed"));
+      sdk.emit(turnEnded("EndTurn"));
     });
 
     await expect(result).resolves.toEqual({ status: "finished" });
@@ -346,11 +342,10 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     const { sdk, broadcasts } = createRuntime();
 
     sdk.emit({
-      type: "assistant.delta",
+      type: "llm.delta",
       sessionId: "session-1",
       agentId: "main",
-      turnId: 7,
-      delta: "Implemented",
+      part: { type: "text", text: "Implemented" },
     });
 
     expect(streamData(broadcasts)).toContainEqual({
@@ -364,11 +359,10 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     const { sdk, broadcasts } = createRuntime();
 
     sdk.emit({
-      type: "thinking.delta",
+      type: "llm.delta",
       sessionId: "session-1",
       agentId: "main",
-      turnId: 7,
-      delta: "Checking the edge case",
+      part: { type: "think", think: "Checking the edge case" },
     });
 
     expect(streamData(broadcasts)).toContainEqual({
@@ -382,13 +376,12 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     const { sdk, broadcasts } = createRuntime();
 
     sdk.emit({
-      type: "tool.call.started",
+      type: "session.tool.started",
       sessionId: "session-1",
       agentId: "main",
-      turnId: 7,
-      toolCallId: "tool-1",
-      name: "Read",
-      args: { path: "src/index.ts" },
+      tool_call_id: "tool-1",
+      tool_name: "Read",
+      arguments: { path: "src/index.ts" },
     });
 
     expect(streamData(broadcasts)).toContainEqual({
@@ -403,17 +396,17 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
   });
 
   it.each([
-    ["completed", "finished"],
-    ["cancelled", "cancelled"],
+    ["EndTurn", "finished"],
+    ["Aborted", "cancelled"],
   ] as const)(
     "emits one stream completion when a turn ends as %s",
-    async (reason, expectedStatus) => {
+    async (stopReason, expectedStatus) => {
       const { runtime, sdk, broadcasts } = createRuntime();
       const completion = runtime.prompt("hello");
       sdk.emit(turnStarted());
 
-      sdk.emit(turnEnded(reason));
-      sdk.emit(turnEnded(reason));
+      sdk.emit(turnEnded(stopReason));
+      sdk.emit(turnEnded(stopReason));
 
       await expect(completion).resolves.toEqual({ status: expectedStatus });
       expect(
@@ -437,15 +430,10 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
   it("emits one error when a failed turn terminal is repeated", async () => {
     const { runtime, sdk, broadcasts } = createRuntime();
     const completion = runtime.prompt("hello");
-    const error = {
-      code: "provider.api_error" as const,
-      message: "Provider rejected the request",
-      retryable: true,
-    };
     sdk.emit(turnStarted());
 
-    sdk.emit(turnEnded("failed", error));
-    sdk.emit(turnEnded("failed", error));
+    sdk.emit(turnEnded("Filtered"));
+    sdk.emit(turnEnded("Filtered"));
 
     await expect(completion).resolves.toEqual({ status: "failed" });
     expect(
@@ -456,22 +444,19 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     ).toHaveLength(1);
   });
 
-  it("suppresses the trailing SDK error when a failed terminal already reported the same error", async () => {
+  it("reports a standalone SDK error that follows a failed terminal", async () => {
     const { runtime, sdk, broadcasts } = createRuntime();
     const completion = runtime.prompt("hello");
-    const error = {
-      code: "provider.api_error" as const,
-      message: "Provider rejected the request",
-      retryable: true,
-    };
     sdk.emit(turnStarted());
 
-    sdk.emit(turnEnded("failed", error));
+    sdk.emit(turnEnded("MaxTokens"));
     sdk.emit({
       type: "error",
       sessionId: "session-1",
       agentId: "main",
-      ...error,
+      code: "session.approval_handler_error",
+      message: "Approval handler failed",
+      retryable: false,
     });
 
     await completion;
@@ -480,7 +465,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
         (event) =>
           typeof event === "object" && event !== null && "type" in event && event.type === "error",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 
   it("reports a preflight error when SDK prompt setup throws before turn start", async () => {
@@ -684,11 +669,10 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     runtime.subscribe("view-2");
 
     sdk.emit({
-      type: "assistant.delta",
+      type: "llm.delta",
       sessionId: "session-1",
       agentId: "main",
-      turnId: 7,
-      delta: "Shared update",
+      part: { type: "text", text: "Shared update" },
     });
 
     expect(sdk.subscriptionCount()).toBe(1);
@@ -702,13 +686,12 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
       const { sdk, baselines } = createRuntime();
 
       sdk.emit({
-        type: "tool.call.started",
+        type: "session.tool.started",
         sessionId: "session-1",
         agentId: "main",
-        turnId: 7,
-        toolCallId: "tool-1",
-        name,
-        args: { path: "src/index.ts" },
+        tool_call_id: "tool-1",
+        tool_name: name,
+        arguments: { path: "src/index.ts" },
       });
 
       expect(baselines).toEqual([
@@ -729,17 +712,16 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     ["Read", { path: "src/index.ts" }],
     ["Write", {}],
     ["Edit", { path: "" }],
-  ] as const)("does not capture a baseline when %s receives non-write input %#", (name, args) => {
+  ] as const)("does not capture a baseline when %s receives non-write input %#", (name, arguments_) => {
     const { sdk, baselines } = createRuntime();
 
     sdk.emit({
-      type: "tool.call.started",
+      type: "session.tool.started",
       sessionId: "session-1",
       agentId: "main",
-      turnId: 7,
-      toolCallId: "tool-1",
-      name,
-      args,
+      tool_call_id: "tool-1",
+      tool_name: name,
+      arguments: arguments_,
     });
 
     expect(baselines).toEqual([]);

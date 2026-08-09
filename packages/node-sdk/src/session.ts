@@ -1,7 +1,7 @@
 import { ErrorCodes, KimiError, type KimiErrorCode } from './legacy/errors';
 import type { AgentContextData, SwarmModeTrigger } from './legacy/wire-types';
 
-import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
+import { type ApprovalHandler, type Event, type QuestionHandler, type ToolCallHandler } from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
@@ -96,6 +96,14 @@ export class Session {
   setQuestionHandler(handler: QuestionHandler | undefined): void {
     this.ensureOpen();
     this.rpc.setQuestionHandler(this.id, handler);
+  }
+
+  /** Handle engine `host/execute_tool` requests for this session (tools the
+   *  host provides, or calls no native tool claims). Unset → such calls fail
+   *  with the SDK's unsupported-tool error result. */
+  setToolHandler(handler: ToolCallHandler | undefined): void {
+    this.ensureOpen();
+    this.rpc.setToolHandler(this.id, handler);
   }
 
   async prompt(input: string | PromptInput): Promise<void> {

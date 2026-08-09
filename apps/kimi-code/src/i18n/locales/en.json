@@ -1255,6 +1255,7 @@
       "printSteerCeiling": "print steer ceiling reached ({{ceilingS}}s), finishing",
       "printSteerMaxTurns": "print steer max turns reached ({{maxTurns}}), finishing",
       "shellNothingToMigrate": "  Nothing to migrate from ~/.kimi/.",
+      "shellNoRustBinary": "The TypeScript TUI is retired — install the Rust binary (or set KIMI_RUST_BIN).",
       "shellBye": "Bye!",
       "shellResumeHint": "To resume this session: kimi -r {{sessionId}}",
       "goalNoGoalFound": "Goal: no goal found.",

@@ -1,7 +1,10 @@
 /**
- * Scenario: public Node SDK events are projected into the released VS Code Webview protocol.
- * Responsibilities: verify legacy shapes, routing state, and terminal metadata one event at a time.
- * Wiring: the pure adapter and real protocol types are used directly; there are no stubs.
+ * Scenario: Rust-engine events (passed through by the SDK) are projected into
+ * the released VS Code Webview protocol.
+ * Responsibilities: verify legacy shapes, step numbering, and terminal metadata
+ * one event at a time.
+ * Wiring: the pure adapter and real protocol types are used directly; there are
+ * no stubs.
  * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts apps/vscode/test/event-adapter.test.ts
  */
 
@@ -13,16 +16,15 @@ import {
   createEventAdapterState,
 } from '../src/runtime/event-adapter';
 
-describe('event adapter (projects SDK events into the legacy Webview contract)', () => {
-  it('emits the pending input when a main-agent turn starts', () => {
+describe('event adapter (projects engine events into the legacy Webview contract)', () => {
+  it('emits the pending input when a main turn starts', () => {
     const result = adaptSdkEvent(
       createEventAdapterState(),
       {
-        type: 'turn.started',
+        type: 'session.turn.started',
         sessionId: 'session-1',
         agentId: 'main',
-        turnId: 7,
-        origin: { kind: 'user' },
+        turn_id: 7,
       },
       { pendingInput: 'Fix the failing test' },
     );
@@ -34,13 +36,45 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     });
   });
 
-  it('emits text content when the assistant streams a delta', () => {
-    const result = adaptSdkEvent(createEventAdapterState(), {
-      type: 'assistant.delta',
+  it('resets the step counter when a turn starts', () => {
+    const first = adaptSdkEvent(createEventAdapterState(), {
+      type: 'llm.step.begin',
       sessionId: 'session-1',
       agentId: 'main',
-      turnId: 7,
-      delta: 'Done',
+      model: 'kimi-k2',
+    });
+    const second = adaptSdkEvent(first.state, {
+      type: 'llm.step.begin',
+      sessionId: 'session-1',
+      agentId: 'main',
+      model: 'kimi-k2',
+    });
+    const started = adaptSdkEvent(second.state, {
+      type: 'session.turn.started',
+      sessionId: 'session-1',
+      agentId: 'main',
+      turn_id: 8,
+    });
+    const next = adaptSdkEvent(started.state, {
+      type: 'llm.step.begin',
+      sessionId: 'session-1',
+      agentId: 'main',
+      model: 'kimi-k2',
+    });
+
+    expect(next.event).toEqual({
+      type: 'StepBegin',
+      payload: { n: 1 },
+      _sessionId: 'session-1',
+    });
+  });
+
+  it('emits text content when the model streams a text part', () => {
+    const result = adaptSdkEvent(createEventAdapterState(), {
+      type: 'llm.delta',
+      sessionId: 'session-1',
+      agentId: 'main',
+      part: { type: 'text', text: 'Done' },
     });
 
     expect(result.event).toEqual({
@@ -50,13 +84,12 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     });
   });
 
-  it('emits thinking content when the model streams a thinking delta', () => {
+  it('emits thinking content when the model streams a think part', () => {
     const result = adaptSdkEvent(createEventAdapterState(), {
-      type: 'thinking.delta',
+      type: 'llm.delta',
       sessionId: 'session-1',
       agentId: 'main',
-      turnId: 7,
-      delta: 'Checking the types',
+      part: { type: 'think', think: 'Checking the types' },
     });
 
     expect(result.event).toEqual({
@@ -66,21 +99,50 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     });
   });
 
-  it('emits a numbered legacy step when an SDK step starts', () => {
-    const result = adaptSdkEvent(createEventAdapterState(), {
-      type: 'turn.step.started',
+  it('drops empty streamed parts', () => {
+    const text = adaptSdkEvent(createEventAdapterState(), {
+      type: 'llm.delta',
       sessionId: 'session-1',
       agentId: 'main',
-      turnId: 7,
-      step: 2,
-      stepId: 'step-2',
+      part: { type: 'text', text: '' },
+    });
+    const think = adaptSdkEvent(createEventAdapterState(), {
+      type: 'llm.delta',
+      sessionId: 'session-1',
+      agentId: 'main',
+      part: { type: 'think', think: '' },
     });
 
-    expect(result.event).toEqual({
-      type: 'StepBegin',
-      payload: { n: 2 },
-      _sessionId: 'session-1',
+    expect(text.event).toBeUndefined();
+    expect(think.event).toBeUndefined();
+  });
+
+  it('numbers steps from the engine step stream', () => {
+    const first = adaptSdkEvent(createEventAdapterState(), {
+      type: 'llm.step.begin',
+      sessionId: 'session-1',
+      agentId: 'main',
+      model: 'kimi-k2',
     });
+    const second = adaptSdkEvent(first.state, {
+      type: 'llm.step.begin',
+      sessionId: 'session-1',
+      agentId: 'main',
+      model: 'kimi-k2',
+    });
+
+    expect([first.event, second.event]).toEqual([
+      {
+        type: 'StepBegin',
+        payload: { n: 1 },
+        _sessionId: 'session-1',
+      },
+      {
+        type: 'StepBegin',
+        payload: { n: 2 },
+        _sessionId: 'session-1',
+      },
+    ]);
   });
 
   it.each([
@@ -90,15 +152,14 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     ['Edit', 'StrReplaceFile'],
     ['TodoList', 'SetTodoList'],
     ['Glob', 'Glob'],
-  ] as const)('maps the %s tool name to %s when a tool starts', (sdkName, legacyName) => {
+  ] as const)('maps the %s tool name to %s when a tool starts', (engineName, legacyName) => {
     const result = adaptSdkEvent(createEventAdapterState(), {
-      type: 'tool.call.started',
+      type: 'session.tool.started',
       sessionId: 'session-1',
       agentId: 'main',
-      turnId: 7,
-      toolCallId: 'tool-1',
-      name: sdkName,
-      args: { path: 'src/index.ts' },
+      tool_call_id: 'tool-1',
+      tool_name: engineName,
+      arguments: { path: 'src/index.ts' },
     });
 
     expect(result.event).toEqual({
@@ -115,50 +176,26 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     });
   });
 
-  it('preserves each tool-call ID when argument deltas are interleaved', () => {
-    const state = createEventAdapterState();
-    const first = adaptSdkEvent(state, {
-      type: 'tool.call.delta',
+  it('drops tool-call argument previews (full args arrive with the tool start)', () => {
+    const result = adaptSdkEvent(createEventAdapterState(), {
+      type: 'llm.delta',
       sessionId: 'session-1',
       agentId: 'main',
-      turnId: 7,
-      toolCallId: 'tool-a',
-      name: 'Read',
-      argumentsPart: '{"path":"a',
-    });
-    const second = adaptSdkEvent(first.state, {
-      type: 'tool.call.delta',
-      sessionId: 'session-1',
-      agentId: 'main',
-      turnId: 7,
-      toolCallId: 'tool-b',
-      name: 'Read',
-      argumentsPart: '{"path":"b',
+      part: { type: 'tool_call', id: 'tool-1', name: 'Read', args: '{"path":"a' },
     });
 
-    expect([first.event, second.event]).toEqual([
-      {
-        type: 'ToolCallPart',
-        payload: { tool_call_id: 'tool-a', arguments_part: '{"path":"a' },
-        _sessionId: 'session-1',
-      },
-      {
-        type: 'ToolCallPart',
-        payload: { tool_call_id: 'tool-b', arguments_part: '{"path":"b' },
-        _sessionId: 'session-1',
-      },
-    ]);
+    expect(result.event).toBeUndefined();
   });
 
-  it('emits a legacy result when an SDK tool call finishes', () => {
+  it('emits a legacy result when an engine tool settles', () => {
     const result = adaptSdkEvent(createEventAdapterState(), {
-      type: 'tool.result',
+      type: 'session.tool.settled',
       sessionId: 'session-1',
       agentId: 'main',
-      turnId: 7,
-      toolCallId: 'tool-1',
-      output: { exitCode: 0 },
-      isError: false,
+      tool_call_id: 'tool-1',
+      tool_name: 'Bash',
+      content: '{"exitCode": 0}',
+      is_error: false,
     });
 
     expect(result.event).toEqual({
@@ -167,7 +204,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
         tool_call_id: 'tool-1',
         return_value: {
           is_error: false,
-          output: '{\n  "exitCode": 0\n}',
+          output: '{"exitCode": 0}',
           message: '',
           display: [],
         },
@@ -176,160 +213,44 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     });
   });
 
-  it('carries a file diff display from tool start into its matching result', () => {
-    const started = adaptSdkEvent(createEventAdapterState(), {
-      type: 'tool.call.started',
+  it('marks an erroring tool result as such', () => {
+    const result = adaptSdkEvent(createEventAdapterState(), {
+      type: 'session.tool.settled',
       sessionId: 'session-1',
       agentId: 'main',
-      turnId: 7,
-      toolCallId: 'tool-1',
-      name: 'Edit',
-      args: { path: 'src/index.ts' },
-      display: {
-        kind: 'diff',
-        path: 'src/index.ts',
-        before: 'old',
-        after: 'new',
-      },
-    });
-    const finished = adaptSdkEvent(started.state, {
-      type: 'tool.result',
-      sessionId: 'session-1',
-      agentId: 'main',
-      turnId: 7,
-      toolCallId: 'tool-1',
-      output: 'updated',
+      tool_call_id: 'tool-1',
+      tool_name: 'Read',
+      content: 'File not found',
+      is_error: true,
     });
 
-    expect(finished.event).toMatchObject({
+    expect(result.event).toMatchObject({
       type: 'ToolResult',
       payload: {
-        return_value: {
-          display: [{
-            type: 'diff',
-            path: 'src/index.ts',
-            old_text: 'old',
-            new_text: 'new',
-          }],
-        },
+        return_value: { is_error: true, output: 'File not found' },
       },
     });
   });
 
-  it('carries a todo display only to the result with the same tool-call ID', () => {
-    const started = adaptSdkEvent(createEventAdapterState(), {
-      type: 'tool.call.started',
-      sessionId: 'session-1',
-      agentId: 'main',
-      turnId: 7,
-      toolCallId: 'todo-1',
-      name: 'TodoList',
-      args: {},
-      display: {
-        kind: 'todo_list',
-        items: [{ title: 'Ship it', status: 'done' }],
-      },
-    });
-    const unrelated = adaptSdkEvent(started.state, {
-      type: 'tool.result',
-      sessionId: 'session-1',
-      agentId: 'main',
-      turnId: 7,
-      toolCallId: 'other',
-      output: 'other result',
-    });
-
-    expect(unrelated.event).toMatchObject({
-      payload: { return_value: { display: [] } },
-    });
-    expect(unrelated.state.toolDisplays['todo-1']).toEqual([
-      { type: 'todo', items: [{ title: 'Ship it', status: 'done' }] },
-    ]);
-    const matching = adaptSdkEvent(unrelated.state, {
-      type: 'tool.result',
-      sessionId: 'session-1',
-      agentId: 'main',
-      turnId: 7,
-      toolCallId: 'todo-1',
-      output: 'updated',
-    });
-    expect(matching.event).toMatchObject({
-      payload: {
-        return_value: {
-          display: [{ type: 'todo', items: [{ title: 'Ship it', status: 'done' }] }],
-        },
-      },
-    });
-  });
-
-  it('emits snake-case status fields when agent status changes', () => {
+  it('emits snake-case token usage when an LLM step finishes', () => {
     const result = adaptSdkEvent(createEventAdapterState(), {
-      type: 'agent.status.updated',
+      type: 'llm.step.end',
       sessionId: 'session-1',
       agentId: 'main',
-      contextUsage: 0.25,
-      planMode: true,
+      content: 'Done',
       usage: {
-        currentTurn: {
-          inputOther: 10,
-          output: 4,
-          inputCacheRead: 3,
-          inputCacheCreation: 2,
-        },
+        input_tokens: 10,
+        output_tokens: 4,
       },
     });
 
     expect(result.event).toEqual({
       type: 'StatusUpdate',
       payload: {
-        context_usage: 0.25,
-        plan_mode: true,
         token_usage: {
           input_other: 10,
           output: 4,
-          input_cache_read: 3,
-          input_cache_creation: 2,
-        },
-      },
-      _sessionId: 'session-1',
-    });
-  });
-
-  it('emits only new token usage when SDK status carries cumulative turn usage', () => {
-    const first = adaptSdkEvent(createEventAdapterState(), {
-      type: 'agent.status.updated',
-      sessionId: 'session-1',
-      agentId: 'main',
-      usage: {
-        currentTurn: {
-          inputOther: 10,
-          output: 4,
-          inputCacheRead: 3,
-          inputCacheCreation: 2,
-        },
-      },
-    });
-    const second = adaptSdkEvent(first.state, {
-      type: 'agent.status.updated',
-      sessionId: 'session-1',
-      agentId: 'main',
-      usage: {
-        currentTurn: {
-          inputOther: 14,
-          output: 7,
-          inputCacheRead: 8,
-          inputCacheCreation: 2,
-        },
-      },
-    });
-
-    expect(second.event).toEqual({
-      type: 'StatusUpdate',
-      payload: {
-        token_usage: {
-          input_other: 4,
-          output: 3,
-          input_cache_read: 5,
+          input_cache_read: 0,
           input_cache_creation: 0,
         },
       },
@@ -337,85 +258,44 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     });
   });
 
-  it('routes a child-agent event through its parent tool after spawn', () => {
-    const spawned = adaptSdkEvent(createEventAdapterState(), {
-      type: 'subagent.spawned',
-      sessionId: 'session-1',
-      agentId: 'main',
-      subagentId: 'child-1',
-      subagentName: 'coder',
-      parentToolCallId: 'agent-call-1',
-      parentAgentId: 'main',
-      runInBackground: false,
-    });
-    const childEvent = adaptSdkEvent(spawned.state, {
-      type: 'assistant.delta',
-      sessionId: 'session-1',
-      agentId: 'child-1',
-      turnId: 1,
-      delta: 'Child result',
-    });
-
-    expect(childEvent.event).toEqual({
-      type: 'SubagentEvent',
-      payload: {
-        parent_tool_call_id: 'agent-call-1',
-        event: {
-          type: 'ContentPart',
-          payload: { type: 'text', text: 'Child result' },
-        },
-      },
-      _sessionId: 'session-1',
-    });
-  });
-
-  it('scopes a child tool-call ID when the child starts a tool', () => {
-    const spawned = adaptSdkEvent(createEventAdapterState(), {
-      type: 'subagent.spawned',
-      sessionId: 'session-1',
-      agentId: 'main',
-      subagentId: 'child-1',
-      subagentName: 'coder',
-      parentToolCallId: 'agent-call-1',
-      parentAgentId: 'main',
-      runInBackground: false,
-    });
-    const childEvent = adaptSdkEvent(spawned.state, {
-      type: 'tool.call.started',
-      sessionId: 'session-1',
-      agentId: 'child-1',
-      turnId: 1,
-      toolCallId: 'tool-1',
-      name: 'Read',
-      args: { path: 'README.md' },
-    });
-
-    expect(childEvent.event).toEqual({
-      type: 'SubagentEvent',
-      payload: {
-        parent_tool_call_id: 'agent-call-1',
-        event: {
-          type: 'ToolCall',
-          payload: {
-            type: 'function',
-            id: 'child-1:tool-1',
-            function: {
-              name: 'ReadFile',
-              arguments: '{"path":"README.md"}',
-            },
-          },
-        },
-      },
-      _sessionId: 'session-1',
-    });
-  });
-
-  it('emits compaction begin when SDK compaction starts', () => {
+  it('drops turn-cumulative usage updates (steps already reported increments)', () => {
     const result = adaptSdkEvent(createEventAdapterState(), {
-      type: 'compaction.started',
+      type: 'session.usage.updated',
       sessionId: 'session-1',
       agentId: 'main',
-      trigger: 'manual',
+      turn_id: 7,
+      input_tokens: 10,
+      output_tokens: 4,
+      total_tokens: 14,
+    });
+
+    expect(result.event).toBeUndefined();
+  });
+
+  it('emits hook content as text', () => {
+    const result = adaptSdkEvent(createEventAdapterState(), {
+      type: 'session.hook.result',
+      sessionId: 'session-1',
+      agentId: 'main',
+      hook_event: 'PreToolUse',
+      content: 'Hook approved',
+      blocked: false,
+    });
+
+    expect(result.event).toEqual({
+      type: 'ContentPart',
+      payload: { type: 'text', text: 'Hook approved' },
+      _sessionId: 'session-1',
+    });
+  });
+
+  it('emits compaction begin when engine compaction starts', () => {
+    const result = adaptSdkEvent(createEventAdapterState(), {
+      type: 'session.compaction.started',
+      sessionId: 'session-1',
+      agentId: 'main',
+      source: 'manual',
+      tokens_before: 100,
     });
 
     expect(result.event).toEqual({
@@ -425,35 +305,14 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     });
   });
 
-  it.each([
-    {
-      type: 'compaction.completed' as const,
-      result: { summary: 'Summary', compactedCount: 3, tokensBefore: 100, tokensAfter: 30 },
-    },
-    { type: 'compaction.cancelled' as const },
-    { type: 'compaction.blocked' as const, turnId: 7 },
-  ])('emits compaction end when SDK reports $type', (event) => {
-    const result = adaptSdkEvent(createEventAdapterState(), {
-      ...event,
-      sessionId: 'session-1',
-      agentId: 'main',
-    });
-
-    expect(result.event).toEqual({
-      type: 'CompactionEnd',
-      payload: {},
-      _sessionId: 'session-1',
-    });
-  });
-
   it('returns terminal metadata when the main turn completes', () => {
     const result = adaptSdkEvent(createEventAdapterState(), {
-      type: 'turn.ended',
+      type: 'session.turn.ended',
       sessionId: 'session-1',
       agentId: 'main',
-      turnId: 7,
-      reason: 'completed',
-      durationMs: 50,
+      turn_id: 7,
+      stop_reason: 'EndTurn',
+      steps: 3,
     });
 
     expect(result.event).toBeUndefined();
@@ -463,22 +322,17 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
       agentId: 'main',
       turnId: 7,
       reason: 'completed',
-      error: undefined,
     });
   });
 
-  it('preserves the SDK error when a main turn fails', () => {
+  it('maps an aborted engine turn to a cancelled terminal', () => {
     const result = adaptSdkEvent(createEventAdapterState(), {
-      type: 'turn.ended',
+      type: 'session.turn.ended',
       sessionId: 'session-1',
       agentId: 'main',
-      turnId: 7,
-      reason: 'failed',
-      error: {
-        code: 'internal',
-        message: 'Provider failed',
-        retryable: false,
-      },
+      turn_id: 7,
+      stop_reason: 'Aborted',
+      steps: 1,
     });
 
     expect(result.terminal).toEqual({
@@ -486,14 +340,25 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
       sessionId: 'session-1',
       agentId: 'main',
       turnId: 7,
-      reason: 'failed',
-      error: {
-        code: 'internal',
-        message: 'Provider failed',
-        retryable: false,
-      },
+      reason: 'cancelled',
     });
   });
+
+  it.each(['Filtered', 'MaxTokens', 'BudgetLimited', 'Paused'] as const)(
+    'maps the %s stop reason to a failed terminal',
+    (stopReason) => {
+      const result = adaptSdkEvent(createEventAdapterState(), {
+        type: 'session.turn.ended',
+        sessionId: 'session-1',
+        agentId: 'main',
+        turn_id: 7,
+        stop_reason: stopReason,
+        steps: 2,
+      });
+
+      expect(result.terminal?.reason).toBe('failed');
+    },
+  );
 
   it('emits a bridge error with the caller-selected phase when the SDK reports an error', () => {
     const result = adaptSdkEvent(

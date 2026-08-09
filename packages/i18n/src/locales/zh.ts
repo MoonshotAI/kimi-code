@@ -25,6 +25,7 @@ export const zh: DeepPartial<typeof import('./en').default> = {
     sessionPlanModeInvalid: '计划模式无效',
     sessionApprovalHandlerError: '审批处理程序抛出异常',
     sessionQuestionHandlerError: '提问处理程序抛出异常',
+    sessionToolHandlerError: '工具执行处理程序抛出异常',
     sessionInitFailed: '会话初始化失败',
     agentNotFound: '未找到 Agent',
     turnAgentBusy: 'Agent 正忙',

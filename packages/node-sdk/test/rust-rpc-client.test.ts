@@ -3,12 +3,14 @@
  * mappings (create/list/status/prompt/event routing) and the native
  * capability policy.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { RustRpcClient, type RustLoopApi } from '../src/rust/rpc-client.js';
+import { Session } from '../src/session.js';
 import { readConfigFile, writeConfigFile } from '../src/legacy/config.js';
+import type { ToolCallRequest } from '../src/legacy/rpc-types.js';
 
 function fakeRustLoop(overrides: Partial<RustLoopApi> = {}): RustLoopApi & {
   calls: Record<string, unknown[]>;
@@ -261,5 +263,188 @@ describe('RustRpcClient', () => {
     const rpc = await client['getRpc']() as unknown as Record<string, unknown>;
     const archive = rpc['archiveSession'] as (input: unknown) => Promise<void>;
     await expect(archive({ sessionId: 'ses_1' })).resolves.toBeUndefined();
+  });
+});
+
+describe('RustRpcClient toolExecute bridge', () => {
+  it('routes engine execute_tool to the session tool handler and maps the response', async () => {
+    let toolExecute: ((req: unknown) => Promise<unknown>) | undefined;
+    const rust = fakeRustLoop({
+      installSessionHostHandlers: (handlers) => {
+        toolExecute = handlers.toolExecute;
+        return true;
+      },
+    });
+    const client = new RustRpcClient({ rustLoop: rust });
+    const handler = vi.fn((request: ToolCallRequest) => {
+      expect(request).toMatchObject({
+        toolCallId: 'call-1',
+        args: { query: 'x' },
+        sessionId: 'ses_1',
+        agentId: 'main',
+      });
+      return { output: 'result text', isError: false };
+    });
+    client.setToolHandler('ses_1', handler);
+
+    await expect(
+      toolExecute?.({
+        session_id: 'ses_1',
+        turn_id: 'turn-1',
+        tool_call_id: 'call-1',
+        tool_name: 'my_tool',
+        arguments: { query: 'x' },
+      }),
+    ).resolves.toEqual({ content: 'result text', is_error: false });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps btw side-question sessions onto the parent session handler', async () => {
+    let toolExecute: ((req: unknown) => Promise<unknown>) | undefined;
+    const rust = fakeRustLoop({
+      installSessionHostHandlers: (handlers) => {
+        toolExecute = handlers.toolExecute;
+        return true;
+      },
+    });
+    const client = new RustRpcClient({ rustLoop: rust });
+    const seen: string[] = [];
+    client.setToolHandler('ses_1', (request: ToolCallRequest & { sessionId?: string }) => {
+      seen.push(request.sessionId ?? '');
+      return { output: 'ok' };
+    });
+
+    await expect(
+      toolExecute?.({
+        session_id: 'btw-ses_1',
+        turn_id: 'turn-1',
+        tool_call_id: 'call-2',
+        tool_name: 'my_tool',
+        arguments: {},
+      }),
+    ).resolves.toEqual({ content: 'ok', is_error: false });
+    expect(seen).toEqual(['ses_1']);
+  });
+
+  it('fails with the unsupported-tool result when no handler is registered', async () => {
+    let toolExecute: ((req: unknown) => Promise<unknown>) | undefined;
+    const rust = fakeRustLoop({
+      installSessionHostHandlers: (handlers) => {
+        toolExecute = handlers.toolExecute;
+        return true;
+      },
+    });
+    const client = new RustRpcClient({ rustLoop: rust });
+
+    await expect(
+      toolExecute?.({
+        session_id: 'ses_1',
+        turn_id: 'turn-1',
+        tool_call_id: 'call-1',
+        tool_name: 'my_tool',
+        arguments: {},
+      }),
+    ).resolves.toEqual({
+      content: 'SDK custom tool calls are not supported: call-1',
+      is_error: true,
+    });
+  });
+
+  it('maps a throwing tool handler to an error result and an error event', async () => {
+    let toolExecute: ((req: unknown) => Promise<unknown>) | undefined;
+    const rust = fakeRustLoop({
+      installSessionHostHandlers: (handlers) => {
+        toolExecute = handlers.toolExecute;
+        return true;
+      },
+    });
+    const client = new RustRpcClient({ rustLoop: rust });
+    client.setToolHandler('ses_1', () => {
+      throw new Error('boom');
+    });
+    const errors: Array<{ code?: string; message?: string; sessionId?: string }> = [];
+    const unsubscribe = client.onEvent((event) => {
+      if (event.type === 'error') {
+        errors.push(event as { code?: string; message?: string; sessionId?: string });
+      }
+    });
+
+    await expect(
+      toolExecute?.({
+        session_id: 'ses_1',
+        turn_id: 'turn-1',
+        tool_call_id: 'call-1',
+        tool_name: 'my_tool',
+        arguments: {},
+      }),
+    ).resolves.toEqual({ content: 'Tool call handler failed: boom', is_error: true });
+    expect(errors).toMatchObject([
+      {
+        type: 'error',
+        code: 'session.tool_handler_error',
+        message: 'boom',
+        sessionId: 'ses_1',
+        agentId: 'main',
+      },
+    ]);
+    unsubscribe();
+  });
+
+  it('maps content parts onto engine content and media blocks', async () => {
+    let toolExecute: ((req: unknown) => Promise<unknown>) | undefined;
+    const rust = fakeRustLoop({
+      installSessionHostHandlers: (handlers) => {
+        toolExecute = handlers.toolExecute;
+        return true;
+      },
+    });
+    const client = new RustRpcClient({ rustLoop: rust });
+    client.setToolHandler('ses_1', () => ({
+      output: [
+        { type: 'text', text: 'done' },
+        { type: 'image_url', imageUrl: { url: 'file:///shot.png' } },
+      ],
+    }));
+
+    await expect(
+      toolExecute?.({
+        session_id: 'ses_1',
+        turn_id: 'turn-1',
+        tool_call_id: 'call-1',
+        tool_name: 'my_tool',
+        arguments: {},
+      }),
+    ).resolves.toEqual({
+      content: 'done',
+      is_error: false,
+      media: [{ type: 'image_url', url: 'file:///shot.png' }],
+    });
+  });
+
+  it('runs through the Session.setToolHandler surface end-to-end', async () => {
+    let toolExecute: ((req: unknown) => Promise<unknown>) | undefined;
+    const rust = fakeRustLoop({
+      installSessionHostHandlers: (handlers) => {
+        toolExecute = handlers.toolExecute;
+        return true;
+      },
+    });
+    const client = new RustRpcClient({ rustLoop: rust });
+    const session = new Session({
+      id: 'ses_1',
+      workDir: '/ws',
+      rpc: client,
+    });
+    session.setToolHandler((request) => ({ output: `handled: ${request.toolCallId}` }));
+
+    await expect(
+      toolExecute?.({
+        session_id: 'ses_1',
+        turn_id: 'turn-1',
+        tool_call_id: 'call-9',
+        tool_name: 'my_tool',
+        arguments: {},
+      }),
+    ).resolves.toEqual({ content: 'handled: call-9', is_error: false });
   });
 });

@@ -19,7 +19,7 @@ import type {
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { Event } from './events';
-import type { ApprovalHandler, QuestionHandler } from '#/events';
+import type { ApprovalHandler, QuestionHandler, ToolCallHandler } from '#/events';
 import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
@@ -225,6 +225,7 @@ export abstract class SDKRpcClientBase {
   private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   private readonly questionHandlers = new Map<string, QuestionHandler>();
+  private readonly toolHandlers = new Map<string, ToolCallHandler>();
 
   get interactiveAgentId(): string {
     return this.interactiveAgentScope.getStore() ?? MAIN_AGENT_ID;
@@ -905,9 +906,18 @@ export abstract class SDKRpcClientBase {
     this.questionHandlers.set(sessionId, handler);
   }
 
+  setToolHandler(sessionId: string, handler: ToolCallHandler | undefined): void {
+    if (handler === undefined) {
+      this.toolHandlers.delete(sessionId);
+      return;
+    }
+    this.toolHandlers.set(sessionId, handler);
+  }
+
   clearSessionHandlers(sessionId: string): void {
     this.approvalHandlers.delete(sessionId);
     this.questionHandlers.delete(sessionId);
+    this.toolHandlers.delete(sessionId);
   }
 
   async requestApproval(
@@ -956,11 +966,36 @@ export abstract class SDKRpcClientBase {
     }
   }
 
-  async toolCall(request: ToolCallRequest): Promise<ToolCallResponse> {
-    return {
-      output: `SDK custom tool calls are not supported: ${request.toolCallId}`,
-      isError: true,
-    };
+  /** Answer one engine `host/execute_tool` request. Routes to the per-session
+   *  tool handler registered by `Session.setToolHandler`; without a handler
+   *  (or when the request carries no session id) the call fails with the SDK's
+   *  unsupported-tool contract instead of pretending success. */
+  async toolCall(
+    request: ToolCallRequest & { sessionId?: string; agentId?: string },
+  ): Promise<ToolCallResponse> {
+    const sessionId = request.sessionId ?? '';
+    const handler = sessionId.length > 0 ? this.toolHandlers.get(sessionId) : undefined;
+    if (handler === undefined) {
+      return {
+        output: `SDK custom tool calls are not supported: ${request.toolCallId}`,
+        isError: true,
+      };
+    }
+
+    try {
+      return await handler(request);
+    } catch (error) {
+      this.receiveEvent({
+        type: 'error',
+        sessionId,
+        agentId: request.agentId ?? MAIN_AGENT_ID,
+        ...makeErrorPayload(ErrorCodes.SESSION_TOOL_HANDLER_ERROR, errorMessage(error)),
+      });
+      return {
+        output: `Tool call handler failed: ${errorMessage(error)}`,
+        isError: true,
+      };
+    }
   }
 
 }

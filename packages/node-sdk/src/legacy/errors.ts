@@ -76,6 +76,7 @@ export const ErrorCodes = {
   SESSION_PLAN_MODE_INVALID: 'session.plan_mode_invalid',
   SESSION_APPROVAL_HANDLER_ERROR: 'session.approval_handler_error',
   SESSION_QUESTION_HANDLER_ERROR: 'session.question_handler_error',
+  SESSION_TOOL_HANDLER_ERROR: 'session.tool_handler_error',
   SESSION_INIT_FAILED: 'session.init_failed',
 
   AGENT_NOT_FOUND: 'agent.not_found',
@@ -234,6 +235,11 @@ export const KIMI_ERROR_INFO = {
   },
   'session.question_handler_error': {
     titleKey: 'errors.sessionQuestionHandlerError',
+    retryable: false,
+    public: true,
+  },
+  'session.tool_handler_error': {
+    titleKey: 'errors.sessionToolHandlerError',
     retryable: false,
     public: true,
   },

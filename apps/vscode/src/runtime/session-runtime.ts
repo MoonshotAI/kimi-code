@@ -51,11 +51,6 @@ export interface PromptResult {
   readonly status: "finished" | "cancelled" | "failed";
 }
 
-interface SuppressedError {
-  readonly code: string;
-  readonly message: string;
-}
-
 interface PendingHostCompaction {
   readonly actionId: number;
   readonly resolve: (result: "completed" | "cancelled") => void;
@@ -86,7 +81,6 @@ export class SessionRuntime {
   private readonly activeWorkSettledWaiters = new Set<() => void>();
   private exclusiveActionActive = false;
   private readonly terminalKeys = new Set<string>();
-  private suppressedError: SuppressedError | undefined;
   private legacyApproval: LegacyApprovalFlags;
   private closed = false;
 
@@ -312,7 +306,15 @@ export class SessionRuntime {
     };
 
     try {
+      // The engine emits no compaction completion event (only
+      // `session.compaction.started`), so the blocking `session/compact` RPC
+      // itself is the completion signal: resolving means the compaction
+      // finished, rejecting (e.g. cancelled or unavailable) fails the action.
       await this.session.compact(instruction === undefined ? {} : { instruction });
+      if (this.pendingHostCompaction?.actionId === actionId) {
+        this.pendingHostCompaction = undefined;
+        resolveCompletion('completed');
+      }
     } catch (error) {
       if (this.pendingHostCompaction?.actionId === actionId) {
         this.pendingHostCompaction = undefined;
@@ -439,31 +441,12 @@ export class SessionRuntime {
   private onSdkEvent(event: Event): void {
     if (this.closed) return;
 
-    if (event.type === "compaction.completed" || event.type === "compaction.cancelled") {
-      const pending = this.pendingHostCompaction;
-      if (pending !== undefined) {
-        this.pendingHostCompaction = undefined;
-        pending.resolve(event.type === "compaction.completed" ? "completed" : "cancelled");
-      }
-    }
-
-    if (event.type === "turn.started" && event.agentId === "main" && this.activePrompt !== undefined) {
+    if (event.type === 'session.turn.started' && event.agentId === 'main' && this.activePrompt !== undefined) {
       this.activePrompt.started = true;
     }
 
-    if (event.type === "tool.call.started") {
+    if (event.type === 'session.tool.started') {
       this.captureFileBaseline(event);
-    }
-
-    if (event.type === "turn.step.retrying") {
-      this.log(
-        `Provider retry ${event.nextAttempt}/${event.maxAttempts} in ${event.delayMs}ms`,
-        new Error(event.errorMessage),
-      );
-    }
-
-    if (event.type === "error" && this.consumeSuppressedError(event.code, event.message)) {
-      return;
     }
 
     const pendingInput = this.activePrompt?.input;
@@ -494,11 +477,11 @@ export class SessionRuntime {
     }
   }
 
-  private captureFileBaseline(event: Extract<Event, { type: "tool.call.started" }>): void {
-    if (event.name !== "Write" && event.name !== "Edit") return;
-    if (!isRecord(event.args)) return;
-    const filePath = event.args["path"];
-    if (typeof filePath !== "string" || filePath.length === 0) return;
+  private captureFileBaseline(event: Extract<Event, { type: 'session.tool.started' }>): void {
+    if (event.tool_name !== 'Write' && event.tool_name !== 'Edit') return;
+    if (!isRecord(event.arguments)) return;
+    const filePath = event.arguments['path'];
+    if (typeof filePath !== 'string' || filePath.length === 0) return;
 
     const summary = this.session.summary;
     this.captureBaseline(
@@ -537,9 +520,9 @@ export class SessionRuntime {
       return;
     }
 
-    const code = terminal.error?.code ?? `turn.${String(terminal.reason)}`;
+    const code = `turn.${String(terminal.reason)}`;
     this.reverseRpc.cancelAll("Turn ended");
-    const detail = terminal.error?.message ?? `Turn ended with reason: ${String(terminal.reason)}`;
+    const detail = `Turn ended with reason: ${String(terminal.reason)}`;
     const message = getUserMessage(code, detail);
     this.log("Session turn failed", new Error(`${code}: ${detail}`));
     this.emitStreamEvent({
@@ -550,17 +533,7 @@ export class SessionRuntime {
       phase: "runtime",
       _sessionId: terminal.sessionId,
     });
-    if (terminal.error !== undefined) {
-      this.suppressedError = { code: terminal.error.code, message: terminal.error.message };
-    }
     this.settlePrompt({ status: "failed" });
-  }
-
-  private consumeSuppressedError(code: string, message: string): boolean {
-    const suppressed = this.suppressedError;
-    if (suppressed === undefined) return false;
-    this.suppressedError = undefined;
-    return suppressed.code === code && suppressed.message === message;
   }
 
   private emitError(error: unknown, phase: ErrorPhase, options?: { readonly terminal?: boolean }): void {

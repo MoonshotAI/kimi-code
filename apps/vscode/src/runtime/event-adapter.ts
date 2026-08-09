@@ -1,48 +1,17 @@
 import type { Event } from '@moonshot-ai/kimi-code-sdk';
 
-import type {
-  DisplayBlock,
-  LegacyWireEvent,
-  StatusUpdate,
-  TokenUsage,
-  TurnBegin,
-} from '../../shared/legacy-sdk';
+import type { LegacyWireEvent, StatusUpdate, TurnBegin } from '../../shared/legacy-sdk';
 import type { ErrorPhase, UIStreamEvent } from '../../shared/types';
-import { toLegacyDisplay } from './tool-display';
 
 const DEFAULT_MAIN_AGENT_ID = 'main';
 
-export interface AdapterTokenUsage {
-  readonly inputOther: number;
-  readonly output: number;
-  readonly inputCacheRead: number;
-  readonly inputCacheCreation: number;
-}
-
-export interface SubagentParent {
-  readonly parentAgentId: string;
-  readonly parentToolCallId: string;
-}
-
 export interface EventAdapterState {
-  readonly subagentParents: Readonly<Record<string, SubagentParent>>;
-  readonly turnUsageByAgent: Readonly<Record<string, AdapterTokenUsage>>;
-  readonly toolDisplays: Readonly<Record<string, readonly DisplayBlock[]>>;
+  /** `llm.step.begin` sequence within the current turn, fed to `StepBegin.n`.
+   *  The engine emits no step numbers, so the adapter numbers them itself. */
+  readonly stepCount: number;
 }
 
-export interface AdaptedToolCallPartEvent {
-  readonly type: 'ToolCallPart';
-  readonly payload: {
-    /** Lets the Webview update the right call when tool arguments interleave. */
-    readonly tool_call_id: string;
-    readonly arguments_part?: string | null;
-  };
-  readonly _sessionId?: string;
-}
-
-export type AdaptedUIStreamEvent = UIStreamEvent | AdaptedToolCallPartEvent;
-
-type SdkTurnEndedEvent = Extract<Event, { type: 'turn.ended' }>;
+export type TurnTerminalReason = 'completed' | 'cancelled' | 'failed';
 
 export interface TurnTerminalMetadata {
   /** Stable within one adapter stream and suitable for terminal-event de-duplication. */
@@ -50,35 +19,33 @@ export interface TurnTerminalMetadata {
   readonly sessionId: string;
   readonly agentId: string;
   readonly turnId: number;
-  readonly reason: SdkTurnEndedEvent['reason'];
-  readonly error?: NonNullable<SdkTurnEndedEvent['error']>;
+  readonly reason: TurnTerminalReason;
 }
 
 export interface EventAdapterResult {
   readonly state: EventAdapterState;
-  readonly event?: AdaptedUIStreamEvent;
+  readonly event?: UIStreamEvent;
   /** SessionRuntime owns conversion of this metadata to exactly one complete/error event. */
   readonly terminal?: TurnTerminalMetadata;
 }
 
 export interface AdaptSdkEventOptions {
-  /** The SDK turn-start event intentionally does not repeat prompt content. */
+  /** The engine turn-start event intentionally does not repeat prompt content. */
   readonly pendingInput?: TurnBegin['user_input'];
   readonly mainAgentId?: string;
   readonly errorPhase?: ErrorPhase;
 }
 
 export function createEventAdapterState(): EventAdapterState {
-  return {
-    subagentParents: {},
-    turnUsageByAgent: {},
-    toolDisplays: {},
-  };
+  return { stepCount: 0 };
 }
 
 /**
- * Purely projects one public Node SDK event into the released Webview protocol.
- * The returned state must be passed into the next call; the input state is never mutated.
+ * Purely projects one Rust-engine event (passed through by the SDK) into the
+ * released Webview protocol. The SDK routes only this session's events here
+ * and stamps `agentId: 'main'`, so no subagent routing is needed. The
+ * returned state must be passed into the next call; the input state is never
+ * mutated.
  */
 export function adaptSdkEvent(
   state: EventAdapterState,
@@ -87,28 +54,8 @@ export function adaptSdkEvent(
 ): EventAdapterResult {
   const mainAgentId = options.mainAgentId ?? DEFAULT_MAIN_AGENT_ID;
 
-  if (sdkEvent.type === 'subagent.spawned') {
-    const parentAgentId = sdkEvent.parentAgentId ?? sdkEvent.callerAgentId ?? sdkEvent.agentId;
-    return {
-      state: {
-        ...state,
-        subagentParents: {
-          ...state.subagentParents,
-          [sdkEvent.subagentId]: {
-            parentAgentId,
-            parentToolCallId: scopedToolCallId(
-              parentAgentId,
-              sdkEvent.parentToolCallId,
-              mainAgentId,
-            ),
-          },
-        },
-      },
-    };
-  }
-
-  if (sdkEvent.type === 'turn.started') {
-    const nextState = resetTurnUsage(state, sdkEvent.agentId);
+  if (sdkEvent.type === 'session.turn.started') {
+    const nextState = { stepCount: 0 };
     if (sdkEvent.agentId !== mainAgentId || options.pendingInput === undefined) {
       return { state: nextState };
     }
@@ -124,17 +71,16 @@ export function adaptSdkEvent(
     };
   }
 
-  if (sdkEvent.type === 'turn.ended') {
+  if (sdkEvent.type === 'session.turn.ended') {
     if (sdkEvent.agentId !== mainAgentId) return { state };
     return {
       state,
       terminal: {
-        key: `${sdkEvent.sessionId}:${sdkEvent.agentId}:${sdkEvent.turnId}`,
+        key: `${sdkEvent.sessionId}:${sdkEvent.agentId}:${sdkEvent.turn_id}`,
         sessionId: sdkEvent.sessionId,
         agentId: sdkEvent.agentId,
-        turnId: sdkEvent.turnId,
-        reason: sdkEvent.reason,
-        error: sdkEvent.error,
+        turnId: sdkEvent.turn_id,
+        reason: mapStopReason(sdkEvent.stop_reason),
       },
     };
   }
@@ -154,20 +100,12 @@ export function adaptSdkEvent(
     };
   }
 
-  const mapped = mapLegacyWireEvent(state, sdkEvent, mainAgentId);
+  const mapped = mapEngineEvent(state, sdkEvent);
   if (mapped.event === undefined) return { state: mapped.state };
-
-  const routed = routeSubagentEvent(
-    mapped.state,
-    sdkEvent.agentId,
-    mapped.event,
-    mainAgentId,
-  );
-  if (routed === undefined) return { state: mapped.state };
 
   return {
     state: mapped.state,
-    event: withSessionId(routed, sdkEvent.sessionId),
+    event: withSessionId(mapped.event, sdkEvent.sessionId),
   };
 }
 
@@ -193,230 +131,101 @@ interface MappedLegacyWireEvent {
   readonly event?: LegacyWireEvent;
 }
 
-function mapLegacyWireEvent(
+function mapEngineEvent(
   state: EventAdapterState,
   sdkEvent: Event,
-  mainAgentId: string,
 ): MappedLegacyWireEvent {
   switch (sdkEvent.type) {
-    case 'turn.step.started':
+    case 'llm.step.begin':
       return {
-        state,
-        event: { type: 'StepBegin', payload: { n: sdkEvent.step } },
+        state: { stepCount: state.stepCount + 1 },
+        event: { type: 'StepBegin', payload: { n: state.stepCount + 1 } },
       };
-    case 'turn.step.retrying':
-      return {
-        state,
-        event: {
-          type: 'StatusUpdate',
-          payload: {
-            retrying: {
-              next_attempt: sdkEvent.nextAttempt,
-              max_attempts: sdkEvent.maxAttempts,
-              delay_ms: sdkEvent.delayMs,
-              message: sdkEvent.errorMessage,
-            },
-          },
+    case 'llm.delta': {
+      const part = sdkEvent.part;
+      if (part.type === 'text' && part.text !== undefined && part.text.length > 0) {
+        return {
+          state,
+          event: { type: 'ContentPart', payload: { type: 'text', text: part.text } },
+        };
+      }
+      if (part.type === 'think' && part.think !== undefined && part.think.length > 0) {
+        return {
+          state,
+          event: { type: 'ContentPart', payload: { type: 'think', think: part.think } },
+        };
+      }
+      // `tool_call` parts are dropped: `session.tool.started` already carries
+      // the complete arguments for the Webview's ToolCall card.
+      return { state };
+    }
+    case 'llm.step.end': {
+      const usage = sdkEvent.usage;
+      if (usage === undefined) return { state };
+      const payload: StatusUpdate = {
+        token_usage: {
+          input_other: usage.input_tokens ?? 0,
+          output: usage.output_tokens ?? 0,
+          input_cache_read: 0,
+          input_cache_creation: 0,
         },
       };
-    case 'turn.step.interrupted':
+      return { state, event: { type: 'StatusUpdate', payload } };
+    }
+    case 'session.tool.started':
       return {
         state,
-        event: { type: 'StepInterrupted', payload: {} },
-      };
-    case 'assistant.delta':
-      return {
-        state,
-        event: { type: 'ContentPart', payload: { type: 'text', text: sdkEvent.delta } },
-      };
-    case 'hook.result':
-      return {
-        state,
-        event: { type: 'ContentPart', payload: { type: 'text', text: sdkEvent.content } },
-      };
-    case 'thinking.delta':
-      return {
-        state,
-        event: { type: 'ContentPart', payload: { type: 'think', think: sdkEvent.delta } },
-      };
-    case 'tool.call.started': {
-      const toolCallId = scopedToolCallId(
-        sdkEvent.agentId,
-        sdkEvent.toolCallId,
-        mainAgentId,
-      );
-      const display = sdkEvent.display === undefined ? undefined : toLegacyDisplay(sdkEvent.display);
-      return {
-        state: display === undefined
-          ? state
-          : {
-              ...state,
-              toolDisplays: { ...state.toolDisplays, [toolCallId]: display },
-            },
         event: {
           type: 'ToolCall',
           payload: {
             type: 'function',
-            id: toolCallId,
+            id: sdkEvent.tool_call_id,
             function: {
-              name: toLegacyToolName(sdkEvent.name),
-              arguments: serializeArguments(sdkEvent.args),
+              name: toLegacyToolName(sdkEvent.tool_name),
+              arguments: serializeArguments(sdkEvent.arguments),
             },
           },
         },
       };
-    }
-    case 'tool.call.delta': {
-      const event: AdaptedToolCallPartEvent = {
-        type: 'ToolCallPart',
-        payload: {
-          tool_call_id: scopedToolCallId(
-            sdkEvent.agentId,
-            sdkEvent.toolCallId,
-            mainAgentId,
-          ),
-          arguments_part: sdkEvent.argumentsPart,
-        },
-      };
-      return { state, event: event as LegacyWireEvent };
-    }
-    case 'tool.result': {
-      const toolCallId = scopedToolCallId(
-        sdkEvent.agentId,
-        sdkEvent.toolCallId,
-        mainAgentId,
-      );
-      const display = state.toolDisplays[toolCallId] ?? [];
-      const toolDisplays = { ...state.toolDisplays };
-      delete toolDisplays[toolCallId];
-      const output = serializeToolOutput(sdkEvent.output);
+    case 'session.tool.settled':
       return {
-        state: { ...state, toolDisplays },
+        state,
         event: {
           type: 'ToolResult',
           payload: {
-            tool_call_id: toolCallId,
+            tool_call_id: sdkEvent.tool_call_id,
             return_value: {
-              is_error: sdkEvent.isError === true,
-              output,
+              is_error: sdkEvent.is_error,
+              output: sdkEvent.content,
               message: '',
-              display: [...display],
+              display: [],
             },
           },
         },
       };
-    }
-    case 'agent.status.updated':
-      return mapStatusUpdate(state, sdkEvent);
-    case 'compaction.started':
+    case 'session.hook.result':
+      return {
+        state,
+        event: { type: 'ContentPart', payload: { type: 'text', text: sdkEvent.content } },
+      };
+    case 'session.compaction.started':
       return {
         state,
         event: { type: 'CompactionBegin', payload: {} },
-      };
-    case 'compaction.blocked':
-    case 'compaction.cancelled':
-    case 'compaction.completed':
-      return {
-        state,
-        event: { type: 'CompactionEnd', payload: {} },
       };
     default:
       return { state };
   }
 }
 
-function mapStatusUpdate(
-  state: EventAdapterState,
-  sdkEvent: Extract<Event, { type: 'agent.status.updated' }>,
-): MappedLegacyWireEvent {
-  const payload: StatusUpdate = {};
-  if (sdkEvent.contextUsage !== undefined) payload.context_usage = sdkEvent.contextUsage;
-  if (sdkEvent.planMode !== undefined) payload.plan_mode = sdkEvent.planMode;
-  if (sdkEvent.model !== undefined) payload.model = sdkEvent.model;
-  if (sdkEvent.thinkingEffort !== undefined) payload.thinking_effort = sdkEvent.thinkingEffort;
-
-  const currentTurn = sdkEvent.usage?.currentTurn;
-  if (currentTurn === undefined) {
-    return Object.keys(payload).length === 0
-      ? { state }
-      : { state, event: { type: 'StatusUpdate', payload } };
-  }
-
-  const previous = state.turnUsageByAgent[sdkEvent.agentId];
-  payload.token_usage = usageDelta(currentTurn, previous);
-  return {
-    state: {
-      ...state,
-      turnUsageByAgent: {
-        ...state.turnUsageByAgent,
-        [sdkEvent.agentId]: currentTurn,
-      },
-    },
-    event: { type: 'StatusUpdate', payload },
-  };
+function mapStopReason(stopReason: string): TurnTerminalReason {
+  if (stopReason === 'EndTurn') return 'completed';
+  if (stopReason === 'Aborted') return 'cancelled';
+  return 'failed';
 }
 
-function usageDelta(current: AdapterTokenUsage, previous: AdapterTokenUsage | undefined): TokenUsage {
-  return {
-    input_other: delta(current.inputOther, previous?.inputOther),
-    output: delta(current.output, previous?.output),
-    input_cache_read: delta(current.inputCacheRead, previous?.inputCacheRead),
-    input_cache_creation: delta(
-      current.inputCacheCreation,
-      previous?.inputCacheCreation,
-    ),
-  };
-}
-
-function delta(current: number, previous: number | undefined): number {
-  if (previous === undefined || current < previous) return current;
-  return current - previous;
-}
-
-function resetTurnUsage(state: EventAdapterState, agentId: string): EventAdapterState {
-  if (state.turnUsageByAgent[agentId] === undefined) return state;
-  const nextUsage = { ...state.turnUsageByAgent };
-  delete nextUsage[agentId];
-  return { ...state, turnUsageByAgent: nextUsage };
-}
-
-function routeSubagentEvent(
-  state: EventAdapterState,
-  agentId: string,
-  event: LegacyWireEvent,
-  mainAgentId: string,
-): LegacyWireEvent | undefined {
-  if (agentId === mainAgentId) return event;
-
-  let currentAgentId = agentId;
-  let routed = event;
-  const visited = new Set<string>();
-
-  while (currentAgentId !== mainAgentId) {
-    if (visited.has(currentAgentId)) return undefined;
-    visited.add(currentAgentId);
-
-    const parent = state.subagentParents[currentAgentId];
-    if (parent === undefined) return undefined;
-    routed = {
-      type: 'SubagentEvent',
-      payload: {
-        parent_tool_call_id: parent.parentToolCallId,
-        event: routed,
-      },
-    };
-    currentAgentId = parent.parentAgentId;
-  }
-
-  return routed;
-}
-
-function scopedToolCallId(agentId: string, toolCallId: string, mainAgentId: string): string {
-  return agentId === mainAgentId ? toolCallId : `${agentId}:${toolCallId}`;
-}
-
-function withSessionId(event: LegacyWireEvent, sessionId: string): AdaptedUIStreamEvent {
-  return { ...event, _sessionId: sessionId } as AdaptedUIStreamEvent;
+function withSessionId(event: LegacyWireEvent, sessionId: string): UIStreamEvent {
+  return { ...event, _sessionId: sessionId } as UIStreamEvent;
 }
 
 function serializeArguments(args: unknown): string {
@@ -427,20 +236,11 @@ function serializeArguments(args: unknown): string {
   }
 }
 
-function serializeToolOutput(output: unknown): string {
-  if (typeof output === 'string') return output;
-  try {
-    return JSON.stringify(output, null, 2) ?? '';
-  } catch {
-    return String(output);
-  }
-}
-
 function serializeDetails(details: Record<string, unknown> | undefined): string | undefined {
   if (details === undefined) return undefined;
   try {
     return JSON.stringify(details, null, 2);
   } catch {
-    return "[Unable to serialize error details]";
+    return '[Unable to serialize error details]';
   }
 }

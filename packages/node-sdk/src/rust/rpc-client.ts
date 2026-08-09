@@ -42,6 +42,7 @@ import {
 } from '#/legacy/config';
 import { DEFAULT_INIT_PROMPT } from '#/legacy/profile/default';
 import type {
+  ContentPart,
   JsonObject,
   KimiConfig,
   KimiHostIdentity,
@@ -424,6 +425,37 @@ export class RustRpcClient extends SDKRpcClientBase {
     this.rustLoop.installSessionHostHandlers({
       onEvent: (raw) => this.dispatchEngineEvent(raw),
       authorizeTool: (raw) => this.authorizeTool(raw),
+      // Host-proxy tool execution: the engine settles host-provided tools
+      // (and calls no native tool claims) through `host/execute_tool`; the
+      // SDK routes each request to the session's registered tool handler
+      // (`Session.setToolHandler`) and maps the SDK response back onto the
+      // engine's `{ content, is_error, media }` wire shape.
+      toolExecute: async (raw) => {
+        const req = (raw ?? {}) as {
+          session_id?: string | null;
+          turn_id?: string | number | null;
+          tool_call_id?: string | null;
+          arguments?: unknown;
+        };
+        // Side-question (btw) turns carry the engine's `btw-<sid>` session id;
+        // they belong to the parent session, so map them back onto it (same
+        // rule as dispatchEngineEvent).
+        const rawSessionId = req.session_id ?? '';
+        const sessionId = rawSessionId.startsWith('btw-')
+          ? rawSessionId.slice('btw-'.length)
+          : rawSessionId;
+        const response = await this.toolCall({
+          sessionId,
+          agentId: 'main',
+          ...(typeof req.turn_id === 'number' ? { turnId: req.turn_id } : {}),
+          toolCallId: req.tool_call_id ?? '',
+          args: req.arguments,
+        });
+        return {
+          ...toEngineToolContent(response.output),
+          is_error: response.isError === true,
+        };
+      },
       llmChat: async (raw) => {
         if (options.llmStep === undefined) {
           throw new Error('no llmStep provided');
@@ -1376,4 +1408,28 @@ function lastUserPromptFromContext(raw: unknown): string | undefined {
  *  (strips the Windows `\\?\` verbatim prefix and converts separators). */
 function normalizeHostPath(path: string): string {
   return path.replace(/^\\\\\?\\/, '').replaceAll('\\', '/');
+}
+
+/** Map an SDK tool response output (`string | ContentPart[]`) onto the
+ *  engine's `{ content, media }` wire shape: text parts join into `content`,
+ *  image parts become engine `image_url` media blocks (audio/video/think
+ *  parts are dropped — the engine's `ContentBlock` has no carrier for
+ *  them). */
+function toEngineToolContent(
+  output: string | ContentPart[],
+): { content: string; media?: Array<{ type: 'image_url'; url: string }> } {
+  if (typeof output === 'string') return { content: output };
+  const text = output
+    .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+  const media = output
+    .filter(
+      (part): part is Extract<ContentPart, { type: 'image_url' }> => part.type === 'image_url',
+    )
+    .map((part) => ({ type: 'image_url' as const, url: part.imageUrl.url }));
+  return {
+    content: text.length > 0 ? text : media.length > 0 ? 'Tool output contains media.' : '',
+    ...(media.length > 0 ? { media } : {}),
+  };
 }

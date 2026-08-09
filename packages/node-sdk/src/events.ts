@@ -3,6 +3,8 @@ import type {
   ApprovalResponse,
   QuestionRequest,
   QuestionResult,
+  ToolCallRequest,
+  ToolCallResponse,
 } from '#/legacy/rpc-types';
 
 // Event union plus shared fields/payloads used across event families.
@@ -85,3 +87,8 @@ export type MaybePromise<T> = T | Promise<T>;
 export type ApprovalHandler = (request: ApprovalRequest) => MaybePromise<ApprovalResponse>;
 
 export type QuestionHandler = (request: QuestionRequest) => MaybePromise<QuestionResult>;
+
+/** Host-side tool execution handler: answers one engine `host/execute_tool`
+ *  request for a session (host-provided tools, or calls no native tool
+ *  claims). Registered per session via `Session.setToolHandler`. */
+export type ToolCallHandler = (request: ToolCallRequest) => MaybePromise<ToolCallResponse>;

@@ -19,6 +19,7 @@ export const en = {
     sessionPlanModeInvalid: 'Invalid plan mode',
     sessionApprovalHandlerError: 'Approval handler threw',
     sessionQuestionHandlerError: 'Question handler threw',
+    sessionToolHandlerError: 'Tool handler threw',
     sessionInitFailed: 'Session init failed',
     agentNotFound: 'Agent not found',
     turnAgentBusy: 'Agent is busy',
