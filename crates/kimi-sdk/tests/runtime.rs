@@ -90,14 +90,20 @@ async fn home(tag: &str) -> (tokio::sync::MutexGuard<'static, ()>, std::path::Pa
 
 /// Drain the harness event stream until `predicate` matches (or timeout).
 async fn wait_for_event(
-    events: &mut kimi_ui::EventSource,
+    events: &mut tokio::sync::broadcast::Receiver<serde_json::Value>,
     predicate: impl Fn(&serde_json::Value) -> bool,
 ) -> serde_json::Value {
     for _ in 0..64 {
-        let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.next())
-            .await
-            .expect("event within 5s")
-            .expect("stream alive");
+        let event = loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+                .await
+                .expect("event within 5s")
+            {
+                Ok(e) => break e,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => panic!("stream alive"),
+            }
+        };
         if predicate(&event) {
             return event;
         }
@@ -109,8 +115,7 @@ async fn wait_for_event(
 async fn prompt_emits_turn_events_and_transcript() {
     let _guard = home("prompt").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded with llm");
-    let mut guard = harness.events().await;
-    let mut events = guard.as_mut().expect("event source");
+    let mut events = harness.subscribe();
 
     let mut session = harness.create_session("s-prompt").await.expect("create");
     let body = session.prompt("hello").await;
@@ -133,8 +138,7 @@ async fn prompt_emits_turn_events_and_transcript() {
 async fn cancel_of_active_turn_emits_aborted() {
     let _guard = home("cancel").await.0;
     let harness = Harness::embedded_with_llm_step(Some(hanging_llm())).expect("embedded");
-    let mut guard = harness.events().await;
-    let mut events = guard.as_mut().expect("event source");
+    let mut events = harness.subscribe();
 
     let mut session = harness.create_session("s-cancel").await.expect("create");
 
@@ -320,8 +324,7 @@ async fn goal_continuation_drives_turns_until_complete() {
         Scripted::Text("objective complete".into()),
     ]));
     let harness = Harness::embedded_with_llm_step(Some(scripted_llm(script))).expect("embedded");
-    let mut guard = harness.events().await;
-    let mut events = guard.as_mut().expect("event source");
+    let mut events = harness.subscribe();
 
     let mut session = harness.create_session("s-goal-cont").await.expect("create");
     let snapshot = session
@@ -494,8 +497,7 @@ async fn usage_accumulates_after_prompt() {
 async fn usage_updated_event_carries_token_fields() {
     let _guard = home("usage-event").await.0;
     let harness = Harness::embedded_with_llm_step(Some(fake_llm())).expect("embedded");
-    let mut guard = harness.events().await;
-    let mut events = guard.as_mut().expect("event source");
+    let mut events = harness.subscribe();
 
     let mut session = harness.create_session("s-usage-ev").await.expect("create");
     let body = session.prompt("stream me").await;

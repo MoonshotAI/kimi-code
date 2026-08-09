@@ -12,6 +12,8 @@ use kimi_agent::persistence::{SessionStore, SqliteStore};
 use kimi_agent::session::manager::SessionManager;
 use tokio::sync::Mutex;
 
+use crate::callbacks::ToolExecuteStep;
+
 
 
 /// Open the engine's session store (`$KIMI_AGENT_HOME/sessions.db` or
@@ -42,6 +44,9 @@ pub struct ServerState {
     pub approval: SharedApprovalStore,
     /// Process-wide permission gate (shared with session agents).
     pub permission: PermissionGate,
+    /// Shared host-tool step handle — the SDK harness installs its per-session
+    /// tool handler here at runtime (`Session.setToolHandler`).
+    pub tool_step: std::sync::Arc<std::sync::Mutex<Option<ToolExecuteStep>>>,
 }
 
 impl ServerState {
@@ -65,6 +70,7 @@ impl ServerState {
         if let Some(step) = llm_step {
             callbacks = callbacks.with_llm_step(step);
         }
+        let tool_step = callbacks.tool_step_handle();
         let callbacks: Arc<dyn HostCallbacks> = Arc::new(callbacks);
         let approval = Arc::new(ApprovalStore::new());
         let permission = PermissionGate::from_env();
@@ -74,6 +80,7 @@ impl ServerState {
             events,
             approval,
             permission,
+            tool_step,
         })
     }
 

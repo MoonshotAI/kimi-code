@@ -5,6 +5,7 @@
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Protocol revision this client prefers (2026-07-28: stateless — no
 /// `initialize` handshake, every request carries protocol metadata in
@@ -62,37 +63,22 @@ pub enum McpProtocolMode {
     Legacy,
 }
 
-/// A request for additional information embedded in an `InputRequiredResult`
-/// (Multi Round-Trip Requests, 2026-07-28). Replaces server-initiated
-/// requests such as `sampling/createMessage` or elicitation.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct MCPInputRequest {
-    pub input: serde_json::Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_state: Option<serde_json::Value>,
-}
-
 /// The `resultType: "input_required"` interim result (MRTR, 2026-07-28).
+///
+/// `inputRequests` is a **map** of server-assigned ids to request objects
+/// (`ListRootsRequest` / `CreateMessageRequest` / `ElicitRequest`), matching
+/// the 2026-07-28 schema; `requestState` is an opaque string the client must
+/// pass back verbatim on the retry. An `input_required` result with an empty
+/// (or absent) `inputRequests` map is a pure retry signal (e.g. load
+/// shedding).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MCPInputRequiredResult {
+    /// Server-assigned request id → request object.
     #[serde(default)]
-    pub input_requests: Vec<MCPInputRequest>,
+    pub input_requests: HashMap<String, serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_state: Option<serde_json::Value>,
-}
-
-/// A client-supplied response to an `InputRequiredResult`, retried on the
-/// original request (MRTR, 2026-07-28).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct MCPInputResponse {
-    pub input: serde_json::Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_state: Option<serde_json::Value>,
+    pub request_state: Option<String>,
 }
 
 /// `resultType` of a result payload; missing means `"complete"` — clients
@@ -168,20 +154,54 @@ pub fn encode_header_value(value: &str) -> String {
 /// Format a descriptive error for an `input_required` result the engine
 /// cannot satisfy (it has no mid-call input-gathering path).
 pub fn input_required_error(required: &MCPInputRequiredResult, after_retry: bool) -> String {
-    let asks: Vec<&str> = required
+    let asks: Vec<String> = required
         .input_requests
-        .iter()
-        .filter_map(|request| request.description.as_deref())
+        .values()
+        .filter_map(|request| {
+            request
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(str::to_string)
+        })
         .collect();
     let detail = if asks.is_empty() {
         format!("{} input request(s)", required.input_requests.len())
     } else {
         asks.join("; ")
     };
-    let phase = if after_retry { " after retry" } else { "" };
-    format!(
-        "MCP server requires additional input to process 'tools/call'{phase} ({detail}); the kimi-agent cannot supply it"
-    )
+    if after_retry {
+        format!("MCP server still requires input after retry: {detail}")
+    } else {
+        format!("MCP server requires input: {detail}")
+    }
+}
+
+/// Build the `inputResponses` map for an `InputRequiredResult`'s requests
+/// that the engine can answer automatically (MRTR, 2026-07-28). Currently
+/// only `ListRootsRequest` (`roots/list`) is answered — with an empty roots
+/// list, which the Roots feature permits. Any other request type (sampling,
+/// elicitation) needs a data source the engine does not have mid-call, so
+/// the whole exchange errors out rather than partially answering.
+pub fn build_auto_input_responses(
+    requests: &HashMap<String, serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let mut responses = serde_json::Map::new();
+    for (id, request) in requests {
+        let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
+        match method {
+            "roots/list" => {
+                responses.insert(id.clone(), serde_json::json!({ "roots": [] }));
+            }
+            other => {
+                return Err(format!(
+                    "MCP server requested unsupported input {:?} ({}); cannot answer automatically",
+                    other,
+                    id
+                ));
+            }
+        }
+    }
+    Ok(serde_json::Value::Object(responses))
 }
 
 /// RFC 9110 `tchar` — valid characters in an HTTP header field name.
@@ -394,6 +414,14 @@ pub struct MCPToolsListResult {
     pub tools: Vec<MCPTool>,
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "nextCursor")]
     pub next_cursor: Option<String>,
+    /// CacheableResult (2026-07-28): freshness hint in milliseconds,
+    /// allowing clients to cache the listing and reduce polling.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "ttlMs")]
+    pub ttl_ms: Option<u64>,
+    /// CacheableResult scope: `"public"` (shared intermediaries may cache) or
+    /// `"private"`. Parsed and surfaced for hosts; the engine does not cache.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "cacheScope")]
+    pub cache_scope: Option<String>,
 }
 
 /// A JSON-RPC request in MCP protocol.
@@ -500,6 +528,8 @@ mod tests {
                 },
             ],
             next_cursor: None,
+            ttl_ms: None,
+            cache_scope: None,
         };
         let json = serde_json::to_value(&list).unwrap();
         assert_eq!(json["tools"][0]["name"], "tool1");
@@ -546,20 +576,64 @@ mod tests {
     }
 
     #[test]
-    fn input_required_result_roundtrips_camel_case() {
-        let required = MCPInputRequiredResult {
-            input_requests: vec![MCPInputRequest {
-                input: serde_json::json!({ "type": "object" }),
-                description: Some("pick a number".into()),
-                request_state: None,
-            }],
-            request_state: None,
-        };
-        let json = serde_json::to_value(&required).unwrap();
-        assert_eq!(json["inputRequests"][0]["description"], "pick a number");
-        let back: MCPInputRequiredResult = serde_json::from_value(json).unwrap();
-        assert_eq!(back.input_requests.len(), 1);
-        assert_eq!(back.input_requests[0].description.as_deref(), Some("pick a number"));
+    fn input_required_result_parses_map_shape() {
+        // The 2026-07-28 schema carries inputRequests as an id → request
+        // map; the engine must accept that shape (not the array draft shape).
+        let json = serde_json::json!({
+            "resultType": "input_required",
+            "inputRequests": {
+                "req-1": { "method": "roots/list", "description": "workspace roots" },
+                "req-2": { "method": "elicitation/create", "description": "pick a number" }
+            },
+            "requestState": "opaque-blob"
+        });
+        let required: MCPInputRequiredResult = serde_json::from_value(json).unwrap();
+        assert_eq!(required.input_requests.len(), 2);
+        assert_eq!(
+            required.input_requests["req-1"]["method"],
+            "roots/list"
+        );
+        assert_eq!(required.request_state.as_deref(), Some("opaque-blob"));
+        let err = input_required_error(&required, false);
+        assert!(err.contains("workspace roots"), "error: {err}");
+        assert!(err.contains("pick a number"), "error: {err}");
+    }
+
+    #[test]
+    fn auto_responses_answer_roots_list_only() {
+        let requests = serde_json::json!({
+            "req-1": { "method": "roots/list" }
+        });
+        let requests: HashMap<String, serde_json::Value> =
+            serde_json::from_value(requests).unwrap();
+        let responses = build_auto_input_responses(&requests).expect("roots answered");
+        assert_eq!(responses["req-1"]["roots"], serde_json::json!([]));
+
+        let mixed = serde_json::json!({
+            "req-1": { "method": "roots/list" },
+            "req-2": { "method": "sampling/createMessage" }
+        });
+        let mixed: HashMap<String, serde_json::Value> =
+            serde_json::from_value(mixed).unwrap();
+        let err = build_auto_input_responses(&mixed).expect_err("sampling cannot be answered");
+        assert!(err.contains("sampling/createMessage"), "error: {err}");
+    }
+
+    #[test]
+    fn tools_list_result_parses_cacheable_result() {
+        let json = serde_json::json!({
+            "tools": [],
+            "ttlMs": 60000,
+            "cacheScope": "private"
+        });
+        let result: MCPToolsListResult = serde_json::from_value(json).unwrap();
+        assert_eq!(result.ttl_ms, Some(60_000));
+        assert_eq!(result.cache_scope.as_deref(), Some("private"));
+        // Absent fields stay absent (no cache hints on legacy servers).
+        let plain: MCPToolsListResult =
+            serde_json::from_value(serde_json::json!({ "tools": [] })).unwrap();
+        assert_eq!(plain.ttl_ms, None);
+        assert_eq!(plain.cache_scope, None);
     }
 
     #[test]

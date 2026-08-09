@@ -346,9 +346,12 @@ impl MCPStdioTransport {
             .map_err(|e| format!("Failed to parse tools/call response: {e}"))
     }
 
-    /// Resolve an MRTR `input_required` result: retry once when the server
-    /// asks for no input (an empty `inputRequests` list), otherwise surface
-    /// a descriptive error listing what the server requested.
+    /// Resolve an MRTR `input_required` result: retry once — answering
+    /// auto-answerable `inputRequests` (`roots/list`) with their responses,
+    /// or re-issuing verbatim when the server asked for no input (an empty
+    /// `inputRequests` map, e.g. load shedding). Any request type the engine
+    /// cannot answer mid-call (sampling, elicitation) surfaces a descriptive
+    /// error instead of guessing.
     fn resolve_input_required(
         &mut self,
         response: &serde_json::Value,
@@ -357,14 +360,26 @@ impl MCPStdioTransport {
     ) -> Result<MCPToolCallResult, String> {
         let required: MCPInputRequiredResult = serde_json::from_value(response.clone())
             .map_err(|e| format!("Failed to parse input_required result: {e}"))?;
-        if !required.input_requests.is_empty() {
-            return Err(input_required_error(&required, false));
-        }
-        // Empty inputRequests is a retry signal from the server.
-        let params = serde_json::json!({
+        let mut params = serde_json::json!({
             "name": name,
             "arguments": arguments,
         });
+        if let Some(state) = &required.request_state {
+            params["requestState"] = serde_json::json!(state);
+        }
+        if !required.input_requests.is_empty() {
+            match build_auto_input_responses(&required.input_requests) {
+                Ok(responses) => {
+                    params["inputResponses"] = responses;
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "{error} — {}",
+                        input_required_error(&required, false)
+                    ));
+                }
+            }
+        }
         let retry = self.send_request("tools/call", params, self.tool_call_timeout_ms)?;
         if result_type_of(&retry) == RESULT_TYPE_INPUT_REQUIRED {
             let required: MCPInputRequiredResult = serde_json::from_value(retry.clone())
@@ -934,7 +949,7 @@ rl.on('line', (line) => {
     callCount += 1;
     if (callCount === 1) {
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
-        resultType: 'input_required', inputRequests: [],
+        resultType: 'input_required', inputRequests: {},
       } }) + '\n');
     } else {
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
@@ -993,7 +1008,7 @@ rl.on('line', (line) => {
   } else if (msg.method === 'tools/call') {
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
       resultType: 'input_required',
-      inputRequests: [{ input: { type: 'object' }, description: 'pick a number' }],
+      inputRequests: { 'req-1': { method: 'sampling/createMessage', description: 'pick a number' } },
     } }) + '\n');
   }
 });
@@ -1014,7 +1029,7 @@ rl.on('line', (line) => {
             .call_tool("echo", Some(serde_json::json!({ "value": "hi" })))
             .expect_err("input_required must not dispatch");
         assert!(error.contains("pick a number"), "got: {error}");
-        assert!(error.contains("cannot supply"), "got: {error}");
+        assert!(error.contains("cannot answer automatically"), "got: {error}");
         transport.shutdown().expect("shutdown");
     }
 
@@ -1125,3 +1140,66 @@ rl.on('line', (line) => {
         assert!(error.contains("boom: bad config"), "got: {error}");
     }
 }
+
+    /// MRTR (2026-07-28): a `roots/list` input request is auto-answered with
+    /// an empty roots list, and the original `tools/call` is retried with
+    /// the `inputResponses` map.
+    #[test]
+    fn input_required_roots_request_is_answered_and_retried() {
+        if Command::new("node").arg("--version").output().is_err() {
+            eprintln!("skipping: node not available");
+            return;
+        }
+        let script = r#"
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.method === 'server/discover') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      protocolVersion: '2026-07-28',
+      capabilities: {}, serverInfo: { name: 'scripted-roots', version: '1.0.0' },
+      supportedProtocolVersions: ['2026-07-28'],
+    } }) + '\n');
+  } else if (msg.method === 'tools/list') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      resultType: 'complete',
+      tools: [{ name: 'echo', description: 'Echo', inputSchema: { type: 'object' } }],
+    } }) + '\n');
+  } else if (msg.method === 'tools/call') {
+    if (msg.params && msg.params.inputResponses) {
+      const answers = msg.params.inputResponses['req-1'];
+      if (answers && Array.isArray(answers.roots) && answers.roots.length === 0) {
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+          resultType: 'complete', content: [{ type: 'text', text: 'roots answered' }],
+        } }) + '\n');
+        return;
+      }
+    }
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
+      resultType: 'input_required',
+      inputRequests: { 'req-1': { method: 'roots/list', description: 'workspace roots' } },
+      requestState: 'rs-1',
+    } }) + '\n');
+  }
+});
+"#;
+        let mut transport = MCPStdioTransport::spawn(
+            "node",
+            &["-e".to_string(), script.to_string()],
+            StdioSpawnOptions {
+                startup_timeout_ms: Some(15_000),
+                tool_call_timeout_ms: Some(15_000),
+                ..Default::default()
+            },
+        )
+        .expect("spawn");
+
+        transport.connect().expect("negotiation");
+        let result = transport
+            .call_tool("echo", Some(serde_json::json!({ "value": "hi" })))
+            .expect("tools/call retried with inputResponses");
+        assert_eq!(mcp_content_to_text(&result.content), "roots answered");
+        transport.shutdown().expect("shutdown");
+    }

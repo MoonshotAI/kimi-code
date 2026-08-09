@@ -55,7 +55,7 @@ impl super::app::App {
                         // Esc/Ctrl-C abandon the wait (dropping the future stops
                         // the flow before approval).
                         let already = kimi_sdk::KimiAuth::new()
-                            .status(&self.harness)
+                            .status(&self.harness, None)
                             .await
                             .unwrap_or(false);
                         if already {

@@ -1012,6 +1012,7 @@ impl Processor for SessionProcessor {
                             updated_at: record.updated_at,
                             title: rich.title,
                             work_dir: rich.work_dir,
+                            metadata: rich.metadata,
                         }
                     })
                     .collect::<Vec<_>>();

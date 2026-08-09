@@ -33,6 +33,7 @@
 | 阶段 F（入口切换与 TS 退役） | 🔶 主体完成（分发薄壳 ✅、入口 wrapper ✅、F-5 全链路 e2e ✅）；TS 删除待 G-6 |
 | G-4 TUI 攻坚（最大长杆） | ✅ 61 命令全命令面 + 交互对拍（§6.4） |
 | G-2 Rust server（`kimi-server` + HTTP/WS 投影） | ✅ 前端零改动直连；v1 wire 契约字段级对拍完成 |
+| G-1 kimi-sdk 补齐 | 🔶 大块完成（2026-08-10）：事件广播 + on_event/approval/tool handler、MCP 全局配置、workspace skills、config 小件、auth 扩展；剩余：消费面切换（§7 G-1） |
 | vitest 基线（TS 宿主测试） | ✅ 5736 passed / 2 failed（kosong 并发 flaky）/ 64 skipped——原 143 failed 归因修复完成（2026-08-10） |
 
 ## 1.3 下一步（G 路线）
@@ -185,7 +186,7 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 | 步 | 内容 | 状态 |
 |---|---|---|
 | G-0 | 基线锁定（cargo 全绿 + vitest 收敛 + TS 存量冻结） | 🔶 2026-08-10：vitest 143→2 failed（kosong flaky）；引擎宿主面 4 项修复完成；TS 存量冻结 ✅（入口 FROZEN banner + 根 AGENTS.md 冻结清单） |
-| G-1 | node-sdk → kimi-sdk 补齐 + apps 消费面切换 | 🔶 进行中（/rust 子路径消费已重写为 kimi-server RPC 拉取式；catalog/config/errors/图片面已补；剩余 session/harness/auth/legacy 面） |
+| G-1 | node-sdk → kimi-sdk 补齐 + apps 消费面切换 | 🔶 kimi-sdk 大块完成（2026-08-10：事件广播/on_event/approval+tool handler、MCP 全局配置 + OAuth flow + stdio 探测、workspace skills、config diagnostics/ensure/removeProvider、auth status 泛化 + usage/feedback/upload）；剩余 apps 消费面切换（vscode 21 类型本地化、CLI oauth 13 处） |
 | G-2 | kap-server → kimi-server + 前端直连 | ✅ 主体（Rust server 前端零改动；v1 wire 契约字段级对拍完成，遗留投影批次见 §7） |
 | G-3 | apps/kimi-code CLI 消费面切 kimi-cli | 🔶 native-session 已完成 plugin/cron/archive；auth/provider/telemetry 面待续 |
 | G-4 | TUI → kimi-tui 分片搬运（长杆） | ✅ 攻坚完成（P0-P6 分片，§6.4） |
@@ -199,7 +200,8 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 
 ## G-1 — node-sdk → kimi-sdk 补齐（当前主攻）
 
-- [ ] kimi-sdk 补齐 session/harness/auth/catalog/legacy 全部面（API 差异表已出：Session 51 方法 ~70% 对应，TOP 缺口为 onEvent/setApprovalHandler——事件订阅面架构级差异：TS 回调+多订阅 vs Rust 单队列拉取，native-session 重写已自建事件循环）
+- [x] kimi-sdk 大块（2026-08-10）：事件广播（subscribe/on_event/EventSubscription）、approval handler 事件驱动自动 resolve、tool handler（embedded HostCallbacks 注入）、MCP 全局配置（mcp.json store + OAuth flow + stdio 探测）、workspace skills、config diagnostics/ensure/removeProvider/getExperimentalFeatures（stub）、auth status 泛化 + getManagedUsage/submitFeedback/upload 三件套
+- [ ] kimi-sdk 补齐 session/harness 剩余面（API 差异表：Session 51 方法 ~70% 对应，TOP 缺口为 onEvent/setApprovalHandler——**已完成**（事件驱动）；`set_question_handler` 定案不实现——引擎 AskUserQuestion 走 stop_turn + 下一条消息（§8））
 - [ ] vscode 面：21 类型本地化（wire 生成或局部定义）后 `@moonshot-ai/kimi-code-sdk` 依赖可彻底删除（运行时可整体移除：isKimiError/createKimiHarness/effectiveModelAlias 已识别）
 - [ ] 发布打包补 kimi-server-serve（pack.mjs）
 
@@ -245,6 +247,10 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 - **image 不迁 kimi-sdk**：压缩核心已两处 Rust（native codec + engine media pipeline）；TS 退役后以 native codec 为基准合并（两套 Rust 压缩已 drift：EXIF/Triangle vs Lanczos3/alpha）
 - **compaction 同步语义**：引擎 compact 是同步 RPC，无 in-flight 可取消 → `session/cancel_compact` no-op（契约注释早已承诺，2026-08-10 补注册）
 - **summarizer 仅 native LLM**：host-proxy 会话 compact 报 `compaction.unable`（SDK 精确映射）；summarizer 独立通道是引擎设计缺口（§1.4.1），SDK 已按 `agent.nativeLlmProvider` 显式 opt-in 接线
+- **kimi-sdk `set_question_handler` 不实现**（2026-08-10 定案）：引擎 AskUserQuestion 工具已改为"格式化内容 + stop_turn + 答案作为下一条消息"（`tools/ask_user.rs`），无反向 RPC；question 面由该机制覆盖
+- **kimi-sdk tool handler 仅 embedded 生效**（2026-08-10 定案）：引擎 `HostCallbacks::execute_tool` 是进程内 trait 调用，stdio 传输无反向通道——与 node-sdk napi 嵌入模式一致；Remote harness 注册 handler 保持 API 对称但引擎侧不可达
+- **MCP MRTR + CacheableResult 落地**（2026-07-28 协议，2026-08-10）：`inputRequests` 按 schema map 形状解析（修正 draft 数组偏差）；`roots/list` 自动应答（空 roots）+ 重试一次，sampling/elicitation 报描述性错误；`tools/list` 解析 `ttlMs`/`cacheScope` 提示（引擎不缓存，供宿主）
+- **`get_experimental_features` 保持 stub**（2026-08-10 定案）：引擎 flags 无 RPC，node-sdk 侧也是空列表 stub，不新增协议面
 
 ## 迁移发现并修复的真实 bug（节选）
 - `session/export` 丢失 base64 编码；`config/set` 不建父目录；`CronProcessor` 未 start；`session/fs` Glob pattern 丢失

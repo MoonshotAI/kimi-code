@@ -31,14 +31,20 @@ async fn home(tag: &str) -> (tokio::sync::MutexGuard<'static, ()>, std::path::Pa
 
 /// Drain the harness event stream until `predicate` matches (or timeout).
 async fn wait_for_event(
-    events: &mut kimi_ui::EventSource,
+    events: &mut tokio::sync::broadcast::Receiver<serde_json::Value>,
     predicate: impl Fn(&serde_json::Value) -> bool,
 ) -> serde_json::Value {
     for _ in 0..64 {
-        let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.next())
-            .await
-            .expect("event within 5s")
-            .expect("stream alive");
+        let event = loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+                .await
+                .expect("event within 5s")
+            {
+                Ok(e) => break e,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => panic!("stream alive"),
+            }
+        };
         if predicate(&event) {
             return event;
         }
@@ -73,8 +79,7 @@ async fn pre_cancel_aborts_the_next_turn() {
 async fn mid_turn_cancel_aborts_the_hung_prompt_turn() {
     let _guard = home("mid-cancel").await.0;
     let harness = Harness::embedded_with_llm_step(Some(hanging_llm())).expect("embedded");
-    let mut guard = harness.events().await;
-    let mut events = guard.as_mut().expect("event source");
+    let mut events = harness.subscribe();
 
     let mut session = harness.create_session("s-probe").await.expect("create");
 

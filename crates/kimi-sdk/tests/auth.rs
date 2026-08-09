@@ -60,7 +60,7 @@ async fn login_persists_status_sees_it_logout_removes_it() {
     let harness = Harness::embedded().expect("embedded");
 
     // Not logged in initially.
-    assert!(!auth.status(&harness).await.expect("status"), "fresh: not logged in");
+    assert!(!auth.status(&harness, None).await.expect("status"), "fresh: not logged in");
 
     // Login drives the device flow and persists providers.kimi.apiKey.
     let mut prompted = false;
@@ -73,9 +73,9 @@ async fn login_persists_status_sees_it_logout_removes_it() {
         .expect("login");
     assert!(prompted, "on_prompt called with verification info");
     assert_eq!(token.access_token, "tok-1");
-    assert!(auth.status(&harness).await.expect("status after login"), "logged in");
+    assert!(auth.status(&harness, None).await.expect("status after login"), "logged in");
 
     // Logout null-patches the provider away.
     auth.logout(&harness).await.expect("logout");
-    assert!(!auth.status(&harness).await.expect("status after logout"), "logged out");
+    assert!(!auth.status(&harness, None).await.expect("status after logout"), "logged out");
 }

@@ -8,7 +8,7 @@
 //! native LLM + native toolset paths run engine-side), so they report a clear
 //! "not configured" error rather than silently dropping.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use kimi_agent::callbacks::HostCallbacks;
 use kimi_protocol::wire_types::{
@@ -22,6 +22,18 @@ use tokio::sync::broadcast;
 /// can drive real engine turns offline.
 pub type LlmStep =
     Arc<dyn Fn(LlmChatRequest) -> BoxFuture<'static, Result<LlmChatResponse, String>> + Send + Sync>;
+
+/// An injectable host-tool execution step (SDK `setToolHandler` hook, mirrors
+/// TS `Session.setToolHandler`). When set, `ServerHostCallbacks::execute_tool`
+/// delegates to it instead of reporting "not configured". The handle is
+/// shared (`Arc<Mutex<Option<…>>>`) so a host can install or replace the step
+/// at runtime, matching the TS `setToolHandler(sessionId, handler)` dynamic
+/// registration.
+pub type ToolExecuteStep = Arc<
+    dyn Fn(ToolExecuteRequest) -> BoxFuture<'static, Result<ToolExecuteResponse, String>>
+        + Send
+        + Sync,
+>;
 
 /// Event fan-out for engine `host/event` notifications.
 #[derive(Clone)]
@@ -60,6 +72,9 @@ pub struct ServerHostCallbacks {
     /// Optional LLM step override; when absent `llm_chat` reports
     /// "not configured" (bare-server behavior).
     llm_step: Option<LlmStep>,
+    /// Optional host-tool step; the shared handle lets the SDK install a
+    /// per-session tool handler at runtime (`Session.setToolHandler`).
+    tool_step: Arc<Mutex<Option<ToolExecuteStep>>>,
 }
 
 impl ServerHostCallbacks {
@@ -73,6 +88,7 @@ impl ServerHostCallbacks {
         Self {
             events,
             llm_step: None,
+            tool_step: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -80,6 +96,18 @@ impl ServerHostCallbacks {
     pub fn with_llm_step(mut self, step: LlmStep) -> Self {
         self.llm_step = Some(step);
         self
+    }
+
+    /// Install a host-tool step override (SDK `setToolHandler` hook).
+    pub fn with_tool_step(self, step: ToolExecuteStep) -> Self {
+        *self.tool_step.lock().unwrap() = Some(step);
+        self
+    }
+
+    /// The shared host-tool step handle — a host (e.g. the SDK harness) can
+    /// install or replace the step at runtime through this handle.
+    pub fn tool_step_handle(&self) -> Arc<Mutex<Option<ToolExecuteStep>>> {
+        self.tool_step.clone()
     }
 
     /// Access the event bus (interface layer subscribes here).
@@ -107,8 +135,12 @@ impl HostCallbacks for ServerHostCallbacks {
 
     fn execute_tool(
         &self,
-        _request: ToolExecuteRequest,
+        request: ToolExecuteRequest,
     ) -> kimi_agent::rpc::types::BoxFuture<'static, Result<ToolExecuteResponse, String>> {
+        let step = self.tool_step.lock().unwrap().clone();
+        if let Some(step) = step {
+            return step(request);
+        }
         Box::pin(async { Err("execute_tool host callback not configured".into()) })
     }
 
@@ -120,6 +152,7 @@ impl HostCallbacks for ServerHostCallbacks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kimi_protocol::wire_types::ToolExecuteRequest;
 
     #[tokio::test]
     async fn emit_event_fans_out_to_subscribers() {
@@ -128,5 +161,80 @@ mod tests {
         callbacks.emit_event(serde_json::json!({ "type": "session.turn.started" }));
         let event = rx.recv().await.expect("event");
         assert_eq!(event["type"], "session.turn.started");
+    }
+
+    #[tokio::test]
+    async fn execute_tool_without_step_reports_not_configured() {
+        let callbacks = ServerHostCallbacks::new();
+        let result = callbacks
+            .execute_tool(ToolExecuteRequest {
+                session_id: None,
+                turn_id: "turn-1".to_string(),
+                tool_call_id: "call_1".to_string(),
+                tool_name: "read".to_string(),
+                arguments: serde_json::json!({}),
+                force_precise: false,
+            })
+            .await;
+        assert!(result.is_err(), "bare server must not claim host tools");
+    }
+
+    #[tokio::test]
+    async fn execute_tool_delegates_to_injected_step() {
+        let callbacks = ServerHostCallbacks::new().with_tool_step(Arc::new(|request| {
+            let name = request.tool_name.clone();
+            Box::pin(async move {
+                Ok(ToolExecuteResponse {
+                    content: format!("ran {name}"),
+                    is_error: false,
+                    is_prediction: false,
+                    stop_turn: false,
+                    media: Vec::new(),
+                })
+            })
+        }));
+        let result = callbacks
+            .execute_tool(ToolExecuteRequest {
+                session_id: None,
+                turn_id: "turn-1".to_string(),
+                tool_call_id: "call_1".to_string(),
+                tool_name: "read".to_string(),
+                arguments: serde_json::json!({}),
+                force_precise: false,
+            })
+            .await
+            .expect("step ran");
+        assert!(!result.is_error);
+        assert_eq!(result.content, "ran read");
+    }
+
+    #[tokio::test]
+    async fn tool_step_handle_allows_runtime_replacement() {
+        let callbacks = ServerHostCallbacks::new();
+        let handle = callbacks.tool_step_handle();
+        *handle.lock().unwrap() = Some(Arc::new(|request| {
+            let name = request.tool_name.clone();
+            Box::pin(async move {
+                Ok(ToolExecuteResponse {
+                    content: format!("ran {name}"),
+                    is_error: false,
+                    is_prediction: false,
+                    stop_turn: false,
+                    media: Vec::new(),
+                })
+            })
+        }));
+        let result = callbacks
+            .execute_tool(ToolExecuteRequest {
+                session_id: None,
+                turn_id: "turn-1".to_string(),
+                tool_call_id: "call_1".to_string(),
+                tool_name: "write".to_string(),
+                arguments: serde_json::json!({}),
+                force_precise: false,
+            })
+            .await
+            .expect("runtime-installed step ran");
+        assert_eq!(result.content, "ran write");
     }
 }

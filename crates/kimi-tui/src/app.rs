@@ -405,6 +405,8 @@ impl Default for ViewState {
 pub struct App {
     pub(crate) harness: Harness,
     pub(crate) session_id: String,
+    /// The harness event subscription (lazily created on first pump).
+    pub(crate) events: Option<tokio::sync::broadcast::Receiver<serde_json::Value>>,
     /// When true (App::new(None)), the startup flow offers a session picker.
     pub(crate) startup_pick: bool,
     pub(crate) session: Option<kimi_sdk::Session>,
@@ -442,6 +444,7 @@ impl App {
         Self {
             harness,
             session_id: session_id.unwrap_or_default().to_string(),
+            events: None,
             startup_pick: session_id.is_none(),
             session: None,
             btw_agent: None,
@@ -506,7 +509,7 @@ impl App {
             self.session_id
         )));
         // Best-effort auth status so a fresh user knows to `/login`.
-        match kimi_sdk::KimiAuth::new().status(&self.harness).await {
+        match kimi_sdk::KimiAuth::new().status(&self.harness, None).await {
             Ok(true) => self.push_line(TranscriptLine::status(t("tui.start.loggedIn"))),
             Ok(false) => self.push_line(TranscriptLine::status(t("tui.start.notLoggedIn"))),
             Err(_) => {}
@@ -954,17 +957,15 @@ impl App {
     /// Render one engine event into the panel (with a short poll timeout so
     /// the select loop keeps yielding to the running prompt).
     pub(crate) async fn pump_one_event(&mut self) {
+        if self.events.is_none() {
+            self.events = Some(self.harness.subscribe());
+        }
         let event = {
-            let mut guard = self.harness.events().await;
-            match guard.as_mut() {
-                Some(source) => {
-                    tokio::time::timeout(std::time::Duration::from_millis(50), source.next())
-                        .await
-                        .ok()
-                        .flatten()
-                }
-                None => None,
-            }
+            let rx = self.events.as_mut().expect("events");
+            tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv())
+                .await
+                .ok()
+                .and_then(|result| result.ok())
         };
         let Some(event) = event else { return };
         let r#type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");

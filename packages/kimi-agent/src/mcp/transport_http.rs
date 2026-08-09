@@ -364,9 +364,12 @@ impl MCPHttpTransport {
         Ok(MCPListenStream { messages: rx, task })
     }
 
-    /// Resolve an MRTR `input_required` result: retry once when the server
-    /// asks for no input (an empty `inputRequests` list), otherwise surface
-    /// a descriptive error listing what the server requested.
+    /// Resolve an MRTR `input_required` result: retry once — answering
+    /// auto-answerable `inputRequests` (`roots/list`) with their responses,
+    /// or re-issuing verbatim when the server asked for no input (an empty
+    /// `inputRequests` map, e.g. load shedding). Any request type the engine
+    /// cannot answer mid-call (sampling, elicitation) surfaces a descriptive
+    /// error instead of guessing.
     async fn resolve_input_required(
         &self,
         response: &serde_json::Value,
@@ -375,14 +378,26 @@ impl MCPHttpTransport {
     ) -> Result<MCPToolCallResult, String> {
         let required: MCPInputRequiredResult = serde_json::from_value(response.clone())
             .map_err(|e| format!("Failed to parse input_required result: {e}"))?;
-        if !required.input_requests.is_empty() {
-            return Err(input_required_error(&required, false));
-        }
-        // Empty inputRequests is a retry signal from the server.
-        let params = serde_json::json!({
+        let mut params = serde_json::json!({
             "name": name,
             "arguments": arguments,
         });
+        if let Some(state) = &required.request_state {
+            params["requestState"] = serde_json::json!(state);
+        }
+        if !required.input_requests.is_empty() {
+            match build_auto_input_responses(&required.input_requests) {
+                Ok(responses) => {
+                    params["inputResponses"] = responses;
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "{error} — {}",
+                        input_required_error(&required, false)
+                    ));
+                }
+            }
+        }
         let (retry, _) = self.post_request("tools/call", params).await?;
         if result_type_of(&retry) == RESULT_TYPE_INPUT_REQUIRED {
             let required: MCPInputRequiredResult = serde_json::from_value(retry.clone())

@@ -54,8 +54,7 @@ async fn harness_exposes_engine_events() {
 
     let harness = Harness::embedded().expect("embedded engine");
     // Subscribe BEFORE driving the session so no event is missed.
-    let mut guard = harness.events().await;
-    let events = guard.as_mut().expect("embedded exposes an event source");
+    let mut events = harness.subscribe();
 
     harness.create_session("s-events").await.expect("create");
     harness.client().call(
@@ -64,10 +63,16 @@ async fn harness_exposes_engine_events() {
     ).await;
 
     // session/load emits a goal.updated event on the harness stream.
-    let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.next())
-        .await
-        .expect("event within 5s")
-        .expect("stream alive");
+    let event = loop {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+            .await
+            .expect("event within 5s")
+        {
+            Ok(e) => break e,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(_) => panic!("stream alive"),
+        }
+    };
     assert_eq!(event["type"], "session.goal.updated", "event: {event}");
 
     // Approval surface: empty list; unknown resolve -> false.
@@ -261,8 +266,7 @@ async fn fake_llm_step_drives_an_offline_turn() {
     let harness = Harness::embedded_with_llm_step(Some(step)).expect("embedded with llm step");
 
     // Subscribe before driving so the turn events are observed.
-    let mut guard = harness.events().await;
-    let events = guard.as_mut().expect("event source");
+    let mut events = harness.subscribe();
 
     let mut session = harness.create_session("s-turn").await.expect("create");
     let body = session.prompt("hello").await;
@@ -278,10 +282,16 @@ async fn fake_llm_step_drives_an_offline_turn() {
     let mut saw_start = false;
     let mut saw_end = false;
     for _ in 0..8 {
-        let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.next())
-            .await
-            .expect("event within 5s")
-            .expect("stream alive");
+        let event = loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+                .await
+                .expect("event within 5s")
+            {
+                Ok(e) => break e,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => panic!("stream alive"),
+            }
+        };
         match event["type"].as_str() {
             Some("session.turn.started") => saw_start = true,
             Some("session.turn.ended") => {

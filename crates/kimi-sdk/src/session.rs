@@ -9,16 +9,63 @@ use kimi_server_client::AppServerClient;
 pub struct Session {
     id: String,
     client: Arc<AppServerClient>,
+    shared: Arc<crate::HarnessShared>,
 }
 
 impl Session {
-    pub(crate) fn new(id: String, client: Arc<AppServerClient>) -> Self {
-        Self { id, client }
+    pub(crate) fn new(
+        id: String,
+        client: Arc<AppServerClient>,
+        shared: Arc<crate::HarnessShared>,
+    ) -> Self {
+        Self { id, client, shared }
     }
 
     /// The session id.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Subscribe to this session's engine events (`session.*` / `llm.*` wire
+    /// shapes), filtered to this session — side-question (`btw-<sid>`) turns
+    /// map back onto the parent session, same rule as the TS
+    /// `dispatchEngineEvent`. Dropping the returned handle unsubscribes.
+    pub fn on_event(
+        &self,
+        handler: impl Fn(serde_json::Value) + Send + Sync + 'static,
+    ) -> crate::EventSubscription {
+        let id = self.id.clone();
+        let mut rx = self.shared.events_tx.subscribe();
+        let task = tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let raw = event["session_id"].as_str().unwrap_or("").to_string();
+                        if crate::normalize_session_id(&raw) == id {
+                            handler(event);
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        });
+        crate::EventSubscription { task: Some(task) }
+    }
+
+    /// Register (or clear, with `None`) this session's approval handler —
+    /// the harness event loop answers `session.approval.requested` events for
+    /// this session through it and resolves the pending approval with the
+    /// decision. Mirrors TS `Session.setApprovalHandler`.
+    pub async fn set_approval_handler(&self, handler: Option<crate::ApprovalHandler>) {
+        crate::set_approval_handler_impl(&self.client, &self.shared, &self.id, handler).await;
+    }
+
+    /// Register (or clear, with `None`) this session's host-tool handler —
+    /// engine `host/execute_tool` requests route through it (embedded engines
+    /// only). Mirrors TS `Session.setToolHandler`.
+    pub async fn set_tool_handler(&self, handler: Option<crate::ToolCallHandler>) {
+        crate::set_tool_handler_impl(&self.shared, &self.id, handler).await;
     }
 
     /// Run one prompt; resolves with the full wire response body.

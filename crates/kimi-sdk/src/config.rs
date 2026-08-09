@@ -3,10 +3,16 @@
 //! `validate_config`) over the engine's config system, mirroring node-sdk's
 //! `legacy/config.ts` path helpers and the `createKimiConfigRpc` surface.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use kimi_agent::config::loader;
 use serde_json::Value;
+
+/// Serializes tests that touch the process-global env (`KIMI_CODE_HOME`,
+/// `HOME`, `USERPROFILE`, `KIMI_CONFIG_PATH`) — shared by every module's
+/// env-dependent tests (config, skills, …).
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Resolve the Kimi home directory (node-sdk `resolveKimiHome` parity):
 /// `KIMI_CODE_HOME` when set, otherwise `.kimi-code` under the platform home
@@ -96,13 +102,70 @@ pub fn validate_config(config: &Value) -> Result<(), String> {
     loader::validate_config(&parsed).map_err(|e| e.to_string())
 }
 
+/// Diagnostics for the most recent config load — node-sdk
+/// `getConfigDiagnostics` parity. A fully valid config yields no warnings; a
+/// broken config (missing file, no providers, parse failure) yields the
+/// failure as a single actionable warning instead of throwing, so hosts can
+/// render a "doctor" panel.
+pub fn get_config_diagnostics() -> Vec<String> {
+    match load_runtime_config_safe() {
+        Ok(_) => Vec::new(),
+        Err(error) => vec![error],
+    }
+}
+
+const DEFAULT_CONFIG_FILE_TEXT: &str = "# ~/.kimi-code/config.toml
+# Runtime settings for Kimi Code.
+# This file starts empty so built-in defaults can apply.
+# Login will populate managed Kimi provider and model entries.
+";
+
+/// Materialize the default config scaffold under the resolved config path
+/// (node-sdk `ensureConfigFile` parity): `KIMI_CONFIG_PATH` when set, else
+/// `<KIMI_CODE_HOME>/config.toml`. Creates the parent directory (0700) and
+/// writes the default scaffold only when the file does not exist yet — an
+/// existing file is left untouched.
+pub fn ensure_config_file() -> Result<(), String> {
+    let path = match std::env::var_os("KIMI_CONFIG_PATH") {
+        Some(value) if !value.is_empty() => PathBuf::from(value),
+        _ => {
+            let home = resolve_kimi_home()
+                .ok_or_else(|| "no kimi home to materialize config".to_string())?;
+            PathBuf::from(home).join("config.toml")
+        }
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            use std::io::Write;
+            file.write_all(DEFAULT_CONFIG_FILE_TEXT.as_bytes())
+                .map_err(|e| format!("write {}: {e}", path.display()))?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(format!("create {}: {error}", path.display())),
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Serializes tests that touch the process-global env (`KIMI_CODE_HOME`,
-    /// `HOME`, `USERPROFILE`, `KIMI_CONFIG_PATH`).
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// Uses the shared module-level lock (see `ENV_LOCK` above) so skills
+    /// and config tests serialize on the same process-global env.
+    use super::ENV_LOCK;
 
     /// Swaps the home-related env vars plus `KIMI_CONFIG_PATH` and restores
     /// the previous values on drop.
