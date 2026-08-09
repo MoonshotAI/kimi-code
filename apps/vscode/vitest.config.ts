@@ -16,6 +16,12 @@ export default defineConfig({
       // session/* RPC surface is stdio-only, and the napi bridge would
       // short-circuit it when the addon is present (see rust-loop.ts).
       KIMI_AGENT_FORCE_STDIO: '1',
+      // Isolate the engine's persistent store (sessions.db) from the real
+      // user home: tests use fixed session ids, and stale records from an
+      // earlier run would leak work_dir/metadata state into fresh rigs.
+      // The directory itself is materialized by test/setup-agent-home.ts.
+      KIMI_AGENT_HOME: resolve(import.meta.dirname, 'test/.agent-home'),
     },
+    setupFiles: ['test/setup-agent-home.ts'],
   },
 });

@@ -63,10 +63,12 @@ describe('KimiHarness.listSessions', () => {
       await harness.createSession({ id: 'ses_harness_all_b', workDir: otherWorkDir });
 
       const sessions = await harness.listSessions();
-      expect(sessions.map((session) => session.id).toSorted()).toEqual([
-        'ses_harness_all_a',
-        'ses_harness_all_b',
-      ]);
+      // The engine store is process-global: other suites' sessions from the
+      // same run are visible too. Assert the harness's own sessions are
+      // present rather than an exact list.
+      expect(sessions.map((session) => session.id)).toEqual(
+        expect.arrayContaining(['ses_harness_all_a', 'ses_harness_all_b']),
+      );
     } finally {
       await harness.close();
     }

@@ -19,7 +19,14 @@ export default defineConfig({
       // onto the in-process napi addon on first use and every session call
       // degrades to null ("Rust engine unavailable"). Force stdio for tests.
       KIMI_AGENT_FORCE_STDIO: '1',
+      // Isolate the engine's persistent store (sessions.db) from the real
+      // user home: tests use fixed session ids, and stale records from an
+      // earlier run would leak work_dir/metadata state into fresh rigs.
+      // The directory itself is materialized by test/setup-agent-home.ts
+      // (concurrent workers would otherwise race to create it).
+      KIMI_AGENT_HOME: fileURLToPath(new URL('../../.tmp/agent-home-sdk', import.meta.url)),
     },
+    setupFiles: ['test/setup-agent-home.ts'],
     include: ['test/**/*.test.ts'],
   },
 });

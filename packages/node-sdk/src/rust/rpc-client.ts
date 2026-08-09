@@ -70,6 +70,7 @@ import type {
   EngineSessionRecord,
   EngineSessionStatus,
 } from './wire';
+import type { NativeLlmConfig } from '@moonshot-ai/kimi-agent/rust-loop';
 
 /**
  * The rust-loop surface `RustRpcClient` needs (structural subset of
@@ -86,6 +87,7 @@ export interface RustLoopApi {
   sessionCreate(options: {
     sessionId?: string;
     homedir?: string;
+    workDir?: string;
     systemPrompt?: string;
     model?: string;
     maxContextSize?: number;
@@ -258,7 +260,14 @@ function mapSessionRecord(
     sessionDir: record.work_dir ?? '',
     createdAt: parseTime(record.created_at, now),
     updatedAt: parseTime(record.updated_at, now),
+    ...(isRecord(record.metadata) && Object.keys(record.metadata).length > 0
+      ? { metadata: record.metadata as JsonObject }
+      : {}),
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function parseTime(value: string | undefined, fallback: number): number {
@@ -541,13 +550,25 @@ export class RustRpcClient extends SDKRpcClientBase {
           workDir !== undefined && workDir.trim().length > 0
             ? await this.discoverSkills(workDir)
             : [];
+        const sessionConfig = readConfigFile(this.configPath);
         const created = await r.sessionCreate({
           sessionId: id,
           homedir: this.homeDir,
+          // The engine records this as the session's work_dir — distinct from
+          // homedir so session/list filtering and cross-host resume see the
+          // real workspace (a harness only mirrors its own sessions).
+          workDir,
           model: effectiveModel,
           // Host-resolved model window: the engine enforces context-budget
           // limits (import overflow) against this.
-          maxContextSize: readConfigFile(this.configPath).models?.[effectiveModel]?.maxContextSize,
+          maxContextSize: sessionConfig.models?.[effectiveModel]?.maxContextSize,
+          // Native-LLM transport (engine-direct provider calls — summarizer,
+          // subagents) is opt-in via `agent.nativeLlmProvider` in config.toml.
+          // It is NOT derived automatically: a native_llm makes the engine
+          // prefer the native transport over the host-proxy `llmStep`, which
+          // would break the SDK's default llmStep (host identity UA, event
+          // stream). Hosts that want native turns set the provider explicitly.
+          nativeLlm: resolveExplicitNativeLlmConfig(sessionConfig, effectiveModel),
           llmStep: this.llmStep,
           // Builtin prompt skills the engine registry must know for
           // host RPCs like `generateAgentsMd` (session.init). The engine
@@ -620,9 +641,21 @@ export class RustRpcClient extends SDKRpcClientBase {
             'listSessions requires workDir',
           );
         }
-        // Host mirror: list what this client created, so a harness only sees
-        // its own sessions even though the engine store is process-global.
-        const summaries = Array.from(this.sessionSummaries.values());
+        // Merge the host mirror (sessions this client created, with host
+        // fields such as additionalDirs) with the engine's persisted records
+        // so a harness sees sessions another harness created in the same
+        // home — the engine store is process-global.
+        const mirror = Array.from(this.sessionSummaries.values());
+        const engine = (await this.rustLoop.sessionList())?.sessions ?? [];
+        const byId = new Map<string, SessionSummary>();
+        for (const record of engine) {
+          byId.set(record.id, mapSessionRecord(record, this.homeDir));
+        }
+        for (const summary of mirror) {
+          const existing = byId.get(summary.id);
+          byId.set(summary.id, existing === undefined ? summary : { ...existing, ...summary });
+        }
+        const summaries = [...byId.values()];
         return summaries.filter(
           (summary) =>
             (workDir === undefined || summary.workDir === workDir) &&
@@ -847,16 +880,12 @@ export class RustRpcClient extends SDKRpcClientBase {
         // silently dropped by the wire (persisted vs ephemeral dirs is an
         // engine-side gap; see RUST_MIGRATION_PLAN TODO).
         await r.sessionAddAdditionalDir(sessionId, path);
-        // Mirror the caller's path into the host summary (the engine returns
-        // its canonical form, which on Windows resolves 8.3 short names —
-        // the SDK surfaces what the caller added). Normalized to the SDK's
-        // forward-slash convention.
-        const normalizedPath = normalizeHostPath(path);
+        // Mirror the caller's path verbatim into the host summary — the SDK
+        // surfaces what the caller added (the engine's canonical form may
+        // resolve Windows 8.3 short names).
         const summary = this.sessionSummaries.get(sessionId);
         const existing = summary?.additionalDirs ?? [];
-        const additionalDirs = existing.includes(normalizedPath)
-          ? existing
-          : [...existing, normalizedPath];
+        const additionalDirs = existing.includes(path) ? existing : [...existing, path];
         if (summary !== undefined) {
           this.sessionSummaries.set(sessionId, { ...summary, additionalDirs });
         }
@@ -1264,12 +1293,21 @@ export class RustRpcClient extends SDKRpcClientBase {
 
   private resumedSummary(
     summary: SessionSummary,
-    _status: EngineSessionStatus | null,
+    status: EngineSessionStatus | null,
     replay?: unknown,
   ): ResumedSessionSummary {
     const now = Date.now();
     const forkedFrom = this.forkParents.get(summary.id);
-    const mainAgent = (replay !== undefined ? { replay } : {}) as ResumedSessionSummary['agents'][string];
+    const mainAgent = {
+      ...(replay !== undefined ? { replay } : {}),
+      // The engine reports the live model in the status snapshot; surface it
+      // as the agent config so hosts can render it on replay.
+      config: {
+        modelAlias: status?.model ?? undefined,
+        thinkingEffort: status?.thinking_effort ?? '',
+      },
+      plan: null,
+    } as ResumedSessionSummary['agents'][string];
     return {
       ...summary,
       sessionMetadata: {
@@ -1352,7 +1390,10 @@ function parseEngineWireRecords(entry: Buffer | undefined): unknown[] {
 /** Map an engine context snapshot (`{ history: [...] }`) to SDK replay
  *  message records, preserving the conversation the fork kept. User messages
  *  carry a `{ kind: 'user' }` origin; assistant messages none (matching the
- *  SDK's `visibleReplayText` filter). */
+ *  SDK's `visibleReplayText` filter). Tool calls and tool results are kept so
+ *  hosts can render tool cards and displays. Each message is mapped with the
+ *  same `mapContextMessage` the context surface uses, so replay records match
+ *  `getContext` history entries field-for-field. */
 function replayFromContext(raw: unknown): unknown[] {
   if (raw === null || typeof raw !== 'object') return [];
   const history = (raw as Record<string, unknown>)['history'];
@@ -1363,26 +1404,10 @@ function replayFromContext(raw: unknown): unknown[] {
     const message = value as Record<string, unknown>;
     if (typeof message['role'] !== 'string') continue;
     const role = message['role'] as string;
-    if (role !== 'user' && role !== 'assistant') continue;
-    const content = Array.isArray(message['content']) ? message['content'] : [];
-    const textParts = (content as Record<string, unknown>[])
-      .filter((part) => part['type'] === 'text' && typeof part['text'] === 'string')
-      .map((part) => ({ type: 'text' as const, text: part['text'] as string }));
-    const origin =
-      message['origin'] !== null && typeof message['origin'] === 'object'
-        ? ((message['origin'] as Record<string, unknown>)['kind'] as
-            | 'user'
-            | 'shell_command'
-            | undefined)
-        : undefined;
+    if (role !== 'user' && role !== 'assistant' && role !== 'tool') continue;
     records.push({
       type: 'message',
-      message: {
-        role,
-        content: textParts,
-        toolCalls: [],
-        ...(origin !== undefined ? { origin: { kind: origin } } : {}),
-      },
+      message: mapContextMessage(message),
     });
   }
   return records;
@@ -1404,10 +1429,69 @@ function lastUserPromptFromContext(raw: unknown): string | undefined {
   return undefined;
 }
 
-/** Normalize an engine-returned path to the SDK's forward-slash convention
- *  (strips the Windows `\\?\` verbatim prefix and converts separators). */
-function normalizeHostPath(path: string): string {
-  return path.replace(/^\\\\\?\\/, '').replaceAll('\\', '/');
+/** Resolve the native-LLM transport for a session, but ONLY when the host
+ *  opted in via `agent.nativeLlmProvider` in config.toml (mirroring the
+ *  engine's `extract_native_llm`). Auto-derivation from the default model is
+ *  deliberately not performed here: a native_llm makes the engine prefer the
+ *  native transport over the host-proxy `llmStep`, which would break the
+ *  SDK's default llmStep (host identity UA, event stream). */
+function resolveExplicitNativeLlmConfig(
+  config: KimiConfig,
+  modelAlias: string | undefined,
+): NativeLlmConfig | undefined {
+  const providerId = config.agent?.nativeLlmProvider;
+  if (providerId === undefined || providerId.length === 0) return undefined;
+  const provider = config.providers[providerId];
+  if (provider === undefined) return undefined;
+  if (provider.env !== undefined && Object.keys(provider.env).length > 0) return undefined;
+  const protocol = protocolForProviderType(provider.type);
+  if (protocol === undefined) return undefined;
+  const baseUrl = provider.baseUrl;
+  const apiKey = provider.apiKey;
+  if (baseUrl === undefined || baseUrl.length === 0 || apiKey === undefined || apiKey.length === 0) {
+    return undefined;
+  }
+  // Explicit providers resolve their own default model; fall back to the
+  // session alias's model, then any alias pointing at the provider.
+  const model =
+    provider.defaultModel ??
+    (modelAlias !== undefined ? config.models?.[modelAlias]?.model : undefined) ??
+    firstAliasModelForProvider(config, providerId);
+  if (model === undefined) return undefined;
+  const customHeaders = provider.customHeaders;
+  return {
+    protocol,
+    base_url: baseUrl,
+    api_key: apiKey,
+    model,
+    ...(provider.maxTokens !== undefined ? { max_tokens: provider.maxTokens } : {}),
+    ...(customHeaders !== undefined && Object.keys(customHeaders).length > 0
+      ? { custom_headers: customHeaders }
+      : {}),
+  };
+}
+
+function protocolForProviderType(type: string | undefined): string | undefined {
+  switch (type) {
+    case 'anthropic':
+      return 'anthropic';
+    case 'openai':
+    case 'kimi':
+      return 'openai';
+    case 'google-genai':
+    case 'google':
+      return 'google';
+    default:
+      return undefined;
+  }
+}
+
+/** First model alias pointing at `providerId` (deterministic key order). */
+function firstAliasModelForProvider(config: KimiConfig, providerId: string): string | undefined {
+  for (const alias of Object.values(config.models ?? {})) {
+    if (alias.provider === providerId) return alias.model;
+  }
+  return undefined;
 }
 
 /** Map an SDK tool response output (`string | ContentPart[]`) onto the

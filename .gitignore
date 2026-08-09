@@ -84,3 +84,4 @@ kimi-debug-*.zip
 # Scratch analysis artifacts
 scan-report.json
 failed-tests.txt
+**/test/.agent-home/

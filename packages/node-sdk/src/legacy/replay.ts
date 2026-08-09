@@ -30,6 +30,13 @@ export interface ReplayMessage {
   readonly role: 'user' | 'assistant' | 'system' | 'tool';
   readonly origin?: ReplayMessageOrigin | undefined;
   readonly content: unknown;
+  /** Assistant-side tool calls (engine context `tool_calls`). */
+  readonly toolCalls?: readonly { readonly id: string; readonly name: string; readonly arguments: unknown }[];
+  /** Tool-call displays keyed by call id (host-rendered, when available). */
+  readonly toolCallDisplays?: Readonly<Record<string, unknown>> | undefined;
+  /** Tool-result wiring (role 'tool'): the call this result answers. */
+  readonly toolCallId?: string | undefined;
+  readonly isError?: boolean | undefined;
 }
 
 /** One replayed agent history record. */

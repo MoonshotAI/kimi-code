@@ -206,16 +206,16 @@ export function createDefaultLlmStep(
     const body: Record<string, unknown> = {
       model: provider.model,
       messages: [
-        { role: 'system', content: req.system_prompt },
-        ...req.messages.map((message) => ({
+        { role: 'system', content: request.system_prompt },
+        ...request.messages.map((message) => ({
           role: message.role,
           content: message.content,
         })),
       ],
       stream: true,
     };
-    if (req.tools.length > 0) {
-      body['tools'] = req.tools.map((tool) => ({
+    if (request.tools.length > 0) {
+      body['tools'] = request.tools.map((tool) => ({
         type: 'function',
         function: {
           name: tool.name,

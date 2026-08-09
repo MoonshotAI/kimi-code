@@ -57,9 +57,10 @@ import type {
 import type { ExecutableTool, LoopMessageBuilder } from './src/contract';
 
 // Re-export the LLM wire types hosts use to register stub/proxy handlers
-// (`llmStep`, `setLlmChatHandler`) — the session surface is host-proxy for
-// non-native-LLM turns, so consumers type their callbacks against these.
-export type { LlmChatRequest, LlmChatResponse };
+// (`llmStep`, `setLlmChatHandler`, native-LLM transport config) — the session
+// surface is host-proxy for non-native-LLM turns, so consumers type their
+// callbacks against these.
+export type { LlmChatRequest, LlmChatResponse, NativeLlmConfig };
 
 // Project root: packages/kimi-agent/rust-loop.ts → ../../ (project root)
 const projectRoot = resolve(import.meta.dirname, '..', '..');
@@ -2214,6 +2215,8 @@ function toHookWire(h: HookDefInput): Record<string, unknown> {
 export interface SessionCreateOptions {
   sessionId?: string;
   homedir?: string;
+  /** The session's real working directory (recorded as the engine work_dir). */
+  workDir?: string;
   systemPrompt?: string;
   provider?: string;
   model?: string;
@@ -2245,6 +2248,7 @@ export async function sessionCreate(
   return agentCall('session/create', {
     session_id: options.sessionId,
     homedir: options.homedir,
+    work_dir: options.workDir,
     system_prompt: options.systemPrompt,
     provider: options.provider,
     model: options.model,
@@ -2580,6 +2584,8 @@ export interface EngineSessionRecord {
   updated_at: string;
   title?: string;
   work_dir?: string;
+  /** Host custom metadata persisted with the durable agent state. */
+  metadata?: unknown;
 }
 
 /** Engine-side session status snapshot (serde snake_case wire form). */

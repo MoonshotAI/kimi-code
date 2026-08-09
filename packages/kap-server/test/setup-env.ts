@@ -12,3 +12,7 @@ import { join } from 'node:path';
 
 const scratch = mkdtempSync(join(tmpdir(), 'kimi-kap-server-test-'));
 process.env['KIMI_CODE_HOME'] = scratch;
+// Isolate the engine's persistent store (sessions.db) the same way: fixed
+// session ids across runs would otherwise leak stale work_dir/metadata
+// records from the real agent home.
+process.env['KIMI_AGENT_HOME'] = join(scratch, 'agent');

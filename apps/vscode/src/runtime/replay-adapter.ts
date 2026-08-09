@@ -454,10 +454,16 @@ function resumedStatusPayload(agent: ResumedAgentState): {
   context_usage?: number;
   token_usage?: TokenUsage;
 } {
-  const maxContextTokens = agent.config.modelCapabilities.max_context_tokens;
-  const totalUsage = agent.usage.total ?? sumUsage(agent.usage.byModel) ?? agent.usage.currentTurn;
+  // The Rust engine resume surface only carries modelAlias/thinkingEffort;
+  // the richer capabilities/usage/context fields of the retired JS resume
+  // state are absent — guard every optional read.
+  const maxContextTokens = agent.config?.modelCapabilities?.max_context_tokens;
+  const totalUsage =
+    agent.usage?.total ?? sumUsage(agent.usage?.byModel) ?? agent.usage?.currentTurn;
   return {
-    ...(maxContextTokens > 0
+    ...(maxContextTokens !== undefined &&
+    maxContextTokens > 0 &&
+    agent.context?.tokenCount !== undefined
       ? { context_usage: agent.context.tokenCount / maxContextTokens }
       : {}),
     ...(totalUsage === undefined
