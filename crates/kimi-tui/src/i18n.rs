@@ -846,6 +846,11 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "{0} — ↑/↓ pick · Enter select · Esc cancel",
         "{0} — ↑/↓ 选择 · Enter 确认 · Esc 取消",
     ),
+    (
+        "tui.picker.noMatch",
+        "no match: {0}",
+        "无匹配：{0}",
+    ),
     // ── Command descriptions (completion popup / /help) ────────────────
     ("tui.cmd.quit", "Leave the chat", "退出聊天"),
     ("tui.cmd.exit", "Leave the chat", "退出聊天"),

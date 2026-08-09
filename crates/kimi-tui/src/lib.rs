@@ -16,6 +16,8 @@ pub mod history;
 pub mod i18n;
 pub mod markdown;
 pub mod media;
+pub mod modal;
+pub mod panel;
 pub mod picker;
 pub mod streaming;
 pub mod theme;

@@ -3053,27 +3053,16 @@ impl App {
 
     /// Draw the full-screen approval detail modal over the chat layout.
     fn render_approval_modal(&self, frame: &mut ratatui::Frame<'_>, pending: &PendingApproval) {
-        let lines: Vec<ratatui::text::Line> = approval_modal_lines(pending)
+        let rows: Vec<crate::modal::ModalRow> = approval_modal_lines(pending)
             .into_iter()
             .enumerate()
-            .map(|(i, text)| {
-                let color = match i {
-                    0 => self.view.theme.assistant,
-                    3 => self.view.theme.error,
-                    _ => self.view.theme.status,
-                };
-                ratatui::text::Line::from(ratatui::text::Span::styled(
-                    text,
-                    ratatui::style::Style::default().fg(color),
-                ))
+            .map(|(i, text)| match i {
+                0 => crate::modal::ModalRow::colored(text, self.view.theme.assistant),
+                3 => crate::modal::ModalRow::colored(text, self.view.theme.error),
+                _ => crate::modal::ModalRow::new(text),
             })
             .collect();
-        let modal = ratatui::widgets::Paragraph::new(lines).block(
-            ratatui::widgets::Block::default()
-                .borders(ratatui::widgets::Borders::ALL)
-                .title("approval"),
-        );
-        frame.render_widget(modal, frame.area());
+        crate::modal::render_modal(frame, "approval", &rows, self.view.theme);
     }
 }
 
