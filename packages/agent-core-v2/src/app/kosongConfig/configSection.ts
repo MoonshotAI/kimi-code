@@ -338,6 +338,28 @@ registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
 });
 
 
+export const VISUAL_MODEL_SECTION = 'visualModel';
+
+export const VISUAL_MODEL_ENV = 'KIMI_VISUAL_MODEL';
+export const VISUAL_MODEL_EFFORT_ENV = 'KIMI_VISUAL_EFFORT';
+
+export const VisualModelConfigSchema = ModelOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+});
+
+export type VisualModelConfig = z.infer<typeof VisualModelConfigSchema>;
+
+export const visualModelEnvBindings = envBindings(VisualModelConfigSchema, {
+  model: { env: VISUAL_MODEL_ENV, parse: parseNonEmptyEnv },
+  defaultEffort: { env: VISUAL_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
+});
+
+registerConfigSection(VISUAL_MODEL_SECTION, VisualModelConfigSchema, {
+  env: visualModelEnvBindings,
+  stripEnv: stripEnvBoundFields(visualModelEnvBindings),
+});
+
+
 export const MODEL_CATALOG_SECTION = 'modelCatalog';
 
 export const ModelCatalogConfigSchema = z.object({
