@@ -80,6 +80,20 @@ pub fn finish_stream(transcript: &mut Vec<TranscriptEntry>, final_text: String) 
     false
 }
 
+/// Finalize a side-agent (btw) turn in place: the streamed line IS the final
+/// answer (the side agent's context is not the session's, so there is no
+/// transcript to read back) — promote it to an assistant line keeping its
+/// accumulated text. Returns whether a streamed line was promoted.
+pub fn finish_side_turn(transcript: &mut Vec<TranscriptEntry>) -> bool {
+    if let Some(last) = last_line_mut(transcript) {
+        if last.kind == TranscriptKind::Streaming {
+            last.kind = TranscriptKind::Assistant;
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +151,26 @@ mod tests {
             last_line(&t).map(|l| l.kind),
             Some(TranscriptKind::Assistant)
         );
+    }
+
+    #[test]
+    fn side_turn_finalizes_stream_in_place() {
+        // A btw (side-agent) turn has no session transcript to read back —
+        // the streamed line IS the answer and must keep its text.
+        let mut t = Vec::new();
+        append_stream(&mut t, "side answer");
+        let promoted = finish_side_turn(&mut t);
+        assert!(promoted);
+        assert_eq!(
+            last_line(&t).map(|l| l.kind),
+            Some(TranscriptKind::Assistant)
+        );
+        assert_eq!(last_line(&t).map(|l| l.text.as_str()), Some("side answer"));
+
+        // No streamed line → nothing to promote, transcript untouched.
+        let mut t2 = vec![TranscriptEntry::Line(crate::app::TranscriptLine::status("ok"))];
+        assert!(!finish_side_turn(&mut t2));
+        assert_eq!(t2.len(), 1);
     }
 
     #[test]

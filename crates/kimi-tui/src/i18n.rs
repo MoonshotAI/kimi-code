@@ -610,6 +610,22 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "导出失败：{0}",
     ),
     ("tui.archive.ok", "session archived", "会话已归档"),
+    ("tui.btw.usage", "/btw <question> — ask a side agent", "/btw <问题> —— 向旁路子代理提问"),
+    (
+        "tui.btw.started",
+        "side agent {0} started — prompts route to it until /endbtw",
+        "旁路子代理 {0} 已启动 —— 后续提问将路由给它，直到 /endbtw",
+    ),
+    (
+        "tui.btw.alreadyActive",
+        "a side agent is already active — run /endbtw first",
+        "旁路子代理已激活 —— 请先运行 /endbtw",
+    ),
+    (
+        "tui.btw.ended",
+        "side agent ended — prompts route to the main session",
+        "旁路子代理已结束 —— 提问恢复路由到主会话",
+    ),
     (
         "tui.err.archiveNotFound",
         "archive: session not found",
@@ -908,6 +924,16 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.cmd.sessions", "Switch sessions", "切换会话"),
     ("tui.cmd.export", "Export the session", "导出会话"),
     ("tui.cmd.archive", "Archive the session", "归档会话"),
+    (
+        "tui.cmd.btw",
+        "Ask a forked side agent a question",
+        "向旁路子代理提问",
+    ),
+    (
+        "tui.cmd.endbtw",
+        "End the side-question agent",
+        "结束旁路子代理",
+    ),
     (
         "tui.cmd.login",
         "Authenticate with a platform",

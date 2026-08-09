@@ -552,6 +552,9 @@ pub struct App {
     /// When true (App::new(None)), the startup flow offers a session picker.
     startup_pick: bool,
     session: Option<kimi_sdk::Session>,
+    /// The active side-question (btw) agent id (`btw-<session_id>`); while
+    /// set, every prompt routes to it (TS btw-panel parity, simplified).
+    btw_agent: Option<String>,
     /// Model aliases for `/model` Tab completion.
     model_aliases: Vec<String>,
     /// Pending tool approvals queued for interactive y/n resolution.
@@ -585,6 +588,7 @@ impl App {
             session_id: session_id.unwrap_or_default().to_string(),
             startup_pick: session_id.is_none(),
             session: None,
+            btw_agent: None,
             model_aliases: Vec::new(),
             pending_approvals: Vec::new(),
             overlay: None,
@@ -1993,6 +1997,40 @@ impl App {
                                 .push_line(TranscriptLine::error(t!("tui.err.archiveFailed", e))),
                         }
                     }
+                    "/btw" => {
+                        // TS parity: spawn a side-question agent and route the
+                        // prompt to it; the answer streams into the transcript
+                        // (`[btw]`-prefixed user line). While the agent is
+                        // active, every prompt routes to it until `/endbtw`.
+                        let question = rest.trim();
+                        if question.is_empty() {
+                            self.push_line(TranscriptLine::status(t("tui.btw.usage")));
+                        } else if self.btw_agent.is_some() {
+                            self.push_line(TranscriptLine::status(t("tui.btw.alreadyActive")));
+                        } else {
+                            match self.session.as_mut().expect("session").start_btw().await {
+                                Ok(id) => {
+                                    self.btw_agent = Some(id.clone());
+                                    self.push_line(TranscriptLine::status(t!("tui.btw.started", id)));
+                                    return self.run_turn(question).await.map(|_| false);
+                                }
+                                Err(e) => {
+                                    self.push_line(TranscriptLine::error(t!("tui.err.generic", e)));
+                                }
+                            }
+                        }
+                    }
+                    "/endbtw" => {
+                        match self.session.as_mut().expect("session").end_btw().await {
+                            Ok(()) => {
+                                self.btw_agent = None;
+                                self.push_line(TranscriptLine::status(t("tui.btw.ended")));
+                            }
+                            Err(e) => {
+                                self.push_line(TranscriptLine::error(t!("tui.err.generic", e)));
+                            }
+                        }
+                    }
                     "/login" => {
                         // Managed kimi auth: run the device flow, surface the
                         // verification URI + code as status lines, and let
@@ -2377,39 +2415,59 @@ impl App {
                     return Ok(false);
                 }
             }
-            // A real prompt: run it and render the transcript, pumping engine
-            // events into the panel while the turn runs. The prompt future lives
-            // in a block so its `&mut session` borrow ends before we read back.
-            self.push_line(TranscriptLine::user(line));
-            let turn_start = self.view.transcript.len();
-            let prompt_result = {
-                // Clone the session out so the prompt future (which borrows it
-                // mutably) can coexist with `self.pump_one_event` in the select.
-                let mut session = self.session.clone().expect("session");
-                // Expand `[image #N]` paste placeholders into multi-modal parts
-                // (plain text when nothing was pasted).
-                let parts = crate::clipboard::expand_placeholders(line, &self.image_attachments);
-                let prompt_fut = session.prompt_parts(parts);
-                tokio::pin!(prompt_fut);
-                loop {
-                    self.poll_prompt_keys().await?;
-                    tokio::select! {
-                        r = &mut prompt_fut => break Some(r.clone()),
-                        _ = self.pump_one_event() => {}
-                    }
+            // A real prompt: run it and render the transcript (see
+            // `run_turn`; the same path serves `/btw <question>`).
+            self.run_turn(line).await?;
+            Ok(false)
+        })
+    }
+
+    /// Run one prompt turn and render the transcript, pumping engine events
+    /// while the turn runs. When a side-question (btw) agent is active, the
+    /// prompt routes to it and the streamed line IS the final answer (the
+    /// side agent's context is not the session's, so no transcript read-back).
+    async fn run_turn(&mut self, line: &str) -> anyhow::Result<()> {
+        let agent_id: Option<String> = self.btw_agent.clone();
+        self.push_line(if agent_id.is_some() {
+            TranscriptLine::user(format!("[btw] {line}"))
+        } else {
+            TranscriptLine::user(line)
+        });
+        let turn_start = self.view.transcript.len();
+        let prompt_result = {
+            // Clone the session out so the prompt future (which borrows it
+            // mutably) can coexist with `self.pump_one_event` in the select.
+            let mut session = self.session.clone().expect("session");
+            // Expand `[image #N]` paste placeholders into multi-modal parts
+            // (plain text when nothing was pasted).
+            let parts = crate::clipboard::expand_placeholders(line, &self.image_attachments);
+            let prompt_fut = session.prompt_parts_as(parts, agent_id.as_deref());
+            tokio::pin!(prompt_fut);
+            loop {
+                self.poll_prompt_keys().await?;
+                tokio::select! {
+                    r = &mut prompt_fut => break Some(r.clone()),
+                    _ = self.pump_one_event() => {}
                 }
-            };
-            if let Some(result) = prompt_result {
-                if let Some(error) = result.get("error") {
-                    self.push_line(TranscriptLine::error(t!(
-                        "tui.err.generic",
-                        error["message"].as_str().unwrap_or("unknown")
-                    )));
+            }
+        };
+        if let Some(result) = prompt_result {
+            if let Some(error) = result.get("error") {
+                self.push_line(TranscriptLine::error(t!(
+                    "tui.err.generic",
+                    error["message"].as_str().unwrap_or("unknown")
+                )));
+            } else {
+                // Close the streamed turn: drop transient thinking, replace
+                // the live line with the final transcript (or append it when
+                // nothing streamed).
+                crate::streaming::drop_trailing_thinking(&mut self.view.transcript);
+                if agent_id.is_some() {
+                    // Side-agent turns: the streamed line is already the
+                    // complete answer — promote it in place (no read-back;
+                    // the side agent's context is not the session's).
+                    crate::streaming::finish_side_turn(&mut self.view.transcript);
                 } else {
-                    // Close the streamed turn: drop transient thinking, replace
-                    // the live line with the final transcript (or append it when
-                    // nothing streamed).
-                    crate::streaming::drop_trailing_thinking(&mut self.view.transcript);
                     match self.session.as_mut().expect("session").transcript().await? {
                         Some(text) => {
                             crate::streaming::finish_stream(&mut self.view.transcript, text);
@@ -2423,22 +2481,22 @@ impl App {
                     }
                 }
             }
-            // Turn summary (TS step-summary parity, simplified): when a turn
-            // made several tool calls, fold a one-line recap into the transcript.
-            let tools = self.view.transcript[turn_start..]
-                .iter()
-                .filter(|e| matches!(e, TranscriptEntry::ToolCall(_)))
-                .count();
-            let messages = self.view.transcript.len() - turn_start;
-            if tools >= 2 {
-                self.push_line(TranscriptLine::status(t!(
-                    "tui.turn.summary",
-                    tools,
-                    messages
-                )));
-            }
-            Ok(false)
-        })
+        }
+        // Turn summary (TS step-summary parity, simplified): when a turn
+        // made several tool calls, fold a one-line recap into the transcript.
+        let tools = self.view.transcript[turn_start..]
+            .iter()
+            .filter(|e| matches!(e, TranscriptEntry::ToolCall(_)))
+            .count();
+        let messages = self.view.transcript.len() - turn_start;
+        if tools >= 2 {
+            self.push_line(TranscriptLine::status(t!(
+                "tui.turn.summary",
+                tools,
+                messages
+            )));
+        }
+        Ok(())
     }
 
     /// Refresh the footer status strip from the current session snapshot.

@@ -129,7 +129,25 @@ async fn harness_exposes_engine_events() {
     // Side (btw) agent lifecycle.
     let btw_id = session.start_btw().await.expect("start_btw");
     assert!(btw_id.starts_with("btw-"), "btw id: {btw_id}");
+
+    // `prompt_as` routes to the side agent: the error is the LLM-gate one
+    // (no reachable LLM in tests), NOT a "no side agent" routing miss.
+    let routed = session.prompt_as("side question", &btw_id).await;
+    let routed_msg = routed["error"]["message"].as_str().unwrap_or("");
+    assert!(
+        !routed_msg.contains("no side agent"),
+        "prompt_as reached the side agent (error: {routed_msg})"
+    );
+
     session.end_btw().await.expect("end_btw");
+    // After teardown the same agent id is a routing miss — proof the agent_id
+    // actually selects the side agent on the wire.
+    let after = session.prompt_as("stale", &btw_id).await;
+    let after_msg = after["error"]["message"].as_str().unwrap_or("");
+    assert!(
+        after_msg.contains("no side agent"),
+        "teardown makes the id a routing miss (error: {after_msg})"
+    );
 
     // Unknown skill errors before any LLM turn.
     let skill = session.activate_skill("nonexistent-skill", serde_json::Value::Null).await;

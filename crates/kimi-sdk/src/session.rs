@@ -31,11 +31,32 @@ impl Session {
     /// `[{"type":"text","text":…}, …]`); resolves with the full wire response
     /// body. Mirrors the SDK's parts-based `Session.prompt` input.
     pub async fn prompt_parts(&mut self, parts: serde_json::Value) -> serde_json::Value {
+        self.prompt_parts_as(parts, None).await
+    }
+
+    /// Run one prompt routed to a specific agent (the side-question agent id
+    /// returned by [`Session::start_btw`]); `None` drives the main agent.
+    pub async fn prompt_parts_as(
+        &mut self,
+        parts: serde_json::Value,
+        agent_id: Option<&str>,
+    ) -> serde_json::Value {
         self.client
             .call(
                 kimi_protocol::methods::SESSION_PROMPT,
-                serde_json::json!({ "session_id": self.id, "input": parts }),
+                serde_json::json!({
+                    "session_id": self.id,
+                    "input": parts,
+                    "agent_id": agent_id,
+                }),
             )
+            .await
+    }
+
+    /// Run one prompt routed to a specific agent (the side-question agent id
+    /// returned by [`Session::start_btw`]).
+    pub async fn prompt_as(&mut self, text: &str, agent_id: &str) -> serde_json::Value {
+        self.prompt_parts_as(serde_json::json!([{ "type": "text", "text": text }]), Some(agent_id))
             .await
     }
 

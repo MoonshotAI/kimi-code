@@ -70,6 +70,8 @@ pub const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("/sessions", "tui.cmd.sessions"),
     ("/export", "tui.cmd.export"),
     ("/archive", "tui.cmd.archive"),
+    ("/btw", "tui.cmd.btw"),
+    ("/endbtw", "tui.cmd.endbtw"),
     ("/login", "tui.cmd.login"),
     ("/logout", "tui.cmd.logout"),
     ("/disconnect", "tui.cmd.logout"),
@@ -101,10 +103,12 @@ pub const SLASH_COMMANDS: &[&str] = &[
     "/approve",
     "/archive",
     "/auto",
+    "/btw",
     "/clear",
     "/compact",
     "/config",
     "/deny",
+    "/endbtw",
     "/exit",
     "/export",
     "/fork",
@@ -551,6 +555,24 @@ mod tests {
         assert_eq!(done, "/quit");
         let (done, _) = complete_line("/provid", &[], None);
         assert_eq!(done, "/provider");
+    }
+
+    #[test]
+    fn btw_commands_are_registered() {
+        // `/btw` and `/endbtw` appear in Tab completion and carry a
+        // description (the side-question agent surface).
+        let descs = command_descriptions();
+        for command in ["/btw", "/endbtw"] {
+            assert!(
+                SLASH_COMMANDS.contains(&command),
+                "{command} missing from SLASH_COMMANDS"
+            );
+            let (_, desc) = descs
+                .iter()
+                .find(|(name, _)| name == command)
+                .unwrap_or_else(|| panic!("{command} missing from descriptions"));
+            assert!(!desc.is_empty(), "{command} desc empty");
+        }
     }
 
     #[test]

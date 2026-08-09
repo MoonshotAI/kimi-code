@@ -513,6 +513,14 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 ## 9. 迁移推进会话快照（2026-08，分支 feat/rust-agent-engine-migration）
 
+**2026-08-09 G-4 分片 J：`/btw` 旁路子代理命令（Rust kimi-tui）**：
+- **背景**：G-4 对拍审计（08-08）判定 `/btw` 为唯一真实命令缺口（TS BtwPanelController 完整面板 vs Rust 无）。卡点：kimi-sdk `Session::new` pub(crate) 无法公开构造任意 id 会话 + prompt 无 agent_id 路由——实际上引擎 `session/start_btw`/`end_btw` + prompt 的 `agent_id`（`btw-<sid>` 路由）早已支持，缺的是 SDK 暴露与 TUI 命令
+- **kimi-sdk**：`prompt_parts_as(parts, agent_id)` + `prompt_as(text, agent_id)`（主 prompt 委托 None）；测试：start_btw 后 prompt_as 路由到 side agent（错误为 LLM 门而非 "no side agent"），end_btw 后同 id 报 "no side agent"（证明 wire 路由生效）
+- **kimi-tui**：`App.btw_agent: Option<String>`；`/btw <question>`（start_btw → 状态行 → 立即 run_turn 路由）+ `/endbtw`（end_btw + 清空）；激活期间所有 prompt 路由到 side agent（TS 面板内对话语义），user 行 `[btw]` 前缀；**btw turn 收尾不回读主会话 context**（side agent 的 context 不在主会话）——新增 `finish_side_turn`（streaming 行原地定稿保留文本，streaming.rs 纯函数 + 单测）；prompt 提交块抽取为 `run_turn`（Enter 与 /btw 共用）；btw 事件（session_id=`btw-<sid>`）走现有渲染路径无需过滤（单 prompt 串行）
+- **命令注册 + i18n**：SLASH_COMMANDS/COMMAND_DESCRIPTIONS 加 /btw /endbtw；i18n en/zh 5 key（usage/started/alreadyActive/ended + 2 命令描述）
+- **测试**：streaming `side_turn_finalizes_stream_in_place`、bottom_pane `btw_commands_are_registered`、kimi-sdk harness 路由测试——kimi-tui 97/97、kimi-sdk 43 全绿，clippy 0 新警告，workspace check 0 errors
+- **G-4 剩余**：媒体/子代理富卡片（tool-call.ts 富结构）、交互路径对拍测试（D-5）
+
 **2026-08-09 G-1 剩余①：`/rust` 子路径消费重写（三文件切 kimi-server RPC 拉取式）**：
 - **目标**：apps/kimi-code 运行时零依赖 `@moonshot-ai/kimi-code-sdk/rust`（node-sdk 子路径）与 `@moonshot-ai/kimi-agent/rust-loop`（TS 桥）——G-6 退役 node-sdk/rust-loop.ts 的前置。三文件（native-session-adapter/native-session/session-engine）从"回调式控制器（host/authorize_tool 反向 RPC）"改为"拉取式 RPC（kimi-server-serve 进程）"。
 - **根因修复（用户要求"修 bug 修根因"）**：kimi-server-serve 的 stderr 事件 printer 有 **512 行硬截断**（`kimi-server-serve.rs` 原 `if lines >= 512 break`）——根因是事件通道最初为短命 CLI 设计、用"行数截断"错误实现背压保护；TUI 等长驻宿主会断流。修复：抽取 `spawn_event_printer`（stdio.rs，无限扇出 + 管道关闭即停，正确背压=管道本身），**先写失败测试**（`event_printer_is_unbounded` 600 事件全达 + `event_printer_stops_on_closed_pipe`）再修；Rust 侧 kimi-tui/Harness::remote（同 stderr 通道）同样受益。transport lib 29 全绿
