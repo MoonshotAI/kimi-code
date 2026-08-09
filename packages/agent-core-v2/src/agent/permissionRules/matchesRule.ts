@@ -77,7 +77,7 @@ export function matchPermissionRule({
     return { rule, strategy: 'tool_name_only', hasRuleArgs: false };
   }
 
-  return execution.matchesRule?.(parsed.argPattern) === true
+  return execution.matchesRule?.(parsed.argPattern, { decision: rule.decision }) === true
     ? { rule, strategy: 'matches_rule', hasRuleArgs: true }
     : undefined;
 }

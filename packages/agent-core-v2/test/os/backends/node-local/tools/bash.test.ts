@@ -37,6 +37,8 @@ import { type ISessionContext, makeSessionContext } from '#/session/sessionConte
 import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
+import { BashParserService } from '#/app/bashParser/bashParserService';
+import type { IBashParserService } from '#/app/bashParser/bashParser';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 const posixEnv: IHostEnvironment = {
@@ -720,8 +722,9 @@ function bashTool(
   background: IAgentTaskService = createFakeTaskService().service,
   toolPolicy: IAgentToolPolicyService = stubToolPolicy(),
   config: IConfigService = stubConfig(),
+  bashParser: IBashParserService = new BashParserService(),
 ): BashTool {
-  return new BashTool(runner, env, ctx, background, toolPolicy, config);
+  return new BashTool(runner, env, ctx, background, toolPolicy, config, bashParser);
 }
 
 

@@ -16,6 +16,8 @@
  *                    the Task* tools being active
  *   - `config`     — `IConfigService`, task config (auto-background on
  *                    timeout, detach timeout)
+ *   - `bashParser` — `IBashParserService`, decomposes the command into
+ *                    sub-commands for permission-rule matching
  *
  * Execution goes through `ISessionProcessRunner`, never directly via
  * `node:child_process`.
@@ -54,7 +56,9 @@ import {
 } from '#/tool/result-builder';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
+import { literalRulePattern } from '#/tool/rule-match';
+import { IBashParserService } from '#/app/bashParser/bashParser';
+import { createCommandPartsProvider, matchesDecomposedCommandRule } from './commandParts';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import { userCancellationReason } from '#/_base/utils/abort';
 import bashDescriptionTemplate from './bash.md?raw';
@@ -138,6 +142,7 @@ export class BashTool implements IBashTool {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
+    @IBashParserService private readonly bashParser: IBashParserService,
   ) {
     this.isWindowsBash = this.env.osKind === 'Windows';
     this.renderedDescription = renderBashDescription(this.env.shellName);
@@ -171,6 +176,7 @@ export class BashTool implements IBashTool {
 
   resolveExecution(args: BashInput): ToolExecution {
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
+    const commandParts = createCommandPartsProvider(this.bashParser, args.command);
     return {
       description: args.run_in_background
         ? `Starting background: ${preview}`
@@ -183,7 +189,8 @@ export class BashTool implements IBashTool {
         language: 'bash',
       },
       approvalRule: literalRulePattern(this.name, args.command),
-      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
+      matchesRule: (ruleArgs, context) =>
+        matchesDecomposedCommandRule(ruleArgs, args.command, context?.decision, commandParts),
       execute: ({ signal, onUpdate, onForegroundTaskStart }) =>
         this.execution(args, signal, onUpdate, onForegroundTaskStart),
     };

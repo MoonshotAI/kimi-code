@@ -74,6 +74,12 @@ export interface ExecutableToolContext {
   readonly onForegroundTaskStart?: ((taskId: string) => void) | undefined;
 }
 
+export type RuleMatchDecision = 'allow' | 'deny' | 'ask';
+
+export interface RuleMatchContext {
+  readonly decision: RuleMatchDecision;
+}
+
 export interface RunnableToolExecution {
   readonly isError?: false | undefined;
   readonly accesses?: ToolAccesses | undefined;
@@ -81,7 +87,7 @@ export interface RunnableToolExecution {
   readonly description?: string;
   readonly stopBatchAfterThis?: boolean | undefined;
   readonly approvalRule: string;
-  readonly matchesRule?: ((ruleArgs: string) => boolean) | undefined;
+  readonly matchesRule?: ((ruleArgs: string, context?: RuleMatchContext) => boolean) | undefined;
   readonly execute: (ctx: ExecutableToolContext) => Promise<ExecutableToolResult>;
 }
 
