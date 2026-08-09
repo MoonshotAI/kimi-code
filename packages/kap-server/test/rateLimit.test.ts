@@ -97,6 +97,54 @@ describe('createAuthHook rate limiting', () => {
   });
 });
 
+describe('createAuthHook bypass policy (URL encoding)', () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    app = buildApp(undefined);
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it('requires a token for percent-encoded /api/ paths', async () => {
+    // The router matches these against /api/v1/sessions; the auth hook must
+    // see the same decoded path instead of bypassing on the raw URL.
+    for (const url of ['/%61pi/v1/sessions', '/%61%70%69/v1/sessions']) {
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.statusCode).toBe(401);
+    }
+  });
+
+  it('serves percent-encoded /api/ paths with a valid token', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/%61pi/v1/sessions',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('requires a token for percent-encoded meta documents', async () => {
+    const res = await app.inject({ method: 'GET', url: '/%6fpenapi.json' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('still bypasses non-API paths without a token', async () => {
+    // No static route is registered, so a bypassed request falls through to
+    // the router's 404 instead of being rejected with 401.
+    const res = await app.inject({ method: 'GET', url: '/index.html' });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('still bypasses the healthz probe when percent-encoded', async () => {
+    const res = await app.inject({ method: 'GET', url: '/%61pi/v1/healthz' });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
 describe('createAuthFailureLimiter (unit)', () => {
   afterEach(() => {
     vi.useRealTimers();

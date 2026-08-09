@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 describe('server-v2 OpenAPI', () => {
@@ -34,6 +35,7 @@ describe('server-v2 OpenAPI', () => {
   async function fetchOpenApi(): Promise<Record<string, unknown>> {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-openapi-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -91,6 +93,29 @@ describe('server-v2 OpenAPI', () => {
     const requestBody = asRecord(uploadOp['requestBody']);
     const content = asRecord(requestBody['content']);
     expect(content['multipart/form-data']).toBeDefined();
+  });
+
+  it('describes session export as a ZIP or JSON error envelope', async () => {
+    const doc = await fetchOpenApi();
+    const exportOp = operation(doc, '/api/v1/sessions/{session_id}/export', 'post');
+    const responses = asRecord(exportOp['responses']);
+    const response = asRecord(responses['200']);
+    const content = asRecord(response['content']);
+    const headers = asRecord(response['headers']);
+    const zipSchema = asRecord(asRecord(content['application/zip'])['schema']);
+    const errorSchema = asRecord(asRecord(content['application/json'])['schema']);
+    const errorProperties = asRecord(errorSchema['properties']);
+
+    expect(zipSchema).toMatchObject({ type: 'string', format: 'binary' });
+    expect(errorProperties).toMatchObject({
+      code: expect.any(Object),
+      msg: expect.any(Object),
+      data: expect.any(Object),
+      request_id: expect.any(Object),
+    });
+    expect(headers['content-disposition']).toBeDefined();
+    expect(headers['content-length']).toBeDefined();
+    expect(headers['cache-control']).toBeDefined();
   });
 
   it('represents the fs-action dispatcher as a oneOf union', async () => {

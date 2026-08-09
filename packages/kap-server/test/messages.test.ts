@@ -5,15 +5,16 @@ import { join } from 'node:path';
 import {
   IAgentContextMemoryService,
   IAgentLifecycleService,
-  IAgentWireRecordService,
-  ISessionLifecycleService,
-  IModelResolver,
+  IWireService,
+  getLiveSessionById,
+  IModelCatalog,
   type ContextMessage,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -48,21 +49,39 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-messages-'));
-    // Seed a stub ISessionModelResolver so the agent scope can instantiate if a
+    // Seed a stub IModelCatalog so the agent scope can instantiate if a
     // transitive service needs it; IContextMemory itself does not.
-    const modelResolver: IModelResolver = {
+    const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
-      resolve: () => {
-        throw new Error('modelResolver.resolve not exercised in this test');
+      get: () => {
+        throw new Error('modelCatalog.get not exercised in this test');
+      },
+      getRequester: () => {
+        throw new Error('modelCatalog.getRequester not exercised in this test');
+      },
+      inspect: () => {
+        throw new Error('modelCatalog.inspect not exercised in this test');
+      },
+      ping: () => {
+        throw new Error('modelCatalog.ping not exercised in this test');
       },
       findByName: () => [],
+      listModels: async () => [],
+      listProviders: async () => [],
+      getProvider: async () => {
+        throw new Error('modelCatalog.getProvider not exercised in this test');
+      },
+      setDefaultModel: async () => {
+        throw new Error('modelCatalog.setDefaultModel not exercised in this test');
+      },
     };
-    seeds = [[IModelResolver, modelResolver]];
+    seeds = [[IModelCatalog, modelCatalog]];
     await boot();
   });
 
   async function boot(): Promise<void> {
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home as string,
@@ -108,9 +127,9 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     sessionId: string,
     messages: readonly ContextMessage[],
   ): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    let agent = session.accessor.get(IAgentLifecycleService).getHandle('main');
+    let agent = session.accessor.get(IAgentLifecycleService).get('main');
     if (agent === undefined) {
       agent = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     }
@@ -118,7 +137,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       agent.accessor.get(IAgentContextMemoryService).append(...messages);
       // Flush the wire log so the temp home is quiescent before afterEach rm's
       // it (macOS can ENOTEMPTY an rmdir while an append is still in flight).
-      await agent.accessor.get(IAgentWireRecordService).flush();
+      await agent.accessor.get(IWireService).flush();
     }
   }
 
@@ -283,7 +302,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   // on the same home so the session is genuinely cold on the read path.
   it('reads the persisted full transcript for a cold session', async () => {
     const id = await createSession();
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const agent = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     const ctx = agent.accessor.get(IAgentContextMemoryService);
@@ -299,7 +318,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       compactedCount: 3,
       tokensBefore: 100,
     });
-    await agent.accessor.get(IAgentWireRecordService).flush();
+    await agent.accessor.get(IWireService).flush();
 
     // The live read already serves the full transcript (pre-compaction prefix
     // + summary), matching v1's `/messages`. Capture the summary id so we can

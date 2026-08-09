@@ -1,42 +1,33 @@
 /**
- * `contextMemory` domain (L4) — `IAgentContextMemoryService` implementation.
+ * `contextMemory` domain — `IAgentContextMemoryService` implementation.
  *
- * Owns the per-agent conversation history in the wire `ContextModel`
- * (`ContextMessage[]`): reads through `wire.getModel`, writes through the
- * v1 wire Ops (`append` / `appendLoopEvent` / `clear` / `undo` /
- * `applyCompaction`).
- * As the sole live mutation gateway for the history, it also cascades a
- * (non-persisted) `context_size.measured` Op alongside every mutation that
- * changes the measured prefix — `clear` resets it, `applyCompaction` adopts
- * `tokensAfter`, and `undo` rebases it (to an estimate when the measured
- * aggregate is truncated); `append` leaves the measured prefix untouched since
- * new messages are the unmeasured tail (see `contextSizeService`). Every
- * mutation still fires `onSpliced` from the live path only (replay rebuilds
- * the Model silently and never invokes these methods), so existing subscribers
- * (context-injector, task-notification) observe the same
- * splice-shaped change events regardless of which Op was persisted. Messages
- * are persisted without local ids — the on-disk record matches v1's field set
- * and public message ids are derived from the transcript index. Blob
- * dehydrate/rehydrate is declared on `ContextModel.blobs`. Bound at
- * Agent scope.
+ * Owns per-agent conversation history through `wire`, maintains measurements
+ * with `tokenCounting`, and broadcasts live mutations through `event`. Every
+ * splice-shaped mutation (`clear` / `applyCompaction` / `undo`) publishes
+ * `context.spliced` from the live path only — replay rebuilds silently — and
+ * `undo` additionally truncates the measured-anchor ledger when the cut
+ * crosses an anchor, letting `tokenCounting` restore the surviving prefix's
+ * REAL size from the remaining anchors. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { estimateTokensForMessages } from '#/_base/utils/tokens';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
-import { ContextSizeModel, contextSizeMeasured } from '#/agent/contextSize/contextSizeOps';
-import { IAgentWireService } from '#/wire/tokens';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import {
+  TokenCountingModel,
+  tokenCountingRebased,
+  tokenCountingTruncated,
+} from '#/agent/tokenCounting/tokenCountingOps';
+import { IWireService } from '#/wire/wire';
 import type { Op } from '#/wire/op';
-import type { IWireService } from '#/wire/wireService';
 
 import {
   IAgentContextMemoryService,
   type ContextCompactionInput,
   type ContextCompactionResult,
 } from './contextMemory';
-import { buildContextCompactionShape } from './compactionHandoff';
+import { buildContextCompactionShape, type TokenEstimate } from './compactionHandoff';
 import {
   computeUndoCut,
   ContextModel,
@@ -66,10 +57,19 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
+    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
   ) {
     super();
+  }
+
+  private get tokenEstimateFns(): TokenEstimate {
+    return {
+      text: (text) => this.tokenCounting.estimateText(text),
+      message: (message) => this.tokenCounting.estimateMessage(message),
+      messages: (messages) => this.tokenCounting.estimateMessages(messages),
+    };
   }
 
   get(): readonly ContextMessage[] {
@@ -86,10 +86,14 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.wire.dispatch(contextAppendLoopEvent({ event }));
   }
+
   clear(): void {
     const deleteCount = this.get().length;
     if (deleteCount === 0) return;
-    this.wire.dispatch(contextClear({}), contextSizeMeasured({ length: 0, tokens: 0 }));
+    this.wire.dispatch(
+      contextClear({}),
+      tokenCountingRebased({ length: 0, tokens: 0, measured: true }),
+    );
     this.publishSplice({ start: 0, deleteCount, messages: [] });
   }
 
@@ -97,7 +101,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     const history = this.get();
     const cut = computeUndoCut(history, count);
     if (isFullyUndoable(cut, count)) {
-      this.wire.dispatch(contextUndo({ count }), ...this.sizeOpsForCut(cut.cutIndex, history));
+      this.wire.dispatch(contextUndo({ count }), ...this.sizeOpsForCut(cut.cutIndex));
       this.publishSplice({
         start: cut.cutIndex,
         deleteCount: history.length - cut.cutIndex,
@@ -109,7 +113,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
 
   applyCompaction(input: ContextCompactionInput): ContextCompactionResult {
     const history = this.get();
-    const result = buildContextCompactionShape(history, input);
+    const result = buildContextCompactionShape(history, input, this.tokenEstimateFns);
     this.wire.dispatch(
       contextApplyCompaction({
         summary: result.summary,
@@ -117,11 +121,16 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
         compactedCount: result.compactedCount,
         tokensBefore: result.tokensBefore,
         tokensAfter: result.tokensAfter,
+        summaryOutputTokens: input.summaryOutputTokens,
         keptUserMessageCount: result.keptUserMessageCount,
         keptHeadUserMessageCount: result.keptHeadUserMessageCount,
         droppedCount: result.droppedCount,
       }),
-      contextSizeMeasured({ length: result.messages.length, tokens: result.tokensAfter }),
+      tokenCountingRebased({
+        length: result.messages.length,
+        tokens: result.tokensAfter,
+        measured: false,
+      }),
     );
     this.publishSplice({
       start: 0,
@@ -143,20 +152,16 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     this.eventBus.publish({ type: 'context.spliced', ...input });
   }
 
-  /**
-   * Cascade a `context_size.measured` Op when an undo truncates the measured
-   * prefix (`ContextSizeModel.length`). If the surviving context still covers
-   * the measured prefix, the measurement stays valid and nothing is emitted;
-   * otherwise the prefix is rebased to an estimate of the surviving messages
-   * (an aggregate measured count can't be truncated without per-message data).
-   */
-  private sizeOpsForCut(cutIndex: number, history: readonly ContextMessage[]): Op[] {
-    const model = this.wire.getModel(ContextSizeModel);
-    if (model.length <= cutIndex) return [];
+  private sizeOpsForCut(cutIndex: number): Op[] {
+    const model = this.wire.getModel(TokenCountingModel);
+    if (!model.anchors.some((anchor) => anchor.length > cutIndex)) return [];
+    // The display tokens are the post-cut size computed from the CURRENT
+    // ledger — anchors at or below the cut are identical before and after
+    // the truncation, so the pre-dispatch read is exact.
     return [
-      contextSizeMeasured({
+      tokenCountingTruncated({
         length: cutIndex,
-        tokens: estimateTokensForMessages(history.slice(0, cutIndex)),
+        tokens: this.tokenCounting.get(0, cutIndex).size,
       }),
     ];
   }
@@ -166,6 +171,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextMemoryService,
   AgentContextMemoryService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'contextMemory',
 );

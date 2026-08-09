@@ -234,6 +234,53 @@ describe('session-store', () => {
     expect(sub.parentAgentId).toBe('main');
   });
 
+  it('ignores persisted agent homedirs and uses the standard paths', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const statePath = join(sessionDir, 'state.json');
+    const state = JSON.parse(await readFile(statePath, 'utf8'));
+    delete state.agents.main.parentAgentId;
+    await writeFile(statePath, JSON.stringify(state));
+
+    const detail = await readSessionDetail(home, 'session_fixture');
+
+    expect(
+      detail!.agents
+        .map(({ agentId, homedir, parentAgentId }) => ({ agentId, homedir, parentAgentId }))
+        .toSorted((a, b) => a.agentId.localeCompare(b.agentId)),
+    ).toEqual([
+      {
+        agentId: 'agent-0',
+        homedir: join(sessionDir, 'agents', 'agent-0'),
+        parentAgentId: 'main',
+      },
+      {
+        agentId: 'main',
+        homedir: join(sessionDir, 'agents', 'main'),
+        parentAgentId: null,
+      },
+    ]);
+  });
+
+  it('reads v2 epoch millisecond timestamps', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const statePath = join(sessionDir, 'state.json');
+    const state = JSON.parse(await readFile(statePath, 'utf8'));
+    state.createdAt = 1_784_012_345_678;
+    state.updatedAt = 1_784_023_456_789;
+    await writeFile(statePath, JSON.stringify(state));
+
+    const [summary] = await listSessions(home);
+
+    expect(summary!.createdAt).toBe(state.createdAt);
+    expect(summary!.updatedAt).toBe(state.updatedAt);
+  });
+
   it('surfaces swarmItem from state.json onto AgentInfo (null when absent)', async () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;

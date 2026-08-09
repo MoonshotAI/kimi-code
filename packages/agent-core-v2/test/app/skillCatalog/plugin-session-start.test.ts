@@ -11,7 +11,6 @@ import { describe, expect, it } from 'vitest';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentWireService } from '#/wire/tokens';
 import type { LogContext, LogPayload } from '#/_base/log/log';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
@@ -121,7 +120,7 @@ describe('plugin session-start dynamic injection', () => {
 
     const text = lastReminder(ctx);
     expect(text).toContain('<plugin_session_start plugin="superpowers" skill="using-superpowers">');
-    expect(text).toContain('<kimi-plugin-instructions plugin="superpowers">');
+    expect(text).toContain('<plugin-instructions plugin="superpowers">');
     expect(text).toContain('AskUserQuestion');
     expect(text).toContain('TodoList');
     expect(text).toContain('body of skill');
@@ -143,7 +142,7 @@ describe('plugin session-start dynamic injection', () => {
     const text = lastReminder(ctx);
     expect(text).toContain('<plugin_session_start plugin="superpowers" skill="using-superpowers">');
     expect(text).toContain('body');
-    expect(text).not.toContain('<kimi-plugin-instructions plugin="superpowers">');
+    expect(text).not.toContain('<plugin-instructions plugin="superpowers">');
     expect(text).not.toContain('AskUserQuestion');
   });
 
@@ -184,7 +183,7 @@ describe('plugin session-start dynamic injection', () => {
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
     });
 
-    await ctx.get(IAgentWireService).replay({
+    await ctx.restore([{
       type: 'context.append_message',
       time: 1,
       message: {
@@ -193,7 +192,7 @@ describe('plugin session-start dynamic injection', () => {
         toolCalls: [],
         origin: { kind: 'injection', variant: 'plugin_session_start' },
       },
-    });
+    }]);
 
     await injectDynamic(ctx);
 

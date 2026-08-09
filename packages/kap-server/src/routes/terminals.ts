@@ -6,7 +6,8 @@
  * Backed by the v2 Session-scoped `ISessionTerminalService`
  * (`agent-core-v2/src/session/terminal`): the route resolves the session from
  * the URL, then dispatches to the matching `ISessionTerminalService` method.
- * The wire schema is reused from `@moonshot-ai/protocol`.
+ * The wire schema comes from the engine's own terminal contract
+ * (`agent-core-v2`).
  *
  * The v2 service is Session-scoped (one instance owns only its own session's
  * terminals), so unlike v1 the methods do not take a `session_id` — the session
@@ -22,23 +23,24 @@
 
 import {
   ErrorCodes,
-  ISessionLifecycleService,
   ISessionTerminalService,
+  resumeSessionById,
   isError2,
   Error2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  closeTerminalResponseSchema,
-  createTerminalRequestSchema,
-  ErrorCode,
-  getTerminalResponseSchema,
-  listTerminalsResponseSchema,
-} from '@moonshot-ai/protocol';
+import { createTerminalRequestSchema } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
+import {
+  closeTerminalResponseSchema,
+  getTerminalResponseSchema,
+  listTerminalsResponseSchema,
+} from '../protocol/rest-terminal';
 import { parseActionSuffix } from './action-suffix';
 
 interface TerminalsRouteHost {
@@ -83,7 +85,7 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
  * unknown or its workspace is gone.
  */
 async function resolveTerminal(core: Scope, sessionId: string): Promise<ISessionTerminalService> {
-  const session = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
+  const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
@@ -139,6 +141,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
       try {
         const { session_id } = req.params;
         const terminal = await (await resolveTerminal(core, session_id)).create(req.body);
+        requestLog(req)?.info({ session_id, terminal_id: terminal.id }, 'terminal created');
         reply.send(okEnvelope(terminal, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
@@ -211,6 +214,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
           return;
         }
         const result = await (await resolveTerminal(core, session_id)).close(parsed.id);
+        requestLog(req)?.info({ session_id, terminal_id: parsed.id }, 'terminal closed');
         reply.send(okEnvelope(result, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);

@@ -128,6 +128,17 @@ describe('MCP OAuth credential identity', () => {
     expect(service.hasTokens('linear', 'https://second.example.com/mcp')).toBe(false);
   });
 
+  it('removes stored credentials when a server authorization is reset', () => {
+    const service = new McpOAuthService({ store: new JsonFileStore(dir) });
+    service
+      .getProvider('linear', 'https://mcp.example.com/mcp')
+      .saveTokens(token('access-token'));
+
+    service.invalidate('linear', 'https://mcp.example.com/mcp');
+
+    expect(service.hasTokens('linear', 'https://mcp.example.com/mcp')).toBe(false);
+  });
+
   it('uses stored client redirect URI when no active OAuth callback is running', () => {
     const provider = new McpOAuthClientProvider({
       serverName: 'notion',
@@ -153,3 +164,47 @@ function token(accessToken: string): OAuthTokens {
     token_type: 'Bearer',
   };
 }
+
+describe('McpOAuthClientProvider.invalidateStaleRegistration', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'kimi-mcp-oauth-stale-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function makeProvider() {
+    return new McpOAuthClientProvider({
+      serverName: 'srv',
+      serverUrl: 'https://mcp.example.com/mcp',
+      store: new JsonFileStore(dir),
+    });
+  }
+
+  it('drops a registration whose redirect_uris miss the current callback', () => {
+    const provider = makeProvider();
+    provider.saveClientInformation({
+      client_id: 'c1',
+      redirect_uris: ['http://127.0.0.1:11111/callback'],
+    });
+    expect(provider.invalidateStaleRegistration('http://127.0.0.1:22222/callback')).toBe(true);
+    expect(provider.clientInformation()).toBeUndefined();
+  });
+
+  it('keeps a registration that still covers the callback URI', () => {
+    const provider = makeProvider();
+    provider.saveClientInformation({
+      client_id: 'c1',
+      redirect_uris: ['http://127.0.0.1:11111/callback'],
+    });
+    expect(provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback')).toBe(false);
+    expect(provider.clientInformation()).toMatchObject({ client_id: 'c1' });
+  });
+
+  it('is a no-op without a stored registration', () => {
+    const provider = makeProvider();
+    expect(provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback')).toBe(false);
+  });
+});

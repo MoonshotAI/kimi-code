@@ -19,6 +19,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart, ReloadSummary } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { summarizeSkill } from '#/app/skillCatalog/types';
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 
@@ -59,7 +60,9 @@ function pluginServiceStub(options: PluginServiceStubOptions): IPluginService {
     listPluginCommands: async () => [],
     checkUpdates: async () => [],
     pluginSkillRoots: async () => [],
+    pluginAgentRoots: async () => [],
     enabledSessionStarts: async () => options.sessionStarts,
+    enabledSystemPrompts: async () => [],
     enabledMcpServers: async () => ({}),
     enabledHooks: async () => [],
   };
@@ -122,7 +125,6 @@ describe('AgentPluginService plugin session-start wiring', () => {
       ),
     );
 
-    // Force-instantiate the real service (production does this from createMain).
     ctx.get(IAgentPluginService);
 
     await injectRegistered(ctx);
@@ -197,6 +199,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       onDidChange: sinkChange.event,
       load: async () => {},
       reload: async () => {},
+      list: async () => catalog.listSkills().map(summarizeSkill),
     };
 
     ctx = createTestAgent(
@@ -243,6 +246,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       onDidChange: sinkChange.event,
       load: async () => {},
       reload: async () => {},
+      list: async () => catalog.listSkills().map(summarizeSkill),
     };
 
     ctx = createTestAgent(

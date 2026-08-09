@@ -16,6 +16,8 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type Unsubscribe = () => void;
 
+export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+
 export type {
   AgentReplayRecord,
   AgentBackgroundTaskInfo,
@@ -64,6 +66,8 @@ export type {
   SkillSummary,
   ThinkingConfig,
   ToolInfo,
+  GlobalMcpServerConfig as McpServerConfig,
+  GlobalMcpServerTestResult as McpTestResult,
 } from '@moonshot-ai/agent-core';
 
 export type { KimiHostIdentity, OAuthRefreshOutcome };
@@ -71,6 +75,17 @@ export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
 export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
 
 export type PermissionMode = 'yolo' | 'manual' | 'auto';
+
+/**
+ * Trust state of a workspace directory. Only meaningful on the agent-core-v2
+ * engine; the v1 engine has no workspace-trust concept and reports
+ * `{ trusted: true, gatedMcpServers: [] }`.
+ */
+export interface WorkspaceTrustInfo {
+  readonly trusted: boolean;
+  /** Names of project-level MCP servers that trusting the workspace would enable. */
+  readonly gatedMcpServers: readonly string[];
+}
 
 export interface CreateGoalInput {
   readonly objective: string;
@@ -105,6 +120,16 @@ export interface CreateSessionOptions {
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
+  /**
+   * Main-agent profile name (`--agent`): a builtin profile or one defined by
+   * an agentfile discovered from the user/project agent directories.
+   */
+  readonly agentProfile?: string;
+  /**
+   * Explicit agentfiles (`--agent-file`) loaded for this session with the
+   * highest precedence; an invalid file fails session creation.
+   */
+  readonly agentFiles?: readonly string[];
   readonly sessionStartedProperties?: TelemetryProperties;
   /**
    * Print-mode (`kimi -p`) only: when the main agent ends a turn while
@@ -126,6 +151,16 @@ export interface ResumeSessionInput {
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
+  /** Re-select the session's already-bound main profile; a different name fails. */
+  readonly agentProfile?: string;
+  /** Include persisted subagent states in the returned replay snapshot. */
+  readonly includeSubagents?: boolean;
+  /**
+   * Limit each returned agent replay to the most recent N user turns. Omit to
+   * return the full replay. Lets UI callers that only render the tail avoid
+   * transferring the entire history over the RPC boundary.
+   */
+  readonly replayTurnLimit?: number;
   readonly sessionStartedProperties?: TelemetryProperties;
 }
 
@@ -140,6 +175,8 @@ export interface AddAdditionalDirInput {
 }
 
 export interface AddAdditionalDirOptions {
+  /** When true, share the directory through workspace local config. When false,
+   * keep it scoped to this session while still restoring it on session resume. */
   readonly persist: boolean;
 }
 
@@ -148,6 +185,11 @@ export interface ForkSessionInput {
   readonly forkId?: string;
   readonly title?: string;
   readonly metadata?: JsonObject;
+  /**
+   * Zero-based index of the user-visible turn to retain through. Omit it to
+   * preserve the existing full-session fork behavior.
+   */
+  readonly turnIndex?: number;
 }
 
 export interface ExportSessionInput {
@@ -175,6 +217,18 @@ export interface ListSessionsOptions {
 
 export interface GetConfigOptions {
   readonly reload?: boolean | undefined;
+}
+
+export interface AuthenticateMcpServerOptions {
+  readonly onAuthorizationUrl: (
+    url: string,
+  ) => void | boolean | PromiseLike<void | boolean>;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}
+
+export interface TestMcpServerOptions {
+  readonly cwd?: string;
 }
 
 export interface CompactOptions {

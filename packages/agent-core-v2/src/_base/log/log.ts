@@ -1,5 +1,5 @@
 /**
- * `_base/log` (L0) — structured logging contract.
+ * `_base/log` — structured logging contract.
  *
  * Defines the public logging model shared by every scope: the `LogEntry` /
  * `LogLevel` types, the `ILogger` / `ILogService` facade used by other domains
@@ -31,10 +31,6 @@ export interface LogEntry {
   readonly error?: LogEntryError;
 }
 
-/**
- * Plain sink interface (not a DI token). `*LogService` implementations own and
- * create their sinks; tests construct sinks directly.
- */
 export interface ILogWriter {
   write(entry: LogEntry): void;
   flush?(): Promise<void>;

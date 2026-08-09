@@ -24,10 +24,11 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ErrorCodes, Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire } from '../loop/stubs';
+import { registerStateServices } from '../../state/stubs';
 
 function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
@@ -47,9 +48,10 @@ function harness() {
   } as unknown as IAgentFullCompactionService;
   const ix = createServices(disposables, {
     strict: true, additionalServices: (reg) => {
+      registerStateServices(reg);
       reg.defineInstance(IAgentContextMemoryService, context);
       reg.defineInstance(IAgentLoopService, loop);
-      reg.defineInstance(IAgentWireService, stubWire());
+      reg.defineInstance(IWireService, stubWire());
       reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
       reg.defineInstance(IAgentFullCompactionService, fullCompaction);
       reg.define(IEventBus, EventBusService);
@@ -57,7 +59,7 @@ function harness() {
       reg.define(IAgentPromptService, AgentPromptService);
     }
   });
-  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction };
+  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, eventBus: ix.get(IEventBus) };
 }
 
 describe('AgentPromptService', () => {
@@ -75,6 +77,20 @@ describe('AgentPromptService', () => {
     const first = await prompt.enqueue({ message: message('one') });
     const second = await prompt.enqueue({ message: message('two') });
     expect(prompt.list().pending.map((item) => item.id)).toEqual([first.id, second.id]);
+  });
+
+  it('publishes prompt.queued only for prompts that cannot launch immediately', async () => {
+    const { prompt, eventBus } = harness();
+    const queued: Array<{ promptId: string; queueLength: number }> = [];
+    eventBus.subscribe('prompt.queued', (e) => {
+      queued.push({ promptId: e.promptId, queueLength: e.queueLength });
+    });
+
+    await prompt.enqueue({ id: 'active', message: message('active') });
+    expect(queued).toEqual([]);
+
+    await prompt.enqueue({ id: 'waiting', message: message('waiting') });
+    expect(queued).toEqual([{ promptId: 'waiting', queueLength: 1 }]);
   });
 
   it('atomically rejects steer when any id is not pending', async () => {
@@ -121,7 +137,7 @@ describe('AgentPromptService', () => {
   it('settles the prompt as failed when the loop throws on launch', async () => {
     const { prompt, loop } = harness();
     vi.spyOn(loop, 'enqueue').mockImplementation(() => {
-      throw new Error2(ErrorCodes.ACTIVITY_INITIALIZING, 'Agent is still restoring');
+      throw new Error2(ErrorCodes.TURN_AGENT_BUSY, 'Cannot launch a new turn while another turn is active');
     });
     const handle = await prompt.enqueue({ id: 'prompt-x', message: message('hello') });
     expect(handle.state).toBe('failed');
@@ -131,10 +147,6 @@ describe('AgentPromptService', () => {
   });
 
   it('replaces an unsupported prompt image with a text notice at the history funnel', async () => {
-    // The format gate is the last funnel before prompt content lands in the
-    // session history: an AVIF data-URL image (accepted by no provider)
-    // must never be appended as an image_url — one poisoned part makes every
-    // later request in the session fail.
     const { prompt, context, loop } = harness();
     const avifUrl = `data:image/avif;base64,${Buffer.from([1, 2, 3]).toString('base64')}`;
     const handle = await prompt.enqueue({

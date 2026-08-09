@@ -6,12 +6,10 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import { IAgentWireService } from '#/wire/tokens';
-import { WireService } from '#/wire/wireServiceImpl';
-import { stubWireRecord } from './stubs';
+
+import { registerTestAgentWire } from '../../wire/stubs';
 
 function textMessage(role: ContextMessage['role'], text: string): ContextMessage {
   return {
@@ -27,11 +25,6 @@ function textOf(message: ContextMessage): string {
     .join('');
 }
 
-// NOTE: the legacy `IMessageService` (which projected context history into
-// `ProtocolMessage`s with derived `msg-N` ids) was removed
-// (see commit `chore: remove IMessageService`). Message history now lives on
-// `IAgentContextMemoryService`, so these cases exercise that history directly instead of
-// the deleted derived-id projection.
 
 describe('message history (IAgentContextMemoryService)', () => {
   let disposables: DisposableStore;
@@ -40,9 +33,8 @@ describe('message history (IAgentContextMemoryService)', () => {
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentWireRecordService, stubWireRecord());
-    ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: 'message' }]));
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
+    registerTestAgentWire(ix, 'wire/message-history', { eventBus: ix.get(IEventBus) });
     ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
   });
   afterEach(() => disposables.dispose());
@@ -62,8 +54,6 @@ describe('message history (IAgentContextMemoryService)', () => {
     ctx.append(textMessage('user', 'keep'));
 
     const view = ctx.get();
-    // Wire-backed state is frozen, so the returned view cannot be mutated in place —
-    // stronger than a defensive copy: the internal history is unaffected either way.
     expect(() => (view as ContextMessage[]).splice(0, view.length)).toThrow();
 
     expect(ctx.get().map(textOf)).toEqual(['keep']);

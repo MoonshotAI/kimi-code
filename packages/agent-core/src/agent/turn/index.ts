@@ -5,11 +5,13 @@ import {
   APIConnectionError,
   APIContextOverflowError,
   APIEmptyResponseError,
+  APIProviderQuotaExhaustedError,
   APIStatusError,
   APITimeoutError,
   inputTotal,
   isContextOverflowStatusError,
   type ContentPart,
+  type Message,
   type TokenUsage,
 } from '@moonshot-ai/kosong';
 import { basename } from 'pathe';
@@ -26,6 +28,7 @@ import { isAbortError, isMaxStepsExceededError } from '../../loop/errors';
 import {
   createLoopEventDispatcher,
   runTurn,
+  type LLMRequestTrace,
   type ExecutableToolResult,
   type LoopEvent,
   type LoopRecordedEvent,
@@ -37,8 +40,14 @@ import type { TelemetryPropertyValue } from '../../telemetry';
 import { gateImageFormatParts } from '../../tools/support/image-compress';
 import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
+import {
+  captureMediaStripSnapshot,
+  stripMediaPartsBySnapshot,
+  type MediaStripSnapshot,
+} from '../context/projector';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
+import { degradeUnresolvedVideoToTag, resolvePromptMedia } from './media-resolve';
 import { ToolCallDeduplicator } from './tool-dedup';
 import { budgetToolResultForModel } from './tool-result-budget';
 
@@ -113,17 +122,37 @@ const GOAL_CONTINUATION_PROMPT = [
   'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
 ].join(' ');
 
+/**
+ * Variant of {@link GOAL_CONTINUATION_PROMPT} used when the previous goal turn
+ * ended by hitting the per-turn step limit (`loop_control.max_steps_per_turn`).
+ * The limit fragments goal work into more continuation turns instead of
+ * pausing the goal; the notice tells the model why, so it can size the next
+ * slice to fit the limit.
+ */
+const GOAL_STEP_CAP_CONTINUATION_PROMPT = [
+  'The previous goal turn reached the per-turn step limit before finishing its work,',
+  'so a new turn was started for you. Pick up where that turn stopped and keep each',
+  'slice of work small enough to fit the limit.',
+  GOAL_CONTINUATION_PROMPT,
+].join(' ');
+
 export class TurnFlow {
   private steerBuffer: BufferedSteer[] = [];
   private turnId = -1;
   private activeTurn: 'resuming' | ActiveTurn | null = null;
-  private readonly toolCallStartedAt = new Map<string, { name: string; startedAt: number }>();
+  private readonly toolCallStartedAt = new Map<
+    string,
+    { name: string; startedAt: number; traceId: string | undefined }
+  >();
   private readonly toolCallDupType = new Map<string, 'normal' | 'cross_step'>();
   private readonly stepToolCallKeys = new Map<number, Set<string>>();
   private readonly telemetryModeByTurn = new Map<number, 'agent' | 'plan'>();
   private readonly currentStepByTurn = new Map<number, number>();
   private readonly interruptedTelemetryTurnIds = new Set<number>();
+  private readonly interruptedTraceIdByTurn = new Map<number, string | undefined>();
   private readonly stepFailureByTurn = new Map<number, LoopTurnInterruptedEvent>();
+  private activeRequestTrace: LLMRequestTrace | undefined;
+  private latestTraceId: string | undefined;
   private currentStep = 0;
 
   constructor(protected readonly agent: Agent) {}
@@ -274,6 +303,10 @@ export class TurnFlow {
     return this.turnId;
   }
 
+  activeRequestTraceId(): string | undefined {
+    return this.activeRequestTrace?.traceId;
+  }
+
   get hasActiveTurn(): boolean {
     return this.activeTurn !== null && this.activeTurn !== 'resuming';
   }
@@ -320,7 +353,13 @@ export class TurnFlow {
     const steers = this.steerBuffer;
     if (steers.length === 0) return false;
     for (const steer of steers) {
-      this.agent.context.appendUserMessage(steer.input, steer.origin);
+      // Steer flushes happen at sites that cannot await an upload, so any
+      // prompt-attached local video is degraded to an always-safe `<video
+      // path>` tag here; the model uploads it in-turn via ReadMediaFile.
+      this.agent.context.appendUserMessage(
+        degradeUnresolvedVideoToTag(steer.input),
+        steer.origin,
+      );
     }
     steers.length = 0;
     return true;
@@ -380,11 +419,15 @@ export class TurnFlow {
       // instead of stopping after the turn that merely started it. (The
       // already-active case took the early return above.)
       const goalBecameActive = this.agent.goal.getGoal().goal?.status === 'active';
+      // The same per-turn-step-limit exemption as the driver's continuation
+      // loop: a turn that failed only at the step cap does not block the
+      // handoff — pursuit starts with a fresh continuation turn (told why).
+      const hitStepCap = isMaxStepsTurnFailure(end);
       if (
         goalBecameActive &&
         end.event.reason !== 'cancelled' &&
-        end.event.reason !== 'failed' &&
-        end.event.reason !== 'blocked'
+        end.event.reason !== 'blocked' &&
+        (end.event.reason !== 'failed' || hitStepCap)
       ) {
         // The ordinary turn created or resumed the goal, so it counts as the
         // first active goal turn before the continuation driver takes over.
@@ -395,7 +438,12 @@ export class TurnFlow {
         }
         return await this.driveGoal(
           this.allocateTurnId(),
-          [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }],
+          [
+            {
+              type: 'text',
+              text: hitStepCap ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT,
+            },
+          ],
           GOAL_CONTINUATION_ORIGIN,
           signal,
         );
@@ -414,7 +462,9 @@ export class TurnFlow {
    * full turn, then reads the goal status the model set via `UpdateGoal`:
    * `complete` (the record is cleared) / `blocked` stop the loop; `active`
    * (the model didn't decide) re-injects the goal reminder and runs the
-   * next continuation turn. Aborted or failed turns pause the goal. Goal-state
+   * next continuation turn. Aborted or failed turns pause the goal — except a
+   * turn that only failed by reaching the per-turn step limit, which just
+   * fragments goal work into more continuation turns. Goal-state
    * blockers, such as explicit `UpdateGoal('blocked')`, prompt-hook blocks, and
    * budget limits, block it (all resumable). Returns the final turn's result.
    */
@@ -446,7 +496,12 @@ export class TurnFlow {
         await this.agent.goal.pauseOnInterrupt({ reason: 'Paused after interruption' });
         return end;
       }
-      if (end.event.reason === 'failed') {
+      // A turn that failed only by reaching the per-turn step limit ended at a
+      // clean step boundary, so it is not a goal failure: fall through to the
+      // normal continuation decision below and keep pursuing the goal. The
+      // `turn.ended` event still reports the failure (and the limit) to hosts.
+      const hitStepCap = isMaxStepsTurnFailure(end);
+      if (end.event.reason === 'failed' && !hitStepCap) {
         await this.agent.goal.pauseActiveGoal({ reason: goalFailurePauseReason(end.event.error) });
         return end;
       }
@@ -471,7 +526,12 @@ export class TurnFlow {
       }
 
       turnId = this.allocateTurnId();
-      turnInput = [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }];
+      turnInput = [
+        {
+          type: 'text',
+          text: hitStepCap ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT,
+        },
+      ];
       turnOrigin = GOAL_CONTINUATION_ORIGIN;
     }
   }
@@ -484,7 +544,9 @@ export class TurnFlow {
     this.agent.usage.beginTurn();
     const startedAt = Date.now();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
-    this.agent.context.appendUserMessage(input, origin);
+    // The budget-exhausted goal turn does not run the model, so it cannot
+    // await an upload — degrade any local video to the always-safe tag form.
+    this.agent.context.appendUserMessage(degradeUnresolvedVideoToTag(input), origin);
     const ended: TurnEndedEvent = {
       type: 'turn.ended',
       turnId,
@@ -515,11 +577,10 @@ export class TurnFlow {
     const telemetryMode = this.telemetryMode();
     this.telemetryModeByTurn.set(turnId, telemetryMode);
     this.currentStepByTurn.set(turnId, 0);
-    this.agent.telemetry.track('turn_started', { mode: telemetryMode, ...this.requestProtocolProps() });
+    this.agent.telemetry.track('turn_started', { turn_id: turnId, mode: telemetryMode, thinking_effort: this.agent.config.thinkingEffort, ...this.requestProtocolProps() });
     this.agent.fullCompaction.resetForTurn();
     this.agent.usage.beginTurn();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
-    this.agent.context.appendUserMessage(input, origin);
 
     const startedAt = Date.now();
     let ended: TurnEndedEvent;
@@ -529,7 +590,14 @@ export class TurnFlow {
     // sits just past the turn.ended boundary that consumers watch for.
     let errorEvent: AgentEvent | undefined;
     try {
-      const promptHookEnded = await this.applyUserPromptHook(turnId, input, origin, signal, startedAt);
+      // Resolve any prompt-attached local video (a `file://` video_url) into
+      // its final delivered form — an uploaded `ms://` reference or an
+      // inline/tag fallback — BEFORE it lands in history, so no unresolved
+      // `file://` reference reaches the model or is persisted for resume. Auth
+      // rejections surface as a failed turn via the catch below.
+      const resolvedInput = await resolvePromptMedia(this.agent, input, signal);
+      this.agent.context.appendUserMessage(resolvedInput, origin);
+      const promptHookEnded = await this.applyUserPromptHook(turnId, resolvedInput, origin, signal, startedAt);
       if (promptHookEnded !== undefined) {
         ended = promptHookEnded.event;
         blockedByUserPromptHook = promptHookEnded.blocked;
@@ -584,6 +652,17 @@ export class TurnFlow {
           if (inputTokens !== undefined) {
             properties['input_tokens'] = inputTokens;
           }
+          // The failed request's own trace id: from the error response
+          // headers when it is a status error; otherwise from the in-flight
+          // capture — a failure after response headers arrived (mid-stream
+          // decode error, empty response) carries no trace on the error
+          // itself, but the request's headers were captured. Failures before
+          // any response (network errors, local aborts) leave the per-step
+          // capture empty, so those still report no trace.
+          const traceId = this.activeRequestTrace?.traceId;
+          if (traceId !== undefined) {
+            properties['trace_id'] = traceId;
+          }
           this.agent.telemetry.track('api_error', properties);
         }
       }
@@ -612,11 +691,20 @@ export class TurnFlow {
         inputData: { turnId, reason: 'cancelled' },
       });
     }
+    const terminalTraceId =
+      ended.reason === 'completed'
+        ? this.latestTraceId
+        : this.interruptedTraceIdByTurn.has(turnId)
+          ? this.interruptedTraceIdByTurn.get(turnId)
+          : this.activeRequestTrace?.traceId;
     this.agent.telemetry.track('turn_ended', {
+      turn_id: turnId,
       reason: ended.reason,
       duration_ms: ended.durationMs,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
+      thinking_effort: this.agent.config.thinkingEffort,
       ...this.requestProtocolProps(),
+      trace_id: terminalTraceId,
     });
     this.agent.emitEvent(ended);
     // Release the active turn in the same frame as turn.ended for a standalone
@@ -650,12 +738,16 @@ export class TurnFlow {
         turnId,
         this.currentStepByTurn.get(turnId) ?? this.currentStep,
         interruptReason,
+        this.activeRequestTrace?.traceId,
       );
     }
     this.telemetryModeByTurn.delete(turnId);
     this.currentStepByTurn.delete(turnId);
     this.interruptedTelemetryTurnIds.delete(turnId);
+    this.interruptedTraceIdByTurn.delete(turnId);
     this.stepFailureByTurn.delete(turnId);
+    this.activeRequestTrace = undefined;
+    this.latestTraceId = undefined;
     return { event: ended, stopReason: completedStopReason, blockedByUserPromptHook };
   }
 
@@ -727,10 +819,18 @@ export class TurnFlow {
     // appended only when the loadable set actually changed, so quiet turns
     // keep the prompt cache fully warm.
     this.agent.injection.injectToolsDiff();
+    let mediaStripSnapshot: MediaStripSnapshot | undefined;
+    const buildMessagesMediaStripped = (): Message[] => {
+      const messages = this.agent.context.messages;
+      mediaStripSnapshot ??= captureMediaStripSnapshot(messages);
+      return stripMediaPartsBySnapshot(messages, mediaStripSnapshot);
+    };
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
       const loopControl = this.agent.kimiConfig?.loopControl;
+      const maxStepsPerTurn = resolveMaxStepsPerTurn(loopControl?.maxStepsPerTurn);
+      const maxRetriesPerStep = resolveMaxRetriesPerStep(loopControl?.maxRetriesPerStep);
       let stopForGoalBudget = false;
       try {
         const result = await runTurn({
@@ -740,15 +840,15 @@ export class TurnFlow {
           buildMessages: () => this.agent.context.messages,
           buildMessagesStrict: () => this.agent.context.strictMessages,
           buildMessagesMediaDegraded: () => this.agent.context.mediaDegradedMessages,
-          buildMessagesMediaStripped: () => this.agent.context.mediaStrippedMessages,
+          buildMessagesMediaStripped,
           dispatchEvent: this.buildDispatchEvent(turnId),
           // Re-read per step (not snapshotted per turn) so a select_tools load
           // is dispatchable on the very next step of the same turn.
           buildTools: () => this.agent.tools.loopTools,
           describeMissingTool: (name) => this.agent.tools.missingToolMessage(name),
           log: this.agent.log,
-          maxSteps: loopControl?.maxStepsPerTurn,
-          maxRetryAttempts: loopControl?.maxRetriesPerStep,
+          maxSteps: maxStepsPerTurn,
+          maxRetryAttempts: maxRetriesPerStep,
           recordStepUsage: async (usage) => {
             try {
               const snapshot = await this.agent.goal.recordTokenUsage(usage.output);
@@ -756,6 +856,10 @@ export class TurnFlow {
             } catch (error) {
               this.agent.log.warn('goal token accounting failed', { error });
             }
+          },
+          onRequestTrace: (trace) => {
+            this.activeRequestTrace = trace;
+            deduper.beginStep(trace);
           },
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
@@ -769,7 +873,6 @@ export class TurnFlow {
               // re-injected later, so append them only after compaction runs.
               this.flushSteerBuffer();
               await this.agent.injection.inject();
-              deduper.beginStep();
               return;
             },
             afterStep: async ({ usage }) => {
@@ -830,7 +933,7 @@ export class TurnFlow {
               ) {
                 goalOutcomeMessageContinuationUsed = true;
                 goalOutcomeToolResultPending = false;
-                if (!hasStepBudgetRemaining(loopControl?.maxStepsPerTurn, ctx.stepNumber)) {
+                if (!hasStepBudgetRemaining(maxStepsPerTurn, ctx.stepNumber)) {
                   return { continue: false };
                 }
                 return { continue: true };
@@ -875,6 +978,16 @@ export class TurnFlow {
               return this.agent.permission.beforeToolCall(ctx);
             },
             finalizeToolResult: async (ctx) => {
+              // Calls rejected in preflight (e.g. invalid args) never reach
+              // prepareToolExecution, so register them here — otherwise the
+              // repeat breaker cannot count them and the model can re-issue
+              // the same invalid call indefinitely.
+              deduper.registerSkipped(
+                ctx.toolCall.id,
+                ctx.toolCall.name,
+                ctx.args,
+                ctx.toolCall.arguments,
+              );
               // Resolve dedup BEFORE firing the PostToolUse hook so same-step
               // dups (whose ctx.result is the dedup placeholder) report the
               // original's real outcome, not an empty success.
@@ -1002,7 +1115,15 @@ export class TurnFlow {
       this.beginTrackedStep(turnId, event.step);
       return;
     }
+    if (event.type === 'step.end') {
+      // Final write: the completed step's last attempt wins over any earlier
+      // mid-stream capture (e.g. from a retried attempt).
+      this.latestTraceId = event.traceId;
+      this.activeRequestTrace = undefined;
+      return;
+    }
     if (event.type === 'turn.interrupted') {
+      this.interruptedTraceIdByTurn.set(turnId, event.traceId);
       if (event.reason === 'error' && event.activeStep !== undefined) {
         this.stepFailureByTurn.set(turnId, event);
       }
@@ -1010,6 +1131,7 @@ export class TurnFlow {
         turnId,
         interruptedStep(event),
         event.interruptReason ?? telemetryInterruptReason(event.reason, false),
+        event.traceId,
       );
       return;
     }
@@ -1019,6 +1141,7 @@ export class TurnFlow {
   private beginTrackedStep(turnId: number, step: number): void {
     this.currentStepByTurn.set(turnId, step);
     this.currentStep = step;
+    this.activeRequestTrace = undefined;
     if (!this.stepToolCallKeys.has(step)) {
       this.stepToolCallKeys.set(step, new Set());
     }
@@ -1026,7 +1149,13 @@ export class TurnFlow {
 
   private trackToolLifecycle(event: LoopEvent, turnId: number): void {
     if (event.type === 'tool.call') {
-      const dupType = this.trackDuplicateToolCall(turnId, event.step, event.name, event.args);
+      const dupType = this.trackDuplicateToolCall(
+        turnId,
+        event.step,
+        event.name,
+        event.args,
+        event.traceId,
+      );
       this.toolCallDupType.set(
         event.toolCallId,
         dupType === 'cross_step' ? 'cross_step' : 'normal',
@@ -1034,6 +1163,7 @@ export class TurnFlow {
       this.toolCallStartedAt.set(event.toolCallId, {
         name: event.name,
         startedAt: Date.now(),
+        traceId: event.traceId,
       });
       return;
     }
@@ -1045,10 +1175,12 @@ export class TurnFlow {
       this.toolCallDupType.delete(event.toolCallId);
       const outcome = telemetryToolOutcome(event.result);
       const properties: Record<string, TelemetryPropertyValue> = {
+        turn_id: turnId,
         tool_name: started.name,
         outcome,
         duration_ms: Date.now() - started.startedAt,
         dup_type: dupType,
+        trace_id: event.traceId ?? started.traceId,
       };
       const errorType = outcome === 'error' ? telemetryToolErrorType(event.result) : undefined;
       if (errorType !== undefined) {
@@ -1063,6 +1195,7 @@ export class TurnFlow {
     step: number,
     toolName: string,
     args: unknown,
+    traceId: string | undefined,
   ): 'normal' | 'same_step' | 'cross_step' {
     const argsText = canonicalTelemetryArgs(args);
     const key = `${toolName}\u0000${argsText}`;
@@ -1085,6 +1218,7 @@ export class TurnFlow {
       tool_name: toolName,
       dup_type: dupType,
       args_hash: createHash('sha256').update(argsText).digest('hex').slice(0, 8),
+      trace_id: traceId,
     });
     return dupType;
   }
@@ -1100,14 +1234,19 @@ export class TurnFlow {
     turnId: number,
     atStep: number,
     interruptReason: TelemetryInterruptReason,
+    traceId: string | undefined,
   ): void {
     if (this.interruptedTelemetryTurnIds.has(turnId)) return;
     this.interruptedTelemetryTurnIds.add(turnId);
+    this.interruptedTraceIdByTurn.set(turnId, traceId);
     this.agent.telemetry.track('turn_interrupted', {
+      turn_id: turnId,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
+      thinking_effort: this.agent.config.thinkingEffort,
       at_step: atStep,
       interrupt_reason: interruptReason,
       ...this.requestProtocolProps(),
+      trace_id: traceId,
     });
   }
 
@@ -1142,8 +1281,50 @@ export class TurnFlow {
   }
 }
 
+const MAX_STEPS_PER_TURN_ENV = 'KIMI_LOOP_MAX_STEPS_PER_TURN';
+const MAX_RETRIES_PER_STEP_ENV = 'KIMI_LOOP_MAX_RETRIES_PER_STEP';
+
+/**
+ * Resolve the effective per-turn step cap. Precedence:
+ * `KIMI_LOOP_MAX_STEPS_PER_TURN` (non-negative integer) → config
+ * (`loop_control.max_steps_per_turn`) → `undefined` (no cap). `0` means no
+ * cap, same as the config field; an invalid env value is ignored.
+ */
+export function resolveMaxStepsPerTurn(configValue?: number): number | undefined {
+  return nonNegativeIntFromEnv(MAX_STEPS_PER_TURN_ENV) ?? configValue;
+}
+
+/**
+ * Resolve the effective per-step retry budget. Precedence:
+ * `KIMI_LOOP_MAX_RETRIES_PER_STEP` (non-negative integer) → config
+ * (`loop_control.max_retries_per_step`) → `undefined` (the loop's built-in
+ * default). An invalid env value is ignored.
+ */
+export function resolveMaxRetriesPerStep(configValue?: number): number | undefined {
+  return nonNegativeIntFromEnv(MAX_RETRIES_PER_STEP_ENV) ?? configValue;
+}
+
+function nonNegativeIntFromEnv(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (raw === undefined || raw.length === 0 || !/^\d+$/.test(raw)) return undefined;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
 function hasStepBudgetRemaining(maxSteps: number | undefined, currentStep: number): boolean {
   return maxSteps === undefined || maxSteps <= 0 || currentStep < maxSteps;
+}
+
+/**
+ * True when a turn ended `failed` only because it reached the per-turn step
+ * limit (`loop_control.max_steps_per_turn`). Such a turn stopped at a clean
+ * step boundary, so goal pursuit continues instead of pausing.
+ */
+function isMaxStepsTurnFailure(end: TurnEndResult): boolean {
+  return (
+    end.event.reason === 'failed' &&
+    end.event.error?.code === ErrorCodes.LOOP_MAX_STEPS_EXCEEDED
+  );
 }
 
 function isTerminalUpdateGoalResult(
@@ -1363,6 +1544,11 @@ interface ApiErrorClassification {
 }
 
 function classifyApiError(error: unknown, summary: KimiErrorPayload): ApiErrorClassification {
+  // Quota/balance exhaustion shares status 429 with rate limits but fails
+  // fast instead of retrying — keep the two apart in telemetry.
+  if (error instanceof APIProviderQuotaExhaustedError) {
+    return { errorType: 'quota_exhausted', statusCode: error.statusCode };
+  }
   const statusCode = apiStatusCode(error) ?? summaryStatusCode(summary);
   if (statusCode !== undefined) {
     if (statusCode === 429) return { errorType: 'rate_limit', statusCode };

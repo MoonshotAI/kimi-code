@@ -72,7 +72,4 @@ move.
 Respond with text only. Do not call any tools — you already have everything you
 need in the conversation history.
 
-{% if customInstruction %}
-Optional user instruction:
-{{ customInstruction }}
-{% endif %}
+${custom_instruction_block}

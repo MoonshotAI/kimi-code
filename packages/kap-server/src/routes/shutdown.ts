@@ -10,6 +10,7 @@
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 
 interface ShutdownRouteHost {
@@ -40,6 +41,10 @@ export function registerShutdownRoutes(
       tags: ['meta'],
     },
     (req, reply) => {
+      requestLog(req)?.info(
+        { remoteAddress: (req as unknown as { ip?: string }).ip },
+        'shutdown requested',
+      );
       reply.send(okEnvelope({ ok: true }, req.id));
       // Let the response flush before tearing the server down.
       setImmediate(() => opts.onShutdown());

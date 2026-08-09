@@ -131,4 +131,15 @@ describe('analyzeWire', () => {
     expect(a.contextSeries.map((p) => p.contextTokens)).toEqual([200, 200]);
     expect(a.summary.peakContextTokens).toBe(200);
   });
+
+  it('uses context.update_token_count as the absolute context-window fill', () => {
+    line = 0;
+    const a = analyzeWire([
+      e({ type: 'context.update_token_count', tokenCount: 42 }, 1),
+    ]);
+
+    expect(a.summary.contextTokens).toBe(42);
+    expect(a.summary.peakContextTokens).toBe(42);
+    expect(a.contextSeries.map((point) => point.contextTokens)).toEqual([42]);
+  });
 });

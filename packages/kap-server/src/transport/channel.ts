@@ -1,5 +1,5 @@
 /**
- * `/api/v2` channel transport — shared, transport-agnostic primitives.
+ * `/api/v1/debug` channel transport — shared, transport-agnostic primitives.
  *
  * A request carries a scope path + a `<service>/<method>` pair: the channel
  * registry resolves `service` (a decorator id) to a Service, and `method` is
@@ -8,7 +8,7 @@
  */
 
 /** Which scope a route resolves before dispatching. */
-export type ScopeKind = 'core' | 'session' | 'agent';
+export type ScopeKind = 'core' | 'workspace' | 'session' | 'agent';
 
 /** The client-facing channel contract (request/response + future events). */
 export interface IChannel {

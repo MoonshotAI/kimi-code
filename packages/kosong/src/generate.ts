@@ -39,6 +39,11 @@ export interface GenerateResult {
    * `null` if the provider did not emit one.
    */
   readonly rawFinishReason: string | null;
+  /**
+   * Provider trace identifier from the `x-trace-id` response header
+   * (Kimi/KFC only), or `null` when the provider does not report one.
+   */
+  readonly traceId?: string | null;
 }
 
 export interface GenerateCallbacks {
@@ -113,6 +118,12 @@ export async function generate(
 
   options?.onRequestStart?.();
   const stream = await provider.generate(systemPrompt, wireTools, history, options);
+  // Early capture: the trace id arrives with the response headers, before the
+  // stream body — and before any mid-stream abort — so hosts can attribute
+  // even a cancelled stream to its server-side request.
+  if (stream.traceId !== undefined) {
+    options?.onTraceId?.(stream.traceId);
+  }
 
   // Post-await abort check: `provider.generate()` may have resolved before
   // noticing a mid-flight abort. Reject immediately rather than draining
@@ -241,13 +252,17 @@ export async function generate(
     }
   }
 
-  return {
+  const result: GenerateResult = {
     id: stream.id,
     message,
     usage: stream.usage,
     finishReason: stream.finishReason,
     rawFinishReason: stream.rawFinishReason,
   };
+  if (stream.traceId !== undefined) {
+    return { ...result, traceId: stream.traceId };
+  }
+  return result;
 }
 
 type CancelableStream = StreamedMessage & {

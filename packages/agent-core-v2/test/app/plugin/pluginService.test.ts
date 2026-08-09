@@ -1,5 +1,5 @@
 /**
- * `plugin` domain (L3) — App-scope `PluginService` boundary scenarios.
+ * `plugin` domain — App-scope `PluginService` boundary scenarios.
  *
  * Covers load-failure degradation and recovery, serialized catalog changes,
  * coded management errors, and managed endpoint injection. Resolves the real
@@ -17,9 +17,9 @@ import path from 'node:path';
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -27,7 +27,7 @@ import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
-import { IProviderService, type ProviderConfig } from '#/app/provider/provider';
+import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import * as pluginStore from '#/app/plugin/store';
 import type { InstalledFile } from '#/app/plugin/store';
@@ -58,7 +58,12 @@ function makeHost(
     stubPair(IProviderService, providers),
     stubPair(ISkillDiscovery, {
       _serviceBrand: undefined,
-      discover: async () => ({ skills: [], skipped: [], scannedRoots: [] }),
+      discover: async () => ({
+        skills: [],
+        skipped: [],
+        scannedRoots: [],
+        scannedDirectories: [],
+      }),
     } satisfies ISkillDiscovery),
   ]);
 }
@@ -152,7 +157,7 @@ describe('PluginService (plugin boundary)', () => {
       LifecycleScope.App,
       IPluginService,
       PluginService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'plugin',
     );
     readInstalled.mockClear();
@@ -176,6 +181,7 @@ describe('PluginService (plugin boundary)', () => {
       const svc = host.app.accessor.get(IPluginService);
       await expect(svc.pluginSkillRoots()).resolves.toEqual([]);
       await expect(svc.enabledSessionStarts()).resolves.toEqual([]);
+      await expect(svc.enabledSystemPrompts()).resolves.toEqual([]);
       await expect(svc.enabledHooks()).resolves.toEqual([]);
     } finally {
       host.dispose();
@@ -251,6 +257,22 @@ describe('PluginService (plugin boundary)', () => {
         expect.objectContaining({ id: 'recovery-demo' }),
       ]);
       expect(reloads).toEqual([{ added: ['recovery-demo'], removed: [], errors: [] }]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('serves enabled plugin system-prompt sections on the consumption plane', async () => {
+    const home = await makeHome();
+    const pluginRoot = await makePluginDir('prompt-demo', { systemPrompt: 'Always cite sources.' });
+    createdDirs.push(pluginRoot);
+    await writeInstalledFile(home, JSON.stringify(installedFile('prompt-demo', pluginRoot)));
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await expect(svc.enabledSystemPrompts()).resolves.toEqual([
+        { pluginId: 'prompt-demo', content: 'Always cite sources.' },
+      ]);
     } finally {
       host.dispose();
     }

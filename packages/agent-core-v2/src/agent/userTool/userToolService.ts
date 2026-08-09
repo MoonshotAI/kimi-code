@@ -1,5 +1,5 @@
 /**
- * `userTool` domain (L4) — `IAgentUserToolService` implementation.
+ * `userTool` domain — `IAgentUserToolService` implementation.
  *
  * Holds the set of host-registered user tools in the `wire` `UserToolModel`
  * (`Map<string, UserToolRegistration>`), mutating it only through the
@@ -7,8 +7,9 @@
  * (`wire.dispatch(...)`). The live side effects — `registry.register` +
  * `profile.addActiveTool` (and the matching dispose / `removeActiveTool`) — run
  * after the dispatch, and are re-derived from the rebuilt Model by
- * `wire.onRestored` after `wire.replay`, so a resumed agent re-registers exactly
- * the tools the persisted ops describe without re-firing any live notification.
+ * `wire.hooks.onDidRestore` after `wire.restore`, so a resumed agent re-registers
+ * exactly the tools the persisted ops describe without re-firing any live
+ * notification.
  * The restore re-registers into the tool registry only: the active-tool set is
  * owned by the persisted `ActiveToolsModel`, so the ephemeral `addActiveTool`
  * overlay is not rebuilt (it is live-only by design). The per-tool
@@ -17,8 +18,7 @@
  */
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type {
@@ -28,8 +28,7 @@ import type {
 } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 
 import { IAgentUserToolService, type UserToolRegistration } from './userTool';
 import { registerUserTool, unregisterUserTool, UserToolModel } from './userToolOps';
@@ -50,10 +49,15 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
   ) {
     super();
-    this._register(this.wire.onRestored(() => this.restoreRegisteredTools()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('user-tool', async (_ctx, next) => {
+        this.restoreRegisteredTools();
+        await next();
+      }),
+    );
   }
 
   list(): readonly UserToolRegistration[] {
@@ -77,11 +81,6 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
   }
 
   private restoreRegisteredTools(): void {
-    // The persisted `ActiveToolsModel` is the source of truth for the active
-    // set on resume. Re-activating a tool whose registration predates the
-    // final `tools.set_active_tools` would resurrect a stale ephemeral
-    // overlay on top of an explicit base, so only activate tools the base
-    // does not exclude.
     const persistedActive = this.profile.getActiveToolNames();
     for (const registration of this.wire.getModel(UserToolModel).values()) {
       const activate =
@@ -102,7 +101,12 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
         execute: (context) => this.executeUserTool(context, name, args),
       }),
     };
-    this.registrations.set(name, this._register(this.registry.register(tool, { source: 'user' })));
+    this.registrations.set(
+      name,
+      this._register(
+        this.registry.register(tool, { source: 'user', disclosure: input.disclosure }),
+      ),
+    );
     if (options?.activate === false) return;
     this.profile.addActiveTool(name);
   }
@@ -151,6 +155,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentUserToolService,
   AgentUserToolService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'userTool',
 );

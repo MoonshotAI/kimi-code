@@ -1,4 +1,12 @@
-import type { CreateSessionOptions, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import {
+  removeProviderFromConfig,
+  type CreateSessionOptions,
+  type KimiConfig,
+  type KimiHarness,
+  type OAuthRef,
+  type Session,
+  type ThinkingEffort,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import { createKimiCodeUserAgent } from '#/cli/version';
 
@@ -7,6 +15,7 @@ import type { SkillListSession } from '../commands';
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
 import {
   refreshAllProviderModels,
+  type RefreshProviderHost,
   type RefreshProviderScope,
   type RefreshResult,
 } from '../utils/refresh-providers';
@@ -24,6 +33,7 @@ export interface AuthFlowHost {
   session: Session | undefined;
   readonly harness: KimiHarness;
   readonly options: KimiTUIOptions;
+  readonly engineV2: boolean;
 
   setAppState(patch: Partial<AppState>): void;
   setStartupReady(): void;
@@ -32,6 +42,7 @@ export interface AuthFlowHost {
   syncRuntimeState(session?: Session): Promise<void>;
   closeSession(reason: string): Promise<void>;
   appendStartupNotice(extra: string): void;
+  hydrateLazyConfigDefaults(): Promise<void>;
   readonly sessionEventHandler: SessionEventHandler;
   fetchSessions(): Promise<void>;
   updateTerminalTitle(): void;
@@ -75,6 +86,20 @@ export class AuthFlowController {
       return;
     }
 
+    if (host.engineV2) {
+      // Lazy session creation (v2 engine): configure the model only; the
+      // session is created on the first message. The effort is carried as the
+      // first session's thinking override so a session-only choice (Alt+S)
+      // made before any session exists is applied on creation.
+      const patch: Partial<AppState> = { model };
+      if (effort !== undefined) {
+        patch.thinkingEffort = effort as ThinkingEffort;
+        patch.lazySessionThinking = effort as ThinkingEffort;
+      }
+      host.setAppState(patch);
+      return;
+    }
+
     const options: MutableCreateSessionOptions = {
       workDir: host.state.appState.workDir,
       model,
@@ -85,6 +110,12 @@ export class AuthFlowController {
           ? 'yolo'
           : undefined,
       planMode: host.state.appState.planMode ? true : undefined,
+      // The post-login session is still the startup session: carry the
+      // --agent/--agent-file binding resolved at launch.
+      agentProfile: host.options.startup.agentProfile,
+      agentFiles: host.options.startup.agentFiles?.length
+        ? [...host.options.startup.agentFiles]
+        : undefined,
     };
     if (host.state.appState.additionalDirs.length > 0) {
       options.additionalDirs = [...host.state.appState.additionalDirs];
@@ -124,11 +155,23 @@ export class AuthFlowController {
     const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
 
     if (defaultModel === undefined || selected === undefined) {
+      if (host.session === undefined && host.engineV2) {
+        // Session-less v2: hydrate permission/plan defaults even without a
+        // default model.
+        await host.hydrateLazyConfigDefaults();
+      }
       host.setAppState({ availableModels, availableProviders });
       return;
     }
 
     await this.activateModelAfterLogin(defaultModel, thinkingEffortFromConfig(config.thinking));
+    if (host.session === undefined && host.engineV2) {
+      // Session-less v2: also hydrate permission/plan defaults from the
+      // refreshed config, same as startup.
+      await host.hydrateLazyConfigDefaults();
+      host.setAppState({ availableModels, availableProviders });
+      return;
+    }
     const appStatePatch: Partial<AppState> = {
       availableModels,
       availableProviders,
@@ -166,23 +209,68 @@ export class AuthFlowController {
   }
 
   private async refreshProviderModelsWithScope(scope: RefreshProviderScope): Promise<RefreshResult> {
-    const { host } = this;
-    const result = await refreshAllProviderModels(
-      {
-        getConfig: () => host.harness.getConfig({ reload: true }),
-        removeProvider: (id) => host.harness.removeProvider(id),
-        setConfig: (patch) => host.harness.setConfig(patch),
-        resolveOAuthToken: async (providerName, oauthRef) => {
-          const tokenProvider = host.harness.auth.resolveOAuthTokenProvider(providerName, oauthRef);
-          return tokenProvider.getAccessToken();
-        },
-        userAgent: createKimiCodeUserAgent(),
-      },
-      { scope },
-    );
+    const result = await refreshAllProviderModels(this.buildRefreshHost(), { scope });
     if (result.changed.length > 0) {
       await this.refreshAvailableModels();
     }
     return result;
+  }
+
+  /**
+   * Build the refresh orchestrator's persistence host. When the harness can
+   * persist several config sections as ONE atomic write (the v2 engine's
+   * `replaceSections`), the orchestrator's two-phase contract (removeProvider
+   * then setConfig) is absorbed the same way the v2 engine's own refresh path
+   * does it: the removal is staged in memory only, and the following
+   * setConfig persists the complete records in a single write — so a process
+   * exit mid-refresh can never leave config.toml in a "provider removed, not
+   * yet restored" state. The v1 harness keeps the legacy host (two
+   * whole-document writes, each atomic on its own).
+   */
+  private buildRefreshHost(): RefreshProviderHost {
+    const { host } = this;
+    const resolveOAuthToken = async (providerName: string, oauthRef?: OAuthRef): Promise<string> => {
+      const tokenProvider = host.harness.auth.resolveOAuthTokenProvider(providerName, oauthRef);
+      return tokenProvider.getAccessToken();
+    };
+    const userAgent = createKimiCodeUserAgent();
+    if (!host.harness.supportsAtomicSectionReplace()) {
+      return {
+        getConfig: () => host.harness.getConfig({ reload: true }),
+        removeProvider: (id) => host.harness.removeProvider(id),
+        setConfig: (patch) => host.harness.setConfig(patch),
+        resolveOAuthToken,
+        userAgent,
+      };
+    }
+    let staged: KimiConfig | undefined;
+    const requireStaged = (): KimiConfig => {
+      if (staged === undefined) {
+        throw new Error('refresh host: getConfig must be called before writes');
+      }
+      return staged;
+    };
+    return {
+      getConfig: async () => {
+        staged = await host.harness.getConfig({ reload: true });
+        return staged;
+      },
+      removeProvider: (id) => {
+        staged = removeProviderFromConfig(requireStaged(), id);
+        return Promise.resolve(staged);
+      },
+      setConfig: async (patch) => {
+        // The orchestrator always passes complete records (built from a full
+        // clone), so the Partial-shaped patch is a full KimiConfig overlay.
+        staged = { ...requireStaged(), ...patch } as KimiConfig;
+        // Object.entries keeps keys whose value is `undefined`, so a cleared
+        // section (e.g. a dangling defaultModel) is expressed as a removal in
+        // the atomic write; sections absent from the patch stay untouched.
+        await host.harness.replaceConfigSections(Object.fromEntries(Object.entries(patch)));
+        return staged;
+      },
+      resolveOAuthToken,
+      userAgent,
+    };
   }
 }

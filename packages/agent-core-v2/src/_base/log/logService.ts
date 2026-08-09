@@ -1,5 +1,5 @@
 /**
- * `_base/log` (L0) — `BoundLogger` base and the App-scope `ILogService`.
+ * `_base/log` — `BoundLogger` base and the App-scope `ILogService`.
  *
  * `BoundLogger` filters entries by level, extracts the payload into ctx/error,
  * merges bound context, and writes to a plain `ILogWriter`. It extends
@@ -9,9 +9,8 @@
  * level from `ILogOptions`.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import {
   type ILogger,
@@ -130,11 +129,6 @@ export class BoundLogger extends Disposable implements ILogger {
   }
 }
 
-/**
- * App-scope `ILogService`: writes the global rotating file under
- * `<homeDir>/logs`, with its level seeded from `ILogOptions`. Flushes
- * synchronously when the App scope is disposed (process shutdown).
- */
 export class AppLogService extends BoundLogger implements ILogService {
   declare readonly _serviceBrand: undefined;
   private readonly sink: FileLogWriter;
@@ -175,6 +169,6 @@ registerScopedService(
   LifecycleScope.App,
   ILogService,
   AppLogService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'log',
 );

@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   SyncDescriptor,
@@ -25,6 +25,7 @@ import {
   ILogService,
   ICoreProcessService,
   IQuestionService,
+  IWorkspaceRegistry,
 } from '../../src/services';
 
 class RecordingEventService implements IEventService {
@@ -93,6 +94,33 @@ class NoopLogService implements ILogService {
   }
 }
 
+class NoopWorkspaceRegistry implements IWorkspaceRegistry {
+  readonly _serviceBrand: undefined;
+
+  async list(): ReturnType<IWorkspaceRegistry['list']> {
+    return [];
+  }
+  async get(): ReturnType<IWorkspaceRegistry['get']> {
+    throw new Error('not implemented');
+  }
+  async createOrTouch(): ReturnType<IWorkspaceRegistry['createOrTouch']> {
+    throw new Error('not implemented');
+  }
+  async update(): ReturnType<IWorkspaceRegistry['update']> {
+    throw new Error('not implemented');
+  }
+  async delete(): Promise<void> {}
+  async resolveRoot(): Promise<string> {
+    throw new Error('not implemented');
+  }
+  async findWorkspaceIdByRoot(): Promise<string | undefined> {
+    return undefined;
+  }
+  async resolveAliasWorkDirs(): Promise<readonly string[]> {
+    return [];
+  }
+}
+
 let tmpHome: string;
 let prevHome: string | undefined;
 
@@ -103,6 +131,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   if (prevHome === undefined) {
     delete process.env['KIMI_HOME'];
   } else {
@@ -120,6 +149,7 @@ function makePeers() {
     approvalService: new RecordingApprovalService(),
     questionService: new RecordingQuestionService(),
     logService: new NoopLogService(),
+    workspaceRegistry: new NoopWorkspaceRegistry(),
   };
 }
 
@@ -179,7 +209,7 @@ describe('BridgeClientAPI', () => {
 
 describe('CoreProcessService direct construction', () => {
   it('constructs, exposes a callable rpc proxy, and ready() resolves', async () => {
-    const { eventService, approvalService, questionService, logService } = makePeers();
+    const { eventService, approvalService, questionService, logService, workspaceRegistry } = makePeers();
     const core = new CoreProcessService(
       {},
       makeEnv(tmpHome),
@@ -187,6 +217,7 @@ describe('CoreProcessService direct construction', () => {
       approvalService,
       questionService,
       logService,
+      workspaceRegistry,
     );
     try {
       await expect(core.ready()).resolves.toBeUndefined();
@@ -197,7 +228,7 @@ describe('CoreProcessService direct construction', () => {
   });
 
   it('rpc round-trip through createRPC reaches KimiCore (getCoreInfo smoke)', async () => {
-    const { eventService, approvalService, questionService, logService } = makePeers();
+    const { eventService, approvalService, questionService, logService, workspaceRegistry } = makePeers();
     const core = new CoreProcessService(
       {},
       makeEnv(tmpHome),
@@ -205,6 +236,7 @@ describe('CoreProcessService direct construction', () => {
       approvalService,
       questionService,
       logService,
+      workspaceRegistry,
     );
     try {
       await core.ready();
@@ -217,7 +249,7 @@ describe('CoreProcessService direct construction', () => {
   });
 
   it('dispose is idempotent and short-circuits subsequent rpc calls', async () => {
-    const { eventService, approvalService, questionService, logService } = makePeers();
+    const { eventService, approvalService, questionService, logService, workspaceRegistry } = makePeers();
     const core = new CoreProcessService(
       {},
       makeEnv(tmpHome),
@@ -225,6 +257,7 @@ describe('CoreProcessService direct construction', () => {
       approvalService,
       questionService,
       logService,
+      workspaceRegistry,
     );
     await core.ready();
     core.dispose();
@@ -241,10 +274,50 @@ describe('CoreProcessService direct construction', () => {
     expect(typeof tokenProvider?.getAccessToken).toBe('function');
   });
 
+  it('threads identity into the default resolver so refreshes carry X-Msh-Platform', async () => {
+    const credentialsDir = join(tmpHome, 'credentials');
+    mkdirSync(credentialsDir, { recursive: true });
+    writeFileSync(
+      join(credentialsDir, 'kimi-code.json'),
+      JSON.stringify({
+        access_token: 'expired-access',
+        refresh_token: 'refresh-1',
+        expires_at: 1,
+        scope: '',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      }),
+    );
+    const refreshHeaders: Record<string, string>[] = [];
+    vi.stubGlobal('fetch', async (_input: unknown, init?: RequestInit) => {
+      refreshHeaders.push((init?.headers ?? {}) as Record<string, string>);
+      return new Response(
+        JSON.stringify({
+          access_token: 'rotated-access',
+          refresh_token: 'rotated-refresh',
+          expires_in: 3600,
+          scope: '',
+          token_type: 'Bearer',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+
+    const resolver = CoreProcessService._defaultOAuthTokenResolver(
+      tmpHome,
+      join(tmpHome, 'config.toml'),
+      { productName: 'test', version: '0.0.0-test', platform: 'test_platform' },
+    );
+    const tokenProvider = resolver('managed:kimi-code');
+    await expect(tokenProvider?.getAccessToken()).resolves.toBe('rotated-access');
+    expect(refreshHeaders).toHaveLength(1);
+    expect(refreshHeaders[0]?.['X-Msh-Platform']).toBe('test_platform');
+  });
+
   it('default-wires kimiRequestHeaders from identity when caller omits headers', () => {
     const headers = CoreProcessService._defaultKimiRequestHeaders(
       tmpHome,
-      { userAgentProduct: 'kimi-code-cli', version: '9.9.9' },
+      { productName: 'kimi-code-cli', version: '9.9.9', platform: 'kimi_code_cli' },
     );
     expect(headers).toBeDefined();
     expect(headers!['User-Agent']).toMatch(/^kimi-code-cli\/9\.9\.9/);
@@ -265,7 +338,7 @@ describe('CoreProcessService direct construction', () => {
     const picked =
       explicit ?? CoreProcessService._defaultKimiRequestHeaders(
         tmpHome,
-        { userAgentProduct: 'kimi-code-cli', version: '9.9.9' },
+        { productName: 'kimi-code-cli', version: '9.9.9', platform: 'kimi_code_cli' },
       );
     expect(picked).toBe(explicit);
   });
@@ -288,6 +361,7 @@ describe('singleton registry composition', () => {
     ix.stub(IQuestionService, questionService);
     ix.stub(IEnvironmentService, makeEnv(tmpHome));
     ix.stub(ILogService, new NoopLogService());
+    ix.stub(IWorkspaceRegistry, new NoopWorkspaceRegistry());
 
     try {
       const core = ix.createInstance(CoreProcessService, {});

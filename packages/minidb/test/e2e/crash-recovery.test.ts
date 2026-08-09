@@ -53,7 +53,7 @@ async function verifyContiguous(dir, label) {
   return last; // highest contiguous index
 }
 
-test('crash-recovery: kill mid-write, recovery yields a contiguous correct prefix', async () => {
+test('crash-recovery: kill mid-write, recovery yields a contiguous correct prefix', { timeout: 60_000 }, async () => {
   // Each run spawns a child process (the dominant cost); 5 runs with random kill
   // times still sample the crash window well.
   const runs = 5;
@@ -70,7 +70,7 @@ test('crash-recovery: kill mid-write, recovery yields a contiguous correct prefi
   }
 });
 
-test('crash-recovery: kill during compaction, still consistent', async () => {
+test('crash-recovery: kill during compaction, still consistent', { timeout: 60_000 }, async () => {
   const runs = 3;
   for (let r = 0; r < runs; r++) {
     const dir = await tmpDir();

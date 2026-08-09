@@ -1,0 +1,50 @@
+# Source files
+src/**
+webview-ui/**
+shared/**
+**/*.ts
+**/*.tsx
+
+# Node modules (bundled via esbuild/vite)
+**/node_modules/**
+
+# Build configs
+.vscode/**
+tsconfig.json
+tsdown.config.ts
+vitest.config.ts
+.vscode-test.mjs
+eslint.config.mjs
+webview-ui/tsconfig.json
+webview-ui/vite.config.ts
+webview-ui/components.json
+
+# Scripts
+scripts/**
+test/**
+runtime/**
+artifacts/**
+
+# Never package generated test/debug state
+**/.kimi/**
+**/.kimi-code/**
+**/cache/**
+**/caches/**
+**/credentials/**
+**/logs/**
+**/profile/**
+**/profiles/**
+**/session/**
+**/sessions/**
+**/tokens/**
+**/*.jsonl
+**/*.log
+
+# Other
+.gitignore
+**/*.map
+*.vsix
+**/.DS_Store
+
+# Prevent parent directory traversal via symlinks
+../**

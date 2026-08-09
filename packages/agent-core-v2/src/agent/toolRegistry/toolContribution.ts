@@ -1,81 +1,82 @@
 /**
- * `toolRegistry` domain (L3) — module-level tool contribution registry.
+ * `toolRegistry` domain — module-level agent-tool contribution registry.
  *
- * Tools contribute themselves at module load via `registerTool(ctor, options?)`
- * — the same "import = register" pattern used by `registerScopedService` for
- * DI services and by `registerConfigSection` for config. `AgentToolRegistryService`
- * (Agent scope) consumes the accumulated contributions on construction: for each
- * contribution whose `when` predicate holds, it uses `IInstantiationService.createInstance`
- * to build the tool (passing any `staticArgs` before the injected DI dependencies)
- * and registers it into the per-agent runtime registry.
+ * Tools contribute themselves at module load via
+ * `registerAgentToolService(identifier, ctor, options?)` — a double registration:
+ * the tool is registered as an Agent-scope DI service
+ * (`registerScopedService`) and recorded in this contribution table. The DI
+ * registration explicitly uses `OnDemand` scope activation, so no tool
+ * constructor runs at scope creation — constructors may legitimately throw
+ * when their host capability is absent (e.g. `WebSearchTool` without a
+ * configured provider), and the runtime registry always holds real instances,
+ * never proxies.
+ * `AgentToolActivationService` consumes the table when
+ * an Agent is created: for each contribution whose `when` predicate holds and
+ * whose `name` the bound Profile's tool policy allows, it resolves the
+ * service through the container (`accessor.get`, triggering construction) and
+ * registers it into the per-agent runtime registry. The
+ * declared `name` is what lets activation filter without instantiating.
  *
- * `registerTool` is deliberately not "builtin"-scoped: the same API is what
- * external contributors (plugins, SDK consumers) will use once the surface is
- * public. The tool's origin is carried by `options.source` (`'builtin'` /
- * `'user'` / `'mcp'` / …), not by the registration API.
+ * `registerAgentToolService` is deliberately not "builtin"-scoped: the same API is
+ * what external contributors (plugins, SDK consumers) will use once the
+ * surface is public. The tool's origin is carried by `options.source`
+ * (`'builtin'` / `'user'` / `'mcp'` / …), not by the registration API.
  *
- * Tools are always Agent-scoped instances (each Agent has its own tool
+ * Tools are always Agent-scoped services (each Agent has its own tool
  * registry, and tool constructors inject Agent-scope services), so no `scope`
  * parameter is exposed. If tools at other scopes are ever needed, add it
  * optionally without breaking existing callers.
  */
 
-import type { ServicesAccessor } from '#/_base/di/instantiation';
-import type { ExecutableTool, ToolSource } from '#/tool/toolContract';
+import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import type {
+  AgentTool,
+  ToolDisclosure,
+  ToolSource,
+} from '#/tool/toolContract';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type AnyExecutableTool = ExecutableTool<any>;
+export type AnyAgentTool = AgentTool<any>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ToolCtor<T extends AnyExecutableTool = AnyExecutableTool> = new (...args: any[]) => T;
+export type AgentToolCtor<T extends AnyAgentTool = AnyAgentTool> = new (...args: any[]) => T;
 
-export interface ToolContributionOptions {
-  /**
-   * Origin tag stored alongside the tool in the runtime registry. Defaults to
-   * `'builtin'` when omitted (mirroring the current runtime `register()`
-   * default). External contributors would pass `'user'`, `'plugin'`, etc.
-   */
+export interface AgentToolContributionOptions {
+  readonly name: string;
   readonly source?: ToolSource;
-  /**
-   * Optional per-Agent predicate. Evaluated once when the Agent's tool registry
-   * is constructed; if it returns `false`, the contribution is skipped for that
-   * Agent. Runs inside an `invokeFunction` so it can `.get()` any Agent-scope
-   * service.
-   */
+  readonly disclosure?: ToolDisclosure;
   readonly when?: (accessor: ServicesAccessor) => boolean;
-  /**
-   * Optional supplier of leading static arguments passed to the tool
-   * constructor before any DI-injected services (matching the SyncDescriptor
-   * convention). Also invoked with a `ServicesAccessor`, so runtime config
-   * values (`IConfigService.get(...)`) can flow through here without a
-   * dedicated wrapper class.
-   */
-  readonly staticArgs?: (accessor: ServicesAccessor) => readonly unknown[];
+  readonly domain?: string;
 }
 
-export interface ToolContribution<T extends AnyExecutableTool = AnyExecutableTool> {
-  readonly ctor: ToolCtor<T>;
-  readonly options: ToolContributionOptions;
+export interface AgentToolContribution<T extends AnyAgentTool = AnyAgentTool> {
+  readonly id: ServiceIdentifier<T>;
+  readonly ctor: AgentToolCtor<T>;
+  readonly options: AgentToolContributionOptions;
 }
 
-const _toolContributions: ToolContribution[] = [];
+const _agentToolContributions: AgentToolContribution[] = [];
 
-export function registerTool<T extends AnyExecutableTool>(
-  ctor: ToolCtor<T>,
-  options: ToolContributionOptions = {},
+export function registerAgentToolService<T extends AnyAgentTool>(
+  id: ServiceIdentifier<T>,
+  ctor: AgentToolCtor<T>,
+  options: AgentToolContributionOptions,
 ): void {
-  _toolContributions.push({ ctor: ctor as ToolCtor, options });
+  registerScopedService(
+    LifecycleScope.Agent,
+    id,
+    ctor,
+    ScopeActivation.OnDemand,
+    options.domain ?? 'unknown',
+  );
+  _agentToolContributions.push({ id, ctor, options });
 }
 
-export function getToolContributions(): readonly ToolContribution[] {
-  return _toolContributions;
+export function getAgentToolContributions(): readonly AgentToolContribution[] {
+  return _agentToolContributions;
 }
 
-/**
- * Test hook. Clears the module-level contribution list so a test can register
- * a bounded set (mirrors `_clearScopedRegistryForTests`). Not for production
- * code — the tool table is meant to accumulate over the process lifetime.
- */
-export function _clearToolContributionsForTests(): void {
-  _toolContributions.length = 0;
+export function _clearAgentToolContributionsForTests(): void {
+  _agentToolContributions.length = 0;
 }

@@ -1,15 +1,13 @@
 /**
- * `edit` domain (L4) — `IFileEditService` implementation.
+ * `edit` domain — `IFileEditService` implementation.
  *
  * Reads the file through the os `hostFs` domain (`IHostFileSystem`), runs the
  * pure edit logic (`TextModel` + `EditService`), and writes the re-materialized
  * content back. Maps host-level failures (e.g. `EISDIR`) to the domain-neutral
- * `FileEditResult`; it owns no tool-facing message, which the Agent `EditTool`
- * adapter supplies. Bound at App scope.
+ * `FileEditResult`; it owns no tool-facing message. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
@@ -28,9 +26,6 @@ export class FileEditService implements IFileEditService {
 
   async edit(input: FileEditInput): Promise<FileEditResult> {
     try {
-      // Strict decoding matches v1 (kaos): a non-UTF-8 file must fail here
-      // instead of being silently decoded with U+FFFD and rewritten, which
-      // would corrupt every invalid byte in the file — even far from the edit.
       const raw = await this.fs.readText(input.path, { errors: 'strict' });
       const model = new TextModel(raw);
       const result = this.editor.apply(model, {
@@ -45,8 +40,6 @@ export class FileEditService implements IFileEditService {
       await this.fs.writeText(input.path, result.rawContent);
       return { ok: true, count: result.count };
     } catch (error) {
-      // hostFs translates raw errnos into `HostFsError` at its boundary, so the
-      // errno lives on the unwrapped cause, not on the thrown error itself.
       const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
       if (code === 'EISDIR') {
         return { ok: false, error: `${input.displayPath} is not a file.` };
@@ -63,6 +56,6 @@ registerScopedService(
   LifecycleScope.App,
   IFileEditService,
   FileEditService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'edit',
 );

@@ -156,4 +156,46 @@ describe('migrated session loads in real kimi-core', () => {
       await session.close();
     }
   });
+
+  it('real Session.resume() preserves a legacy todo display', async () => {
+    const result = await migrateOneSession({
+      sourceSessionDir: join(FIXTURES, 'large-100msgs'),
+      oldSessionUuid: 'todo-display',
+      workdirPath: WORK_DIR,
+      targetHome,
+    });
+    expect(result.outcome).toBe('migrated');
+    const targetDir = (result as Extract<MigrateOneResult, { outcome: 'migrated' }>)
+      .targetDir;
+
+    const session = new Session({
+      kaos: (await LocalKaos.create()).withCwd(WORK_DIR),
+      id: 'ses_todo-display',
+      homedir: targetDir,
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+    });
+    try {
+      await session.resume();
+      const assistant = session
+        .getReadyAgent('main')
+        ?.context.history.find((message) =>
+          message.toolCalls.some(
+            (call) => call.id === 'tool_y3SXWWQIUysddnYoklaWhUeE',
+          ),
+        );
+
+      expect(
+        assistant?.toolCallDisplays?.['tool_y3SXWWQIUysddnYoklaWhUeE'],
+      ).toEqual({
+        kind: 'todo_list',
+        items: expect.arrayContaining([
+          { title: '准备测试环境（创建隔离 work-dir）', status: 'in_progress' },
+          { title: '汇报结论', status: 'pending' },
+        ]),
+      });
+    } finally {
+      await session.close();
+    }
+  });
 });

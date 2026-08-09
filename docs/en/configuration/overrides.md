@@ -45,7 +45,7 @@ For a single provider, credentials are resolved in this order:
 
 > The `[providers.<name>.env]` sub-table is just a TOML section in the config file — it does not write anything into the shell environment. It is only consulted when the corresponding direct field (`api_key` / `base_url`) is empty.
 
-For the full list of credential key names, see [Environment variables: provider credential key names](./env-vars.md#provider-credential-key-names-written-in-configtoml).
+For the full list of credential key names, see [Environment variables: provider credential key names](./env-vars.md#provider-credential-key-names-written-in-config-toml).
 
 ## Command-line options
 
@@ -55,7 +55,8 @@ Options passed at startup have the highest priority and apply only to the curren
 | --- | --- |
 | `-S, --session [id]` | Resume a specific session; enters interactive selection when no id is given |
 | `-c, --continue` | Resume the last session for the current working directory |
-| `-y, --yolo` | Auto-approve all tool calls |
+| `-y, --yolo` | Auto-approve regular tool calls; the agent may still ask questions |
+| `--auto` | Start in auto permission mode: fully autonomous, the agent will not ask questions |
 | `--plan` | Start in Plan mode |
 | `-m, --model <model>` | Use a specific model alias for this session |
 | `-p, --prompt <prompt>` | Run in non-interactive mode: execute a single prompt and exit |

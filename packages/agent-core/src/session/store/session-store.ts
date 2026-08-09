@@ -1,14 +1,29 @@
+import type { Dirent } from 'node:fs';
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import * as nodePath from 'node:path';
 import { dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
 import { z } from 'zod';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import type { SessionIndexEntry } from '#/session/store/session-index';
-import { appendSessionIndexEntry, readSessionIndex } from '#/session/store/session-index';
+import {
+  appendSessionIndexDeletion,
+  appendSessionIndexEntry,
+  readSessionIndex,
+} from '#/session/store/session-index';
 import { encodeWorkDirKey, normalizeWorkDir } from '#/session/store/workdir-key';
+import {
+  promptMetadataTextFromPayload,
+  promptMetadataTextFromPluginCommand,
+  promptMetadataTextFromSkill,
+} from '#/session/prompt-metadata';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '#/rpc/core-api';
-import { FileSystemAgentRecordPersistence, type AgentRecordOf } from '../../agent/records';
+import {
+  FileSystemAgentRecordPersistence,
+  type AgentRecord,
+  type AgentRecordOf,
+} from '../../agent/records';
 
 const SessionSummaryStateSchema = z.object({
   archived: z.boolean().optional(),
@@ -34,18 +49,31 @@ export interface ForkSessionRecordInput {
   readonly targetId: string;
   readonly title?: string;
   readonly metadata?: JsonObject;
+  readonly turnIndex?: number;
 }
 
-export type SessionStoreOptions = Record<string, never>;
+export type SessionStoreOptions = {
+  /**
+   * Optional identity hook (wired by the services layer from the workspace
+   * registry): the already-registered workspace id for the same physical root
+   * as `workDir`, or undefined when no entry matches. Bucket derivation
+   * prefers it over minting a fresh `encodeWorkDirKey` hash, so a session
+   * created from a case/slash variant of a registered Windows root lands in
+   * the registered bucket instead of splitting into a second one.
+   */
+  readonly resolveWorkspaceId?: (workDir: string) => Promise<string | undefined>;
+};
 
 export class SessionStore {
   readonly sessionsDir: string;
+  private readonly resolveWorkspaceId: SessionStoreOptions['resolveWorkspaceId'];
 
   constructor(
     readonly homeDir: string,
-    _options: SessionStoreOptions = {},
+    options: SessionStoreOptions = {},
   ) {
     this.sessionsDir = join(homeDir, 'sessions');
+    this.resolveWorkspaceId = options.resolveWorkspaceId;
   }
 
   sessionDirFor(input: { readonly id: string; readonly workDir: string }): string {
@@ -53,15 +81,49 @@ export class SessionStore {
     return join(this.sessionsDir, encodeWorkDirKey(normalizeWorkDir(input.workDir)), input.id);
   }
 
+  /**
+   * Bucket key for a workDir: asks the workspace registry (when wired) for the
+   * registered id of the same physical root — see SessionStoreOptions — and
+   * prefers it over the freshly minted `encodeWorkDirKey` hash. Falls back to
+   * minting when the resolver is absent, errors, or returns an id that is not
+   * a safe bucket name (registry contents are user-editable state; minted ids
+   * always pass `isSafeSessionId`).
+   */
+  private async bucketKeyFor(workDir: string): Promise<string> {
+    let resolved: string | undefined;
+    try {
+      resolved = await this.resolveWorkspaceId?.(workDir);
+    } catch {
+      resolved = undefined;
+    }
+    return resolved !== undefined && isSafeSessionId(resolved)
+      ? resolved
+      : encodeWorkDirKey(normalizeWorkDir(workDir));
+  }
+
+  /** Like `sessionDirFor`, but under the registry-resolved bucket. */
+  private async resolvedSessionDirFor(input: {
+    readonly id: string;
+    readonly workDir: string;
+  }): Promise<string> {
+    assertSafeSessionId(input.id);
+    return join(this.sessionsDir, await this.bucketKeyFor(input.workDir), input.id);
+  }
+
+  /** Bucket directory for a workDir, registry-resolved when possible. */
+  private async bucketDirFor(workDir: string): Promise<string> {
+    return join(this.sessionsDir, await this.bucketKeyFor(workDir));
+  }
+
   async create(input: CreateSessionRecordInput): Promise<SessionSummary> {
     assertSafeSessionId(input.id);
     const workDir = normalizeWorkDir(input.workDir);
     const indexed = await this.findSessionEntry(input.id);
-    if (indexed !== undefined) {
+    if (indexed !== undefined && (await isDirectory(indexed.sessionDir))) {
       throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.id}" already exists`);
     }
 
-    const dir = this.sessionDirFor({ id: input.id, workDir });
+    const dir = await this.resolvedSessionDirFor({ id: input.id, workDir });
     if (await isDirectory(dir)) {
       throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.id}" already exists`);
     }
@@ -76,6 +138,7 @@ export class SessionStore {
   }
 
   async fork(input: ForkSessionRecordInput): Promise<SessionSummary> {
+    assertForkTurnIndex(input.turnIndex);
     const source = await this.findExistingSessionEntry(input.sourceId);
     assertSafeSessionId(input.targetId);
     const indexed = await this.findSessionEntry(input.targetId);
@@ -83,7 +146,7 @@ export class SessionStore {
       throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.targetId}" already exists`);
     }
 
-    const targetDir = this.sessionDirFor({ id: input.targetId, workDir: source.workDir });
+    const targetDir = await this.resolvedSessionDirFor({ id: input.targetId, workDir: source.workDir });
     if (await isDirectory(targetDir)) {
       throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.targetId}" already exists`);
     }
@@ -96,7 +159,20 @@ export class SessionStore {
         errorOnExist: true,
       });
       await dropForkedSessionFiles(targetDir);
-      const forkedState = await this.writeForkedState(input, source.sessionDir, source.workDir, targetDir);
+      const fullForkedState = await this.writeForkedState(
+        input,
+        source.sessionDir,
+        source.workDir,
+        targetDir,
+      );
+      const forkedState = input.turnIndex === undefined
+        ? fullForkedState
+        : await truncateForkedSessionAtTurn(
+            targetDir,
+            input.sourceId,
+            input.turnIndex,
+            fullForkedState,
+          );
       await appendForkedMarkers(forkedState);
       const summary = await this.summaryFromDir(input.targetId, targetDir, source.workDir);
       await appendSessionIndexEntry(this.homeDir, {
@@ -164,6 +240,12 @@ export class SessionStore {
     };
     await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
     return this.summaryFromDir(id, entry.sessionDir, entry.workDir);
+  }
+
+  async delete(id: string): Promise<void> {
+    const entry = await this.findExistingSessionEntry(id);
+    await rm(entry.sessionDir, { recursive: true, force: true });
+    await appendSessionIndexDeletion(this.homeDir, id);
   }
 
   async list(options: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
@@ -238,13 +320,20 @@ export class SessionStore {
           continue;
         }
         // Refuse to index a session whose recorded workDir does not match the
-        // bucket it lives in (corrupt or foreign state).
-        if (resolve(sessionDir) !== resolve(expectedDir)) continue;
+        // bucket it lives in (corrupt or foreign state). The registry-resolved
+        // bucket is accepted too: sessions created with a wired resolver live
+        // in the registered bucket even though their workDir mints elsewhere.
+        if (
+          !areSameFsPath(sessionDir, expectedDir) &&
+          !areSameFsPath(sessionDir, await this.resolvedSessionDirFor({ id, workDir }))
+        ) {
+          continue;
+        }
 
         const existing = index.get(id);
         if (
           existing !== undefined &&
-          resolve(existing.sessionDir) === resolve(sessionDir) &&
+          areSameFsPath(existing.sessionDir, sessionDir) &&
           existing.workDir === workDir
         ) {
           continue;
@@ -283,15 +372,17 @@ export class SessionStore {
     workDir: string,
     includeArchive: boolean,
   ): Promise<readonly SessionSummary[]> {
-    const bucketDir = join(this.sessionsDir, encodeWorkDirKey(workDir));
-    let entries;
+    const bucketDir = await this.bucketDirFor(workDir);
+    let entries: Dirent[] = [];
     try {
       entries = await readdir(bucketDir, { withFileTypes: true });
     } catch {
-      return [];
+      // The same Windows directory may have an older bucket whose drive/share
+      // casing differs. The index fallback below can still recover it.
     }
 
     const sessions: SessionSummary[] = [];
+    const seen = new Set<string>();
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const id = entry.name;
@@ -300,6 +391,21 @@ export class SessionStore {
       const summary = await this.summaryFromDir(id, dir, workDir);
       if (!includeArchive && summary.archived === true) continue;
       sessions.push(summary);
+      seen.add(id);
+    }
+
+    // Do not change the established bucket hash: that would hide every
+    // existing Windows session after an upgrade. Instead merge indexed
+    // sessions whose persisted workDir names the same case-insensitive drive
+    // or UNC location (for example TUI `C:/Work` vs VS Code `c:\\Work`).
+    const index = await readSessionIndex(this.homeDir, this.sessionsDir);
+    for (const entry of index.values()) {
+      if (seen.has(entry.sessionId) || !(await isDirectory(entry.sessionDir))) continue;
+      const summary = await this.summaryFromDir(entry.sessionId, entry.sessionDir, entry.workDir);
+      if (!areSameFsPath(summary.workDir, workDir)) continue;
+      if (!includeArchive && summary.archived === true) continue;
+      sessions.push(summary);
+      seen.add(entry.sessionId);
     }
     sessions.sort(compareSessionSummary);
     return sessions;
@@ -340,7 +446,7 @@ export class SessionStore {
     includeArchive: boolean,
   ): Promise<SessionSummary | undefined> {
     if (!isSafeSessionId(sessionId)) return undefined;
-    const sessionDir = this.sessionDirFor({ id: sessionId, workDir });
+    const sessionDir = await this.resolvedSessionDirFor({ id: sessionId, workDir });
     if (!(await isDirectory(sessionDir))) return undefined;
     const summary = await this.summaryFromDir(sessionId, sessionDir, workDir);
     if (!includeArchive && summary.archived === true) return undefined;
@@ -454,6 +560,316 @@ function forkCustomMetadata(source: unknown, metadata: JsonObject | undefined): 
 async function dropForkedSessionFiles(sessionDir: string): Promise<void> {
   await Promise.all(
     FORKED_SESSION_DROPPED_FILES.map((fileName) => rm(join(sessionDir, fileName), { force: true })),
+  );
+}
+
+interface MainTurnSlice {
+  readonly records: readonly AgentRecord[];
+  readonly cutoffTime?: number;
+  readonly lastPrompt?: string;
+}
+
+async function truncateForkedSessionAtTurn(
+  sessionDir: string,
+  sourceSessionId: string,
+  turnIndex: number,
+  state: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const agents = state['agents'];
+  if (!isRecord(agents) || !isRecord(agents['main'])) {
+    throw new KimiError(
+      ErrorCodes.SESSION_STATE_INVALID,
+      `Session "${sourceSessionId}" has no main agent metadata`,
+    );
+  }
+
+  const mainAgentDir = join(sessionDir, 'agents', 'main');
+  const mainPersistence = new FileSystemAgentRecordPersistence(
+    join(mainAgentDir, 'wire.jsonl'),
+  );
+  const mainRecords = await readAgentRecords(mainPersistence);
+  const mainSlice = sliceMainRecordsAtTurn(mainRecords, sourceSessionId, turnIndex);
+  mainPersistence.rewrite(mainSlice.records);
+  await mainPersistence.flush();
+
+  const retainedAgents: Record<string, unknown> = {
+    main: withAgentHomedir(agents['main'], mainAgentDir),
+  };
+  for (const [agentId, agentMeta] of Object.entries(agents)) {
+    if (agentId === 'main') continue;
+    const agentDir = join(sessionDir, 'agents', agentId);
+    const retained = await truncateSubagentAtTime(agentDir, mainSlice.cutoffTime);
+    if (retained) {
+      retainedAgents[agentId] = withAgentHomedir(agentMeta, agentDir);
+      continue;
+    }
+    await rm(agentDir, { recursive: true, force: true });
+  }
+  dropAgentsWithMissingParents(retainedAgents);
+
+  for (const agentId of Object.keys(agents)) {
+    if (retainedAgents[agentId] !== undefined) continue;
+    await rm(join(sessionDir, 'agents', agentId), { recursive: true, force: true });
+  }
+
+  for (const agentId of Object.keys(retainedAgents)) {
+    const agentDir = join(sessionDir, 'agents', agentId);
+    await Promise.all([
+      rm(join(agentDir, 'tasks'), { recursive: true, force: true }),
+      rm(join(agentDir, 'cron'), { recursive: true, force: true }),
+    ]);
+  }
+
+  const next = {
+    ...state,
+    lastPrompt: mainSlice.lastPrompt,
+    agents: retainedAgents,
+  };
+  await writeFile(join(sessionDir, 'state.json'), `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+  return next;
+}
+
+function withAgentHomedir(agentMeta: unknown, homedir: string): unknown {
+  return isRecord(agentMeta) ? { ...agentMeta, homedir } : agentMeta;
+}
+
+async function readAgentRecords(
+  persistence: FileSystemAgentRecordPersistence,
+): Promise<readonly AgentRecord[]> {
+  const records: AgentRecord[] = [];
+  for await (const record of persistence.read()) {
+    records.push(record);
+  }
+  return records;
+}
+
+function sliceMainRecordsAtTurn(
+  records: readonly AgentRecord[],
+  sourceSessionId: string,
+  turnIndex: number,
+): MainTurnSlice {
+  const turnStarts: number[] = [];
+  for (let index = 0; index < records.length; index += 1) {
+    if (isUserVisibleTurnRecord(records[index]!)) turnStarts.push(index);
+  }
+  const start = turnStarts[turnIndex];
+  if (start === undefined) {
+    throw new KimiError(
+      ErrorCodes.REQUEST_INVALID,
+      `Turn ${String(turnIndex)} was not found in session "${sourceSessionId}"`,
+      { details: { turnIndex, availableTurns: turnStarts.length } },
+    );
+  }
+
+  const end = turnStarts[turnIndex + 1] ?? records.length;
+  const retainedTurnInputs = turnInputIndicesThrough(records, turnIndex);
+  const retained = records
+    .slice(0, end)
+    .filter(
+      (record, index) =>
+        !isUserVisibleTurnInputRecord(record) || retainedTurnInputs.has(index),
+    );
+  const cutoffTimes = retained
+    .map(recordTime)
+    .filter((time): time is number => time !== undefined);
+  const lastPrompt = promptMetadataFromTurnRecord(records[start]!);
+  return {
+    records: retained,
+    cutoffTime: cutoffTimes.length === 0 ? undefined : Math.max(...cutoffTimes),
+    lastPrompt,
+  };
+}
+
+async function truncateSubagentAtTime(
+  agentDir: string,
+  cutoffTime: number | undefined,
+): Promise<boolean> {
+  if (cutoffTime === undefined) return false;
+  const persistence = new FileSystemAgentRecordPersistence(join(agentDir, 'wire.jsonl'));
+  const records = await readAgentRecords(persistence);
+  let end = records.length;
+  for (let index = 0; index < records.length; index += 1) {
+    const time = recordTime(records[index]!);
+    if (time !== undefined && time > cutoffTime) {
+      end = index;
+      break;
+    }
+  }
+  const retained = records.slice(0, end);
+  if (retained.length === 0) return false;
+  persistence.rewrite(retained);
+  await persistence.flush();
+  return true;
+}
+
+function dropAgentsWithMissingParents(agents: Record<string, unknown>): void {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [agentId, agentMeta] of Object.entries(agents)) {
+      if (agentId === 'main' || !isRecord(agentMeta)) continue;
+      const parentAgentId = agentMeta['parentAgentId'];
+      if (
+        typeof parentAgentId === 'string' &&
+        parentAgentId !== 'main' &&
+        agents[parentAgentId] === undefined
+      ) {
+        delete agents[agentId];
+        changed = true;
+      }
+    }
+  }
+}
+
+function recordTime(record: AgentRecord): number | undefined {
+  if (typeof record.time === 'number' && Number.isFinite(record.time)) return record.time;
+  if (
+    record.type === 'metadata' &&
+    typeof record.created_at === 'number' &&
+    Number.isFinite(record.created_at)
+  ) {
+    return record.created_at;
+  }
+  return undefined;
+}
+
+function isUserVisibleTurnRecord(record: AgentRecord): boolean {
+  if (record.type !== 'context.append_message') return false;
+  const { message } = record;
+  if (message.role !== 'user') return false;
+  switch (message.origin?.kind) {
+    case undefined:
+    case 'user':
+      return true;
+    case 'skill_activation':
+    case 'plugin_command':
+      return message.origin.trigger === 'user-slash';
+    case 'shell_command':
+      return message.origin.phase === 'input';
+    case 'background_task':
+    case 'compaction_summary':
+    case 'cron_job':
+    case 'cron_missed':
+    case 'hook_result':
+    case 'injection':
+    case 'retry':
+    case 'system_trigger':
+      return false;
+  }
+}
+
+function isUserVisibleTurnInputRecord(record: AgentRecord): boolean {
+  if (record.type !== 'turn.prompt' && record.type !== 'turn.steer') return false;
+  switch (record.origin.kind) {
+    case 'user':
+      return true;
+    case 'skill_activation':
+    case 'plugin_command':
+      return record.origin.trigger === 'user-slash';
+    case 'shell_command':
+      return record.origin.phase === 'input';
+    case 'background_task':
+    case 'compaction_summary':
+    case 'cron_job':
+    case 'cron_missed':
+    case 'hook_result':
+    case 'injection':
+    case 'retry':
+    case 'system_trigger':
+      return false;
+  }
+}
+
+function turnInputIndicesThrough(
+  records: readonly AgentRecord[],
+  turnIndex: number,
+): ReadonlySet<number> {
+  const pending: number[] = [];
+  const retained = new Set<number>();
+  let visibleTurnIndex = 0;
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!;
+    if (isUserVisibleTurnInputRecord(record)) {
+      pending.push(index);
+      continue;
+    }
+    if (!isUserVisibleTurnRecord(record)) continue;
+
+    const matchAt = findMatchingTurnInput(records, pending, record);
+    if (matchAt !== -1) {
+      const [inputIndex] = pending.splice(matchAt, 1);
+      if (visibleTurnIndex <= turnIndex && inputIndex !== undefined) {
+        retained.add(inputIndex);
+      }
+    }
+    visibleTurnIndex += 1;
+  }
+  return retained;
+}
+
+function findMatchingTurnInput(
+  records: readonly AgentRecord[],
+  pending: readonly number[],
+  turnRecord: AgentRecord,
+): number {
+  const exact = pending.findIndex((index) =>
+    turnInputMatchesRecord(records[index]!, turnRecord, true),
+  );
+  if (exact !== -1) return exact;
+  return pending.findIndex((index) =>
+    turnInputMatchesRecord(records[index]!, turnRecord, false),
+  );
+}
+
+function turnInputMatchesRecord(
+  inputRecord: AgentRecord,
+  turnRecord: AgentRecord,
+  compareContent: boolean,
+): boolean {
+  if (
+    (inputRecord.type !== 'turn.prompt' && inputRecord.type !== 'turn.steer') ||
+    turnRecord.type !== 'context.append_message' ||
+    turnRecord.message.role !== 'user'
+  ) {
+    return false;
+  }
+  if (!sameTurnOrigin(inputRecord.origin.kind, turnRecord.message.origin?.kind)) return false;
+  return !compareContent || JSON.stringify(inputRecord.input) === JSON.stringify(turnRecord.message.content);
+}
+
+function sameTurnOrigin(inputKind: string, messageKind: string | undefined): boolean {
+  if (inputKind === 'user') return messageKind === undefined || messageKind === 'user';
+  return inputKind === messageKind;
+}
+
+function promptMetadataFromTurnRecord(record: AgentRecord): string | undefined {
+  if (record.type !== 'context.append_message' || record.message.role !== 'user') {
+    return undefined;
+  }
+  const { message } = record;
+  if (message.origin?.kind === 'skill_activation') {
+    return promptMetadataTextFromSkill({
+      name: message.origin.skillName,
+      args: message.origin.skillArgs,
+    });
+  }
+  if (message.origin?.kind === 'plugin_command') {
+    return promptMetadataTextFromPluginCommand({
+      pluginId: message.origin.pluginId,
+      commandName: message.origin.commandName,
+      args: message.origin.commandArgs,
+    });
+  }
+  return promptMetadataTextFromPayload({ input: message.content });
+}
+
+function assertForkTurnIndex(turnIndex: number | undefined): void {
+  if (turnIndex === undefined) return;
+  if (Number.isSafeInteger(turnIndex) && turnIndex >= 0) return;
+  throw new KimiError(
+    ErrorCodes.REQUEST_INVALID,
+    'forkSession turnIndex must be a non-negative safe integer',
+    { details: { turnIndex } },
   );
 }
 
@@ -575,6 +991,17 @@ function remapSessionPath(value: string, sourceDir: string, targetDir: string): 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function areSameFsPath(left: string, right: string): boolean {
+  if (isWindowsAbsolutePath(left) || isWindowsAbsolutePath(right)) {
+    return nodePath.win32.resolve(left).toLowerCase() === nodePath.win32.resolve(right).toLowerCase();
+  }
+  return resolve(left) === resolve(right);
+}
+
+function isWindowsAbsolutePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(value);
 }
 
 async function statIfExists(path: string): Promise<{ readonly mtimeMs: number } | undefined> {

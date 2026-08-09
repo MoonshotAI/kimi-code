@@ -1,16 +1,30 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+/**
+ * Kap server boot tests — exercise the public server lifecycle, App-scope
+ * seeds, instance registration, loopback routes, and owned resource cleanup
+ * with real local storage and loopback sockets.
+ */
+
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { pino } from 'pino';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { hostRequestHeadersSeed, IHostRequestHeaders } from '@moonshot-ai/agent-core-v2';
+import {
+  IBootstrapService,
+  IFileSystemStorageService,
+  IHostRequestHeaders,
+  InMemoryStorageService,
+  IOAuthToolkit,
+  ITelemetryService,
+  noopTelemetryService,
+} from '@moonshot-ai/agent-core-v2';
 
-import type { LockContents } from '../src/lock';
+import { listLiveServerInstances } from '../src/instanceRegistry';
 import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
-import { getServerVersion } from '../src/version';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authedFetch } from './helpers/auth';
 
 describe('server-v2 boot', () => {
@@ -31,6 +45,7 @@ describe('server-v2 boot', () => {
   it('boots agent-core-v2 and serves the basic /api/v1 routes', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -80,30 +95,157 @@ describe('server-v2 boot', () => {
     expect(oauthBody.data).toBeNull();
   });
 
-  it('seeds a default product User-Agent that opts.seeds can override', async () => {
+  it('reports opts.serverVersion as server_version instead of the package version', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-version-'));
+    server = await startServer({
+      hostIdentity: {
+        productName: 'test-host',
+        version: '9.9.9-host',
+        platform: 'test_platform',
+      },
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      serverVersion: '9.9.9-host',
+    });
+
+    const base = `http://127.0.0.1:${server.port}`;
+    const meta = await authedFetch(server, base, '/api/v1/meta');
+    const metaBody = await meta.json() as {
+      code: number;
+      data: { server_version: string };
+    };
+    expect(metaBody.data.server_version).toBe('9.9.9-host');
+
+    // The engine version is also what the instance registry advertises to
+    // status/ps clients.
+    const [instance] = await listLiveServerInstances(home);
+    expect(instance?.serverVersion).toBe('9.9.9-host');
+
+    // ... while the default product User-Agent and the engine's client
+    // identity come from the host identity.
+    const defaults = server.core.accessor.get(IHostRequestHeaders);
+    expect(defaults.headers['User-Agent']).toBe('test-host/9.9.9-host');
+    expect(server.core.accessor.get(IBootstrapService).clientIdentity).toEqual({
+      productName: 'test-host',
+      version: '9.9.9-host',
+      platform: 'test_platform',
+    });
+  });
+
+  it('seeds default Kimi identity headers from hostIdentity that opts.seeds can override', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ua-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
     });
     const defaults = server.core.accessor.get(IHostRequestHeaders);
-    expect(defaults.headers['User-Agent']).toBe(`kimi-code-cli/${getServerVersion()}`);
+    expect(defaults.headers['User-Agent']).toBe('test-host/0.0.0-test');
+    expect(defaults.headers['X-Msh-Version']).toBe('0.0.0-test');
+    expect(defaults.headers['X-Msh-Platform']).toBe('test_platform');
 
     // Restart on the same homeDir with a host-provided seed; it must win over
-    // the default (the CLI passes full Kimi identity headers this way).
+    // the default (a host can always re-seed the port with its own instance).
     await server.close();
     server = undefined;
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: hostRequestHeadersSeed({ 'User-Agent': 'custom-host/9.9' }),
+      seeds: [[IHostRequestHeaders, { headers: { 'User-Agent': 'custom-host/9.9' } }]],
     });
     const overridden = server.core.accessor.get(IHostRequestHeaders);
     expect(overridden.headers['User-Agent']).toBe('custom-host/9.9');
+  });
+
+  it('seeds explicit skill dirs into the core scope when skillDirs is provided', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      skillDirs: ['/skills/explicit'],
+    });
+    expect(server.core.accessor.get(IBootstrapService).args.skillDirs).toEqual([
+      '/skills/explicit',
+    ]);
+
+    // Without skillDirs the resolved args carry no explicit dirs.
+    await server.close();
+    server = undefined;
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    expect(server.core.accessor.get(IBootstrapService).args.skillDirs).toBeUndefined();
+  });
+
+  it('does not shut down a host-injected telemetry service when server telemetry is disabled', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-host-telemetry-'));
+    await writeFile(join(home, 'config.toml'), 'telemetry = false\n', 'utf8');
+    const shutdown = vi.fn(async () => {});
+
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds: [[ITelemetryService, { ...noopTelemetryService, shutdown }]],
+    });
+
+    await server.close();
+    server = undefined;
+
+    expect(shutdown).not.toHaveBeenCalled();
+  });
+
+  it('completes server cleanup when owned telemetry shutdown fails', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-telemetry-failure-'));
+    const storage = new InMemoryStorageService();
+    const write = storage.write.bind(storage);
+    vi.spyOn(storage, 'write').mockImplementation(async (scope, key, data, options) => {
+      if (scope === 'telemetry') throw new Error('telemetry storage unavailable');
+      await write(scope, key, data, options);
+    });
+    const auth = {
+      _serviceBrand: undefined,
+      getCachedAccessToken: async () => {
+        throw new Error('telemetry auth unavailable');
+      },
+    } as unknown as IOAuthToolkit;
+
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      telemetry: true,
+      seeds: [
+        [IFileSystemStorageService, storage],
+        [IOAuthToolkit, auth],
+      ],
+    });
+    const core = server.core;
+    core.accessor.get(ITelemetryService).track('server_probe');
+
+    await server.close();
+    server = undefined;
+
+    expect(() => core.accessor.get(IBootstrapService)).toThrow();
+    expect(await listLiveServerInstances(home)).toEqual([]);
   });
 });
 
@@ -249,28 +391,27 @@ describe('server-v2 boot — port retry', () => {
     }
   });
 
-  it('retries on port+1 and advertises the bound port in the lock', async () => {
+  it('retries on port+1 and advertises the bound port in the instance registry', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-port-retry-'));
     const { port, next } = await allocateAdjacentFreePair();
     // Occupy the requested port with a raw TCP server (a "third-party" process
-    // from the server's point of view — it does NOT hold the lock).
+    // from the server's point of view — it is not a registered kimi instance).
     const occupant = await listenOnPort('127.0.0.1', port);
     try {
       server = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
         host: '127.0.0.1',
         port,
         homeDir: home,
         logLevel: 'silent',
       });
 
-      // Bound to the next available port (>= next); the lock advertises it so
-      // status/kill/ps work. On Windows a recently-closed probe port can linger
-      // in TIME_WAIT, so the retry may land on port+2 instead of port+1.
+      // Bound to the next available port (>= next); the registry advertises it
+      // so status/kill/ps work. On Windows a recently-closed probe port can
+      // linger in TIME_WAIT, so the retry may land on port+2 instead of port+1.
       expect(server.port).toBeGreaterThanOrEqual(next);
-      const stored = JSON.parse(
-        await readFile(join(home, 'server', 'lock'), 'utf8'),
-      ) as LockContents;
-      expect(stored.port).toBe(server.port);
+      const [instance] = await listLiveServerInstances(home);
+      expect(instance?.port).toBe(server.port);
     } finally {
       await closeNetServer(occupant);
     }

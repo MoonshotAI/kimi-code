@@ -14,19 +14,13 @@ import { EDGE_KINDS } from './style';
 
 const ALL_SCOPES: readonly ServiceScope[] = ['App', 'Session', 'Agent'];
 
-/** Query-string-driven overrides for the initial dep-graph filter state. */
 export interface QueryParams {
-  /** Domains to show; everything else is hidden. Absent ⇒ all domains shown. */
   domains?: string[];
-  /** Scopes to show. Absent ⇒ all scopes shown. */
   scopes?: ServiceScope[];
-  /** Edge kinds to show. Absent ⇒ all kinds shown. */
   kinds?: EdgeKind[];
-  /** Initial search box value. */
   search?: string;
   hideOrphans?: boolean;
   groupByScope?: boolean;
-  /** `ServiceNode.id` to pre-select (e.g. `Session::IMyService`). */
   focus?: string;
 }
 
@@ -80,10 +74,6 @@ function isKind(s: string): s is EdgeKind {
   return (EDGE_KINDS as readonly string[]).includes(s);
 }
 
-/**
- * Presence of the key (`?hideOrphans` or `?hideOrphans=`) means `true`.
- * Explicit false-ish spellings (`false`, `0`, `no`, `off`) opt out.
- */
 function parseBool(raw: string | null): boolean {
   if (raw === null || raw === '') return true;
   return !/^(false|0|no|off)$/i.test(raw.trim());

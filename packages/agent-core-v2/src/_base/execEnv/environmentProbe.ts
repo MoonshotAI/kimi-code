@@ -1,5 +1,5 @@
 /**
- * `_base/execEnv` (L0) — OS / shell probe.
+ * `_base/execEnv` — OS / shell probe.
  *
  * Detects the host operating system, architecture, kernel release, and a
  * usable POSIX shell path. The result is a pure function of injected probes
@@ -9,11 +9,9 @@
  *
  * On Windows the probe expects bash from Git for Windows or MSYS2. If it
  * cannot be located the function throws a plain `Error` with the checked paths
- * in the message; the App-scope host-environment service catches that at first
- * resolution. Set `KIMI_SHELL_PATH` to override.
+ * in the message. Set `KIMI_SHELL_PATH` to override.
  *
- * Vendored from `@moonshot-ai/kaos` `environment.ts` — kept as a pure helper
- * with no DI dependencies.
+ * Kept as a pure helper with no DI dependencies.
  */
 
 import { execFile as nodeExecFile } from 'node:child_process';
@@ -22,9 +20,6 @@ import { access } from 'node:fs/promises';
 import * as nodeOs from 'node:os';
 import * as nodePath from 'node:path';
 
-// `OsKind` carries 'macOS' / 'Linux' / 'Windows' for known platforms and falls
-// back to the raw `process.platform` string for unknown ones (e.g. 'freebsd').
-// Typed as `string` so the union is not inhabited-by-string.
 export type OsKind = string;
 export type ShellName = 'bash' | 'sh';
 export type PathClass = 'posix' | 'win32';
@@ -40,8 +35,6 @@ export interface HostEnvironmentInfo {
 }
 
 export interface HostEnvironmentProbeDeps {
-  // Accepts the full Node `Platform` enum plus arbitrary strings for
-  // forward-compatible OS kinds.
   readonly platform: string;
   readonly arch: string;
   readonly release: string;
@@ -211,10 +204,6 @@ async function readGitExecPath(
   return undefined;
 }
 
-// Most Git for Windows installs put `git.exe` in `<root>\cmd\git.exe`, with
-// bash at `<root>\bin\bash.exe`. Portable installs sometimes put both in
-// `<root>\bin\`. Only infer from those anchored layouts; package manager
-// shims live elsewhere and must resolve through `git --exec-path`.
 function gitBashCandidatesFromGitExe(gitExe: string): readonly string[] | undefined {
   const normalizedGitExe = nodePath.win32.normalize(normalizeWindowsPath(gitExe));
   const gitDir = nodePath.win32.dirname(normalizedGitExe);
@@ -268,16 +257,6 @@ function dedupeWindowsPaths(paths: readonly string[]): readonly string[] {
   return deduped;
 }
 
-/**
- * Production convenience — derive the deps bag from Node's ambient surface.
- *
- * The result is memoised: subsequent calls return the original promise.
- * `HostEnvironmentInfo` is immutable for the lifetime of the process (it
- * derives from `process.platform`, `process.arch`, `os.release()`, `os.homedir()`,
- * and one-time shell-path discovery), so caching is sound. Tests that need to
- * probe with different inputs should call {@link probeHostEnvironment} directly
- * with an injected deps bag.
- */
 let cachedProbe: Promise<HostEnvironmentInfo> | undefined;
 
 export function probeHostEnvironmentFromNode(): Promise<HostEnvironmentInfo> {

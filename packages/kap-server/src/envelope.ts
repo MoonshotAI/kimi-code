@@ -1,12 +1,7 @@
 /**
- * Re-export the envelope helpers from `@moonshot-ai/protocol`.
+ * Re-export the envelope helpers from the local `protocol` module.
  *
- * The wire-shape source of truth lives in `@moonshot-ai/protocol`. Re-exporting
- * the protocol helpers preserves field order and JSON output for server
- * responses.
- *
- * Keep this file as a re-export shim (not a direct re-export from the package
- * barrel) so downstream `from './envelope'` imports inside the server stay
- * stable and don't all need to be touched.
+ * Keep this file as a re-export shim so downstream `from './envelope'`
+ * imports inside the server stay stable and don't all need to be touched.
  */
-export { okEnvelope, errEnvelope, type Envelope } from '@moonshot-ai/protocol';
+export { okEnvelope, errEnvelope, type Envelope } from './protocol/envelope';

@@ -11,9 +11,10 @@
  *   - `recurring` — undefined / true means "fire repeatedly until deleted
  *     or auto-expired"; false means "fire once then auto-delete".
  *   - `lastFiredAt` — wall-clock epoch ms of the last ideal occurrence
- *     whose jittered delivery has actually completed. Persisted so a
- *     `kimi resume` does not replay already-delivered recurring fires:
- *     without it, the scheduler would fall back to `createdAt` and
+ *     whose jittered delivery has actually completed. Persisted so
+ *     resuming the session does not replay already-delivered recurring
+ *     fires: without it, the scheduler would fall back to `createdAt`
+ *     and
  *     coalesce yesterday's already-fired 09:00 into today's tick. A
  *     value greater than the current wall clock is treated as corrupt
  *     and the scheduler falls back to `createdAt` for that task.

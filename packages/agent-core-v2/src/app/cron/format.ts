@@ -3,17 +3,12 @@
  * tool output, and the `<cron-fire>` injection the scheduler hands to the model
  * when a task fires.
  *
- * Both renderers stay dependency-free so the tools and the service can import
- * them without pulling in the rest of the cron stack.
+ * Both renderers stay dependency-free so they can be imported without
+ * pulling in the rest of the cron stack.
  */
 
-import type { CronJobOrigin } from '@moonshot-ai/protocol';
+import type { CronJobOrigin } from '#/agent/contextMemory/types';
 
-/**
- * Render a wall-clock epoch-ms value in local time with an explicit numeric
- * offset. Cron expressions are evaluated in local time, so tool output keeps
- * that mental model while staying unambiguous and ISO-8601-parseable.
- */
 export function formatLocalIsoWithOffset(ms: number): string {
   const date = new Date(ms);
   const offsetMin = -date.getTimezoneOffset();
@@ -29,12 +24,6 @@ export function formatLocalIsoWithOffset(ms: number): string {
   )}${offset}`;
 }
 
-/**
- * Render the chat-history injection text delivered when a cron task fires.
- * Attribute values are escape-safe via `stringAttr`; the body inside `<prompt>`
- * is verbatim — double-escaping would be noisier than literal punctuation in an
- * LLM-visible transcript.
- */
 export function renderCronFireXml(origin: CronJobOrigin, prompt: string): string {
   const jobId = stringAttr(origin.jobId, 'unknown');
   const cron = stringAttr(origin.cron, 'unknown');

@@ -570,6 +570,34 @@ describe('ToolCallComponent', () => {
     expect(header).toContain('Current plan · Approved: Pragmatic refactor');
   });
 
+  it('header chips Auto-approved when ExitPlanMode was auto-approved without user review', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_exit_auto',
+        name: 'ExitPlanMode',
+        args: {},
+      },
+      {
+        tool_call_id: 'call_exit_auto',
+        output:
+          'Exited plan mode. Plan mode deactivated. All tools are now available.\n' +
+          'Note: this plan was auto-approved without user review — the user has NOT explicitly approved it.\n' +
+          'Plan saved to: /tmp/plan.md\n\n' +
+          '## Plan (auto-approved, not user-reviewed):\n# Auto Plan\n\n1. Do the thing.',
+        is_error: false,
+      },
+    );
+
+    const out = strip(component.render(100).join('\n'));
+    const header = out.split('\n')[1] ?? '';
+    expect(header).toMatch(/Current plan · Auto-approved\s*$/);
+    // The plan body renders from the auto-approved marker; the engine-side
+    // note above the marker must not leak into the rendered plan box.
+    expect(out).toContain('Auto Plan');
+    expect(out).toContain('1. Do the thing.');
+    expect(out).not.toContain('Note: this plan was auto-approved');
+  });
+
   it('renders Rejected in the plan box title and keeps revise feedback visible', () => {
     const component = new ToolCallComponent(
       {
@@ -1003,6 +1031,34 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('Used Agent');
     expect(out).not.toContain('parent duplicate result');
     expect(out).not.toContain('summary fallback');
+  });
+
+  it('shows the bound model in the subagent header and group snapshot once reported', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_model',
+        name: 'Agent',
+        args: { description: 'explore project' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_model_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+
+    let out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Explore Agent Queued (explore project) · 0 tools');
+    expect(out).not.toContain('Kimi K2.5');
+
+    component.updateSubagentMetrics({ modelDisplay: 'Kimi K2.5' });
+
+    out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Explore Agent Queued (explore project) · Kimi K2.5 · 0 tools');
+    expect(component.getSubagentSnapshot().model).toBe('Kimi K2.5');
   });
 
   it('shows Backgrounded after a foreground subagent is detached, even after setResult', () => {

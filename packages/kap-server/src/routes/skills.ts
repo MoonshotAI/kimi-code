@@ -16,7 +16,7 @@
  * counterpart: it scans the same roots a new session in that workspace cwd
  * would, so clients can populate the composer skill menu before a session
  * exists. The workspace id is resolved to its root via
- * `IWorkspaceRegistry.get` (`40410` when unknown); the root is then scanned by
+ * `IWorkspaceService.get` (`40410` when unknown); the root is then scanned by
  * composing the same five sources the per-session catalog merges — builtin /
  * user / extra / project(workDir) / plugin — through the shared `ISkillDiscovery`,
  * `skillRoots` and `InMemorySkillCatalog` primitives, so the result matches the
@@ -25,7 +25,8 @@
  * are exported for exactly this purpose.
  *
  * **Activation gate**: by convention the session endpoints are only valid for
- * an *activated* session — one that is live in `ISessionLifecycleService`. When
+ * an *activated* session — one that is live in a workspace handler's session
+ * registry. When
  * the session is not in the live map we still answer `40401 session.not_found`
  * (the only session error code on the v1 wire contract), but we enrich the
  * message:
@@ -35,13 +36,16 @@
  * **Scope split**: v1 resolves a single `ISkillService` for every verb. v2
  * splits the domain, so the route borrows different scoped services per verb:
  *   - session list → `ISessionSkillCatalog` (Session scope) — `catalog.listSkills()`.
- *   - workspace list → no session: resolves `IWorkspaceRegistry` (App scope)
+ *   - workspace list → no session: resolves `IWorkspaceService` (App scope)
  *     for the root, then composes the skill scan at the edge (see above).
  *   - activate     → `IAgentSkillService` (Agent scope, on the `main` agent) —
  *                    renders the skill prompt and starts a turn with a
  *                    `skill_activation` origin. The returned `Turn` handle is
  *                    discarded; clients follow progress via the `skill.activated`
  *                    + `turn.*` events emitted by the service on the WS stream.
+ *                    The edge then applies the prompt-metadata update
+ *                    (`applyPromptMetadataUpdate`) so a first `/<skill>`
+ *                    message titles the session, matching the native RPC path.
  *
  * **Model projection**: `SkillDefinition` (v2) → protocol `SkillDescriptor`,
  * byte-for-byte with v1's `toProtocolSkill`
@@ -66,25 +70,29 @@
  */
 
 import {
-  BUILTIN_SKILLS,
+  builtinProductSkillsEnabled,
+  visibleBuiltinSkills,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
   IAgentSkillService,
   IBootstrapService,
   IConfigService,
+  IEventService,
   IPluginService,
   ISessionIndex,
-  ISessionLifecycleService,
+  ISessionMetadata,
   ISessionSkillCatalog,
-  ISkillCatalogRuntimeOptions,
   ISkillDiscovery,
-  IWorkspaceRegistry,
+  IWorkspaceService,
   InMemorySkillCatalog,
   isError2,
+  resumeSessionById,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
+  applyPromptMetadataUpdate,
   configuredRoots,
   projectRoots,
+  promptMetadataTextFromSkill,
   userRoots,
   type ISessionScopeHandle,
   type Scope,
@@ -92,19 +100,20 @@ import {
   type ExtraSkillDirsConfig,
   type MergeAllAvailableSkillsConfig,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  ErrorCode,
-  activateSkillRequestSchema,
-  activateSkillResultSchema,
-  listSkillsResponseSchema,
-  workspaceIdParamSchema,
-  type SkillDescriptor,
-} from '@moonshot-ai/protocol';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
+import { ErrorCode } from '../protocol/error-codes';
+import {
+  activateSkillRequestSchema,
+  activateSkillResultSchema,
+  listSkillsResponseSchema,
+} from '../protocol/rest-skill';
+import { workspaceIdParamSchema } from '../protocol/rest-workspace';
+import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
 
 interface SkillsRouteHost {
@@ -153,7 +162,7 @@ async function resolveActivatedSession(
   // session cold-loads it instead of reporting "not activated"; matches v1's
   // `resumeSession` in SkillService. `resume` returns undefined only when the
   // session is unknown or its workspace is gone.
-  const handle = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
+  const handle = await resumeSessionById(core.accessor, sessionId);
   if (handle !== undefined) return { handle };
 
   const summary = await core.accessor.get(ISessionIndex).get(sessionId);
@@ -214,7 +223,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { workspace_id } = req.params;
-      const ws = await core.accessor.get(IWorkspaceRegistry).get(workspace_id);
+      const ws = await core.accessor.get(IWorkspaceService).get(workspace_id);
       if (ws === undefined) {
         reply.send(
           errEnvelope(
@@ -283,6 +292,17 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         await agent.accessor
           .get(IAgentSkillService)
           .activate({ name: parsed.id, args: req.body.args });
+        // Keep the easy-title behavior of the native RPC / TUI path: a first
+        // `/<skill>` message titles the session (same as routes/prompts.ts).
+        await applyPromptMetadataUpdate(
+          {
+            metadata: resolved.handle.accessor.get(ISessionMetadata),
+            eventService: core.accessor.get(IEventService),
+            sessionId: session_id,
+          },
+          promptMetadataTextFromSkill({ name: parsed.id, args: req.body.args }),
+        );
+        requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
@@ -322,11 +342,10 @@ async function listWorkspaceSkillsForRoot(
   const plugins = core.accessor.get(IPluginService);
   const config = core.accessor.get(IConfigService);
   await config.ready;
-  const runtimeOptions = core.accessor.get(ISkillCatalogRuntimeOptions);
   const extraSkillDirs = config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
   const mergeAllAvailableSkills =
     config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
-  const explicitDirs = runtimeOptions.explicitDirs ?? [];
+  const explicitDirs = bootstrap.args.skillDirs ?? [];
   const useExplicitDirs = explicitDirs.length > 0;
   const rootOptions = { mergeAllAvailableSkills };
 
@@ -349,7 +368,10 @@ async function listWorkspaceSkillsForRoot(
 
   const catalog = new InMemorySkillCatalog();
   const ordered = [
-    { skills: BUILTIN_SKILLS, priority: SKILL_SOURCE_PRIORITY.builtin },
+    {
+      skills: visibleBuiltinSkills(builtinProductSkillsEnabled(config)),
+      priority: SKILL_SOURCE_PRIORITY.builtin,
+    },
     { skills: plugin.skills, priority: SKILL_SOURCE_PRIORITY.plugin },
     { skills: extra.skills, priority: SKILL_SOURCE_PRIORITY.extra },
     { skills: user.skills, priority: SKILL_SOURCE_PRIORITY.user },

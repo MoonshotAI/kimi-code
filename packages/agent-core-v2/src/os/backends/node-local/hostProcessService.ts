@@ -1,5 +1,5 @@
 /**
- * `hostProcess` domain (L6) — `IHostProcessService` node-local implementation.
+ * `hostProcess` domain — `IHostProcessService` node-local implementation.
  *
  * Spawns child processes with `node:child_process.spawn`, wraps them in the
  * domain-facing `IHostProcess` handle, and provides cross-platform process-tree
@@ -11,8 +11,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream';
 
 import { BufferedReadable } from '#/_base/execEnv/bufferedReadable';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import {
   HostProcessError,
@@ -146,7 +145,6 @@ class HostProcess implements IHostProcess {
         try {
           this._child.kill(signal ?? 'SIGTERM');
         } catch {
-          /* best effort */
         }
         return;
       }
@@ -203,6 +201,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostProcessService,
   HostProcessService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'hostProcess',
 );

@@ -13,16 +13,21 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
-import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { APIProviderRateLimitError } from '#/app/llmProtocol/errors';
+import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { APIProviderRateLimitError } from '#/kosong/contract/errors';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentLifecycleService,
-  type AgentTaskHooks,
   type CreateAgentOptions,
 } from '#/session/agentLifecycle/agentLifecycle';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { createHooks } from '#/hooks';
+import {
+  type AgentTaskHooks,
+  ISessionSubagentService,
+} from '#/session/subagent/subagent';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import {
   ISessionMetadata,
@@ -42,7 +47,9 @@ import {
   type AgentSpawnAttemptOptions,
   type QueuedAgentRunTask,
 } from '#/session/swarm/agentRunBatch';
-import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
+import { ISessionSwarmService, type SessionSwarmSpawnTask, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
+import { Error2 } from '#/_base/errors/errors';
+import { ConfigErrors } from '#/app/config/errors';
 import { SessionSwarmService } from '#/session/swarm/sessionSwarmService';
 
 import { stubLog } from '../../_base/log/stubs';
@@ -836,6 +843,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   let agents: Record<string, AgentMeta>;
   let handles: Map<string, IAgentScopeHandle>;
   let lifecycle: IAgentLifecycleService;
+  let subagents: ISessionSubagentService;
   let createAgent: ReturnType<typeof vi.fn>;
   let runAgent: ReturnType<typeof vi.fn>;
   let eventBus: IEventBus;
@@ -847,18 +855,21 @@ describe('SessionSwarmService metadata compatibility', () => {
     handles = new Map();
     eventBus = eventBusStub();
     lifecycle = lifecycleStub(handles, eventBus);
+    subagents = subagentStub();
     createAgent = lifecycle.create as ReturnType<typeof vi.fn>;
-    runAgent = lifecycle.run as ReturnType<typeof vi.fn>;
+    runAgent = subagents.run as ReturnType<typeof vi.fn>;
     handles.set('main', agentHandle('main', lifecycle, eventBus));
 
     ix.stub(IAgentLifecycleService, lifecycle);
-    ix.stub(IAgentProfileCatalogService, {
+    ix.stub(ISessionSubagentService, subagents);
+    ix.stub(ISessionAgentProfileCatalog, {
       _serviceBrand: undefined,
+      ready: Promise.resolve(),
       get: (name: string) =>
         name === 'coder'
-          ? { name: 'coder', tools: [], systemPrompt: () => '' }
+          ? normalizeAgentProfile({ name: 'coder', tools: [], systemPrompt: () => '' })
           : undefined,
-      getDefault: () => ({ name: 'agent', tools: [], systemPrompt: () => '' }),
+      getDefault: () => normalizeAgentProfile({ name: 'agent', tools: [], systemPrompt: () => '' }),
       list: () => [],
     });
     ix.stub(
@@ -896,6 +907,19 @@ describe('SessionSwarmService metadata compatibility', () => {
       },
     });
     ix.stub(ILogService, stubLog());
+    ix.stub(IModelCatalog, {
+      _serviceBrand: undefined,
+      get: (alias: string) => {
+        if (alias === 'provider/bad') {
+          throw new Error2(
+            ConfigErrors.codes.CONFIG_INVALID,
+            'Model "provider/bad" is not configured in config.toml.',
+            { details: { model: 'provider/bad' } },
+          );
+        }
+        return { id: alias } as Model;
+      },
+    } as IModelCatalog);
     ix.set(ISessionSwarmService, new SyncDescriptor(SessionSwarmService));
   });
 
@@ -905,17 +929,14 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('reads swarm items from caller-owned v2 labels and legacy v1 metadata', async () => {
     agents['v2-child'] = {
-      homedir: '/tmp/kimi/s1/agents/v2-child',
       labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
     };
     agents['legacy-child'] = {
-      homedir: '/tmp/kimi/s1/agents/legacy-child',
       type: 'sub',
       parentAgentId: 'main',
       swarmItem: 'src/legacy.ts',
     };
     agents['other-child'] = {
-      homedir: '/tmp/kimi/s1/agents/other-child',
       labels: { parentAgentId: 'other', swarmItem: 'src/other.ts' },
     };
 
@@ -937,7 +958,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('prefers labels over legacy metadata fields when both are present', async () => {
     agents['mixed-child'] = {
-      homedir: '/tmp/kimi/s1/agents/mixed-child',
       labels: { parentAgentId: 'main', swarmItem: 'src/labels.ts' },
       type: 'sub',
       parentAgentId: 'other',
@@ -957,7 +977,6 @@ describe('SessionSwarmService metadata compatibility', () => {
   it('normalizes legacy subagent metadata into labels for new writes', () => {
     expect(
       labelsFromAgentMeta({
-        homedir: '/tmp/kimi/s1/agents/legacy-child',
         type: 'sub',
         parentAgentId: 'main',
         swarmItem: 'src/legacy.ts',
@@ -965,7 +984,6 @@ describe('SessionSwarmService metadata compatibility', () => {
     ).toEqual({ parentAgentId: 'main', swarmItem: 'src/legacy.ts' });
     expect(
       labelsFromAgentMeta({
-        homedir: '/tmp/kimi/s1/agents/mixed-child',
         labels: { parentAgentId: 'main', swarmItem: 'src/labels.ts', custom: 'kept' },
         type: 'sub',
         parentAgentId: 'other',
@@ -996,9 +1014,7 @@ describe('SessionSwarmService metadata compatibility', () => {
           profile: 'coder',
           model: 'kimi-test',
           thinking: 'medium',
-          cwd: '/repo',
         },
-        permissionMode: 'auto',
         labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
       }),
     );
@@ -1023,7 +1039,6 @@ describe('SessionSwarmService metadata compatibility', () => {
           profileName: opts.binding?.profile ?? 'coder',
           modelAlias: opts.binding?.model ?? 'kimi-test',
           thinkingLevel: opts.binding?.thinking ?? 'medium',
-          cwd: opts.binding?.cwd ?? '/repo',
         },
         new Map([[IAgentUserToolService, childUserTools]]),
       );
@@ -1042,7 +1057,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('keeps v1 resume ownership errors inside the per-subagent result', async () => {
     agents['other-child'] = {
-      homedir: '/tmp/kimi/s1/agents/other-child',
       labels: { parentAgentId: 'other', swarmItem: 'src/other.ts' },
     };
     handles.set('other-child', agentHandle('other-child', lifecycle, eventBusStub()));
@@ -1063,9 +1077,8 @@ describe('SessionSwarmService metadata compatibility', () => {
     expect(runAgent).not.toHaveBeenCalled();
   });
 
-  it('realigns resumed children to the caller current model', async () => {
+  it('keeps resumed children on their own recorded model', async () => {
     agents['agent-existing'] = {
-      homedir: '/tmp/kimi/s1/agents/agent-existing',
       labels: { parentAgentId: 'main' },
     };
     const child = agentHandle('agent-existing', lifecycle, eventBus, {
@@ -1082,7 +1095,8 @@ describe('SessionSwarmService metadata compatibility', () => {
       }),
     ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-existing' }]);
 
-    expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('kimi-test');
+    // No realign: resume must not drag the child back to the parent's model.
+    expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('stale-model');
     expect(runAgent).toHaveBeenCalledWith(
       'agent-existing',
       { kind: 'prompt', prompt: 'Continue' },
@@ -1090,15 +1104,61 @@ describe('SessionSwarmService metadata compatibility', () => {
     );
   });
 
+  it('prefers the spawn task binding over the caller model', async () => {
+    const service = ix.get(ISessionSwarmService);
+    const spawnTask: SessionSwarmSpawnTask = {
+      ...spawnSessionTask('src/a.ts'),
+      kind: 'spawn',
+      binding: { model: 'provider/secondary', thinking: 'low' },
+    };
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [spawnTask],
+      }),
+    ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-new' }]);
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: {
+          profile: 'coder',
+          model: 'provider/secondary',
+          thinking: 'low',
+        },
+      }),
+    );
+  });
+
+  it('points at the secondary model config when a spawn task binding is invalid', async () => {
+    const service = ix.get(ISessionSwarmService);
+    const spawnTask: SessionSwarmSpawnTask = {
+      ...spawnSessionTask('src/a.ts'),
+      kind: 'spawn',
+      binding: { model: 'provider/bad', thinking: 'low' },
+    };
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [spawnTask],
+      }),
+    ).resolves.toMatchObject([
+      {
+        status: 'failed',
+        error: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
+      },
+    ]);
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
   it('does not emit spawned again when a rate-limited child retries', async () => {
     vi.useFakeTimers();
     try {
       agents['agent-retry'] = {
-        homedir: '/tmp/kimi/s1/agents/agent-retry',
         labels: { parentAgentId: 'main' },
       };
       agents['agent-blocker'] = {
-        homedir: '/tmp/kimi/s1/agents/agent-blocker',
         labels: { parentAgentId: 'main' },
       };
       handles.set('agent-retry', agentHandle('agent-retry', lifecycle, eventBus));
@@ -1155,7 +1215,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('rejects resume of an already running child before launching or emitting spawned', async () => {
     agents['agent-existing'] = {
-      homedir: '/tmp/kimi/s1/agents/agent-existing',
       labels: { parentAgentId: 'main' },
     };
     handles.set(
@@ -1192,7 +1251,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   });
 });
 
-function spawnSessionTask(swarmItem?: string): SessionSwarmTask {
+function spawnSessionTask(swarmItem?: string): SessionSwarmSpawnTask {
   return {
     kind: 'spawn',
     data: {},
@@ -1224,42 +1283,47 @@ function lifecycleStub(
   handles: Map<string, IAgentScopeHandle>,
   eventBus: IEventBus,
 ): IAgentLifecycleService {
-  const hooks = createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']);
   const lifecycle = {
     _serviceBrand: undefined,
-    hooks,
-    onDidStopAgentTask: Event.None,
     onDidCreate: Event.None,
-    onDidCreateMain: Event.None,
     onDidDispose: Event.None,
     create: vi.fn(async (opts: CreateAgentOptions = {}) => {
+      if (opts.agentId !== undefined) {
+        const existing = handles.get(opts.agentId);
+        if (existing !== undefined) return existing;
+      }
       const id = opts.agentId ?? 'agent-new';
       const handle = agentHandle(id, lifecycle as IAgentLifecycleService, eventBus, {
         profileName: opts.binding?.profile ?? 'coder',
         modelAlias: opts.binding?.model ?? 'kimi-test',
         thinkingLevel: opts.binding?.thinking ?? 'medium',
-        cwd: opts.binding?.cwd ?? '/repo',
       });
       handles.set(id, handle);
       return handle;
     }),
-    ensureMcpReady: async () => {},
-    notifyMainCreated: () => {},
-    notifyAgentTaskStopped: () => {},
     fork: vi.fn(),
+    get: (agentId: string) => handles.get(agentId),
+    list: () => [...handles.values()],
+    remove: async (agentId: string) => {
+      handles.delete(agentId);
+    },
+    broadcastPermissionMode: () => {},
+  };
+  return lifecycle as IAgentLifecycleService;
+}
+
+function subagentStub(): ISessionSubagentService {
+  return {
+    _serviceBrand: undefined,
+    hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+    onDidStopAgentTask: Event.None,
     run: vi.fn(async (agentId: string) => ({
       agentId,
       turn: {} as never,
       completion: Promise.resolve({ summary: 'child summary' }),
     })),
-    getHandle: (agentId: string) => handles.get(agentId),
-    whenReady: (agentId: string) => Promise.resolve(handles.get(agentId)),
-    list: () => [...handles.values()],
-    remove: async (agentId: string) => {
-      handles.delete(agentId);
-    },
-  };
-  return lifecycle as IAgentLifecycleService;
+    notifyAgentTaskStopped: () => {},
+  } as ISessionSubagentService;
 }
 
 function agentHandle(
@@ -1270,7 +1334,6 @@ function agentHandle(
   services: ReadonlyMap<unknown, unknown> = new Map(),
 ): IAgentScopeHandle {
   const profile = profileService({
-    cwd: '/repo',
     modelAlias: 'kimi-test',
     modelCapabilities: {} as never,
     profileName: 'agent',
@@ -1318,6 +1381,7 @@ function profileService(data: ProfileData): IAgentProfileService {
     update: (changed) => {
       current = { ...current, ...changed };
     },
+    republishStatus: () => {},
   } as IAgentProfileService;
 }
 

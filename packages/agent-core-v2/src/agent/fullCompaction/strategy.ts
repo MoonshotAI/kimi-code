@@ -1,7 +1,7 @@
-import type { Message } from '#/app/llmProtocol/message';
+import type { Message } from '#/kosong/contract/message';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { CompactionSource } from './types';
-import { estimateTokensForMessage } from '#/_base/utils/tokens';
+import { estimateTokensForMessage } from '#/kosong/contract/tokens';
 
 export interface CompactionConfig {
   triggerRatio: number;
@@ -17,7 +17,7 @@ export interface CompactionConfig {
 
 export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   triggerRatio: 0.85,
-  blockRatio: 0.85, // Same as triggerRatio to disable async compaction
+  blockRatio: 0.85,
   reservedContextSize: 50_000,
   maxCompactionPerTurn: Infinity,
   maxOverflowCompactionAttempts: 3,
@@ -38,7 +38,10 @@ export interface CompactionStrategy {
 }
 
 export class RuntimeCompactionStrategy implements CompactionStrategy {
-  constructor(private readonly context: () => ProfileModelContext) { }
+  constructor(
+    private readonly context: () => ProfileModelContext,
+    private readonly estimateMessage: (message: Message) => number = estimateTokensForMessage,
+  ) { }
 
   shouldCompact(usedSize: number): boolean {
     return this.delegate().shouldCompact(usedSize);
@@ -71,15 +74,17 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
   private delegate(): DefaultCompactionStrategy {
     const model = this.context();
     return new DefaultCompactionStrategy(
-      () => model.modelCapabilities.max_context_tokens,
+      () => model.modelCapabilities.max_input_tokens ?? model.modelCapabilities.max_context_tokens,
       this.config(model),
+      this.estimateMessage,
     );
   }
 
   private windowDelegate(): DefaultCompactionStrategy {
     return new DefaultCompactionStrategy(
-      () => this.context().modelCapabilities.max_context_tokens,
+      () => this.context().modelCapabilities.max_input_tokens ?? this.context().modelCapabilities.max_context_tokens,
       DEFAULT_COMPACTION_CONFIG,
+      this.estimateMessage,
     );
   }
 
@@ -100,7 +105,8 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
 export class DefaultCompactionStrategy implements CompactionStrategy {
   constructor(
     protected readonly maxSizeProvider: () => number,
-    protected readonly config: CompactionConfig = DEFAULT_COMPACTION_CONFIG
+    protected readonly config: CompactionConfig = DEFAULT_COMPACTION_CONFIG,
+    protected readonly estimateMessage: (message: Message) => number = estimateTokensForMessage,
   ) { }
 
   protected get maxSize(): number {
@@ -129,11 +135,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 
   computeCompactCount(messages: readonly Message[], source: CompactionSource): number {
-    // Return value: N messages to be compacted (0 means no compaction possible)
-    // LLM Input: messages.slice(0, N) + [user:instruction]
-    // Preserved recent messages: messages.slice(N)
 
-    // Manual compaction
     if (source === 'manual') {
       for (let i = messages.length - 1; i > 0; i--) {
         if (canSplitAfter(messages, i)) {
@@ -143,15 +145,6 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
       return 0;
     }
 
-    // Auto compaction rules (in order of precedence):
-    // 1. The split after messages[N-1] must be safe per `canSplitAfter`:
-    //    messages[N-1] is not a user or asst-with-tool-calls, and the retained
-    //    suffix messages.slice(N) has no orphan tool result.
-    // 2. At least one recent message must be preserved
-    // 3. At most maxRecentMessages recent messages should be preserved
-    // 4. At most maxRecentUserMessages recent user messages should be preserved
-    // 5. At most maxRecentSizeRatio * maxSize recent messages should be preserved
-    // 6. N should be as small as possible
 
     let recentMessages = 1;
     let recentUserMessages = 0;
@@ -165,7 +158,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
       if (m2.role === 'user') {
         recentUserMessages++;
       }
-      recentSize += estimateTokensForMessage(m2);
+      recentSize += this.estimateMessage(m2);
 
       if (canSplitAfter(messages, splitIndex)) {
         bestN = splitIndex + 1;
@@ -191,7 +184,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
     let bestN: number | undefined;
 
     for (let i = messages.length - 2; i > 0; i--) {
-      reducedSize += estimateTokensForMessage(messages[i + 1]!);
+      reducedSize += this.estimateMessage(messages[i + 1]!);
       if (canSplitAfter(messages, i)) {
         bestN = i + 1;
         if (reducedSize >= minReducedSize) {
@@ -212,7 +205,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
 
     let compactedSize = 0;
     for (let i = 0; i < compactedCount; i++) {
-      compactedSize += estimateTokensForMessage(messages[i]!);
+      compactedSize += this.estimateMessage(messages[i]!);
     }
     if (compactedSize <= this.maxSize) {
       return compactedCount;
@@ -220,7 +213,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
 
     let bestN: number | undefined;
     for (let n = compactedCount - 1; n > 0; n--) {
-      compactedSize -= estimateTokensForMessage(messages[n]!);
+      compactedSize -= this.estimateMessage(messages[n]!);
       if (!canSplitAfter(messages, n - 1)) {
         continue;
       }
@@ -246,21 +239,6 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 }
 
-/**
- * Decide whether a compaction split is safe to place immediately after
- * `messages[index]`. A split is safe only when:
- *   - `messages[index]` itself is not a user message or an assistant message
- *     with pending tool calls (cutting either of those off from what follows
- *     would break the conversation), AND
- *   - the next message is not a tool result. The history is well-formed:
- *     tool results only appear after their owning `asst_w_tc` and all tool
- *     results for one exchange land consecutively before the next non-tool
- *     message. So if the suffix starts with a tool result, its `asst_w_tc`
- *     must be in the compacted prefix, which would orphan that result
- *     (e.g. splitting between tool_a and tool_b of a parallel call), AND
- *   - the compacted prefix itself does not end with an unresolved tool
- *     exchange, because pending tool results must remain in the retained tail.
- */
 function canSplitAfter(messages: readonly Message[], index: number): boolean {
   const m = messages[index];
   if (m === undefined) return false;

@@ -136,6 +136,53 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('attaches the summarizer request trace id to compaction_finished', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+
+    ctx.mockNextProviderResponse({
+      parts: [{ type: 'text', text: 'Compacted summary.' }],
+      traceId: 'trace-compact-1',
+    });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    expect(records).toContainEqual({
+      event: 'compaction_finished',
+      properties: expect.objectContaining({ source: 'manual', trace_id: 'trace-compact-1' }),
+    });
+    expect(ctx.agent.fullCompaction.lastTraceId).toBe('trace-compact-1');
+  });
+
+  it('attaches the failed summarizer request trace id to compaction_failed', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async () => {
+      // 401 is not retryable: the round fails on the first attempt without
+      // backoff timers.
+      throw new APIStatusError(401, 'Unauthorized', 'req-1', null, 'trace-compact-err');
+    };
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    expect(records).toContainEqual({
+      event: 'compaction_failed',
+      properties: expect.objectContaining({ source: 'manual', trace_id: 'trace-compact-err' }),
+    });
+  });
+
   it('emits the raw summary while keeping the prefixed summary in model context', async () => {
     const ctx = testAgent();
     ctx.configure({
@@ -364,6 +411,7 @@ describe('FullCompaction', () => {
   });
 
   it('force-refreshes OAuth credentials on compaction 401 and treats replay 401 as provider auth error', async () => {
+    const records: TelemetryRecord[] = [];
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
     const oauthOptions = oauthTestAgentOptions(async (options) => {
@@ -380,11 +428,17 @@ describe('FullCompaction', () => {
     ) => {
       authKeys.push(options?.auth?.apiKey ?? '<missing>');
       if (authKeys.length <= 2) {
-        throw new APIStatusError(401, 'Unauthorized', 'req-compact-401');
+        throw new APIStatusError(
+          401,
+          'Unauthorized',
+          'req-compact-401',
+          null,
+          authKeys.length === 1 ? 'trace-compact-initial-401' : 'trace-compact-replay-401',
+        );
       }
       return textResult('Recovered compacted summary.');
     };
-    const ctx = testAgent({ ...oauthOptions, generate });
+    const ctx = testAgent({ ...oauthOptions, generate, telemetry: recordingTelemetry(records) });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -409,6 +463,9 @@ describe('FullCompaction', () => {
     );
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token']);
     expect(tokenCalls).toEqual([undefined, true]);
+    expect(
+      records.find((record) => record.event === 'compaction_failed')?.properties?.['trace_id'],
+    ).toBe('trace-compact-replay-401');
     expect(ctx.compactHistory()).toEqual([
       { role: 'user', text: 'old user one' },
       { role: 'assistant', text: 'old assistant one' },
@@ -1789,6 +1846,99 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('triggers preemptive compaction against the declared input cap, not the total window', async () => {
+    let callCount = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return textResult('Preemptive summary under the input cap.');
+      }
+      await callbacks?.onMessagePart?.({ type: 'text', text: 'Answered after input-cap compaction.' });
+      return textResult('Answered after input-cap compaction.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 200_000,
+        max_input_tokens: 150_000,
+      },
+    });
+    // 160k sits between the input-cap trigger (150k × 0.85 = 127.5k) and the
+    // total-window trigger (200k × 0.85 = 170k): compaction must fire only
+    // because the input cap is the prompt budget.
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 160_000);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(2);
+    expect(events).toContainEqual(
+      expect.objectContaining({ event: 'compaction.started' }),
+    );
+  });
+
+  it('honors the observed provider window over a declared input cap', async () => {
+    let callCount = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-observed-window');
+      }
+      if (callCount === 2) {
+        return textResult('Observed recovery summary.');
+      }
+      if (callCount === 3) {
+        await callbacks?.onMessagePart?.({
+          type: 'text',
+          text: 'Recovered after observed overflow.',
+        });
+        return textResult('Recovered after observed overflow.');
+      }
+      if (callCount === 4) {
+        return textResult('Observed preemptive summary.');
+      }
+      if (callCount === 5) {
+        await callbacks?.onMessagePart?.({
+          type: 'text',
+          text: 'Answered after observed-window precompaction.',
+        });
+        return textResult('Answered after observed-window precompaction.');
+      }
+      throw new Error(`Unexpected generate call ${String(callCount)}`);
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 200_000,
+        max_input_tokens: 150_000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'learn observed window' }] });
+    await ctx.untilTurnEnd();
+    expect(callCount).toBe(3);
+
+    ctx.appendExchange(2, 'near observed user', 'near observed assistant', 120_000);
+    ctx.newEvents();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use observed window' }] });
+    const events = await ctx.untilTurnEnd();
+
+    // The strategy must size against the provider-learned window (~108k),
+    // not the raw 150k declared input cap — otherwise it never preemptively
+    // compacts the 120k context the provider already rejected.
+    expect(callCount).toBe(5);
+    expect(events).toContainEqual(
+      expect.objectContaining({ event: 'compaction.started' }),
+    );
+  });
+
   it('stops repeated provider-overflow compactions when the compacted context still overflows', async () => {
     let callCount = 0;
     const generate: GenerateFn = async (_provider, _system, _tools, history) => {
@@ -2021,16 +2171,14 @@ describe('FullCompaction', () => {
     await ctx.untilTurnEnd();
 
     expect(callCount).toBe(3);
-    // The catalogued model declares no supportEfforts, so the kimi provider
-    // normalizes to boolean thinking and reports 'on' rather than the
-    // requested 'high'. The agent's stored thinkingEffort ('high') is still
-    // carried across the compaction (see the record assertion below).
+    // A Kimi model without supportEfforts is boolean-only, so the effective
+    // state and every compaction request use 'on'.
     expect(providerThinkingEfforts).toEqual(['on', 'on', 'on']);
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'auto',
-        thinking_effort: 'high',
+        thinking_effort: 'on',
       }),
     });
   });

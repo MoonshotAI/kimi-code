@@ -11,9 +11,10 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { defineModel } from '#/wire/model';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService, PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from './stubs';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -63,12 +64,17 @@ function setup(logKey: string): {
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey }]));
+  const log = ix.get(IAppendLogStore);
+  const eventBus = ix.get(IEventBus);
+  const wire = registerTestAgentWire(ix, testWireScope(SCOPE, logKey), {
+    log,
+    eventBus,
+  });
   return {
     ix,
-    log: ix.get(IAppendLogStore),
-    eventBus: ix.get(IEventBus),
-    wire: ix.get(IAgentWireService),
+    log,
+    eventBus,
+    wire,
   };
 }
 
@@ -82,9 +88,9 @@ afterEach(() => disposables.dispose());
 async function readRecords(
   target: IAppendLogStore = log,
   key = KEY,
-): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of target.read<PersistedRecord>(SCOPE, key)) {
+): Promise<WireRecord[]> {
+  const out: WireRecord[] = [];
+  for await (const record of target.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -129,7 +135,12 @@ describe('WireService Op.toEvent', () => {
     const seen: DomainEvent[] = [];
     disposables.add(replay.eventBus.subscribe((e) => seen.push(e)));
 
-    await replay.wire.replay(...records);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, 'replay'),
+      records,
+    );
 
     expect(replay.wire.getModel(CounterModel)).toEqual({ value: 4 });
     expect(seen).toEqual([]);

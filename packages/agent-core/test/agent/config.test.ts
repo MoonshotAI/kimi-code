@@ -57,7 +57,7 @@ describe('Agent config', () => {
     await expect(ctx.rpc.getConfig({})).resolves.toMatchObject({
       provider: nextProvider,
       systemPrompt: 'Changed profile prompt.',
-      thinkingEffort: 'high',
+      thinkingEffort: 'on',
       modelCapabilities: nextCapability,
     });
     await ctx.expectResumeMatches();
@@ -105,6 +105,65 @@ describe('Agent config', () => {
     ctx.agent.useProfile(profile);
 
     expect(ctx.agent.config.systemPrompt).toBe('Prompt with additional dirs: none');
+  });
+
+  it('useProfile injects enabled plugin system-prompt sections', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const profile: ResolvedAgentProfile = {
+      name: 'plugin-profile',
+      systemPrompt: (context) => context.pluginSections ?? '',
+      tools: [],
+    };
+    ctx.agent.setPluginSystemPrompts([{ pluginId: 'demo', content: 'Always cite sources.' }]);
+
+    ctx.agent.useProfile(profile);
+
+    expect(ctx.agent.config.systemPrompt).toBe('<!-- From: plugin demo -->\nAlways cite sources.');
+
+    ctx.agent.setPluginSystemPrompts([]);
+    ctx.agent.useProfile(profile);
+
+    expect(ctx.agent.config.systemPrompt).toBe('');
+  });
+
+  it('skips plugin sections beyond the aggregate byte budget and warns once', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const profile: ResolvedAgentProfile = {
+      name: 'plugin-profile',
+      systemPrompt: (context) => context.pluginSections ?? '',
+      tools: [],
+    };
+    const large = 'x'.repeat(48 * 1024);
+    ctx.agent.setPluginSystemPrompts([
+      { pluginId: 'first', content: large },
+      { pluginId: 'second', content: large },
+    ]);
+
+    ctx.agent.useProfile(profile);
+
+    expect(ctx.agent.config.systemPrompt).toContain('<!-- From: plugin first -->');
+    expect(ctx.agent.config.systemPrompt).not.toContain('<!-- From: plugin second -->');
+    const budgetWarnings = (events: ReturnType<typeof ctx.newEvents>) =>
+      events.filter(
+        (entry) =>
+          (entry as { event?: string }).event === 'warning' &&
+          (entry as { args?: { code?: string } }).args?.code === 'plugin-sections-oversized',
+      );
+    expect(budgetWarnings(ctx.newEvents())).toHaveLength(1);
+
+    // A re-render applies the budget again but does not warn twice.
+    ctx.agent.setPluginSystemPrompts([
+      { pluginId: 'first', content: large },
+      { pluginId: 'second', content: large },
+      { pluginId: 'third', content: 'small' },
+    ]);
+    ctx.agent.useProfile(profile);
+
+    expect(ctx.agent.config.systemPrompt).toContain('<!-- From: plugin third -->');
+    expect(ctx.agent.config.systemPrompt).not.toContain('<!-- From: plugin second -->');
+    expect(budgetWarnings(ctx.newEvents())).toHaveLength(0);
   });
 
   it('config.update with cwd initializes builtin tools', async () => {
@@ -164,8 +223,8 @@ describe('Agent config', () => {
     ctx.mockNextResponse({ type: 'text', text: 'Still using the original turn config.' });
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_bash", "toolName": "Bash", "action": "Running: printf original-result", "result": { "decision": "approved", "selectedLabel": "approve" }, "time": "<time>" }
-      [wire] config.update                       { "modelAlias": "changed-model", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual" }
+      [wire] config.update                       { "modelAlias": "changed-model", "thinkingEffort": "off", "time": "<time>" }
+      [emit] agent.status.updated                { "model": "changed-model", "thinkingEffort": "off", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual" }
       [wire] config.update                       { "systemPrompt": "Changed system prompt.", "time": "<time>" }
       [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual" }
       [wire] tools.set_active_tools              { "names": [], "time": "<time>" }

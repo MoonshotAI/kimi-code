@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Kimi Code: Extension Development Host (isolated)",
+      "type": "extensionHost",
+      "request": "launch",
+      "preLaunchTask": "vscode: dev",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--user-data-dir=${workspaceFolder}/../../.tmp/vscode-extension-dev/user-data",
+        "--extensions-dir=${workspaceFolder}/../../.tmp/vscode-extension-dev/extensions",
+        "--disable-workspace-trust",
+        "--skip-welcome",
+        "--skip-release-notes",
+        "${workspaceFolder}/../../.tmp/vscode-extension-dev/workspace"
+      ],
+      "env": {
+        "KIMI_CODE_HOME": "${workspaceFolder}/../../.tmp/vscode-extension-dev/kimi-home"
+      },
+      "outFiles": ["${workspaceFolder}/dist/**/*.js", "${workspaceFolder}/dist/**/*.mjs"],
+      "sourceMaps": true,
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ]
+    }
+  ]
+}

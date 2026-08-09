@@ -3,14 +3,17 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IAgentPlanService, PlanData } from '#/agent/plan/plan';
 import {
   ExitPlanModeInputSchema,
-  ExitPlanModeTool,
   type ExitPlanModeInput,
-} from '#/agent/plan/tools/exit-plan-mode';
+} from '#/agent/tools/plan/exit-plan-mode/exit-plan-mode';
+import { ExitPlanModeTool } from '#/agent/tools/plan/exit-plan-mode/exitPlanModeTool';
+import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
+
 
 const options = [
   { label: 'Approach A', description: 'Small change.' },
@@ -24,6 +27,7 @@ function planService(): IAgentPlanService {
     cancel: () => {},
     clear: async () => {},
     exit: vi.fn(),
+    recordRevision: async () => {},
     status: async () =>
       ({
         id: 'test-plan',
@@ -46,6 +50,15 @@ function recordingTelemetry(): ITelemetryService {
     setEnabled: () => {},
     flush: () => Promise.resolve(),
     shutdown: () => Promise.resolve(),
+  };
+}
+
+function permissionMode(mode: PermissionMode = 'auto'): IAgentPermissionModeService {
+  return {
+    _serviceBrand: undefined,
+    mode,
+    setMode: () => {},
+    onDidChangeMode: () => ({ dispose: () => {} }),
   };
 }
 
@@ -132,6 +145,7 @@ describe('ExitPlanMode option output', () => {
     const result = await executeTool(
       new ExitPlanModeTool(
         { ...planService(), exit },
+        permissionMode(),
         telemetry,
       ),
       {
@@ -147,17 +161,128 @@ describe('ExitPlanMode option output', () => {
     expect(result.output).toContain('Exited plan mode');
   });
 
+  it('marks the direct-execution output as auto-approved, not user-reviewed, in auto mode', async () => {
+    const telemetry = recordingTelemetry();
+
+    const result = await executeTool(
+      new ExitPlanModeTool(planService(), permissionMode('auto'), telemetry),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_plan_auto',
+        args: {},
+        signal,
+      },
+    );
+
+    expect(result.isError).toBeFalsy();
+    // In auto permission mode no interactive review can happen, so the
+    // output must not read as if the user had approved the plan.
+    expect(result.output).toContain('## Plan (auto-approved, not user-reviewed):');
+    expect(result.output).not.toContain('## Approved Plan:');
+    expect(result.output).toContain('the user has NOT explicitly approved it');
+    expect(result.output).toContain('# Plan');
+  });
+
+  it('keeps the user-approved output when a rule lets the call through outside auto mode', async () => {
+    const telemetry = recordingTelemetry();
+
+    const result = await executeTool(
+      new ExitPlanModeTool(planService(), permissionMode('manual'), telemetry),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_plan_rule',
+        args: {},
+        signal,
+      },
+    );
+
+    expect(result.isError).toBeFalsy();
+    // Outside auto mode the direct-execution path means a configured or
+    // session allow/ask rule approved the call — an explicit user decision,
+    // so the output keeps the user-approved wording.
+    expect(result.output).toContain('## Approved Plan:');
+    expect(result.output).not.toContain('auto-approved');
+    expect(telemetry.track2).toHaveBeenCalledWith('plan_resolved', {
+      outcome: 'approved',
+    });
+  });
+
   it('returns success without a "User feedback:" prefix when revise has no feedback', async () => {
     const telemetry = recordingTelemetry();
 
-    const result = await executeTool(new ExitPlanModeTool(planService(), telemetry), {
-      turnId: 7,
-      toolCallId: 'call_exit_plan',
-      args: { options },
-      signal,
-    });
+    const result = await executeTool(
+      new ExitPlanModeTool(planService(), permissionMode(), telemetry),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_plan',
+        args: { options },
+        signal,
+      },
+    );
 
     expect(result.isError).toBeFalsy();
     expect(result.output).not.toContain('User feedback:');
+  });
+
+  it('records a revision once per submission when the review display resolves', async () => {
+    const recordRevision = vi.fn(async () => {});
+    const service: IAgentPlanService = { ...planService(), recordRevision };
+
+    const result = await executeTool(
+      new ExitPlanModeTool(service, permissionMode(), recordingTelemetry()),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_record',
+        args: {},
+        signal,
+      },
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(recordRevision).toHaveBeenCalledTimes(1);
+  });
+
+  it('still submits when revision recording fails', async () => {
+    const recordRevision = vi.fn(async () => {
+      throw new Error('disk full');
+    });
+    const service: IAgentPlanService = { ...planService(), recordRevision };
+
+    const result = await executeTool(
+      new ExitPlanModeTool(service, permissionMode(), recordingTelemetry()),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_record_failure',
+        args: {},
+        signal,
+      },
+    );
+
+    expect(recordRevision).toHaveBeenCalledTimes(1);
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Exited plan mode');
+  });
+
+  it('skips revision recording when the plan content is empty', async () => {
+    const recordRevision = vi.fn(async () => {});
+    const service: IAgentPlanService = {
+      ...planService(),
+      recordRevision,
+      status: async () => ({ id: 'test-plan', content: '   ', path: '/tmp/kimi-plan.md' }),
+    };
+
+    const result = await executeTool(
+      new ExitPlanModeTool(service, permissionMode(), recordingTelemetry()),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_empty',
+        args: {},
+        signal,
+      },
+    );
+
+    expect(recordRevision).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('No plan file found');
   });
 });

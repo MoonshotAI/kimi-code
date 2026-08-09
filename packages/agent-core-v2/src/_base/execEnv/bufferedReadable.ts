@@ -1,11 +1,10 @@
 /**
- * `_base/execEnv` (L0) — `BufferedReadable` stream helper.
+ * `_base/execEnv` — `BufferedReadable` stream helper.
  *
  * A `Readable` wrapper that preserves source backpressure while still allowing
  * consumers to read buffered output after the source has ended. Used by process
  * spawners so `wait()`-then-read on small/medium outputs works without draining
- * unboundedly. Vendored from `@moonshot-ai/kaos` `internal.ts`; kept as a pure
- * helper with no DI dependencies.
+ * unboundedly. Kept as a pure helper with no DI dependencies.
  */
 
 import { Readable } from 'node:stream';
@@ -15,8 +14,6 @@ export class BufferedReadable extends Readable {
   private _ended: boolean = false;
 
   constructor(source: Readable) {
-    // Keep a modest prefetch window so wait()-then-read still works for
-    // common small/medium outputs without draining unboundedly.
     super({ highWaterMark: 128 * 1024 });
     this._source = source;
     this._source.on('data', this._onData);

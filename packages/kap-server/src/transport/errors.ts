@@ -1,10 +1,12 @@
 /**
- * `/api/v2` transport error handling — map internal errors onto the project
+ * `/api/v1/debug` transport error handling — map internal errors onto the project
  * envelope, guard serialization, time-box calls, and gate access.
  */
 
 import { ErrorCodes, Error2 } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode, errEnvelope } from '@moonshot-ai/protocol';
+
+import { errEnvelope } from '../protocol/envelope';
+import { ErrorCode } from '../protocol/error-codes';
 
 /** Thrown by {@link withTimeout} when a call exceeds its deadline. */
 export class TimeoutError extends Error {
@@ -44,6 +46,7 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.GOAL_NOT_RESUMABLE]: ErrorCode.GOAL_NOT_RESUMABLE,
   [ErrorCodes.GOAL_OBJECTIVE_EMPTY]: ErrorCode.GOAL_OBJECTIVE_EMPTY,
   [ErrorCodes.GOAL_OBJECTIVE_TOO_LONG]: ErrorCode.GOAL_OBJECTIVE_TOO_LONG,
+  [ErrorCodes.GOAL_UNSUPPORTED_AGENT]: ErrorCode.GOAL_UNSUPPORTED_AGENT,
   // hostFs / storage codes → closest v1 wire equivalent (ENOTDIR collapses
   // into path-not-found); codes without an equivalent fall back to 50001.
   [ErrorCodes.OS_FS_NOT_FOUND]: ErrorCode.FS_PATH_NOT_FOUND,

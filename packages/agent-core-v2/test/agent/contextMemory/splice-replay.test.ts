@@ -23,18 +23,18 @@ import {
   contextClear,
   contextUndo,
 } from '#/agent/contextMemory/contextOps';
-import { ContextSizeModel, contextSizeMeasured } from '#/agent/contextSize/contextSizeOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService, PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'ctx-live';
@@ -152,26 +152,25 @@ function buildHost(key: string): Host {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(
-    IAgentWireService,
-    new SyncDescriptor(WireService, [
-      { logScope: SCOPE, logKey: key },
-    ]),
-  );
   ix.stub(IAgentBlobService, blob);
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
+  const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
+    log: ix.get(IAppendLogStore),
+    blob,
+    eventBus: ix.get(IEventBus),
+  });
   return {
-    wire: ix.get(IAgentWireService),
+    wire,
     svc: ix.get(IAgentContextMemoryService),
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   };
 }
 
-async function readRecords(log: IAppendLogStore, key = KEY): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of log.read<PersistedRecord>(SCOPE, key)) {
+async function readRecords(log: IAppendLogStore, key = KEY): Promise<WireRecord[]> {
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -236,7 +235,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
   });
 
   it('folds v1 context.append_loop_event records into the ContextModel on replay', async () => {
-    const records: PersistedRecord[] = [
+    const records: WireRecord[] = [
       { type: 'context.append_message', message: userMessage('q') },
       { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1', turnId: '0', step: 1 } },
       {
@@ -276,7 +275,12 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ];
 
     const replay = buildHost(REPLAY_KEY);
-    await replay.wire.replay(...records);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
 
     const model = replay.wire.getModel(ContextModel) as readonly ContextMessage[];
     expect(model.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
@@ -290,7 +294,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
   });
 
   it('replays v1 context.apply_compaction records with contextSummary as the model summary', async () => {
-    const records: PersistedRecord[] = [
+    const records: WireRecord[] = [
       { type: 'context.append_message', message: userMessage('old') },
       { type: 'context.append_message', message: userMessage('tail') },
       {
@@ -304,7 +308,12 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ];
 
     const replay = buildHost(REPLAY_KEY);
-    await replay.wire.replay(...records);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
 
     const model = replay.wire.getModel(ContextModel) as readonly ContextMessage[];
     expect(model.map(textOf)).toEqual(['model-facing summary', 'tail']);
@@ -315,7 +324,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
   });
 
   it('replays new context.apply_compaction records with kept user messages before contextSummary', async () => {
-    const records: PersistedRecord[] = [
+    const records: WireRecord[] = [
       { type: 'context.append_message', message: userMessage('old user') },
       {
         type: 'context.append_message',
@@ -338,7 +347,12 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ];
 
     const replay = buildHost(REPLAY_KEY);
-    await replay.wire.replay(...records);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
 
     const model = replay.wire.getModel(ContextModel) as readonly ContextMessage[];
     expect(model.map((message) => message.role)).toEqual(['user', 'user', 'user']);
@@ -349,7 +363,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
   });
 
   it('replays pre-contextSummary kept-user records without adding a new prefix', async () => {
-    const records: PersistedRecord[] = [
+    const records: WireRecord[] = [
       { type: 'context.append_message', message: userMessage('old user') },
       { type: 'context.append_message', message: userMessage('recent user') },
       {
@@ -363,7 +377,12 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ];
 
     const replay = buildHost(REPLAY_KEY);
-    await replay.wire.replay(...records);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
 
     const model = replay.wire.getModel(ContextModel) as readonly ContextMessage[];
     expect(model.map(textOf)).toEqual(['old user', 'recent user', 'OLD SUMMARY']);
@@ -380,7 +399,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       toolCalls: [],
       origin: { kind: 'compaction_summary' },
     };
-    const records: PersistedRecord[] = [
+    const records: WireRecord[] = [
       { type: 'context.append_message', message: userMessage('old') },
       { type: 'context.append_message', message: userMessage('tail') },
       {
@@ -391,7 +410,12 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ];
 
     const replay = buildHost(REPLAY_KEY);
-    await replay.wire.replay(...records);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
 
     const model = replay.wire.getModel(ContextModel) as readonly ContextMessage[];
     expect(model).toHaveLength(2);
@@ -420,7 +444,12 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     expect(mediaUrl(persisted)).not.toContain(big);
 
     const replay = buildHost(REPLAY_KEY);
-    await replay.wire.replay(...records);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
     expect(blob.loadCalls).toBeGreaterThanOrEqual(1);
 
     const rebuilt = replay.wire.getModel(ContextModel) as readonly ContextMessage[];
@@ -446,7 +475,12 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     disposables.add(replay.eventBus.subscribe('context.spliced', (event) => {
       replayed.push({ start: event.start, deleteCount: event.deleteCount });
     }));
-    await replay.wire.replay(...records);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
     expect(replayed).toHaveLength(0);
     expect(replay.wire.getModel(ContextModel) as readonly ContextMessage[]).toHaveLength(2);
   });

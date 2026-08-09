@@ -22,11 +22,6 @@ export function buildHookSpawnOptions(options: {
     cwd: options.cwd,
     stdio: 'pipe',
     detached: process.platform !== 'win32',
-    // Hide the console Windows would otherwise allocate for the shell child.
-    // Without `windowsHide:true`, each hook flashes a visible console window —
-    // the same regression the node-local process host already guards against
-    // (see `buildSpawnOptions` in os/backends/node-local/hostProcessService.ts)
-    // and the runner's own taskkill spawn. Unconditional: it is a no-op on POSIX.
     windowsHide: true,
     env: options.env === undefined ? undefined : { ...process.env, ...options.env },
   };
@@ -104,11 +99,6 @@ export async function runHook(
       stderr += chunk;
     });
 
-    // Settle on the exit code AND drained stdio, not on `wait()` alone:
-    // `wait()` resolves at the child's 'exit', which can precede the
-    // stdout/stderr 'end', so a fast-exiting hook would otherwise lose its
-    // trailing output. `proc.dispose()` runs here for every path (clean exit,
-    // timeout, abort) once the process has exited and the streams have closed.
     const stdoutDone = new Promise<void>((done) => proc.stdout.once('end', done));
     const stderrDone = new Promise<void>((done) => proc.stderr.once('end', done));
     void Promise.all([proc.wait(), stdoutDone, stderrDone]).then(

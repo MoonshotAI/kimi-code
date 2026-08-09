@@ -6,8 +6,10 @@
  *   - same-origin (`Origin` host === `Host`, port stripped both sides) → allowed;
  *   - cross-origin → allowed only if the full origin (scheme + host) is in the
  *     explicit whitelist (`KIMI_CODE_CORS_ORIGINS`, no `*` wildcard — PLAN
- *     §3.4). Allowed origins get `Access-Control-Allow-*` echoed; `OPTIONS`
- *     preflight short-circuits to `204`;
+ *     §3.4). Allowed origins get `Access-Control-Allow-Origin/-Methods` echoed
+ *     and `Access-Control-Allow-Headers` reflected from the preflight's
+ *     `Access-Control-Request-Headers` (so new client headers need no server
+ *     change); `OPTIONS` preflight short-circuits to `204`;
  *   - cross-origin and NOT whitelisted → no CORS headers are emitted, so the
  *     browser blocks the response. `OPTIONS` still returns `204` (without CORS
  *     headers) so the preflight fails closed.
@@ -23,7 +25,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { stripPort } from './hostnames';
 
 const CORS_ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
-const CORS_ALLOW_HEADERS = 'Content-Type, Authorization';
+const CORS_ALLOW_HEADERS = 'Content-Type, Authorization, X-Kimi-Client-Id, X-Kimi-Client-Name, X-Kimi-Client-Version, X-Kimi-Client-Ui-Mode';
 
 export interface OriginHookOptions {
   /** Explicit cross-origin allowlist (full origin strings, scheme + host). */
@@ -112,7 +114,11 @@ function isLoopbackHost(h: string): boolean {
 /**
  * Build the Fastify `onRequest` CORS hook.
  *
- * Allowed origins get `Access-Control-Allow-*` echoed and `OPTIONS` preflights
+ * Allowed origins get `Access-Control-Allow-Origin/-Methods` echoed and
+ * `Access-Control-Allow-Headers` reflected from the preflight's
+ * `Access-Control-Request-Headers` (falling back to `CORS_ALLOW_HEADERS` for
+ * non-preflight responses), so newly added client request headers do not
+ * require a matching server-side allowlist change; `OPTIONS` preflights
  * short-circuit to `204`. Disallowed origins get no CORS headers (the browser
  * blocks the response); their `OPTIONS` preflight still returns `204` so it
  * fails closed without leaking headers.
@@ -129,7 +135,10 @@ export function createOriginHook(
     if (isOriginAllowed(origin, req.headers.host, allowed)) {
       reply.header('Access-Control-Allow-Origin', origin);
       reply.header('Access-Control-Allow-Methods', CORS_ALLOW_METHODS);
-      reply.header('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
+      reply.header(
+        'Access-Control-Allow-Headers',
+        req.headers['access-control-request-headers'] ?? CORS_ALLOW_HEADERS,
+      );
       reply.header('Vary', 'Origin');
       if (req.method === 'OPTIONS') {
         return reply.code(204).send();

@@ -44,7 +44,6 @@ describe('toHostFsError', () => {
     });
     expect(error.cause).toBe(raw);
     expect(() => JSON.stringify(error.details)).not.toThrow();
-    // The message stays a short human sentence — no path or errno interpolation.
     expect(error.message).not.toContain('/secret');
     expect(error.message).not.toContain('EACCES');
   });

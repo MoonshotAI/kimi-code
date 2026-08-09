@@ -107,8 +107,9 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
   const children = host.state.transcriptContainer.children;
   const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);
   if (lastUserComponentIndex !== undefined) {
+    // Structural removal only: the container's ref-checked render cache
+    // detects the child-list change; no tree-wide invalidate needed.
     removeUndoContextComponents(children, lastUserComponentIndex);
-    host.state.transcriptContainer.invalidate();
   }
 
   const preservedEntries = entries.slice(lastUserIndex).filter(

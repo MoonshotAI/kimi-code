@@ -279,6 +279,17 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
         if (current) current.cancelled = true;
         break;
 
+      case 'context.update_token_count':
+        contextTokens = rec.tokenCount;
+        contextSeries.push({
+          lineNo: entry.lineNo,
+          time: t,
+          turnIndex: current?.index ?? -1,
+          step: -1,
+          contextTokens,
+        });
+        if (contextTokens > peakContext) peakContext = contextTokens;
+        break;
       case 'context.clear':
         contextTokens = 0;
         break;

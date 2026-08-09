@@ -1,61 +1,40 @@
 import { randomUUID } from 'node:crypto';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { IAgentTaskService } from '#/agent/task/task';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentGoalService } from '#/agent/goal/goal';
-import type { PluginCommandActivatedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
 import { ErrorCodes, Error2 } from '#/errors';
-import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentPlanService } from '#/agent/plan/plan';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import {
+  IAgentLifecycleService,
+  MAIN_AGENT_ID,
+} from '#/session/agentLifecycle/agentLifecycle';
 import { expandCommandArguments } from '#/app/plugin/commands';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { ProfileError } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { IAgentShellCommandService } from '#/agent/shellCommand/shellCommand';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionBtwService } from '#/session/btw/btw';
 import { IAgentSkillService } from '#/agent/skill/skill';
-import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentUsageService } from '#/agent/usage/usage';
-import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import type {
   ActivatePluginCommandPayload,
   ActivateSkillPayload,
-  BeginCompactionPayload,
   CancelPayload,
-  CancelPlanPayload,
-  CreateGoalPayload,
-  DetachTaskPayload,
   EmptyPayload,
-  EnterSwarmPayload,
-  GetTaskOutputPayload,
-  GetTasksPayload,
   PromptLaunchResult,
   PromptPayload,
-  RegisterToolPayload,
-  RunShellCommandPayload,
-  ShellCommandResult,
-  CancelShellCommandPayload,
-  SetActiveToolsPayload,
-  SetModelPayload,
   SetPermissionPayload,
-  SetThinkingPayload,
   SteerPayload,
-  StopTaskPayload,
   UndoHistoryPayload,
-  UnregisterToolPayload,
 } from './core-api';
 import { IAgentRPCService } from './rpc';
 import {
@@ -64,6 +43,15 @@ import {
   promptMetadataTextFromPluginCommand,
   promptMetadataTextFromSkill,
 } from './prompt-metadata';
+
+export interface PluginCommandActivatedEvent {
+  readonly type: 'plugin_command.activated';
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly commandArgs?: string;
+  readonly trigger: 'user-slash';
+}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -76,36 +64,37 @@ export class AgentRPCService implements IAgentRPCService {
 
   constructor(
     @IAgentPromptService private readonly promptService: IAgentPromptService,
-    @IAgentShellCommandService private readonly shellCommand: IAgentShellCommandService,
+    @IAgentConversationUndoService
+    private readonly conversationUndo: IAgentConversationUndoService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
-    @IAgentPermissionGate private readonly permission: IAgentPermissionGate,
-    @IAgentPlanService private readonly planMode: IAgentPlanService,
-    @IAgentSwarmService private readonly swarmMode: IAgentSwarmService,
     @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
-    @IAgentUserToolService private readonly userTools: IAgentUserToolService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IHostEnvironment private readonly hostEnv: IHostEnvironment,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
+    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
     @IAgentSkillService private readonly skills: IAgentSkillService,
-    @IAgentUsageService private readonly usage: IAgentUsageService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentGoalService private readonly goal: IAgentGoalService,
     @IEventBus private readonly eventBus: IEventBus,
     @IEventService private readonly eventService: IEventService,
     @IPluginService private readonly plugins: IPluginService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionContext private readonly sessionContext: ISessionContext,
-    @ISessionBtwService private readonly btw: ISessionBtwService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) { }
 
   async prompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
-    // Mirror v1: persist `lastPrompt` and derive an easy title from the first
-    // prompt BEFORE launching the turn, so the web session title is populated as
-    // soon as the conversation starts (gap closed — v2 used to leave it empty).
+    if (payload.disabledTools !== undefined) {
+      try {
+        await this.toolPolicy.setSessionDisabledTools(payload.disabledTools);
+      } catch (error) {
+        if (error instanceof ProfileError) {
+          throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+        }
+        throw error;
+      }
+    }
     await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
     const handle = await this.promptService.enqueue({ message: {
       role: 'user',
@@ -116,14 +105,6 @@ export class AgentRPCService implements IAgentRPCService {
     if (handle.state === 'pending') return undefined;
     const turn = await handle.launched;
     return turn === undefined ? undefined : { turn_id: turn.id };
-  }
-
-  async runShellCommand(payload: RunShellCommandPayload): Promise<ShellCommandResult> {
-    return this.shellCommand.run(payload);
-  }
-
-  cancelShellCommand(payload: CancelShellCommandPayload): void {
-    this.shellCommand.cancel(payload.commandId);
   }
 
   async steer(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {
@@ -140,25 +121,25 @@ export class AgentRPCService implements IAgentRPCService {
 
   cancel({ turnId }: CancelPayload): void {
     if (this.loop.status().state === 'running') {
-      this.telemetry.track2('cancel', { from: 'streaming' });
+      this.telemetry.track2('cancel', {
+        from: 'streaming',
+        trace_id: this.loop.status().activeTraceId,
+      });
     }
     this.loop.cancel(turnId);
   }
 
-  undoHistory(payload: UndoHistoryPayload): number {
-    const undone = this.promptService.undo(payload.count);
-    this.telemetry.track2('conversation_undo', { count: payload.count });
-    return undone;
-  }
-
-  setThinking(payload: SetThinkingPayload): void {
-    this.profile.setThinking(payload.level);
+  async undoHistory(payload: UndoHistoryPayload): Promise<number> {
+    return this.conversationUndo.undo(payload.count);
   }
 
   setPermission(payload: SetPermissionPayload): void {
     const wasYolo = this.permissionMode.mode === 'yolo';
     const wasAuto = this.permissionMode.mode === 'auto';
     this.permissionMode.setMode(payload.mode);
+    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
+      this.agentLifecycle.broadcastPermissionMode(payload.mode);
+    }
     const enabled = this.permissionMode.mode === 'yolo';
     if (enabled !== wasYolo) {
       this.telemetry.track2('yolo_toggle', { enabled });
@@ -169,81 +150,23 @@ export class AgentRPCService implements IAgentRPCService {
     }
   }
 
-  setModel(payload: SetModelPayload) {
-    return this.profile.setModel(payload.model);
-  }
-
-  getModel(_payload: EmptyPayload): string {
-    return this.profile.getModel();
-  }
-
-  enterPlan(_payload: EmptyPayload): Promise<void> {
-    return this.planMode.enter();
-  }
-
-  cancelPlan(payload: CancelPlanPayload): void {
-    this.planMode.cancel(payload.id);
-  }
-
-  clearPlan(_payload: EmptyPayload): Promise<void> {
-    return this.planMode.clear();
-  }
-
-  enterSwarm(payload: EnterSwarmPayload): void {
-    this.swarmMode.enter(payload.trigger);
-  }
-
-  exitSwarm(_payload: EmptyPayload): void {
-    this.swarmMode.exit();
-  }
-
-  getSwarmMode(_payload: EmptyPayload): boolean {
-    return this.swarmMode.isActive;
-  }
-
-  startBtw(_payload: EmptyPayload): Promise<string> {
-    return this.btw.start();
-  }
-
-  beginCompaction(payload: BeginCompactionPayload): void {
-    this.fullCompaction.begin({ source: 'manual', instruction: payload.instruction });
-  }
-
   cancelCompaction(_payload: EmptyPayload): void {
     const active = this.fullCompaction.compacting;
     if (active !== null) {
-      this.telemetry.track2('cancel', { from: 'compacting' });
+      this.telemetry.track2('cancel', {
+        from: 'compacting',
+        trace_id: active.traceId,
+      });
     }
     active?.abortController.abort();
   }
 
-  registerTool(payload: RegisterToolPayload): void {
-    this.userTools.register(payload);
-  }
-
-  unregisterTool(payload: UnregisterToolPayload): void {
-    this.userTools.unregister(payload.name);
-  }
-
-  setActiveTools(payload: SetActiveToolsPayload): void {
-    this.profile.update({ activeToolNames: payload.names });
-  }
-
-  stopTask(payload: StopTaskPayload): void {
-    void this.tasks.stop(payload.taskId, payload.reason);
-  }
-
-  detachTask(payload: DetachTaskPayload) {
-    return this.tasks.detach(payload.taskId);
-  }
-
-  clearContext(_payload: EmptyPayload): void {
-    this.promptService.clear();
-  }
-
-  async activateSkill(payload: ActivateSkillPayload): Promise<void> {
-    void this.skills.activate(payload);
+  async activateSkill(payload: ActivateSkillPayload): Promise<PromptLaunchResult | undefined> {
+    // Awaited (not fire-and-forget): the caller gets the launched turn id and
+    // activation failures (unknown skill, busy) surface instead of vanishing.
+    const turn = await this.skills.activate(payload);
     await this.updatePromptMetadata(promptMetadataTextFromSkill(payload));
+    return { turn_id: turn.id };
   }
 
   async activatePluginCommand(payload: ActivatePluginCommandPayload): Promise<void> {
@@ -295,64 +218,23 @@ export class AgentRPCService implements IAgentRPCService {
     );
   }
 
-  createGoal(payload: CreateGoalPayload) {
-    return this.goal.createGoal(payload);
-  }
-
-  getGoal(_payload: EmptyPayload) {
-    return this.goal.getGoal();
-  }
-
-  pauseGoal(_payload: EmptyPayload) {
-    return this.goal.pauseGoal();
-  }
-
-  resumeGoal(_payload: EmptyPayload) {
-    return this.goal.resumeGoal();
-  }
-
-  cancelGoal(_payload: EmptyPayload) {
-    return this.goal.cancelGoal();
-  }
-
-  getTaskOutput(payload: GetTaskOutputPayload): Promise<string> {
-    return this.tasks.readOutput(payload.taskId, payload.tail);
-  }
-
   getContext(_payload: EmptyPayload) {
     return {
       history: this.context.get(),
-      tokenCount: this.contextSize.get().measured,
+      // The externally reported context size, resolved by the
+      // `[token_counting]` strategy inside the service — matching the v1
+      // `context.tokenCount` semantics.
+      tokenCount: this.tokenCounting.statusSize(),
     };
-  }
-
-  getConfig(_payload: EmptyPayload) {
-    return this.profile.data();
-  }
-
-  getPermission(_payload: EmptyPayload) {
-    return this.permission.data();
-  }
-
-  getPlan(_payload: EmptyPayload) {
-    return this.planMode.status();
-  }
-
-  getUsage(_payload: EmptyPayload) {
-    return this.usage.status();
   }
 
   getTools(_payload: EmptyPayload) {
     return this.toolRegistry.list().map((tool) => ({
       name: tool.name,
       description: tool.description,
-      active: this.profile.isToolActive(tool.name, tool.source),
+      active: this.toolPolicy.isToolActive(tool.name, tool.source),
       source: tool.source,
     }));
-  }
-
-  getTasks(payload: GetTasksPayload) {
-    return this.tasks.list(payload.activeOnly ?? false, payload.limit);
   }
 }
 
@@ -360,6 +242,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentRPCService,
   AgentRPCService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'rpc',
 );

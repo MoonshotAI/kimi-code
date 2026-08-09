@@ -9,14 +9,9 @@
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-/** Rejection message returned by the deny-all permission policy for tool calls. */
 export const TOOL_CALL_DISABLED_MESSAGE =
   'Tool calls are disabled for side questions. Answer with text only.';
 
-/**
- * System reminder appended to a `btw` child agent. Tool definitions remain
- * visible only for prompt-cache reasons; the model must not call them.
- */
 export const SIDE_QUESTION_SYSTEM_REMINDER = `
 This is a side-channel conversation with the user. You should answer user questions directly based on what you already know.
 
@@ -35,10 +30,6 @@ IMPORTANT:
 export interface ISessionBtwService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Fork the main agent into a side-question child agent (tools disabled,
-   * side-channel reminder appended) and return the child's id.
-   */
   start(): Promise<string>;
 }
 

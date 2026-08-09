@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
+import { win32 } from 'node:path';
 import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 
 import { resolveKimiHome } from '#/config/path';
@@ -138,7 +139,17 @@ function normalizeStdioCwd(config: McpServerConfig, cwdBase: string): McpServerC
 }
 
 function resolvePath(base: string, value: string): string {
+  if (isWindowsAbsolutePath(base)) {
+    return win32.resolve(base, value).replaceAll('\\', '/');
+  }
+  if (isWindowsAbsolutePath(value)) {
+    return win32.resolve(value).replaceAll('\\', '/');
+  }
   return isAbsolute(value) ? normalize(value) : resolve(base, value);
+}
+
+function isWindowsAbsolutePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(value);
 }
 
 function isFileNotFound(error: unknown): boolean {

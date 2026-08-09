@@ -2,7 +2,7 @@
  * server-v2 — on-demand main-agent resolution.
  *
  * Sessions are created without a main agent; the first request that targets
- * `main` materializes it here. Both the `/api/v1` routes and the `/api/v2`
+ * `main` materializes it here. Both the `/api/v1` routes and the `/api/v1/debug`
  * dispatcher resolve the main agent through {@link ensureMainAgent} so a
  * missing main agent is created instead of reported as `agent.not_found`.
  *
@@ -12,9 +12,8 @@
  * default profile is applied automatically. There is intentionally no default
  * model baked in here: a runnable agent only exists once a model is chosen.
  *
- * Both symbols are re-exports of the core `agentLifecycle` domain's bootstrap
- * helper, so main-agent bootstrap business (plugin session-start injection)
- * lives in exactly one place.
+ * Both symbols are re-exports of the core `agentLifecycle` domain, so
+ * main-agent bootstrap lives in exactly one place.
  */
 
 export { ensureMainAgent, MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2';

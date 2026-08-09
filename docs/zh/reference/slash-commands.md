@@ -14,8 +14,9 @@
 | --- | --- | --- | --- |
 | `/login` | — | 选择账号或平台并登录：Kimi Code 走 OAuth 验证码流程，Kimi Platform 通过 API 密钥登录 | 否 |
 | `/logout` | — | 清除当前所选账号的凭据 | 否 |
-| `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见[平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-与供应商管理) | 是 |
+| `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见[平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-—-交互式供应商管理) | 是 |
 | `/model` | — | 切换当前会话使用的 LLM 模型 | 是 |
+| `/secondary_model` | — | 配置子 Agent 默认绑定的次主力模型（写入 [`[secondary_model]`](../configuration/config-files.md#secondary-model) 配置并在当前会话立即生效）。需开启 `secondary-model` 实验功能 | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板 | 是 |
 | `/experiments` | `/experimental` | 打开实验功能面板 | 是 |
 | `/permission` | — | 选择权限模式 | 是 |
@@ -29,14 +30,16 @@
 | `/new` | `/clear` | 开启全新会话，丢弃当前上下文 | 否 |
 | `/sessions` | `/resume` | 浏览历史会话并切换/恢复 | 否 |
 | `/tasks` | `/task` | 浏览后台任务列表 | 是 |
-| `/fork` | — | 基于当前会话 fork 一份新会话，保留完整对话历史 | 否 |
+| `/fork` | — | 基于当前会话 fork 一份新会话，保留完整对话历史；fork 后仍停留在当前会话 | 否 |
 | `/title [<text>]` | `/rename` | 不带参数时显示当前会话标题；带参数时设置为新标题（最长 200 字符） | 是 |
 | `/compact [<instruction>]` | — | 压缩当前对话上下文，释放 token 占用；可附带自定义指令，提示模型压缩时保留哪些信息 | 否 |
-| `/undo [<count>]` | — | 从当前上下文撤销最近的提示词。不带数量时打开选择器；带数量时撤销对应条数。最后一次上下文压缩之前的提示词不能撤销 | 否 |
+| `/undo [<count>]` | — | 从当前上下文撤销最近的提示词。不带数量时打开选择器；带数量时撤销对应条数。最后一次上下文压缩之前的提示词不能撤销。撤销会一并回滚这些提示词产生的 todo 列表和计划模式状态（不回滚代码改动） | 否 |
 | `/init` | — | 分析当前代码库并生成 `AGENTS.md` | 否 |
 | `/export-md [<path>]` | `/export` | 将当前会话导出为 Markdown 文件 | 否 |
 | `/export-debug-zip` | — | 将当前会话导出为调试用 ZIP 压缩包（与 [`kimi export`](./kimi-command.md#kimi-export) 行为一致） | 否 |
+| `/copy` | — | 将最后一条 AI 回复复制到剪贴板 | 否 |
 | `/add-dir [<path>]` | — | 为当前会话添加额外的工作目录。不带路径（或传入 `list`）运行时列出已配置的目录。添加时可选择是否将目录记入项目的 `.kimi-code/local.toml` | 否 |
+| `/web` | — | 在 web UI 中打开当前会话：选择一个运行中的实例进行连接，或在 TUI 退出后新开一个前台服务器。参见 [`kimi web`](./kimi-command.md#kimi-web) | 是 |
 
 ## 模式与运行控制
 
@@ -103,7 +106,7 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 | `/mcp` | — | 列出当前会话中的 MCP server 及连接状态 | 是 |
 | `/plugins` | — | 打开交互式 plugin 管理器 | 是 |
 | `/version` | — | 显示 Kimi Code CLI 版本号 | 是 |
-| `/feedback` | — | 提交反馈，可附加诊断日志和代码库上下文 | 是 |
+| `/feedback` | `/bug` | 提交反馈，可附加诊断日志和代码库上下文 | 是 |
 
 ## 退出
 
@@ -120,6 +123,7 @@ Kimi Code CLI 随包内置了一组 Skill，直接以 `/<name>` 形式出现在�
 | `/mcp-config` | 配置 MCP server 并处理 MCP OAuth 登录。详见 [MCP](../customization/mcp.md) |
 | `/custom-theme [<text>]` | 创建或编辑自定义 TUI 配色主题。详见 [主题](../customization/themes.md) |
 | `/update-config` | 查看或编辑 `config.toml`（模型、供应商、权限、hooks）和 `tui.toml`（主题、编辑器、通知、自动更新） |
+| `/check-kimi-code-docs` | 依据官方文档回答 Kimi Code 产品问题（CLI 用法、配置、会员、错误码） |
 | `/import-from-cc-codex` | 从 Claude Code 和 Codex 导入 instructions、skills 和 MCP 设置 |
 | `/sub-skill` | 发现并将本地 skill 库存重组为分层子 skill 包。包含 `/sub-skill.review`（只读提案）和 `/sub-skill.consolidate`（执行重组） |
 

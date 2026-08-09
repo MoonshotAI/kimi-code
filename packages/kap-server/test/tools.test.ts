@@ -20,17 +20,19 @@ import { join } from 'node:path';
 import {
   IAgentLifecycleService,
   IAgentToolRegistryService,
-  ISessionLifecycleService,
-  IModelResolver,
+  getLiveSessionById,
+  ISessionToolPolicy,
+  IModelCatalog,
   type ExecutableTool,
 } from '@moonshot-ai/agent-core-v2';
 import {
   listMcpServersResponseSchema,
   listToolsResponseSchema,
-} from '@moonshot-ai/protocol';
+} from '../src/protocol/rest-tool';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -46,6 +48,7 @@ interface ToolWire {
   input_schema: unknown;
   source: string;
   mcp_server_id?: string;
+  active?: boolean;
 }
 
 describe('server-v2 /api/v1 tools + mcp', () => {
@@ -55,19 +58,37 @@ describe('server-v2 /api/v1 tools + mcp', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-tools-'));
-    const modelResolver: IModelResolver = {
+    const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
-      resolve: () => {
-        throw new Error('modelResolver.resolve not exercised in this test');
+      get: () => {
+        throw new Error('modelCatalog.get not exercised in this test');
+      },
+      getRequester: () => {
+        throw new Error('modelCatalog.getRequester not exercised in this test');
+      },
+      inspect: () => {
+        throw new Error('modelCatalog.inspect not exercised in this test');
+      },
+      ping: () => {
+        throw new Error('modelCatalog.ping not exercised in this test');
       },
       findByName: () => [],
+      listModels: async () => [],
+      listProviders: async () => [],
+      getProvider: async () => {
+        throw new Error('modelCatalog.getProvider not exercised in this test');
+      },
+      setDefaultModel: async () => {
+        throw new Error('modelCatalog.setDefaultModel not exercised in this test');
+      },
     };
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: [[IModelResolver, modelResolver]],
+      seeds: [[IModelCatalog, modelCatalog]],
     });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -113,9 +134,9 @@ describe('server-v2 /api/v1 tools + mcp', () => {
   // The main agent scope is not created automatically on session creation
   // (server-v2 gap G10); create it here so IToolRegistry / IMcpService resolve.
   async function ensureMainAgent(sessionId: string) {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    let agent = session.accessor.get(IAgentLifecycleService).getHandle('main');
+    let agent = session.accessor.get(IAgentLifecycleService).get('main');
     agent ??= await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     return agent;
   }
@@ -163,7 +184,8 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       const echo = tools.find((t) => t.name === 'Echo');
       // v1 parity: `input_schema` is always null on the wire, even though v2's
       // registry carries the real JSON schema (`parameters`).
-      expect(echo).toMatchObject({ source: 'builtin', input_schema: null });
+      // With no gate in play every tool is `active: true` (v2 extension).
+      expect(echo).toMatchObject({ source: 'builtin', input_schema: null, active: true });
       expect(echo?.mcp_server_id).toBeUndefined();
 
       const skill = tools.find((t) => t.name === 'MySkill');
@@ -183,6 +205,24 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       );
       expect(body.code).toBe(0);
       expect(listToolsResponseSchema.safeParse(body.data).success).toBe(true);
+    });
+
+    it('marks tools denied by the session tool policy as inactive', async () => {
+      const id = await createSession();
+      await ensureMainAgent(id);
+
+      // Set the session-scope denylist directly: this harness's model catalog is
+      // a throwing stub, so the REST prompt path (which requires a bound profile)
+      // is unavailable here. The composed gate read by the route is the same.
+      const session = getLiveSessionById(server!.core.accessor, id);
+      if (session === undefined) throw new Error(`session ${id} not found`);
+      await session.accessor.get(ISessionToolPolicy).setDisabledTools(['Bash']);
+
+      const { body } = await getJson<{ tools: ToolWire[] }>(`/api/v1/tools?session_id=${id}`);
+      expect(body.code).toBe(0);
+      const tools = listToolsResponseSchema.parse(body.data).tools;
+      expect(tools.find((t) => t.name === 'Bash')).toMatchObject({ active: false });
+      expect(tools.find((t) => t.name === 'Read')).toMatchObject({ active: true });
     });
 
     it('rejects an empty session_id with 40001', async () => {

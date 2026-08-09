@@ -1,5 +1,5 @@
 /**
- * `todo` domain (L4) — `ISessionTodoService` contract.
+ * `todo` domain — `ISessionTodoService` contract.
  *
  * The session-shared todo list: an in-memory list materialized from the main
  * agent's `tools.update_store` (`key: 'todo'`) wire records, mutated through
@@ -15,13 +15,9 @@ import type { TodoItem } from './todoItem';
 export interface ISessionTodoService {
   readonly _serviceBrand: undefined;
 
-  /** Current in-memory todo list (the materialized main-agent wire state). */
   getTodos(): readonly TodoItem[];
-  /** Replace the whole list: appends a `tools.update_store` (`key: 'todo'`) to the main agent's wire. */
   setTodos(todos: readonly TodoItem[]): void;
-  /** Clear the list (equivalent to `setTodos([])`). */
   clear(): void;
-  /** Fires when the materialized list changes (after a `tools.update_store` is applied); carries the sanitized list. */
   readonly onDidChange: Event<readonly TodoItem[]>;
 }
 

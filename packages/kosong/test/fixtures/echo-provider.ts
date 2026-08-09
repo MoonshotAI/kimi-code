@@ -319,6 +319,7 @@ class EchoStreamedMessage implements StreamedMessage {
   readonly usage: TokenUsage | null;
   readonly finishReason: FinishReason | null;
   readonly rawFinishReason: string | null;
+  readonly traceId: string | null = null;
 
   private readonly _parts: StreamedMessagePart[];
 

@@ -4,14 +4,12 @@
  * Owns the `old_string` uniqueness rule, the `replace_all` path, and the
  * user-facing error messages. Operates on a {@link TextModel} (pure text) and
  * returns a discriminated result: either the re-materialized raw content plus
- * the replacement count, or a ready-to-surface error message. No IO —
- * `FileEditService` handles reading/writing and no-op pre-checks.
+ * the replacement count, or a ready-to-surface error message. No IO.
  */
 
 import type { TextModel } from './textModel';
 
 export interface EditApplyInput {
-  /** Display path used in error messages (the user-facing path, not necessarily absolute). */
   readonly path: string;
   readonly old_string: string;
   readonly new_string: string;
@@ -35,16 +33,6 @@ function notUniqueMessage(path: string, count: number): string {
 }
 
 export class EditService {
-  /**
-   * Apply the edit business rules to `model`.
-   *
-   * - `replace_all`: replace every occurrence; error when none are found.
-   * - otherwise: require exactly one occurrence; error on zero (not found) or
-   *   more than one (not unique).
-   *
-   * The no-op case (`old_string === new_string`) is intentionally not handled
-   * here — `EditTool` rejects it before any file IO.
-   */
   apply(model: TextModel, input: EditApplyInput): EditApplyResult {
     if (input.replace_all) {
       const { text, count } = model.replaceAll(input.old_string, input.new_string);

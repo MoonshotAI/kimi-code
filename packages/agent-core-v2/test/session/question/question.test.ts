@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import {
   _clearScopedRegistryForTests,
   LifecycleScope,
+  ScopeActivation,
   registerScopedService,
   type Scope,
 } from '#/_base/di/scope';
@@ -14,6 +14,10 @@ import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { SessionInteractionService } from '#/session/interaction/interactionService';
 import { type QuestionRequest, ISessionQuestionService } from '#/session/question/question';
 import { SessionQuestionService } from '#/session/question/questionService';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
 const noopEventBus: IEventBus = {
   _serviceBrand: undefined,
@@ -41,12 +45,15 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
 
   beforeEach(() => {
     _clearScopedRegistryForTests();
-    registerScopedService(LifecycleScope.Session, ISessionInteractionService, SessionInteractionService, InstantiationType.Delayed, 'interaction');
-    registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, InstantiationType.Delayed, 'question');
+    registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
+    registerScopedService(LifecycleScope.Session, ISessionInteractionService, SessionInteractionService, ScopeActivation.OnDemand, 'interaction');
+    registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, ScopeActivation.OnDemand, 'question');
 
     disposables = new DisposableStore();
     host = createScopedTestHost([stubPair(IEventBus, noopEventBus)]);
-    session = host.child(LifecycleScope.Session, 'session-a');
+    session = host.child(LifecycleScope.Session, 'session-a', [
+      stubPair(IWorkspaceStateService, new WorkspaceStateService()),
+    ]);
   });
 
   afterEach(() => {
@@ -104,6 +111,26 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     });
   });
 
+  it('records the owning agent on the interaction origin', async () => {
+    const interaction = session.accessor.get(ISessionInteractionService);
+    const questions = session.accessor.get(ISessionQuestionService);
+
+    const sub = questions.request(makeRequest('q-sub'), { agentId: 'sub-1' });
+    expect(interaction.listPending().find((i) => i.id === 'q-sub')?.origin).toMatchObject({
+      agentId: 'sub-1',
+    });
+
+    const main = questions.request(makeRequest('q-main'));
+    expect(
+      interaction.listPending().find((i) => i.id === 'q-main')?.origin.agentId,
+    ).toBeUndefined();
+
+    questions.dismiss('q-sub');
+    questions.dismiss('q-main');
+    await expect(sub).resolves.toBeNull();
+    await expect(main).resolves.toBeNull();
+  });
+
   it('request with a pre-aborted signal resolves null and parks nothing', async () => {
     const questions = session.accessor.get(ISessionQuestionService);
     const controller = new AbortController();
@@ -128,9 +155,6 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
 
     controller.abort();
 
-    // v1 broker semantics: the abort settles the entry as a dismissal, so the
-    // caller sees the same `null` result (→ `event.question.dismissed`) as an
-    // explicit dismiss instead of a rejection.
     await expect(pending).resolves.toBeNull();
     expect(questions.listPending()).toEqual([]);
     expect(resolved).toEqual([{ id: 'q1', response: null }]);
@@ -145,13 +169,14 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     questions.answer('q1', { answers: { q_0: 'Yes' } });
 
     await expect(pending).resolves.toEqual({ answers: { q_0: 'Yes' } });
-    // A late abort is a no-op: the entry is already settled.
     controller.abort();
     expect(questions.listPending()).toEqual([]);
   });
 
   it('Session scope isolates brokers: a question parked in A is invisible to B', () => {
-    const sessionB = host.child(LifecycleScope.Session, 'session-b');
+    const sessionB = host.child(LifecycleScope.Session, 'session-b', [
+      stubPair(IWorkspaceStateService, new WorkspaceStateService()),
+    ]);
     const questionsA = session.accessor.get(ISessionQuestionService);
     const questionsB = sessionB.accessor.get(ISessionQuestionService);
 
@@ -159,7 +184,6 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     expect(questionsA.listPending().map((r) => r.id)).toEqual(['q1']);
     expect(questionsB.listPending()).toEqual([]);
 
-    // Answering from B is a no-op — the id lives in A's kernel.
     questionsB.answer('q1', { answers: { q_0: 'Yes' } });
     expect(questionsA.listPending().map((r) => r.id)).toEqual(['q1']);
   });

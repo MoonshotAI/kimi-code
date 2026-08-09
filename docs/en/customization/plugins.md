@@ -1,6 +1,6 @@
 # Plugins
 
-Plugins package reusable Kimi Code CLI capabilities into installable units — they can add [Agent Skills](./skills.md), automatically load a specified Skill at session start, and declare MCP servers to provide real tool capabilities. They are ideal for sharing workflows with a team, connecting to external services, or installing extensions from the official marketplace.
+Plugins package reusable Kimi Code CLI capabilities into installable units — they can add [Agent Skills](./skills.md), custom [agents](./agents.md), automatically load a specified Skill at session start, contribute system-prompt instructions, and declare MCP servers to provide real tool capabilities. They are ideal for sharing workflows with a team, connecting to external services, or installing extensions from the official marketplace.
 
 ## Installation and Management
 
@@ -33,7 +33,7 @@ You can also use slash commands directly:
 | `/plugins mcp enable <id> <server>` | Enable an MCP server declared by a plugin |
 | `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin |
 
-The **Installed** tab lists your installed plugins and shows an update badge when a newer version is available in the marketplace. The **Official** and **Third-party** tabs list marketplace plugins by tier; the **Custom** tab installs from a URL. Marketplace catalogs load automatically when needed. Each install shows a trust badge: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else). Installing a third-party plugin (anything not from the official address, including Custom installs) first shows a confirmation prompt that defaults to cancelling, so it is only installed if you choose to trust the source.
+The **Installed** tab lists your installed plugins and shows an update badge when a newer version is available in the marketplace. When a turn that used an outdated plugin (its MCP tool or a `/<plugin>:<command>` slash command) ends, a one-time notice also points you to `/plugins` for the update; each new marketplace version is announced once. The **Official** and **Third-party** tabs list marketplace plugins by tier; the **Custom** tab installs from a URL. On the v2 engine, the Official tab also lists the built-in product capabilities (Kimi Computer Use — macOS only — and Kimi WebBridge). Their identity and install action come from the client, while the marketplace may supply a version for the normal `install` / `installed` / `update` status. Detailed runtime checks and install progress go to the log instead of changing the installed state. Pressing Enter for an install or update refreshes the binary runtime and wiring plugin together. When Kimi WebBridge is installed or updated, legacy standalone copies of its Skill are moved to `$KIMI_CODE_HOME/backups/kimi-webbridge-skills/` before the managed plugin takes over; the old files are backed up, not deleted. Marketplace catalogs load automatically when needed. Each install shows a trust badge: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else). Installing a third-party plugin (anything not from the official address, including Custom installs) first shows a confirmation prompt that defaults to cancelling, so it is only installed if you choose to trust the source.
 
 ### Installing from GitHub
 
@@ -72,7 +72,7 @@ Pass a custom marketplace JSON path or URL to `/plugins marketplace <source>`, o
 
 ## Kimi Datasource
 
-Kimi Datasource is the official Kimi Code data plugin. It lets you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — no manual API calls or data account registration required.
+Kimi Datasource is the official Kimi Code data plugin. It lets you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — with professional finance sources such as Wind, IMF, Gildata, SEC EDGAR, and S&P Capital IQ built in, no manual API calls or data account registration required.
 
 ### Installation
 
@@ -82,7 +82,7 @@ You must first complete OAuth login with a Kimi Code account via `/login`. The p
 2. Find **Kimi Datasource** and press `Enter` to install
 3. After installation completes, run `/reload` or `/new` to activate the plugin
 
-The current latest version is v3.2.0. The plugin does not update automatically — to upgrade to a newer version, repeat the installation steps above.
+Using Kimi Datasource consumes your Kimi Code plan quota; the install result reminds you of this. The current latest version is v3.3.0. The plugin does not update automatically — to upgrade to a newer version, repeat the installation steps above.
 
 ### How to use
 
@@ -100,6 +100,8 @@ Once installed, describe your need in natural language and Kimi Code will automa
 
 **On-the-spot legal lookup**: Stuck on which statute governs a residence-right contract dispute? Pinpoint the relevant Civil Code articles — full text, authority level, and validity — then pull a few comparable precedents to back them up, without digging through statute databases.
 
+**Institutional-grade US equity research**: Writing a deep dive on a US stock? Pull the 10-K filing, standardized XBRL metrics, top-50 holders, and consensus estimates in one go — SEC filings and S&P data without juggling multiple data terminals.
+
 ### Coverage
 
 | Category | Scope |
@@ -109,6 +111,11 @@ Once installed, describe your need in natural language and Kimi Code will automa
 | Corporate data | Business registration, equity chain, legal risk, and related-entity graph for mainland Chinese companies |
 | Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
 | Legal | Chinese laws, regulations, and judicial cases — semantic/keyword search and detail lookup for statutes across all authority levels (constitution, laws, judicial interpretations, departmental rules), plus ordinary and authoritative case search |
+| Financial terminal (Wind) | A-share, fund, bond, and index quotes with financial indicators, company announcements and research reports, and macroeconomic data |
+| International macro (IMF) | Official IMF datasets (IFS, BOP, DOTS, WEO, and more): exchange rates, CPI, balance of payments, trade, and GDP forecasts |
+| Smart screening (Gildata) | Natural-language stock / fund / fund-manager screening, plus macro-industry data, research reports, announcements, and news |
+| US filings (SEC EDGAR) | 8,000+ US-listed companies — 10-K/10-Q statements, XBRL metrics, Form 4 insider trades, 13F institutional holdings, and 8-K material events (back to 2009) |
+| US fundamentals (S&P Capital IQ) | Standardized financial statements, valuation ratios, consensus estimates, holders and executives, competitor relationships, corporate events, and call transcripts |
 
 ### Billing and limitations
 
@@ -136,6 +143,7 @@ Example:
   "version": "1.0.0",
   "description": "Finance data and analysis workflows for Kimi Code CLI",
   "skills": "./skills/",
+  "systemPromptPath": "./SYSTEM.md",
   "sessionStart": {
     "skill": "using-finance"
   },
@@ -154,13 +162,35 @@ Supported fields:
 | `version`, `description`, `keywords`, `author`, `homepage`, `license` | Display metadata |
 | `interface` | Fields shown in `/plugins`: `displayName`, `shortDescription`, `longDescription`, `developerName`, `websiteURL` |
 | `skills` | One or more `./` paths; must be within the plugin root directory. When omitted, the `SKILL.md` in the root directory is treated as a single Skill root |
+| `agents` | One or more `./` paths; must be within the plugin root directory and point to directories containing [agent files](./agents.md#custom-agents). When omitted, the `agents/` directory under the plugin root (if present) is picked up automatically |
 | `sessionStart.skill` | Loads the specified plugin Skill into the main Agent when a new or resumed session starts |
 | `skillInstructions` | Additional instructions appended whenever a Skill from this plugin is loaded |
+| `systemPrompt` | Inline instructions contributed to the agent's system prompt while the plugin is enabled |
+| `systemPromptPath` | A `./` path to a UTF-8 text file containing system-prompt instructions; combined after `systemPrompt` when both are present |
 | `mcpServers` | MCP server declarations; enabled by default, can be disabled from `/plugins` |
 | `hooks` | Hook rules run on lifecycle events while the plugin is enabled; see [Hooks in Plugins](#hooks-in-plugins) |
 | `commands` | One or more `./` paths pointing to a directory or `.md` file; registers the Markdown files within as slash commands. See [Plugin Slash Commands](#plugin-slash-commands) |
 
 Unsupported runtime fields such as `tools`, `apps`, `inject`, and `configFile` appear as diagnostics and are ignored.
+
+### System-prompt instructions
+
+Use `systemPrompt` for a short inline instruction, or `systemPromptPath` to keep longer instructions in a file inside the plugin root. If both fields are present, the inline text appears first, followed by the file content. The file content is read when the plugin is installed or reloaded, so edits take effect only after `/plugins reload`. For example:
+
+```json
+{
+  "name": "code-review",
+  "systemPromptPath": "./SYSTEM.md"
+}
+```
+
+System-prompt contributions take effect on both agent engines. The interactive TUI, `kimi -p`, and `kimi web` use the v2 engine by default; setting `KIMI_CODE_LEGACY_FLAG=1` routes the local CLI surfaces to the legacy engine.
+
+Each field — the inline `systemPrompt` and the `systemPromptPath` file — is limited to 32 KB (UTF-8 bytes): oversized content is ignored and reported in the plugin diagnostics. Across all enabled plugins, one prompt build injects at most 64 KB of instructions; contributions beyond the budget are skipped with a warning, including a single plugin whose inline text and file together exceed that budget.
+
+New sessions and newly created agents read the contributions from the plugins currently enabled. An in-flight request keeps its existing system prompt. `/plugins reload` refreshes the plugin skill list and requests prompt rebuilds for live agents; use it when you need the change to converge deliberately before the next turn. On the v2 engine, installing, enabling, disabling, or removing a plugin updates the catalog immediately and a later prompt rebuild — for example after compaction or a tool-policy change — may pick up the new sections. The legacy engine keeps each live session's plugin snapshot until `/plugins reload` or a new session. A resumed session starts from its persisted prompt, and later rebuilds follow the engine-specific behavior above. Toggling a plugin's MCP server does not change system-prompt sections.
+
+The built-in agent prompt includes instructions from enabled plugins automatically. A custom `SYSTEM.md` or agent file owns its template, so include `${plugin_sections}` where plugin-contributed instructions should appear. If the custom template includes `${base_prompt}` and that effective default already contains the plugin block, do not add `${plugin_sections}` again. See [Custom agents and SYSTEM.md](./agents.md#overriding-the-main-agent-s-system-prompt-with-system-md) for the complete variable table.
 
 ## Plugin Slash Commands
 
@@ -242,6 +272,19 @@ my-plugin/
 
 Regardless of how a Skill is loaded (`sessionStart.skill`, `/skill:<name>`, or automatic model invocation), `skillInstructions` appears alongside that plugin's Skill.
 
+## Plugin Agents
+
+A plugin can ship custom agents: declare one or more `./` directories in the manifest's `agents` field (or simply place an `agents/` directory under the plugin root). The agent files inside use the same format as [custom agents](./agents.md#custom-agents) and, while the plugin is enabled, are discovered automatically and can be delegated to as sub-agents by the main Agent.
+
+```text
+my-plugin/
+  kimi.plugin.json
+  agents/
+    reviewer.md
+```
+
+Plugin agents rank below every other file source: on a name collision, user-level, extra, project-level, and `--agent-file` agents all win over the plugin-provided one, and replacing a built-in agent still requires an explicit `override: true` in the frontmatter. After installing, enabling, disabling, or removing a plugin, the agent list refreshes in a new session (or on `/reload`); on the v2 engine the live session also refreshes after `/plugins reload`.
+
 ## MCP Servers in Plugins
 
 When a plugin needs real tool capabilities, it can declare `mcpServers` in its manifest, reusing the [MCP](./mcp.md) schema.
@@ -316,4 +359,3 @@ Plugins have a limited loading scope. The following operations do not occur duri
 - All paths must remain within the plugin root directory after symbolic link resolution
 - MCP servers of enabled plugins start after `/reload` or in new sessions and can be disabled at any time from `/plugins`
 - Broken manifests or unsafe paths appear in `/plugins info <id>` diagnostics and do not affect other sessions
-

@@ -17,7 +17,7 @@
  *     persisted, which flips the entry to `connected` and lets
  *     `ToolManager` swap the synthetic tool out for the real MCP tools.
  *
- * The blocking shape (option 1 in the plan) keeps the implementation
+ * The blocking shape keeps the implementation
  * simple at the cost of holding one tool call open for the duration of
  * the human's browser flow. If the model ends up re-invoking the tool
  * mid-flow we just start a fresh flow; the new callback server supersedes
@@ -32,14 +32,18 @@ import {
   type ExecutableToolResult,
 } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import {
-  MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
-  type McpOAuthAuthorizationUrlUpdateData,
-} from '@moonshot-ai/protocol';
-import { AlreadyAuthorizedError, type McpOAuthService } from '#/agent/mcp/oauth/service';
-import { qualifyMcpToolName } from '#/agent/mcp/tool-naming';
+import { AlreadyAuthorizedError, type McpOAuthService } from '#/mcpCore/oauth/service';
+import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
 
-const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
+
+export interface McpOAuthAuthorizationUrlUpdateData {
+  readonly serverName: string;
+  readonly authorizationUrl: string;
+  readonly expiresAt?: number;
+}
+
+const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
 
 const AUTH_TOOL_TOOL_NAME = 'authenticate';
 
@@ -51,32 +55,20 @@ This server requires an OAuth login that has not yet been completed. ` +
 
   1. The tool prints an authorization URL.
   2. **You must show that URL to the user verbatim** and ask them to open it
-     in a browser, sign in, and approve the kimi-code client.
+     in a browser, sign in, and approve the client.
   3. The tool blocks (up to 15 minutes) until the browser redirects back to
      the local callback listener.
-  4. On success, kimi-code reconnects the MCP server and the real tools
+  4. On success, the client reconnects the MCP server and the real tools
      replace this synthetic tool.
 
 Take no arguments. Treat the URL as sensitive — do not modify it or strip
 query parameters.`;
 
 export interface CreateMcpAuthToolOptions {
-  /** Friendly MCP server name as configured in `mcp.json`. */
   readonly serverName: string;
-  /** Base URL of the MCP server (used for OAuth resource metadata discovery). */
   readonly serverUrl: string;
-  /** OAuth orchestrator, typically `Session`-scoped. */
   readonly oauthService: McpOAuthService;
-  /**
-   * Triggers a manager-level reconnect once tokens land on disk. Implemented
-   * by the {@link McpConnectionManager} and bound in the {@link ToolManager}
-   * `needs-auth` branch.
-   */
   readonly reconnect: (signal?: AbortSignal) => Promise<void>;
-  /**
-   * Overrides the per-call OAuth wait timeout. Tests set this to a small
-   * number; production callers should accept the default.
-   */
   readonly timeoutMs?: number;
 }
 
@@ -84,7 +76,6 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
   const { serverName, serverUrl, oauthService, reconnect, timeoutMs } = options;
   const name = qualifyMcpToolName(serverName, AUTH_TOOL_TOOL_NAME);
   const description = DESCRIPTION_TEMPLATE(serverName);
-  // No arguments; an empty object schema keeps providers happy across SDKs.
   const parameters = toInputJsonSchema(z.object({}));
   const execute = async (ctx: ExecutableToolContext): Promise<ExecutableToolResult> => {
     const { signal, onUpdate } = ctx;
@@ -113,9 +104,11 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     }
 
     const urlText = flow.authorizationUrl.toString();
+    const waitTimeoutMs = timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
     const customData: McpOAuthAuthorizationUrlUpdateData = {
       serverName,
       authorizationUrl: urlText,
+      expiresAt: Date.now() + waitTimeoutMs,
     };
     onUpdate?.({
       kind: 'custom',
@@ -132,7 +125,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     });
 
     try {
-      await flow.complete({ signal, timeoutMs: timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS });
+      await flow.complete({ signal, timeoutMs: waitTimeoutMs });
     } catch (error) {
       return errorResult(serverName, error, urlText);
     }

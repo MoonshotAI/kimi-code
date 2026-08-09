@@ -1,6 +1,6 @@
 ---
 name: update-config
-description: Inspect or edit kimi-code's own config — `config.toml` (model, provider, permission, hooks) and `tui.toml` (theme, editor, notifications, auto-update). Use when the user asks what a setting does or wants to change one.
+description: Inspect or edit kimi-code's own config — `config.toml` (model, provider, permission, hooks) and `tui.toml` (theme, editor, notifications, auto-update). Use when the user asks what a setting does, wants to change one, or needs to fix a deprecated config key / environment variable warning.
 ---
 
 # Configure kimi-code (update-config)
@@ -20,7 +20,7 @@ echo "$HOME/.kimi-code"
 
 Use the first line when it is non-empty; otherwise use the second line. In the rest of this skill, `<KIMI_CODE_HOME>` means that resolved root — **never assume `~/.kimi-code`**.
 
-- **`config.toml`** — agent / runtime settings: `default_model`, `providers`, `models`, `thinking`, `permission`, `hooks`, `loop_control`, etc.
+- **`config.toml`** — agent / runtime settings: `default_model`, `secondary_model` (subagent model), `providers`, `models`, `thinking`, `permission`, `hooks`, `loop_control`, etc.
 - **`tui.toml`** — terminal-UI / client preferences: `theme`, `[editor].command`, `[notifications]`, `[upgrade].auto_install` (auto-update). These can usually also be changed with the interactive commands `/config`, `/theme`, `/editor`, which is easier — prefer pointing the user at those.
 
 The "read → copy → Edit → validate → back up → overwrite" flow below applies to both files; only **which reload command applies** differs (see Capability 4).
@@ -96,6 +96,13 @@ Once local validation passes, tell the user how to make the change take effect �
 - changed both → a single **`/reload`** covers it.
 
 Note: `/reload` is available **only when idle** — if a reply is streaming, press Esc / Ctrl-C to stop first. `kimi doctor` already validated the schema before the overwrite, so reload should apply cleanly; if it still errors, follow the message to fix it or recover from the most recent timestamped backup. If you don't want to reload now, the **next new session** picks it up automatically.
+
+## Capability 5: fix a deprecated key or env-var warning
+
+kimi reports configuration deprecations as warnings — in the TUI startup notices and pushed to clients as the `event.config.warning` event. There are two shapes, handled differently:
+
+- **Deprecated TOML key** — e.g. `[loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'.` The old value no longer applies, so fix it promptly: follow the Capability 2 flow (copy → Edit → validate → back up → overwrite) and **rename the key in `config.toml`, keeping its value unchanged**. The warning names the exact section and replacement key — use those; never guess other renames. After `/reload`, the warning disappears.
+- **Deprecated environment variable** — e.g. `Environment variable KIMI_LOOP_MAX_RETRIES_PER_STEP is deprecated; use KIMI_LOOP_MAX_ATTEMPTS_PER_STEP instead.` The old variable still works, but this is **not** fixable by editing `config.toml`/`tui.toml` — tell the user to rename the variable where they set it (shell profile, CI environment, launcher script). Do not add anything to the config files for this.
 
 ## Don'ts
 

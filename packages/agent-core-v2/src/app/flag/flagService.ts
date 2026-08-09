@@ -1,15 +1,13 @@
 /**
- * `flag` domain (L3) — `IFlagService` implementation.
+ * `flag` domain — `IFlagService` implementation.
  *
- * Resolves experimental flags from the environment (read through `bootstrap`),
- * the `[experimental]` config section, and defaults; reads flag definitions
- * from `flagRegistry`, and reads/watches config through `config`. Bound at App
- * scope.
+ * Resolves experimental flags from the environment, the `[experimental]`
+ * config section, and defaults; reads flag definitions from the registry, and
+ * reads/watches config. Bound at App scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -117,6 +115,6 @@ registerScopedService(
   LifecycleScope.App,
   IFlagService,
   FlagService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'flag',
 );

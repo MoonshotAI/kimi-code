@@ -1,6 +1,8 @@
 import {
   effectiveModelAlias,
+  SECONDARY_DERIVED_MODEL_ALIAS,
   type ExperimentalFeatureState,
+  type KimiConfig,
   type ModelAlias,
   type PermissionMode,
   type Session,
@@ -35,6 +37,21 @@ import type { SlashCommandHost } from './dispatch';
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
 
+const MODEL_SWITCH_CACHE_WARNING =
+  'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
+const EFFORT_SWITCH_CACHE_WARNING =
+  'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.';
+
+/** True once the conversation has at least one user message: a switch from
+ * then on resends the accumulated context, losing the cache. Shell-command
+ * echoes are also 'user' transcript entries but carry an empty `bullet`, so
+ * they're excluded. */
+function hasConversationHistory(host: SlashCommandHost): boolean {
+  return host.state.transcriptEntries.some(
+    (entry) => entry.kind === 'user' && entry.bullet !== '',
+  );
+}
+
 function currentTuiConfig(host: SlashCommandHost): TuiConfig {
   return {
     theme: host.state.appState.theme,
@@ -43,6 +60,14 @@ function currentTuiConfig(host: SlashCommandHost): TuiConfig {
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
   };
+}
+
+export function effectiveModelForHost(host: SlashCommandHost, model: ModelAlias): ModelAlias {
+  const providerType = host.state.appState.availableProviders[model.provider]?.type;
+  // Flat models (no named provider, e.g. inline base_url served by a v2
+  // backend) have no provider entry to look up; their own protocol declaration
+  // plays the provider-identity role, mirroring the resolver.
+  return effectiveModelAlias(model, providerType ?? model.protocol);
 }
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -65,6 +90,13 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
   else if (subcmd === 'off') enabled = false;
   else {
     host.showError(`Unknown plan subcommand: ${subcmd}`);
+    return;
+  }
+
+  // The session may already be in the requested mode (e.g. it was created
+  // with config.defaultPlanMode applied), and re-entering plan mode throws.
+  if (host.state.appState.planMode === enabled) {
+    host.showNotice(`Plan mode is already ${enabled ? 'on' : 'off'}`);
     return;
   }
 
@@ -92,10 +124,12 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
 
 export async function handleYoloCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
-  if (session === undefined) {
+  if (session === undefined && !host.engineV2) {
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
+  // v2 session-less: the chosen mode is recorded in appState and passed to the
+  // lazy-created session; apply the runtime permission only when one exists.
 
   const subcmd = args.trim().toLowerCase();
   const currentMode = host.state.appState.permissionMode;
@@ -105,9 +139,9 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
       host.showNotice('YOLO mode is already on');
       return;
     }
-    await session.setPermission('yolo');
+    await session?.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
+    host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
     return;
   }
 
@@ -116,7 +150,7 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
       host.showNotice('YOLO mode is already off');
       return;
     }
-    await session.setPermission('manual');
+    await session?.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
     host.showNotice('YOLO mode: OFF');
     return;
@@ -124,22 +158,24 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
 
   // toggle
   if (currentMode === 'yolo') {
-    await session.setPermission('manual');
+    await session?.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
     host.showNotice('YOLO mode: OFF');
   } else {
-    await session.setPermission('yolo');
+    await session?.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
+    host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
   }
 }
 
 export async function handleAutoCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
-  if (session === undefined) {
+  if (session === undefined && !host.engineV2) {
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
+  // v2 session-less: the chosen mode is recorded in appState and passed to the
+  // lazy-created session; apply the runtime permission only when one exists.
 
   const subcmd = args.trim().toLowerCase();
   const currentMode = host.state.appState.permissionMode;
@@ -149,9 +185,9 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
       host.showNotice('Auto mode is already on');
       return;
     }
-    await session.setPermission('auto');
+    await session?.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
+    host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
     return;
   }
 
@@ -160,7 +196,7 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
       host.showNotice('Auto mode is already off');
       return;
     }
-    await session.setPermission('manual');
+    await session?.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
     host.showNotice('Auto mode: OFF');
     return;
@@ -168,13 +204,13 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
 
   // toggle
   if (currentMode === 'auto') {
-    await session.setPermission('manual');
+    await session?.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
     host.showNotice('Auto mode: OFF');
   } else {
-    await session.setPermission('auto');
+    await session?.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
+    host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
   }
 }
 
@@ -227,6 +263,25 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
   showModelPicker(host, alias);
 }
 
+export async function handleSecondaryModelCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const alias = args.trim();
+  await refreshModelsForPicker(host);
+  const models = pickerModelsForHost(host);
+  if (Object.keys(models).length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  if (alias.length > 0 && models[alias] === undefined) {
+    host.showError(`Unknown model alias: ${alias}`);
+    return;
+  }
+  const secondary = (await host.harness.getConfig()).secondaryModel;
+  showSecondaryModelPicker(host, models, secondary?.model ?? '', secondary?.defaultEffort, alias);
+}
+
 export async function handleEffortCommand(host: SlashCommandHost, args: string): Promise<void> {
   const alias = host.state.appState.model;
   const model = host.state.appState.availableModels[alias];
@@ -234,7 +289,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     host.showError('No model selected. Run /model to select one first.');
     return;
   }
-  const effective = effectiveModelAlias(model);
+  const effective = effectiveModelForHost(host, model);
   const segments = segmentsFor(effective);
   const arg = args.trim().toLowerCase();
   if (arg.length === 0) {
@@ -242,10 +297,19 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     return;
   }
   if (!segments.includes(arg)) {
-    host.showError(
-      `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
+    const providerType = host.state.appState.availableProviders[effective.provider]?.type;
+    const protocol = effective.protocol ?? providerType;
+    if (protocol !== 'anthropic') {
+      host.showError(
+        `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
+      );
+      return;
+    }
+    const knownEfforts = effective.supportEfforts?.join(', ') ?? 'none declared';
+    host.showStatus(
+      `Thinking effort "${arg}" is not listed for ${alias} (known: ${knownEfforts}). Sending "${arg}" unchanged; the configured provider will validate it.`,
+      'warning',
     );
-    return;
   }
   await performModelSwitch(host, alias, arg, true);
 }
@@ -262,6 +326,7 @@ function showEffortPicker(
     new EffortSelectorComponent({
       efforts: segments,
       currentValue,
+      warning: hasConversationHistory(host) ? EFFORT_SWITCH_CACHE_WARNING : undefined,
       onSelect: (effort) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, effort, true);
@@ -357,8 +422,23 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
   );
 }
 
+/**
+ * The models a picker may offer: the user's configured aliases with
+ * host-effective provider resolution applied, minus the synthesized
+ * `__secondary__` derived entry — a runtime artifact of the `[secondary_model]`
+ * recipe that must never be selectable as a primary or secondary model.
+ */
+function pickerModelsForHost(host: SlashCommandHost): Record<string, ModelAlias> {
+  return Object.fromEntries(
+    Object.entries(host.state.appState.availableModels)
+      .filter(([alias]) => alias !== SECONDARY_DERIVED_MODEL_ALIAS)
+      .map(([alias, model]) => [alias, effectiveModelForHost(host, model)]),
+  );
+}
+
 export function showModelPicker(host: SlashCommandHost, selectedValue: string = host.state.appState.model): void {
-  const entries = Object.entries(host.state.appState.availableModels);
+  const models = pickerModelsForHost(host);
+  const entries = Object.entries(models);
   if (entries.length === 0) {
     host.showNotice(
       'No models configured',
@@ -368,10 +448,11 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
   }
   host.mountEditorReplacement(
     new TabbedModelSelectorComponent({
-      models: host.state.appState.availableModels,
+      models,
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinkingEffort: host.state.appState.thinkingEffort,
+      warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, thinking, true);
@@ -393,6 +474,14 @@ async function performModelSwitch(
   effort: ThinkingEffort,
   persist: boolean,
 ): Promise<void> {
+  let session = host.session;
+  if (session === undefined && host.engineV2) {
+    // A first prompt may still be inside lazy creation: wait it out so the
+    // switch lands on the new session instead of being overwritten by its
+    // assembly.
+    await host.waitForLazyCreation();
+    session = host.session;
+  }
   if (host.state.appState.streamingPhase !== 'idle') {
     host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
     return;
@@ -403,9 +492,9 @@ async function performModelSwitch(
   const modelChanged = alias !== prevModel;
   const effortChanged = effort !== prevEffort;
   const runtimeChanged = modelChanged || effortChanged;
-  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  let effectiveAlias = alias;
+  let effectiveEffort = effort;
 
-  const session = host.session;
   try {
     if (session === undefined && runtimeChanged) {
       await host.authFlow.activateModelAfterLogin(alias, effort);
@@ -416,6 +505,9 @@ async function performModelSwitch(
       if (effort !== prevEffort) {
         await session.setThinking(effort);
       }
+      const status = await session.getStatus();
+      effectiveAlias = status.model ?? alias;
+      effectiveEffort = status.thinkingEffort;
     }
   } catch (error) {
     const msg = formatErrorMessage(error);
@@ -423,15 +515,25 @@ async function performModelSwitch(
     return;
   }
 
-  host.setAppState({ model: alias, thinkingEffort: effort });
+  if (session === undefined) {
+    effectiveAlias = host.state.appState.model;
+    effectiveEffort = host.state.appState.thinkingEffort;
+  }
+  const effectiveModelChanged = effectiveAlias !== prevModel;
+  const effectiveEffortChanged = effectiveEffort !== prevEffort;
+  const displayName = modelDisplayName(
+    effectiveAlias,
+    host.state.appState.availableModels[effectiveAlias],
+  );
+  host.setAppState({ model: effectiveAlias, thinkingEffort: effectiveEffort });
   if (session === undefined && runtimeChanged) {
-    if (alias !== prevModel) {
-      host.track('model_switch', { model: alias });
+    if (effectiveModelChanged) {
+      host.track('model_switch', { model: effectiveAlias });
     }
-    if (effort !== prevEffort) {
+    if (effectiveEffortChanged) {
       host.track('thinking_toggle', {
-        enabled: effort !== 'off',
-        effort,
+        enabled: effectiveEffort !== 'off',
+        effort: effectiveEffort,
         from: prevEffort,
       });
     }
@@ -440,7 +542,12 @@ async function performModelSwitch(
   let persisted = false;
   if (persist) {
     try {
-      persisted = await persistModelSelection(host, alias, effort);
+      persisted = await persistModelSelection(
+        host,
+        effectiveAlias,
+        effectiveEffort,
+        effectiveEffortChanged,
+      );
     } catch (error) {
       const msg = formatErrorMessage(error);
       host.showError(`Switched to ${displayName}, but failed to save default: ${msg}`);
@@ -449,18 +556,18 @@ async function performModelSwitch(
   }
 
   let status: string;
-  if (modelChanged) {
+  if (effectiveModelChanged) {
     status = persist
-      ? `Switched to ${displayName} with thinking ${effort}.`
-      : `Switched to ${displayName} with thinking ${effort} for this session only.`;
-  } else if (effortChanged) {
+      ? `Switched to ${displayName} with thinking ${effectiveEffort}.`
+      : `Switched to ${displayName} with thinking ${effectiveEffort} for this session only.`;
+  } else if (effectiveEffortChanged) {
     status = persist
-      ? `Thinking set to ${effort}.`
-      : `Thinking set to ${effort} for this session only.`;
+      ? `Thinking set to ${effectiveEffort}.`
+      : `Thinking set to ${effectiveEffort} for this session only.`;
   } else if (persist && persisted) {
-    status = `Saved ${displayName} with thinking ${effort} as default.`;
+    status = `Saved ${displayName} with thinking ${effectiveEffort} as default.`;
   } else {
-    status = `Already using ${displayName} with thinking ${effort}.`;
+    status = `Already using ${displayName} with thinking ${effectiveEffort}.`;
   }
   host.showStatus(status, 'success');
 }
@@ -469,13 +576,21 @@ async function persistModelSelection(
   host: SlashCommandHost,
   alias: string,
   effort: ThinkingEffort,
+  effortChanged: boolean,
 ): Promise<boolean> {
   const config = await host.harness.getConfig({ reload: true });
-  const patch = thinkingEffortToConfig(effort);
+  const model = host.state.appState.availableModels[alias];
+  const full = thinkingEffortToConfig(
+    effort,
+    model === undefined ? undefined : effectiveModelForHost(host, model).supportEfforts,
+  );
+  // Re-confirming the effort shown when the picker opened is not an explicit
+  // choice — persist the model but leave the stored effort preference alone.
+  const patch = effortChanged ? full : { enabled: full.enabled };
   if (
     config.defaultModel === alias &&
     config.thinking?.enabled === patch.enabled &&
-    config.thinking?.effort === patch.effort
+    (!effortChanged || config.thinking?.effort === patch.effort)
   ) {
     return false;
   }
@@ -484,6 +599,99 @@ async function persistModelSelection(
     thinking: patch,
   });
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Secondary model (`/secondary_model`)
+// ---------------------------------------------------------------------------
+
+function showSecondaryModelPicker(
+  host: SlashCommandHost,
+  models: Record<string, ModelAlias>,
+  currentValue: string,
+  currentEffort: string | undefined,
+  selectedValue?: string,
+): void {
+  host.mountEditorReplacement(
+    new TabbedModelSelectorComponent({
+      models,
+      currentValue,
+      selectedValue,
+      currentThinkingEffort: currentEffort ?? 'off',
+      title: ' Select a secondary model (subagents)',
+      onSelect: ({ alias, thinking }) => {
+        host.restoreEditor();
+        void performSecondaryModelSwitch(host, alias, thinking);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+/**
+ * Persist-first, then live-apply: the synthesized derived entry only exists in
+ * the core config after a reload. No session-only variant — a session-local
+ * recipe with patch fields would bind a derived alias the core config cannot
+ * resolve.
+ */
+async function performSecondaryModelSwitch(
+  host: SlashCommandHost,
+  alias: string,
+  effort: ThinkingEffort,
+): Promise<void> {
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  let updatedConfig: KimiConfig;
+  try {
+    updatedConfig = await host.harness.setConfig({
+      secondaryModel: { model: alias, defaultEffort: effort },
+    });
+  } catch (error) {
+    host.showError(`Failed to save secondary model: ${formatErrorMessage(error)}`);
+    return;
+  }
+  if (host.session !== undefined) {
+    try {
+      await host.session.applyPersistedSecondaryModel();
+    } catch (error) {
+      host.showError(
+        `Saved ${displayName} as the secondary model, but failed to apply it to this session: ${formatErrorMessage(error)}`,
+      );
+      return;
+    }
+  }
+  host.setAppState({ availableModels: updatedConfig.models ?? {} });
+  // Report the effective binding from the reloaded config, not the picked
+  // value: KIMI_SECONDARY_MODEL / KIMI_SECONDARY_EFFORT override the recipe at
+  // runtime, and the session binds the overlaid snapshot (mirrors how
+  // /model displays the effective alias read back from the session).
+  const effective = updatedConfig.secondaryModel;
+  const envOverrides: string[] = [];
+  if (effective?.model !== undefined && effective.model !== alias) {
+    envOverrides.push(`KIMI_SECONDARY_MODEL=${effective.model}`);
+  }
+  if (effective?.defaultEffort !== undefined && effective.defaultEffort !== effort) {
+    envOverrides.push(`KIMI_SECONDARY_EFFORT=${effective.defaultEffort}`);
+  }
+  if (envOverrides.length > 0 && effective?.model !== undefined) {
+    const effectiveName = modelDisplayName(
+      effective.model,
+      updatedConfig.models?.[effective.model],
+    );
+    host.showStatus(
+      `Saved ${displayName} as the secondary model, but ${envOverrides.join(' and ')} ` +
+        `overrides it at runtime — subagents bind ${effectiveName} until the env var is unset.`,
+      'warning',
+    );
+    return;
+  }
+  host.showStatus(
+    host.session === undefined
+      ? `Secondary model set to ${displayName} with thinking ${effort}; applies to new sessions.`
+      : `Secondary model set to ${displayName} with thinking ${effort}.`,
+    'success',
+  );
 }
 
 function showThemePicker(host: SlashCommandHost): void {
@@ -685,7 +893,14 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
   }
 
   try {
-    await host.requireSession().setPermission(mode);
+    if (host.session !== undefined) {
+      await host.session.setPermission(mode);
+    } else if (!host.engineV2) {
+      host.showError(NO_ACTIVE_SESSION_MESSAGE);
+      return;
+    }
+    // v2 session-less: the chosen mode is recorded in appState and passed to
+    // the lazy-created session.
   } catch (error) {
     const msg = formatErrorMessage(error);
     host.showError(`Failed to set permission mode: ${msg}`);

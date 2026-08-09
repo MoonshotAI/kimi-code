@@ -20,6 +20,7 @@ import {
   ratioSeverity,
   renderProgressBar,
   safeUsageRatio,
+  usagePercent,
 } from '#/utils/usage/usage-format';
 
 import {
@@ -133,7 +134,7 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
     const bar = renderProgressBar(safeRatio, 20);
     const barColoured = currentTheme.fg(severityToken(ratioSeverity(safeRatio)), bar);
     lines.push(
-      `  ${barColoured}  ${value(`${(safeRatio * 100).toFixed(1)}%`.padStart(6, ' '))}  ` +
+      `  ${barColoured}  ${value(`${String(usagePercent(tokens, maxTokens))}%`.padStart(6, ' '))}  ` +
         muted(`(${formatTokenCount(tokens)} / ${formatTokenCount(maxTokens)})`),
     );
   } else {

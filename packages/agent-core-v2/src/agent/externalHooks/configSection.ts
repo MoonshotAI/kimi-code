@@ -1,11 +1,10 @@
 /**
- * `externalHooks` domain (L5) — `hooks` config-section schema and TOML
+ * `externalHooks` domain — `hooks` config-section schema and TOML
  * transforms.
  *
  * Owns the `[[hooks]]` configuration section (external hook definitions),
  * including the snake_case ↔ camelCase TOML transforms for each hook entry.
- * Registered at module load via `registerConfigSection`, so the `config` domain
- * never imports this domain's types.
+ * Registered at module load via `registerConfigSection`.
  */
 
 import { z } from 'zod';
@@ -30,13 +29,11 @@ export type HookDefConfig = z.infer<typeof HookDefSchema>;
 
 export const HooksConfigSchema = z.array(HookDefSchema);
 
-/** Read transform: camelCase each hook entry's keys. */
 export const hooksFromToml = (rawSnake: unknown): unknown => {
   if (!Array.isArray(rawSnake)) return rawSnake;
   return rawSnake.map((hook) => (isPlainObject(hook) ? transformPlainObject(hook) : hook));
 };
 
-/** Write transform: snake_case each hook entry's keys. */
 export const hooksToToml = (value: unknown, _rawSnake: unknown): unknown => {
   if (!Array.isArray(value)) return value;
   return value.map((hook) => (isPlainObject(hook) ? plainObjectToToml(hook, undefined) : hook));

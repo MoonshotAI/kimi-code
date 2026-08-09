@@ -86,11 +86,26 @@ function makeOpenAIChatClient(response: unknown) {
   };
 }
 
+// The Kimi provider consumes `APIPromise.withResponse()` to read the
+// `x-trace-id` response header, so its mocked client must expose that method.
+function makeKimiChatClient(response: unknown) {
+  return {
+    chat: {
+      completions: {
+        create: vi.fn().mockImplementation(() => ({
+          withResponse: () =>
+            Promise.resolve({ data: response, response: new Response(null) }),
+        })),
+      },
+    },
+  };
+}
+
 function createKimiProvider(response: unknown, stream: boolean): KimiChatProvider {
   return new KimiChatProvider({
     model: 'kimi-k2-turbo-preview',
     stream,
-    clientFactory: () => makeOpenAIChatClient(response) as never,
+    clientFactory: () => makeKimiChatClient(response) as never,
   });
 }
 

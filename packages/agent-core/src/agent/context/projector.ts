@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { ContentPart, Message, TextPart } from '@moonshot-ai/kosong';
 
 import { ErrorCodes, KimiError } from '../../errors';
@@ -47,9 +49,10 @@ export interface ProjectOptions {
   readonly mergeConsecutiveAssistants?: boolean;
   /**
    * When `true`, drop assistant tool calls whose id already appeared earlier
-   * (first occurrence wins; a message left with no content and no calls is
-   * dropped), and drop every tool result after the first for a given id so the
-   * kept call keeps exactly one answer. Duplicate ids are wire-invalid on
+   * (first occurrence wins; a message left with no calls and no sendable
+   * content is dropped), and drop every tool result after the first for a
+   * given id so the kept call keeps exactly one answer. Duplicate ids are
+   * wire-invalid on
    * strict providers ("`tool_use` ids must be unique") and no other pass can
    * repair them. Strict-resend only: a provider that accepted the duplicates
    * when it produced them (e.g. per-response counter ids like `call_0`) must
@@ -95,7 +98,15 @@ export type ProjectionAnomaly =
   /** Two adjacent assistant turns were merged into one (strict). */
   | { readonly kind: 'consecutive_assistants_merged' }
   /** A non-empty but all-whitespace text block was dropped (always). */
-  | { readonly kind: 'whitespace_text_dropped'; readonly role: string };
+  | { readonly kind: 'whitespace_text_dropped'; readonly role: string }
+  /**
+   * Every recorded part serialized to nothing on the wire (e.g. an assistant
+   * step that recorded only an empty thinking part from a provider-filtered
+   * response), so the whole message was dropped. Distinct from the silent
+   * empty-content drop: parts were recorded, yet none of them was sendable —
+   * a genuine defect signal, not routine cleanup.
+   */
+  | { readonly kind: 'vacuous_message_dropped'; readonly role: string };
 
 export function project(history: readonly ContextMessage[], options?: ProjectOptions): Message[] {
   let result = mergeAdjacentUserMessages(history, options?.onAnomaly);
@@ -210,7 +221,11 @@ function repairToolExchangeAdjacency(
 // Strict providers reject a request whose assistant messages carry two
 // `tool_use` blocks with the same id ("tool_use ids must be unique"). Keep the
 // first occurrence of each call id, drop the rest, and drop an assistant
-// message entirely when duplicates were all it carried. Every result after the
+// message entirely when duplicates were all it carried — or when removing
+// them leaves only vacuous content (e.g. a single empty thinking block),
+// which would serialize as an empty assistant and be rejected again on the
+// strict retry ("the message ... with role 'assistant' must not be empty").
+// Every result after the
 // first for a given id is dropped with its call, so no dangling tool message
 // survives the dedupe; when the kept call has no result of its own, the later
 // duplicate's surviving result is reattached by the adjacency repair. Runs
@@ -237,8 +252,14 @@ function dedupeDuplicateToolCalls(
       });
       if (kept.length === message.toolCalls.length) {
         out.push(message);
-      } else if (kept.length > 0 || message.content.length > 0) {
+      } else if (kept.length > 0 || !message.content.every(isVacuousContentPart)) {
         out.push({ ...message, toolCalls: kept });
+      } else if (message.content.length > 0) {
+        // Every call this message carried was a later duplicate, and only
+        // vacuous content remains: kept, it would serialize as an empty
+        // assistant and be rejected again on the strict retry. Drop it with
+        // a trace (a truly content-free message stays a silent drop).
+        onAnomaly?.({ kind: 'vacuous_message_dropped', role: message.role });
       }
       continue;
     }
@@ -403,7 +424,34 @@ function prepareMessageForProjection(
   // content-free — it must survive the empty-message cleanup or the loaded
   // schemas silently vanish from every outgoing request.
   if (next.tools !== undefined && next.tools.length > 0) return next;
-  return next.content.length === 0 && next.toolCalls.length === 0 ? null : next;
+  if (next.toolCalls.length > 0) return next;
+  if (next.content.length === 0) return null;
+  // Every remaining part serializes to nothing on the wire — e.g. an
+  // assistant step that recorded only an empty thinking part from a
+  // provider-filtered response. Sent as-is it becomes an assistant message
+  // with no content and no tool calls, which strict providers reject ("the
+  // message ... with role 'assistant' must not be empty") on every resend,
+  // permanently wedging the session. Drop the whole message here. A message
+  // that carries any real content keeps every part verbatim — including
+  // empty thinking blocks, which preserved-thinking providers require back.
+  if (next.content.every(isVacuousContentPart)) {
+    onAnomaly?.({ kind: 'vacuous_message_dropped', role: next.role });
+    return null;
+  }
+  return next;
+}
+
+/**
+ * True when a content part carries nothing the provider wire can represent:
+ * an empty or whitespace-only text block, or an empty thinking block with no
+ * provider signature. A signed thinking block (`encrypted`) is never vacuous
+ * — reasoning providers require it back verbatim — and media parts always
+ * carry content.
+ */
+function isVacuousContentPart(part: ContentPart): boolean {
+  if (part.type === 'text') return part.text.trim().length === 0;
+  if (part.type === 'think') return part.encrypted === undefined && part.think.trim().length === 0;
+  return false;
 }
 
 function canMergeUserMessage(message: ContextMessage): boolean {
@@ -483,26 +531,116 @@ const MEDIA_DEGRADED_PLACEHOLDERS = {
 } as const;
 
 /**
- * Markers for the media-stripped resend after the provider rejected an
- * image's FORMAT (not its size): the image marker points the model at
- * re-reading the file, whose refusal carries per-OS conversion instructions;
- * audio/video are collateral of the full strip and say so.
+ * Provider-compatible markers for a resend with every media part stripped.
+ * This projection recovers from both an image-format rejection and a request
+ * that remains too large after retaining recent media, so the wording must
+ * not diagnose either cause. Re-reading the path gives the model the relevant
+ * conversion or size-reduction guidance at the tool boundary.
  */
 export const MEDIA_STRIPPED_PLACEHOLDERS = {
   image_url:
-    '[image omitted: the provider rejected this image; re-read the file for conversion instructions]',
+    '[image omitted for provider compatibility; re-read the file to view it or get conversion guidance]',
   audio_url:
-    '[audio omitted: dropped along with a rejected image; re-read the file to hear it]',
+    '[audio omitted for provider compatibility; re-read the file to hear it]',
   video_url:
-    '[video omitted: dropped along with a rejected image; re-read the file to view it]',
+    '[video omitted for provider compatibility; re-read the file to view it]',
 } as const;
 
 type MediaPlaceholderSet = typeof MEDIA_DEGRADED_PLACEHOLDERS | typeof MEDIA_STRIPPED_PLACEHOLDERS;
 
+type DegradableMediaPart = Extract<
+  ContentPart,
+  { readonly type: keyof MediaPlaceholderSet }
+>;
+
+interface MediaContainer {
+  readonly url: string;
+  readonly id?: string;
+}
+
+/**
+ * Content identities of the media present when full stripping first becomes
+ * necessary in a turn. Digests, rather than part/container object identity,
+ * survive compaction and ensure re-reading identical media remains stripped.
+ */
+export type MediaStripSnapshot = ReadonlySet<string>;
+
+/**
+ * Projection shallow-clones content parts but keeps their nested media
+ * containers. Cache each container's digest so sticky stripped projections do
+ * not rescan giant base64 data URLs on every step. A clone produced by
+ * compaction misses the cache but recomputes the same content digest.
+ */
+const MEDIA_CONTAINER_KEY_CACHE = new WeakMap<
+  MediaContainer,
+  Partial<Record<DegradableMediaPart['type'], string>>
+>();
+
 function isDegradableMediaPart(
   part: ContentPart,
-): part is ContentPart & { type: keyof MediaPlaceholderSet } {
+): part is DegradableMediaPart {
   return part.type in MEDIA_DEGRADED_PLACEHOLDERS;
+}
+
+function mediaContainer(part: DegradableMediaPart): MediaContainer {
+  if (part.type === 'image_url') return part.imageUrl;
+  if (part.type === 'audio_url') return part.audioUrl;
+  return part.videoUrl;
+}
+
+function mediaStripKey(part: DegradableMediaPart): string {
+  const container = mediaContainer(part);
+  const keysByType = MEDIA_CONTAINER_KEY_CACHE.get(container);
+  const cached = keysByType?.[part.type];
+  if (cached !== undefined) return cached;
+
+  const key = createHash('sha256')
+    .update(part.type)
+    .update('\0')
+    .update(container.id ?? '')
+    .update('\0')
+    .update(container.url)
+    .digest('hex');
+  if (keysByType === undefined) {
+    MEDIA_CONTAINER_KEY_CACHE.set(container, { [part.type]: key });
+  } else {
+    keysByType[part.type] = key;
+  }
+  return key;
+}
+
+/** Capture the provider-visible content identity of every current media part. */
+export function captureMediaStripSnapshot(messages: readonly Message[]): MediaStripSnapshot {
+  const snapshot = new Set<string>();
+  for (const message of messages) {
+    for (const part of message.content) {
+      if (isDegradableMediaPart(part)) snapshot.add(mediaStripKey(part));
+    }
+  }
+  return snapshot;
+}
+
+/**
+ * Replace only media captured in `snapshot`. Media produced later with a new
+ * provider-visible identity survives, allowing the model to read a smaller
+ * recovery copy while the oversized/poisoned content stays stripped.
+ */
+export function stripMediaPartsBySnapshot(
+  messages: readonly Message[],
+  snapshot: MediaStripSnapshot,
+): Message[] {
+  let changed = false;
+  const result = messages.map((message) => {
+    let messageChanged = false;
+    const content = message.content.map((part): ContentPart => {
+      if (!isDegradableMediaPart(part) || !snapshot.has(mediaStripKey(part))) return part;
+      changed = true;
+      messageChanged = true;
+      return { type: 'text', text: MEDIA_STRIPPED_PLACEHOLDERS[part.type] };
+    });
+    return messageChanged ? { ...message, content } : message;
+  });
+  return changed ? result : (messages as Message[]);
 }
 
 /**
@@ -510,8 +648,8 @@ function isDegradableMediaPart(
  * text markers. This is the media-degraded projection used to resend a request
  * the provider rejected as too large (HTTP 413 on accumulated base64 media)
  * and — with `keepRecent = 0` and `MEDIA_STRIPPED_PLACEHOLDERS` — the resend
- * after an image-format rejection, where the poisoned image could be anywhere
- * and only a full strip guarantees a clean request. A purely read-side
+ * after a provider media rejection, where only a full strip guarantees a
+ * compatible request. A purely read-side
  * transform — the underlying history is left untouched — that trades pixels
  * for deliverability while the surrounding text (including ReadMediaFile's
  * `<image path="...">` wrapper) survives, so the model can re-read any file

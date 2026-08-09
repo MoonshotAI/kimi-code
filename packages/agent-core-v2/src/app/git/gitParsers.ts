@@ -1,14 +1,12 @@
 /**
- * `git` domain (L1) — pure git-output parsers.
+ * `git` domain — pure git-output parsers.
  *
  * Parses `git status --porcelain=v1 --branch`, `git diff --numstat`, and
  * `gh pr view --json` output into the protocol `FsGitStatusResponse` shape.
- * No IO, no DI — plain functions so they can be unit-tested directly. Moved
- * from `session/sessionFs/fsGit.ts` (originally ported from v1
- * `services/fs/fsGit.ts`).
+ * No IO, no DI — plain functions so they can be unit-tested directly.
  */
 
-import type { FsGitStatus, FsGitStatusResponse, FsPullRequest } from '@moonshot-ai/protocol';
+import type { FsGitStatus, FsGitStatusResponse, FsPullRequest } from './git';
 
 export function parsePorcelain(
   stdout: string,
@@ -49,11 +47,6 @@ export function parsePorcelain(
   return { branch, ahead, behind, entries, additions: 0, deletions: 0, pullRequest: null };
 }
 
-/**
- * Sum added/deleted line counts from `git diff --numstat` output. Each line is
- * `<added>\t<deleted>\t<path>`; a binary file reports `-` for both counts,
- * which we treat as 0. Returns the aggregate across all files.
- */
 export function parseNumstat(stdout: string): {
   additions: number;
   deletions: number;
@@ -132,8 +125,6 @@ function collapseXY(xy: string): FsGitStatus {
 }
 
 function posix(p: string): string {
-  // Git porcelain always emits `/`-separated paths, even on Windows; normalize
-  // the stray backslash for safety without depending on the host path style.
   return p.replaceAll('\\', '/');
 }
 

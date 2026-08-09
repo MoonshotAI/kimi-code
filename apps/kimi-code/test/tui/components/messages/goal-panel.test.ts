@@ -55,7 +55,7 @@ describe('buildGoalReportLines', () => {
     expect(out).toContain('Running');
     expect(out).toContain('4m 12s');
     expect(out).toContain('Turns');
-    expect(out).toContain('128.4k'); // formatTokenCount
+    expect(out).toContain('125k'); // formatTokenCount
   });
 
   it('shows a no-stop-condition note for an unbounded active goal', () => {

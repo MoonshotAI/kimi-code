@@ -12,11 +12,6 @@
 import type { IDisposable } from '#/_base/di/lifecycle';
 
 export interface IntervalTimerOptions {
-  /**
-   * When true, the underlying Node handle is `unref()`-ed so the timer does
-   * not keep the event loop alive on its own. Use for background polling that
-   * must not prevent process exit on its own.
-   */
   readonly unref?: boolean;
 }
 
@@ -25,7 +20,6 @@ export class IntervalTimer implements IDisposable {
 
   constructor(private readonly options: IntervalTimerOptions = {}) {}
 
-  /** Stop the loop if running. Idempotent. */
   cancel(): void {
     if (this.handle !== undefined) {
       clearInterval(this.handle);
@@ -33,7 +27,6 @@ export class IntervalTimer implements IDisposable {
     }
   }
 
-  /** Cancel any pending loop and start a new one. */
   cancelAndSet(runner: () => void, intervalMs: number): void {
     this.cancel();
     const handle = setInterval(runner, intervalMs);
@@ -48,9 +41,35 @@ export class IntervalTimer implements IDisposable {
     this.handle = handle;
   }
 
-  /** True while a loop is scheduled. */
   isSet(): boolean {
     return this.handle !== undefined;
+  }
+
+  dispose(): void {
+    this.cancel();
+  }
+}
+
+export class TimeoutTimer implements IDisposable {
+  private handle: ReturnType<typeof setTimeout> | undefined;
+
+  cancel(): void {
+    if (this.handle !== undefined) {
+      clearTimeout(this.handle);
+      this.handle = undefined;
+    }
+  }
+
+  cancelAndSet(runner: () => void, timeoutMs: number): void {
+    this.cancel();
+    const handle = setTimeout(() => {
+      this.handle = undefined;
+      runner();
+    }, timeoutMs);
+    if (typeof handle === 'object' && handle !== null && 'unref' in handle) {
+      (handle as { unref: () => void }).unref();
+    }
+    this.handle = handle;
   }
 
   dispose(): void {

@@ -27,16 +27,16 @@ import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
-  ISessionLifecycleService,
-  ISkillCatalogRuntimeOptions,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import {
   activateSkillResultSchema,
   listSkillsResponseSchema,
-} from '@moonshot-ai/protocol';
+} from '../src/protocol/rest-skill';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -62,7 +62,7 @@ describe('server-v2 /api/v1 skills', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
-    server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
   });
 
@@ -107,10 +107,10 @@ describe('server-v2 /api/v1 skills', () => {
   // The main agent scope is not created automatically on session creation
   // (server-v2 gap G10); create it here so skill activation can start a turn.
   async function createMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agents = session.accessor.get(IAgentLifecycleService);
-    if (agents.getHandle('main') === undefined) await agents.create({ agentId: 'main' });
+    if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
   async function registerWorkspace(root: string): Promise<string> {
@@ -185,6 +185,20 @@ describe('server-v2 /api/v1 skills', () => {
       expect(updateConfig).not.toHaveProperty('is_sub_skill');
       expect(updateConfig).not.toHaveProperty('isSubSkill');
     });
+
+    it('lists the check-kimi-code-docs builtin skill', async () => {
+      const id = await createSession();
+      const { body } = await getJson<{ skills: SkillWire[] }>(
+        `/api/v1/sessions/${id}/skills`,
+      );
+      expect(body.code).toBe(0);
+      const skills = listSkillsResponseSchema.parse(body.data).skills;
+
+      const docsSkill = skills.find((s) => s.name === 'check-kimi-code-docs');
+      expect(docsSkill).toBeDefined();
+      expect(docsSkill).toMatchObject({ source: 'builtin' });
+      expect(docsSkill?.description.length).toBeGreaterThan(0);
+    });
   });
 
   describe('POST /api/v1/sessions/{sid}/skills/{name}:activate', () => {
@@ -201,6 +215,21 @@ describe('server-v2 /api/v1 skills', () => {
         activated: true,
         skill_name: 'update-config',
       });
+    });
+
+    it('derives the session title from the first skill activation', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+
+      const activated = await postJson<{ activated: boolean; skill_name: string }>(
+        `/api/v1/sessions/${id}/skills/update-config:activate`,
+        { args: '--help' },
+      );
+      expect(activated.body.code).toBe(0);
+
+      const got = await getJson<{ title: string }>(`/api/v1/sessions/${id}`);
+      expect(got.body.code).toBe(0);
+      expect(got.body.data.title).toBe('/update-config --help');
     });
 
     it('returns 40415 for an unknown skill', async () => {
@@ -278,11 +307,12 @@ describe('server-v2 /api/v1 skills', () => {
       await server!.close();
       server = undefined;
       server = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
         host: '127.0.0.1',
         port: 0,
         homeDir: home,
         logLevel: 'silent',
-        seeds: [[ISkillCatalogRuntimeOptions, { _serviceBrand: undefined, explicitDirs: [explicitDir] }]] as never,
+        skillDirs: [explicitDir],
       });
       base = `http://127.0.0.1:${server.port}`;
 

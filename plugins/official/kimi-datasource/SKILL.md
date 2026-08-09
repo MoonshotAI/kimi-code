@@ -1,7 +1,7 @@
 ---
 name: kimi-datasource
 description: |
-  Universal data-source assistant. Use this skill when the user wants external structured data such as stocks, financial reports, technical indicators, A-share/HK/US markets, global macroeconomics, Chinese enterprise registry information, arXiv papers, Google Scholar results, or Chinese laws/regulations and judicial cases.
+  Universal data-source assistant. Use this skill when the user wants external structured data such as stocks, financial reports, technical indicators, A-share/HK/US markets, global macroeconomics, Chinese enterprise registry information, arXiv papers, Google Scholar results, Chinese laws/regulations and judicial cases, Wind financial data (intraday/minute quotes, funds, bonds), IMF macro datasets (FX rates, CPI, GDP forecasts), Gildata smart screening, US SEC filings (10-K/10-Q, Form 4, 13F), or S&P Capital IQ fundamentals (top holders, consensus estimates, valuation ratios).
   This plugin exposes tools via MCP server `plugin-kimi-datasource_data`; call them in the flow `mcp__plugin-kimi-datasource_data__get_data_source_desc` → `mcp__plugin-kimi-datasource_data__call_data_source_tool`.
 ---
 
@@ -20,17 +20,37 @@ description: |
 
 ## 1. 这个 skill 提供什么能力
 
-本 plugin 后面挂了 7 个外部数据源。每一行的"数据源名"就是传给 `get_data_source_desc` 的 `name`。
+本 plugin 后面挂了 12 个外部数据源。每一行的"数据源名"就是传给 `get_data_source_desc` 的 `name`。
 
 | 能力域 | 数据源名 | 典型问题 |
 |---|---|---|
 | **A股 / 港股 / 美股 行情和财务** | `stock_finance_data` | "茅台现在多少钱"、"宁德时代 2024 年财报"、"腾讯股东"、"杭州的人工智能股票" |
-| **Yahoo Finance 全球金融** | `yahoo_finance` | "苹果分析师评级"、"AAPL 期权链"、"标普 500 历年价格" |
-| **世界银行宏观经济** | `world_bank_open_data` | "中国历年 GDP"、"印度通胀率"、"各国人口增长对比" |
+| **Yahoo Finance 全球金融** | `yahoo_finance` | "苹果分析师评级"、"AAPL 期权链"、"苹果前十大机构股东" |
+| **世界银行历史宏观** | `world_bank_open_data` | "中国历年 GDP"、"印度通胀率"、"各国人口增长对比" |
 | **中国企业工商信息** | `tianyancha` | "字节跳动股东"、"比亚迪司法风险"、"宁德时代专利" |
 | **arXiv 论文预印本** | `arxiv` | "找 RAG 综述"、"下载 2406.xxxxx" |
 | **Google Scholar 学术搜索** | `scholar` | "Hinton 最新论文"、"transformer 综述高引文献" |
 | **中国法律法规 / 司法案例** | `yuandian_law` | "民法典关于居住权的规定"、"帮我查劳动合同解除的相关法条"、"找几个不当得利的判例" |
+| **Wind 万得（A股/基金/债券/宏观）** | `wind` | "茅台今天的分钟线"、"十年期国债收益率走势"、"基金净值查询" |
+| **IMF 国际宏观（汇率 / CPI / 预测）** | `imf` | "美元兑人民币汇率"、"各国 GDP 增速预测"、"全球通胀率对比" |
+| **恒生聚源智能筛选** | `gildata` | "筛选净利润增速超 30% 且 ROE 大于 15% 的股票"、"基金经理筛选" |
+| **美股 SEC 披露文件** | `sec_edgar` | "特斯拉 10-K 年报"、"苹果 10-Q 季报"、"Form 4 内部人交易"、"13F 机构持仓" |
+| **S&P Capital IQ 美股基本面** | `sp_data` | "苹果分析师一致预期"、"美股估值比率对比"、"竞争对手关系" |
+
+### 选源原则
+
+1. **用户点名了数据源** → 直接用指定的源。
+2. **没点名** → 按能力域从上表选最匹配的一个；结合下面的"能力边界参考"和用户问题的深度、范围自行判断。
+3. **一次简单查询只选一个数据源**，不要并行读取其他源的 desc。选定的源成功返回且已经覆盖用户问题后，立即回答；不要为了补充字段、重新格式化或交叉验证继续调用其他 API。只有用户明确要求跨源对比时，才能查询第二个数据源。
+
+### 能力边界参考（客观事实，选源时考虑）
+
+- `yahoo_finance` 的外汇历史最多 2 年；`imf` 提供长期的汇率、CPI、GDP 预测和国际收支序列
+- `stock_finance_data` 的行情是实时/收盘快照；分钟级分时序列在 `wind`（另有基金、债券、国债收益率）
+- 股东 / 机构持仓：`yahoo_finance`、`sec_edgar`（13F）、`sp_data`（S&P 标准化持有人）都覆盖，口径和深度不同
+- `world_bank_open_data` 是 50 年以上的历史宏观序列；要 IMF 的预测值用 `imf`
+- `gildata` 的查询输入是自然语言条件（选股 / 选基金 / 基金经理筛选），`tianyancha` 是企业工商档案
+- `wind` 的 `indexes`/`indicators` 参数要求 Wind 原生字段名；PE/PB/ROE/总市值这类常用字段先调 `wind_search_fields` 映射（支持别名和中文，一次查一个），不要硬猜字段名
 
 **不支持的能力**：通用 Web 搜索 / 实时新闻。问到这类问题，告诉用户当前数据源不覆盖。
 
@@ -39,13 +59,13 @@ description: |
 后端可用 API 经常会调整，**这份 skill 故意不抄具体的 API 名和参数表**。每次调用前你都应当现场问数据源："你都有什么接口？"
 
 ```
-1. 根据用户问题，从上表挑出一个 data_source_name
+1. 根据用户问题，从上表只挑一个 data_source_name
 2. 执行 get_data_source_desc，读取该数据源的 Markdown 文档
 3. 仔细读返回的 Markdown，里面列了：
      - 该数据源整体说明（含 ticker 格式、全局约束）
      - 每个 API 的描述 / 必填参数 / 可选参数 / 默认值 / 取值范围
 4. 选最匹配的 API，按文档拼 params
-5. 执行 call_data_source_tool
+5. 执行一次 call_data_source_tool；结果成功且已经覆盖问题时停止调用
 6. 读返回结果，用用户提问时使用的语言回答
 ```
 

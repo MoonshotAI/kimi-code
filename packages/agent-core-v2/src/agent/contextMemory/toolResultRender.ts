@@ -7,7 +7,7 @@
  * system status text or appends model-only notes.
  */
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 
 const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
 const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';

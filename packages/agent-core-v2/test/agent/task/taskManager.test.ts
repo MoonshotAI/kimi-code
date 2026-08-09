@@ -18,9 +18,10 @@ import {
 import {
   SubagentTask,
   type SubagentHandle,
-} from '#/session/agentLifecycle/tools/subagent-task';
-import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
+} from '#/agent/tools/agent/subagent-task';
+import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   configServices,
   createTestAgent,
@@ -142,7 +143,6 @@ async function waitForOutput(
   throw new Error(`Timed out waiting for output: ${expected}`);
 }
 
-// ---- test helpers ----
 
 function immediateProcess(exitCode: number, stdoutText = ''): IProcess {
   return {
@@ -478,7 +478,7 @@ describe('AgentTaskService', () => {
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
     expect(manager.getTask(taskId)).toMatchObject({
       status: 'killed',
-      stopReason: 'Interrupted by user',
+      stopReason: 'Aborted by the user',
     });
   });
 
@@ -508,7 +508,7 @@ describe('AgentTaskService', () => {
     const info = await manager.wait(taskId);
     expect(info).toMatchObject({
       status: 'killed',
-      stopReason: 'Interrupted by user',
+      stopReason: 'Aborted by the user',
     });
     expect(isUserCancellation(subagentController.signal.reason)).toBe(true);
   });
@@ -938,12 +938,6 @@ describe('AgentTaskService', () => {
     expect(killSpy).not.toHaveBeenCalledWith('SIGKILL');
   });
 
-  /**
-   * Build a process that only reaps on SIGKILL and whose stdout never ends on
-   * its own, so the task lifecycle cannot settle before the manager's deadline
-   * and grace window drive teardown. Exercises the v1-aligned timeout path:
-   * deadline -> SIGTERM -> SIGTERM_GRACE_MS -> forceStop (SIGKILL).
-   */
   function sigtermOnlyKillProcess(pid: number): {
     proc: IProcess;
     killSpy: ReturnType<typeof vi.fn>;
@@ -985,11 +979,11 @@ describe('AgentTaskService', () => {
     });
 
     const terminal = manager.wait(taskId);
-    await vi.advanceTimersByTimeAsync(1); // deadline -> abort -> SIGTERM (ignored)
+    await vi.advanceTimersByTimeAsync(1);
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
     expect(killSpy).not.toHaveBeenCalledWith('SIGKILL');
 
-    await vi.advanceTimersByTimeAsync(5_000); // grace elapses -> forceStop SIGKILL
+    await vi.advanceTimersByTimeAsync(5_000);
     const info = await terminal;
 
     expect(info?.status).toBe('timed_out');
@@ -999,13 +993,13 @@ describe('AgentTaskService', () => {
   it('reports timed_out when a timed-out process exits to SIGTERM within the grace window', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { manager } = createAgentTaskService();
-    const { proc, killSpy } = pendingProcess(); // SIGTERM reaps with 143
+    const { proc, killSpy } = pendingProcess();
     const taskId = manager.registerTask(new ProcessTask(proc, 'sleep 60', 'timeout graceful'), {
       timeoutMs: 1,
     });
 
     const terminal = manager.wait(taskId);
-    await vi.advanceTimersByTimeAsync(1); // deadline -> SIGTERM reaps within grace
+    await vi.advanceTimersByTimeAsync(1);
     const info = await terminal;
 
     expect(info?.status).toBe('timed_out');
@@ -1024,8 +1018,8 @@ describe('AgentTaskService', () => {
     manager.detach(taskId);
 
     const terminal = manager.wait(taskId);
-    await vi.advanceTimersByTimeAsync(1); // detach deadline -> SIGTERM (ignored)
-    await vi.advanceTimersByTimeAsync(5_000); // grace -> SIGKILL
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(5_000);
     const info = await terminal;
 
     expect(info?.status).toBe('timed_out');
@@ -1045,14 +1039,11 @@ describe('AgentTaskService', () => {
     });
     const waiting = manager.waitForForegroundRelease(taskId);
 
-    // The 1s foreground deadline detaches the task instead of killing it.
     await vi.advanceTimersByTimeAsync(1_000);
     await expect(waiting).resolves.toBe('timeout_detached');
     expect(killSpy).not.toHaveBeenCalled();
     expect(manager.getTask(taskId)).toMatchObject({ status: 'running', detached: true });
 
-    // The task keeps running past the original deadline; the re-armed 5s
-    // detach deadline still applies (1000 + 5000 = 6000ms).
     await vi.advanceTimersByTimeAsync(1_000);
     expect(manager.getTask(taskId)?.status).toBe('running');
     await vi.advanceTimersByTimeAsync(4_000);
@@ -1286,11 +1277,16 @@ describe('AgentTaskService', () => {
   it('getTask on an unknown id does not create persisted state', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-mgr-missing-'));
     try {
-      const { manager, persistence } = createAgentTaskService({ sessionDir });
+      const { ctx, manager, persistence } = createAgentTaskService({ sessionDir });
 
       expect(manager.getTask('bash-bogusss0')).toBeUndefined();
 
       expect(await persistence!.listTasks()).toEqual([]);
+      // The session scope's initial metadata write is kicked at creation but
+      // not awaited by the (synchronous) harness; settle it before the
+      // cleanup below removes the home dir, the same way session
+      // materialization awaits metadata readiness in production.
+      await ctx.get(ISessionMetadata).ready;
     } finally {
       await rm(sessionDir, { recursive: true, force: true });
     }

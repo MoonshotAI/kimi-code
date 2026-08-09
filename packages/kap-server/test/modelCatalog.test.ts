@@ -4,16 +4,19 @@ import { join } from 'node:path';
 
 import {
   IConfigService,
-  IModelCatalogService,
+  IModelCatalog,
   IOAuthService,
-  type IModelCatalogService as IModelCatalogServiceType,
+  IProviderDiscoveryService,
+  type IModelCatalog as IModelCatalogType,
   type IOAuthService as IOAuthServiceType,
+  type IProviderDiscoveryService as IProviderDiscoveryServiceType,
   type ModelCatalogConfig,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -62,7 +65,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-model-catalog-'));
     // Disable the background refresh scheduler so its startup refresh never
-    // races the route-level assertions below (it shares the IModelCatalogService
+    // races the route-level assertions below (it shares the IProviderDiscoveryService
     // binding that the stub tests override).
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'] = '0';
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'] = '0';
@@ -86,6 +89,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       await writeFile(join(home as string, 'config.toml'), toml, 'utf-8');
     }
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -145,13 +149,25 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     ]);
   });
 
+  it('hides the synthesized secondary-model derived entry from /models', async () => {
+    await boot(
+      `${CATALOG_TOML}\n[secondary_model]\nmodel = "turbo"\nmax_output_size = 8192\n`,
+    );
+    const { status, body } = await getJson<{ items: { model: string }[] }>('/api/v1/models');
+    expect(status).toBe(200);
+    expect(body.data.items.map((item) => item.model)).toEqual(['k2', 'turbo', 'gpt4o']);
+  });
+
   it('lists models without refreshing providers', async () => {
     const refreshProviderModels = vi.fn(async () => ({
       changed: [],
       unchanged: [],
       failed: [],
     }));
-    const seeds = [[IModelCatalogService, catalogStub(refreshProviderModels)]] as unknown as ScopeSeed;
+    const seeds = [
+      [IModelCatalog, catalogStub()],
+      [IProviderDiscoveryService, discoveryStub(refreshProviderModels)],
+    ] as unknown as ScopeSeed;
     await boot(CATALOG_TOML, seeds);
 
     const { status, body } = await getJson<{ items: unknown[] }>('/api/v1/models');
@@ -194,7 +210,13 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       has_api_key: true,
       status: 'connected',
       models: ['k2', 'turbo'],
+      // The single GET reveals the stored key; the list above never does.
+      api_key: 'sk-test',
     });
+
+    const noKey = await getJson<Record<string, unknown>>('/api/v1/providers/openai');
+    expect(noKey.body.code).toBe(0);
+    expect(noKey.body.data).not.toHaveProperty('api_key');
   });
 
   it('sets the global default model and reflects it in /auth', async () => {
@@ -249,11 +271,22 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     expect(body.data).toEqual({ changed: [], unchanged: [], failed: [] });
   });
 
-  function catalogStub(
-    refreshProviderModels: IModelCatalogServiceType['refreshProviderModels'],
-  ): IModelCatalogServiceType {
+  function catalogStub(): IModelCatalogType {
     return {
       _serviceBrand: undefined,
+      get: () => {
+        throw new Error('unused');
+      },
+      getRequester: () => {
+        throw new Error('unused');
+      },
+      inspect: () => {
+        throw new Error('unused');
+      },
+      ping: async () => {
+        throw new Error('unused');
+      },
+      findByName: () => [],
       listModels: async () => [],
       listProviders: async () => [],
       getProvider: async () => {
@@ -262,8 +295,13 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       setDefaultModel: async () => {
         throw new Error('unused');
       },
-      refreshProviderModels,
     };
+  }
+
+  function discoveryStub(
+    refreshProviderModels: IProviderDiscoveryServiceType['refreshProviderModels'],
+  ): IProviderDiscoveryServiceType {
+    return { _serviceBrand: undefined, refreshProviderModels };
   }
 
   function oauthStub(
@@ -283,6 +321,8 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       },
       status: async () => ({ loggedIn: false }),
       refreshOAuthProviderModels,
+      getManagedUsage: async () => ({ kind: 'error' as const, message: 'unused' }),
+      getManagedUserInfo: async () => ({ kind: 'error' as const, message: 'unused' }),
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
     };
@@ -325,7 +365,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       unchanged: ['moonshot-cn'],
       failed: [],
     }));
-    const seeds = [[IModelCatalogService, catalogStub(refreshProviderModels)]] as unknown as ScopeSeed;
+    const seeds = [[IProviderDiscoveryService, discoveryStub(refreshProviderModels)]] as unknown as ScopeSeed;
     await boot(CATALOG_TOML, seeds);
 
     const { status, body } = await postJson('/api/v1/providers:refresh', {});
@@ -340,7 +380,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       unchanged: [],
       failed: [],
     }));
-    const seeds = [[IModelCatalogService, catalogStub(refreshProviderModels)]] as unknown as ScopeSeed;
+    const seeds = [[IProviderDiscoveryService, discoveryStub(refreshProviderModels)]] as unknown as ScopeSeed;
     await boot(CATALOG_TOML, seeds);
 
     const { status, body } = await postJson('/api/v1/providers/managed%3Akimi-code:refresh', {});
@@ -355,7 +395,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       unchanged: [],
       failed: [],
     }));
-    const seeds = [[IModelCatalogService, catalogStub(refreshProviderModels)]] as unknown as ScopeSeed;
+    const seeds = [[IProviderDiscoveryService, discoveryStub(refreshProviderModels)]] as unknown as ScopeSeed;
     await boot(CATALOG_TOML, seeds);
 
     const { body } = await postJson('/api/v1/providers/foo:bogus', {});

@@ -132,7 +132,16 @@ describe('llm request trace records', () => {
     try {
       const persistence = new InMemoryAgentRecordPersistence();
       const ctx = testAgent({ persistence });
-      ctx.configure();
+      ctx.configure({
+        modelCapabilities: {
+          image_in: false,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000_000,
+        },
+      });
       ctx.agent.config.update({ thinkingEffort: 'high' });
 
       ctx.mockNextResponse({ type: 'text', text: 'ok' });

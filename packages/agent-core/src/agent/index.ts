@@ -6,9 +6,9 @@ import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
 import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
-import { generate } from '@moonshot-ai/kosong';
+import { generate, type ChatProvider } from '@moonshot-ai/kosong';
 
-import type { EnabledPluginSessionStart, PluginCommandDef } from '#/plugin';
+import type { EnabledPluginSessionStart, EnabledPluginSystemPrompt, PluginCommandDef } from '#/plugin';
 import { expandCommandArguments } from '../plugin/commands';
 import type { PluginCommandOrigin } from './context';
 
@@ -20,6 +20,7 @@ import {
   type PreparedSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
+import { composePluginSections, PLUGIN_SECTIONS_MAX_BYTES } from '../profile/plugin-sections';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -63,7 +64,13 @@ import type { ToolServices } from '../tools/support/services';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
 export type { SwarmModeTrigger } from './swarm';
-export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
+export type {
+  BuiltinTool,
+  ToolDisclosure,
+  ToolInfo,
+  ToolSource,
+  UserToolRegistration,
+} from './tool';
 export * from './goal';
 
 export type AgentType = 'main' | 'sub' | 'independent';
@@ -96,6 +103,7 @@ export interface AgentOptions {
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly pluginCommands?: readonly PluginCommandDef[];
+  readonly pluginSystemPrompts?: readonly EnabledPluginSystemPrompt[];
   readonly experimentalFlags?: ExperimentalFlagResolver;
   /** Owner-scoped [image] limits; a standalone Agent gets env/built-in defaults. */
   readonly imageLimits?: ImageLimits;
@@ -112,7 +120,13 @@ export class Agent {
     return this._kaos;
   }
 
-  readonly kimiConfig?: KimiConfig;
+  /**
+   * The session config snapshot this agent reads (loop control, subagent
+   * binding descriptions, ...). Mutable via {@link updateKimiConfig} so the
+   * session can push live config updates (e.g. a `/secondary_model` switch)
+   * to already-instantiated agents.
+   */
+  kimiConfig?: KimiConfig;
   readonly homedir?: string;
   readonly mediaOriginalsDir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
@@ -162,6 +176,17 @@ export class Agent {
   private additionalDirs: readonly string[];
   private activeProfile?: ResolvedAgentProfile;
   private brandHome?: string;
+  private readonly emittedThinkingEffortWarnings = new Set<string>();
+  private pluginSystemPrompts: readonly EnabledPluginSystemPrompt[];
+  private readonly emittedPluginBudgetWarnings = new Set<string>();
+  private readonly pendingThinkingEffortWarnings: Array<{
+    readonly code: string;
+    readonly message: string;
+    readonly modelAlias: string | undefined;
+    readonly model: string;
+    readonly effort: string;
+    readonly knownEfforts: string | undefined;
+  }> = [];
   private readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 
   constructor(options: AgentOptions) {
@@ -174,6 +199,7 @@ export class Agent {
     this.toolServices = options.toolServices;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];
     this.pluginCommands = options.pluginCommands ?? [];
+    this.pluginSystemPrompts = options.pluginSystemPrompts ?? [];
     this.rawGenerate = options.generate ?? generate;
     this.modelProvider = options.modelProvider;
     this.subagentHost = options.subagentHost;
@@ -269,6 +295,7 @@ export class Agent {
         // before dispatching), so it must not leave a request trace or a
         // diagnostic log line claiming a request was sent.
         if (requestOptions?.signal?.aborted !== true) {
+          this.warnAboutAnthropicThinkingEffort(provider, modelAlias);
           this.llmRequestLogger.logRequest({
             provider,
             modelAlias,
@@ -303,6 +330,99 @@ export class Agent {
     };
   }
 
+  private warnAboutAnthropicThinkingEffort(
+    provider: ChatProvider,
+    modelAlias: string | undefined,
+  ): void {
+    if (provider.name !== 'anthropic') return;
+    const effort = provider.thinkingEffort;
+    if (effort === null || effort === 'on' || effort === 'off') return;
+
+    let warning:
+      | { readonly code: string; readonly message: string; readonly knownEfforts?: string }
+      | undefined;
+    try {
+      const resolved =
+        modelAlias === undefined
+          ? undefined
+          : this.modelProvider?.resolveProviderConfig(modelAlias);
+      if (resolved === undefined) return;
+
+      const supportEfforts = resolved.supportEfforts?.filter((value) => value.length > 0);
+      if (supportEfforts === undefined || supportEfforts.length === 0) return;
+      if (supportEfforts.includes(effort)) return;
+      warning = {
+        code: 'anthropic-thinking-effort-not-listed',
+        message: `Thinking effort "${effort}" is not listed for model "${provider.modelName}" (known: ${supportEfforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`,
+        knownEfforts: supportEfforts.join(','),
+      };
+    } catch {
+      // Capability diagnostics must never turn an otherwise sendable request
+      // into a client-side failure.
+      return;
+    }
+
+    if (warning === undefined) return;
+    const key = [warning.code, modelAlias, provider.modelName, effort, warning.knownEfforts].join(
+      '\u0000',
+    );
+    if (this.emittedThinkingEffortWarnings.has(key)) return;
+    this.emittedThinkingEffortWarnings.add(key);
+    const pending = {
+      code: warning.code,
+      message: warning.message,
+      modelAlias,
+      model: provider.modelName,
+      effort,
+      knownEfforts: warning.knownEfforts,
+    };
+    if (this.records.restoring) {
+      this.pendingThinkingEffortWarnings.push(pending);
+      return;
+    }
+    this.publishAnthropicThinkingEffortWarning(pending);
+  }
+
+  private publishAnthropicThinkingEffortWarning(
+    warning: (typeof this.pendingThinkingEffortWarnings)[number],
+  ): void {
+    try {
+      this.log.warn(warning.message, {
+        modelAlias: warning.modelAlias,
+        model: warning.model,
+        effort: warning.effort,
+        knownEfforts: warning.knownEfforts,
+      });
+    } catch {
+      // Diagnostics must never block resume or request dispatch.
+    }
+    try {
+      const delivery = this.rpc?.emitEvent?.({
+        type: 'warning',
+        code: warning.code,
+        message: warning.message,
+      });
+      void delivery?.catch(() => {});
+    } catch {
+      // Diagnostics must never block resume or request dispatch.
+    }
+  }
+
+  private flushPendingAnthropicThinkingEffortWarnings(): void {
+    for (const warning of this.pendingThinkingEffortWarnings.splice(0)) {
+      this.publishAnthropicThinkingEffortWarning(warning);
+    }
+  }
+
+  warnAboutCurrentAnthropicThinkingEffort(): void {
+    try {
+      if (!this.config.hasProvider) return;
+      this.warnAboutAnthropicThinkingEffort(this.config.provider, this.config.modelAlias);
+    } catch {
+      // A capability warning must never make config replay or session resume fail.
+    }
+  }
+
   get llm(): KosongLLM {
     // All provider-level request config (thinking, sampling params, thinking.keep)
     // is applied in ConfigState.provider so compaction shares it. See get provider().
@@ -326,10 +446,19 @@ export class Agent {
     profile: ResolvedAgentProfile,
     context?: PreparedSystemPromptContext,
     brandHome?: string,
+    subagentNames?: readonly string[],
   ): void {
     this.setActiveProfile(profile, brandHome);
-    this.updateSystemPromptFromProfile(profile, context);
-    this.tools.setActiveTools(profile.tools);
+    this.updateSystemPromptFromProfile(profile, context, subagentNames);
+    this.tools.setActiveTools(profile.tools, profile.disallowedTools);
+  }
+
+  /** Push a refreshed session config snapshot and rebuild config-dependent builtin tools. */
+  updateKimiConfig(config: KimiConfig | undefined): void {
+    this.kimiConfig = config;
+    if (this.config.hasProvider) {
+      this.tools.refreshBuiltinTools();
+    }
   }
 
   setActiveProfile(profile: ResolvedAgentProfile, brandHome?: string): void {
@@ -356,20 +485,54 @@ export class Agent {
   private updateSystemPromptFromProfile(
     profile: ResolvedAgentProfile,
     context?: PreparedSystemPromptContext,
+    subagentNames?: readonly string[],
   ): void {
+    const pluginSections = composePluginSections(this.pluginSystemPrompts);
+    this.warnAboutSkippedPluginSections(pluginSections.skipped);
     const systemPrompt = profile.systemPrompt({
       osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
       skills: this.skills?.registry,
+      pluginSections: pluginSections.content,
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,
       additionalDirsInfo: context?.additionalDirsInfo,
     });
-    this.config.update({ profileName: profile.name, systemPrompt });
+    this.config.update({ profileName: profile.name, systemPrompt, subagentNames });
+  }
+
+  /**
+   * Replace the enabled plugins' system-prompt contributions. Does not
+   * re-render on its own — pair with `refreshSystemPrompt()` so callers decide
+   * when the prompt-cache prefix is invalidated.
+   */
+  setPluginSystemPrompts(sections: readonly EnabledPluginSystemPrompt[]): void {
+    this.pluginSystemPrompts = sections;
+  }
+
+  /**
+   * Warn once per plugin when its system-prompt contribution is skipped
+   * because the aggregate budget is exhausted; a skipped contribution keeps
+   * being skipped on every re-render, so the warning is deduped by plugin id.
+   */
+  private warnAboutSkippedPluginSections(skipped: readonly string[]): void {
+    const newlySkipped = skipped.filter((id) => !this.emittedPluginBudgetWarnings.has(id));
+    if (newlySkipped.length === 0) return;
+    for (const id of newlySkipped) this.emittedPluginBudgetWarnings.add(id);
+    const message =
+      `Plugin system-prompt contributions from ${newlySkipped.map((id) => `"${id}"`).join(', ')} ` +
+      `were skipped: the aggregate ${PLUGIN_SECTIONS_MAX_BYTES / 1024} KB budget is exhausted.`;
+    this.log.warn(message);
+    this.emitEvent({
+      type: 'warning',
+      code: 'plugin-sections-oversized',
+      message,
+    });
   }
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
     const result = await this.records.replay(options);
+    this.flushPendingAnthropicThinkingEffortWarnings();
     try {
       this.replayBuilder.postRestoring = true;
       this.goal.normalizeAfterReplay();
@@ -397,7 +560,10 @@ export class Agent {
       },
       cancel: (payload) => {
         if (this.turn.hasActiveTurn) {
-          this.telemetry.track('cancel', { from: 'streaming' });
+          this.telemetry.track('cancel', {
+            from: 'streaming',
+            trace_id: this.turn.activeRequestTraceId(),
+          });
         }
         this.turn.cancel(payload.turnId);
       },
@@ -407,7 +573,7 @@ export class Agent {
       },
       setThinking: (payload) => {
         const previousEffort = this.config.thinkingEffort;
-        this.config.update({ thinkingEffort: payload.effort });
+        this.config.setThinkingEffort(payload.effort);
         const effort = this.config.thinkingEffort;
         if (effort !== previousEffort) {
           this.telemetry.track('thinking_toggle', {
@@ -468,7 +634,10 @@ export class Agent {
       },
       cancelCompaction: () => {
         if (this.fullCompaction.isCompacting) {
-          this.telemetry.track('cancel', { from: 'compacting' });
+          this.telemetry.track('cancel', {
+            from: 'compacting',
+            trace_id: this.fullCompaction.lastTraceId,
+          });
         }
         this.fullCompaction.cancel();
       },
@@ -487,6 +656,15 @@ export class Agent {
       detachBackground: (payload) => this.background.detach(payload.taskId),
       clearContext: () => {
         this.context.clear();
+      },
+      importContext: (payload) => {
+        if (this.turn.hasActiveTurn || this.fullCompaction.isCompacting) {
+          throw new KimiError(
+            ErrorCodes.TURN_AGENT_BUSY,
+            'Cannot import context while the agent is busy',
+          );
+        }
+        this.context.importContext(payload.content, payload.source);
       },
       activateSkill: (payload) => {
         if (this.skills === null) {
@@ -549,12 +727,13 @@ export class Agent {
     void this.rpc?.emitEvent?.(event);
   }
 
-  emitStatusUpdated(): void {
+  emitStatusUpdated(includeThinkingEffort = false): void {
     if (this.records.restoring) return;
     if (!this.config.hasModel) return;
 
     const contextTokens = this.context.tokenCount;
-    const maxContextTokens = this.config.modelCapabilities.max_context_tokens;
+    const capability = this.config.modelCapabilities;
+    const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
     const contextUsage =
       maxContextTokens !== undefined && maxContextTokens > 0
         ? contextTokens / maxContextTokens
@@ -565,6 +744,7 @@ export class Agent {
     this.emitEvent({
       type: 'agent.status.updated',
       model,
+      thinkingEffort: includeThinkingEffort ? this.config.thinkingEffort : undefined,
       contextTokens,
       maxContextTokens,
       contextUsage,

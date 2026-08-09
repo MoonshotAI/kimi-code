@@ -1,17 +1,28 @@
 /**
- * Scan submitted text for media placeholders and produce
- * the `PromptPart[]` we'll send to the SDK prompt endpoint.
+ * Scan submitted text for media placeholders and produce the prompt content
+ * we'll send to the SDK prompt endpoint.
  *
- * Rules:
+ * `extractMediaAttachments` (sync) is the single expansion path for prompts:
+ *   - image placeholders expand to inline image content parts (preceded by a
+ *     compression caption when paste-time compression shrank the bytes — see
+ *     `ImageAttachment.original`);
+ *   - video placeholders are copied into the shared cache (`getCacheDir()`)
+ *     and expand to a `video_url` part pointing at the cache copy with a
+ *     `file://` url. The v1 engine resolves that local reference inside the
+ *     turn — uploading it (the `ms://` inline form) or degrading to a
+ *     `<video path>` tag the model reads with `ReadMediaFile` — before the
+ *     prompt lands in history.
+ *
+ * `rewriteMediaPlaceholders` is the separate text channel for slash-command
+ * args (`/skill`, plugin commands): those are plain text, so media is rendered
+ * as a `<video|image path="…">` tag / plain-text reference into cache-dir
+ * copies the model opens with `ReadMediaFile`.
+ *
+ * Rules for both:
  *   - Only placeholders that resolve against `store` get extracted.
  *     A literal `[image #999 ...]` the user typed themselves stays in
  *     the text (we can't hallucinate files for it).
- *   - Order is preserved for text/image/video segments. Image placeholders
- *     expand to image content parts so the prompt reaches the provider
- *     without relying on a model tool call. Video placeholders are copied
- *     into the shared cache (`getCacheDir()`) and expand to file-path tags,
- *     so `ReadMediaFile` — and the provider's `VideoUploader` — own video
- *     upload behavior instead of base64-inlining here.
+ *   - Order is preserved for text/image/video segments.
  *   - Adjacent text segments are flattened — empty / whitespace-only
  *     segments drop out so we never emit `{type:'text', text:' '}`
  *     noise between two media parts.
@@ -20,6 +31,7 @@
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
 import { buildImageCompressionCaption } from '@moonshot-ai/kimi-code-sdk';
@@ -71,8 +83,10 @@ export function extractMediaAttachments(
     const before = text.slice(cursor, match.index);
     pushText(parts, before);
     if (attachment.kind === 'video') {
+      // Copy the paste into the shared cache and reference it by a `file://`
+      // url; the engine resolves (uploads or degrades) it inside the turn.
       const cachePath = materializeVideoToCache(attachment);
-      pushText(parts, formatMediaTag('video', cachePath));
+      parts.push(videoPartForCachePath(cachePath));
       videoAttachmentIds.push(id);
     } else {
       // Paste-time compression is announced next to the image so the model
@@ -192,6 +206,18 @@ function imagePartForAttachment(att: ImageAttachment): PromptPart {
   return {
     type: 'image_url',
     imageUrl: { url: `data:${att.mime};base64,${base64}` },
+  };
+}
+
+/**
+ * A `video_url` prompt part pointing at a cache copy by `file://` url. The v1
+ * engine resolves the local reference in-turn (upload → `ms://`, or degrade to
+ * a `<video path>` tag) before it reaches the model or the persisted history.
+ */
+function videoPartForCachePath(cachePath: string): PromptPart {
+  return {
+    type: 'video_url',
+    videoUrl: { url: pathToFileURL(cachePath).href },
   };
 }
 

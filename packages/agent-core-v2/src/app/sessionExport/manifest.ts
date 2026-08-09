@@ -1,20 +1,18 @@
 /**
- * `sessionExport` domain (L6) — export manifest builder.
+ * `sessionExport` domain — export manifest builder.
  *
  * Produces the diagnostic `manifest.json` included in every exported session
  * archive. The manifest combines persisted session metadata, host/runtime
  * version facts, and wire-log activity timestamps discovered during export.
  */
 
-import { AGENT_WIRE_PROTOCOL_VERSION } from '#/agent/wireRecord/wireRecord';
+import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 
 import type {
   ExportSessionManifest,
   ShellEnvironment,
 } from './sessionExport';
 import type { SessionWireScan } from './wire-scan';
-
-export const WIRE_PROTOCOL_VERSION = AGENT_WIRE_PROTOCOL_VERSION;
 
 export interface ExportSessionManifestSummary {
   readonly id: string;
@@ -30,6 +28,8 @@ export function buildExportManifest(args: {
   readonly sessionScan: SessionWireScan;
   readonly sessionLogPath?: string | undefined;
   readonly globalLogPath?: string | undefined;
+  readonly webLogPath?: string;
+  readonly desktopVersion?: string;
   readonly installSource?: string | undefined;
   readonly shellEnv?: ShellEnvironment | undefined;
 }): ExportSessionManifest {
@@ -52,6 +52,8 @@ export function buildExportManifest(args: {
     workspaceDir: args.summary.workspaceDir,
     sessionLogPath: args.sessionLogPath,
     globalLogPath: args.globalLogPath,
+    webLogPath: args.webLogPath,
+    desktopVersion: args.desktopVersion,
     installSource: args.installSource,
     shellEnv: args.shellEnv,
   };

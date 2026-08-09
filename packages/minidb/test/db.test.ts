@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MiniDb } from '../src/index.js';
 import { encodeFrame, TYPE_SET } from '../src/codec.js';
+import { barrier, waitFor } from './helpers.js';
 
 const B = (s) => Buffer.from(s);
 
@@ -170,6 +171,116 @@ test('backup + restore preserves data, indexes, and text search', async () => {
   }
 });
 
+test('backup fences writes at a linearization point: every pre-fence ack is in, concurrent writes reject (review #22)', async () => {
+  const dir = await tmpDir();
+  const parent = await tmpDir();
+  const backupDir = path.join(parent, 'backup-dest'); // intentionally absent
+  const restoreDir = await tmpDir();
+  try {
+    const db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+    await db.set('seed1', 'a');
+    await db.set('seed2', 'b');
+
+    // Park the WAL writev of the NEXT write so a set is provably in flight
+    // when the backup starts: the backup's drain must wait for it, and its
+    // ack then lands INSIDE the backup (it entered before the fence).
+    const fh = (db as unknown as { wal: { fh: { writev: (...a: unknown[]) => Promise<unknown> } } }).wal.fh;
+    const gate = barrier(fh, 'writev', 1);
+    const inFlight = db.set('inflight', 'c');
+    await gate.entered;
+
+    const backingUp = db.backup(backupDir, { compact: false });
+    let backupDone = false;
+    void backingUp.then(() => {
+      backupDone = true;
+    });
+
+    // Writes submitted behind the fence reject with a clear, retryable error.
+    await assert.rejects(db.set('late', 'd'), (e: unknown) => (e as { code?: string }).code === 'BACKUP_IN_PROGRESS');
+    await assert.rejects(db.batch([{ op: 'set', key: 'late2', value: 'd' }]), /backup is in progress/i);
+    // The backup cannot complete while the fenced-in write is still parked.
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    assert.equal(backupDone, false, 'backup waits for the in-flight write (its linearization point)');
+
+    gate.release();
+    gate.restore();
+    await inFlight;
+    await backingUp;
+    assert.equal(backupDone, true);
+
+    // After the backup the gate is lifted: writes work again.
+    await db.set('after', 'e');
+    assert.equal(db.get('after'), 'e');
+    await db.close();
+
+    // The manifest is the commit marker and lists the copied files.
+    const manifest = JSON.parse(await fs.readFile(path.join(backupDir, 'backup.manifest.json'), 'utf8')) as { files: string[] };
+    assert.ok(manifest.files.includes('db.wal'), 'manifest lists the WAL');
+
+    // Restore: every write ack'd before the fence is in; the rejected ones are not.
+    const restored = await MiniDb.restore<string>(backupDir, restoreDir, { valueCodec: 'string' });
+    assert.equal(restored.get('seed1'), 'a');
+    assert.equal(restored.get('seed2'), 'b');
+    assert.equal(restored.get('inflight'), 'c', 'the write drained before the fence is included');
+    assert.equal(restored.get('late'), undefined);
+    assert.equal(restored.get('late2'), undefined);
+    assert.equal(restored.get('after'), undefined, 'a post-backup write is not included');
+    await restored.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(parent, { recursive: true, force: true });
+    await fs.rm(restoreDir, { recursive: true, force: true });
+  }
+});
+
+test('backup copy failure leaves no partial backup behind and reopens the write gate (review #22)', async () => {
+  const dir = await tmpDir();
+  const parent = await tmpDir();
+  const backupDir = path.join(parent, 'backup-dest');
+  try {
+    const db = await MiniDb.open<string>({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+    await db.set('k', 'v');
+
+    // Fail the copy phase: every fs.copyFile rejects.
+    const boom = new Error('injected copy failure');
+    const origCopy = fs.copyFile;
+    (fs as unknown as { copyFile: unknown }).copyFile = () => Promise.reject(boom);
+    try {
+      await assert.rejects(db.backup(backupDir, { compact: false }), /injected copy failure/);
+    } finally {
+      (fs as unknown as { copyFile: unknown }).copyFile = origCopy;
+    }
+
+    // No half backup: the destination was never created, and no temp/aside
+    // dir is stranded next to it.
+    assert.equal(await fs.stat(backupDir).then(() => true, () => false), false, 'destination untouched');
+    const leftovers = (await fs.readdir(parent)).filter((n) => n.includes('.backup-'));
+    assert.deepEqual(leftovers, [], `stranded temp dirs: ${leftovers.join(', ')}`);
+
+    // The write gate was released: the db keeps working.
+    await db.set('after', 'w');
+    assert.equal(db.get('after'), 'w');
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(parent, { recursive: true, force: true });
+  }
+});
+
+test('readOnly open of a non-existent directory fails with ENOENT and creates nothing (review #26)', async () => {
+  const parent = await tmpDir();
+  const dir = path.join(parent, 'missing');
+  try {
+    await assert.rejects(
+      MiniDb.open({ dir, valueCodec: 'string', readOnly: true }),
+      (e: unknown) => (e as NodeJS.ErrnoException).code === 'ENOENT',
+    );
+    assert.equal(await fs.stat(dir).then(() => true, () => false), false, 'no directory was created');
+  } finally {
+    await fs.rm(parent, { recursive: true, force: true });
+  }
+});
+
 test('valueMode disk stores value pointers and reads from WAL', async () => {
   const dir = await tmpDir();
   try {
@@ -318,6 +429,164 @@ test('valueMode auto without maxMemoryBytes defaults to memory', async () => {
     assert.equal(db.valueMode, 'memory');
     assert.equal(db.store.map.get('a')?.ref.kind, 'memory');
     await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('openOrRebuild preserves data when only a sidecar definition file is corrupt', async () => {
+  const dir = await tmpDir();
+  try {
+    let db = await MiniDb.open<Record<string, number>>({ dir, valueCodec: 'json', fsyncPolicy: 'no' });
+    for (let i = 0; i < 100; i++) await db.set(`k${i}`, { n: i });
+    await db.createIndex('byN', { field: 'n' });
+    await db.close();
+    await fs.writeFile(path.join(dir, 'db.indexes.json'), 'corrupt{{{');
+    // plain open still throws on the corrupt sidecar...
+    await assert.rejects(MiniDb.open({ dir, valueCodec: 'json' }), SyntaxError);
+    // ...but openOrRebuild drops the derived sidecars instead of wiping the data
+    db = await MiniDb.openOrRebuild<Record<string, number>>({ dir, valueCodec: 'json', fsyncPolicy: 'no' });
+    assert.equal(db.size, 100);
+    assert.deepEqual(db.get('k42'), { n: 42 });
+    assert.deepEqual(db.listIndexes(), []); // definitions are lost, not the data; recreate as needed
+    await db.createIndex('byN2', { field: 'n' });
+    assert.equal(db.findEq('byN2', 42).length, 1);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('open removes stale compaction temp files', async () => {
+  const dir = await tmpDir();
+  try {
+    let db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no' });
+    await db.set('a', '1');
+    await db.close();
+    await fs.writeFile(path.join(dir, 'db.snapshot.tmp'), 'stale');
+    await fs.writeFile(path.join(dir, 'db.wal.tmp'), 'stale');
+    db = await MiniDb.open({ dir, valueCodec: 'string' });
+    assert.equal(db.get('a'), '1');
+    await assert.rejects(fs.stat(path.join(dir, 'db.snapshot.tmp')), /ENOENT/);
+    await assert.rejects(fs.stat(path.join(dir, 'db.wal.tmp')), /ENOENT/);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('query with skip/limit returns the same rows as slicing the unbounded result', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open<Record<string, number>>({ dir, valueCodec: 'json', fsyncPolicy: 'no' });
+    for (let i = 0; i < 200; i++) await db.set(`k${String(i).padStart(3, '0')}`, { n: i, grp: i % 4 });
+    await db.createIndex('byGrp', { field: 'grp' });
+    const full = db.query({ key: { prefix: 'k1' } });
+    assert.deepEqual(db.query({ key: { prefix: 'k1' }, limit: 10 }), full.slice(0, 10));
+    assert.deepEqual(db.query({ key: { prefix: 'k1' }, skip: 5, limit: 3 }), full.slice(5, 8));
+    const eq = db.query({ filter: { grp: 2 } }); // indexed equality path
+    assert.deepEqual(db.query({ filter: { grp: 2 }, limit: 7 }), eq.slice(0, 7));
+    const scan = db.query({ filter: { n: { $gte: 100 } } }); // unindexed full scan path
+    assert.deepEqual(db.query({ filter: { n: { $gte: 100 } }, skip: 10, limit: 5 }), scan.slice(10, 15));
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('maxMemory evict-lru evicts in least-recently-used order across many victims', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open({ dir, valueCodec: 'string', maxMemoryBytes: 50, maxMemoryPolicy: 'evict-lru' });
+    await db.set('a', '1234567890'); // ~11B per record, budget fits 4
+    await db.set('b', '1234567890');
+    await db.set('c', '1234567890');
+    await db.set('d', '1234567890');
+    assert.equal(db.get('a'), '1234567890'); // touch a: b becomes LRU
+    await db.set('e', '1234567890'); // exceeds budget -> evicts b
+    await db.set('f', '1234567890'); // exceeds budget -> evicts c
+    assert.equal(db.get('a'), '1234567890');
+    assert.equal(db.get('b'), undefined);
+    assert.equal(db.get('c'), undefined);
+    assert.equal(db.get('d'), '1234567890');
+    assert.equal(db.get('e'), '1234567890');
+    assert.equal(db.get('f'), '1234567890');
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- stage 6: async read APIs -------------------------------------------------
+
+for (const valueMode of ['memory', 'disk'] as const) {
+  test(`async reads match sync reads (valueMode: ${valueMode})`, async () => {
+    const dir = await tmpDir();
+    try {
+      const db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', valueMode, autoCompact: false });
+      await db.createTextIndex('ft', { fields: ['text'] });
+      await db.createIndex('byKind', { field: 'kind' });
+      for (let i = 0; i < 300; i++) {
+        await db.set(`k${i}`, { kind: `t${i % 5}`, score: i, text: `hello world doc ${i} 异步 读取 ${i % 7}` }, { dt: { ts: 1700000000000 + i } });
+      }
+      await db.del('k0');
+      await db.set('k1', { kind: 't1', score: 999, text: 'replaced 替换' });
+
+      // getAsync vs get
+      assert.deepEqual(await db.getAsync('k1'), db.get('k1'));
+      assert.deepEqual(await db.getAsync('k42'), db.get('k42'));
+      assert.equal(await db.getAsync('k0'), undefined);
+      assert.equal(await db.getAsync('missing'), undefined);
+
+      // searchBoundedAsync / searchAsync vs search
+      for (const q of ['hello', '异步', 'hello world', 'replaced']) {
+        const syncRes = db.searchBounded('ft', q, { limit: 20 });
+        const asyncRes = await db.searchBoundedAsync('ft', q, { limit: 20 });
+        assert.deepEqual(asyncRes, syncRes, `searchBoundedAsync(${q})`);
+        assert.deepEqual(await db.searchAsync('ft', q, { limit: 20 }), db.search('ft', q, { limit: 20 }));
+      }
+
+      // queryAsync vs query across the planner's shapes
+      const shapes = [
+        { filter: { kind: 't3' } },
+        { dt: { ts: { gte: 1700000000050 } }, limit: 10 },
+        { dt: { ts: { gte: 1700000000050 } }, sort: { ts: -1 as const }, limit: 5 },
+        { text: { index: 'ft', q: 'hello' }, limit: 10 },
+        { key: { prefix: 'k1' }, limit: 5 },
+        { sort: { score: -1 as const }, limit: 7 },
+        { filter: { kind: 't2' }, sort: { score: 1 as const }, skip: 3, limit: 6 },
+      ];
+      for (const q of shapes) {
+        assert.deepEqual(await db.queryAsync(q), db.query(q), `queryAsync(${JSON.stringify(q)})`);
+      }
+      await db.close();
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('async reads stay correct across a compaction rotation (disk mode)', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', valueMode: 'disk', compactThresholdBytes: 4096 });
+    for (let i = 0; i < 400; i++) {
+      await db.set(`k${i}`, { kind: `t${i % 5}`, score: i, text: `rotation doc ${i}` });
+    }
+    await waitFor(() => db.stats.compactions >= 1, 'auto compaction');
+    for (let i = 400; i < 500; i++) {
+      await db.set(`k${i}`, { kind: 't6', score: i, text: `post rotation doc ${i}` });
+    }
+    for (let i = 0; i < 500; i += 37) {
+      assert.deepEqual(await db.getAsync(`k${i}`), db.get(`k${i}`));
+    }
+    await db.close();
+    // read-only reopen: async reads identical to sync reads against the rotated files.
+    const ro = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', valueMode: 'disk', readOnly: true });
+    for (let i = 0; i < 500; i += 41) {
+      assert.deepEqual(await ro.getAsync(`k${i}`), ro.get(`k${i}`));
+    }
+    await ro.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

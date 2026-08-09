@@ -1,0 +1,77 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "vscode: prepare isolated dev",
+      "type": "process",
+      "command": "pnpm",
+      "args": ["run", "dev:prepare"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "vscode: watch extension",
+      "type": "process",
+      "command": "pnpm",
+      "args": ["run", "dev:extension"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "typescript",
+        "fileLocation": "absolute",
+        "pattern": {
+          "regexp": "^(.*?):(\\d+):(\\d+):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Extension dev build complete; watching for changes"
+        }
+      }
+    },
+    {
+      "label": "vscode: watch webview",
+      "type": "process",
+      "command": "pnpm",
+      "args": ["run", "dev:webview"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "fileLocation": "absolute",
+        "pattern": {
+          "regexp": "^(.*?):(\\d+):(\\d+):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "built in \\d+.*ms"
+        }
+      }
+    },
+    {
+      "label": "vscode: dev",
+      "dependsOrder": "parallel",
+      "dependsOn": [
+        "vscode: prepare isolated dev",
+        "vscode: watch extension",
+        "vscode: watch webview"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

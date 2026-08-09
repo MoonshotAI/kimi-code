@@ -1,6 +1,7 @@
 import type { ContentPart, Message } from '@moonshot-ai/kosong';
 
 import type { SkillSource } from '../../skill';
+import type { ToolInputDisplay } from '../../tools/display';
 import type { BackgroundTaskStatus } from '../background';
 
 export interface UserPromptOrigin {
@@ -103,6 +104,11 @@ export type PromptOrigin =
 export type ContextMessage = Message & {
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
+  /**
+   * UI-only input displays keyed by tool call id. These are rebuilt from the
+   * persisted loop events for resume/replay and stripped before provider calls.
+   */
+  toolCallDisplays?: Record<string, ToolInputDisplay>;
   /**
    * Tool-result side channel rendered to the model but never to UIs; see
    * `ExecutableToolResult.note`. Appended to the projected tool message at

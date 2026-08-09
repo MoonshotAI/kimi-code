@@ -1,12 +1,12 @@
 /**
- * `tool` domain (L3) — buffered tool-result builder.
+ * `tool` domain — buffered tool-result builder.
  *
  * Shared helper for tools that stream text into a bounded output buffer with
- * optional per-line and total-char truncation. Lives in the foundational tool
- * domain so every tool implementation (file, shell, web, …) can build
- * consistently-truncated `ExecutableToolResult`s without depending on a
- * sibling tool domain. Pure helper; no scoped service.
+ * optional per-line and total-char truncation. Pure helper; no scoped
+ * service.
  */
+
+import { BugIndicatingError } from '#/errors';
 
 import type { ExecutableToolErrorResult, ExecutableToolSuccessResult } from './toolContract';
 
@@ -21,11 +21,10 @@ export interface ToolResultBuilderOptions {
 }
 
 export type ExecutableToolResultBuilderResult = (
-  | ExecutableToolSuccessResult
   | ExecutableToolErrorResult
+  | ExecutableToolSuccessResult
 ) & {
   readonly output: string;
-  readonly message: string;
   readonly truncated: boolean;
   readonly brief?: string;
 };
@@ -44,7 +43,7 @@ export class ToolResultBuilder {
       options.maxLineLength === undefined ? DEFAULT_MAX_LINE_LENGTH : options.maxLineLength;
 
     if (this.maxLineLength !== null && this.maxLineLength <= TRUNCATION_MARKER.length) {
-      throw new Error('maxLineLength must be greater than the truncation marker length.');
+      throw new BugIndicatingError('maxLineLength must be greater than the truncation marker length.');
     }
   }
 
@@ -126,7 +125,6 @@ export class ToolResultBuilder {
             ? `${output}${finalMessage}`
             : `${output}\n${finalMessage}`
         : output,
-      message: finalMessage,
       truncated: this.truncationHappened,
       brief: options.brief,
     };
@@ -152,7 +150,6 @@ export class ToolResultBuilder {
             : output.endsWith('\n')
               ? `${output}${finalMessage}`
               : `${output}\n${finalMessage}`,
-      message: finalMessage,
       truncated: this.truncationHappened,
       brief: options.brief,
     };

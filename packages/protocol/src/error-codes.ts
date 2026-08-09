@@ -57,6 +57,8 @@ export const ErrorCode = {
   TERMINAL_NOT_FOUND: 40414,
   /** skill_name 不存在 */
   SKILL_NOT_FOUND: 40415,
+  /** tool_call_id 不存在，或该调用没有对应的 plan（非 ExitPlanMode） */
+  TOOL_CALL_NOT_FOUND: 40416,
 
   /** session 有正在进行的 prompt，拒绝新请求 */
   SESSION_BUSY: 40901,
@@ -97,6 +99,8 @@ export const ErrorCode = {
   GOAL_OBJECTIVE_TOO_LONG: 40918,
   /** fs.mkdir 目标路径已存在（文件或目录） */
   FS_ALREADY_EXISTS: 40919,
+  /** goal 只允许主 agent 使用 */
+  GOAL_UNSUPPORTED_AGENT: 40920,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,
@@ -105,7 +109,7 @@ export const ErrorCode = {
   /** 临时文件已过期 */
   FILE_EXPIRED: 41003,
 
-  /** 上传超 50MB */
+  /** 文件过大（如 session 导出超限；/files 上传不设上限） */
   FILE_TOO_LARGE: 41301,
   /** fs.read 超 10MB */
   FS_TOO_LARGE: 41302,
@@ -170,6 +174,7 @@ export const ErrorCodeReason: Readonly<Record<ErrorCode, string>> = {
   [ErrorCode.MODEL_NOT_FOUND]: 'model.not_found',
   [ErrorCode.TERMINAL_NOT_FOUND]: 'terminal.not_found',
   [ErrorCode.SKILL_NOT_FOUND]: 'skill.not_found',
+  [ErrorCode.TOOL_CALL_NOT_FOUND]: 'tool_call.not_found',
 
   [ErrorCode.SESSION_BUSY]: 'session.busy',
   [ErrorCode.APPROVAL_ALREADY_RESOLVED]: 'approval.already_resolved',
@@ -191,6 +196,7 @@ export const ErrorCodeReason: Readonly<Record<ErrorCode, string>> = {
   [ErrorCode.GOAL_OBJECTIVE_EMPTY]: 'goal.objective_empty',
   [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: 'goal.objective_too_long',
   [ErrorCode.FS_ALREADY_EXISTS]: 'fs.already_exists',
+  [ErrorCode.GOAL_UNSUPPORTED_AGENT]: 'goal.unsupported_agent',
 
   [ErrorCode.APPROVAL_EXPIRED]: 'approval.expired',
   [ErrorCode.QUESTION_EXPIRED]: 'question.expired',

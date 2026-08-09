@@ -3,16 +3,9 @@
  * metadata backing serialization.
  *
  * Owns the `ErrorDomain` contract every business domain uses to contribute its
- * codes, the registry (`registerErrorDomain` / `errorInfo` / `isErrorCode`) the
- * serializer reads, and the domain-independent core codes (`internal`,
- * `not_implemented`). Domain-owned codes live next to their owning domain and
- * are aggregated into the public `ErrorCodes` const by `#/errors`.
+ * codes, the registry (`registerErrorDomain` / `errorInfo` / `isErrorCode`),
+ * and the domain-independent core codes (`internal`, `not_implemented`).
  */
-
-import type { KimiErrorCode } from '@moonshot-ai/protocol';
-
-/** Wire-stable code carried by every `Error2`. Sourced from the protocol. */
-export type ErrorCode = KimiErrorCode;
 
 export interface ErrorInfo {
   readonly title: string;
@@ -21,28 +14,23 @@ export interface ErrorInfo {
   readonly action?: string;
 }
 
-/**
- * A domain's error contribution: the `codes` const (name → wire code) plus the
- * optional retryable list and per-code human-facing overrides. Every value in
- * `codes` must be a protocol-known `ErrorCode`.
- */
 export interface ErrorDomain {
-  readonly codes: { readonly [name: string]: ErrorCode };
-  readonly retryable?: ReadonlyArray<ErrorCode>;
+  readonly codes: { readonly [name: string]: string };
+  readonly retryable?: ReadonlyArray<string>;
   readonly info?: { readonly [code: string]: ErrorInfo };
 }
 
-const registeredCodes = new Set<ErrorCode>();
-const retryableCodes = new Set<ErrorCode>();
+const registeredCodes = new Map<string, object>();
+const retryableCodes = new Set<string>();
 const infoOverrides: { [code: string]: ErrorInfo } = {};
 
-/**
- * Merge a domain's error contribution into the runtime registry. Each domain's
- * error module calls this at load; re-registering an identical code is a no-op.
- */
 export function registerErrorDomain(domain: ErrorDomain): void {
   for (const code of Object.values(domain.codes)) {
-    registeredCodes.add(code);
+    const owner = registeredCodes.get(code);
+    if (owner !== undefined && owner !== domain.codes) {
+      throw new Error(`error code '${code}' is registered by two different domains`);
+    }
+    registeredCodes.set(code, domain.codes);
   }
   for (const code of domain.retryable ?? []) {
     retryableCodes.add(code);
@@ -52,11 +40,11 @@ export function registerErrorDomain(domain: ErrorDomain): void {
   }
 }
 
-export function isErrorCode(code: unknown): code is ErrorCode {
-  return typeof code === 'string' && registeredCodes.has(code as ErrorCode);
+export function isErrorCode(code: unknown): code is string {
+  return typeof code === 'string' && registeredCodes.has(code);
 }
 
-export function errorInfo(code: ErrorCode): ErrorInfo {
+export function errorInfo(code: string): ErrorInfo {
   const override = infoOverrides[code];
   if (override !== undefined) return override;
   return {
@@ -66,11 +54,11 @@ export function errorInfo(code: ErrorCode): ErrorInfo {
   };
 }
 
-/** Domain-independent codes shared by every consumer. */
 export const CoreErrors = {
   codes: {
     INTERNAL: 'internal',
     NOT_IMPLEMENTED: 'not_implemented',
+    VALIDATION_FAILED: 'validation.failed',
   },
   info: {
     internal: {

@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
+import { effectiveModelAlias, log } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -9,8 +10,11 @@ import type {
   CreateSessionOptions,
   KimiHarness,
   PermissionMode,
+  PluginCommandDef,
   PromptPart,
   Session,
+  SkillSummary,
+  WorkspaceTrustInfo,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import {
@@ -61,8 +65,10 @@ import {
 } from './components/dialogs/approval-preview';
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
+import { defaultThinkingEffortFor } from './components/dialogs/model-selector';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
+import { TrustPromptComponent, type TrustPromptChoice } from './components/dialogs/trust-prompt';
 import {
   FileMentionProvider,
   type SlashAutocompleteCommand,
@@ -85,7 +91,10 @@ import {
 import { StepSummaryComponent } from './components/messages/step-summary';
 import { ThinkingComponent } from './components/messages/thinking';
 import { ToolCallComponent } from './components/messages/tool-call';
-import { UserMessageComponent } from './components/messages/user-message';
+import {
+  ReplayTurnBoundaryComponent,
+  UserMessageComponent,
+} from './components/messages/user-message';
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
 import { QueuePaneComponent } from './components/panes/queue-pane';
 import type { TuiConfig } from './config';
@@ -94,6 +103,7 @@ import {
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
+  SESSIONLESS_STARTUP_NOTICE,
 } from './constant/kimi-tui';
 import { CHROME_GUTTER } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
@@ -134,9 +144,13 @@ import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
+import { installInputLatencyProbe } from './utils/input-latency';
+import { startupTrace } from '#/utils/startup-trace';
+import { REPLAY_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatBashOutputForDisplay } from './utils/shell-output';
+import { thinkingEffortFromConfig } from './utils/thinking-config';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
@@ -150,6 +164,8 @@ import { nextTranscriptId } from './utils/transcript-id';
 import {
   TRANSCRIPT_EXPAND_TURNS,
   TRANSCRIPT_HYSTERESIS,
+  TRANSCRIPT_KEEP_RECENT_ASSISTANT,
+  TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
   TRANSCRIPT_KEEP_RECENT_STEPS,
   TRANSCRIPT_MAX_TURNS,
   TRANSCRIPT_WINDOW_ENABLED,
@@ -168,6 +184,8 @@ export type {
 
 export interface KimiTUIStartupInput {
   readonly cliOptions: CLIOptions;
+  /** Profile name resolved from cliOptions --agent/--agent-file (see resolveAgentProfileSelection). */
+  readonly agentProfile?: string;
   readonly additionalDirs?: readonly string[];
   readonly tuiConfig: TuiConfig;
   readonly version: string;
@@ -176,6 +194,8 @@ export interface KimiTUIStartupInput {
   readonly migrationPlan?: MigrationPlan | null;
   /** When true, run only the migration screen, then exit (the `kimi migrate` command). */
   readonly migrateOnly?: boolean;
+  /** agent-core-v2 engine; enables the startup workspace-trust prompt. */
+  readonly engineV2?: boolean;
 }
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
@@ -224,6 +244,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     disablePasteBurst: input.tuiConfig.disablePasteBurst,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
+    statusLine: input.tuiConfig.statusLine,
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -291,6 +312,8 @@ export class KimiTUI {
   readonly options: KimiTUIOptions;
   session: Session | undefined;
   state: TUIState;
+  /** In-flight lazy session creation (v2 engine), shared by concurrent first-use triggers. */
+  private ensureSessionPromise: Promise<Session | undefined> | null = null;
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
@@ -311,8 +334,11 @@ export class KimiTUI {
   private uninstallRainbowDance: () => void;
   private signalCleanupHandlers: Array<() => void> = [];
   private isShuttingDown = false;
+  private backgroundRefreshPromise: Promise<void> | undefined;
   private readonly migrationPlan: MigrationPlan | null;
   private readonly migrateOnly: boolean;
+  /** Whether the harness runs on the agent-core-v2 engine (lazy session creation). */
+  readonly engineV2: boolean;
   private startupNotice: string | undefined;
   private lastActivityMode: string | undefined;
   private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =
@@ -356,6 +382,13 @@ export class KimiTUI {
   /** URL opened in the browser just before exit (e.g. by `/web`); printed by onExit. */
   public exitOpenUrl: string | undefined;
 
+  /**
+   * Task that takes over the process after the TUI shuts down, instead of
+   * exiting (`/web` starting a new server: the server keeps this terminal
+   * attached until Ctrl+C). Set via {@link setExitForegroundTask}.
+   */
+  public exitForegroundTask: ((exitCode: number) => Promise<void>) | undefined;
+
   track(event: string, properties?: Parameters<KimiHarness['track']>[1]): void {
     this.harness.track(event, properties);
   }
@@ -371,12 +404,15 @@ export class KimiTUI {
         auto: startupInput.cliOptions.auto,
         plan: startupInput.cliOptions.plan,
         model: startupInput.cliOptions.model,
+        agentProfile: startupInput.agentProfile,
+        agentFiles: startupInput.cliOptions.agentFiles,
         startupNotice: startupInput.startupNotice,
       },
     };
     this.options = tuiOptions;
     this.migrationPlan = startupInput.migrationPlan ?? null;
     this.migrateOnly = startupInput.migrateOnly ?? false;
+    this.engineV2 = startupInput.engineV2 ?? false;
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
     this.uninstallRainbowDance = installRainbowDance(() => {
@@ -460,6 +496,18 @@ export class KimiTUI {
 
   async refreshSkillCommands(session?: SkillListSession): Promise<void> {
     if (session === undefined) {
+      // v2 engine: skills live on the workspace handler, not the session, so
+      // they are available before the first (lazy) session is created — the
+      // workspace catalog is the same merged view a session would serve.
+      if (this.engineV2) {
+        try {
+          const skills = await this.harness.listWorkspaceSkills(this.state.appState.workDir);
+          this.applySkillCommands(skills);
+          return;
+        } catch {
+          return;
+        }
+      }
       this.skillCommands = [];
       this.skillCommandMap.clear();
       this.setupAutocomplete();
@@ -472,6 +520,10 @@ export class KimiTUI {
     } catch {
       return;
     }
+    this.applySkillCommands(skills);
+  }
+
+  private applySkillCommands(skills: readonly SkillSummary[]): void {
     const skillCommands = buildSkillSlashCommands(skills);
     this.skillCommands = skillCommands.commands;
     this.skillCommandMap.clear();
@@ -483,6 +535,17 @@ export class KimiTUI {
 
   async refreshPluginCommands(session?: Session): Promise<void> {
     if (session === undefined) {
+      // v2 engine: the enabled plugin commands are an app-global live view,
+      // available before the first (lazy) session is created.
+      if (this.engineV2) {
+        try {
+          const defs = await this.harness.listPluginCommands();
+          this.applyPluginCommands(defs);
+          return;
+        } catch {
+          return;
+        }
+      }
       this.pluginCommands = [];
       this.pluginCommandMap.clear();
       this.setupAutocomplete();
@@ -495,6 +558,10 @@ export class KimiTUI {
     } catch {
       return;
     }
+    this.applyPluginCommands(defs);
+  }
+
+  private applyPluginCommands(defs: readonly PluginCommandDef[]): void {
     const pluginSlashCommands = buildPluginSlashCommands(defs);
     this.pluginCommands = pluginSlashCommands.commands;
     this.pluginCommandMap.clear();
@@ -509,6 +576,7 @@ export class KimiTUI {
   // =========================================================================
 
   async start(): Promise<void> {
+    startupTrace('tui:start');
     // Signal handlers must be installed before raw mode to avoid EIO loops.
     this.registerSignalHandlers();
     // Outer try rolls back signal listeners on startup failure.
@@ -536,11 +604,25 @@ export class KimiTUI {
         return;
       }
 
+      startupTrace('trustPrompt:begin');
+      const trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
+      startupTrace('trustPrompt:end');
+      startupTrace('initMainTui:begin');
       const shouldReplayHistory = await this.initMainTui();
-      this.startEventLoop();
+      startupTrace('initMainTui:end');
+      // Debug-only input→render latency overlay (KIMI_TUI_INPUT_LATENCY=1).
+      if (process.env['KIMI_TUI_INPUT_LATENCY']) installInputLatencyProbe(this.state.ui);
+      // When the trust prompt already started the event loop, starting it
+      // again would re-run pi-tui's terminal.start() — stacking a second
+      // Kitty keyboard-protocol push (leaking CSI-u mode past exit) and
+      // duplicate stdin listeners.
+      if (!trustPromptStartedLoop) this.startEventLoop();
+      startupTrace('eventLoop:started');
       try {
         this.startBackgroundFdAutocomplete();
+        startupTrace('finishStartup:begin');
         await this.finishStartup(shouldReplayHistory);
+        startupTrace('finishStartup:end');
       } catch (error) {
         this.disposeTerminalTracking();
         this.state.ui.stop();
@@ -672,6 +754,10 @@ export class KimiTUI {
       this.startupNotice = undefined;
     }
     void this.showTmuxKeyboardWarningIfNeeded();
+    // Config diagnostics (deprecated keys/env vars, invalid sections) in
+    // warning yellow at boot; `run-prompt`/`run-v2-print` print them to
+    // stderr for non-interactive runs.
+    void this.showConfigWarningsIfAny();
     if (this.state.startupState === 'picker') {
       void this.bootstrapFromPicker();
       return;
@@ -718,7 +804,7 @@ export class KimiTUI {
   private async init(): Promise<boolean> {
     setExperimentalFeatures(await this.harness.getExperimentalFeatures());
     await this.authFlow.refreshAvailableModels();
-    void this.refreshProviderModelsInBackground();
+    this.backgroundRefreshPromise = this.refreshProviderModelsInBackground();
 
     const { startup } = this.options;
     const { workDir } = this.state.appState;
@@ -730,6 +816,10 @@ export class KimiTUI {
       model: startup.model,
       permission: startup.auto ? 'auto' : startup.yolo ? 'yolo' : undefined,
       planMode: startup.plan ? true : undefined,
+      // --agent/--agent-file bind the startup session only; sessions created
+      // later in this process fall back to the default profile.
+      agentProfile: startup.agentProfile,
+      agentFiles: startup.agentFiles?.length ? [...startup.agentFiles] : undefined,
     };
     if (this.state.appState.additionalDirs.length > 0) {
       createSessionOptions.additionalDirs = [...this.state.appState.additionalDirs];
@@ -767,6 +857,7 @@ export class KimiTUI {
           session = await this.harness.resumeSession({
             id: startup.sessionFlag,
             additionalDirs: createSessionOptions.additionalDirs,
+            replayTurnLimit: REPLAY_TURN_LIMIT,
           });
           shouldReplayHistory = true;
         } else {
@@ -776,6 +867,7 @@ export class KimiTUI {
             session = await this.harness.resumeSession({
               id: target.id,
               additionalDirs: createSessionOptions.additionalDirs,
+              replayTurnLimit: REPLAY_TURN_LIMIT,
             });
             shouldReplayHistory = true;
           } else {
@@ -786,6 +878,14 @@ export class KimiTUI {
             );
           }
         }
+      } else if (this.engineV2) {
+        // Lazy session creation (v2 engine): start session-less and create the
+        // session on the first message. Startup flags are carried in appState
+        // and applied when that session is created; until then the footer
+        // shows the config defaults the engine would apply at createSession
+        // time (model, permission, plan mode, thinking effort, context cap).
+        await this.hydrateLazyConfigDefaults();
+        this.appendStartupNotice(SESSIONLESS_STARTUP_NOTICE);
       } else {
         session = await this.harness.createSession(createSessionOptions);
       }
@@ -801,11 +901,13 @@ export class KimiTUI {
       return false;
     }
 
-    if (session === undefined) {
+    if (!this.engineV2 && session === undefined) {
       throw new Error('Startup session was not initialized.');
     }
-    await this.setSession(session);
-    await this.syncRuntimeState(session);
+    if (session !== undefined) {
+      await this.setSession(session);
+      await this.syncRuntimeState(session);
+    }
     this.applyStartupPermissionAndPlanToAppState();
     this.state.startupState = 'ready';
     return shouldReplayHistory;
@@ -816,6 +918,16 @@ export class KimiTUI {
     this.isShuttingDown = true;
     this.unregisterSignalHandlers();
     this.aborted = true;
+    // Give the startup provider-model refresh a brief chance to finish before
+    // the harness closes (and the process exits): its config writes are each
+    // atomic, so draining can only ever leave a complete file behind. Bounded
+    // so a slow network never delays the exit.
+    if (this.backgroundRefreshPromise !== undefined) {
+      await Promise.race([
+        this.backgroundRefreshPromise,
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
+    }
     this.streamingUI.discardPending();
     // Stop background polling, streaming intervals, and per-component timers
     // before tearing the UI down, so they can't keep firing requestRender after
@@ -993,17 +1105,31 @@ export class KimiTUI {
         this.state.ui.requestRender();
         return;
       }
-      this.runShellCommandFromInput(text);
+      void this.runShellCommandFromInput(text);
       return;
     }
     slashCommands.dispatchInput(this, text);
   }
 
-  private runShellCommandFromInput(command: string): void {
-    const session = this.session;
+  private async runShellCommandFromInput(command: string): Promise<void> {
+    let session = this.session;
     if (session === undefined) {
-      this.showError('No active session for shell command.');
-      return;
+      if (!this.engineV2) {
+        this.showError('No active session for shell command.');
+        return;
+      }
+      session = await this.ensureSession();
+      if (session === undefined) return;
+      // A concurrent first message may have started a prompt while this lazy
+      // creation was in flight (both inputs share the same creation promise);
+      // honor the busy gate here, like handleUserInput does before the await,
+      // instead of running the shell command concurrently with an agent turn.
+      if (this.state.appState.streamingPhase !== 'idle') {
+        this.enqueueMessage(command, undefined, 'bash');
+        this.updateQueueDisplay();
+        this.state.ui.requestRender();
+        return;
+      }
     }
     // Echo the command locally (bash-input) with a `$` prompt. The agent also
     // records it for resume; this is the live view.
@@ -1107,25 +1233,40 @@ export class KimiTUI {
     const session = this.session;
     if (session === undefined) return;
     if (item.mode === 'bash') {
-      this.runShellCommandFromInput(item.text);
+      void this.runShellCommandFromInput(item.text);
     } else {
       this.sendQueuedMessage(session, item);
     }
     this.updateQueueDisplay();
   }
 
-  sendNormalUserInput(text: string): void {
+  async sendNormalUserInput(text: string): Promise<void> {
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    const extraction = extractMediaAttachments(text, this.imageStore);
-    if (!this.validateMediaCapabilities(extraction)) return;
-    const session = this.session;
-    if (session === undefined) {
-      this.showError(LLM_NOT_SET_MESSAGE);
+    let extraction: ReturnType<typeof extractMediaAttachments>;
+    try {
+      // Pasted videos are copied into the cache and expand to a `file://`
+      // `video_url` part; the engine resolves (uploads or degrades) them
+      // inside the turn, so submission stays fully synchronous.
+      extraction = extractMediaAttachments(text, this.imageStore);
+    } catch (error) {
+      // A video cache copy failed (unwritable cache dir, vanished source…);
+      // nothing was dispatched.
+      this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
       return;
+    }
+    if (!this.validateMediaCapabilities(extraction)) return;
+    let session = this.session;
+    if (session === undefined) {
+      if (!this.engineV2) {
+        this.showError(LLM_NOT_SET_MESSAGE);
+        return;
+      }
+      session = await this.ensureSession();
+      if (session === undefined) return;
     }
     if (extraction.hasMedia) {
       this.sendMessage(session, text, {
@@ -1251,7 +1392,7 @@ export class KimiTUI {
 
   sendQueuedMessage(session: Session, item: QueuedMessage): void {
     if (item.mode === 'bash') {
-      this.runShellCommandFromInput(item.text);
+      void this.runShellCommandFromInput(item.text);
       return;
     }
     this.harness.withInteractiveAgent(item.agentId ?? MAIN_AGENT_ID, () => {
@@ -1283,6 +1424,22 @@ export class KimiTUI {
     this.beginSessionRequest();
 
     const sdkInput = options?.parts ?? input;
+    // While a goal is being pursued the engine holds its active turn across the
+    // whole continuation loop, so a fresh prompt races the goal driver at every
+    // continuation boundary and is rejected with `turn.agent_busy`, dropping
+    // the message. Steer instead: the engine buffers it into the running goal
+    // turn, or launches a turn of its own if the loop just ended.
+    if (this.state.appState.goal?.status === 'active') {
+      void session.steer(sdkInput).catch((error: unknown) => {
+        const message = formatErrorMessage(error);
+        // Same reset as the prompt path: beginSessionRequest already moved the
+        // TUI to the waiting phase, and no turn events may follow a failed
+        // steer (e.g. the session is gone), which would leave the UI stuck
+        // queueing input behind a request that never completes.
+        this.failSessionRequest(`Failed to steer: ${message}`);
+      });
+      return;
+    }
     void session.prompt(sdkInput).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.failSessionRequest(`Failed to send: ${message}`);
@@ -1434,6 +1591,10 @@ export class KimiTUI {
     this.exitOpenUrl = url;
   }
 
+  setExitForegroundTask(task: (exitCode: number) => Promise<void>): void {
+    this.exitForegroundTask = task;
+  }
+
   async getStartupMcpMs(): Promise<number> {
     const session = this.session;
     if (session === undefined) return 0;
@@ -1493,22 +1654,179 @@ export class KimiTUI {
     return this.session;
   }
 
-  private async createSessionFromCurrentState(): Promise<Session> {
+  /**
+   * Seed appState with the config defaults the v2 engine would apply at
+   * createSession time (model, permission, plan mode, thinking effort,
+   * context cap), so the footer and the lazy create path reflect them while
+   * no session exists. Runs at session-less startup and again on /reload
+   * while still session-less, so externally edited defaults take effect
+   * before the first lazy-created session.
+   */
+  async hydrateLazyConfigDefaults(): Promise<void> {
+    const { startup } = this.options;
+    const config = await this.harness.getConfig({ reload: true });
+    const patch: Partial<AppState> = {};
+    const startupModel = startup.model ?? config.defaultModel;
+    if (startupModel !== undefined) {
+      patch.model = startupModel;
+      const selected = config.models?.[startupModel];
+      if (selected?.maxContextSize !== undefined) {
+        patch.maxContextTokens = selected.maxContextSize;
+      }
+    } else {
+      // The default disappeared from config (edited externally): clear the
+      // previously hydrated value instead of passing a stale explicit model
+      // to the first lazy-created session.
+      patch.model = '';
+      patch.maxContextTokens = 0;
+    }
+    // CLI --auto/--yolo/--plan win over config defaults; the flags are
+    // re-applied by applyStartupPermissionAndPlanToAppState at startup.
+    if (!startup.auto && !startup.yolo) {
+      // Reset to manual when the default was removed from config — a stale
+      // elevated mode must not be passed to the first lazy-created session.
+      patch.permissionMode = config.defaultPermissionMode ?? 'manual';
+    }
+    // Track the config default itself (vs an explicit CLI --plan) so the lazy
+    // create path can tell which one would activate plan mode; a removed
+    // default also clears the hydrated footer value.
+    patch.configDefaultPlanMode = config.defaultPlanMode === true;
+    if (!startup.plan) {
+      patch.planMode = config.defaultPlanMode === true;
+    }
+    const effort = thinkingEffortFromConfig(config.thinking);
+    if (effort !== undefined) {
+      patch.thinkingEffort = effort;
+    } else if (startupModel !== undefined) {
+      // No concrete effort configured: mirror the engine, which resolves the
+      // model's default effort at createSession time.
+      const raw = config.models?.[startupModel];
+      if (raw !== undefined) {
+        const providerType = config.providers?.[raw.provider]?.type;
+        patch.thinkingEffort = defaultThinkingEffortFor(
+          effectiveModelAlias(raw, providerType ?? raw.protocol),
+        );
+      }
+    }
+    if (startup.agentProfile !== undefined || startup.agentFiles !== undefined) {
+      patch.agentProfile = startup.agentProfile;
+      patch.agentFiles = startup.agentFiles?.length ? [...startup.agentFiles] : undefined;
+    }
+    this.setAppState(patch);
+  }
+
+  private async createSessionFromCurrentState(bindStartupAgent = false): Promise<Session> {
     const model = this.state.appState.model.trim();
     if (model.length === 0) {
       throw new Error(LLM_NOT_SET_MESSAGE);
     }
+    // With an active session, carry the live plan state. Session-less (lazy
+    // creation / `/new` before the first session) on v2, pass only the
+    // explicit CLI --plan intent — and only when the engine is not already
+    // applying `defaultPlanMode` at create time (sessionLifecycleService),
+    // since re-entering an active plan mode throws. On v1 (which never
+    // pre-fills plan mode from config), keep the historical appState value.
+    const explicitPlanMode =
+      this.session !== undefined || !this.engineV2
+        ? this.state.appState.planMode
+        : this.options.startup.plan && this.state.appState.configDefaultPlanMode !== true;
     const options: MutableCreateSessionOptions = {
       workDir: this.state.appState.workDir,
       model,
-      thinking: this.session === undefined ? undefined : this.state.appState.thinkingEffort,
+      // With an active session, carry the live effort. Session-less (lazy
+      // creation / `/new` before the first session), carry the session-only
+      // thinking override chosen via Alt+S if any — never the initial 'off'
+      // default, which would force thinking off where the engine's config or
+      // model default would apply.
+      thinking:
+        this.session === undefined
+          ? this.state.appState.lazySessionThinking
+          : this.state.appState.thinkingEffort,
       permission: this.state.appState.permissionMode,
-      planMode: this.state.appState.planMode ? true : undefined,
+      planMode: explicitPlanMode ? true : undefined,
     };
     if (this.state.appState.additionalDirs.length > 0) {
       options.additionalDirs = [...this.state.appState.additionalDirs];
     }
+    if (bindStartupAgent) {
+      // The --agent/--agent-file startup binding is consumed by the first
+      // lazy-created session; `/new` sessions fall back to the default profile.
+      if (this.state.appState.agentProfile !== undefined) {
+        options.agentProfile = this.state.appState.agentProfile;
+      }
+      if (this.state.appState.agentFiles !== undefined) {
+        options.agentFiles = [...this.state.appState.agentFiles];
+      }
+    }
     return this.harness.createSession(options);
+  }
+
+  /**
+   * Lazy-create the session on first use (v2 engine, session-less startup).
+   * Returns the existing session, or creates one from the current state and
+   * runs the same assembly `createNewSession` performs. Returns undefined and
+   * shows the error when creation fails; callers must still guard on
+   * `appState.model`.
+   *
+   * Concurrent first-use triggers (a double Enter, or a slash command right
+   * after a prompt) both observe `session === undefined`, so the first caller
+   * owns the creation and the rest share the in-flight promise — otherwise
+   * two sessions would be created and the later `setSession` would close the
+   * first one mid-dispatch.
+   */
+  async ensureSession(): Promise<Session | undefined> {
+    // Even when a session is already assigned, a previous lazy creation may
+    // still be finishing its assembly (runtime sync, command refresh,
+    // subscription). Wait for it so callers never dispatch against a
+    // partially initialized session.
+    if (this.ensureSessionPromise !== null) return this.ensureSessionPromise;
+    if (this.session !== undefined) return this.session;
+    this.ensureSessionPromise = this.lazyCreateSession().finally(() => {
+      this.ensureSessionPromise = null;
+    });
+    return this.ensureSessionPromise;
+  }
+
+  /** Await the in-flight lazy session creation, if any (v2); no-op otherwise. */
+  async waitForLazyCreation(): Promise<void> {
+    await this.ensureSessionPromise;
+  }
+
+  private async lazyCreateSession(): Promise<Session | undefined> {
+    let session: Session;
+    try {
+      session = await this.createSessionFromCurrentState(true);
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      this.showError(`Failed to start a session: ${msg}`);
+      return undefined;
+    }
+    this.resetSessionRuntime();
+    await this.setSession(session);
+    this.setAppState({ sessionId: session.id });
+    try {
+      await this.activateRuntime();
+      await this.syncRuntimeState(session);
+    } catch (error) {
+      this.sessionEventHandler.startSubscription();
+      const msg = formatErrorMessage(error);
+      this.showError(`Post-create setup failed: ${msg}`);
+      return undefined;
+    }
+    try {
+      await this.refreshSkillCommands(session);
+      await this.refreshPluginCommands(session);
+    } catch {
+      /* keep the new session usable even if dynamic skills fail */
+    }
+    this.sessionEventHandler.startSubscription();
+    void this.showSessionWarnings(session);
+    // The session-only thinking override was consumed by this session; the
+    // runtime status now owns the displayed effort.
+    if (this.state.appState.lazySessionThinking !== undefined) {
+      this.setAppState({ lazySessionThinking: undefined });
+    }
+    return session;
   }
 
   async setSession(session: Session): Promise<void> {
@@ -1629,8 +1947,11 @@ export class KimiTUI {
         this.state.appState.sessionId,
         this.hasSessionContent(),
       );
-    } catch {
-      /* silently ignore */
+    } catch (error) {
+      // The picker must keep working (it renders the empty state), but a
+      // swallowed failure surfaces as a misleading "No sessions found." —
+      // keep a log trail so the real error stays discoverable.
+      log.warn('failed to fetch sessions for picker', { error: String(error) });
     } finally {
       this.state.loadingSessions = false;
     }
@@ -1674,6 +1995,10 @@ export class KimiTUI {
   }
 
   private async resumeSession(targetSessionId: string): Promise<boolean> {
+    // A first-use lazy creation may still be in flight: wait it out so the
+    // checks below see settled state — the pending prompt would otherwise
+    // replace the resumed session when creation completes.
+    await this.waitForLazyCreation();
     if (targetSessionId === this.state.appState.sessionId) {
       this.showStatus('Already on this session.');
       return true;
@@ -1689,7 +2014,10 @@ export class KimiTUI {
 
     let session: Session;
     try {
-      session = await this.harness.resumeSession({ id: targetSessionId });
+      session = await this.harness.resumeSession({
+        id: targetSessionId,
+        replayTurnLimit: REPLAY_TURN_LIMIT,
+      });
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to resume session ${targetSessionId}: ${msg}`);
@@ -1990,18 +2318,18 @@ export class KimiTUI {
     this.state.todoPanelContainer.clear();
     this.imageStore.clear();
     this.renderWelcome();
-    // Session resets (/new, /clear, session switch) want a pristine screen.
-    // Force a destructive full render: the renderer's collapse repaint
-    // intentionally preserves scrollback, which would leave the previous
-    // session's text above the welcome banner.
-    this.state.ui.requestRender(true);
+    // No forced full render on session reset: let the differential renderer
+    // converge on its own (a mass change above the viewport still makes the
+    // engine repaint everything, but nothing is forced destructively here).
+    this.state.ui.requestRender();
   }
 
   private isTurnBoundaryComponent(child: Component): boolean {
     if (
       !(child instanceof UserMessageComponent) &&
       !(child instanceof SkillActivationComponent) &&
-      !(child instanceof PluginCommandComponent)
+      !(child instanceof PluginCommandComponent) &&
+      !(child instanceof ReplayTurnBoundaryComponent)
     ) {
       return false;
     }
@@ -2089,7 +2417,28 @@ export class KimiTUI {
   }
 
   mergeCurrentTurnSteps(): boolean {
-    if (TRANSCRIPT_KEEP_RECENT_STEPS <= 0) return false;
+    return this.foldCurrentTurnContent(
+      TRANSCRIPT_KEEP_RECENT_STEPS,
+      TRANSCRIPT_KEEP_RECENT_ASSISTANT,
+    );
+  }
+
+  /**
+   * Fold the just-finished turn's assistant messages down to the completed-turn
+   * cap: while a turn is live it may keep TRANSCRIPT_KEEP_RECENT_ASSISTANT
+   * messages mounted, but once it ends only the conclusion-bearing tail stays.
+   * Called when a turn finishes; the finished turn is still the current one at
+   * that point (no newer boundary exists yet).
+   */
+  mergeCompletedTurnAssistants(): boolean {
+    return this.foldCurrentTurnContent(
+      TRANSCRIPT_KEEP_RECENT_STEPS,
+      TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
+    );
+  }
+
+  private foldCurrentTurnContent(keepSteps: number, keepAssistants: number): boolean {
+    if (keepSteps <= 0 && keepAssistants <= 0) return false;
     const children = this.state.transcriptContainer.children;
 
     // Find the start of the current turn (last turn-starting user message).
@@ -2102,22 +2451,34 @@ export class KimiTUI {
     }
     if (turnStart < 0) return false;
 
-    // Locate an existing summary, the assistant message, and the mergeable steps.
+    // Locate an existing summary, the assistant messages, and the mergeable steps.
     let summaryIndex = -1;
     const stepIndices: number[] = [];
+    const assistantIndices: number[] = [];
     for (let i = turnStart + 1; i < children.length; i++) {
       const child = children[i]!;
       if (child instanceof StepSummaryComponent) {
         summaryIndex = i;
         continue;
       }
-      if (child instanceof AssistantMessageComponent) continue;
+      if (child instanceof AssistantMessageComponent) {
+        assistantIndices.push(i);
+        continue;
+      }
       stepIndices.push(i);
     }
 
-    if (stepIndices.length <= TRANSCRIPT_KEEP_RECENT_STEPS) return false;
-    const mergeCount = stepIndices.length - TRANSCRIPT_KEEP_RECENT_STEPS;
-    const toMergeIndices = stepIndices.slice(0, mergeCount);
+    // Fold the oldest steps / assistant messages beyond their respective caps;
+    // the most recent ones stay mounted. Children are chronological, so the
+    // oldest of each kind sit at the front of their index lists.
+    const stepMergeCount = keepSteps > 0 ? Math.max(0, stepIndices.length - keepSteps) : 0;
+    const assistantMergeCount =
+      keepAssistants > 0 ? Math.max(0, assistantIndices.length - keepAssistants) : 0;
+    if (stepMergeCount === 0 && assistantMergeCount === 0) return false;
+    const toMergeIndices = [
+      ...stepIndices.slice(0, stepMergeCount),
+      ...assistantIndices.slice(0, assistantMergeCount),
+    ];
 
     let thinkingCount = 0;
     let toolCount = 0;
@@ -2126,15 +2487,15 @@ export class KimiTUI {
       if (child instanceof ThinkingComponent) thinkingCount++;
       else if (child instanceof ToolCallComponent) toolCount++;
     }
-    if (thinkingCount === 0 && toolCount === 0) return false;
+    if (thinkingCount === 0 && toolCount === 0 && assistantMergeCount === 0) return false;
 
     let summary: StepSummaryComponent;
     if (summaryIndex >= 0) {
       summary = children[summaryIndex] as StepSummaryComponent;
-      summary.addCounts(thinkingCount, toolCount);
+      summary.addCounts(thinkingCount, toolCount, assistantMergeCount);
     } else {
       summary = new StepSummaryComponent();
-      summary.addCounts(thinkingCount, toolCount);
+      summary.addCounts(thinkingCount, toolCount, assistantMergeCount);
     }
 
     // Rebuild children: keep everything except the merged steps, with the summary
@@ -2159,7 +2520,8 @@ export class KimiTUI {
   }
 
   mergeAllTurnSteps(): void {
-    if (TRANSCRIPT_KEEP_RECENT_STEPS <= 0) return;
+    if (TRANSCRIPT_KEEP_RECENT_STEPS <= 0 && TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED <= 0)
+      return;
     const children = this.state.transcriptContainer.children;
 
     const boundaries: number[] = [];
@@ -2179,16 +2541,29 @@ export class KimiTUI {
 
       let summaryIndex = -1;
       const stepIndices: number[] = [];
+      const assistantIndices: number[] = [];
       for (let i = turnStart + 1; i < turnEnd; i++) {
         const child = children[i]!;
         if (child instanceof StepSummaryComponent) summaryIndex = i;
-        else if (child instanceof AssistantMessageComponent) continue;
+        else if (child instanceof AssistantMessageComponent) assistantIndices.push(i);
         else stepIndices.push(i);
       }
 
-      if (stepIndices.length > TRANSCRIPT_KEEP_RECENT_STEPS) {
-        const mergeCount = stepIndices.length - TRANSCRIPT_KEEP_RECENT_STEPS;
-        const toMergeIndices = stepIndices.slice(0, mergeCount);
+      const stepMergeCount =
+        TRANSCRIPT_KEEP_RECENT_STEPS > 0
+          ? Math.max(0, stepIndices.length - TRANSCRIPT_KEEP_RECENT_STEPS)
+          : 0;
+      // Replayed turns are all completed turns, so the stricter completed-turn
+      // assistant cap applies (matching what live turns fold to on turn end).
+      const assistantMergeCount =
+        TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED > 0
+          ? Math.max(0, assistantIndices.length - TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED)
+          : 0;
+      if (stepMergeCount > 0 || assistantMergeCount > 0) {
+        const toMergeIndices = [
+          ...stepIndices.slice(0, stepMergeCount),
+          ...assistantIndices.slice(0, assistantMergeCount),
+        ];
         let thinkingCount = 0;
         let toolCount = 0;
         for (const idx of toMergeIndices) {
@@ -2199,10 +2574,10 @@ export class KimiTUI {
         let summary: StepSummaryComponent;
         if (summaryIndex >= 0) {
           summary = children[summaryIndex] as StepSummaryComponent;
-          summary.addCounts(thinkingCount, toolCount);
+          summary.addCounts(thinkingCount, toolCount, assistantMergeCount);
         } else {
           summary = new StepSummaryComponent();
-          summary.addCounts(thinkingCount, toolCount);
+          summary.addCounts(thinkingCount, toolCount, assistantMergeCount);
         }
         newChildren.push(summary);
         for (const idx of toMergeIndices) toDispose.push(children[idx]!);
@@ -2440,12 +2815,10 @@ export class KimiTUI {
       if (!isExpandable(child)) continue;
       child.setExpanded(this.state.toolOutputExpanded && i >= expandCutoff);
     }
-    // Expanding/collapsing shifts content above the viewport; the clamped
-    // differential render would paint a second copy below the stale one in
-    // scrollback. This is a deliberate user action (like /clear), so do a
-    // destructive full render: scrollback holds exactly one copy and the
-    // expanded output can be read by scrolling up.
-    this.state.ui.requestRender(true);
+    // Differential render only — no destructive full redraw on expand/collapse.
+    // (When the expanded region reaches above the viewport, the engine's own
+    // fallback may still do a full render; that path is not forced from here.)
+    this.state.ui.requestRender();
   }
 
   toggleTodoPanelExpansion(): void {
@@ -2683,18 +3056,10 @@ export class KimiTUI {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
-    // Measure overflow against the restored tree (editor mounted), not the tall
-    // panel just removed — otherwise a short session with a tall panel looks like
-    // it overflows and we take a full clear/home that yanks the editor to the top.
-    // Treat an exact one-screen fill as overflowing too: a full redraw is safe
-    // there (no blank tail) and clears a stale viewport offset after a shrink.
-    const { columns, rows } = this.state.terminal;
-    const overflowsViewport = this.state.ui.render(columns).length >= rows;
-    // Force a full re-render after replacing a tall panel with the shorter editor:
-    // differential rendering leaves the editor shifted up when the bottom-anchored
-    // region shrinks in place. Skip under tmux (its own reflow handles the shrink)
-    // and when content fits on one screen (a full clear would pull the editor up).
-    this.state.ui.requestRender(!this.state.terminalState.insideTmux && overflowsViewport);
+    // Differential render only: closing a tall panel leaves the editor a few
+    // rows above the bottom (blank tail) until the next append, but avoids a
+    // destructive full redraw on every dialog close.
+    this.state.ui.requestRender();
   }
 
   restoreInputText(text: string): void {
@@ -2731,6 +3096,57 @@ export class KimiTUI {
       }
     }
     return result;
+  }
+
+  /**
+   * agent-core-v2 startup gate: before any session is created, ask whether to
+   * trust this folder when the workspace is not trusted yet (project-level MCP
+   * servers stay disabled while untrusted). Best-effort throughout — a failed
+   * check or trust write never blocks startup. Choosing "don't trust" (or Esc)
+   * exits the program before any session is created; the prompt reappears on
+   * the next launch: the engine's untrusted state is indistinguishable from
+   * never-trusted. Returns true when the prompt started the event loop (the
+   * caller must not start it again).
+   */
+  private async maybeRunWorkspaceTrustPrompt(): Promise<boolean> {
+    if (!this.engineV2) return false;
+    const workDir = this.state.appState.workDir;
+    let info: WorkspaceTrustInfo;
+    try {
+      info = await this.harness.getWorkspaceTrustInfo(workDir);
+    } catch {
+      return false;
+    }
+    if (info.trusted) return false;
+    this.startEventLoop();
+    const choice = await new Promise<TrustPromptChoice>((resolve) => {
+      this.state.activeDialog = 'trust-prompt';
+      this.mountEditorReplacement(
+        new TrustPromptComponent({
+          workDir,
+          gatedMcpServers: info.gatedMcpServers,
+          onSelect: (c) => {
+            resolve(c);
+          },
+        }),
+      );
+    });
+    this.state.activeDialog = null;
+    if (choice !== 'trust') {
+      // Declining trust exits the program (Claude Code's "No, exit" semantics):
+      // stop() runs the standard shutdown path and ends in process.exit. The
+      // editor is NOT restored first — its frame would linger as an orphaned
+      // input box above the exit message; the prompt stays as the last frame.
+      await this.stop();
+      return true;
+    }
+    this.restoreEditor();
+    try {
+      await this.harness.trustWorkspace(workDir);
+    } catch {
+      // A failed write leaves the workspace untrusted (re-asked next launch).
+    }
+    return true;
   }
 
   showHelpPanel(): void {

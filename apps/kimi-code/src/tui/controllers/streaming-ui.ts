@@ -36,6 +36,7 @@ export interface StreamingUIHost {
   shiftQueuedMessage(): QueuedMessage | undefined;
   pushTranscriptEntry(entry: TranscriptEntry): void;
   mergeCurrentTurnSteps(): void;
+  mergeCompletedTurnAssistants(): void;
 }
 
 export class StreamingUIController {
@@ -555,6 +556,9 @@ export class StreamingUIController {
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
     this.finalizeLiveTextBuffers('idle');
+    // The finished turn keeps only its conclusion-bearing tail; intermediate
+    // chatter folds into the step summary.
+    this.host.mergeCompletedTurnAssistants();
     this.resetToolCallState();
     this._currentTurnId = undefined;
 
@@ -596,6 +600,7 @@ export class StreamingUIController {
       turnId: this._currentTurnId,
       renderMode: 'markdown' as const,
       content: '',
+      modelText: true,
     };
     const component = new AssistantMessageComponent();
     this._streamingBlock = { component, entry };
@@ -622,7 +627,11 @@ export class StreamingUIController {
   }
 
   onThinkingUpdate(fullText: string): void {
-    if (fullText.length === 0 && this._activeThinkingComponent === undefined) return;
+    // Skip thinking that carries nothing visible — empty (e.g. encrypted
+    // reasoning) or whitespace-only (a model occasionally streams a single
+    // space as thinking). Session replay funnels through here as well, so a
+    // stored whitespace-only think part never becomes a bare bullet line.
+    if (fullText.trim().length === 0 && this._activeThinkingComponent === undefined) return;
     const { state } = this.host;
     if (this._activeThinkingComponent === undefined) {
       this._pendingAgentGroup = null;
@@ -830,8 +839,9 @@ export class StreamingUIController {
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(solo);
     if (idx >= 0) {
+      // In-place replacement is picked up by the container's ref-checked
+      // render cache; a tree-wide invalidate is unnecessary (and costly).
       children[idx] = group;
-      state.transcriptContainer.invalidate();
     } else {
       state.transcriptContainer.addChild(group);
     }
@@ -887,8 +897,9 @@ export class StreamingUIController {
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(solo);
     if (idx >= 0) {
+      // In-place replacement is picked up by the container's ref-checked
+      // render cache; a tree-wide invalidate is unnecessary (and costly).
       children[idx] = group;
-      state.transcriptContainer.invalidate();
     } else {
       state.transcriptContainer.addChild(group);
     }

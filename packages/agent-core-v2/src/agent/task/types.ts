@@ -17,7 +17,6 @@ export type AgentTaskSettlementStatus = 'completed' | 'failed' | 'timed_out' | '
 
 export interface AgentTaskSettlement {
   readonly status: AgentTaskSettlementStatus;
-  /** Human-readable reason for the terminal status, when available. */
   readonly stopReason?: string;
 }
 
@@ -25,18 +24,11 @@ export interface AgentTaskInfoBase {
   readonly taskId: string;
   readonly description: string;
   readonly status: AgentTaskStatus;
-  /**
-   * `false` means a tool call is still waiting on this task in the
-   * foreground. Omitted legacy records should be treated as detached.
-   */
   readonly detached?: boolean;
   readonly startedAt: number;
   readonly endedAt: number | null;
-  /** Human-readable reason for the terminal status, when available. */
   readonly stopReason?: string;
-  /** Suppress automatic terminal notifications/reminders for this task. */
   readonly terminalNotificationSuppressed?: boolean;
-  /** Deadline supplied at registration; surfaced via task info. */
   readonly timeoutMs?: number;
 }
 

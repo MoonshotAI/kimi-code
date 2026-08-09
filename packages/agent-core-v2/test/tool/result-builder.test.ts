@@ -11,7 +11,7 @@ describe('ToolResultBuilder', () => {
 
     const result = builder.ok('Operation completed');
     expect(result.output).toBe('Hello world');
-    expect(result.message).toBe('Operation completed.');
+    expect(result.truncated).toBe(false);
     expect(builder.nChars).toBe(11);
   });
 
@@ -24,10 +24,8 @@ describe('ToolResultBuilder', () => {
 
     const result = builder.ok('Operation completed');
     expect(result.output).toContain('Hello[...truncated]');
-    expect(result.output).toContain('Output is truncated');
+    expect(result.output).toContain('Operation completed.');
     expect(result.output.endsWith('Output is truncated to fit in the message.')).toBe(true);
-    expect(result.message).toContain('Operation completed.');
-    expect(result.message).toContain('Output is truncated');
     expect(result.truncated).toBe(true);
   });
 
@@ -38,7 +36,7 @@ describe('ToolResultBuilder', () => {
 
     const result = builder.ok();
     expect(result.output).toContain('[...truncated]');
-    expect(result.message).toContain('Output is truncated');
+    expect(result.output).toContain('Output is truncated');
   });
 
   it('respects both per-line and per-buffer limits at once', () => {
@@ -51,7 +49,7 @@ describe('ToolResultBuilder', () => {
 
     const result = builder.ok();
     expect(result.output).toContain('[...truncated]');
-    expect(result.message).toContain('Output is truncated');
+    expect(result.output).toContain('Output is truncated');
   });
 
   it('tracks nChars as the buffer grows', () => {
@@ -88,7 +86,7 @@ describe('ToolResultBuilder', () => {
 
     const result = builder.ok();
     expect(result.output).toContain('Hello\n[...truncated]');
-    expect(result.message).toContain('Output is truncated');
+    expect(result.output).toContain('Output is truncated');
   });
 
   it('keeps unterminated trailing text in output', () => {
@@ -115,7 +113,6 @@ describe('ToolResultBuilder', () => {
 
     expect(result.output).toContain('Some output');
     expect(result.output).toContain('Something went wrong');
-    expect(result.message).toBe('Something went wrong');
   });
 
   it('preserves the truncation hint on error', () => {
@@ -125,8 +122,8 @@ describe('ToolResultBuilder', () => {
     const result = builder.error('Command failed');
 
     expect(result.output).toContain('[...truncated]');
-    expect(result.message).toContain('Command failed');
-    expect(result.message).toContain('Output is truncated');
+    expect(result.output).toContain('Command failed');
+    expect(result.output).toContain('Output is truncated');
   });
 
   it('returns executable output with critical messages included', () => {
@@ -136,8 +133,8 @@ describe('ToolResultBuilder', () => {
     const result = builder.ok('Operation completed');
 
     expect(result.output).toContain('[...truncated]');
+    expect(result.output).toContain('Operation completed.');
     expect(result.output).toContain('Output is truncated');
-    expect(result.message).toContain('Output is truncated');
   });
 
   it('keeps normal success messages out of non-empty output', () => {
@@ -147,6 +144,5 @@ describe('ToolResultBuilder', () => {
     const result = builder.ok('Command executed successfully.');
 
     expect(result.output).toBe('ok\n');
-    expect(result.message).toBe('Command executed successfully.');
   });
 });

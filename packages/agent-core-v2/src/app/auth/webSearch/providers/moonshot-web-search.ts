@@ -1,4 +1,5 @@
-import type { WebSearchProvider, WebSearchResult } from '../tools/web-search';
+import type { WebSearchProvider, WebSearchResult } from '#/agent/tools/web-search/web-search';
+import { Error2, ErrorCodes } from '#/errors';
 
 export interface BearerTokenProvider {
   getAccessToken(options?: { readonly force?: boolean | undefined }): Promise<string>;
@@ -60,15 +61,19 @@ export class MoonshotWebSearchProvider implements WebSearchProvider {
 
     if (response.status === 401) {
       const detail = await safeReadText(response);
-      throw new Error(
+      throw new Error2(
+        ErrorCodes.WEB_FETCH_FAILED,
         `Moonshot search request failed: HTTP 401 (auth/unauthorized). ${detail}`.trim(),
+        { details: { status: response.status } },
       );
     }
 
     if (response.status !== 200) {
       const detail = await safeReadText(response);
-      throw new Error(
+      throw new Error2(
+        ErrorCodes.WEB_FETCH_FAILED,
         `Moonshot search request failed: HTTP ${String(response.status)}. ${detail}`.trim(),
+        { details: { status: response.status } },
       );
     }
 
@@ -119,7 +124,8 @@ export class MoonshotWebSearchProvider implements WebSearchProvider {
       }
     }
     if (this.apiKey !== undefined && this.apiKey.length > 0) return this.apiKey;
-    throw new Error(
+    throw new Error2(
+      ErrorCodes.AUTH_TOKEN_MISSING,
       'Moonshot search service is not configured: missing API key or token provider.',
     );
   }

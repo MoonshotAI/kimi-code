@@ -1,17 +1,17 @@
 /**
- * Server instance registry — replaces the single-instance homedir lock when the
- * `multi_server` experimental flag is on.
+ * Server instance registry — the discovery mechanism for kap-server instances
+ * sharing one home directory.
  *
- * Instead of one exclusive `<home>/server/lock`, every server instance writes a
- * self-describing file under `<home>/server/instances/<serverId>.json`. Multiple
- * instances can coexist in the same home directory and discover each other by
- * reading the directory. Each file is single-writer (only its owning process
- * ever rewrites it), so updates are race-free; stale entries left by a crashed
- * peer are swept lazily on `register` / `listLive` via a `kill(pid, 0)` probe.
+ * Every server instance writes a self-describing file under
+ * `<home>/server/instances/<serverId>.json`. Multiple instances can coexist in
+ * the same home directory and discover each other by reading the directory.
+ * Each file is single-writer (only its owning process ever rewrites it), so
+ * updates are race-free; stale entries left by a crashed peer are swept lazily
+ * on `register` / `listLive` via a `kill(pid, 0)` probe.
  *
- * The `heartbeat_at` field is informational this phase (diagnostics + a hook
- * for future cross-machine TTL liveness); same-machine stale detection keys off
- * pid liveness only, matching the legacy lock's `pidAlive` semantics.
+ * The `heartbeat_at` field is informational (diagnostics + a hook for future
+ * cross-machine TTL liveness); same-machine stale detection keys off pid
+ * liveness only.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -35,7 +35,7 @@ export interface ServerInstanceInfo {
   readonly port: number;
   readonly startedAt: number;
   readonly heartbeatAt: number;
-  readonly hostVersion?: string;
+  readonly serverVersion?: string;
 }
 
 /** On-disk JSON shape. snake_case to match operator-facing logs and the legacy lock. */
@@ -46,6 +46,8 @@ interface ServerInstanceDisk {
   port: number;
   started_at: number;
   heartbeat_at: number;
+  // Wire name kept as `host_version`: external tooling (kimi-inspect's server
+  // discovery) parses these files independently.
   host_version?: string;
 }
 
@@ -105,7 +107,7 @@ function encode(info: ServerInstanceInfo): string {
     port: info.port,
     started_at: info.startedAt,
     heartbeat_at: info.heartbeatAt,
-    ...(info.hostVersion !== undefined ? { host_version: info.hostVersion } : {}),
+    ...(info.serverVersion !== undefined ? { host_version: info.serverVersion } : {}),
   };
   return JSON.stringify(disk);
 }
@@ -128,7 +130,7 @@ function decode(raw: string): ServerInstanceInfo | undefined {
         port: parsed.port,
         startedAt: parsed.started_at,
         heartbeatAt: parsed.heartbeat_at,
-        ...(parsed.host_version !== undefined ? { hostVersion: parsed.host_version } : {}),
+        ...(parsed.host_version !== undefined ? { serverVersion: parsed.host_version } : {}),
       };
     }
     return undefined;
@@ -264,7 +266,7 @@ export function createInstanceRegistry(options: InstanceRegistryOptions = {}): I
             port: state.port,
             startedAt: info.startedAt,
             heartbeatAt: now(),
-            ...(info.hostVersion !== undefined ? { hostVersion: info.hostVersion } : {}),
+            ...(info.serverVersion !== undefined ? { serverVersion: info.serverVersion } : {}),
           };
           await writeFileAtomic(filePath, encode(full));
         } finally {
@@ -331,8 +333,8 @@ export async function listLiveServerInstances(
 
 /**
  * Convenience one-shot read: return the longest-running live instance, or
- * `undefined` when none exist. Mirrors `getLiveLock` for callers that only
- * need a single daemon to talk to.
+ * `undefined` when none exist. For callers that only need a single daemon to
+ * talk to (e.g. the CLI's `server ps/kill` and the `kimi web` spawner).
  */
 export async function getLiveServerInstance(
   homeDir?: string,

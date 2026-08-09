@@ -1,7 +1,7 @@
-import { type Message } from '#/app/llmProtocol/message';
+import { type Message } from '#/kosong/contract/message';
 import { describe, expect, it } from 'vitest';
 
-import { estimateTokensForMessages } from '#/_base/utils/tokens';
+import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { DefaultCompactionStrategy } from '#/agent/fullCompaction/strategy';
 
 describe('DefaultCompactionStrategy', () => {
@@ -89,8 +89,6 @@ describe('DefaultCompactionStrategy', () => {
       textMessage('user', 'next prompt'),
     ];
 
-    // The only valid split is before the parallel exchange (after 'old assistant'),
-    // never between tool_a and tool_b — that would leave tool_b as an orphan.
     expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
   });
 
@@ -122,6 +120,38 @@ describe('DefaultCompactionStrategy', () => {
     expect(count).toBeLessThan(messages.length);
     expect(estimateTokensForMessages(messages.slice(0, count))).toBeLessThanOrEqual(maxSize);
     expect(estimateTokensForMessages(messages.slice(0, count + 1))).toBeGreaterThan(maxSize);
+  });
+
+  it('degrades to count-based recency and skips window fitting under a zero estimator', () => {
+    const zeroed = new DefaultCompactionStrategy(
+      () => 1_000,
+      {
+        triggerRatio: 0.85,
+        blockRatio: 0.85,
+        reservedContextSize: 0,
+        maxCompactionPerTurn: 3,
+        maxOverflowCompactionAttempts: 3,
+        maxRecentMessages: 2,
+        maxRecentUserMessages: Infinity,
+        maxRecentSizeRatio: 0.2,
+        minOverflowReductionRatio: 0.05,
+      },
+      () => 0,
+    );
+    const messages = [
+      textMessage('user', `old user ${'x'.repeat(1_200)}`),
+      textMessage('assistant', `old assistant ${'x'.repeat(1_200)}`),
+      textMessage('user', `older user ${'x'.repeat(1_200)}`),
+      textMessage('assistant', `older assistant ${'x'.repeat(1_200)}`),
+      textMessage('user', 'pending user'),
+      textMessage('assistant', 'pending assistant'),
+    ];
+
+    // Message sizes are invisible: exactly the last `maxRecentMessages`
+    // messages stay recent and the compacted prefix is never shrunk to fit
+    // the window — the real estimator would shrink it from 4 to 2 here.
+    expect(zeroed.computeCompactCount(messages, 'auto')).toBe(4);
+    expect(testCompactionStrategy(1_000).computeCompactCount(messages, 'auto')).toBe(2);
   });
 
   it('reserves response context by default before the ratio threshold is reached', () => {

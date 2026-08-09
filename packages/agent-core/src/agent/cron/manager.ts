@@ -13,10 +13,11 @@
  *   - translate a fired `CronTask` into a `steer(...)` call carrying a
  *     `CronJobOrigin`, plus the `cron_fired` telemetry event;
  *   - mirror every store mutation to `<sessionDir>/cron/<id>.json`
- *     (via {@link addTask} / {@link removeTasks}) so that `kimi resume`
- *     can call {@link loadFromDisk} to rehydrate previously-scheduled
- *     tasks. When no `sessionDir` is supplied (subagents, tests,
- *     ephemeral sessions) the manager stays purely in-memory.
+ *     (via {@link addTask} / {@link removeTasks}) so that a resumed
+ *     session can call {@link loadFromDisk} to rehydrate
+ *     previously-scheduled tasks. When no `sessionDir` is supplied
+ *     (subagents, tests, ephemeral sessions) the manager stays purely
+ *     in-memory.
  *   - provide a `handleMissed(...)` entry point that future boot-time
  *     missed-task notification will call. Today the scheduler's
  *     `coalescedCount` semantics handle missed fires inline, so this
@@ -143,7 +144,7 @@ export class CronManager {
    * `sessionDir` was supplied — the manager then behaves as pure
    * in-memory, matching pre-persistence semantics. When defined,
    * `addTask` / `removeTasks` schedule fire-and-forget writes so a
-   * later `kimi resume` can reload via {@link loadFromDisk}.
+   * later session resume can reload via {@link loadFromDisk}.
    */
   private readonly persistStore: PerIdJsonStore<CronTask> | undefined;
 
@@ -241,9 +242,9 @@ export class CronManager {
 
   /**
    * Persist the scheduler's `lastFiredAt` cursor for a recurring task
-   * so a `kimi resume` does not coalesce-replay an already-delivered
-   * fire. Called by the scheduler's `onAdvanceCursor` callback after a
-   * successful recurring fire.
+   * so resuming the session does not coalesce-replay an
+   * already-delivered fire. Called by the scheduler's `onAdvanceCursor`
+   * callback after a successful recurring fire.
    *
    * No-op when the task has already been removed between fire and
    * callback (concurrent CronDelete is the canonical case). When
@@ -261,9 +262,10 @@ export class CronManager {
   }
 
   /**
-   * Rehydrate the in-memory store from `<sessionDir>/cron/` after
-   * `kimi resume`. No-op when persistence is not attached. Idempotent:
-   * clears the in-memory map and re-inserts every record on disk.
+   * Rehydrate the in-memory store from `<sessionDir>/cron/` after the
+   * session is resumed. No-op when persistence is not attached.
+   * Idempotent: clears the in-memory map and re-inserts every record on
+   * disk.
    *
    * Tasks are inserted via {@link SessionCronStore.adopt} so the
    * original `id` and `createdAt` survive — `createdAt` is the

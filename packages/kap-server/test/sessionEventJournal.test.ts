@@ -2,7 +2,7 @@
  * `SessionEventJournal` — seq assignment, durability, recovery, epoch rotation.
  */
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -93,6 +93,29 @@ describe('SessionEventJournal', () => {
     const j = await SessionEventJournal.open(filePath);
     const out = await j.readSince(0, 100);
     expect(out).toEqual([]);
+    await j.close();
+  });
+
+  it('flushes appends that arrive while a flush is in flight', async () => {
+    const j = await SessionEventJournal.open(filePath);
+    // The first append starts an in-flight flush; the rest land in the same
+    // synchronous burst (while it runs) and must be chained into a follow-up
+    // round — not parked until a later append or `close()`.
+    for (let i = 1; i <= 12; i++) j.append(j.nextSeq(), envelope(i));
+    // Poll the raw file: `readSince`/`close` force a flush themselves and
+    // would mask a missing chained round.
+    const deadline = Date.now() + 2000;
+    let lines = 0;
+    while (Date.now() < deadline) {
+      try {
+        lines = (await readFile(filePath, 'utf8')).trim().split('\n').length;
+      } catch {
+        lines = 0;
+      }
+      if (lines >= 13) break; // header + 12 events
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(lines).toBe(13);
     await j.close();
   });
 });

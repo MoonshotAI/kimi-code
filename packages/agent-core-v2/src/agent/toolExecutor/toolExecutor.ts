@@ -1,17 +1,25 @@
 /**
- * `toolExecutor` domain (L3) — Agent-scope tool execution contract.
+ * `toolExecutor` domain — Agent-scope tool execution contract.
  *
- * Defines the public execution surface for provider tool calls, will/did
- * execution hooks, tool-call result settlement, duplicate-call tagging for
- * telemetry, and preflight description extension points. Bound at Agent scope.
+ * Defines the public execution surface for provider tool calls, the
+ * before/will execution-interception events, the did execution hook,
+ * tool-call result settlement, duplicate-call tagging for telemetry, and
+ * preflight description extension points. Bound at Agent scope.
  */
 
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
+import type { Event } from '#/_base/event';
 import type { ToolResult } from '#/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type {
+  BeforeToolExecuteEvent,
+  ToolDidExecuteContext,
+  WillExecuteToolEvent,
+} from '#/agent/toolExecutor/toolHooks';
+import type { ToolCall } from '#/kosong/contract/message';
 import type { OrderedHookSlot } from '#/hooks';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { ToolSource } from '#/tool/toolContract';
 
 export interface ToolCallStartedPayload {
   readonly toolCallId: string;
@@ -22,6 +30,7 @@ export interface ToolCallStartedPayload {
 export interface ToolExecutorExecuteOptions {
   readonly signal: AbortSignal;
   readonly turnId: number;
+  readonly trace?: LLMRequestTrace;
   readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
 }
 
@@ -33,8 +42,11 @@ export interface ToolExecutionResult {
 
 export type MissingToolDescriber = (toolName: string) => string | undefined;
 export type UnavailableToolDescriber = (toolName: string) => string | undefined;
+export type ToolCallGuard = (tool: {
+  readonly name: string;
+  readonly source: ToolSource;
+}) => string | undefined;
 
-/** How a duplicate tool call relates to its original (dedupe telemetry). */
 export type ToolCallDupType = 'same_step' | 'cross_step';
 
 export interface IAgentToolExecutorService {
@@ -42,29 +54,18 @@ export interface IAgentToolExecutorService {
 
   execute(calls: ToolCall[], options: ToolExecutorExecuteOptions): AsyncIterable<ToolExecutionResult>;
 
+  readonly onBeforeExecuteTool: Event<BeforeToolExecuteEvent>;
+
+  readonly onWillExecuteTool: Event<WillExecuteToolEvent>;
+
   readonly hooks: {
-    readonly onBeforeExecuteTool: OrderedHookSlot<ToolBeforeExecuteContext>;
     readonly onDidExecuteTool: OrderedHookSlot<ToolDidExecuteContext>;
   };
 
-  /**
-   * Record that a tool call is a duplicate so `tool_call` telemetry can tag
-   * it. Written by the `toolDedupe` plugin (which already injects this
-   * service — injecting the plugin here would cycle); the executor reads and
-   * clears the entry when the call's telemetry fires, defaulting to 'normal'.
-   */
   recordDupType(toolCallId: string, dupType: ToolCallDupType): void;
 
-  /**
-   * Single-slot hook for the "registered but currently unavailable" preflight
-   * message. A second registration overwrites the first; disposing the returned
-   * handle clears the slot only when the same describer still occupies it.
-   */
+  registerToolCallGuard(guard: ToolCallGuard): IDisposable;
   registerUnavailableToolDescriber(describer: UnavailableToolDescriber): IDisposable;
-  /**
-   * Single-slot hook for the tool-miss preflight message (e.g. a loaded tool
-   * whose server dropped). Same single-slot semantics as above.
-   */
   registerMissingToolDescriber(describer: MissingToolDescriber): IDisposable;
 }
 

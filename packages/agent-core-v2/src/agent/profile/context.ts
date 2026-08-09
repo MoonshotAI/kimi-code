@@ -1,57 +1,61 @@
 /**
- * `profile` domain (L4) — system-prompt context assembly.
+ * `profile` domain — system-prompt context assembly.
  *
  * Loads the AGENTS.md instruction hierarchy (user-level brand + generic files,
- * then project-level files from the project root down to the cwd) and assembles
- * the {@link SystemPromptContext} bag consumed by `IAgentProfileService.useProfile`.
+ * then project-level files from the project root down to the cwd — the root
+ * discovered through a git work-tree probe) and assembles
+ * the {@link SystemPromptContext} bag.
+ * `agentsMdWatchRoots` exposes the watch plan for the probed file set, and
+ * `prepareSystemPromptContext` accepts a `preloadedAgentsMd` snapshot so the
+ * caller can inject an already-read snapshot instead of re-reading the files.
  *
  * Runs on top of the os `IHostFileSystem` (for `readText` / `stat` / `readdir`)
  * plus the host's `homeDir` — supplied together as a small `ProfileContextDeps`
  * bag threaded through the helpers.
  *
- * Port of v1 `packages/agent-core/src/profile/context.ts`. The combined
- * AGENTS.md content is injected in full; when it exceeds the soft
- * {@link AGENTS_MD_RECOMMENDED_MAX_BYTES} budget a visible `agentsMdWarning`
- * is produced (surfaced through `getSessionWarnings`) instead of silently
- * truncating.
+ * The combined AGENTS.md content is injected in full; when it exceeds the
+ * soft {@link AGENTS_MD_RECOMMENDED_MAX_BYTES} budget a visible
+ * `agentsMdWarning` is produced instead of silently truncating.
+ *
+ * The discovered-file list is returned alongside the content as `paths`
+ * (surfaced as `agentsMdPaths`), and the per-directory candidate rules
+ * (`AGENTS_MD_PLAIN_NAMES` / `dotKimiAgentsMdPath` / `findAgentsMdInDir`)
+ * plus the root→leaf chain helpers (`findProjectRoot` / `dirsRootToLeaf`)
+ * are exported so discovery probes and injection never drift apart. Legacy
+ * restored prompts can recover their exact injected paths from the same
+ * rendered source annotations.
  */
 
-import { dirname, join, normalize } from 'pathe';
+import { basename, dirname, join, normalize } from 'pathe';
 
+import { findGitWorkTree } from '#/app/git/workTree';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { SystemPromptContext } from './profile';
 
-// Soft budget for the combined AGENTS.md content injected into the system
-// prompt. ~32 KB is roughly 8K–20K tokens (≈1.5–3% of a 262144-token context),
-// large enough to leave the bulk of the context window to the conversation
-// while still catching accidental oversized instruction files. Exceeding it no
-// longer truncates content; it only surfaces a user-visible warning so the user
-// can trim oversized instruction files.
 export const AGENTS_MD_RECOMMENDED_MAX_BYTES = 32 * 1024;
 
 export const LIST_DIR_ROOT_WIDTH = 30;
 export const LIST_DIR_CHILD_WIDTH = 10;
 
-/**
- * Small dep bag threaded through the context helpers so they only depend on
- * the filesystem primitive plus the host home directory, not on `IKaos`.
- */
 interface ProfileContextDeps {
   readonly fs: IHostFileSystem;
   readonly homeDir: string;
 }
 
+export type { ProfileContextDeps };
+
 export interface PreparedSystemPromptContext extends SystemPromptContext {
   readonly cwdListing?: string;
   readonly agentsMd?: string;
+  readonly agentsMdPaths?: readonly string[];
   readonly additionalDirsInfo?: string;
-  /** Present when the combined AGENTS.md content exceeds the recommended size. */
   readonly agentsMdWarning?: string;
 }
 
 export interface PrepareSystemPromptContextOptions {
   readonly additionalDirs?: readonly string[];
+  readonly preloadedAgentsMd?: LoadedAgentsMd;
 }
 
 export async function prepareSystemPromptContext(
@@ -63,12 +67,15 @@ export async function prepareSystemPromptContext(
   const additionalDirs = dedupeDirs(options?.additionalDirs ?? []);
   const [cwdListing, agentsMdResult, additionalDirsInfo] = await Promise.all([
     listDirectory(deps, workDir, { collapseHiddenDirs: true }),
-    loadAgentsMdForRoots(deps, brandHome, [workDir]),
+    options?.preloadedAgentsMd !== undefined
+      ? Promise.resolve(options.preloadedAgentsMd)
+      : loadAgentsMdForRoots(deps, brandHome, [workDir]),
     loadAdditionalDirsInfo(deps, additionalDirs),
   ]);
   return {
     cwdListing,
     agentsMd: agentsMdResult.content,
+    agentsMdPaths: agentsMdResult.paths,
     additionalDirsInfo,
     agentsMdWarning: agentsMdResult.warning,
   };
@@ -83,21 +90,92 @@ export async function loadAgentsMd(
   return result.content;
 }
 
-interface LoadedAgentsMd {
-  readonly content: string;
-  readonly warning: string | undefined;
+export async function loadAgentsMdDetailed(
+  deps: ProfileContextDeps,
+  workDir: string,
+  brandHome?: string,
+): Promise<LoadedAgentsMd> {
+  return loadAgentsMdForRoots(deps, brandHome, [workDir]);
 }
 
-async function loadAgentsMdForRoots(
+export interface LoadedAgentsMd {
+  readonly content: string;
+  readonly warning: string | undefined;
+  readonly paths: readonly string[];
+}
+
+export const AGENTS_MD_PLAIN_NAMES = ['AGENTS.md', 'agents.md'] as const;
+
+export function dotKimiAgentsMdPath(dir: string): string {
+  return join(dir, '.kimi-code', 'AGENTS.md');
+}
+
+export function agentsMdCandidatePaths(dir: string): string[] {
+  return [dotKimiAgentsMdPath(dir), ...AGENTS_MD_PLAIN_NAMES.map((name) => join(dir, name))];
+}
+
+export function extractAgentsMdPathsFromSystemPrompt(systemPrompt: string): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const match of systemPrompt.matchAll(/^<!-- From: (.+) -->$/gm)) {
+    const path = match[1];
+    if (
+      path === undefined ||
+      !AGENTS_MD_PLAIN_NAMES.some((candidate) => candidate === basename(path))
+    ) {
+      continue;
+    }
+    const normalized = normalize(path);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    paths.push(normalized);
+  }
+  return paths;
+}
+
+export async function findAgentsMdInDir(
+  deps: { readonly fs: IHostFileSystem },
+  dir: string,
+): Promise<string[]> {
+  const found: string[] = [];
+  const dotKimi = dotKimiAgentsMdPath(dir);
+  if (await isNonEmptyFile(deps, dotKimi)) found.push(dotKimi);
+  for (const fileName of AGENTS_MD_PLAIN_NAMES) {
+    const candidate = join(dir, fileName);
+    if (await isNonEmptyFile(deps, candidate)) {
+      found.push(candidate);
+      break;
+    }
+  }
+  return found;
+}
+
+async function isNonEmptyFile(
+  deps: { readonly fs: IHostFileSystem },
+  path: string,
+): Promise<boolean> {
+  try {
+    const content = await deps.fs.readText(path, { errors: 'ignore' });
+    return content.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function loadAgentsMdForRoots(
   deps: ProfileContextDeps,
   brandHome: string | undefined,
   workDirs: readonly string[],
 ): Promise<LoadedAgentsMd> {
   const discovered: AgentFile[] = [];
   const seen = new Set<string>();
+  const loadWarnings: string[] = [];
+  const warnLoad = (message: string): void => {
+    loadWarnings.push(message);
+  };
 
   const collect = async (path: string): Promise<boolean> => {
-    const file = await readAgentFile(deps, path);
+    const file = await readAgentFile(deps, path, warnLoad);
     if (file === undefined) return false;
     const key = normalize(file.path);
     if (seen.has(key)) return false;
@@ -106,17 +184,13 @@ async function loadAgentsMdForRoots(
     return true;
   };
 
-  // User-level files come first so any project-level AGENTS.md overrides them.
-  // The brand dir follows KIMI_CODE_HOME (default ~/.kimi-code); the generic
-  // .agents dir stays under the real OS home so it can be shared across tools.
   const realHome = deps.homeDir;
   const brandDir = brandHome ?? join(realHome, '.kimi-code');
   await collect(join(brandDir, 'AGENTS.md'));
 
-  // Generic user-level dir (.agents) matches skill discovery.
   const genericDirs = [join(realHome, '.agents')];
   const genericFiles = genericDirs.flatMap((dir) =>
-    ['AGENTS.md', 'agents.md'].map((name) => join(dir, name)),
+    AGENTS_MD_PLAIN_NAMES.map((name) => join(dir, name)),
   );
   for (const file of genericFiles) {
     if (await collect(file)) break;
@@ -124,12 +198,12 @@ async function loadAgentsMdForRoots(
 
   for (const workDir of workDirs) {
     const rootWorkDir = normalize(workDir);
-    const projectRoot = await findProjectRoot(deps, rootWorkDir);
+    const projectRoot = (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
     const dirs = dirsRootToLeaf(rootWorkDir, projectRoot);
 
     for (const dir of dirs) {
-      await collect(join(dir, '.kimi-code', 'AGENTS.md'));
-      for (const fileName of ['AGENTS.md', 'agents.md']) {
+      await collect(dotKimiAgentsMdPath(dir));
+      for (const fileName of AGENTS_MD_PLAIN_NAMES) {
         if (await collect(join(dir, fileName))) break;
       }
     }
@@ -137,13 +211,49 @@ async function loadAgentsMdForRoots(
 
   const content = renderAgentFiles(discovered);
   const totalBytes = byteLength(content);
-  const warning =
-    totalBytes > AGENTS_MD_RECOMMENDED_MAX_BYTES
-      ? `AGENTS.md total ${formatKB(totalBytes)} KB exceeds the recommended ` +
+  if (totalBytes > AGENTS_MD_RECOMMENDED_MAX_BYTES) {
+    loadWarnings.push(
+      `AGENTS.md total ${formatKB(totalBytes)} KB exceeds the recommended ` +
         `${formatKB(AGENTS_MD_RECOMMENDED_MAX_BYTES)} KB. Large instruction files ` +
-        `increase cost and may impact performance; consider trimming.`
-      : undefined;
-  return { content, warning };
+        `increase cost and may impact performance; consider trimming.`,
+    );
+  }
+  const warning = loadWarnings.length > 0 ? loadWarnings.join('\n') : undefined;
+  const paths = discovered.map((file) => normalize(file.path));
+  return { content, warning, paths };
+}
+
+export interface AgentsMdWatchRoot {
+  readonly root: string;
+  readonly candidates: readonly string[];
+}
+
+export async function agentsMdWatchRoots(
+  deps: ProfileContextDeps,
+  workDir: string,
+  brandHome?: string,
+): Promise<readonly AgentsMdWatchRoot[]> {
+  const realHome = deps.homeDir;
+  const brandDir = brandHome ?? join(realHome, '.kimi-code');
+  const plan: AgentsMdWatchRoot[] = [
+    { root: brandDir, candidates: [join(brandDir, 'AGENTS.md')] },
+    {
+      root: realHome,
+      candidates: [join(realHome, '.agents', 'AGENTS.md'), join(realHome, '.agents', 'agents.md')],
+    },
+  ];
+  const rootWorkDir = normalize(workDir);
+  const projectRoot = (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
+  const projectCandidates: string[] = [];
+  for (const dir of dirsRootToLeaf(rootWorkDir, projectRoot)) {
+    projectCandidates.push(
+      join(dir, '.kimi-code', 'AGENTS.md'),
+      join(dir, 'AGENTS.md'),
+      join(dir, 'agents.md'),
+    );
+  }
+  plan.push({ root: projectRoot, candidates: projectCandidates });
+  return plan;
 }
 
 async function loadAdditionalDirsInfo(
@@ -159,19 +269,15 @@ async function loadAdditionalDirsInfo(
   return sections.join('\n\n');
 }
 
-async function findProjectRoot(deps: ProfileContextDeps, workDir: string): Promise<string> {
-  const initial = normalize(workDir);
-  let current = initial;
-
-  while (true) {
-    if (await pathExists(deps, join(current, '.git'))) return current;
-    const parent = dirname(current);
-    if (parent === current) return initial;
-    current = parent;
-  }
+export async function findProjectRoot(
+  deps: { readonly fs: IHostFileSystem },
+  workDir: string,
+): Promise<string> {
+  const rootWorkDir = normalize(workDir);
+  return (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
 }
 
-function dirsRootToLeaf(workDir: string, projectRoot: string): string[] {
+export function dirsRootToLeaf(workDir: string, projectRoot: string): string[] {
   const dirs: string[] = [];
   let current = normalize(workDir);
 
@@ -194,23 +300,39 @@ interface AgentFile {
 async function readAgentFile(
   deps: ProfileContextDeps,
   path: string,
+  warn: (message: string) => void,
 ): Promise<AgentFile | undefined> {
-  if (!(await isFile(deps, path))) return undefined;
-  const content = (await deps.fs.readText(path, { errors: 'ignore' })).trim();
+  if (!(await isFile(deps, path))) {
+    if (await entryExists(deps, path)) {
+      warn(`Instruction file at ${path} exists but is not a readable regular file; skipping.`);
+    }
+    return undefined;
+  }
+  let content: string;
+  try {
+    content = (await deps.fs.readText(path, { errors: 'ignore' })).trim();
+  } catch {
+    warn(`Instruction file at ${path} could not be read; skipping.`);
+    return undefined;
+  }
   if (content.length === 0) return undefined;
   return { path, content };
 }
 
-async function pathExists(deps: ProfileContextDeps, path: string): Promise<boolean> {
+async function pathExists(deps: { readonly fs: IHostFileSystem }, path: string): Promise<boolean> {
   try {
-    await deps.fs.stat(path);
+    await deps.fs.lstat(path);
     return true;
   } catch {
     return false;
   }
 }
 
-async function isFile(deps: ProfileContextDeps, path: string): Promise<boolean> {
+async function entryExists(deps: { readonly fs: IHostFileSystem }, path: string): Promise<boolean> {
+  return pathExists(deps, path);
+}
+
+async function isFile(deps: { readonly fs: IHostFileSystem }, path: string): Promise<boolean> {
   try {
     const stat = await deps.fs.stat(path);
     return stat.isFile;
@@ -250,11 +372,6 @@ function dedupeDirs(dirs: readonly string[]): string[] {
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// listDirectory — compact 2-level directory tree for LLM context.
-// Port of v1 `packages/agent-core/src/tools/support/list-directory.ts`, driven
-// through the os `IHostFileSystem` (`readdir` + `stat`).
-// ---------------------------------------------------------------------------
 
 interface ListDirectoryOptions {
   readonly collapseHiddenDirs?: boolean;

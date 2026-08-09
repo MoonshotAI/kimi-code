@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -33,7 +33,7 @@ function recordContainsSkillLoaded(record: unknown, skillName: string): boolean 
       return (
         part.type === 'text' &&
         typeof part.text === 'string' &&
-        part.text.includes(`<kimi-skill-loaded name="${skillName}"`)
+        part.text.includes(`<skill-loaded name="${skillName}"`)
       );
     }) ?? false
   );
@@ -246,9 +246,9 @@ describe('ToolManager SkillTool wire behavior', () => {
             text: [
               'Skill tool loaded instructions for this request. Follow them.',
               '',
-              '<kimi-skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
+              '<skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
               'body of review',
-              '</kimi-skill-loaded>',
+              '</skill-loaded>',
             ].join('\n'),
           },
         ],
@@ -259,9 +259,6 @@ describe('ToolManager SkillTool wire behavior', () => {
         }),
       }),
     });
-    // `skill.activate` is a live-only Op (`persist: false`): the activation
-    // fact is not a v1 record type, so only the reminder message lands in the
-    // wire log — there is no separate `skill.activate` record.
     expect(persistence.records.some((record) => record.type === 'skill.activate')).toBe(false);
     expect(context.get().at(-1)).toMatchObject({
       role: 'assistant',
@@ -328,10 +325,6 @@ describe('ToolManager SkillTool restore behavior', () => {
       { type: 'context.append_message', message },
     ]);
 
-    // Replay is silent: `skill.activated` derives from the Op on `dispatch`
-    // only, so restoring the records re-fires neither the domain event nor
-    // telemetry (matching the former `restoring` guard); only the context
-    // message lands back in history.
     expect(emit).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'skill.activated' }),
     );

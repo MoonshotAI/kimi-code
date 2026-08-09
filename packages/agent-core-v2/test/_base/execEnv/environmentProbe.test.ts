@@ -30,7 +30,6 @@ interface StubOpts {
   readonly execFileResults?: Readonly<Record<string, string>>;
 }
 
-/** Build a stub deps bag mimicking Node's `os` + `process` surface. */
 function stubDeps(opts: StubOpts): HostEnvironmentProbeDeps {
   const existing = new Set(opts.existingPaths ?? []);
   return {

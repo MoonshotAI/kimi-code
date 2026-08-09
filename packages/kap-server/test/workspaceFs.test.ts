@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -19,8 +20,6 @@ interface BrowseEntryWire {
   name: string;
   path: string;
   is_dir: true;
-  is_git_repo: boolean;
-  branch?: string;
 }
 
 interface BrowseWire {
@@ -37,19 +36,20 @@ interface HomeWire {
 describe('server-v2 /api/v1 fs folder picker', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
-  let lockDir: string | undefined;
+  let instancesDir: string | undefined;
   let base: string;
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-'));
-    // Keep the single-instance lock OUTSIDE the browsed homeDir (mirrors v1's
-    // isolated-lock harness) so the folder picker only sees the test fixtures.
-    lockDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-lock-'));
+    // Keep the instance registry OUTSIDE the browsed homeDir so the folder
+    // picker only sees the test fixtures.
+    instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-instances-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
-      lockPath: join(lockDir, 'lock'),
+      instancesDir,
       logLevel: 'silent',
     });
     base = `http://127.0.0.1:${server.port}`;
@@ -64,9 +64,9 @@ describe('server-v2 /api/v1 fs folder picker', () => {
       await rm(home, { recursive: true, force: true });
       home = undefined;
     }
-    if (lockDir !== undefined) {
-      await rm(lockDir, { recursive: true, force: true });
-      lockDir = undefined;
+    if (instancesDir !== undefined) {
+      await rm(instancesDir, { recursive: true, force: true });
+      instancesDir = undefined;
     }
   });
 
@@ -129,26 +129,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
     for (const entry of body.data.entries) {
       expect(entry.is_dir).toBe(true);
       expect(entry.path).toBe(join(await realpath(root), entry.name));
-      expect(typeof entry.is_git_repo).toBe('boolean');
     }
-  });
-
-  it('annotates git repositories with the current branch', async () => {
-    const root = home as string;
-    const repo = join(root, 'repo');
-    await mkdir(join(repo, '.git'), { recursive: true });
-    await writeFile(join(repo, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-    await mkdir(join(root, 'plain'));
-
-    const { body } = await getJson<BrowseWire>(
-      `/api/v1/fs:browse?path=${encodeURIComponent(root)}`,
-    );
-    expect(body.code).toBe(0);
-    const byName = new Map(body.data.entries.map((e) => [e.name, e]));
-    expect(byName.get('repo')?.is_git_repo).toBe(true);
-    expect(byName.get('repo')?.branch).toBe('main');
-    expect(byName.get('plain')?.is_git_repo).toBe(false);
-    expect(byName.get('plain')?.branch).toBeUndefined();
   });
 
   it('sorts dot-directories after regular ones', async () => {
@@ -199,5 +180,257 @@ describe('server-v2 /api/v1 fs folder picker', () => {
     const { body } = await getJson<HomeWire>('/api/v1/fs:home');
     expect(body.code).toBe(0);
     expect(body.data.recent_roots).toContain(root);
+  });
+});
+
+describe('server-v2 /api/v1 fs:mkdir', () => {
+  let server: RunningServer | undefined;
+  let dir: string | undefined;
+  let instancesDir: string | undefined;
+  let base: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsmkdir-'));
+    instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsmkdir-instances-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: dir,
+      instancesDir,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (dir !== undefined) {
+      await rm(dir, { recursive: true, force: true });
+      dir = undefined;
+    }
+    if (instancesDir !== undefined) {
+      await rm(instancesDir, { recursive: true, force: true });
+      instancesDir = undefined;
+    }
+  });
+
+  async function postJson<T>(
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; body: Envelope<T> }> {
+    const res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    } as never);
+    return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  it('creates a directory that fs:browse then lists', async () => {
+    const target = join(dir as string, 'fresh-folder');
+
+    const { status, body } = await postJson<{ path: string }>('/api/v1/fs:mkdir', {
+      path: target,
+    });
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+    expect(body.data.path).toBe(target);
+
+    const browse = await fetch(
+      `${base}/api/v1/fs:browse?path=${encodeURIComponent(dir as string)}`,
+      { headers: authHeaders(server as RunningServer) } as never,
+    );
+    const browseBody = (await browse.json()) as Envelope<BrowseWire>;
+    expect(browseBody.data.entries.map((e) => e.name)).toContain('fresh-folder');
+  });
+
+  it('rejects a relative path (40001)', async () => {
+    const { body } = await postJson<null>('/api/v1/fs:mkdir', { path: 'relative/folder' });
+    expect(body.code).toBe(40001);
+  });
+
+  it('rejects an existing directory (40919)', async () => {
+    const target = join(dir as string, 'already-here');
+    await mkdir(target);
+
+    const { body } = await postJson<null>('/api/v1/fs:mkdir', { path: target });
+    expect(body.code).toBe(40919);
+  });
+
+  it('rejects an existing file (40919)', async () => {
+    const target = join(dir as string, 'file.txt');
+    await writeFile(target, 'hi');
+
+    const { body } = await postJson<null>('/api/v1/fs:mkdir', { path: target });
+    expect(body.code).toBe(40919);
+  });
+
+  it('rejects a missing parent (40409)', async () => {
+    const target = join(dir as string, 'no-such-parent', 'child');
+    const { body } = await postJson<null>('/api/v1/fs:mkdir', { path: target });
+    expect(body.code).toBe(40409);
+  });
+
+  it('does not serve the double-colon URL', async () => {
+    const res = await fetch(`${base}/api/v1/fs::mkdir`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ path: join(dir as string, 'x') }),
+    } as never);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('server-v2 /api/v1 fs:content', () => {
+  let server: RunningServer | undefined;
+  let dir: string | undefined;
+  let instancesDir: string | undefined;
+  let base: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fscontent-'));
+    instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fscontent-instances-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: dir,
+      instancesDir,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (dir !== undefined) {
+      await rm(dir, { recursive: true, force: true });
+      dir = undefined;
+    }
+    if (instancesDir !== undefined) {
+      await rm(instancesDir, { recursive: true, force: true });
+      instancesDir = undefined;
+    }
+  });
+
+  function contentUrl(path: string): string {
+    return `${base}/api/v1/fs:content?path=${encodeURIComponent(path)}`;
+  }
+
+  async function getContent(
+    path: string,
+    headers: Record<string, string> = {},
+  ): Promise<Response> {
+    // `connection: close` keeps every fetch on its own short-lived socket so
+    // undici never pools an idle keep-alive connection that would hold
+    // `server.close()` open in afterEach.
+    return fetch(contentUrl(path), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer), ...headers },
+    } as never);
+  }
+
+  it('serves a text file raw with mime, etag, and length headers', async () => {
+    const file = join(dir as string, 'hello.md');
+    await writeFile(file, '# hi\n');
+
+    const res = await getContent(file);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/markdown');
+    expect(res.headers.get('content-length')).toBe('5');
+    expect(typeof res.headers.get('etag')).toBe('string');
+    expect(typeof res.headers.get('last-modified')).toBe('string');
+    expect(await res.text()).toBe('# hi\n');
+  });
+
+  it('serves an unknown-extension text file as text/plain', async () => {
+    const file = join(dir as string, 'notes.weird');
+    await writeFile(file, 'just text');
+
+    const res = await getContent(file);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/plain');
+  });
+
+  it('serves binary files byte-for-byte with an octet-stream fallback mime', async () => {
+    const file = join(dir as string, 'blob.bin');
+    const original = Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x10, 0x80]);
+    await writeFile(file, original);
+
+    const res = await getContent(file);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/octet-stream');
+    expect(Buffer.from(await res.arrayBuffer()).equals(original)).toBe(true);
+  });
+
+  it('guesses image mime from the extension', async () => {
+    const file = join(dir as string, 'pic.png');
+    await writeFile(file, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]));
+
+    const res = await getContent(file);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('image/png');
+  });
+
+  it('answers If-None-Match with 304 when the etag matches', async () => {
+    const file = join(dir as string, 'cached.txt');
+    await writeFile(file, 'cache me');
+
+    const first = await getContent(file);
+    const etag = first.headers.get('etag') as string;
+
+    const res = await getContent(file, { 'if-none-match': etag });
+    expect(res.status).toBe(304);
+    expect(res.headers.get('etag')).toBe(etag);
+    expect(await res.text()).toBe('');
+  });
+
+  it('honors single-range requests with 206', async () => {
+    const file = join(dir as string, 'long.txt');
+    await writeFile(file, '0123456789');
+
+    const res = await getContent(file, { range: 'bytes=2-5' });
+    expect(res.status).toBe(206);
+    expect(res.headers.get('content-range')).toBe('bytes 2-5/10');
+    expect(res.headers.get('content-length')).toBe('4');
+    expect(await res.text()).toBe('2345');
+  });
+
+  it('rejects a relative path (40001)', async () => {
+    const res = await getContent('relative/path.txt');
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40001);
+  });
+
+  it('rejects a nonexistent path (40409)', async () => {
+    const res = await getContent(join(dir as string, 'does-not-exist.txt'));
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40409);
+  });
+
+  it('rejects a directory path (40906)', async () => {
+    const res = await getContent(dir as string);
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40906);
+  });
+
+  // /dev/null is a character device, not a regular file.
+  it.skipIf(process.platform === 'win32')('rejects non-regular files (40001)', async () => {
+    const res = await getContent('/dev/null');
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40001);
+  });
+
+  it('does not serve the double-colon URL', async () => {
+    const res = await fetch(`${base}/api/v1/fs::content?path=%2Ftmp`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    expect(res.status).toBe(404);
   });
 });

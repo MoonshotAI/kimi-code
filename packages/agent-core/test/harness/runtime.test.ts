@@ -228,6 +228,45 @@ micro_compaction = false
     expect(reloadedMainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
   });
 
+  it('live-applies the complete persisted secondary recipe', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL', '1');
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_secondary_refresh',
+      workDir,
+      model: 'default-mock',
+    });
+
+    await rpc.setKimiConfig({
+      secondaryModel: {
+        model: 'default-mock',
+        maxContextSize: 65_536,
+      },
+    });
+    await rpc.applyPersistedSecondaryModel({ sessionId: created.id });
+
+    const config = core.sessions.get(created.id)?.getReadyAgent('main')?.kimiConfig;
+    expect(config?.secondaryModel).toEqual({
+      model: 'default-mock',
+      maxContextSize: 65_536,
+    });
+    expect(config?.models?.['__secondary__']?.overrides?.maxContextSize).toBe(65_536);
+  });
+
   // Regression for https://github.com/MoonshotAI/kimi-code/issues/988: during
   // ACP `session/new` the tool kaos is the reverse-RPC bridge and the client
   // does not know the session yet, so reading `.kimi-code/local.toml` through
@@ -329,6 +368,107 @@ custom_headers = { "X-Test" = "1" }
       'X-Msh-Version': '0.0.0-test',
       'X-Test': '1',
     });
+  });
+
+  it('enables Moonshot web services from KIMI_WEB_* env vars without a services config section', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), '');
+    vi.stubEnv('KIMI_WEB_SEARCH_BASE_URL', 'https://search-env.example/v1');
+    vi.stubEnv('KIMI_WEB_SEARCH_API_KEY', 'env-search-key');
+    vi.stubEnv('KIMI_WEB_FETCH_BASE_URL', 'https://fetch-env.example/v1');
+    vi.stubEnv('KIMI_WEB_FETCH_API_KEY', 'env-fetch-key');
+
+    const fetchImpl = vi.fn().mockImplementation(async (url: string | URL) =>
+      String(url).includes('search')
+        ? new Response(JSON.stringify({ search_results: [] }), { status: 200 })
+        : new Response('page body', { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({ id: 'ses_runtime_service_env', workDir });
+    const session = core.sessions.get(created.id);
+
+    const webSearcher = session?.options.toolServices?.webSearcher;
+    const urlFetcher = session?.options.toolServices?.urlFetcher;
+    expect(webSearcher).toBeDefined();
+    expect(urlFetcher).toBeDefined();
+
+    await webSearcher!.search('kimi');
+    const [searchUrl, searchInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(searchUrl).toBe('https://search-env.example/v1');
+    expect((searchInit.headers as Record<string, string>)['Authorization']).toBe(
+      'Bearer env-search-key',
+    );
+
+    await urlFetcher!.fetch('https://example.com/page', {});
+    const [fetchUrl, fetchInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
+    expect(fetchUrl).toBe('https://fetch-env.example/v1');
+    expect((fetchInit.headers as Record<string, string>)['Authorization']).toBe(
+      'Bearer env-fetch-key',
+    );
+  });
+
+  it('keeps persisted credentials off an env-selected Moonshot search endpoint', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[services.moonshot_search]
+base_url = "https://search-file.example/v1"
+api_key = "file-search-key"
+oauth = { storage = "file", key = "oauth/custom-kimi-code" }
+custom_headers = { "X-Config-Secret" = "secret-value" }
+`,
+    );
+    vi.stubEnv('KIMI_WEB_SEARCH_BASE_URL', 'https://search-env.example/v1');
+    vi.stubEnv('KIMI_WEB_SEARCH_API_KEY', 'env-search-key');
+
+    const getAccessToken = vi.fn().mockResolvedValue('oauth-token');
+    const resolveOAuthTokenProvider = vi.fn<OAuthTokenProviderResolver>(() => ({
+      getAccessToken,
+    }));
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ search_results: [] }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir, resolveOAuthTokenProvider });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({ id: 'ses_runtime_service_env_precedence', workDir });
+    const session = core.sessions.get(created.id);
+
+    await session?.options.toolServices?.webSearcher?.search('kimi');
+
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://search-env.example/v1');
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer env-search-key' });
+    expect(init.headers).not.toHaveProperty('X-Config-Secret');
+    expect(resolveOAuthTokenProvider).not.toHaveBeenCalled();
+    expect(getAccessToken).not.toHaveBeenCalled();
   });
 
   it('falls back to defaultModel when createSession receives no model option', async () => {
@@ -1036,6 +1176,97 @@ base_url = "https://search.example.test/v1"
     expect(reminders.at(-1)).toContain('supersedes any earlier plugin_session_start');
   });
 
+  it('replaces only the plugin agent layer when a plugin is disabled before reload', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const pluginRoot = join(tmp, 'plugin');
+    await mkdir(join(homeDir, 'agents'), { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await mkdir(join(pluginRoot, 'agents'), { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    await writeFile(
+      join(homeDir, 'agents', 'local-reviewer.md'),
+      '---\nname: local-reviewer\ndescription: Local reviewer\n---\n\nLocal prompt.\n',
+    );
+    await writeFile(
+      join(pluginRoot, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', agents: ['./agents'] }),
+    );
+    await writeFile(
+      join(pluginRoot, 'agents', 'plugin-reviewer.md'),
+      '---\nname: plugin-reviewer\ndescription: Plugin reviewer\n---\n\nPlugin prompt.\n',
+    );
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    await core.installPlugin({ source: pluginRoot });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload_plugin_agents',
+      workDir,
+      model: 'default-mock',
+    });
+    expect(core.sessions.get(created.id)?.agentCatalog.get('plugin-reviewer')).toBeDefined();
+    expect(core.sessions.get(created.id)?.agentCatalog.get('local-reviewer')).toBeDefined();
+
+    await core.setPluginEnabled({ id: 'demo', enabled: false });
+    await rpc.reloadSession({ sessionId: created.id });
+
+    const reloadedCatalog = core.sessions.get(created.id)?.agentCatalog;
+    expect(reloadedCatalog?.get('plugin-reviewer')).toBeUndefined();
+    expect(reloadedCatalog?.get('local-reviewer')?.description).toBe('Local reviewer');
+  });
+
+  it('adds a newly installed plugin agent on reload and preserves it on resume', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const pluginRoot = join(tmp, 'plugin');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await mkdir(join(pluginRoot, 'agents'), { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    await writeFile(
+      join(pluginRoot, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', agents: ['./agents'] }),
+    );
+    await writeFile(
+      join(pluginRoot, 'agents', 'plugin-reviewer.md'),
+      '---\nname: plugin-reviewer\ndescription: Plugin reviewer\n---\n\nPlugin prompt.\n',
+    );
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload_new_plugin_agent',
+      workDir,
+      model: 'default-mock',
+    });
+    expect(core.sessions.get(created.id)?.agentCatalog.get('plugin-reviewer')).toBeUndefined();
+
+    await core.installPlugin({ source: pluginRoot });
+    await rpc.reloadSession({ sessionId: created.id });
+    expect(core.sessions.get(created.id)?.agentCatalog.get('plugin-reviewer')).toBeDefined();
+
+    await rpc.closeSession({ sessionId: created.id });
+    await rpc.resumeSession({ sessionId: created.id });
+    expect(core.sessions.get(created.id)?.agentCatalog.get('plugin-reviewer')).toBeDefined();
+  });
+
   it('does not append a plugin_session_start reminder on reload without the force flag', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
@@ -1144,6 +1375,118 @@ base_url = "https://search.example.test/v1"
     const reminders = pluginSessionStartReminders(core, created.id);
     expect(reminders).toHaveLength(1);
     expect(reminders[0]).toContain('no active plugin session starts');
+  });
+});
+
+describe('KimiCore print-mode defaults', () => {
+  let tmp: string;
+
+  afterEach(async () => {
+    if (tmp !== undefined) {
+      await rm(tmp, { recursive: true, force: true });
+    }
+    await __resetRootLoggerForTest();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  async function createCorePair(homeDir: string, uiMode?: string) {
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir, uiMode });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    return { core, rpc };
+  }
+
+  async function setupDirs(configToml: string): Promise<{ homeDir: string; workDir: string }> {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-print-defaults-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), configToml);
+    return { homeDir, workDir };
+  }
+
+  it('applies print-mode subagent/loop defaults to sessions when uiMode is print', async () => {
+    const { homeDir, workDir } = await setupDirs(baseModelConfig());
+    const { core, rpc } = await createCorePair(homeDir, 'print');
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults',
+      workDir,
+      model: 'default-mock',
+    });
+
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(0);
+    expect(main?.kimiConfig?.background?.bashTaskTimeoutS).toBe(0);
+    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(0);
+
+    // The raw user config is left untouched so config reads/writes still
+    // round-trip the user's file values.
+    const raw = await core.getKimiConfig();
+    expect(raw.subagent).toBeUndefined();
+    expect(raw.loopControl).toBeUndefined();
+  });
+
+  it('keeps explicit user config over the print-mode defaults', async () => {
+    const { homeDir, workDir } = await setupDirs(`${baseModelConfig()}
+[loop_control]
+max_steps_per_turn = 7
+
+[subagent]
+timeout_ms = 5000
+`);
+    const { core, rpc } = await createCorePair(homeDir, 'print');
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults_user_config',
+      workDir,
+      model: 'default-mock',
+    });
+
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(5000);
+    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(7);
+  });
+
+  it('does not apply print-mode defaults outside print mode', async () => {
+    const { homeDir, workDir } = await setupDirs(baseModelConfig());
+    const { core, rpc } = await createCorePair(homeDir);
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults_off',
+      workDir,
+      model: 'default-mock',
+    });
+
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent).toBeUndefined();
+    expect(main?.kimiConfig?.loopControl).toBeUndefined();
+  });
+
+  it('applies print-mode defaults when a session is reloaded', async () => {
+    const { homeDir, workDir } = await setupDirs(baseModelConfig());
+    const { core, rpc } = await createCorePair(homeDir, 'print');
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults_reload',
+      workDir,
+      model: 'default-mock',
+    });
+    await rpc.reloadSession({ sessionId: created.id });
+
+    // The reload path rebuilds the session through resumeSessionWithOverrides;
+    // the agent it constructs must carry the same print-mode defaults.
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(0);
+    expect(main?.kimiConfig?.background?.bashTaskTimeoutS).toBe(0);
+    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(0);
   });
 });
 

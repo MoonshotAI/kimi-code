@@ -41,6 +41,10 @@ const ModelAliasBaseSchema = z.object({
   provider: z.string(),
   model: z.string(),
   maxContextSize: z.number().int().min(1),
+  // Declared prompt/input cap when below the total window (e.g. gpt-5: 400k
+  // window, 272k input). Compaction and other prompt-budget checks prefer it
+  // over max_context_size; completion budgeting keeps the total window.
+  maxInputSize: z.number().int().min(1).optional(),
   maxOutputSize: z.number().int().min(1).optional(),
   capabilities: z.array(z.string()).optional(),
   displayName: z.string().optional(),
@@ -56,10 +60,19 @@ const ModelAliasBaseSchema = z.object({
   // config.toml. The user's chosen effort is stored globally in thinking.effort.
   supportEfforts: z.array(z.string()).optional(),
   defaultEffort: z.string().optional(),
+  // The effort value that encodes "thinking off" on the wire for this model
+  // (models.dev declares it as the "none" entry, e.g. xai grok). When set,
+  // turning thinking off sends this value instead of omitting the effort
+  // field — required by models whose default is to reason.
+  offEffort: z.string().optional(),
   // Route the Anthropic transport through the beta Messages API
   // (`POST /v1/messages?beta=true`) instead of the standard endpoint. Used by
   // managed Kimi Code models that declare `protocol: 'anthropic'`.
   betaApi: z.boolean().optional(),
+  // Per-model endpoint override, paired with `protocol`. Catalog imports set
+  // it when a gateway provider serves this model over a different endpoint
+  // than the provider default.
+  baseUrl: z.string().optional(),
 });
 
 export const ModelAliasOverrideSchema = ModelAliasBaseSchema.omit({
@@ -67,6 +80,7 @@ export const ModelAliasOverrideSchema = ModelAliasBaseSchema.omit({
   model: true,
   protocol: true,
   betaApi: true,
+  baseUrl: true,
 }).partial();
 
 export type ModelAliasOverrides = z.infer<typeof ModelAliasOverrideSchema>;
@@ -78,6 +92,19 @@ export const ModelAliasSchema = ModelAliasBaseSchema.extend({
 });
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
+
+/**
+ * The secondary-model recipe (`[secondary_model]` on disk): `model` points at
+ * a `[models]` entry and every remaining field is a subagent-only patch,
+ * materialized into a synthesized derived model entry at runtime (see
+ * `config/secondary-model.ts`). `default_effort` doubles as the subagent
+ * thinking effort.
+ */
+export const SecondaryModelConfigSchema = ModelAliasOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+});
+
+export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
 
 export const ThinkingConfigSchema = z.object({
   enabled: z.boolean().optional(),
@@ -133,6 +160,13 @@ export const BackgroundConfigSchema = z.object({
    * instead of killing it. Defaults to true when unset.
    */
   bashAutoBackgroundOnTimeout: z.boolean().optional(),
+  /**
+   * Default timeout (seconds) for background Bash tasks when the call omits
+   * `timeout`, also used to re-arm foreground commands moved to the
+   * background. `0` means no timeout. Explicit per-call `timeout` values are
+   * unaffected. Defaults to the Bash tool's built-in 600s when unset.
+   */
+  bashTaskTimeoutS: z.number().int().min(0).optional(),
   killGracePeriodMs: z.number().int().min(0).optional(),
   printWaitCeilingS: z.number().int().min(1).optional(),
   printBackgroundMode: z.enum(['exit', 'drain', 'steer']).optional(),
@@ -142,10 +176,36 @@ export const BackgroundConfigSchema = z.object({
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
 
 export const SubagentConfigSchema = z.object({
-  timeoutMs: z.number().int().min(1).optional(),
+  /**
+   * Per-subagent (`Agent` / `AgentSwarm`, foreground and background) timeout
+   * in milliseconds. `0` means no timeout. Defaults to 2 hours when unset.
+   */
+  timeoutMs: z.number().int().min(0).optional(),
 });
 
 export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
+
+export const MAX_MCP_TIMEOUT_MS = 2_147_483_647;
+const McpTimeoutMsSchema = z.number().int().min(1).max(MAX_MCP_TIMEOUT_MS);
+
+export const McpConfigSchema = z.object({
+  /**
+   * Global default MCP server startup (connect + tool discovery) timeout in
+   * milliseconds. A per-server `startupTimeoutMs` in `mcp.json` and the
+   * KIMI_MCP_STARTUP_TIMEOUT_MS env var both win over this value. Defaults
+   * to 30s when unset.
+   */
+  startupTimeoutMs: McpTimeoutMsSchema.optional(),
+  /**
+   * Global default single MCP tool-call timeout in milliseconds. A
+   * per-server `toolTimeoutMs` in `mcp.json` and the
+   * KIMI_MCP_TOOL_TIMEOUT_MS env var both win over this value. Falls back to
+   * the client built-in default when unset.
+   */
+  toolTimeoutMs: McpTimeoutMsSchema.optional(),
+});
+
+export type McpConfig = z.infer<typeof McpConfigSchema>;
 
 export const ImageConfigSchema = z.object({
   /**
@@ -208,8 +268,8 @@ export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
 
 const McpServerCommonFields = {
   enabled: z.boolean().optional(),
-  startupTimeoutMs: z.number().int().min(1).optional(),
-  toolTimeoutMs: z.number().int().min(1).optional(),
+  startupTimeoutMs: McpTimeoutMsSchema.optional(),
+  toolTimeoutMs: McpTimeoutMsSchema.optional(),
   enabledTools: z.array(z.string()).optional(),
   disabledTools: z.array(z.string()).optional(),
 } as const;
@@ -232,6 +292,10 @@ export const McpServerHttpConfigSchema = z.object({
   transport: z.literal('http'),
   url: z.string().url(),
   headers: StringRecordSchema.optional(),
+  // Backward-compatible UI marker. OAuth is still discovered from a remote
+  // server's 401 response; this flag only records that the user explicitly
+  // chose OAuth and lets hosts expose login/reset controls before connecting.
+  auth: z.literal('oauth').optional(),
   // Indirect secret reference: the bearer token is looked up from
   // `process.env[bearerTokenEnvVar]` at connection time, never committed.
   bearerTokenEnvVar: z.string().min(1).optional(),
@@ -244,6 +308,7 @@ export const McpServerSseConfigSchema = z.object({
   transport: z.literal('sse'),
   url: z.string().url(),
   headers: StringRecordSchema.optional(),
+  auth: z.literal('oauth').optional(),
   // Indirect secret reference: the bearer token is looked up from
   // `process.env[bearerTokenEnvVar]` at connection time, never committed.
   bearerTokenEnvVar: z.string().min(1).optional(),
@@ -289,9 +354,12 @@ export const KimiConfigSchema = z.object({
   services: ServicesConfigSchema.optional(),
   mergeAllAvailableSkills: z.boolean().optional(),
   extraSkillDirs: z.array(z.string()).optional(),
+  extraAgentDirs: z.array(z.string()).optional(),
   loopControl: LoopControlSchema.optional(),
   background: BackgroundConfigSchema.optional(),
   subagent: SubagentConfigSchema.optional(),
+  secondaryModel: SecondaryModelConfigSchema.optional(),
+  mcp: McpConfigSchema.optional(),
   image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
@@ -308,6 +376,8 @@ const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
 const SubagentConfigPatchSchema = SubagentConfigSchema.partial();
+const SecondaryModelConfigPatchSchema = SecondaryModelConfigSchema.partial();
+const McpConfigPatchSchema = McpConfigSchema.partial();
 const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
 const ExperimentalConfigPatchSchema = ExperimentalConfigSchema;
@@ -333,9 +403,12 @@ export const KimiConfigPatchSchema = z
     services: ServicesConfigPatchSchema.optional(),
     mergeAllAvailableSkills: z.boolean().optional(),
     extraSkillDirs: z.array(z.string()).optional(),
+    extraAgentDirs: z.array(z.string()).optional(),
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
     subagent: SubagentConfigPatchSchema.optional(),
+    secondaryModel: SecondaryModelConfigPatchSchema.optional(),
+    mcp: McpConfigPatchSchema.optional(),
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),

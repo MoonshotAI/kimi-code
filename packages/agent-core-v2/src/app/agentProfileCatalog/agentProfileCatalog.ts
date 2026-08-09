@@ -1,6 +1,6 @@
 /**
- * `agentProfileCatalog` domain (L3) — App-scope registry of named agent
- * profiles.
+ * `agentProfileCatalog` domain — the agent-profile domain types and the
+ * App-scope extension point (`IAgentProfileRegistry`).
  *
  * A profile is "how an Agent runs": the full system prompt it renders for a
  * given context, the tool set it may use, plus optional per-invocation and
@@ -8,27 +8,41 @@
  * the same profile can be bound to any Model. Together with a bound Model, a
  * profile uniquely determines an Agent's behavior (`Profile + Model ⇒ Agent`).
  *
- * Every profile is self-contained: `systemPrompt(context)` returns the complete
- * prompt (base + role overlay are merged at definition time, not at spawn
- * time). The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the default
- * profile used when an Agent is bound to a Model without naming a profile.
+ * Every profile is self-contained: `renderSystemPrompt(context)` returns the
+ * complete prompt (base + role overlay are merged at definition time, not at
+ * spawn time) together with the environment facts disclosed by that render.
+ * `systemPrompt(context)` is the same render's text only — it is derived from
+ * `renderSystemPrompt` at registration, so the two can never drift apart.
+ * Profiles stay
+ * independent of concrete model aliases, but may declare
+ * a symbolic primary/secondary preference used as the default when spawned as
+ * a subagent. The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the
+ * default profile used when an Agent is bound to a Model without naming a
+ * profile.
  *
- * Profiles are contributed at module load via `registerAgentProfile(...)`, the
- * same "import = register" pattern used by `registerTool` and
- * `registerConfigSection`. `AgentProfileCatalogService` consumes the accumulated
- * contributions on construction and exposes `get(name)` / `getDefault()` /
- * `list()` to callers (the `Agent` tool, the swarm scheduler, and the per-agent
- * profile binding). Contributions are keyed by `name`; a later-registered
- * profile with the same name overrides an earlier one.
+ * `tools` is an allowlist of exact builtin names plus `mcp__` globs
+ * (`undefined` = every tool active); `disallowedTools` denies with the same
+ * matching semantics, applied on top of the allowlist result. `subagents` is
+ * an allowlist of subagent profile names the agent may delegate to
+ * (`undefined` = any type).
+ *
+ * Profiles reach agents through the Contribution / Registry / Catalog
+ * extension point: loaders (builtin code contributions via
+ * `registerAgentProfile(...)`, plugin / user file scans at App scope,
+ * workspace / extra / explicit file scans at Workspace scope) register
+ * `AgentProfileContribution`s into the App-scope `IAgentProfileRegistry`,
+ * keyed by source id; the Session-scope `ISessionAgentProfileCatalog`
+ * projects the registry into the merged, name-deduped read view that
+ * consumers (the `Agent` tool, the swarm scheduler, the per-agent profile
+ * binding) resolve profiles through.
  */
-
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { ILogger } from '#/_base/log/log';
 import type { ISessionProcessRunner } from '#/session/process/processRunner';
 
-/** Name of the builtin default profile (the top-level interactive agent). */
 export const DEFAULT_AGENT_PROFILE_NAME = 'agent';
+
+export type AgentModelPreference = 'primary' | 'secondary';
 
 export interface AgentProfilePromptPrefixContext {
   readonly cwd: string;
@@ -37,83 +51,105 @@ export interface AgentProfilePromptPrefixContext {
 }
 
 export interface AgentProfileSummaryPolicy {
-  /** Minimum length (in characters) of the child's summary before it is
-   *  considered acceptable. Shorter summaries trigger a continuation turn. */
   readonly minChars: number;
-  /** Continuation prompt appended to the child agent when the summary is too
-   *  short, asking it to expand. */
   readonly continuationPrompt: string;
-  /** Number of continuation attempts before giving up. */
   readonly retries: number;
 }
 
-/**
- * Runtime context supplied to a profile's system-prompt renderer. Captures
- * everything determined at render time (working dir, AGENTS.md, host OS/shell,
- * skills, …). Assembled by the `profile` domain and passed into
- * {@link AgentProfile.systemPrompt}.
- */
 export interface AgentProfileContext {
   readonly cwd?: string;
-  /** 2-level tree listing of the working directory, for LLM orientation. */
   readonly cwdListing?: string;
-  /** Concatenated AGENTS.md instruction hierarchy (user-level + project-level). */
   readonly agentsMd?: string;
-  /** Rendered listings of additional workspace directories. */
   readonly additionalDirsInfo?: string;
-  /** Host OS family (`macOS` / `Linux` / `Windows` / raw platform). */
   readonly osKind?: string;
   readonly shellName?: string;
   readonly shellPath?: string;
-  /** ISO timestamp captured at render time. */
   readonly now?: string;
-  /** Rendered model-facing listing of available skills. */
+  readonly timeZone?: string;
   readonly skills?: string;
+  readonly skillActive?: boolean;
+  readonly pluginSections?: string;
+  readonly productName?: string;
+  readonly replyStyleGuide?: string;
   readonly [key: string]: unknown;
 }
 
+export interface EnvironmentDisclosureSnapshot {
+  readonly cwd: string;
+  readonly date:
+    | { readonly disclosed: true; readonly value: { readonly localDate: string; readonly timeZone: string } }
+    | { readonly disclosed: false };
+}
+
+export interface SystemPromptRenderResult {
+  readonly text: string;
+  readonly environment: EnvironmentDisclosureSnapshot;
+}
+
 export interface AgentProfile {
-  /** Stable identifier; must be unique across contributions. */
   readonly name: string;
-  /** Short human-readable label; surfaced to the caller (LLM) as "Available agent types". */
   readonly description?: string;
-  /** When-to-use hint appended to `description` in the caller's tool spec. */
   readonly whenToUse?: string;
-  /** Tool names (and MCP glob patterns) the agent may use under this profile. */
-  readonly tools: readonly string[];
-  /**
-   * Render the complete system prompt for this profile given the runtime
-   * context. Self-contained — includes the base prompt and any role overlay.
-   */
-  systemPrompt(context: AgentProfileContext): string;
-  /**
-   * Optional per-invocation prompt prefix produced from the caller's context
-   * (e.g. `explore`'s `<git-context>` block). Prepended to the caller-supplied
-   * prompt before the child's first turn. Best-effort — a thrown error / empty
-   * return skips the prefix.
-   */
+  readonly override?: boolean;
+  readonly tools?: readonly string[];
+  readonly disallowedTools?: readonly string[];
+  readonly subagents?: readonly string[];
+  readonly modelPreference?: AgentModelPreference;
+  readonly systemPrompt: (context: AgentProfileContext) => string;
+  readonly renderSystemPrompt: (context: AgentProfileContext) => SystemPromptRenderResult;
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
-  /**
-   * Optional summary distillation policy applied by the caller after the
-   * child's turn ends. Undefined = accept whatever the child returned.
-   */
   readonly summaryPolicy?: AgentProfileSummaryPolicy;
 }
 
-export interface IAgentProfileCatalogService {
-  readonly _serviceBrand: undefined;
+/**
+ * The profile shape accepted at registration ({@link registerAgentProfile},
+ * file-based profile factories): authors provide at least one render entry —
+ * the structured `renderSystemPrompt`, the legacy text-only `systemPrompt`,
+ * or both (the structured renderer is then authoritative). The union
+ * statically requires at least one entry; {@link normalizeAgentProfile} still
+ * throws on inputs that escaped the type check (plain JS, casts).
+ * {@link normalizeAgentProfile} derives the other method, so a registered
+ * {@link AgentProfile} always carries both and its `systemPrompt` text always
+ * comes from the same render as its disclosure metadata. A text-only input
+ * renders with no disclosed environment facts. Callbacks are bound to the
+ * input object at runtime, so method-style definitions relying on `this`
+ * keep working.
+ */
+export type AgentProfileInput = Omit<AgentProfile, 'systemPrompt' | 'renderSystemPrompt'> &
+  (
+    | {
+        readonly systemPrompt: (context: AgentProfileContext) => string;
+        readonly renderSystemPrompt?: (
+          context: AgentProfileContext,
+        ) => SystemPromptRenderResult;
+      }
+    | {
+        readonly systemPrompt?: (context: AgentProfileContext) => string;
+        readonly renderSystemPrompt: (context: AgentProfileContext) => SystemPromptRenderResult;
+      }
+  );
 
-  /** Return the profile with the given name, or `undefined` when unknown. */
-  get(name: string): AgentProfile | undefined;
-  /**
-   * Return the builtin default profile ({@link DEFAULT_AGENT_PROFILE_NAME}).
-   * Throws when no default profile is registered (a programming-time invariant
-   * violation, not a request failure).
-   */
-  getDefault(): AgentProfile;
-  /** Enumerate every registered profile. Stable order (insertion order). */
-  list(): readonly AgentProfile[];
+export function normalizeAgentProfile(input: AgentProfileInput): AgentProfile {
+  if (input.renderSystemPrompt !== undefined) {
+    const render = input.renderSystemPrompt.bind(input);
+    return {
+      ...input,
+      renderSystemPrompt: render,
+      systemPrompt: (context) => render(context).text,
+    };
+  }
+  if (input.systemPrompt !== undefined) {
+    const systemPrompt = input.systemPrompt.bind(input);
+    return {
+      ...input,
+      systemPrompt,
+      renderSystemPrompt: (context) => ({
+        text: systemPrompt(context),
+        environment: { cwd: context.cwd ?? '', date: { disclosed: false } },
+      }),
+    };
+  }
+  throw new Error(
+    `Agent profile "${input.name}" must define systemPrompt or renderSystemPrompt.`,
+  );
 }
-
-export const IAgentProfileCatalogService: ServiceIdentifier<IAgentProfileCatalogService> =
-  createDecorator<IAgentProfileCatalogService>('agentProfileCatalogService');

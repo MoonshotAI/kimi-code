@@ -1,9 +1,13 @@
+import { APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
+import { APIProviderQuotaExhaustedError, isRetryableGenerateError } from '#/errors';
 import { generate } from '#/generate';
 import type { ContentPart, Message, ToolCall } from '#/message';
 import { extractUsageFromChunk, KimiChatProvider } from '#/providers/kimi';
+import { classifyKimiQuotaError } from '#/providers/kimi-errors';
 import { extractUsage } from '#/providers/openai-common';
 import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
+import { APIError as OpenAIAPIError } from 'openai';
 import { describe, it, expect, vi } from 'vitest';
 
 function makeChatCompletionResponse(model: string = 'test-model') {
@@ -23,16 +27,30 @@ function makeChatCompletionResponse(model: string = 'test-model') {
   };
 }
 
-function createProvider(
-  stream: boolean = false,
-  supportEfforts?: readonly string[],
-): KimiChatProvider {
+function createProvider(stream: boolean = false): KimiChatProvider {
   return new KimiChatProvider({
     model: 'kimi-k2-turbo-preview',
     apiKey: 'test-key',
     stream,
-    supportEfforts,
   });
+}
+
+/**
+ * The provider reads the KFC `x-trace-id` response header via the SDK's
+ * `APIPromise.withResponse()`, so mocked `chat.completions.create` calls must
+ * resolve to an object exposing that method. `traceId` sets the header value
+ * the fake response reports.
+ */
+function mockCreateResult(data: unknown, traceId?: string) {
+  return {
+    withResponse: () =>
+      Promise.resolve({
+        data,
+        response: new Response(null, {
+          headers: traceId === undefined ? {} : { 'x-trace-id': traceId },
+        }),
+      }),
+  };
 }
 
 type KimiGenerationState = {
@@ -60,7 +78,7 @@ async function captureRequestBody(
     .fn()
     .mockImplementation((params: unknown) => {
       capturedBody = params as Record<string, unknown>;
-      return Promise.resolve(makeChatCompletionResponse('kimi-k2'));
+      return mockCreateResult(makeChatCompletionResponse('kimi-k2'));
     });
 
   const stream = await provider.generate(systemPrompt, tools, history, options);
@@ -72,6 +90,36 @@ async function captureRequestBody(
     throw new Error('Expected provider.generate() to call chat.completions.create');
   }
   return capturedBody;
+}
+
+async function captureKimiMessages(
+  history: Message[],
+  configure?: (provider: KimiChatProvider) => KimiChatProvider,
+): Promise<Array<Record<string, unknown>>> {
+  let captured: Record<string, unknown> | undefined;
+  const create = vi.fn().mockImplementation((params: unknown) => {
+    captured = params as Record<string, unknown>;
+    return mockCreateResult(makeChatCompletionResponse('kimi-k2'));
+  });
+  let provider = new KimiChatProvider({
+    model: 'kimi-k2',
+    apiKey: 'test-key',
+    stream: false,
+    clientFactory: () => ({ chat: { completions: { create } } }) as never,
+  });
+  if (configure !== undefined) {
+    provider = configure(provider);
+  }
+
+  const response = await provider.generate('', [], history);
+  for await (const part of response) {
+    void part;
+  }
+
+  if (captured === undefined) {
+    throw new Error('Expected Kimi provider to send a request.');
+  }
+  return captured['messages'] as Array<Record<string, unknown>>;
 }
 
 const ADD_TOOL: Tool = {
@@ -577,6 +625,188 @@ describe('KimiChatProvider', () => {
         { role: 'user', content: 'Thanks!' },
       ]);
     });
+
+    it('preserves an explicitly empty reasoning field on a tool-call message', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: '' }],
+          toolCalls: [
+            { type: 'function', id: 'call_1', name: 'lookup', arguments: '{"q":"test"}' },
+          ],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        {
+          role: 'assistant',
+          reasoning_content: '',
+          tool_calls: [
+            {
+              type: 'function',
+              id: 'call_1',
+              function: { name: 'lookup', arguments: '{"q":"test"}' },
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('sends empty reasoning_content for an assistant tool call when preserved thinking is active', async () => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            { type: 'function', id: 'call_1', name: 'lookup', arguments: '{"q":"test"}' },
+          ],
+        },
+      ];
+
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+      );
+
+      expect(messages[0]).toHaveProperty('reasoning_content', '');
+    });
+
+    it('sends empty reasoning_content for a text assistant when keep=all omits thinking.type', async () => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Done.' }],
+          toolCalls: [],
+        },
+      ];
+
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { keep: 'all' } }),
+      );
+
+      expect(messages[0]).toHaveProperty('reasoning_content', '');
+    });
+
+    it('replays an existing empty ThinkPart unchanged when preserved thinking is active', async () => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: '' }],
+          toolCalls: [],
+        },
+      ];
+
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+      );
+
+      expect(messages[0]).toHaveProperty('reasoning_content', '');
+    });
+
+    it('replays aggregated empty ThinkParts unchanged when preserved thinking is active', async () => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: '' },
+            { type: 'think', think: '' },
+          ],
+          toolCalls: [],
+        },
+      ];
+
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+      );
+
+      expect(messages[0]).toHaveProperty('reasoning_content', '');
+    });
+
+    it('preserves non-empty reasoning when preserved thinking is active', async () => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: '' },
+            { type: 'think', think: 'reasoning text' },
+          ],
+          toolCalls: [],
+        },
+      ];
+
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+      );
+
+      expect(messages[0]).toHaveProperty('reasoning_content', 'reasoning text');
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['null', null],
+      ['false', false],
+      ['off', 'off'],
+    ])(
+      'does not backfill reasoning_content when thinking.keep is %s',
+      async (_kind, keep) => {
+        const history: Message[] = [
+          {
+            role: 'assistant',
+            content: [],
+            toolCalls: [
+              { type: 'function', id: 'call_1', name: 'lookup', arguments: '{"q":"test"}' },
+            ],
+          },
+        ];
+
+        const messages = await captureKimiMessages(history, (provider) =>
+          provider.withExtraBody({ thinking: { type: 'enabled', keep } }),
+        );
+
+        expect(messages[0]).not.toHaveProperty('reasoning_content');
+      },
+    );
+
+    it('does not backfill reasoning_content when thinking is disabled', async () => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            { type: 'function', id: 'call_1', name: 'lookup', arguments: '{"q":"test"}' },
+          ],
+        },
+      ];
+
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { type: 'disabled', keep: 'all' } }),
+      );
+
+      expect(messages[0]).not.toHaveProperty('reasoning_content');
+    });
+
+    it('does not backfill reasoning_content on non-assistant messages', async () => {
+      const history: Message[] = [
+        { role: 'system', content: [{ type: 'text', text: 'System.' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'User.' }], toolCalls: [] },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'Tool result.' }],
+          toolCalls: [],
+          toolCallId: 'call_1',
+        },
+      ];
+
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+      );
+
+      for (const message of messages) {
+        expect(message).not.toHaveProperty('reasoning_content');
+      }
+    });
   });
 
   describe('generation kwargs', () => {
@@ -721,7 +951,7 @@ describe('KimiChatProvider', () => {
 
       expect(getGenerationState(provider)).toEqual({
         extra_body: {
-          thinking: { type: 'enabled' },
+          thinking: { type: 'enabled', effort: 'high' },
         },
         max_tokens: 512,
       });
@@ -758,7 +988,7 @@ describe('KimiChatProvider', () => {
   });
 
   describe('with thinking', () => {
-    it('model without support_efforts omits effort', async () => {
+    it('sends concrete effort strings verbatim', async () => {
       const provider = createProvider().withThinking('high');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
@@ -766,12 +996,12 @@ describe('KimiChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       expect(body['reasoning_effort']).toBeUndefined();
-      expect(body['thinking']).toEqual({ type: 'enabled' });
+      expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high' });
       expect(body['extra_body']).toBeUndefined();
     });
 
     it('effort-capable model sends thinking.effort', async () => {
-      const provider = createProvider(false, ['low', 'high', 'max']).withThinking('high');
+      const provider = createProvider().withThinking('high');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
@@ -782,7 +1012,7 @@ describe('KimiChatProvider', () => {
     });
 
     it('effort-capable model passes max through to thinking.effort (no clamp)', async () => {
-      const provider = createProvider(false, ['low', 'high', 'max']).withThinking('max');
+      const provider = createProvider().withThinking('max');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
@@ -792,7 +1022,7 @@ describe('KimiChatProvider', () => {
     });
 
     it('hoists thinking disabled and clears reasoning_effort for off', async () => {
-      const provider = createProvider(false, ['low', 'high', 'max']).withThinking('off');
+      const provider = createProvider().withThinking('off');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
@@ -803,22 +1033,22 @@ describe('KimiChatProvider', () => {
       expect(body['extra_body']).toBeUndefined();
     });
 
-    it('effort-capable model omits effort for efforts not declared in support_efforts', async () => {
-      // 'xhigh' / 'on' / 'foo' are not in ['low', 'high', 'max'], so the
-      // provider normalizes them to "enabled, no effort" instead of rejecting.
+    it('omits the effort only for the boolean on signal', async () => {
       for (const effort of ['xhigh', 'on', 'foo']) {
-        const provider = createProvider(false, ['low', 'high', 'max']).withThinking(effort);
+        const provider = createProvider().withThinking(effort);
         const history: Message[] = [
           { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
         ];
         const body = await captureRequestBody(provider, '', [], history);
         expect(body['reasoning_effort']).toBeUndefined();
-        expect(body['thinking']).toEqual({ type: 'enabled' });
+        expect(body['thinking']).toEqual(
+          effort === 'on' ? { type: 'enabled' } : { type: 'enabled', effort },
+        );
       }
     });
 
     it('thinkingEffort property reflects the configured effort', () => {
-      const provider = createProvider(false, ['low', 'high', 'max']);
+      const provider = createProvider();
       expect(provider.thinkingEffort).toBeNull();
 
       expect(provider.withThinking('high').thinkingEffort).toBe('high');
@@ -827,17 +1057,15 @@ describe('KimiChatProvider', () => {
       expect(provider.withThinking('off').thinkingEffort).toBe('off');
     });
 
-    it("thinkingEffort falls back to 'on' when support_efforts is absent", () => {
+    it("thinkingEffort reports 'on' only for the boolean on signal", () => {
       const provider = createProvider();
-      // Without declared efforts the wire object carries no `effort`, so the
-      // getter reports boolean-thinking ("on") for any non-off effort.
-      expect(provider.withThinking('high').thinkingEffort).toBe('on');
+      expect(provider.withThinking('high').thinkingEffort).toBe('high');
       expect(provider.withThinking('on').thinkingEffort).toBe('on');
       expect(provider.withThinking('off').thinkingEffort).toBe('off');
     });
 
     it('replaces the previous thinking effort when called again', () => {
-      const provider = createProvider(false, ['low', 'high', 'max'])
+      const provider = createProvider()
         .withThinking('high')
         .withThinking('off');
 
@@ -876,7 +1104,7 @@ describe('KimiChatProvider', () => {
       const client = {
         chat: {
           completions: {
-            create: vi.fn().mockResolvedValue(makeChatCompletionResponse('kimi-k2')),
+            create: vi.fn().mockImplementation(() => mockCreateResult(makeChatCompletionResponse('kimi-k2'))),
           },
         },
       };
@@ -958,11 +1186,13 @@ describe('KimiChatProvider', () => {
   describe('non-stream response parsing', () => {
     it('yields text content from non-stream response', async () => {
       const provider = createProvider();
-      (provider as any)._client.chat.completions.create = vi.fn().mockResolvedValue({
-        id: 'chatcmpl-123',
-        choices: [{ message: { role: 'assistant', content: 'Hello world' } }],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-      });
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [{ message: { role: 'assistant', content: 'Hello world' } }],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+      );
 
       const stream = await provider.generate(
         '',
@@ -987,19 +1217,21 @@ describe('KimiChatProvider', () => {
 
     it('yields reasoning_content as ThinkPart', async () => {
       const provider = createProvider();
-      (provider as any)._client.chat.completions.create = vi.fn().mockResolvedValue({
-        id: 'chatcmpl-123',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: 'The answer is 4.',
-              reasoning_content: 'Let me think about this...',
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'The answer is 4.',
+                reasoning_content: 'Let me think about this...',
+              },
             },
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-      });
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+      );
 
       const stream = await provider.generate(
         '',
@@ -1016,6 +1248,305 @@ describe('KimiChatProvider', () => {
         { type: 'think', think: 'Let me think about this...' },
         { type: 'text', text: 'The answer is 4.' },
       ]);
+    });
+
+    it('yields an empty ThinkPart when reasoning_content is explicitly empty', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-empty-reasoning',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                reasoning_content: '',
+                tool_calls: [
+                  {
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{"q":"test"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      );
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([
+        { type: 'think', think: '' },
+        {
+          type: 'function',
+          id: 'call_1',
+          name: 'lookup',
+          arguments: '{"q":"test"}',
+        },
+      ]);
+    });
+
+    it('yields reasoning as ThinkPart (vLLM wire field)', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'The answer is 4.',
+                reasoning: 'Let me think about this...',
+              },
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+      );
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([
+        { type: 'think', think: 'Let me think about this...' },
+        { type: 'text', text: 'The answer is 4.' },
+      ]);
+    });
+
+    it('prefers reasoning_content when both fields are present', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'A',
+                reasoning_content: 'from reasoning_content',
+                reasoning: 'from reasoning',
+              },
+            },
+          ],
+        }),
+      );
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([
+        { type: 'think', think: 'from reasoning_content' },
+        { type: 'text', text: 'A' },
+      ]);
+    });
+
+    it('falls back to reasoning when reasoning_content is null', async () => {
+      // Current vLLM emits a compatibility `reasoning_content: null` alongside
+      // the real `reasoning` string; the null must fall through.
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-123',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'A',
+                reasoning_content: null,
+                reasoning: 'from reasoning',
+              },
+            },
+          ],
+        }),
+      );
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([
+        { type: 'think', think: 'from reasoning' },
+        { type: 'text', text: 'A' },
+      ]);
+    });
+  });
+
+  describe('reasoning key dialect', () => {
+    const THINK_HISTORY: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: 'hmm' },
+          { type: 'text', text: 'ok' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    it('echoes thinking under reasoning after a non-stream response used that field', async () => {
+      const provider = createProvider();
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return mockCreateResult({
+            id: 'chatcmpl-r',
+            choices: [
+              { message: { role: 'assistant', content: 'ok', reasoning: 'hmm' } },
+            ],
+          });
+        });
+
+      // Detection happens while draining the first response.
+      const first = await provider.generate('', [], []);
+      for await (const part of first) void part;
+
+      const second = await provider.generate('', [], THINK_HISTORY);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+
+    it('detects the dialect from streaming deltas and echoes it on the next request', async () => {
+      const provider = createProvider(true);
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          async function* chunks(): AsyncIterable<Record<string, unknown>> {
+            yield { id: 'chatcmpl-s', choices: [{ index: 0, delta: { reasoning: 'hmm' } }] };
+            yield {
+              id: 'chatcmpl-s',
+              choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }],
+            };
+          }
+          return mockCreateResult(chunks());
+        });
+
+      const first = await provider.generate('', [], []);
+      const firstParts = [];
+      for await (const part of first) firstParts.push(part);
+      expect(firstParts).toEqual([
+        { type: 'think', think: 'hmm' },
+        { type: 'text', text: 'ok' },
+      ]);
+
+      const second = await provider.generate('', [], THINK_HISTORY);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+
+    it('defaults to reasoning_content before any detection', async () => {
+      const provider = createProvider();
+      let captured: Record<string, unknown> | undefined;
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured = params as Record<string, unknown>;
+          return mockCreateResult(makeChatCompletionResponse('kimi-k2'));
+        });
+
+      const stream = await provider.generate('', [], THINK_HISTORY);
+      for await (const part of stream) void part;
+
+      const messages = captured?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning_content: 'hmm' });
+    });
+
+    it('dialect detected on a per-step clone steers the original provider', async () => {
+      const original = createProvider();
+      const captured: Array<Record<string, unknown>> = [];
+      (original as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return mockCreateResult({
+            id: 'chatcmpl-r',
+            choices: [{ message: { role: 'assistant', content: 'ok', reasoning: 'hmm' } }],
+          });
+        });
+
+      // The per-step clone shares `_client` (mocked above) and must also share
+      // the dialect cell: learning on the clone steers the original.
+      const clone = original.withMaxCompletionTokens(2048);
+      const first = await clone.generate('', [], []);
+      for await (const part of first) void part;
+
+      const second = await original.generate('', [], THINK_HISTORY);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+  });
+
+  describe('trace id capture', () => {
+    it('reads x-trace-id from a non-stream response', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation(() => mockCreateResult(makeChatCompletionResponse('kimi-k2'), 'trace-abc'));
+
+      const stream = await provider.generate('', [], []);
+      for await (const part of stream) void part;
+
+      expect(stream.traceId).toBe('trace-abc');
+    });
+
+    it('reads x-trace-id from a streaming response before the body is drained', async () => {
+      const provider = createProvider(true);
+      async function* chunks(): AsyncIterable<Record<string, unknown>> {
+        yield {
+          id: 'chatcmpl-stream',
+          choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: 'stop' }],
+        };
+      }
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation(() => mockCreateResult(chunks(), 'trace-stream'));
+
+      const stream = await provider.generate('', [], []);
+      // The header arrives with the response, before any streamed part.
+      expect(stream.traceId).toBe('trace-stream');
+      for await (const part of stream) void part;
+      expect(stream.traceId).toBe('trace-stream');
+    });
+
+    it('reports null when the response carries no x-trace-id header', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation(() => mockCreateResult(makeChatCompletionResponse('kimi-k2')));
+
+      const stream = await provider.generate('', [], []);
+      for await (const part of stream) void part;
+
+      expect(stream.traceId).toBeNull();
+    });
+
+    it('generate() carries traceId onto the result and fires onTraceId once headers arrive', async () => {
+      const provider = createProvider();
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation(() => mockCreateResult(makeChatCompletionResponse('kimi-k2'), 'trace-gen'));
+
+      const traceIds: Array<string | null> = [];
+      const result = await generate(provider, '', [], [], undefined, {
+        onTraceId: (traceId) => traceIds.push(traceId),
+      });
+
+      expect(traceIds).toEqual(['trace-gen']);
+      expect(result.traceId).toBe('trace-gen');
     });
   });
 
@@ -1057,6 +1588,25 @@ describe('KimiChatProvider', () => {
       }
     }
 
+    it('yields an empty ThinkPart from an explicitly empty streaming delta', async () => {
+      const provider = createProvider(true);
+      const chunks = [
+        {
+          id: 'chatcmpl-empty-reasoning',
+          choices: [{ index: 0, delta: { reasoning_content: '' }, finish_reason: null }],
+        },
+      ];
+      (
+        provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream(chunks)));
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([{ type: 'think', think: '' }]);
+    });
+
     it('buffers indexed argument deltas until the real tool name arrives', async () => {
       const provider = createProvider(true);
 
@@ -1070,7 +1620,7 @@ describe('KimiChatProvider', () => {
 
       (
         provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
-      )._client.chat.completions.create = vi.fn().mockResolvedValue(mockStream(chunks));
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream(chunks)));
 
       const result = await generate(
         provider,
@@ -1102,7 +1652,7 @@ describe('KimiChatProvider', () => {
 
       (
         provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
-      )._client.chat.completions.create = vi.fn().mockResolvedValue(mockStream(chunks));
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream(chunks)));
 
       const events: string[] = [];
       await generate(
@@ -1159,7 +1709,7 @@ describe('KimiChatProvider', () => {
 
       (
         provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
-      )._client.chat.completions.create = vi.fn().mockResolvedValue(mockStream(chunks));
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream(chunks)));
 
       const result = await generate(
         provider,
@@ -1234,7 +1784,7 @@ describe('KimiChatProvider', () => {
 
       (
         provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
-      )._client.chat.completions.create = vi.fn().mockResolvedValue(mockStream([singleChunk]));
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream([singleChunk])));
 
       // generate() uses the reducer which expects a ToolCall header before
       // accumulating arguments. A pure arg-only without a prior header is
@@ -1249,25 +1799,27 @@ describe('KimiChatProvider', () => {
 
     it('non-stream response with tool_calls yields ToolCall parts', async () => {
       const provider = createProvider(false);
-      (provider as any)._client.chat.completions.create = vi.fn().mockResolvedValue({
-        id: 'chatcmpl-nonstream',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  id: 'call_ns_a',
-                  type: 'function',
-                  function: { name: 'lookup', arguments: '{"q":"hi"}' },
-                },
-              ],
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-nonstream',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call_ns_a',
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{"q":"hi"}' },
+                  },
+                ],
+              },
             },
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-      });
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+      );
 
       const stream = await provider.generate(
         '',
@@ -1288,23 +1840,25 @@ describe('KimiChatProvider', () => {
 
     it('non-stream response generates UUID when tool_call has no id', async () => {
       const provider = createProvider(false);
-      (provider as any)._client.chat.completions.create = vi.fn().mockResolvedValue({
-        id: 'chatcmpl-uuid',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  type: 'function',
-                  function: { name: 'lookup', arguments: '{}' },
-                },
-              ],
+      (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
+        mockCreateResult({
+          id: 'chatcmpl-uuid',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{}' },
+                  },
+                ],
+              },
             },
-          },
-        ],
-      });
+          ],
+        }),
+      );
 
       const stream = await provider.generate(
         '',
@@ -1336,7 +1890,7 @@ describe('KimiChatProvider', () => {
 
   describe('withThinking medium', () => {
     it('maps medium -> thinking.effort=medium for an effort-capable model', () => {
-      const provider = createProvider(false, ['low', 'medium', 'high']).withThinking('medium');
+      const provider = createProvider().withThinking('medium');
       expect(provider.thinkingEffort).toBe('medium');
     });
   });
@@ -1354,7 +1908,7 @@ describe('KimiChatProvider', () => {
     });
 
     it('field-merges thinking when called after withThinking', async () => {
-      const provider = createProvider(false, ['low', 'high', 'max'])
+      const provider = createProvider()
         .withThinking('high')
         .withExtraBody({ thinking: { keep: 'all' } });
       const history: Message[] = [
@@ -1383,7 +1937,7 @@ describe('KimiChatProvider', () => {
         .withThinking('high');
 
       expect(getGenerationState(provider).extra_body).toEqual({
-        thinking: { type: 'enabled', keep: 'all' },
+        thinking: { type: 'enabled', effort: 'high', keep: 'all' },
       });
     });
 
@@ -1396,7 +1950,7 @@ describe('KimiChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['thinking']).toEqual({ type: 'enabled' });
+      expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high' });
     });
 
     it('treats empty thinking patch as noop, preserving prior withThinking', async () => {
@@ -1406,7 +1960,7 @@ describe('KimiChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['thinking']).toEqual({ type: 'enabled' });
+      expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high' });
     });
   });
 
@@ -1616,5 +2170,65 @@ describe('extractUsage', () => {
     const undef: unknown = undefined;
     expect(extractUsage(null)).toBeNull();
     expect(extractUsage(undef)).toBeNull();
+  });
+});
+
+describe('classifyKimiQuotaError', () => {
+  const QUOTA_MESSAGE =
+    'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details';
+  const TOKEN_QUOTA_MESSAGE =
+    'You exceeded your current token quota: <org-0123456789abcdef> 31275, please check your account balance';
+
+  function quota429(message: string, type?: string): OpenAIAPIError {
+    return new OpenAIAPIError(
+      429,
+      type === undefined ? undefined : { message, type },
+      `429 ${message}`,
+      new Headers(),
+    );
+  }
+
+  it('classifies a structured exceeded_current_quota_error body as quota-exhausted', () => {
+    const error = classifyKimiQuotaError(
+      quota429('Too many requests', 'exceeded_current_quota_error'),
+    );
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(error)).toBe(false);
+  });
+
+  it.each([QUOTA_MESSAGE, TOKEN_QUOTA_MESSAGE])(
+    'falls back to billing wording "%s" without a structured body',
+    (message) => {
+      expect(classifyKimiQuotaError(quota429(message))).toBeInstanceOf(
+        APIProviderQuotaExhaustedError,
+      );
+    },
+  );
+
+  it.each(['Too many requests', 'your token quota per minute was exceeded'])(
+    'answers undefined for transient 429 "%s"',
+    (message) => {
+      expect(classifyKimiQuotaError(quota429(message))).toBeUndefined();
+    },
+  );
+
+  it('answers undefined for non-429 and non-SDK shapes', () => {
+    expect(
+      classifyKimiQuotaError(new OpenAIAPIError(403, undefined, QUOTA_MESSAGE, new Headers())),
+    ).toBeUndefined();
+    expect(classifyKimiQuotaError(new Error(QUOTA_MESSAGE))).toBeUndefined();
+    expect(classifyKimiQuotaError(undefined)).toBeUndefined();
+  });
+
+  it('classifies the Anthropic SDK error shape (body nested under .error)', () => {
+    const source = AnthropicAPIError.generate(
+      429,
+      { type: 'error', error: { type: 'exceeded_current_quota_error', message: 'quota gone' } },
+      'Too many requests',
+      new Headers(),
+    );
+    const error = classifyKimiQuotaError(source);
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(error)).toBe(false);
   });
 });

@@ -18,7 +18,7 @@
  * `packages/agent-core/src/services/task/task.ts`.
  *
  * **Resolution**: `core` → `ISessionIndex` (existence, → 40401) →
- * `ISessionLifecycleService` (live session handle) → `IAgentLifecycleService`
+ * the live handler registry (live session handle) → `IAgentLifecycleService`
  * (the `main` agent) → `IAgentTaskService`. When the session is not live or
  * has no main agent yet (server-v2 gap G10 — the main agent is not created on
  * session creation), there is no task service: `list` returns an empty page
@@ -41,22 +41,23 @@
 import {
   IAgentTaskService,
   ISessionIndex,
-  ISessionLifecycleService,
+  getLiveSessionById,
   type AgentTaskInfo,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { ErrorCode } from '../protocol/error-codes';
 import {
-  ErrorCode,
   cancelTaskResultSchema,
   getTaskQuerySchema,
   getTaskResponseSchema,
   listTasksQuerySchema,
   listTasksResponseSchema,
-} from '@moonshot-ai/protocol';
-import type { Task, TaskKind, TaskStatus } from '@moonshot-ai/protocol';
+} from '../protocol/rest-task';
+import type { Task, TaskKind, TaskStatus } from '../protocol/task';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
@@ -255,7 +256,8 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      await resolved.tasks?.stop(task_id);
+      await resolved.tasks?.stopByUser(task_id);
+      requestLog(req)?.info({ session_id, task_id }, 'task cancelled');
       reply.send(okEnvelope({ cancelled: true as const }, req.id));
     },
   );
@@ -277,7 +279,7 @@ async function resolveSessionTasks(core: Scope, sid: string): Promise<ResolvedTa
   const summary = await core.accessor.get(ISessionIndex).get(sid);
   if (summary === undefined) return { kind: 'not_found' };
 
-  const session = core.accessor.get(ISessionLifecycleService).get(sid);
+  const session = getLiveSessionById(core.accessor, sid);
   if (session === undefined) return { kind: 'resolved', tasks: undefined };
   const agent = await ensureMainAgent(session);
   const tasks = agent.accessor.get(IAgentTaskService);

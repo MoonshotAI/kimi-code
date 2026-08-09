@@ -23,7 +23,7 @@ TOML 字段名一律用下划线（snake_case），如 `default_model`、`max_co
 以下示例覆盖最常用的配置项，可直接复制后按需修改：
 
 ```toml
-default_model = "kimi-code/kimi-for-coding"
+default_model = "kimi-code/k3"
 default_permission_mode = "manual"
 default_plan_mode = false
 merge_all_available_skills = true
@@ -33,6 +33,15 @@ telemetry = true
 type = "kimi"
 base_url = "https://api.kimi.com/coding/v1"
 api_key = ""
+
+[models."kimi-code/k3"]
+provider = "managed:kimi-code"
+model = "k3"
+max_context_size = 1048576
+capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
+display_name = "K3"
+support_efforts = [ "max" ]
+default_effort = "max"
 
 [models."kimi-code/kimi-for-coding"]
 provider = "managed:kimi-code"
@@ -52,7 +61,7 @@ effort = "high"
 keep = "all"
 
 [loop_control]
-max_retries_per_step = 3
+max_attempts_per_step = 10
 reserved_context_size = 50000
 
 [background]
@@ -89,20 +98,24 @@ timeout = 5
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | 默认模型别名，必须在 `models` 中定义 |
-| `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `manual`（逐次询问）、`auto`（自动批准读操作）、`yolo`（全部自动批准） |
+| `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `manual`（逐次询问）、`yolo`（自动批准工具操作，Agent 仍可能提问）、`auto`（完全自主，Agent 自己做决定，不再提问） |
 | `default_plan_mode` | `boolean` | `false` | 新会话是否默认以 Plan 模式（先出计划再执行）启动 |
 | `merge_all_available_skills` | `boolean` | `true` | 是否合并所有目录中的 Agent Skills |
 | `extra_skill_dirs` | `array<string>` | — | 额外 Skill 搜索目录，叠加到默认目录之上 |
+| `extra_agent_dirs` | `array<string>` | — | 额外自定义 Agent 搜索目录，叠加到默认目录之上 |
+| `builtin_product_skills` | `boolean` | `true` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills：`update-config`、`custom-theme`、`mcp-config`、`check-kimi-code-docs`、`import-from-cc-codex`。关闭后它们的名称和描述不再进入系统提示词，代价是失去这些任务的引导流程。默认的 `agent-core-v2` 引擎会读取本字段；设置 `KIMI_CODE_LEGACY_FLAG=1` 选择旧版引擎时会忽略 |
 | `telemetry` | `boolean` | `true` | 是否启用匿名遥测；显式设为 `false` 时关闭 |
 | `providers` | `table` | `{}` | API 供应商表 → [`providers`](#providers) |
 | `models` | `table` | — | 模型别名表 → [`models`](#models) |
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |
-| `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop_control) |
+| `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop-control) |
 | `background` | `table` | — | 后台任务运行参数 → [`background`](#background) |
+| `tools` | `table` | — | 全局工具开关 → [`tools`](#tools) |
 | `image` | `table` | — | 图片压缩参数 → [`image`](#image) |
 | `services` | `table` | — | 内置外部服务配置 → [`services`](#services) |
 | `permission` | `table` | — | 初始权限规则 → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | 生命周期 hook，详见 [Hooks](../customization/hooks.md) |
+| `identity` | `table` | — | 自定义 Agent 身份 → [`identity`](#identity) |
 
 以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`image`、`services`、`permission` 等嵌套表逐一展开。
 
@@ -138,10 +151,13 @@ KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 | `provider` | `string` | 是 | 使用的供应商名称，必须在 `providers` 中定义 |
 | `model` | `string` | 是 | 调用 API 时实际传给服务端的模型 ID |
 | `max_context_size` | `integer` | 是 | 最大上下文长度（token 数），必须 ≥ 1 |
+| `max_input_size` | `integer` | 否 | 模型声明的单次请求输入上限（当低于总窗口时，如 gpt-5 的 400k 窗口 / 272k 输入）。压缩、上下文溢出检查和用量比率优先使用它；补全预算仍使用总窗口。解析时会被钳制到不超过 `max_context_size` |
 | `max_output_size` | `integer` | 否 | 单次请求的输出 token 上限（对应 `max_tokens`）。目前仅 `anthropic` 供应商读取。为 Claude 模型设置后，这个显式值会覆盖内置的服务端最大值 |
 | `capabilities` | `array<string>` | 否 | 显式追加的能力标签：`thinking`、`always_thinking`、`image_in`、`video_in`、`audio_in`、`tool_use`。与供应商自动识别的能力取并集，只能追加不能移除 |
-| `support_efforts` | `array<string>` | 否 | 模型目录声明的 Thinking 档位。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] support_efforts` |
+| `support_efforts` | `array<string>` | 否 | 模型接受的 Thinking 档位。对 `kimi` 而言，在运行时选择列表外的值会报错；模型解析时若配置值或之前的值不受目标模型支持，会回落到目标模型的 `default_effort`，并将该有效值同步给 UI。支持 Thinking 但没有此字段的 Kimi 模型使用布尔 `on` / `off`。其他 provider 在协议提供原生 effort 字段时会原样传递具体值；协议仅提供等级或 token budget 时，只做必要的格式转换。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] support_efforts` |
 | `default_effort` | `string` | 否 | 模型的默认 Thinking 档位。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] default_effort` |
+| `off_effort` | `string` | 否 | 关闭 Thinking 时在线上传输的 effort 编码（如 xai grok 的 `none`）。仅对声明了该编码的模型（catalog 会导入）有意义：设置后选择 Off 会发送这个值而不是省略 effort 字段——对默认就会推理的模型，这是真正关闭推理的唯一方式 |
+| `base_url` | `string` | 否 | 模型级端点覆盖（catalog 导入网关模型时写入，这些模型与供应商默认端点不同）。解析时优先于供应商的 `base_url`；仅在与 `protocol` 配合时生效 |
 | `display_name` | `string` | 否 | UI 中显示的名称，未设时回退到 `model` |
 | `reasoning_key` | `string` | 否 | 仅 `openai` 供应商。当网关用非标准字段名返回推理内容时才需要设置；默认自动识别 `reasoning_content` / `reasoning_details` / `reasoning` |
 | `adaptive_thinking` | `boolean` | 否 | 仅 `anthropic` 供应商。强制开启或关闭 adaptive thinking，覆盖按模型名推断的逻辑。省略时自动推断（Claude ≥ 4.6 使用 adaptive） |
@@ -170,9 +186,40 @@ max_context_size = 131072
 display_name = "Kimi for Coding (custom)"
 ```
 
-`[models."<alias>".overrides]` 接受普通模型字段，例如 `max_context_size`、`max_output_size`、`capabilities`、`display_name`、`reasoning_key`、`adaptive_thinking`、`support_efforts` 和 `default_effort`。不接受身份 / 路由字段：`provider`、`model`、`protocol` 和 `beta_api`。
+`[models."<alias>".overrides]` 接受普通模型字段，例如 `max_context_size`、`max_input_size`、`max_output_size`、`capabilities`、`display_name`、`reasoning_key`、`adaptive_thinking`、`support_efforts`、`default_effort` 和 `off_effort`。不接受身份 / 路由字段：`provider`、`model`、`protocol`、`beta_api` 和 `base_url`。
 
 无需修改配置文件也可以临时切换模型——通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
+
+## `secondary_model`
+
+次主力模型是主模型之外的第二个模型配置——通常是一个更便宜的模型，供不需要主模型能力的功能绑定使用。它目前的消费者是子 Agent 派生：设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；未设置时，子 Agent 继承主 Agent 的模型。
+
+这是默认绑定而非强制。实验功能启用后，`Agent` / `AgentSwarm` 工具会获得 `model` 参数（仅接受 `"secondary"` / `"primary"` 两个符号值），工具描述中也会列出可选模型并标注默认值。派生时按以下顺序解析子 Agent 的模型：工具调用显式传入的 `model` → 子 Agent profile 的 [`model_preference`](../customization/agents.md#agent-文件格式) → 已配置的次主力模型（默认）。其中 `"primary"` 指主 Agent 当前正在运行的模型，不一定是 `default_model`——例如会话中途用 `/model` 切换过模型。
+
+由于是否覆盖默认值由主 Agent 自行决定（工具描述仅建议常规任务用 `"secondary"`、困难或质量敏感的任务用 `"primary"`，不构成强制），用户没有单次派生级别的直接开关。想让某个子 Agent 使用主模型，可以在提示词中要求主 Agent 传入 `model: "primary"`，或在对应 profile 中设置 `model_preference: "primary"`。
+
+该功能目前是实验功能，默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用，或使用 master `KIMI_CODE_EXPERIMENTAL_FLAG=1`。它在包括交互式 TUI 在内的所有启动方式下生效。
+
+在交互式 TUI 中，可以使用 [`/secondary_model`](../reference/slash-commands.md) 命令打开模型选择器来设置该配置：选择后会写入本小节配置，并在当前会话立即生效——之后派生的子 Agent 会直接绑定新的次主力模型。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | — | [`[models]`](#models) 中已配置条目的别名，如 `kimi-code/kimi-k2.5`（不限 kimi 模型，可用任意供应商） |
+| `default_effort` | `string` | — | 子 Agent 绑定次主力模型时使用的 thinking effort。未设置时按"全局 `[thinking]` 配置 → 模型默认 effort"的链路解析，不再继承主 Agent 的 effort。与主模型的 thinking effort 语义一致：严格校验 effort 的模型（如 kimi 模型）在不支持该取值时回退到模型默认 effort，其他供应商的模型按原样发送给后端 |
+| 其他字段 | — | — | 接受 [`[models."<alias>".overrides]`](#models) 的全部字段（`max_context_size`、`max_output_size`、`support_efforts` 等），作为仅对子 Agent 生效的模型补丁 |
+
+`model` 之外的字段构成补丁：存在补丁字段时，运行时会在内存中合成一个派生模型条目（被指向条目的拷贝，补丁并入其 overrides 且补丁优先），子 Agent 实际绑定该派生条目；没有补丁字段时，子 Agent 直接绑定 `model` 指向的条目。派生条目只存在于内存中（不写回 `config.toml`），也不会出现在模型选择列表里。
+
+```toml
+[secondary_model]
+model = "kimi-code/kimi-k2.5"
+default_effort = "low"
+max_output_size = 8192
+```
+
+`model` / `default_effort` 可被环境变量 `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` 覆盖，优先级均高于配置文件。
+
+实验功能启用后，会话启动时会校验该配置：`model` 无法解析，或 `default_effort` 不在（应用补丁后的）模型 effort 列表中时，会在启动时显示警告（并通过会话警告 API 返回）。该检查仅为提示——配置有误的次主力模型仍会在派生子 Agent 时失败，派生错误中同样附带配置来源提示。
 
 ## `thinking`
 
@@ -181,7 +228,7 @@ display_name = "Kimi for Coding (custom)"
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `enabled` | `boolean` | `true` | 新会话是否默认开启 Thinking，设为 `false` 可强制关闭 |
-| `effort` | `string` | — | Thinking 强度（例如 `low`、`medium`、`high`、`xhigh`、`max`），实际可用等级取决于模型声明的 `support_efforts`，未识别的值会被供应商忽略 |
+| `effort` | `string` | — | Thinking 强度（例如 `low`、`medium`、`high`、`xhigh`、`max`）。非 Kimi provider 在上游协议接受具体 effort 值时不会改写该值；如果上游拒绝，请改成该模型支持的档位。协议仅提供等级或 token budget 时，仍需做格式转换。对于带 `support_efforts` 的 Kimi 模型，若该配置值不在列表中，会回落到模型默认档位；没有该列表的 Kimi 模型会把任意开启值视为布尔 `on` |
 | `keep` | `string` | `"all"` | 保留思考透传。在 `kimi` 上以 `thinking.keep` 发送；在 `anthropic`（Claude 以及 Kimi 的 Anthropic 兼容模式）上以 `context_management` 的 `clear_thinking_20251015` 编辑发送（开启 keep 会让 Anthropic 请求走 beta Messages API；关值可禁用 keep 并回到标准端点）。`"all"` 会保留历史轮次的思考内容（`reasoning_content` / Anthropic thinking blocks）；传入关值（`false`/`0`/`no`/`off`/`none`/`null`）可禁用。可被 `KIMI_MODEL_THINKING_KEEP` 覆盖；仅在 Thinking 开启时注入 |
 
 ### 已废弃字段
@@ -190,16 +237,32 @@ display_name = "Kimi for Coding (custom)"
 | --- | --- | --- |
 | `default_thinking` | 0.21.0 | 顶层布尔值，由 `[thinking] enabled` 取代。将 `default_thinking = true` 迁移为 `enabled = true`，`default_thinking = false` 迁移为 `enabled = false`。 |
 | `thinking.mode` | 0.21.0 | 可选值 `auto` / `on` / `off`，由 `[thinking] enabled` 取代。`mode = "off"` 改为 `enabled = false`；`mode = "on"` 和 `mode = "auto"` 等价于 `enabled = true`（默认值），可删除该行。 |
+| `loop_control.max_retries_per_step` | 0.32.0 | 由 `loop_control.max_attempts_per_step` 取代（该值本来就是含首次尝试的总尝试次数上限）。旧 key 不再生效，启动时会给出警告，请在 `config.toml` 中手动改名。 |
+| `loop_control.max_steps_per_run` | 0.32.0 | 由 `loop_control.max_steps_per_turn` 取代。旧 key 不再生效，启动时会给出警告，请在 `config.toml` 中手动改名。 |
 
 ## `loop_control`
 
-`loop_control` 控制 Agent 执行循环的步数上限、单步重试次数，以及触发上下文自动压缩的阈值。
+`loop_control` 控制 Agent 执行循环的步数上限、单步尝试次数上限，以及触发上下文自动压缩的阈值。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `max_steps_per_turn` | `integer` | — | 单轮最大步数；不设或设为 `0` 则无上限 |
-| `max_retries_per_step` | `integer` | `3` | 单步失败后的最大重试次数 |
+| `max_attempts_per_step` | `integer` | `10` | 单步失败后的最大总尝试次数（含首次尝试） |
 | `reserved_context_size` | `integer` | — | 预留给模型输出的 token 数；上下文窗口剩余量低于此值时触发自动压缩 |
+
+`max_steps_per_turn` 可被环境变量 `KIMI_LOOP_MAX_STEPS_PER_TURN` 覆盖，`max_attempts_per_step` 可被 `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` 覆盖，优先级均高于配置文件。旧的 `KIMI_LOOP_MAX_RETRIES_PER_STEP` 已废弃，但在新变量未设置时仍生效（启动时会给出警告）。
+
+重试仅针对瞬时故障——连接错误、超时、HTTP 429 限流和 5xx 服务端错误。账户额度耗尽或余额不足导致的 429 不会重试，会立即失败：在充值之前重试不可能成功。
+
+## `token_counting`
+
+`token_counting` 决定对外上报的上下文 token 计数——即上下文大小显示所基于的值。内部逻辑（自动压缩触发、预算、超限退避）始终同时使用供应商实测与估算，不受本配置影响。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `strategy` | `"measured+estimated" \| "measured" \| "estimated"` | `"measured+estimated"` | `measured+estimated` 上报实时大小——每次请求的供应商实测用量加上未实测尾部的估算——并以最近一次实测总量兜底；`measured` 只上报供应商实测，显示仅在每次请求完成后变化；`estimated` 忽略供应商实测、上报纯估算——适用于不上报用量或用量不可信的供应商 |
+
+`strategy` 可被环境变量 `KIMI_TOKEN_COUNTING_STRATEGY` 覆盖，优先级高于 `config.toml`。
 
 ## `background`
 
@@ -209,22 +272,75 @@ display_name = "Kimi for Coding (custom)"
 | --- | --- | --- | --- |
 | `max_running_tasks` | `integer` | — | 同时运行的最大后台任务数 |
 | `keep_alive_on_exit` | `boolean` | `false` | 会话关闭时是否保留仍在运行的后台任务。默认情况下，Kimi Code 会在进程退出前请求停止所有后台任务；只有希望任务在会话结束后继续运行时才设为 `true`。在 print 模式（`kimi -p`）下，本字段仅作为 `print_background_mode` 未设置时的兼容回退：`true` 等价于 `print_background_mode = "drain"` |
-| `bash_auto_background_on_timeout` | `boolean` | `true` | 前台 `Bash` 命令触及超时时间时，将其转为后台任务而不是直接终止：命令完成时 agent 会收到通知，转入后台的命令受 600s 默认后台超时约束。设为 `false` 则恢复超时即终止的行为 |
-| `print_background_mode` | `"exit" \| "drain" \| "steer"` | `"exit"` | 仅 print 模式（`kimi -p`）生效，决定主 agent 的 turn 结束后如何处理未返回的后台任务：`"exit"` 立即退出；`"drain"` 退出前等待所有后台任务进入终态（结果不回馈给主 agent）；`"steer"` 不退出，让后台任务完成时像后台子代理一样以合成 user 消息 steer 主 agent 进入新 turn，直到某 turn 结束时无未决后台任务或触及上限。设置后优先级高于 `keep_alive_on_exit` 的 print 回退 |
-| `print_wait_ceiling_s` | `integer` | `3600` | print 模式（`kimi -p`）下，`print_background_mode` 为 `"drain"` 或 `"steer"` 时，等待/steer 循环的墙钟上限（秒）。在非 print 模式或 `"exit"` 时无效 |
-| `print_max_turns` | `integer` | `50` | print 模式（`kimi -p`）且 `print_background_mode = "steer"` 时，允许由后台任务完成触发的新 turn 的最大数量，防止 steer 循环失控 |
+| `kill_grace_period_ms` | `integer` | `5000` | 会话关闭、手动停止或任务超时请求正常终止后，等待任务自行结束的宽限时间（毫秒）。超过该时间仍在运行时，Kimi Code 会尝试强制停止该任务 |
+| `bash_auto_background_on_timeout` | `boolean` | `true` | 前台 `Bash` 命令触及超时时间时，将其转为后台任务而不是直接终止：命令完成时 agent 会收到通知，转入后台的命令受 `bash_task_timeout_s` 默认后台超时约束。设为 `false` 则恢复超时即终止的行为 |
+| `bash_task_timeout_s` | `integer` | `600` | 后台 `Bash` 任务在调用未传 `timeout` 时的默认超时（秒）；前台命令超时转后台后也按此值重新计时。`0` 表示无超时——任务一直运行到自行结束或被模型手动停止。显式传入的 `timeout` 不受影响。在 print 模式（`kimi -p`）下未显式设置时默认为 `0` |
+| `print_background_mode` | `"exit" \| "drain" \| "steer"` | `"steer"` | 仅 print 模式（`kimi -p`）生效，决定主 agent 的 turn 结束后如何处理未返回的后台任务：`"exit"` 立即退出；`"drain"` 退出前等待所有后台任务进入终态（结果不回馈给主 agent）；`"steer"` 不退出，让后台任务完成时像后台子代理一样以合成 user 消息 steer 主 agent 进入新 turn，直到某 turn 结束时无未决后台任务或触及上限。设置后优先级高于 `keep_alive_on_exit` 的 print 回退 |
+| `print_wait_ceiling_s` | `integer` | `315360000` | print 模式（`kimi -p`）下，`print_background_mode` 为 `"drain"` 或 `"steer"` 时，等待/steer 循环的墙钟上限（秒；默认 10 年，近似不设限）。在非 print 模式或 `"exit"` 时无效 |
+| `print_max_turns` | `integer` | `100000` | print 模式（`kimi -p`）且 `print_background_mode = "steer"` 时，允许由后台任务完成触发的新 turn 的最大数量，防止 steer 循环失控（默认值近似不设限） |
 
-`keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，优先级高于配置文件。
+`keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，`max_running_tasks` 可被 `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` 覆盖，优先级均高于配置文件。
 
-在 print 模式（`kimi -p "<prompt>"`）下，Kimi Code 默认只跑一个非交互的单轮 turn，主 agent 一结束就退出（`print_background_mode = "exit"`）。如果你启动了后台任务（例如通过 `Agent(run_in_background=true)` 并发子代理，或 `Bash(run_in_background=true)` 的长命令）并希望它们跑完，可将 `print_background_mode` 设为 `"drain"`（等任务结束再退出，结果不回馈）或 `"steer"`（任务结束后把结果 steer 给主 agent，触发新 turn 继续处理）。`"steer"` 适合让主 agent 依据后台长任务（如训练、评测）的结果继续做后续步骤；其总耗时受 `print_wait_ceiling_s` 限制、额外 turn 数受 `print_max_turns` 限制。
+在 print 模式（`kimi -p "<prompt>"`）下，只要还有未决的后台任务，Kimi Code 在主 agent 的 turn 结束后不会退出：每个任务完成都会以合成 user 消息回馈给主 agent，steer 出新的 turn（默认 `print_background_mode = "steer"`），直到某 turn 结束时没有任何未决任务才退出。该循环受 `print_wait_ceiling_s` 与 `print_max_turns` 约束，默认值都近似不设限。print 模式下后台工作也不会被墙钟超时杀掉：后台 `Bash` 任务默认无超时（`bash_task_timeout_s = 0`），子代理默认无超时（`[subagent] timeout_ms = 0`），只有模型自己能停止任务。将 `print_background_mode` 设为 `"drain"` 可等待任务结束但不回馈结果，设为 `"exit"` 则在主 agent 结束后立即退出。
 
 ## `subagent`
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `timeout_ms` | `integer` | `7200000`（2 小时） | 单个子代理（`Agent` / `AgentSwarm`）允许运行的最长时间（毫秒）。超时后子代理以 `timed_out` 收尾。设为很大的值（例如 `259200000`，即 3 天）可近似取消上限。该值是后台任务管理器对每个子代理任务的 per-task timeout，因此对前台与后台子代理同时生效。注意：超过 `2147483647`（约 24.8 天）会被运行时钳成 1ms |
-
+| `timeout_ms` | `integer` | `7200000`（2 小时） | 单个子代理（`Agent` / `AgentSwarm`）允许运行的最长时间（毫秒）。超时后子代理以 `timed_out` 收尾。`0` 表示无超时——子代理一直运行到自行结束或被模型手动停止。该值是后台任务管理器对每个子代理任务的 per-task timeout，因此对前台与后台子代理同时生效。在 print 模式（`kimi -p`）下未显式设置时默认为 `0`。注意：超过 `2147483647`（约 24.8 天）的值会被运行时钳到约 24.8 天 |
 `timeout_ms` 可被环境变量 `KIMI_SUBAGENT_TIMEOUT_MS` 覆盖，优先级高于配置文件。
+
+## `mcp`
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `startup_timeout_ms` | `integer` | `30000`（30 秒） | 所有 MCP server 的全局默认连接（启动 + 工具发现）超时（毫秒），取值范围为 `1`–`2147483647`。`mcp.json` 中单个 server 的 `startupTimeoutMs` 始终优先于本节与环境变量；都未设置时使用默认值 |
+| `tool_timeout_ms` | `integer` | `60000`（60 秒） | 所有 MCP server 的全局默认单次工具调用超时（毫秒），取值范围为 `1`–`2147483647`。`mcp.json` 中单个 server 的 `toolTimeoutMs` 始终优先于本节与环境变量；都未设置时使用客户端内置默认值 |
+
+`startup_timeout_ms` 和 `tool_timeout_ms` 可分别被环境变量 `KIMI_MCP_STARTUP_TIMEOUT_MS` 和 `KIMI_MCP_TOOL_TIMEOUT_MS` 覆盖，优先级高于配置文件。MCP server 的完整配置方式见 [MCP](../customization/mcp.md)。
+
+## `identity`
+
+自定义 Agent 的身份标识。不设置时行为完全不变。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `name` | `string` | — | Agent 在系统提示词中的自称（填充 `${product_name}` 变量，你自己的 `SYSTEM.md` 和 agent 文件同样适用） |
+| `slug` | `string` | 由 `name` 派生 | 协议字段中使用的机器标识：发给第三方 provider 的 `User-Agent` 产品名，以及连接 MCP 服务器时声明的客户端名。省略时由 `name` 派生：转小写，连续的非字母数字字符折叠为 `-` |
+
+```toml
+[identity]
+name = "Acme Dev Agent"
+slug = "acme-dev"        # 可选
+```
+
+两个字段都可以通过 `KIMI_CODE_IDENTITY_NAME` 和 `KIMI_CODE_IDENTITY_SLUG` 环境变量设置，优先级高于 `config.toml`，且不会被写回配置文件——适合不便写配置文件的容器和 CI 场景。
+
+如果名称中不含任何 ASCII 字母或数字（例如纯中文名称），就无法派生出 slug，此时回退为 `agent`；需要特定协议标识请显式填写 `slug`。
+
+身份在启动时解析一次，进程生命周期内保持不变——建立连接时它已宣告给 MCP 服务器和 provider，中途无法更换。修改本节配置在下次启动时对新会话生效；resume 的会话保留录制时的系统提示词，因为其历史轮次本就以原身份自称。同理，已完成的 MCP OAuth 授权保留其授予时的客户端注册；重置该服务器的认证即可在新身份下重新注册。
+
+本节由默认的 `agent-core-v2` 引擎读取。设置 `KIMI_CODE_LEGACY_FLAG=1` 后，旧版 `kimi` / `kimi -p` 路径会忽略此配置；`kimi web` 始终使用 `agent-core-v2`。
+
+## `tools`
+
+`tools` 设置全局工具开关，对所有会话中的每个 Agent 生效，并在 Agent 自身的 `tools` / `disallowedTools` 策略之上再取一次交集。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | `array<string>` | — | 全局允许列表：非空时仅列出的工具可用；省略或设为空数组均表示不约束 |
+| `disabled` | `array<string>` | — | 全局禁止列表，在 `enabled` 之后应用 |
+
+工具名匹配规则与 Agent 文件中的同名字段一致：内置工具按名称精确匹配（如 `Read`），MCP 工具用 glob 匹配（如 `mcp__github__*`）。有三种写法永远匹配不到任何工具，出现时会给出警告：`mcp__` 模式之外使用通配符（`enabled = ["*"]` 会禁用所有工具，而 `disabled = ["*"]` 什么也禁不掉）；缺少工具段的 `mcp__` 字面量（`mcp__github` —— 匹配整个服务器要用 `mcp__github__*`）；以及任何已注册或内置工具都没有的名字（匹配区分大小写）。
+
+```toml
+[tools]
+disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
+```
+
+::: warning 注意
+与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节不仅决定模型能"看到"哪些工具，还会在执行前再次强制检查。[权限规则](#permission)仍是独立的控制层，用于决定哪些操作需要审批。
+:::
 
 ## `image`
 
@@ -257,6 +373,8 @@ display_name = "Kimi for Coding (custom)"
 | `api_key` | `string` | 否 | API 密钥 |
 | `oauth` | `table` | 否 | OAuth 凭据引用，结构同 `providers.*.oauth` |
 | `custom_headers` | `table<string, string>` | 否 | 请求时附加的自定义 HTTP 头 |
+
+`base_url` 和 `api_key` 也可由环境变量提供，环境变量优先于配置文件：`KIMI_WEB_SEARCH_BASE_URL` / `KIMI_WEB_SEARCH_API_KEY` 对应 `moonshot_search`，`KIMI_WEB_FETCH_BASE_URL` / `KIMI_WEB_FETCH_API_KEY` 对应 `moonshot_fetch`。`KIMI_WEB_SEARCH_BASE_URL` 和 `KIMI_WEB_FETCH_BASE_URL` 定义的是独立服务端点，因此文件中持久化的 API 密钥、OAuth 引用和自定义 header 都不会发送给它；该端点需要鉴权时，请同时设置对应的环境变量 API 密钥。只设置环境变量 API 密钥时，配置中的端点和自定义 header 保持不变，但两种配置凭据都会被替换。不写配置段、只通过环境变量设置 base URL 和 API 密钥，也可以启用对应服务。
 
 ```toml
 [services.moonshot_search]
@@ -309,12 +427,14 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `theme` | `string` | `auto` | 配色主题：`auto`（跟随终端）、`dark`、`light`，或[自定义主题](../customization/themes)的名字 |
+| `theme` | `string` | `auto` | 配色主题：`auto`（跟随终端）、`dark`、`light`，或[自定义主题](../customization/themes.md)的名字 |
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
 | `[editor].command` | `string` | `""` | 编写长输入用的外部编辑器命令；留空则回退到 `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
+| `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行展示哪些内置槽位及其顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`git`、`tips`。缺省保持默认布局；未知 id 跳过并告警 |
+| `[status_line].command` | `string` | `""` | 自定义状态栏命令。其 stdout 第一行替换状态栏第一行，stdin 会收到 JSON 快照（model、cwd、git 分支、permission 模式、plan 模式、上下文用量、session id、版本）。运行上限 300ms、每秒最多一次；失败时回退内置布局 |
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -330,6 +450,10 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+# [status_line]
+# items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]
+# command = "~/.kimi-code/statusline.sh"
 ```
 
 修改在下次启动时生效，或用 `/reload-tui` 立即生效（只重载 `tui.toml`）；`/reload` 会同时重载 `config.toml` 和 `tui.toml`。

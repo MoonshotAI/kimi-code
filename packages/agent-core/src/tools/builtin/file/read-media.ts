@@ -28,7 +28,6 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import type {
   ContentPart,
   ModelCapability,
-  VideoURLPart,
   VideoUploadInput as ProviderVideoUploadInput,
 } from '@moonshot-ai/kosong';
 import { z } from 'zod';
@@ -40,8 +39,10 @@ import type { TelemetryClient } from '../../../telemetry';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../../support/file-type';
+import { deliverVideoContent, type VideoUploader } from '../../support/video-delivery';
 import {
   IMAGE_BYTE_BUDGET,
+  MAX_IMAGE_DECODE_BYTES,
   compressImageForModel,
   cropImageForModel,
   formatByteSize,
@@ -61,11 +62,44 @@ import readMediaDescriptionHead from './read-media.md?raw';
 // ── Constants ────────────────────────────────────────────────────────
 
 const MAX_MEDIA_MEGABYTES = 100;
-const MAX_MEDIA_BYTES = MAX_MEDIA_MEGABYTES * 1024 * 1024;
+export const MAX_MEDIA_BYTES = MAX_MEDIA_MEGABYTES * 1024 * 1024;
+
+function buildImageDeliveryLimitError(input: {
+  readonly finalBytes: number;
+  readonly readByteBudget: number;
+  readonly maxEdge: number;
+}): string {
+  return (
+    `Image is too large to send safely after compression (${String(input.finalBytes)} bytes; ` +
+    `limit ${String(input.readByteBudget)} bytes and ${String(input.maxEdge)}px on the longest edge). ` +
+    'The original image was not sent to the model. Do not retry the same file unchanged. ' +
+    'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
+    'then call ReadMediaFile on the smaller copy.'
+  );
+}
+
+function buildImageDecodeLimitError(finalBytes: number): string {
+  return (
+    `Image is too large to process safely for region or full_resolution (${String(finalBytes)} bytes; ` +
+    `safe decode limit ${String(MAX_IMAGE_DECODE_BYTES)} bytes). ` +
+    'The original image was not sent to the model. Do not retry the same file unchanged. ' +
+    'Use Bash or an available image-processing tool to create a smaller copy or crop the needed ' +
+    'region into a separate image, then call ReadMediaFile on the resulting file.'
+  );
+}
+
+function buildFullResolutionLimitError(path: string, finalBytes: number): string {
+  return (
+    `"${path}" is ${String(finalBytes)} bytes (${formatByteSize(finalBytes)}), ` +
+    `over the ${String(IMAGE_BYTE_BUDGET)}-byte (${formatByteSize(IMAGE_BYTE_BUDGET)}) ` +
+    'per-image limit, so full_resolution cannot be honored. ' +
+    'Use region to view a crop at full fidelity instead.'
+  );
+}
 
 export type VideoUploadInput = ProviderVideoUploadInput;
 
-export type VideoUploader = (input: VideoUploadInput) => Promise<VideoURLPart>;
+export type { VideoUploader };
 
 // ── Input schema ─────────────────────────────────────────────────────
 
@@ -243,6 +277,26 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
     this.imageLimits = imageLimits ?? new ImageLimits();
   }
 
+  /**
+   * Deliver a video through the provider's upload channel when available,
+   * falling back to an inline base64 part when the channel is missing or
+   * broken (e.g. the provider has no files endpoint) — a failed upload must
+   * not turn the whole read into an error. Auth rejections (401/403) are
+   * the exception: they must surface, because they drive credential
+   * refresh and a clear auth error instead of masking a bad token behind
+   * an inline payload the next request will also reject.
+   */
+  private videoContentPart(
+    data: Buffer,
+    mimeType: string,
+    safePath: string,
+  ): Promise<ContentPart> {
+    return deliverVideoContent(
+      { data, mimeType, filename: safePath.split(/[\\/]/).at(-1) },
+      this.videoUploader,
+    );
+  }
+
   resolveExecution(args: ReadMediaFileInput): ToolExecution {
     const path = resolvePathAccessPath(args.path, {
       kaos: this.kaos,
@@ -348,6 +402,51 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
         };
       }
 
+      if (
+        fileType.kind === 'image' &&
+        stat.stSize > MAX_IMAGE_DECODE_BYTES &&
+        (args.region !== undefined || args.full_resolution === true)
+      ) {
+        return {
+          isError: true,
+          output: buildImageDecodeLimitError(stat.stSize),
+        };
+      }
+
+      if (
+        fileType.kind === 'image' &&
+        args.region === undefined &&
+        args.full_resolution === true &&
+        stat.stSize > IMAGE_BYTE_BUDGET
+      ) {
+        return {
+          isError: true,
+          output: buildFullResolutionLimitError(args.path, stat.stSize),
+        };
+      }
+
+      const defaultImageLimits =
+        fileType.kind === 'image' && args.region === undefined && args.full_resolution !== true
+          ? {
+              maxEdge: this.imageLimits.maxEdgePx(),
+              readByteBudget: this.imageLimits.readByteBudget(),
+            }
+          : undefined;
+      if (
+        defaultImageLimits !== undefined &&
+        stat.stSize > MAX_IMAGE_DECODE_BYTES &&
+        stat.stSize > defaultImageLimits.readByteBudget
+      ) {
+        return {
+          isError: true,
+          output: buildImageDeliveryLimitError({
+            finalBytes: stat.stSize,
+            readByteBudget: defaultImageLimits.readByteBudget,
+            maxEdge: defaultImageLimits.maxEdge,
+          }),
+        };
+      }
+
       const data = await this.kaos.readBytes(safePath);
       // The summary always reports the ORIGINAL pixel size and byte size: the
       // model derives relative coordinates and scales them by the original
@@ -394,11 +493,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           if (data.length > IMAGE_BYTE_BUDGET) {
             return {
               isError: true,
-              output:
-                `"${args.path}" is ${String(data.length)} bytes (${formatByteSize(data.length)}), ` +
-                `over the ${String(IMAGE_BYTE_BUDGET)}-byte (${formatByteSize(IMAGE_BYTE_BUDGET)}) ` +
-                'per-image limit, so full_resolution cannot be honored. ' +
-                'Use region to view a crop at full fidelity instead.',
+              output: buildFullResolutionLimitError(args.path, data.length),
             };
           }
           const base64 = Buffer.from(data).toString('base64');
@@ -418,14 +513,29 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           // tokens nor trips the provider's per-image byte ceiling. Model-read
           // images get the much tighter read budget: they accumulate in the
           // request body on every turn, and detail stays reachable through the
-          // region readback (which ignores the budget). Best effort: on any
-          // failure compressImageForModel returns the original bytes, so the
-          // read still succeeds with the uncompressed image.
+          // region readback (which ignores the budget). The compressor is
+          // best-effort and may return the original bytes after a safety guard
+          // or codec failure, so enforce both delivery limits before creating
+          // any model-visible media part.
+          const { maxEdge, readByteBudget } = defaultImageLimits!;
           const compressed = await compressImageForModel(data, fileType.mimeType, {
-            maxEdge: this.imageLimits.maxEdgePx(),
-            byteBudget: this.imageLimits.readByteBudget(),
+            maxEdge,
+            byteBudget: readByteBudget,
             telemetry: this.compressTelemetry,
           });
+          if (
+            compressed.finalByteLength > readByteBudget ||
+            Math.max(compressed.width, compressed.height) > maxEdge
+          ) {
+            return {
+              isError: true,
+              output: buildImageDeliveryLimitError({
+                finalBytes: compressed.finalByteLength,
+                readByteBudget,
+                maxEdge,
+              }),
+            };
+          }
           const base64 = Buffer.from(compressed.data).toString('base64');
           mediaPart = {
             type: 'image_url',
@@ -444,18 +554,8 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             dimensions = { width: compressed.originalWidth, height: compressed.originalHeight };
           }
         }
-      } else if (this.videoUploader !== undefined) {
-        mediaPart = await this.videoUploader({
-          data,
-          mimeType: fileType.mimeType,
-          filename: safePath.split(/[\\/]/).at(-1),
-        });
       } else {
-        const base64 = data.toString('base64');
-        mediaPart = {
-          type: 'video_url',
-          videoUrl: { url: `data:${fileType.mimeType};base64,${base64}` },
-        };
+        mediaPart = await this.videoContentPart(data, fileType.mimeType, safePath);
       }
 
       const tag = fileType.kind === 'image' ? 'image' : 'video';

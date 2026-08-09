@@ -4,7 +4,7 @@ import {
   ChatProviderError,
   normalizeAPIStatusError,
 } from '#/errors';
-import type { Message, StreamedMessagePart, ToolCall } from '#/message';
+import type { Message, StreamedMessagePart, ThinkPart, ToolCall } from '#/message';
 import { isToolDeclarationOnlyMessage } from '#/message';
 import type {
   ChatProvider,
@@ -148,6 +148,7 @@ interface GoogleContent {
 
 interface GooglePart {
   text?: string;
+  thought?: boolean;
   functionCall?: { name: string; args: Record<string, unknown> };
   functionResponse?: {
     name: string;
@@ -162,14 +163,18 @@ function toolCallIdToName(toolCallId: string, toolNameById: Map<string, string>)
   const name = toolNameById.get(toolCallId);
   if (name !== undefined) return name;
   // Fallback: ids produced by this provider follow the format
-  // "{tool_name}_{id_suffix}" where `tool_name` may itself contain
-  // underscores (e.g. `fetch_image`) and `id_suffix` is a single trailing
-  // token without underscores (e.g. a random hex / UUID fragment). We strip
-  // the last "_<suffix>" segment by matching it explicitly — splitting on
-  // the first underscore would truncate multi-word tool names like
-  // `fetch_image_<id>` to just `fetch`.
-  const match = /^(.+)_[^_]+$/.exec(toolCallId);
-  return match?.[1] ?? toolCallId;
+  // "{tool_name}_{upstream_id}_{entropy}" where `tool_name` may itself
+  // contain underscores (e.g. `fetch_image`) and `entropy` is the fixed
+  // 8-hex-char suffix this provider appends for cross-turn uniqueness. Strip
+  // the entropy suffix first, then the trailing "_<upstream_id>" segment by
+  // matching it explicitly — splitting on the first underscore would truncate
+  // multi-word tool names like `fetch_image_<id>` to just `fetch`. (Pre-entropy
+  // ids of the form "{tool_name}_{id_suffix}" still parse: a trailing 8-hex
+  // segment is indistinguishable from the entropy suffix, and stripping it
+  // recovers the same name the old single-suffix shape did.)
+  const withoutEntropy = toolCallId.replace(/_[0-9a-f]{8}$/, '');
+  const match = /^(.+)_[^_]+$/.exec(withoutEntropy);
+  return match?.[1] ?? withoutEntropy;
 }
 
 /**
@@ -256,9 +261,14 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
       case 'text':
         parts.push({ text: part.text });
         break;
-      case 'think':
-        // Skip think parts (synthetic)
+      case 'think': {
+        const thoughtPart: GooglePart = { text: part.think, thought: true };
+        if (part.encrypted !== undefined && part.encrypted.length > 0) {
+          thoughtPart.thoughtSignature = part.encrypted;
+        }
+        parts.push(thoughtPart);
         break;
+      }
       case 'image_url':
         parts.push(convertMediaUrl(part.imageUrl.url, 'image/jpeg'));
         break;
@@ -569,26 +579,38 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
 
       for (const part of contentParts) {
         const p = part as Record<string, unknown>;
-        if (p['thought'] === true && p['text']) {
-          parts.push({ type: 'think', think: p['text'] as string });
+        if (p['thought'] === true && typeof p['text'] === 'string') {
+          const thoughtSignature = p['thoughtSignature'] ?? p['thought_signature'];
+          const thinkPart: ThinkPart = { type: 'think', think: p['text'] };
+          if (typeof thoughtSignature === 'string' && thoughtSignature.length > 0) {
+            thinkPart.encrypted = thoughtSignature;
+          }
+          parts.push(thinkPart);
         } else if (p['text']) {
           parts.push({ type: 'text', text: p['text'] as string });
         } else if (p['functionCall'] || p['function_call']) {
           const fc = (p['functionCall'] ?? p['function_call']) as Record<string, unknown>;
           const name = fc['name'] as string;
           if (!name) continue;
+          // The upstream function-call id is only unique within its own
+          // response (some backends re-issue small ids like "0" every turn),
+          // so `${name}_${id}` collided across turns — two AgentSwarm calls in
+          // different turns both became `AgentSwarm_0` and the web client
+          // merged their member lists into one card. Append entropy so ids
+          // stay unique across the whole session.
           const id_ = (fc['id'] as string) ?? crypto.randomUUID();
-          const toolCallId = `${name}_${id_}`;
+          const toolCallId = `${name}_${id_}_${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}`;
           const thoughtSigB64 = p['thoughtSignature'] ?? p['thought_signature'];
-          parts.push({
+          const toolCall: ToolCall = {
             type: 'function',
             id: toolCallId,
             name,
             arguments: fc['args'] ? JSON.stringify(fc['args']) : '{}',
-            ...(thoughtSigB64
-              ? { extras: { thought_signature_b64: thoughtSigB64 as string } }
-              : {}),
-          } satisfies ToolCall);
+          };
+          if (typeof thoughtSigB64 === 'string' && thoughtSigB64.length > 0) {
+            toolCall.extras = { thought_signature_b64: thoughtSigB64 };
+          }
+          parts.push(toolCall);
         }
       }
     }

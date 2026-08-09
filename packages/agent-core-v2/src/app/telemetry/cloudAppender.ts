@@ -1,9 +1,9 @@
 /**
- * `telemetry` domain (L1) — `CloudAppender`, an `ITelemetryAppender` that
+ * `telemetry` domain — `CloudAppender`, an `ITelemetryAppender` that
  * batches events, drops non-primitive properties, redacts PII from string
  * values, enriches events with common context, and posts them to the
  * telemetry endpoint through `CloudTransport`, which persists failed events
- * through the `storage` byte layer. Reads host facts (`clientVersion`, env,
+ * through the `storage` byte layer. Reads host facts (`clientIdentity`, env,
  * platform/arch) from `IBootstrapService`; `createCloudAppender` assembles
  * one from a `ServicesAccessor` so hosts only supply identity facts.
  * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
@@ -51,10 +51,6 @@ export interface CloudAppenderOptions {
   readonly now?: () => number;
 }
 
-/**
- * Host identity facts the engine cannot resolve on its own. Everything else
- * (storage, client version, env, platform) comes from the accessor.
- */
 export interface CloudAppenderHostOptions {
   readonly deviceId: string;
   readonly appName: string;
@@ -65,11 +61,6 @@ export interface CloudAppenderHostOptions {
   readonly getAccessToken?: () => string | null | Promise<string | null>;
 }
 
-/**
- * Assemble a `CloudAppender` from the accessor's registered services plus
- * host identity facts. The accessor is only read synchronously during this
- * call — never stash it.
- */
 export function createCloudAppender(
   accessor: ServicesAccessor,
   host: CloudAppenderHostOptions,
@@ -114,10 +105,11 @@ export class CloudAppender implements ITelemetryAppender {
   }
 
   track(event: string, properties?: TelemetryProperties): void {
+    const eventSessionId = properties?.['sessionId'];
     const enriched: EnrichedCloudEvent = {
       event_id: randomUUID().replaceAll('-', ''),
       device_id: this.deviceId,
-      session_id: this.sessionId,
+      session_id: typeof eventSessionId === 'string' ? eventSessionId : this.sessionId,
       event,
       timestamp: Date.now() / 1000,
       properties: cleanTelemetryProperties(sanitizeProperties(properties)),
@@ -137,6 +129,10 @@ export class CloudAppender implements ITelemetryAppender {
     const sessionId = patch['sessionId'];
     if (typeof sessionId === 'string') {
       this.sessionId = sessionId;
+    }
+    const model = patch['model'];
+    if (typeof model === 'string') {
+      setPrimitive(this.context, 'model', model);
     }
   }
 
@@ -190,9 +186,8 @@ function buildContext(options: CloudAppenderOptions): CloudContext {
   const { bootstrap } = options;
   const context: CloudContext = {
     app_name: options.appName,
-    client_version: bootstrap.clientVersion,
-    // `version` is kept as a backward-compatible alias of `client_version`.
-    version: bootstrap.clientVersion,
+    client_version: bootstrap.clientIdentity.version,
+    version: bootstrap.clientIdentity.version,
     core_version: resolveCoreVersion(),
     runtime: 'node',
     platform: bootstrap.platform,

@@ -1,11 +1,10 @@
 /**
- * `tool` domain (L3) — runtime tool-args validation.
+ * `tool` domain — runtime tool-args validation.
  *
  * Compiles tool-parameter JSON Schemas into AJV validators (draft-07 /
  * 2019-09 / 2020-12 detected per schema) and formats validation failures
- * into model-readable messages. Only the executor path loads this module,
- * so the AJV instances are paid for once, at execution time. Pure helper;
- * no scoped service.
+ * into model-readable messages. The AJV instances are paid for once, at
+ * execution time. Pure helper; no scoped service.
  */
 
 import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';
@@ -35,8 +34,6 @@ const DRAFT_2019_KEYWORDS = new Set([
 
 const DRAFT_2020_KEYWORDS = new Set(['prefixItems', '$dynamicAnchor', '$dynamicRef']);
 
-// Mixing JSON Schema dialects in a single Ajv instance is unsafe because
-// keyword semantics differ, e.g. draft-07 tuple `items` vs 2020-12 `prefixItems`.
 function ajvFor(schema: Record<string, unknown>): Ajv | Ajv2019 | Ajv2020 {
   const $schema = schema['$schema'];
   if (typeof $schema === 'string') {
@@ -63,10 +60,8 @@ function containsSchemaKeyword(value: unknown, keywords: ReadonlySet<string>): b
 
 export type JsonType = null | number | string | boolean | JsonArray | JsonObject;
 
-/** @internal */
 export interface JsonArray extends Array<JsonType> {}
 
-/** @internal */
 export interface JsonObject extends Record<string, JsonType> {}
 
 export type ToolArgsValidator = ValidateFunction<JsonType>;

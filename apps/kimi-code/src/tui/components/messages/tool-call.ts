@@ -28,6 +28,7 @@ import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
+import { formatTokenCount } from '#/utils/usage/usage-format';
 
 import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
@@ -42,6 +43,7 @@ const MAX_SUB_TOOL_CALLS_SHOWN = 4;
 // cannot wrap the header onto a second row and break the card's stable height.
 const MAX_SUBAGENT_DESCRIPTION_LENGTH = 60;
 const APPROVED_PLAN_MARKER = '## Approved Plan:';
+const AUTO_APPROVED_PLAN_MARKER = '## Plan (auto-approved, not user-reviewed):';
 const STREAMING_PROGRESS_INTERVAL_MS = 1000;
 const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 const ABORTED_MARK = '⊘';
@@ -91,6 +93,8 @@ export interface ToolCallSubagentSnapshot {
   readonly toolName: string;
   readonly toolCallDescription: string;
   readonly agentName: string | undefined;
+  /** Display name of the model the subagent is bound to, when known (live only). */
+  readonly model?: string;
   readonly phase: SubagentPhase | undefined;
   readonly toolCount: number;
   readonly elapsedSeconds: number | undefined;
@@ -137,8 +141,7 @@ function str(v: unknown): string {
 
 function formatSubagentContextTokens(contextTokens: number | undefined): string | undefined {
   if (contextTokens === undefined || contextTokens <= 0) return undefined;
-  const formatted = contextTokens >= 1000 ? `${(contextTokens / 1000).toFixed(1)}k` : String(contextTokens);
-  return `${formatted} tok`;
+  return `${formatTokenCount(contextTokens)} tok`;
 }
 
 function usageInputTotal(usage: TokenUsage): number {
@@ -153,8 +156,7 @@ function usageTotal(usage: TokenUsage | undefined): number {
 function formatSubagentTokens(usage: TokenUsage | undefined): string | undefined {
   const total = usageTotal(usage);
   if (total <= 0) return undefined;
-  const formatted = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
-  return `${formatted} tok`;
+  return `${formatTokenCount(total)} tok`;
 }
 
 function formatByteSize(bytes: number): string {
@@ -171,13 +173,16 @@ function formatElapsed(seconds: number): string {
 }
 
 function extractApprovedPlan(output: string): string {
-  const markerIndex = output.indexOf(APPROVED_PLAN_MARKER);
+  const marker = output.includes(AUTO_APPROVED_PLAN_MARKER)
+    ? AUTO_APPROVED_PLAN_MARKER
+    : APPROVED_PLAN_MARKER;
+  const markerIndex = output.indexOf(marker);
   if (markerIndex < 0) return '';
-  return output.slice(markerIndex + APPROVED_PLAN_MARKER.length).trim();
+  return output.slice(markerIndex + marker.length).trim();
 }
 
 interface ExitPlanModeOutcome {
-  readonly kind: 'approved' | 'rejected';
+  readonly kind: 'approved' | 'auto_approved' | 'rejected';
   readonly chosen?: string;
   readonly feedback?: string;
   readonly path?: string;
@@ -193,11 +198,16 @@ const PLAN_SAVED_TO_RE = /\nPlan saved to: ([^\n]+)\n/;
 /**
  * Parses the ExitPlanMode result content string to recover the approval outcome
  * and optional plan path. Core-side templates live in
- * `packages/agent-core/src/tools/builtin/planning/exit-plan-mode.ts`:
+ * `packages/agent-core/src/tools/builtin/planning/exit-plan-mode.ts` and
+ * `.../agent/permission/policies/exit-plan-mode-review-ask.ts`:
  *   - Approved output starts with 'Exited plan mode.' and selected options
  *     are reported as 'Selected approach: <label>'. Older outputs may start
  *     with 'User approved option "<label>".' Plan-file mode may include
  *     'Plan saved to: <path>'.
+ *   - Auto-approved output (auto permission mode skips the review ask) also
+ *     starts with 'Exited plan mode.' but marks the plan body with
+ *     '## Plan (auto-approved, not user-reviewed):' instead of
+ *     '## Approved Plan:' — the user never saw or approved the plan.
  *   - Rejected output starts with 'Plan rejected by user.' or older
  *     'User rejected the plan.'; feedback uses 'User rejected the plan.
  *     Feedback:\n\n<text>'.
@@ -217,6 +227,11 @@ function interpretExitPlanModeOutcome(output: string): ExitPlanModeOutcome {
   }
   const pathMatch = PLAN_SAVED_TO_RE.exec(output);
   const path = pathMatch?.[1]?.trim();
+  if (output.includes(AUTO_APPROVED_PLAN_MARKER)) {
+    return path !== undefined && path.length > 0
+      ? { kind: 'auto_approved', path }
+      : { kind: 'auto_approved' };
+  }
   const optionMatch = SELECTED_APPROACH_RE.exec(output) ?? APPROVED_OPTION_RE.exec(output);
   if (optionMatch !== null) {
     return path !== undefined && path.length > 0
@@ -232,7 +247,8 @@ function isExitPlanModeOutcomeOutput(output: string): boolean {
     output.startsWith(PLAN_REJECT_PREFIX) ||
     output.startsWith('Exited plan mode.') ||
     APPROVED_OPTION_RE.test(output) ||
-    output.includes(APPROVED_PLAN_MARKER)
+    output.includes(APPROVED_PLAN_MARKER) ||
+    output.includes(AUTO_APPROVED_PLAN_MARKER)
   );
 }
 
@@ -581,6 +597,8 @@ export class ToolCallComponent extends Container {
   private backgroundTaskTerminalPhase: 'done' | 'failed' | undefined;
   private subagentContextTokens: number | undefined;
   private subagentUsage: TokenUsage | undefined;
+  /** Display name of the model the subagent is bound to (from its `agent.status.updated`). */
+  private subagentModel: string | undefined;
   private subagentResultSummary: string | undefined;
   private subagentError: string | undefined;
   private streamingProgressTimer: ReturnType<typeof setInterval> | undefined;
@@ -884,6 +902,7 @@ export class ToolCallComponent extends Container {
       toolName: this.toolCall.name,
       toolCallDescription: str(this.toolCall.args['description']) || str(this.toolCall.description),
       agentName: this.subagentAgentName,
+      model: this.subagentModel,
       phase: derivedPhase,
       toolCount: finished,
       elapsedSeconds: this.getSubagentElapsedSeconds(),
@@ -1148,12 +1167,16 @@ export class ToolCallComponent extends Container {
   updateSubagentMetrics(payload: {
     contextTokens?: number | undefined;
     usage?: TokenUsage | undefined;
+    modelDisplay?: string | undefined;
   }): void {
     if (payload.contextTokens !== undefined && payload.contextTokens > 0) {
       this.subagentContextTokens = payload.contextTokens;
     }
     if (payload.usage !== undefined) {
       this.subagentUsage = payload.usage;
+    }
+    if (payload.modelDisplay !== undefined) {
+      this.subagentModel = payload.modelDisplay;
     }
     this.headerText.setText(this.buildHeader());
     this.invalidate();
@@ -1425,6 +1448,11 @@ export class ToolCallComponent extends Container {
             ? `Approved: ${outcome.chosen}`
             : 'Approved';
         return `${label}${currentTheme.fg('success', ` · ${chipText}`)}`;
+      }
+      if (outcome.kind === 'auto_approved') {
+        // Auto permission mode let the plan through without user review —
+        // a warning-toned chip keeps "the user approved this" out of the UI.
+        return `${label}${currentTheme.fg('warning', ' · Auto-approved')}`;
       }
       return label;
     }
@@ -1765,9 +1793,9 @@ export class ToolCallComponent extends Container {
   }
 
   private formatSingleSubagentStatsText(): string {
-    const parts = [
-      `${String(this.subToolActivities.size)} tool${this.subToolActivities.size === 1 ? '' : 's'}`,
-    ];
+    const parts: string[] = [];
+    if (this.subagentModel !== undefined) parts.push(this.subagentModel);
+    parts.push(`${String(this.subToolActivities.size)} tool${this.subToolActivities.size === 1 ? '' : 's'}`);
     const elapsed = this.getSubagentElapsedSeconds();
     if (elapsed !== undefined) parts.push(formatElapsed(elapsed));
     const tokens =
@@ -2297,9 +2325,7 @@ function computeLatestActivity(
 }
 
 function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tok`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k tok`;
-  return `${String(n)} tok`;
+  return `${formatTokenCount(n)} tok`;
 }
 
 function formatActivityLine(

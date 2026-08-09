@@ -1,36 +1,41 @@
 /**
- * `agentPlugin` domain (L4) — `IAgentPluginService` implementation.
+ * `agentPlugin` domain — `IAgentPluginService` implementation.
  *
  * Renders session-start skills from `plugin` and `sessionSkillCatalog`, injects
  * them through `contextInjector` and `systemReminder`, and uses `contextMemory`
- * to neutralize stale guidance. Resolves session prompt context through
- * `sessionContext` and reports missing skills through `log`. Bound at Agent
- * scope.
+ * to neutralize stale guidance. Main-agent-only (v1 parity): the service
+ * self-gates on `agentId === 'main'`; Agent scope creation instantiates it for
+ * every agent, so other agents construct it as a no-op. Resolves
+ * session prompt context through `sessionContext` and reports missing skills
+ * through `log`. Bound at Agent scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
 import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/session/sessionSkillCatalog/pluginSkillSource';
 
 import { IAgentPluginService } from './agentPlugin';
 
 const SESSION_START_INJECTION_VARIANT = 'plugin_session_start';
 
+const MAIN_AGENT_ID = 'main';
+
 export class AgentPluginService extends Disposable implements IAgentPluginService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -40,6 +45,7 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
     @ILogService private readonly log: ILogService,
   ) {
     super();
+    if (scopeContext.agentId !== MAIN_AGENT_ID) return;
     this._register(
       injector.register(
         SESSION_START_INJECTION_VARIANT,
@@ -144,6 +150,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPluginService,
   AgentPluginService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'agentPlugin',
 );

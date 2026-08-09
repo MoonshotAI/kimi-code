@@ -665,7 +665,7 @@ max_context_size = 262144
 
     expect(result).toMatchObject({
       kind: 'ok',
-      summary: { label: 'Weekly limit', used: 1, limit: 10 },
+      summary: { name: 'Weekly limit', used: 1, limit: 10 },
     });
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const headers = new Headers((init.headers ?? {}) as Record<string, string>);
@@ -714,7 +714,7 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.
 
     await expect(harness.auth.getManagedUsage()).resolves.toMatchObject({
       kind: 'ok',
-      summary: { label: 'Dev limit', used: 2, limit: 10 },
+      summary: { name: 'Dev limit', used: 2, limit: 10 },
     });
     await expect(
       harness.auth.submitFeedback({
@@ -798,7 +798,7 @@ oauth = { storage = "file", key = "${configuredOauthKey}", oauth_host = "https:/
     ).resolves.toBe('env-access-token');
     await expect(harness.auth.getManagedUsage()).resolves.toMatchObject({
       kind: 'ok',
-      summary: { label: 'Env limit', used: 3, limit: 10 },
+      summary: { name: 'Env limit', used: 3, limit: 10 },
     });
     await expect(
       harness.auth.submitFeedback({

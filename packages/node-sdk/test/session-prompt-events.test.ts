@@ -1,3 +1,9 @@
+/**
+ * Scenario: prompt-driven session behavior, including historical-turn forks.
+ * Responsibilities: public SDK events, persisted replay, metadata, and input errors.
+ * Wiring: real in-process core/storage with only the remote model provider stubbed.
+ * Run: pnpm exec vitest run packages/node-sdk/test/session-prompt-events.test.ts
+ */
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -94,6 +100,38 @@ async function removeTempDir(dir: string): Promise<void> {
 }
 
 describe('Session.prompt events', () => {
+  it('preserves existing custom metadata when an SDK metadata patch is resumed', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const session = await harness.createSession({
+        id: 'ses_update_metadata',
+        workDir,
+        metadata: { source: 'vscode' },
+      });
+      await session.createGoal({ objective: 'Keep core-owned metadata' });
+      await session.updateMetadata({
+        vscode_legacy_approval: { yolo: true, afk: false },
+      });
+      await session.close();
+
+      const resumed = await harness.resumeSession({ id: session.id });
+
+      expect(resumed.summary?.metadata).toEqual({
+        source: 'vscode',
+        vscode_legacy_approval: { yolo: true, afk: false },
+      });
+      await expect(resumed.getGoal()).resolves.toMatchObject({
+        goal: { objective: 'Keep core-owned metadata' },
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('persists sanitized prompt metadata without marking the title custom', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
@@ -309,6 +347,41 @@ describe('Session.prompt events', () => {
     }
   });
 
+  it('includes persisted subagent replay only when resume explicitly requests it', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const session = await harness.createSession({ id: 'ses_subagent_replay', workDir });
+      const events: Event[] = [];
+      const unsubscribe = session.onEvent((event) => events.push(event));
+      await session.init();
+      unsubscribe();
+      const spawned = events.find((event) => event.type === 'subagent.spawned');
+      if (spawned?.type !== 'subagent.spawned') throw new Error('Expected persisted subagent');
+      await session.close();
+
+      const defaultResume = await harness.resumeSession({ id: session.id });
+      expect(defaultResume.getResumeState()?.agents).not.toHaveProperty(spawned.subagentId);
+      await defaultResume.close();
+
+      const fullResume = await harness.resumeSession({
+        id: session.id,
+        includeSubagents: true,
+      });
+      expect(fullResume.getResumeState()?.agents[spawned.subagentId]?.replay).toContainEqual(
+        expect.objectContaining({
+          type: 'message',
+          message: expect.objectContaining({ role: 'assistant' }),
+        }),
+      );
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('starts btw through RPC as a forked subagent without prompt metadata updates', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
@@ -391,6 +464,199 @@ describe('Session.prompt events', () => {
     }
   });
 
+  it('persists only conversation through the selected turn across resume', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_turn_fork_source', workDir });
+      await runPrompt(source, 'first question', 'first answer');
+      await runPrompt(source, 'second question', 'second answer');
+      await runPrompt(source, 'third question', 'third answer');
+
+      const fork = await harness.forkSession({
+        id: source.id,
+        forkId: 'ses_turn_fork_child',
+        turnIndex: 1,
+      });
+      await fork.close();
+      const resumed = await harness.resumeSession({ id: fork.id });
+      const replayText = visibleReplayText(resumed.getResumeState()?.agents['main']?.replay ?? []);
+
+      expect(replayText).toEqual([
+        'user:first question',
+        'assistant:first answer',
+        'user:second question',
+        'assistant:second answer',
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('returns the requested identity for a historical fork', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({
+        id: 'ses_turn_fork_metadata_source',
+        workDir,
+        metadata: { source: 'vscode' },
+      });
+      await runPrompt(source, 'branch here', 'kept answer');
+      await runPrompt(source, 'future prompt', 'discarded answer');
+
+      const fork = await harness.forkSession({
+        id: source.id,
+        forkId: 'ses_turn_fork_metadata_child',
+        title: 'Historical branch',
+        metadata: { branch: 'historical' },
+        turnIndex: 0,
+      });
+      const state = fork.getResumeState();
+
+      expect(fork.id).toBe('ses_turn_fork_metadata_child');
+      expect(fork.workDir).toBe(source.workDir);
+      expect(state?.sessionMetadata.forkedFrom).toBe(source.id);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('derives historical fork metadata from the selected turn', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({
+        id: 'ses_turn_fork_state_source',
+        workDir,
+        metadata: { source: 'vscode' },
+      });
+      await runPrompt(source, 'branch here', 'kept answer');
+      await runPrompt(source, 'future prompt', 'discarded answer');
+
+      const fork = await harness.forkSession({
+        id: source.id,
+        forkId: 'ses_turn_fork_state_child',
+        title: 'Historical branch',
+        metadata: { branch: 'historical' },
+        turnIndex: 0,
+      });
+
+      expect(fork.summary).toMatchObject({
+        title: 'Historical branch',
+        lastPrompt: 'branch here',
+        metadata: { source: 'vscode', branch: 'historical' },
+      });
+      expect(fork.getResumeState()?.sessionMetadata).toMatchObject({
+        title: 'Historical branch',
+        lastPrompt: 'branch here',
+        custom: { source: 'vscode', branch: 'historical' },
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('continues with the next turn id after a historical fork', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_turn_fork_id_source', workDir });
+      await runPrompt(source, 'kept prompt', 'kept answer');
+      await runPrompt(source, 'future prompt', 'future answer');
+      const fork = await harness.forkSession({ id: source.id, turnIndex: 0 });
+      const started = waitForEvent(fork, (event) => event.type === 'turn.started');
+      const ended = waitForEvent(fork, (event) => event.type === 'turn.ended');
+
+      await fork.prompt('branch continuation');
+
+      await expect(started).resolves.toMatchObject({ type: 'turn.started', turnId: 1 });
+      await ended;
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('omits subagents created after the selected historical turn', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_turn_fork_agents_source', workDir });
+      await runPrompt(source, 'kept prompt', 'kept answer');
+      await runPrompt(source, 'future prompt', 'future answer');
+      await source.init();
+
+      const fork = await harness.forkSession({ id: source.id, turnIndex: 0 });
+
+      expect(Object.keys(fork.getResumeState()?.sessionMetadata.agents ?? {})).toEqual(['main']);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects a negative historical turn index with request.invalid', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      const source = await harness.createSession({ id: 'ses_turn_fork_negative', workDir });
+
+      await expect(
+        harness.forkSession({ id: source.id, turnIndex: -1 }),
+      ).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'request.invalid',
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects an out-of-range historical turn without creating the fork', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await configureFakeProvider(harness);
+      const source = await harness.createSession({ id: 'ses_turn_fork_range_source', workDir });
+      await runPrompt(source, 'only question', 'only answer');
+
+      await expect(
+        harness.forkSession({
+          id: source.id,
+          forkId: 'ses_turn_fork_range_child',
+          turnIndex: 1,
+        }),
+      ).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'request.invalid',
+        details: { turnIndex: 1, availableTurns: 1 },
+      });
+      await expect(
+        harness.listSessions({ sessionId: 'ses_turn_fork_range_child' }),
+      ).resolves.toEqual([]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('rejects empty prompt input', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
@@ -410,6 +676,42 @@ describe('Session.prompt events', () => {
     }
   });
 });
+
+async function runPrompt(
+  session: Parameters<typeof waitForEvent>[0] & { prompt(input: string): Promise<void> },
+  input: string,
+  response: string,
+): Promise<void> {
+  fakeProviderState.responseText = response;
+  const done = waitForEvent(session, (event) => event.type === 'turn.ended');
+  await session.prompt(input);
+  await done;
+}
+
+function visibleReplayText(
+  records: readonly {
+    readonly type: string;
+    readonly message?: {
+      readonly role: string;
+      readonly content: ReadonlyArray<{ readonly type: string; readonly text?: string }>;
+      readonly origin?: { readonly kind: string };
+    };
+  }[],
+): readonly string[] {
+  const entries: string[] = [];
+  for (const record of records) {
+    if (record.type !== 'message' || record.message === undefined) continue;
+    const { message } = record;
+    if (message.role === 'user' && message.origin?.kind !== 'user') continue;
+    if (message.role !== 'user' && message.role !== 'assistant') continue;
+    const text = message.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text ?? '')
+      .join('');
+    entries.push(`${message.role}:${text}`);
+  }
+  return entries;
+}
 
 async function configureFakeProvider(harness: KimiHarness): Promise<void> {
   await harness.setConfig({

@@ -1,23 +1,22 @@
 /**
- * `usage` domain (L3) — wire Model (`UsageModel`) and the `usage.record` Op
+ * `usage` domain — wire Model (`UsageModel`) and the `usage.record` Op
  * (`recordUsage`) for the agent's accumulated token usage.
  *
  * Declares usage as a wire Model (`byModel` totals) plus the single Op that
  * folds one `record` call into it. The persisted record carries exactly v1's
  * field set (`{ model, usage, usageScope }`); the per-turn accumulator is NOT
- * in the Model — it is live-only service state (see `usageService`), reset on
+ * in the Model — it is live-only service state, reset on
  * resume like v1 (v1 restore folds every `usage.record` as `session` scope and
  * never rebuilds `currentTurn`). `apply` is pure and ignores any extra fields
  * found on replayed legacy records (early v2 logs carried `turnId` / `context`).
  * Also declares the canonical `agent.status.updated` event shape on
- * `DomainEventMap`; the usage slice is published live by `usageService` after
- * each dispatch (never on replay). Consumed by the Agent-scope `usageService`.
+ * `DomainEventMap`; the usage slice is published live after
+ * each dispatch (never on replay).
  */
 
 import { z } from 'zod';
 
-import { addUsage, type TokenUsage } from '#/app/llmProtocol/usage';
-import type { AgentPhase } from '#/agent/runtime/runtime';
+import { addUsage, type TokenUsage } from '#/kosong/contract/usage';
 import { defineModel } from '#/wire/model';
 
 import type { UsageStatus } from './usage';
@@ -26,16 +25,14 @@ export type UsageRecordScope = 'session' | 'turn';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
-    // Canonical declaration for the agent status-bar event (`IEventBus`); each
-    // domain derives/publishes a subset.
     'agent.status.updated': {
       usage?: UsageStatus;
       swarmMode?: boolean;
       planMode?: boolean;
       model?: string;
+      thinkingEffort?: string;
       maxContextTokens?: number;
       contextTokens?: number;
-      phase?: AgentPhase;
     };
   }
 }

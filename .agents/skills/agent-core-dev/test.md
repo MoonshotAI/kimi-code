@@ -79,9 +79,9 @@ Reach for this only when *which layer a service lives in* is itself the thing be
 
 ```ts
 import { beforeEach, describe, expect, it } from 'vitest';
-import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -94,7 +94,7 @@ describe('XxxService (scoped)', () => {
       LifecycleScope.Agent,
       IXxxService,
       XxxService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'xxx',
     );
   });

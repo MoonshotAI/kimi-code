@@ -1,36 +1,29 @@
 /**
- * `todo` domain (L4) — `ISessionTodoService` implementation.
+ * `todo` domain — `ISessionTodoService` implementation.
  *
- * Holds the session's shared todo list as a stateless facade over the main
- * agent's `TodoModel`: `getTodos` reads `wire.getModel(TodoModel)` live, and
- * every mutation only dispatches a `tools.update_store` Op to the main agent's
- * wire (the
- * single source of truth and replayable timeline); `onDidChange` is bridged
- * from `wire.subscribe(TodoModel)`. The service keeps no list copy of its own,
- * so the live view and the post-replay view can never drift. Binds the
- * `TodoListTool` and the stale-todo reminder into every agent (`onDidCreate`),
- * and the model subscription into the main agent (`onDidCreateMain`),
- * borrowing each agent's services through its `IAgentScopeHandle.accessor`.
- * Per-agent bindings are disposed when the agent is disposed. Bound at Session
- * scope.
- *
- * Debt: the session's todo list is still persisted on the MAIN agent's wire (a
- * Session → Agent edge), so it follows the main agent's lifetime. Once
- * `ISessionWireService` is wired up with its own log + replay, move `TodoModel`
- * there — swap `@IAgentWireService` for `@ISessionWireService` and drop the
- * main-agent subscription. The stateless facade makes that a one-line change.
+ * Provides session-wide todo access through the main agent's `wire`, binds
+ * todo capabilities into each agent, and publishes changes through its typed
+ * event. The main agent's wire owns the replayable state (including the
+ * undo-checkpointed `TodoModel`); this facade keeps no list copy of its own
+ * and there is deliberately no second session-level wire aggregate. Bound at
+ * Session scope.
  */
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import {
+  type IAgentScopeHandle,
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+} from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 
 import { ISessionTodoService } from './sessionTodo';
 import { TodoModel, todoSet } from './todoOps';
@@ -45,26 +38,25 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   private readonly onDidChangeEmitter = this._register(new Emitter<readonly TodoItem[]>());
   readonly onDidChange = this.onDidChangeEmitter.event;
 
-  /** Per-agent bindings (reminder per agent, plus the model subscription for main). */
   private readonly agentBindings = new Map<string, IDisposable[]>();
+  private lastKnownTodos: readonly TodoItem[] = [];
 
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
 
-    this._register(this.agentLifecycle.onDidCreate((handle) => this.bindAgent(handle)));
-    this._register(this.agentLifecycle.onDidCreateMain((handle) => this.bindMainWire(handle)));
+    this._register(
+      this.agentLifecycle.onDidCreate((handle) => {
+        this.bindAgent(handle);
+      }),
+    );
     this._register(
       this.agentLifecycle.onDidDispose((agentId) => this.disposeAgentBindings(agentId)),
     );
 
     for (const handle of this.agentLifecycle.list()) {
       this.bindAgent(handle);
-    }
-    const main = this.agentLifecycle.getHandle(MAIN_AGENT_ID);
-    if (main !== undefined) {
-      this.bindMainWire(main);
     }
 
     this._register(
@@ -77,9 +69,9 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   }
 
   getTodos(): readonly TodoItem[] {
-    const main = this.agentLifecycle.getHandle(MAIN_AGENT_ID);
+    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return [];
-    return main.accessor.get(IAgentWireService).getModel(TodoModel);
+    return main.accessor.get(IWireService).getModel(TodoModel).current;
   }
 
   setTodos(todos: readonly TodoItem[]): void {
@@ -95,22 +87,13 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   }
 
   private dispatchTodoSet(todos: readonly TodoItem[]): void {
-    const main = this.agentLifecycle.getHandle(MAIN_AGENT_ID);
+    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return;
-    const wire = main.accessor.get(IAgentWireService);
+    const wire = main.accessor.get(IWireService);
     wire.dispatch(todoSet({ key: 'todo', value: todos }));
-  }
-
-  private bindMainWire(handle: IAgentScopeHandle): void {
-    const wire = handle.accessor.get(IAgentWireService);
-    // Registered on the main agent's wire by `onDidCreateMain`, which fires in
-    // `ensureMainAgent` strictly before that wire's `replay`. Bridge model
-    // changes to `onDidChange`: replay applies silently (no notification), so
-    // this fires only for live `tools.update_store` (`key: 'todo'`) writes, carrying the sanitized model.
-    const disposable = wire.subscribe(TodoModel, (state) => {
-      this.onDidChangeEmitter.fire(state);
-    });
-    this.trackAgentBinding(handle.id, disposable);
+    const current = wire.getModel(TodoModel).current;
+    this.lastKnownTodos = current;
+    this.onDidChangeEmitter.fire(current);
   }
 
   private bindAgent(handle: IAgentScopeHandle): void {
@@ -119,13 +102,25 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
       handle.id,
       injector.register(TODO_LIST_REMINDER_VARIANT, () => this.staleReminder(handle)),
     );
+    if (handle.id !== MAIN_AGENT_ID) return;
+
+    this.lastKnownTodos = handle.accessor.get(IWireService).getModel(TodoModel).current;
+    this.trackAgentBinding(
+      handle.id,
+      handle.accessor.get(IEventBus).subscribe('context.undone', () => {
+        const current = handle.accessor.get(IWireService).getModel(TodoModel).current;
+        if (todoItemsEqual(current, this.lastKnownTodos)) return;
+        this.lastKnownTodos = current;
+        this.onDidChangeEmitter.fire(current);
+      }),
+    );
   }
 
   private staleReminder(handle: IAgentScopeHandle): string | undefined {
     const memory = handle.accessor.get(IAgentContextMemoryService);
-    const profile = handle.accessor.get(IAgentProfileService);
+    const toolPolicy = handle.accessor.get(IAgentToolPolicyService);
     return todoListStaleReminder({
-      active: profile.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
+      active: toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
       history: memory.get(),
       todos: this.getTodos(),
     });
@@ -147,13 +142,21 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
       disposable.dispose();
     }
     this.agentBindings.delete(agentId);
+    if (agentId === MAIN_AGENT_ID) this.lastKnownTodos = [];
   }
+}
+
+function todoItemsEqual(a: readonly TodoItem[], b: readonly TodoItem[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((item, index) => item.title === b[index]?.title && item.status === b[index]?.status)
+  );
 }
 
 registerScopedService(
   LifecycleScope.Session,
   ISessionTodoService,
   SessionTodoService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'todo',
 );

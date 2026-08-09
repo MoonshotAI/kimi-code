@@ -14,8 +14,6 @@ export const workspaceSchema = z.object({
   id: workspaceIdSchema,
   root: z.string().min(1),
   name: z.string().min(1).max(100),
-  is_git_repo: z.boolean(),
-  branch: z.string().nullable(),
   created_at: isoDateTimeSchema,
   last_opened_at: isoDateTimeSchema,
   session_count: z.number().int().nonnegative(),

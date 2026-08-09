@@ -9,9 +9,10 @@
  *
  * Media-degraded resend: when the provider rejects the request BODY as too
  * large (HTTP 413, `APIRequestTooLargeError` — accumulated base64 media, not
- * tokens), the step resends ONCE with the media-degraded projection
- * (`buildMessagesMediaDegraded`), and later steps of the same turn keep using
- * it so each step does not pay a fresh 413.
+ * tokens), the step first resends with the media-degraded projection
+ * (`buildMessagesMediaDegraded`). If that is still too large, one final
+ * all-media-stripped projection is attempted. Later steps keep using the
+ * projection that recovered so each step does not pay a fresh 413.
  *
  * Any other error propagates unchanged and the builders are never consulted.
  */
@@ -283,6 +284,157 @@ describe('executeLoopStep — request-too-large media-degraded fallback', () => 
     await expect(runTurn(input)).rejects.toBe(REQUEST_TOO_LARGE);
     expect(calls).toBe(2); // first attempt + one degraded resend, then give up
     expect(degradedCount).toBe(1);
+  });
+
+  it('propagates a later 413 without reintroducing media when the turn is already stripped', async () => {
+    const echo = new EchoTool();
+    const llm = new FakeLLM({ responses: [] });
+    let attempts = 0;
+    llm.chat = async (params) => {
+      llm.calls.push(params);
+      attempts += 1;
+      if (attempts <= 2) throw REQUEST_TOO_LARGE;
+      if (attempts === 3) {
+        return makeToolUseResponse([makeToolCall('echo', { text: 'hi' }, 'tc-stripped')]);
+      }
+      throw REQUEST_TOO_LARGE;
+    };
+    const sink = new CollectingSink({});
+    const context = new RecordingContext({ messages: [userMessage('normal projection')] });
+    const degradedMessages = [userMessage('media-degraded projection')];
+    const strippedMessages = [userMessage('media-stripped projection')];
+    const input: RunTurnInput = {
+      turnId: 'turn-1',
+      signal: new AbortController().signal,
+      llm,
+      buildMessages: context.buildMessages,
+      buildMessagesMediaDegraded: () => degradedMessages,
+      buildMessagesMediaStripped: () => strippedMessages,
+      tools: [echo],
+      dispatchEvent: createLoopEventDispatcher({
+        appendTranscriptRecord: context.appendTranscriptRecord,
+        emitLiveEvent: sink.emit,
+      }),
+    };
+
+    await expect(runTurn(input)).rejects.toBe(REQUEST_TOO_LARGE);
+
+    expect(attempts).toBe(4);
+    expect(llm.calls[0]?.messages).toEqual([userMessage('normal projection')]);
+    expect(llm.calls[1]?.messages).toBe(degradedMessages);
+    expect(llm.calls[2]?.messages).toBe(strippedMessages);
+    expect(llm.calls[3]?.messages).toBe(strippedMessages);
+    expect(llm.calls[3]?.requestLogFields).toMatchObject({ projection: 'media-stripped' });
+    expect(echo.calls).toHaveLength(1);
+  });
+
+  it('skips a duplicate degraded retry when the active degraded projection receives 413', async () => {
+    const echo = new EchoTool();
+    const llm = new FakeLLM({ responses: [] });
+    let attempts = 0;
+    llm.chat = async (params) => {
+      llm.calls.push(params);
+      attempts += 1;
+      if (attempts === 1 || attempts === 3) throw REQUEST_TOO_LARGE;
+      if (attempts === 2) {
+        return makeToolUseResponse([makeToolCall('echo', { text: 'hi' }, 'tc-degraded')]);
+      }
+      return makeEndTurnResponse('recovered');
+    };
+    const sink = new CollectingSink({});
+    const context = new RecordingContext({ messages: [userMessage('normal projection')] });
+    const degradedMessages = [userMessage('media-degraded projection')];
+    const strippedMessages = [userMessage('media-stripped projection')];
+    const input: RunTurnInput = {
+      turnId: 'turn-1',
+      signal: new AbortController().signal,
+      llm,
+      buildMessages: context.buildMessages,
+      buildMessagesMediaDegraded: () => degradedMessages,
+      buildMessagesMediaStripped: () => strippedMessages,
+      tools: [echo],
+      dispatchEvent: createLoopEventDispatcher({
+        appendTranscriptRecord: context.appendTranscriptRecord,
+        emitLiveEvent: sink.emit,
+      }),
+    };
+
+    const result = await runTurn(input);
+
+    expect(result.stopReason).toBe('end_turn');
+    expect(attempts).toBe(4);
+    expect(llm.calls[0]?.messages).toEqual([userMessage('normal projection')]);
+    expect(llm.calls[1]?.messages).toBe(degradedMessages);
+    expect(llm.calls[2]?.messages).toBe(degradedMessages);
+    expect(llm.calls[3]?.messages).toBe(strippedMessages);
+    expect(llm.calls[2]?.requestLogFields).toMatchObject({ projection: 'media-degraded' });
+    expect(llm.calls[3]?.requestLogFields).toMatchObject({ projection: 'media-stripped' });
+    expect(echo.calls).toHaveLength(1);
+  });
+
+  it('strips all media when the degraded resend exposes an unsupported image format', async () => {
+    const llm = new FakeLLM({ responses: [] });
+    let attempts = 0;
+    llm.chat = async (params) => {
+      llm.calls.push(params);
+      attempts += 1;
+      if (attempts === 1) throw REQUEST_TOO_LARGE;
+      if (attempts === 2) throw new APIStatusError(400, 'unsupported image format');
+      return makeEndTurnResponse('recovered');
+    };
+    const sink = new CollectingSink({});
+    const context = new RecordingContext({ messages: [userMessage('normal projection')] });
+    const degradedMessages = [userMessage('media-degraded projection')];
+    const strippedMessages = [userMessage('media-stripped projection')];
+    const input: RunTurnInput = {
+      turnId: 'turn-1',
+      signal: new AbortController().signal,
+      llm,
+      buildMessages: context.buildMessages,
+      buildMessagesMediaDegraded: () => degradedMessages,
+      buildMessagesMediaStripped: () => strippedMessages,
+      dispatchEvent: createLoopEventDispatcher({
+        appendTranscriptRecord: context.appendTranscriptRecord,
+        emitLiveEvent: sink.emit,
+      }),
+    };
+
+    const result = await runTurn(input);
+
+    expect(result.stopReason).toBe('end_turn');
+    expect(attempts).toBe(3);
+    expect(llm.calls[0]?.messages).toEqual([userMessage('normal projection')]);
+    expect(llm.calls[1]?.messages).toBe(degradedMessages);
+    expect(llm.calls[1]?.requestLogFields).toMatchObject({ projection: 'media-degraded' });
+    expect(llm.calls[2]?.messages).toBe(strippedMessages);
+    expect(llm.calls[2]?.requestLogFields).toMatchObject({ projection: 'media-stripped' });
+  });
+
+  it('stops after the all-media-stripped attempt when every projection receives 413', async () => {
+    const llm = new FakeLLM({ responses: [] });
+    let attempts = 0;
+    llm.chat = async (params) => {
+      llm.calls.push(params);
+      attempts += 1;
+      throw REQUEST_TOO_LARGE;
+    };
+    const sink = new CollectingSink({});
+    const context = new RecordingContext({ messages: [userMessage('normal projection')] });
+    const input: RunTurnInput = {
+      turnId: 'turn-1',
+      signal: new AbortController().signal,
+      llm,
+      buildMessages: context.buildMessages,
+      buildMessagesMediaDegraded: () => [userMessage('media-degraded projection')],
+      buildMessagesMediaStripped: () => [userMessage('media-stripped projection')],
+      dispatchEvent: createLoopEventDispatcher({
+        appendTranscriptRecord: context.appendTranscriptRecord,
+        emitLiveEvent: sink.emit,
+      }),
+    };
+
+    await expect(runTurn(input)).rejects.toBe(REQUEST_TOO_LARGE);
+    expect(attempts).toBe(3);
   });
 
   it('keeps using the degraded projection for later steps of the same turn', async () => {

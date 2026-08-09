@@ -9,7 +9,6 @@ import type { ServiceRegistration } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import type { ILogger } from '#/_base/log/log';
 
-/** A no-op `ILogger`: every method is a no-op, `child()` returns itself. */
 export function stubLogger(): ILogger {
   const logger: ILogger = {
     error: () => {},
@@ -21,7 +20,6 @@ export function stubLogger(): ILogger {
   return logger;
 }
 
-/** A no-op `ILogService` fixed at `info` level. */
 export function stubLog(): ILogService {
   return {
     ...stubLogger(),
@@ -32,7 +30,6 @@ export function stubLog(): ILogService {
   };
 }
 
-/** Register the default no-op `ILogService`. */
 export function registerLogServices(reg: ServiceRegistration): void {
   reg.defineInstance(ILogService, stubLog());
 }

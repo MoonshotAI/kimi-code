@@ -103,3 +103,105 @@ test('delete removes key from the ordered index', () => {
   s.del('b');
   assert.deepEqual([...s.scan()].map((r) => r.key.toString()), ['a', 'c']);
 });
+
+test('has() does not materialize disk-backed values', () => {
+  let reads = 0;
+  const s = new Store({
+    activeExpireIntervalMs: 0,
+    readValue: () => {
+      reads++;
+      return B('disk-value');
+    },
+  });
+  s.setRef('dk', { kind: 'disk', loc: { file: 'snapshot', off: 0, len: 10 } });
+  assert.equal(reads, 0);
+  assert.equal(s.has('dk'), true);
+  assert.equal(s.has('missing'), false);
+  assert.equal(reads, 0); // has() must stay metadata-only (no positioned read)
+  assert.equal(s.get('dk').toString(), 'disk-value');
+  assert.equal(reads, 1);
+  s.close();
+});
+
+test('rawKeys yields ordered keys without materializing values', () => {
+  let reads = 0;
+  const s = new Store({
+    activeExpireIntervalMs: 0,
+    readValue: () => {
+      reads++;
+      return B('v');
+    },
+  });
+  s.setRef('a', { kind: 'disk', loc: { file: 'snapshot', off: 0, len: 1 } });
+  s.set('b', B('2'));
+  s.setRef('c', { kind: 'disk', loc: { file: 'snapshot', off: 2, len: 1 } });
+  s.set('d', B('4'), Date.now() - 1); // already expired
+  assert.deepEqual([...s.rawKeys({})], ['a', 'b', 'c']);
+  assert.deepEqual([...s.rawKeys({ gte: 'b' })], ['b', 'c']);
+  assert.equal(reads, 0);
+  s.close();
+});
+
+test('size stays correct with and without TTL keys in play', () => {
+  const s = new Store({ activeExpireIntervalMs: 0 });
+  for (let i = 0; i < 5; i++) s.set(`k${i}`, B('v'));
+  assert.equal(s.size, 5); // O(1) path (no TTL keys)
+  s.set('t', B('v'), Date.now() + 10_000);
+  assert.equal(s.size, 6); // TTL key in play -> live-count path
+  s.set('t', B('v2')); // overwrite without TTL
+  assert.equal(s.size, 6);
+  assert.ok(s.del('t'));
+  assert.equal(s.size, 5); // back to the fast path
+  s.set('u', B('v'), Date.now() - 1); // already expired at set
+  assert.equal(s.size, 5); // expired keys are not counted
+  s.close();
+});
+
+test('active expiration drains a simultaneous-expiry storm within seconds', async () => {
+  // default-class settings: 100/count quota per tick + a small time budget for bursts
+  const s = new Store({ activeExpireIntervalMs: 100, activeExpireMaxPerTick: 100 });
+  const N = 3000;
+  for (let i = 0; i < N; i++) s.set(`t${i}`, B('v'), Date.now() + 30);
+  assert.equal(s.map.size, N);
+  await sleep(1200);
+  // the old fixed ~1000/s rate would have left ~1500+ dead entries behind
+  assert.equal(s.map.size, 0);
+  s.close();
+});
+
+test('reapExpiredDue drains only due entries via the TTL heap', () => {
+  const s = new Store({ activeExpireIntervalMs: 0 });
+  s.set('expired', B('1'), Date.now() - 1000);
+  s.set('future', B('2'), Date.now() + 3_600_000);
+  s.set('plain', B('3'));
+  assert.equal(s.reapExpiredDue(), 1, 'only the due record is reaped');
+  assert.ok(!s.has('expired'));
+  assert.ok(s.has('future'));
+  assert.ok(s.has('plain'));
+  // nothing due -> a no-op (and no full-store sweep needed)
+  assert.equal(s.reapExpiredDue(), 0);
+  assert.equal(s.map.size, 2);
+  s.close();
+});
+
+test('reapExpiredDue skips stale heap entries from overwritten TTLs', () => {
+  const s = new Store({ activeExpireIntervalMs: 0 });
+  const t1 = Date.now() - 1000; // already past
+  s.set('k', B('1'), t1);
+  s.set('k', B('2'), Date.now() + 3_600_000); // overwrite: the t1 heap entry is now stale
+  assert.equal(s.reapExpiredDue(), 0, 'the stale entry must not reap the live record');
+  assert.equal(s.get('k')?.toString(), '2');
+  s.close();
+});
+
+test('reapExpiredDue falls back to a full scan when the heap diverged from the map', () => {
+  const s = new Store({ activeExpireIntervalMs: 0 });
+  s.set('a', B('1'), Date.now() - 1000);
+  s.set('b', B('2'), Date.now() - 1000);
+  // Force the broken invariant (live TTL records, empty heap) the fallback
+  // guards against; no code path may produce this.
+  (s as unknown as { heap: { clear(): void } }).heap.clear();
+  assert.equal(s.reapExpiredDue(), 2, 'divergence detected -> full resync reap');
+  assert.equal(s.map.size, 0);
+  s.close();
+});

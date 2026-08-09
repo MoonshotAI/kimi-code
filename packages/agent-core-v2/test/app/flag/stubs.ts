@@ -12,10 +12,6 @@ import type {
 } from '#/app/flag/flag';
 import type { IFlagRegistry } from '#/app/flag/flagRegistry';
 
-/**
- * A minimal `IFlagService`. `enabled` is either a fixed boolean or a per-id
- * predicate; everything else is a no-op / empty.
- */
 export function stubFlag(enabled: boolean | ((id: string) => boolean) = false): IFlagService {
   const isEnabled = typeof enabled === 'function' ? enabled : (): boolean => enabled;
   const registry: IFlagRegistry = {

@@ -1,20 +1,17 @@
 /**
- * `edit` domain (L4) — `IFileEditService` contract.
+ * `edit` domain — `IFileEditService` contract.
  *
  * App-scope general edit capability: reads a file through the os `hostFs`
  * domain (`IHostFileSystem`), applies the exact-string edit rules, and writes
  * the re-materialized content back. Returns a domain-neutral result (the
  * replacement count, or a ready-to-surface error) so consumers at any scope
- * can adapt it to their own shape; the Agent `EditTool` adapter turns it into
- * an `ExecutableToolResult`. Bound at App scope.
+ * can adapt it to their own shape. Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface FileEditInput {
-  /** Absolute, access-checked path to read and write. */
   readonly path: string;
-  /** User-facing path used in messages. */
   readonly displayPath: string;
   readonly old_string: string;
   readonly new_string: string;

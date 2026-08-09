@@ -1,5 +1,5 @@
 /**
- * `terminal` domain (L6) — Session-scoped terminal facade.
+ * `terminal` domain — Session-scoped terminal facade.
  *
  * Owns this session's terminal set and its per-terminal output buffers and
  * attached sinks; spawns PTYs through the App-scoped `IHostTerminalService`,
@@ -9,10 +9,9 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type {
   CreateTerminalRequest,
   Terminal,
@@ -174,7 +173,6 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       try {
         record.process.kill();
       } catch {
-        // best-effort cleanup
       }
     }
     this.records.clear();
@@ -251,9 +249,6 @@ function frameSeq(frame: TerminalFrame): number {
 }
 
 function defaultShell(): string {
-  // Use `||` (not `??`): an EMPTY $SHELL (set but blank, as some daemon/launchd
-  // envs leave it) must still fall back, or a PTY spawn fails with
-  // "posix_spawnp failed".
   return process.env['SHELL'] || '/bin/sh';
 }
 
@@ -261,6 +256,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionTerminalService,
   SessionTerminalService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'terminal',
 );

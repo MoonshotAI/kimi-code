@@ -27,6 +27,7 @@ function createProvider(
     stream: boolean;
     reasoningKey: string;
     model: string;
+    offEffort: string;
   }>,
 ): OpenAILegacyChatProvider {
   return new OpenAILegacyChatProvider({
@@ -34,6 +35,7 @@ function createProvider(
     apiKey: 'test-key',
     stream: options?.stream ?? false,
     reasoningKey: options?.reasoningKey,
+    offEffort: options?.offEffort,
   });
 }
 
@@ -588,6 +590,153 @@ describe('OpenAILegacyChatProvider', () => {
         { role: 'user', content: 'Thanks!' },
       ]);
     });
+
+    it('defaults to reasoning_content before any detection', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'Thinking...' },
+            { type: 'text', text: '4.' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const messages = body['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({
+        role: 'assistant',
+        content: '4.',
+        reasoning_content: 'Thinking...',
+      });
+    });
+
+    it('echoes thinking under the dialect detected from the response', async () => {
+      const provider = createProvider();
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return Promise.resolve({
+            id: 'chatcmpl-r',
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: 'ok', reasoning: 'hmm' },
+                finish_reason: 'stop',
+              },
+            ],
+          });
+        });
+
+      // Detection happens while draining the first response.
+      const first = await provider.generate('', [], []);
+      for await (const part of first) void part;
+
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'hmm' },
+            { type: 'text', text: 'ok' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const second = await provider.generate('', [], history);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+
+    it('explicit reasoningKey pins the dialect against detection', async () => {
+      const provider = createProvider({ reasoningKey: 'custom_reasoning' });
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return Promise.resolve({
+            id: 'chatcmpl-r',
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: 'ok', reasoning: 'hmm' },
+                finish_reason: 'stop',
+              },
+            ],
+          });
+        });
+
+      // With an explicit key, only that key is read inbound: a `reasoning`
+      // field is not picked up, and detection stays out of the way.
+      const first = await provider.generate('', [], []);
+      const firstParts = [];
+      for await (const part of first) firstParts.push(part);
+      expect(firstParts).toEqual([{ type: 'text', text: 'ok' }]);
+
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'hmm' },
+            { type: 'text', text: 'ok' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const second = await provider.generate('', [], history);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', custom_reasoning: 'hmm' });
+    });
+
+    it('dialect detected on a per-step clone steers the original provider', async () => {
+      const original = createProvider();
+      const captured: Array<Record<string, unknown>> = [];
+      (original as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          return Promise.resolve({
+            id: 'chatcmpl-r',
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: 'ok', reasoning: 'hmm' },
+                finish_reason: 'stop',
+              },
+            ],
+          });
+        });
+
+      // The per-step clone shares `_client` (mocked above) and must also share
+      // the dialect cell: learning on the clone steers the original.
+      const clone = original.withGenerationKwargs({ max_tokens: 2048 });
+      const first = await clone.generate('', [], []);
+      for await (const part of first) void part;
+
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'hmm' },
+            { type: 'text', text: 'ok' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const second = await original.generate('', [], history);
+      for await (const part of second) void part;
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
   });
 
   describe('generation kwargs', () => {
@@ -603,6 +752,39 @@ describe('OpenAILegacyChatProvider', () => {
 
       expect(body['temperature']).toBe(0.7);
       expect(body['max_tokens']).toBe(2048);
+    });
+
+    it('passes constructor generationKwargs into the request body', async () => {
+      // The construction-time channel (session affinity): kwargs seeded via
+      // the options land on every request, no morph required.
+      const provider = new OpenAILegacyChatProvider({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        stream: false,
+        generationKwargs: { prompt_cache_key: 'session-test' },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['prompt_cache_key']).toBe('session-test');
+    });
+
+    it('explicit maxTokens wins over constructor generationKwargs on conflict', async () => {
+      const provider = new OpenAILegacyChatProvider({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        stream: false,
+        maxTokens: 1024,
+        generationKwargs: { max_tokens: 512 },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_tokens']).toBe(1024);
     });
 
     it('maps json_schema response format to response_format', async () => {
@@ -923,7 +1105,7 @@ describe('OpenAILegacyChatProvider', () => {
       },
     );
 
-    it('.withThinking("max") maps to xhigh without model-specific clamping', async () => {
+    it('.withThinking("max") passes max through verbatim', async () => {
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
@@ -947,9 +1129,98 @@ describe('OpenAILegacyChatProvider', () => {
         history,
       );
 
-      expect(openAIChatModel['reasoning_effort']).toBe('xhigh');
-      expect(openAIProModel['reasoning_effort']).toBe('xhigh');
-      expect(deepSeekModel['reasoning_effort']).toBe('xhigh');
+      expect(openAIChatModel['reasoning_effort']).toBe('max');
+      expect(openAIProModel['reasoning_effort']).toBe('max');
+      expect(deepSeekModel['reasoning_effort']).toBe('max');
+    });
+
+    it('passes max through verbatim', async () => {
+      const provider = createProvider({ model: 'kimi-for-coding' }).withThinking('max');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBe('max');
+      expect(provider.thinkingEffort).toBe('max');
+    });
+
+    it('passes concrete effort strings through verbatim', async () => {
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      for (const requested of ['xhigh', 'medium', 'extreme'] as const) {
+        const body = await captureRequestBody(
+          createProvider({ model: 'kimi-for-coding' }).withThinking(requested),
+          '',
+          [],
+          history,
+        );
+        expect(body['reasoning_effort']).toBe(requested);
+      }
+    });
+
+    it('does not filter concrete efforts through a client-side allow-list', async () => {
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const provider = createProvider({
+        model: 'kimi-for-coding',
+      });
+
+      const maxBody = await captureRequestBody(provider.withThinking('max'), '', [], history);
+      const xhighBody = await captureRequestBody(provider.withThinking('xhigh'), '', [], history);
+
+      expect(maxBody['reasoning_effort']).toBe('max');
+      expect(xhighBody['reasoning_effort']).toBe('xhigh');
+    });
+
+    it('.withThinking("off") sends no reasoning_effort and reports "off"', async () => {
+      const provider = createProvider().withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+      expect(provider.thinkingEffort).toBe('off');
+    });
+
+    it('.withThinking("off") sends the configured offEffort for models that reason by default', async () => {
+      const provider = createProvider({ offEffort: 'none' }).withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBe('none');
+      expect(provider.thinkingEffort).toBe('off');
+    });
+
+    it('.withThinking("on") sends no reasoning_effort without ThinkPart history and reports "on"', async () => {
+      const provider = createProvider().withThinking('on');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+      expect(provider.thinkingEffort).toBe('on');
+    });
+
+    it('reports a null thinkingEffort until withThinking is called', () => {
+      expect(createProvider().thinkingEffort).toBeNull();
+    });
+
+    it('.withThinking("off") clears a concrete effort set earlier', async () => {
+      const provider = createProvider().withThinking('high').withThinking('off');
+      expect(provider.thinkingEffort).toBe('off');
+
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+      expect(body['reasoning_effort']).toBeUndefined();
     });
   });
 
@@ -1041,6 +1312,52 @@ describe('OpenAILegacyChatProvider', () => {
 
       expect(body['reasoning_effort']).toBe('high');
     });
+
+    it('does not auto-inject reasoning_effort when thinking was explicitly turned off', async () => {
+      // An explicit withThinking('off') is not the same as "never configured":
+      // with thinking off, auto-injection must not silently switch reasoning
+      // back on (or leak reasoning_effort to models that reject the field).
+      const provider = createProvider({ model: 'some-model' }).withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'Thinking...' },
+            { type: 'text', text: 'Hi!' },
+          ],
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'How are you?' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+      expect(provider.thinkingEffort).toBe('off');
+    });
+
+    it('still auto-injects reasoning_effort for an explicit "on"', async () => {
+      // 'on' keeps the #1616 behavior: thinking enabled without a concrete
+      // effort still pairs reasoning_effort with ThinkPart history so strict
+      // OpenAI-compatible gateways don't 400.
+      const provider = createProvider({ model: 'some-model' }).withThinking('on');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'Thinking...' },
+            { type: 'text', text: 'Hi!' },
+          ],
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'How are you?' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBe('medium');
+      expect(provider.thinkingEffort).toBe('on');
+    });
   });
 
   describe('default reasoning protocol (no explicit reasoningKey)', () => {
@@ -1069,6 +1386,27 @@ describe('OpenAILegacyChatProvider', () => {
         role: 'assistant',
         content: 'answer',
         reasoning_content: 'inner monologue',
+      });
+    });
+
+    it('serializes an explicitly empty ThinkPart to reasoning_content', async () => {
+      const provider = createProvider({ model: 'deepseek-reasoner' });
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: '' }],
+          toolCalls: [
+            { type: 'function', id: 'call_1', name: 'lookup', arguments: '{"q":"test"}' },
+          ],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[0]).toMatchObject({
+        role: 'assistant',
+        reasoning_content: '',
       });
     });
 
@@ -1129,6 +1467,28 @@ describe('OpenAILegacyChatProvider', () => {
         { type: 'think', think: ' think 2' },
         { type: 'text', text: 'final' },
       ]);
+    });
+
+    it('yields an empty ThinkPart from an explicitly empty streaming reasoning field', async () => {
+      const provider = new OpenAILegacyChatProvider({
+        model: 'deepseek-reasoner',
+        apiKey: 'test-key',
+        stream: true,
+      });
+
+      async function* mockedStream(): AsyncIterable<Record<string, unknown>> {
+        yield { id: 'c1', choices: [{ index: 0, delta: { reasoning_content: '' } }] };
+      }
+
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockResolvedValue(mockedStream());
+
+      const stream = await provider.generate('', [], []);
+      const parts: StreamedMessagePart[] = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([{ type: 'think', think: '' }]);
     });
 
     it('treats blank reasoning_key as unset so defaults still apply', async () => {
@@ -1476,6 +1836,26 @@ describe('OpenAILegacyChatProvider — non-stream response parsing', () => {
       { type: 'think', think: 'Some thinking here.' },
       { type: 'text', text: 'Final answer' },
     ]);
+  });
+
+  it('yields an empty ThinkPart when the non-stream reasoning field is explicitly empty', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'deepseek-reasoner',
+      apiKey: 'test-key',
+      stream: false,
+      reasoningKey: 'reasoning_content',
+    });
+
+    const parts = await collectFromMockedResponse(
+      provider,
+      makeNonStreamResponse({
+        role: 'assistant',
+        content: null,
+        reasoning_content: '',
+      }),
+    );
+
+    expect(parts).toEqual([{ type: 'think', think: '' }]);
   });
 
   it('non-stream response yields ToolCall parts when tool_calls present', async () => {

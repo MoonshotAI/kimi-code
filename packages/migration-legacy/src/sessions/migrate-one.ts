@@ -13,6 +13,7 @@ import {
 } from './translator.js';
 import { writeMainAgentWire } from './wire-writer.js';
 import { writeSessionState } from './state-writer.js';
+import { extractToolCallDisplays } from './tool-call-display.js';
 
 export type MigrateOneResult =
   | { readonly outcome: 'migrated'; readonly targetDir: string }
@@ -59,10 +60,21 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
   let messages: NormalizedMessage[] = [];
   let lastUserPrompt = '';
   let contextLines: readonly string[] = [];
+  let oldWireText: string | undefined;
   try {
     const contextText = await readFile(join(input.sourceSessionDir, 'context.jsonl'), 'utf-8');
     contextLines = contextText.split(/\r?\n/);
-    messages = closeDanglingToolCalls(translateContextLines(contextLines));
+    try {
+      oldWireText = await readFile(join(input.sourceSessionDir, 'wire.jsonl'), 'utf-8');
+    } catch {
+      // A missing/corrupt wire must not prevent the model-facing context from
+      // migrating; it only means UI display enrichment is unavailable.
+    }
+    const toolCallDisplays =
+      oldWireText === undefined ? undefined : extractToolCallDisplays(oldWireText);
+    messages = closeDanglingToolCalls(
+      translateContextLines(contextLines, toolCallDisplays),
+    );
     lastUserPrompt = extractLastUserText(messages);
   } catch {
     return { outcome: 'failed', reason: 'cannot read context.jsonl' };
@@ -104,21 +116,23 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
   }
 
   let wireProtocolFromOld: string | null = null;
-  try {
-    const oldWire = await readFile(join(input.sourceSessionDir, 'wire.jsonl'), 'utf-8');
-    const firstLine = oldWire.split(/\r?\n/)[0];
-    if (firstLine !== undefined && firstLine.length > 0) {
-      const parsed: unknown = JSON.parse(firstLine);
-      if (
-        parsed !== null &&
-        typeof parsed === 'object' &&
-        typeof (parsed as { protocol_version?: unknown }).protocol_version === 'string'
-      ) {
-        wireProtocolFromOld = (parsed as { protocol_version: string }).protocol_version;
+  if (oldWireText !== undefined) {
+    try {
+      const firstLine = oldWireText.split(/\r?\n/)[0];
+      if (firstLine !== undefined && firstLine.length > 0) {
+        const parsed: unknown = JSON.parse(firstLine);
+        if (
+          parsed !== null &&
+          typeof parsed === 'object' &&
+          typeof (parsed as { protocol_version?: unknown }).protocol_version === 'string'
+        ) {
+          wireProtocolFromOld = (parsed as { protocol_version: string }).protocol_version;
+        }
       }
+    } catch {
+      // ignore a corrupt metadata line; display extraction already skips
+      // malformed records independently.
     }
-  } catch {
-    // ignore
   }
 
   try {

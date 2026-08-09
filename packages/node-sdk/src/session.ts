@@ -11,12 +11,14 @@ import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
+  CapabilityStatus,
   BackgroundTaskInfo,
   CompactOptions,
   CreateGoalInput,
   GetCronTasksResult,
   GoalSnapshot,
   GoalToolResult,
+  JsonObject,
   McpServerInfo,
   McpStartupMetrics,
   PermissionMode,
@@ -46,6 +48,30 @@ export interface SessionOptions {
   readonly resumeState?: ResumedSessionState | undefined;
   readonly rpc: SDKRpcClientBase;
   readonly onClose?: (() => void | Promise<void>) | undefined;
+}
+
+/**
+ * The capability surface (built-in product capabilities: kimi-cu,
+ * kimi-webbridge) exists only on the v2 engine — v1 has no capability
+ * domain. Feature-detect structurally so a Session backed by v1 fails with
+ * a clear message instead of a confusing missing-method error.
+ */
+interface CapabilityRpcSurface {
+  listCapabilities(): Promise<readonly CapabilityStatus[]>;
+  getCapability(id: string): Promise<CapabilityStatus>;
+  installCapability(id: string): Promise<CapabilityStatus>;
+}
+
+export function capabilityRpc(rpc: SDKRpcClientBase): CapabilityRpcSurface {
+  const candidate = rpc as Partial<CapabilityRpcSurface>;
+  if (
+    typeof candidate.listCapabilities !== 'function' ||
+    typeof candidate.getCapability !== 'function' ||
+    typeof candidate.installCapability !== 'function'
+  ) {
+    throw new TypeError('The capability surface is unavailable on this engine (requires v2).');
+  }
+  return candidate as CapabilityRpcSurface;
 }
 
 export class Session {
@@ -206,6 +232,18 @@ export class Session {
     await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
   }
 
+  /**
+   * Live-apply the persisted `[secondary_model]` recipe to this session
+   * (subagent model binding). Persist the recipe via `KimiHarness.setConfig`
+   * first; this reloads the complete recipe and its synthesized derived entry
+   * before updating the session snapshot — mirroring the `/secondary_model`
+   * flow.
+   */
+  async applyPersistedSecondaryModel(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.applyPersistedSecondaryModel({ sessionId: this.id });
+  }
+
   async setPermission(mode: PermissionMode): Promise<void> {
     this.ensureOpen();
     if (!isPermissionMode(mode)) {
@@ -215,6 +253,30 @@ export class Session {
       );
     }
     await this.rpc.setPermission({ sessionId: this.id, mode });
+  }
+
+  /** Shallow-merge host-owned fields into this session's persisted custom metadata. */
+  async updateMetadata(patch: JsonObject): Promise<void> {
+    this.ensureOpen();
+    if (Object.hasOwn(patch, 'goal')) {
+      throw new KimiError(
+        ErrorCodes.GOAL_METADATA_RESERVED,
+        'Session metadata key "goal" is reserved for the goal lifecycle',
+      );
+    }
+    const summary = this.requireSummary();
+    await this.rpc.updateSessionMetadata({ sessionId: this.id, metadata: patch });
+    const metadata = { ...summary.metadata, ...patch };
+    this.summary = { ...summary, metadata };
+    if (this.resumeState !== undefined) {
+      this.resumeState = {
+        ...this.resumeState,
+        sessionMetadata: {
+          ...this.resumeState.sessionMetadata,
+          custom: { ...this.resumeState.sessionMetadata.custom, ...patch },
+        },
+      };
+    }
   }
 
   async setPlanMode(enabled: boolean): Promise<void> {
@@ -270,6 +332,18 @@ export class Session {
   async undoHistory(count: number = 1): Promise<void> {
     this.ensureOpen();
     await this.rpc.undoHistory({ sessionId: this.id, count });
+  }
+
+  /** Clear this session's model context without creating a new session. */
+  async clearContext(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.clearContext({ sessionId: this.id });
+  }
+
+  /** Append imported text to this session's context without prompting the model. */
+  async importContext(content: string, source: string): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.importContext({ sessionId: this.id, content, source });
   }
 
   async getContext(): Promise<AgentContextData> {
@@ -473,6 +547,27 @@ export class Session {
   async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
     this.ensureOpen();
     await this.rpc.setPluginEnabled(id, enabled);
+  }
+
+  /** Built-in capabilities with layered readiness (v2 engine only). */
+  async listCapabilities(): Promise<readonly CapabilityStatus[]> {
+    this.ensureOpen();
+    return capabilityRpc(this.rpc).listCapabilities();
+  }
+
+  /** One capability's layered readiness + live install progress. */
+  async getCapability(id: string): Promise<CapabilityStatus> {
+    this.ensureOpen();
+    return capabilityRpc(this.rpc).getCapability(id);
+  }
+
+  /**
+   * Start an idempotent capability install (binary runtime + wiring) in the
+   * background; poll `getCapability` for progress.
+   */
+  async installCapability(id: string): Promise<CapabilityStatus> {
+    this.ensureOpen();
+    return capabilityRpc(this.rpc).installCapability(id);
   }
 
   async setPluginMcpServerEnabled(

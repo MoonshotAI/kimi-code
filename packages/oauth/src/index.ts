@@ -36,12 +36,14 @@ export {
   KIMI_CODE_PLATFORM,
   parseKimiCodeCustomHeaders,
   readKimiDeviceId,
+  replaceUserAgentProduct,
 } from './identity';
 export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
 
 export { KIMI_CODE_FLOW_CONFIG } from './constants';
 
 export {
+  applyManagedApiKeyProviderModels,
   applyManagedKimiCodeLogoutConfig,
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
@@ -57,6 +59,7 @@ export {
   resolveKimiCodeOAuthKey,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  toManagedModelAlias,
 } from './managed-kimi-code';
 export type {
   FetchManagedKimiCodeModelsOptions,
@@ -76,10 +79,26 @@ export type {
 } from './managed-kimi-code';
 
 export {
+  fetchManagedUserInfo,
+  kimiCodeUserInfoUrl,
+  managedUserInfoPhoneSchema,
+  managedUserInfoResultSchema,
+  managedUserInfoSchema,
+  parseManagedUserInfoPayload,
+} from './managed-userinfo';
+export type {
+  FetchManagedUserInfoError,
+  FetchManagedUserInfoResult,
+  ManagedUserInfo,
+  ManagedUserInfoPhone,
+  ManagedUserInfoResult,
+} from './managed-userinfo';
+
+export {
   fetchManagedUsage,
   formatDuration,
-  formatResetTime,
   isManagedKimiCode,
+  isManagedKimiCodeBaseUrl,
   kimiCodeBaseUrl,
   kimiCodeUsageUrl,
   parseManagedUsagePayload,
@@ -89,6 +108,7 @@ export type {
   FetchManagedUsageResult,
   ParsedManagedUsage,
   UsageRow,
+  UsageWindow,
 } from './managed-usage';
 
 export { fetchSubmitFeedback, kimiCodeFeedbackUrl } from './managed-feedback';
@@ -150,6 +170,7 @@ export type {
 
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {
+  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
   AuthProviderStatus,
   AuthStatus,

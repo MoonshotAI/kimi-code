@@ -1,5 +1,5 @@
 /**
- * `hostEnvironment` domain (L1) — `IHostEnvironment` implementation.
+ * `hostEnvironment` domain — `IHostEnvironment` implementation.
  *
  * Kicks off the OS / shell probe (`probeHostEnvironmentFromNode`) and the
  * login-shell PATH enrichment (`applyLoginShellPathFromNode`) at construction
@@ -8,8 +8,7 @@
  * returning stale zeros. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { probeHostEnvironmentFromNode } from '#/_base/execEnv/environmentProbe';
 import { applyLoginShellPathFromNode } from '#/_base/execEnv/loginShellPath';
@@ -29,12 +28,6 @@ export class HostEnvironmentService implements IHostEnvironment {
   readonly ready: Promise<void>;
 
   constructor() {
-    // Enrich process.env.PATH from the user's login shell so spawned commands
-    // find user-installed tools (e.g. Homebrew's gh) even when kimi-code itself
-    // was launched without the full profile PATH. Both probes are memoised,
-    // independent, and run concurrently: the login-shell probe is a no-op on
-    // win32 (where probeHostEnvironment reads PATH to locate Git Bash), and on
-    // POSIX probeHostEnvironment does not consult PATH.
     this.ready = Promise.all([
       probeHostEnvironmentFromNode().then((info) => {
         this._info = info;
@@ -85,6 +78,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostEnvironment,
   HostEnvironmentService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'hostEnvironment',
 );

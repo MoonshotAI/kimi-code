@@ -17,7 +17,7 @@ import {
   OAuthUnauthorizedError,
   RetryableRefreshError,
 } from './errors';
-import type { DeviceAuthorization, DeviceHeaders, OAuthFlowConfig, TokenInfo } from './types';
+import type { DeviceAuthorization, DeviceHeaders, OAuthFlowConfig, OAuthRequestHeaders, TokenInfo } from './types';
 import { isRecord } from './utils';
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -59,7 +59,7 @@ const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 async function postForm(
   url: string,
   params: Record<string, string>,
-  deviceHeaders?: DeviceHeaders | undefined,
+  deviceHeaders?: OAuthRequestHeaders | undefined,
   options?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<{ status: number; data: Record<string, unknown> }> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
@@ -82,7 +82,8 @@ async function postForm(
     });
   } catch (error) {
     throw new OAuthConnectionError(
-      `OAuth request to ${url} failed: ${error instanceof Error ? error.message : String(error)}`,
+      `OAuth request to ${url} failed: ${describeFetchFailure(error)}`,
+      { cause: error },
     );
   }
   const status = response.status;
@@ -96,11 +97,28 @@ async function postForm(
   return { status, data };
 }
 
+/**
+ * Flatten a fetch rejection into a readable message. undici throws a generic
+ * `TypeError: fetch failed` and hides the real reason (DNS, refused, TLS,
+ * timeout) in a nested `cause` chain — walk it so the surfaced message names
+ * the actual failure instead of just "fetch failed".
+ */
+function describeFetchFailure(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const messages = new Set<string>();
+  let current: Error | undefined = error;
+  while (current !== undefined) {
+    messages.add(current.message);
+    current = current.cause instanceof Error ? current.cause : undefined;
+  }
+  return [...messages].join(': ');
+}
+
 // ── requestDeviceAuthorization ────────────────────────────────────────
 
 export async function requestDeviceAuthorization(
   config: OAuthFlowConfig,
-  options: { readonly deviceHeaders?: DeviceHeaders | undefined },
+  options: { readonly deviceHeaders?: OAuthRequestHeaders | undefined },
 ): Promise<DeviceAuthorization> {
   const url = `${config.oauthHost.replace(/\/$/, '')}/api/oauth/device_authorization`;
   const { status, data } = await postForm(
@@ -150,7 +168,7 @@ export type DevicePollResult =
 export async function pollDeviceToken(
   config: OAuthFlowConfig,
   deviceCode: string,
-  options: { readonly deviceHeaders?: DeviceHeaders | undefined },
+  options: { readonly deviceHeaders?: OAuthRequestHeaders | undefined },
 ): Promise<DevicePollResult> {
   const url = `${config.oauthHost.replace(/\/$/, '')}/api/oauth/token`;
   const { status, data } = await postForm(
@@ -195,7 +213,7 @@ export async function pollDeviceToken(
 // ── refreshAccessToken ────────────────────────────────────────────────
 
 export interface RefreshOptions {
-  readonly deviceHeaders?: DeviceHeaders | undefined;
+  readonly deviceHeaders?: OAuthRequestHeaders | undefined;
   readonly maxRetries?: number | undefined;
   /**
    * Backoff between retries in ms. Defaults to `2 ** attempt * 1000` (1s, 2s).
@@ -271,4 +289,4 @@ export async function refreshAccessToken(
   throw lastError ?? new OAuthError('Token refresh failed after retries.');
 }
 
-export type { DeviceHeaders };
+export type { DeviceHeaders, OAuthRequestHeaders };

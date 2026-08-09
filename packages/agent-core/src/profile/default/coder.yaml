@@ -8,13 +8,25 @@ promptVars:
 whenToUse: |
   Use this agent for non-trivial software engineering work that may require reading files, editing code, running commands, and returning a compact but technically complete summary to the parent agent.
 tools:
+  - Agent
+  - AgentSwarm
   - Bash
-  - Read
-  - ReadMediaFile
+  - CronCreate
+  - CronDelete
+  - CronList
+  - Edit
+  - EnterPlanMode
+  - ExitPlanMode
   - Glob
   - Grep
-  - Write
-  - Edit
+  - Read
+  - ReadMediaFile
+  - Skill
+  - TaskList
+  - TaskOutput
+  - TaskStop
+  - TodoList
   - WebSearch
   - FetchURL
+  - Write
   - mcp__*

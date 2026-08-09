@@ -338,6 +338,55 @@ describe('ModelSelectorComponent', () => {
     expect(out).toContain('Thinking  (←→ to switch)');
   });
 
+  it('derives official Anthropic effort segments from the model name', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        opus: {
+          provider: 'anthropic',
+          model: 'claude-opus-4-6',
+          maxContextSize: 200000,
+        },
+      },
+      currentValue: 'opus',
+      currentThinkingEffort: 'high',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    const out = text(picker);
+    expect(out).toContain('Low');
+    expect(out).toContain('[ High ]');
+    expect(out).toContain('Max');
+    expect(out).toContain('Off');
+    expect(out).not.toContain('Xhigh');
+
+    picker.handleInput(RIGHT);
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'opus', thinking: 'max' });
+  });
+
+  it('derives official always-on Anthropic models without an Off segment', () => {
+    const picker = new ModelSelectorComponent({
+      models: {
+        fable: {
+          provider: 'anthropic',
+          model: 'claude-fable-5',
+          maxContextSize: 200000,
+        },
+      },
+      currentValue: 'fable',
+      currentThinkingEffort: 'high',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const out = text(picker);
+    expect(out).toContain('Xhigh');
+    expect(out).toContain('Max');
+    expect(out).not.toContain('Off');
+  });
+
   it('cycles efforts with Left/Right and clamps at the ends', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({
@@ -420,6 +469,45 @@ describe('ModelSelectorComponent', () => {
     // support_efforts present but default_effort absent -> default to the
     // middle entry (medium), not a hardcoded level.
     expect(text(picker)).toContain('[ Medium ]');
+  });
+
+  it('renders the warning line directly below the key-hint line when provided', () => {
+    const picker = new ModelSelectorComponent({
+      models: { kimi: model('Kimi K2') },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'on',
+      warning: 'Switching may increase token usage.',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const lines = picker.render(120).map(strip);
+    const hintIdx = lines.findIndex((l) => l.includes('↑↓ navigate'));
+    expect(hintIdx).toBeGreaterThanOrEqual(0);
+    expect(lines[hintIdx + 1]).toContain('Switching may increase token usage.');
+    // Model list is pushed below the inserted warning line, not overlapped.
+    expect(lines.findIndex((l) => l.includes('Kimi K2'))).toBeGreaterThan(hintIdx + 1);
+  });
+
+  it('wraps a warning longer than the width instead of truncating it', () => {
+    const warning =
+      'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
+    const picker = new ModelSelectorComponent({
+      models: { kimi: model('Kimi K2') },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'on',
+      warning,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const lines = picker.render(50).map(strip);
+    const hintIdx = lines.findIndex((l) => l.includes('↑↓ navigate'));
+    expect(lines[hintIdx + 1]).not.toBe('');
+    expect(lines[hintIdx + 2]).not.toBe('');
+    // Word-wrapped: nothing dropped — the full warning survives across lines.
+    const squashed = lines.join('').replaceAll(/\s+/g, '');
+    expect(squashed).toContain(warning.replaceAll(/\s+/g, ''));
   });
 });
 

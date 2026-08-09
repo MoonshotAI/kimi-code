@@ -1,12 +1,13 @@
 /**
  * `_base` retry helpers — exponential and server-directed backoff, abortable
- * sleeps, and error-field extraction shared by retry policies (the loop's
- * `stepRetry` plugin, full-compaction's self-managed resends).
+ * sleeps, and error-field extraction. The default budget is 10 attempts per
+ * step: the 500ms ×2 ramp capped at 32s waits out multi-minute provider
+ * overload (sustained 429s) before a turn fails.
  */
 
 import { abortable } from '#/_base/utils/abort';
 
-export const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
+export const DEFAULT_MAX_RETRY_ATTEMPTS = 10;
 
 const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 32_000;
@@ -63,7 +64,6 @@ function maybeStatusCode(error: unknown): number | undefined {
   if (typeof error !== 'object' || error === null) return undefined;
   const statusCode = (error as { statusCode?: unknown }).statusCode;
   if (typeof statusCode === 'number') return statusCode;
-  // Boundary-translated errors carry the HTTP status in `details`.
   const details = (error as { details?: unknown }).details;
   if (details !== null && typeof details === 'object') {
     const detailsStatus = (details as { statusCode?: unknown }).statusCode;

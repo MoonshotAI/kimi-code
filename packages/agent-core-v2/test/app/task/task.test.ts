@@ -19,7 +19,6 @@ describe('TaskService', () => {
   });
   afterEach(() => disposables.dispose());
 
-  // ── run() basics ──────────────────────────────────────────
 
   describe('run()', () => {
     it('transitions running → completed on success', async () => {
@@ -61,7 +60,6 @@ describe('TaskService', () => {
     });
   });
 
-  // ── defer() basics ────────────────────────────────────────
 
   describe('defer()', () => {
     it('starts in pending state', () => {
@@ -84,7 +82,6 @@ describe('TaskService', () => {
     });
   });
 
-  // ── Cancellation ──────────────────────────────────────────
 
   describe('cancellation', () => {
     it('run() cancel aborts the signal and settles as cancelled', async () => {
@@ -120,7 +117,6 @@ describe('TaskService', () => {
     });
   });
 
-  // ── Disposal ──────────────────────────────────────────────
 
   describe('disposal', () => {
     it('dispose cancels a running task', async () => {
@@ -148,7 +144,6 @@ describe('TaskService', () => {
     });
   });
 
-  // ── State change events ───────────────────────────────────
 
   describe('onDidChangeState', () => {
     it('fires on each transition for run()', async () => {
@@ -157,7 +152,6 @@ describe('TaskService', () => {
       handle.onDidChangeState((s) => states.push(s));
       await handle.result;
       expect(states).toEqual(['completed']);
-      // 'running' was already fired before listener was attached
     });
 
     it('resolve/reject after settlement is ignored on deferred', () => {
@@ -172,7 +166,6 @@ describe('TaskService', () => {
     });
   });
 
-  // ── Four consumption patterns ─────────────────────────────
 
   describe('consumption patterns', () => {
     it('resolves the value and completes when awaiting handle.result', async () => {
@@ -190,7 +183,6 @@ describe('TaskService', () => {
       });
       registry.set(handle.id, handle);
 
-      // Later, retrieve and await
       const retrieved = registry.get(handle.id)!;
       const result = await retrieved.result;
       expect(result).toBe('async-result');
@@ -215,7 +207,6 @@ describe('TaskService', () => {
       ]);
 
       expect(winner.kind).toBe('detach');
-      // Handle is still running — task continues independently
       expect(handle.state).toBe('running');
       handle.cancel();
     });
@@ -223,7 +214,6 @@ describe('TaskService', () => {
     it('resolves a deferred handle settled from outside the awaiting turn', async () => {
       const handle = svc.defer<string>();
 
-      // Simulate resolving from a different "turn"
       setTimeout(() => handle.resolve('from-outside'), 10);
 
       const result = await handle.result;
@@ -232,7 +222,6 @@ describe('TaskService', () => {
     });
   });
 
-  // ── ID uniqueness ─────────────────────────────────────────
 
   describe('IDs', () => {
     it('handles have unique IDs', () => {

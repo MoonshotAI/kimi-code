@@ -25,90 +25,44 @@ import {
 } from './style';
 import { tagColor, type TagMap } from './tags';
 
-/** Fixed node width so port rows have a stable horizontal box. */
 const NODE_WIDTH = 300;
-/** Height of the header block (impl / token / domain lines + padding). */
 const HEADER_HEIGHT = 68;
-/** Per-port row height. Must stay in sync with the CSS below. */
 const PORT_ROW_HEIGHT = 18;
-/** Vertical padding between the header divider and the first port row. */
 const PORTS_PAD_TOP = 4;
-/** Height reserved for the tag chip row when a node carries at least one tag. */
 const TAGS_ROW_HEIGHT = 20;
 
-/**
- * Per-node method port lists. `outPorts` are methods on this service that
- * make calls into a dependency (they anchor the source end of edges leaving
- * this node); `inPorts` are methods on this service that other services
- * call into (they anchor the target end of edges entering this node).
- */
 interface ServicePortsInfo {
   inPorts: string[];
   outPorts: string[];
-  /**
-   * Subset of `inPorts` that actually has at least one edge terminating on
-   * it (as opposed to being seeded from the interface's declared surface
-   * with no caller). Used to dim the handle / label so unused public
-   * methods stand out visually.
-   */
   connectedIn: Set<string>;
 }
 
 interface GraphViewProps {
   graph: Graph;
   filters: FilterState;
-  /** Selected `ServiceNode.id`. */
   selectedId?: string;
   onSelect: (id?: string) => void;
-  /** User-authored tags, keyed by `ServiceNode.id`. */
   tags: TagMap;
-  /** Replace the full tag list for a node (empty list clears the entry). */
   onEditTags: (nodeId: string, tags: string[]) => void;
 }
 
 interface ServiceNodeData extends Record<string, unknown> {
   service: ServiceNode;
   selected: boolean;
-  /**
-   * True when the search box has content and this node matches. Rendered
-   * as a distinct cyan outline so search hits are visually separable from
-   * the yellow-outlined click-selected node.
-   */
   matched: boolean;
   dim: boolean;
   ports: ServicePortsInfo;
-  /** Tags attached to this node, in entry order. */
   tags: string[];
 }
 
 const EVENT_KINDS: Set<EdgeKind> = new Set(['publish', 'subscribe', 'emit', 'on']);
 
-/**
- * The method name that an edge terminates at on the target node. For plain
- * calls this is `ref.toMethod`; for event-bus edges, where the call is
- * `bus.publish(...)` etc., the method name is already carried by the edge
- * kind so we surface it as the effective toMethod so the target node grows
- * a matching port row.
- */
 function effectiveToMethod(kind: EdgeKind, refTo: string | undefined): string | undefined {
   if (refTo !== undefined) return refTo;
   if (EVENT_KINDS.has(kind)) return kind;
   return undefined;
 }
 
-/**
- * Build the port lists per node from a set of edges.
- *
- * `inPorts` are seeded from `service.publicMembers` — every method /
- * property declared on the service's interface, whether anything actually
- * calls it or not, so the node advertises its full public surface. Any
- * inbound edge method that isn't already in that seed (unusual — usually
- * event-bus edges named after the kind) is folded in too.
- *
- * `outPorts` remain edge-driven: they are the methods on THIS service
- * that make a call outward, so filtering out an edge kind naturally
- * collapses the rows it would have populated.
- */
 function computeServicePorts(
   services: ServiceNode[],
   edges: Edge[],
@@ -161,11 +115,6 @@ function ServiceNodeView({ data }: NodeProps<Node<ServiceNodeData>>): JSX.Elemen
   const { service, selected, matched, dim, ports, tags } = data;
   const bg = SCOPE_STYLE[service.scope].color;
   const rowCount = Math.max(ports.inPorts.length, ports.outPorts.length);
-  // Interface-only node: the token is referenced but has no registered impl.
-  // Flagged with a dashed warning border so missing bindings stand out from
-  // concrete services at a glance. Selection / search-match still win so the
-  // active node stays unambiguous. Scope-mismatch nodes (token registered, but
-  // at a scope the caller can't see) get a distinct amber dashed border.
   const isUnresolved = service.unresolved === true;
   const isScopeMismatch = service.scopeMismatch === true;
   const specialBorder = isUnresolved || isScopeMismatch;
@@ -201,8 +150,6 @@ function ServiceNodeView({ data }: NodeProps<Node<ServiceNodeData>>): JSX.Elemen
         position: 'relative',
       }}
     >
-      {/* Fallback handles at the header — for refs with no method attribution
-          (raw ctor param declarations, un-chained `.get(IX)` lookups). */}
       <Handle
         id="default-target"
         type="target"
@@ -216,7 +163,6 @@ function ServiceNodeView({ data }: NodeProps<Node<ServiceNodeData>>): JSX.Elemen
         style={{ background: '#555', top: HEADER_HEIGHT / 2 }}
       />
 
-      {/* Header */}
       <div style={{ padding: '6px 10px' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
           <span
@@ -229,8 +175,6 @@ function ServiceNodeView({ data }: NodeProps<Node<ServiceNodeData>>): JSX.Elemen
           >
             {SCOPE_STYLE[service.scope].badge}
           </span>
-          {/* Impl is the primary label — that's the actual class the container
-              constructs; the token is a secondary identity shown below. */}
           <span
             style={{
               fontWeight: 600,
@@ -269,17 +213,10 @@ function ServiceNodeView({ data }: NodeProps<Node<ServiceNodeData>>): JSX.Elemen
               <div
                 key={i}
                 style={{
-                  // `position: relative` anchors the row's Handles to the
-                  // row itself; React Flow measures the dot's centre from
-                  // this box, so alignment tracks the label automatically
-                  // — no hardcoded pixel offsets to drift out of sync.
                   position: 'relative',
                   height: PORT_ROW_HEIGHT,
                 }}
               >
-                {/* Handles live directly on the row (no `overflow: hidden`
-                    ancestor), so React Flow's default translate(-50%, -50%)
-                    positions the dot straddling the node's border. */}
                 {out !== undefined && (
                   <Handle
                     id={`out:${out}`}
@@ -293,10 +230,6 @@ function ServiceNodeView({ data }: NodeProps<Node<ServiceNodeData>>): JSX.Elemen
                     id={`in:${inn}`}
                     type="target"
                     position={Position.Right}
-                    // Dim handle when the port is only there because it's
-                    // declared on the interface — nothing calls into it.
-                    // The connected-vs-declared distinction reads at a
-                    // glance without hunting for edges.
                     style={{
                       background: ports.connectedIn.has(inn) ? '#a8c8f6' : '#3d444d',
                     }}
@@ -376,7 +309,6 @@ function BandLabelView({ data }: NodeProps<Node<{ scope: string; width: number }
 
 const nodeTypes = { service: ServiceNodeView, band: BandLabelView };
 
-/** Non-interactive row of tag chips, used inside a graph node. */
 function TagChips({ tags }: { tags: string[] }): JSX.Element {
   return (
     <div
@@ -396,7 +328,6 @@ function TagChips({ tags }: { tags: string[] }): JSX.Element {
 
 interface TagChipProps {
   tag: string;
-  /** When provided, renders a remove affordance. */
   onRemove?: () => void;
 }
 
@@ -456,17 +387,10 @@ function TagChip({ tag, onRemove }: TagChipProps): JSX.Element {
 
 interface TagEditorProps {
   tags: string[];
-  /** Known tags across the graph, offered as input suggestions. */
   allTags: string[];
   onChange: (next: string[]) => void;
 }
 
-/**
- * Per-node tag editor rendered in the side panel. Chips remove on click; the
- * input adds on Enter or the add button, normalising whitespace and refusing
- * duplicates. `allTags` feeds a `<datalist>` so existing tags are one keystroke
- * away — keeps spelling consistent so grouping actually groups.
- */
 function TagEditor({ tags, allTags, onChange }: TagEditorProps): JSX.Element {
   const [draft, setDraft] = useState('');
   const listId = 'tag-suggestions';
@@ -557,12 +481,6 @@ function TagEditor({ tags, allTags, onChange }: TagEditorProps): JSX.Element {
   );
 }
 
-/**
- * Persist the pan/zoom viewport across dev-server reloads so a source-code
- * edit (which triggers a `full-reload` from the `virtual:dep-graph` plugin)
- * doesn't wipe the position the user carefully panned to. Scoped to
- * `sessionStorage` so each fresh browser session starts with `fitView`.
- */
 const VIEWPORT_STORAGE_KEY = 'agent-core-v2:dep-graph:viewport';
 
 function loadViewport(): Viewport | undefined {
@@ -588,8 +506,6 @@ function saveViewport(v: Viewport): void {
   try {
     sessionStorage.setItem(VIEWPORT_STORAGE_KEY, JSON.stringify(v));
   } catch {
-    // Storage disabled (private mode / quota) — silently drop; the graph
-    // still works, it just won't remember the viewport across reloads.
   }
 }
 
@@ -600,17 +516,10 @@ function passesFilter(
 ): boolean {
   if (!filters.scopes.has(service.scope)) return false;
   if (filters.hiddenDomains.has(service.domain)) return false;
-  // NOTE: search intentionally does NOT filter here — it drives the
-  // highlight/dim treatment below so context around a hit stays visible.
   if (filters.hideOrphans && !connected.has(service.id)) return false;
   return true;
 }
 
-/**
- * Case-insensitive substring match across the identity fields and public
- * surface. Kept close to `passesFilter` so the two search-related pieces
- * (highlight input, matches predicate) stay obviously in sync.
- */
 function matchesSearch(service: ServiceNode, query: string): boolean {
   const members = service.publicMembers ? ` ${service.publicMembers.join(' ')}` : '';
   const hay = `${service.token} ${service.impl} ${service.domain}${members}`.toLowerCase();
@@ -625,20 +534,11 @@ export function GraphView({
   tags,
   onEditTags,
 }: GraphViewProps): JSX.Element {
-  // Compute once at mount so a re-render that adds nodes doesn't yank the
-  // viewport back to the stored value while the user is panning.
   const initialViewport = useMemo(() => loadViewport(), []);
 
   const { nodes, edges, selectedService, selectedEdges } = useMemo(() => {
-    // Which edges survive the edge-kind filter? Unresolved edges are kept: the
-    // analyzer now synthesises an interface-only node for each unresolved token
-    // (rendered with a distinct border), so their `to` resolves to a real node
-    // instead of dangling. Edges whose endpoint is filtered out are dropped
-    // below via the `visibleIds` check.
     const survivingEdges: Edge[] = graph.edges.filter((e) => filters.kinds.has(e.kind));
 
-    // Node ids that appear on either end of any surviving edge — for the
-    // orphan filter.
     const connected = new Set<string>();
     for (const e of survivingEdges) {
       connected.add(e.from);
@@ -650,25 +550,12 @@ export function GraphView({
     );
     const visibleIds = new Set(visibleServices.map((s) => s.id));
 
-    // Also drop edges whose endpoint is not in the visible set.
     const finalEdges = survivingEdges.filter(
       (e) => visibleIds.has(e.from) && visibleIds.has(e.to),
     );
 
-    // Ports depend on the *rendered* edges: a port with no visible edge is
-    // dead weight on the node, so we compute after filter+visibility.
     const ports = computeServicePorts(visibleServices, finalEdges);
 
-    // Compute the three focus drivers:
-    //   • `selectedId` — the click-selected node (0 or 1 at a time).
-    //   • `matched`    — every node whose identity or public surface hits
-    //                     the current search string.
-    //   • `tagMatched` — every node carrying at least one active tag
-    //                     (the "group by tag" view).
-    // Their neighbours (nodes touched by any surviving edge) are folded in
-    // so the graph keeps enough context around a hit to be readable —
-    // this is the "act like a click" behaviour: nothing disappears, just
-    // dims. `focused` is the union used to decide dim vs bright.
     const searchQuery = filters.search.trim().toLowerCase();
     const matched = new Set<string>();
     if (searchQuery) {
@@ -677,8 +564,6 @@ export function GraphView({
       }
     }
 
-    // Tag focus: every visible node carrying at least one active tag seeds
-    // the focus set, so the graph reads as "the group(s) these tags pick out".
     const tagMatched = new Set<string>();
     if (filters.activeTags.size > 0) {
       for (const s of visibleServices) {
@@ -736,8 +621,6 @@ export function GraphView({
       }),
     );
 
-    // If grouped, add one non-interactive label node above each band so the
-    // three columns are self-labeling.
     if (layout.bands) {
       const ys = [...pos.values()].map((p) => p.y);
       const minY = ys.length > 0 ? Math.min(...ys) : 0;
@@ -757,14 +640,7 @@ export function GraphView({
     const rfEdges: RFEdge[] = [];
     for (const e of finalEdges) {
       const style = EDGE_STYLE[e.kind];
-      // With a focus (click or search) active, an edge is bright when both
-      // ends are in the focus set — i.e. it either sits directly on a hit
-      // or bridges two things adjacent to a hit. When no focus is active
-      // every edge stays at its default opacity.
       const isHighlighted = focusActive && focused.has(e.from) && focused.has(e.to);
-      // Group refs by (fromMethod, effectiveToMethod) so identical method
-      // pairs on different lines collapse into a single arrow between the
-      // same two handles instead of stacking.
       const pairs = new Map<
         string,
         { fromMethod: string | undefined; toMethod: string | undefined }
@@ -810,10 +686,6 @@ export function GraphView({
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
-        // Only `fitView` on the very first mount of a fresh browser session.
-        // Once a viewport is remembered, hand it to React Flow as
-        // `defaultViewport` so the pan/zoom the user last landed on is
-        // preserved across dev-server reloads.
         {...(initialViewport
           ? { defaultViewport: initialViewport }
           : { fitView: true })}
@@ -974,9 +846,7 @@ interface EdgeGroup {
   edge: Edge;
   peerLabel: string;
   peerToken?: string;
-  /** Refs that have at least one attributed method — one table row each. */
   methodRefs: EdgeRef[];
-  /** Refs with neither `fromMethod` nor `toMethod` (ctor param decls etc.). */
   unattributedCount: number;
 }
 
@@ -998,13 +868,6 @@ function buildEdgeGroups(
   });
 }
 
-/**
- * Right-panel table of edges touching the selected service. One row per
- * attributed call ref; consecutive rows belonging to the same edge share
- * `kind` / `peer` cells via `rowSpan` so the grouping is visible without
- * repeating them. The self-side method column is bold so the direction of
- * each call reads at a glance (out ⇒ `from` bold, in ⇒ `to` bold).
- */
 function EdgeList({ title, edges, direction, byId }: EdgeListProps): JSX.Element {
   const groups = buildEdgeGroups(edges, direction, byId);
   const selfIsFrom = direction === 'out';

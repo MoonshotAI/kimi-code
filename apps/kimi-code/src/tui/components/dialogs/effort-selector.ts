@@ -3,6 +3,7 @@ import {
   Key,
   matchesKey,
   truncateToWidth,
+  wrapTextWithAnsi,
   type Focusable,
 } from '@moonshot-ai/pi-tui';
 
@@ -22,6 +23,10 @@ export interface EffortSelectorOptions {
   /** When provided, Alt+S applies the choice to the current session only. */
   readonly onSessionOnlySelect?: (effort: ThinkingEffort) => void;
   readonly onCancel: () => void;
+  /** When set, rendered as warning-colored lines directly below the key-hint
+   * line; wraps instead of truncating when it exceeds the width (e.g. the
+   * mid-conversation switch cost notice). */
+  readonly warning?: string;
 }
 
 /**
@@ -76,8 +81,13 @@ export class EffortSelectorComponent extends Container implements Focusable {
       currentTheme.fg('primary', '─'.repeat(width)),
       currentTheme.boldFg('primary', ` ${this.opts.title ?? 'Select thinking effort'}`),
       currentTheme.fg('textMuted', ` ${hintParts.join(' · ')}`),
-      '',
     ];
+    if (this.opts.warning !== undefined) {
+      for (const line of wrapTextWithAnsi(this.opts.warning, Math.max(1, width - 1))) {
+        lines.push(currentTheme.fg('warning', ` ${line}`));
+      }
+    }
+    lines.push('');
 
     const segments = this.opts.efforts.map((effort, index) => {
       const label = effortLabel(effort);

@@ -1,25 +1,37 @@
 /**
- * `shellCommand` domain (L4) — `IAgentShellCommandService` implementation.
+ * `shellCommand` domain — `IAgentShellCommandService` implementation.
  *
  * Runs user-initiated `!` commands through the builtin `Bash` tool from
  * `toolRegistry`, records the command and output as `shell_command`-origin
  * context messages via `contextMemory`, streams live `shell.output` /
- * `shell.started` events through `eventBus`, and steers the model through
- * `promptService` when a command is detached to background. Bound at Agent
- * scope.
+ * `shell.started` / `shell.completed` events through `eventBus`, and steers
+ * the model through `promptService` when a command is detached to background.
+ * Bound at Agent scope.
+ *
+ * `shell.completed` fires once when a foreground command settles (success or
+ * failure); runs detached to background do NOT fire it — they report through
+ * the task lifecycle instead. `shell.output` / `shell.completed` carry the
+ * foreground process `taskId` once that task is registered, so consumers that
+ * missed `shell.started` can still route the chunk. A failure text that was
+ * never streamed (empty stdout/stderr) is emitted as a `shell.output` chunk
+ * before `shell.completed`, so live consumers see the output too.
+ *
+ * The plain-data state (`shellCommandTasks`) is registered into `agentState`
+ * (`IAgentStateService`) and read/written through it; `shellCommandControllers`
+ * stays an instance field (per-command `AbortController`s, not plain data).
  */
 
-import type { ShellOutputEvent, ShellStartedEvent } from '@moonshot-ai/protocol';
-
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/_base/state/stateRegistry';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentStateService } from '#/agent/state/agentState';
 import type { ToolUpdate } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
+import { Error2, ErrorCodes } from '#/errors';
 
 import {
   IAgentShellCommandService,
@@ -27,14 +39,40 @@ import {
   type RunShellCommandResult,
 } from './shellCommand';
 
+export interface ShellOutputEvent {
+  readonly type: 'shell.output';
+  readonly commandId: string;
+  readonly update: ToolUpdate;
+  readonly taskId?: string;
+}
+
+export interface ShellStartedEvent {
+  readonly type: 'shell.started';
+  readonly commandId: string;
+  readonly taskId: string;
+}
+
+export interface ShellCompletedEvent {
+  readonly type: 'shell.completed';
+  readonly commandId: string;
+  readonly isError: boolean;
+  readonly taskId?: string;
+}
+
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'shell.output': ShellOutputEvent;
     'shell.started': ShellStartedEvent;
+    'shell.completed': ShellCompletedEvent;
   }
 }
 
 const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
+
+export const shellCommandTasksKey = defineState<Map<string, string>>(
+  'shellCommand.tasks',
+  () => new Map(),
+);
 
 export class AgentShellCommandService implements IAgentShellCommandService {
   declare readonly _serviceBrand: undefined;
@@ -45,13 +83,16 @@ export class AgentShellCommandService implements IAgentShellCommandService {
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentPromptService private readonly promptService: IAgentPromptService,
     @IEventBus private readonly eventBus: IEventBus,
-  ) { }
+    @IAgentStateService private readonly states: IAgentStateService,
+  ) {
+    this.states.register(shellCommandTasksKey);
+  }
+
+  private get shellCommandTasks(): Map<string, string> {
+    return this.states.get(shellCommandTasksKey);
+  }
 
   async run(input: RunShellCommandInput): Promise<RunShellCommandResult> {
-    // Record the command up front so the model sees it on the next turn even if
-    // resolution or execution fails below. Mirrors v1 `runShellCommand`
-    // (parity with claude-code's `shouldQuery: false`): a foreground `!`
-    // command is written into context but does NOT itself start a turn.
     this.appendShellInput(input.command);
 
     const controller = new AbortController();
@@ -82,11 +123,17 @@ export class AgentShellCommandService implements IAgentShellCommandService {
           else if (update.kind === 'stderr') stderr += update.text ?? '';
           else return;
           if (input.commandId !== undefined) {
-            this.eventBus.publish({ type: 'shell.output', commandId: input.commandId, update });
+            this.eventBus.publish({
+              type: 'shell.output',
+              commandId: input.commandId,
+              update,
+              taskId: this.shellCommandTasks.get(input.commandId),
+            });
           }
         },
         onForegroundTaskStart: (taskId: string) => {
           if (input.commandId !== undefined) {
+            this.shellCommandTasks.set(input.commandId, taskId);
             this.eventBus.publish({ type: 'shell.started', commandId: input.commandId, taskId });
           }
         },
@@ -94,30 +141,55 @@ export class AgentShellCommandService implements IAgentShellCommandService {
 
       const isError = result.isError === true;
       if (typeof result.output === 'string' && result.output.startsWith('task_id: ')) {
-        // Detached to background (ctrl+b): inject the background-task metadata
-        // (task_id / status / output path) as a user-invisible message and
-        // immediately notify the model — mirrors the background-task completion
-        // notification, but hidden. Not recorded as a `shell_command` output;
-        // the input above is the only user-visible trace.
         this.notifyBackgrounded(result.output);
         return { stdout: result.output, stderr: '', isError: false, backgrounded: true };
       }
       if (isError && stdout.length === 0 && stderr.length === 0) {
         stderr = typeof result.output === 'string' ? result.output : 'Command failed.';
+        if (input.commandId !== undefined && stderr.length > 0) {
+          this.eventBus.publish({
+            type: 'shell.output',
+            commandId: input.commandId,
+            update: { kind: 'stderr', text: stderr },
+            taskId: this.shellCommandTasks.get(input.commandId),
+          });
+        }
+      }
+      if (input.commandId !== undefined) {
+        this.eventBus.publish({
+          type: 'shell.completed',
+          commandId: input.commandId,
+          isError,
+          taskId: this.shellCommandTasks.get(input.commandId),
+        });
       }
       this.appendShellOutput(stdout, stderr, isError);
       return { stdout, stderr, isError };
     } catch (error) {
-      // Covers `ensureBashTool` throwing (Bash not registered) and any
-      // exception escaping `execute`. Surface the reason as stderr and record
-      // it so the model and replay see what went wrong instead of a bare RPC
-      // error.
-      stderr += error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      stderr += message;
+      if (input.commandId !== undefined) {
+        if (message.length > 0) {
+          this.eventBus.publish({
+            type: 'shell.output',
+            commandId: input.commandId,
+            update: { kind: 'stderr', text: message },
+            taskId: this.shellCommandTasks.get(input.commandId),
+          });
+        }
+        this.eventBus.publish({
+          type: 'shell.completed',
+          commandId: input.commandId,
+          isError: true,
+          taskId: this.shellCommandTasks.get(input.commandId),
+        });
+      }
       this.appendShellOutput(stdout, stderr, true);
       return { stdout, stderr, isError: true };
     } finally {
       if (input.commandId !== undefined) {
         this.shellCommandControllers.delete(input.commandId);
+        this.shellCommandTasks.delete(input.commandId);
       }
     }
   }
@@ -129,7 +201,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
   private ensureBashTool() {
     const bash = this.toolRegistry.resolve('Bash');
     if (bash === undefined) {
-      throw new Error('Bash tool is not registered.');
+      throw new Error2(ErrorCodes.INTERNAL, 'Bash tool is not registered.');
     }
     return bash;
   }
@@ -171,6 +243,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentShellCommandService,
   AgentShellCommandService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'shellCommand',
 );

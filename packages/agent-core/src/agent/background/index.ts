@@ -42,6 +42,23 @@ export function isBackgroundTaskTerminal(status: BackgroundTaskStatus): boolean 
   return TERMINAL_STATUSES.has(status);
 }
 
+const MAX_RUNNING_TASKS_ENV = 'KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS';
+
+/**
+ * Resolve the effective background-task concurrency cap. Precedence:
+ * `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` (positive integer) → config
+ * (`background.max_running_tasks`) → `undefined` (no cap). An invalid env
+ * value is ignored.
+ */
+export function resolveMaxRunningTasks(configValue?: number): number | undefined {
+  const raw = process.env[MAX_RUNNING_TASKS_ENV]?.trim();
+  if (raw !== undefined && raw.length > 0 && /^\d+$/.test(raw)) {
+    const parsed = Number(raw);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return configValue;
+}
+
 export { AgentBackgroundTask } from './agent-task';
 export type { AgentBackgroundTaskInfo } from './agent-task';
 export { ProcessBackgroundTask } from './process-task';
@@ -282,7 +299,9 @@ export class BackgroundManager {
   }
 
   private assertCanRegister(startedInBackground: boolean): void {
-    const maxRunningTasks = this.agent.kimiConfig?.background?.maxRunningTasks;
+    const maxRunningTasks = resolveMaxRunningTasks(
+      this.agent.kimiConfig?.background?.maxRunningTasks,
+    );
     if (maxRunningTasks === undefined) return;
     if (!startedInBackground) return;
     if (this.activeBackgroundAdmissionCount() < maxRunningTasks) return;

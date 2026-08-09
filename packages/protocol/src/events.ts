@@ -2,7 +2,12 @@ import { z } from 'zod';
 
 import { ToolInputDisplaySchema, type ToolInputDisplay } from './display';
 import { messageContentSchema, type MessageContent } from './message';
-import { sessionSchema, sessionStatusSchema, type Session, type SessionStatus } from './session';
+import {
+  sessionPendingInteractionSchema,
+  sessionSchema,
+  type Session,
+  type SessionPendingInteraction,
+} from './session';
 import { isoDateTimeSchema } from './time';
 import { configResponseSchema, type ConfigResponse } from './rest/config';
 import {
@@ -220,6 +225,8 @@ export type KimiErrorCode =
   | 'session.undo_unavailable'
   | 'session.export_not_found'
   | 'session.export_missing_version'
+  | 'session.export_output_conflict'
+  | 'session.export_too_large'
   | 'session.closed'
   | 'session.permission_mode_invalid'
   | 'session.thinking_empty'
@@ -229,12 +236,12 @@ export type KimiErrorCode =
   | 'session.question_handler_error'
   | 'session.init_failed'
   | 'agent.not_found'
-  | 'activity.agent_busy'
-  | 'activity.cancelling'
-  | 'activity.disposing'
-  | 'activity.disposed'
-  | 'activity.initializing'
-  | 'activity.session_rejected'
+  | 'agent.already_exists'
+  | 'agent.already_running'
+  | 'agent.not_a_subagent'
+  | 'agent.not_owned'
+  | 'agent.type_not_allowed'
+  | 'agent.max_tokens_exceeded'
   | 'turn.agent_busy'
   | 'goal.already_exists'
   | 'goal.not_found'
@@ -243,9 +250,13 @@ export type KimiErrorCode =
   | 'goal.status_invalid'
   | 'goal.metadata_reserved'
   | 'goal.not_resumable'
+  | 'goal.unsupported_agent'
   | 'model.not_configured'
   | 'model.config_invalid'
   | 'profile.thinking_alias_conflict'
+  | 'profile.unknown'
+  | 'profile.already_bound'
+  | 'profile.not_bound'
   | 'model.not_found'
   | 'auth.login_required'
   | 'auth.provisioning_required'
@@ -264,15 +275,19 @@ export type KimiErrorCode =
   | 'skill.not_found'
   | 'skill.type_unsupported'
   | 'skill.name_empty'
+  | 'skill.parse_failed'
+  | 'skill.nested_too_deep'
   | 'records.write_failed'
   | 'compaction.failed'
   | 'compaction.unable'
   | 'task.task_id_empty'
+  | 'task.limit_exceeded'
   | 'usage.turn_id_conflict'
   | 'mcp.server_not_found'
   | 'mcp.server_disabled'
   | 'mcp.startup_failed'
   | 'mcp.tool_name_collision'
+  | 'mcp.oauth_failed'
   | 'message.not_found'
   | 'plugin.not_found'
   | 'plugin.load_failed'
@@ -312,9 +327,16 @@ export type KimiErrorCode =
   | 'storage.corrupted'
   | 'storage.io_failed'
   | 'storage.locked'
+  | 'storage.permission_denied'
+  | 'storage.disk_full'
   | 'wire.duplicate_op'
   | 'wire.cycle'
   | 'wire.unknown_record'
+  | 'wire.migration_missing'
+  | 'cron.expression_invalid'
+  | 'web.invalid_url'
+  | 'web.private_address'
+  | 'web.fetch_failed'
   | 'validation.failed'
   | 'not_implemented'
   | 'internal';
@@ -408,6 +430,12 @@ export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_
 export interface McpOAuthAuthorizationUrlUpdateData {
   readonly serverName: string;
   readonly authorizationUrl: string;
+  /**
+   * Epoch-ms instant when the engine stops waiting for the OAuth callback.
+   * Hosts derive countdowns and expiry states from this value instead of
+   * mirroring the engine-side timeout constant.
+   */
+  readonly expiresAt?: number;
 }
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
@@ -478,6 +506,7 @@ export type AgentPhase =
 export interface AgentStatusUpdatedEvent {
   readonly type: 'agent.status.updated';
   readonly model?: string;
+  readonly thinkingEffort?: string;
   readonly contextTokens?: number;
   readonly maxContextTokens?: number;
   readonly contextUsage?: number;
@@ -515,10 +544,27 @@ export interface WorkspaceDeletedEvent {
   readonly root: string;
 }
 
+export interface SessionWorkChangedEvent {
+  readonly type: 'event.session.work_changed';
+  readonly busy: boolean;
+  /** Main-agent turn liveness, excluding background and sub-agent work. */
+  readonly main_turn_active?: boolean;
+  /** Highest-priority pending interaction for clients without a session subscription. */
+  readonly pending_interaction?: SessionPendingInteraction;
+  /** Outcome of the MAIN agent's most recent turn, when one has ended since
+   *  activation (see `Session.last_turn_reason`). */
+  readonly last_turn_reason?: 'completed' | 'cancelled' | 'failed';
+}
+
+/**
+ * @deprecated Replaced by {@link SessionWorkChangedEvent}: awaiting states
+ * ride the approval/question channels and outcomes ride turn.ended. Kept so
+ * pre-change journals still parse during replay.
+ */
 export interface SessionStatusChangedEvent {
   readonly type: 'event.session.status_changed';
-  readonly status: SessionStatus;
-  readonly previous_status: SessionStatus;
+  readonly status: 'idle' | 'running' | 'awaiting_approval' | 'awaiting_question' | 'aborted';
+  readonly previous_status: 'idle' | 'running' | 'awaiting_approval' | 'awaiting_question' | 'aborted';
   readonly current_prompt_id?: string;
 }
 
@@ -580,6 +626,7 @@ export interface TurnStartedEvent {
   readonly type: 'turn.started';
   readonly turnId: number;
   readonly origin: PromptOrigin;
+  readonly prompt?: string;
 }
 
 export interface TurnEndedEvent {
@@ -702,6 +749,7 @@ export interface ShellOutputEvent {
   readonly type: 'shell.output';
   readonly commandId: string;
   readonly update: ToolUpdate;
+  readonly taskId?: string;
 }
 
 /**
@@ -712,6 +760,18 @@ export interface ShellStartedEvent {
   readonly type: 'shell.started';
   readonly commandId: string;
   readonly taskId: string;
+}
+
+/**
+ * Fired once when a foreground `!` shell command settles (success or
+ * failure). Runs detached to background do NOT fire it — they report through
+ * the task lifecycle instead. Transient, like the other `shell.*` events.
+ */
+export interface ShellCompletedEvent {
+  readonly type: 'shell.completed';
+  readonly commandId: string;
+  readonly isError: boolean;
+  readonly taskId?: string;
 }
 
 export interface ToolResultEvent {
@@ -873,6 +933,7 @@ export type AgentEvent =
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
+  | SessionWorkChangedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | ModelCatalogChangedEvent
@@ -893,6 +954,7 @@ export type AgentEvent =
   | ToolProgressEvent
   | ShellOutputEvent
   | ShellStartedEvent
+  | ShellCompletedEvent
   | ToolResultEvent
   | ToolListUpdatedEvent
   | McpServerStatusEvent
@@ -1120,6 +1182,8 @@ export const kimiErrorCodeSchema = z.enum([
   'session.undo_unavailable',
   'session.export_not_found',
   'session.export_missing_version',
+  'session.export_output_conflict',
+  'session.export_too_large',
   'session.closed',
   'session.permission_mode_invalid',
   'session.thinking_empty',
@@ -1129,12 +1193,12 @@ export const kimiErrorCodeSchema = z.enum([
   'session.question_handler_error',
   'session.init_failed',
   'agent.not_found',
-  'activity.agent_busy',
-  'activity.cancelling',
-  'activity.disposing',
-  'activity.disposed',
-  'activity.initializing',
-  'activity.session_rejected',
+  'agent.already_exists',
+  'agent.already_running',
+  'agent.not_a_subagent',
+  'agent.not_owned',
+  'agent.type_not_allowed',
+  'agent.max_tokens_exceeded',
   'turn.agent_busy',
   'goal.already_exists',
   'goal.not_found',
@@ -1143,9 +1207,13 @@ export const kimiErrorCodeSchema = z.enum([
   'goal.status_invalid',
   'goal.metadata_reserved',
   'goal.not_resumable',
+  'goal.unsupported_agent',
   'model.not_configured',
   'model.config_invalid',
   'profile.thinking_alias_conflict',
+  'profile.unknown',
+  'profile.already_bound',
+  'profile.not_bound',
   'model.not_found',
   'auth.login_required',
   'auth.provisioning_required',
@@ -1164,15 +1232,19 @@ export const kimiErrorCodeSchema = z.enum([
   'skill.not_found',
   'skill.type_unsupported',
   'skill.name_empty',
+  'skill.parse_failed',
+  'skill.nested_too_deep',
   'records.write_failed',
   'compaction.failed',
   'compaction.unable',
   'task.task_id_empty',
+  'task.limit_exceeded',
   'usage.turn_id_conflict',
   'mcp.server_not_found',
   'mcp.server_disabled',
   'mcp.startup_failed',
   'mcp.tool_name_collision',
+  'mcp.oauth_failed',
   'message.not_found',
   'plugin.not_found',
   'plugin.load_failed',
@@ -1197,6 +1269,31 @@ export const kimiErrorCodeSchema = z.enum([
   'fs.too_many_results',
   'fs.grep_timeout',
   'fs.git_unavailable',
+  'os.fs.not_found',
+  'os.fs.is_directory',
+  'os.fs.not_directory',
+  'os.fs.already_exists',
+  'os.fs.permission_denied',
+  'os.fs.not_empty',
+  'os.fs.unavailable',
+  'os.fs.unknown',
+  'os.process.spawn_failed',
+  'os.process.kill_failed',
+  'storage.not_found',
+  'storage.decode_failed',
+  'storage.corrupted',
+  'storage.io_failed',
+  'storage.locked',
+  'storage.permission_denied',
+  'storage.disk_full',
+  'wire.duplicate_op',
+  'wire.cycle',
+  'wire.unknown_record',
+  'wire.migration_missing',
+  'cron.expression_invalid',
+  'web.invalid_url',
+  'web.private_address',
+  'web.fetch_failed',
   'validation.failed',
   'not_implemented',
   'internal',
@@ -1273,6 +1370,7 @@ export const toolUpdateSchema = z.object({
 export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
   serverName: z.string(),
   authorizationUrl: z.string(),
+  expiresAt: z.number().optional(),
 }) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
 
 export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked']) satisfies z.ZodType<TurnEndReason>;
@@ -1344,6 +1442,7 @@ export const agentPhaseSchema = z.discriminatedUnion('kind', [
 export const agentStatusUpdatedEventSchema = z.object({
   type: z.literal('agent.status.updated'),
   model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
   contextTokens: z.number().optional(),
   maxContextTokens: z.number().optional(),
   contextUsage: z.number().optional(),
@@ -1381,10 +1480,19 @@ export const workspaceDeletedEventSchema = z.object({
   root: z.string().min(1),
 }) satisfies z.ZodType<WorkspaceDeletedEvent>;
 
+export const sessionWorkChangedEventSchema = z.object({
+  type: z.literal('event.session.work_changed'),
+  busy: z.boolean(),
+  main_turn_active: z.boolean().optional(),
+  pending_interaction: sessionPendingInteractionSchema.optional(),
+  last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
+}) satisfies z.ZodType<SessionWorkChangedEvent>;
+
+/** @deprecated See {@link SessionStatusChangedEvent}. */
 export const sessionStatusChangedEventSchema = z.object({
   type: z.literal('event.session.status_changed'),
-  status: sessionStatusSchema,
-  previous_status: sessionStatusSchema,
+  status: z.enum(['idle', 'running', 'awaiting_approval', 'awaiting_question', 'aborted']),
+  previous_status: z.enum(['idle', 'running', 'awaiting_approval', 'awaiting_question', 'aborted']),
   current_prompt_id: z.string().min(1).optional(),
 }) satisfies z.ZodType<SessionStatusChangedEvent>;
 
@@ -1440,6 +1548,7 @@ export const turnStartedEventSchema = z.object({
   type: z.literal('turn.started'),
   turnId: z.number(),
   origin: promptOriginSchema,
+  prompt: z.string().optional(),
 }) satisfies z.ZodType<TurnStartedEvent>;
 
 export const turnEndedEventSchema = z.object({
@@ -1546,6 +1655,7 @@ export const shellOutputEventSchema = z.object({
   type: z.literal('shell.output'),
   commandId: z.string(),
   update: toolUpdateSchema,
+  taskId: z.string().optional(),
 }) satisfies z.ZodType<ShellOutputEvent>;
 
 export const shellStartedEventSchema = z.object({
@@ -1553,6 +1663,13 @@ export const shellStartedEventSchema = z.object({
   commandId: z.string(),
   taskId: z.string(),
 }) satisfies z.ZodType<ShellStartedEvent>;
+
+export const shellCompletedEventSchema = z.object({
+  type: z.literal('shell.completed'),
+  commandId: z.string(),
+  isError: z.boolean(),
+  taskId: z.string().optional(),
+}) satisfies z.ZodType<ShellCompletedEvent>;
 
 export const toolResultEventSchema = z.object({
   type: z.literal('tool.result'),
@@ -1711,6 +1828,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceCreatedEventSchema,
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,
+  sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
   modelCatalogChangedEventSchema,
   goalUpdatedEventSchema,
@@ -1730,6 +1848,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   toolProgressEventSchema,
   shellOutputEventSchema,
   shellStartedEventSchema,
+  shellCompletedEventSchema,
   toolResultEventSchema,
   toolListUpdatedEventSchema,
   mcpServerStatusEventSchema,
@@ -1785,6 +1904,7 @@ export const VOLATILE_EVENT_TYPES = [
   'tool.progress',
   'shell.output',
   'shell.started',
+  'shell.completed',
   'agent.status.updated',
 ] as const satisfies readonly AgentEvent['type'][];
 

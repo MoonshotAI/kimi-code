@@ -43,7 +43,6 @@ interface StubOpts {
   readonly userShell?: string | undefined;
 }
 
-/** Build a stub deps bag; records `execFileText` invocations in `calls`. */
 function stubDeps(opts: StubOpts): { deps: LoginShellPathDeps; calls: unknown[][] } {
   const calls: unknown[][] = [];
   return {
@@ -68,9 +67,6 @@ describe('probeLoginShellPath', () => {
       execFileResult: 'HOME=/Users/u\nPATH=/opt/homebrew/bin:/usr/bin:/bin\nTERM=dumb\n',
     });
     await expect(probeLoginShellPath(deps)).resolves.toBe('/opt/homebrew/bin:/usr/bin:/bin');
-    // env must be invoked by absolute path: a bare `env` resolves through the
-    // inherited (possibly cwd-dependent) PATH from the workspace cwd, so a
-    // repo-planted `env` binary could run at session startup.
     expect(calls).toEqual([['/bin/zsh', ['-l', '-c', '/usr/bin/env'], 5_000]]);
   });
 
@@ -88,9 +84,6 @@ describe('probeLoginShellPath', () => {
   });
 
   it('falls back to the account login shell when SHELL is unset or blank', async () => {
-    // launchd/daemon launches can leave $SHELL unset or blank (the very
-    // contexts whose PATH is impoverished); the probe must then use the OS
-    // account's login shell instead of giving up.
     for (const env of [{}, { SHELL: '' }, { SHELL: '   ' }]) {
       const { deps, calls } = stubDeps({
         env,
@@ -129,18 +122,13 @@ describe('mergeLoginShellPath', () => {
   });
 
   it('returns the current PATH string verbatim when nothing is missing', () => {
-    // Strict identity, including empty components and duplicates the user
-    // already has — a no-op merge must not normalize anything.
     expect(mergeLoginShellPath('/a::/b:/a:', '/b:/a')).toBe('/a::/b:/a:');
   });
 
   it('preserves empty components (cwd lookup) in the current PATH while appending', () => {
-    // POSIX treats a leading colon, trailing colon, or double colon as "search
-    // the current directory"; merging must not strip that.
     expect(mergeLoginShellPath(':/usr/bin', '/new')).toBe(':/usr/bin:/new');
     expect(mergeLoginShellPath('/usr/bin:', '/new')).toBe('/usr/bin::/new');
     expect(mergeLoginShellPath('/a::/b', '/c')).toBe('/a::/b:/c');
-    // A set-but-empty PATH is cwd-only lookup; the empty component stays first.
     expect(mergeLoginShellPath('', '/a')).toBe(':/a');
   });
 
@@ -149,16 +137,10 @@ describe('mergeLoginShellPath', () => {
   });
 
   it('skips empty and duplicate login-shell entries', () => {
-    // Empty login-shell components are never imported: appending a cwd lookup
-    // the user did not already have would widen their search path.
     expect(mergeLoginShellPath('/a', ':/b::/a:')).toBe('/a:/b');
   });
 
   it('skips relative login-shell entries', () => {
-    // `.` and relative components are cwd-dependent lookup with another
-    // spelling — the host runs commands from arbitrary workspace directories,
-    // so importing one would let a command name resolve from an untrusted
-    // project cwd. Only absolute entries may be appended.
     expect(mergeLoginShellPath('/a', '.:bin:../x:/b')).toBe('/a:/b');
   });
 });
@@ -179,9 +161,6 @@ describe('applyLoginShellPath', () => {
   });
 
   it('does not set an unset PATH when the login shell contributes nothing', async () => {
-    // Pathological but possible: the login-shell PATH holds only empty
-    // components. Writing '' back would turn "unset" (implementation default
-    // search path) into "cwd-only lookup".
     const env: Record<string, string | undefined> = { SHELL: '/bin/zsh' };
     const { deps } = stubDeps({ env, execFileResult: 'PATH=:::\n' });
     await applyLoginShellPath(deps);
@@ -209,23 +188,16 @@ describe.skipIf(process.platform === 'win32')('applyLoginShellPathFromNode', () 
   it('appends login-shell PATH entries missing from process.env.PATH', async () => {
     const extraDir = join(tempDir, 'login-only-bin');
     const stubShell = join(tempDir, 'stub-shell.sh');
-    // Stands in for the user's login shell: its shebang runs under /bin/sh, so
-    // the trailing `-l -c /usr/bin/env` land as positional args and the script
-    // just reports an environment whose PATH carries an entry the kimi-code
-    // process does not have.
     await writeFile(stubShell, `#!/bin/sh\necho "HOME=$HOME"\necho "PATH=${extraDir}:/usr/bin:/bin"\n`);
     await chmod(stubShell, 0o755);
     process.env['SHELL'] = stubShell;
 
-    // Drop any memoised probe from prior tests so this call probes the stub
-    // shell instead of returning a cached result.
     vi.resetModules();
     const { applyLoginShellPathFromNode } = await import('#/_base/execEnv/loginShellPath');
     await applyLoginShellPathFromNode();
 
     const entries = (process.env['PATH'] ?? '').split(':');
     expect(entries).toContain(extraDir);
-    // Existing entries keep priority: the login-shell extras are appended.
     expect(process.env['PATH']?.startsWith(originalPath ?? '')).toBe(true);
   });
 });

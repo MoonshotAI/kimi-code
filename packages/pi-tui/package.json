@@ -1,6 +1,6 @@
 {
 	"name": "@moonshot-ai/pi-tui",
-	"version": "0.80.7",
+	"version": "0.80.8",
 	"private": true,
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"license": "MIT",

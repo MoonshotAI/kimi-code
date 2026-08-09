@@ -1,6 +1,4 @@
-import type { CompactionResult as ProtocolCompactionResult } from '@moonshot-ai/protocol';
-
-export interface CompactionResult extends ProtocolCompactionResult {
+export interface CompactionResult {
   summary: string;
   contextSummary?: string;
   compactedCount: number;

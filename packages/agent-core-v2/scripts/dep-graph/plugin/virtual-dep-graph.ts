@@ -28,7 +28,6 @@ import type { Graph } from '../analyzer/types';
 const VIRTUAL_ID = 'virtual:dep-graph';
 const RESOLVED_ID = `\0${VIRTUAL_ID}`;
 
-/** Coalesce watcher bursts (single save often fires add+change+rename). */
 const DEBOUNCE_MS = 200;
 
 function tag(): string {
@@ -41,17 +40,9 @@ function isSrcFile(file: string): boolean {
 }
 
 interface PluginOptions {
-  /** If false, don't mirror the graph to disk (in-memory only). Default true. */
   writeSnapshotFile?: boolean;
 }
 
-/**
- * Structural fingerprint of a graph: services + edges + unknownTokens only,
- * with `generatedAt` deliberately excluded. The analyzer already sorts each
- * of these arrays deterministically, so a stable `JSON.stringify` is enough
- * to detect real content changes and ignore metadata-only churn (e.g. the
- * HEAD sha bumping without any DI edit).
- */
 function fingerprint(g: Graph): string {
   return JSON.stringify({
     services: g.services,
@@ -68,11 +59,6 @@ export function depGraphPlugin(options: PluginOptions = {}): Plugin {
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let watcher: FSWatcher | undefined;
 
-  /**
-   * Re-run the analyzer and swap `cached` only when the structural
-   * fingerprint changed. Returns whether the graph actually changed so the
-   * caller can decide whether to invalidate the virtual module.
-   */
   function analyzeNow(reason: string): boolean {
     const started = Date.now();
     const next = analyze({ generatedAt: tag() });
@@ -113,21 +99,10 @@ export function depGraphPlugin(options: PluginOptions = {}): Plugin {
   return {
     name: 'agent-core-v2:dep-graph',
     buildStart() {
-      // Run once eagerly so the snapshot file exists as soon as the dev
-      // server prints its "ready" banner — external tools (and the first
-      // browser load) don't have to wait for the first save.
       if (!cached) analyzeNow('startup');
     },
     configureServer(dev) {
       server = dev;
-      // Vite's own watcher is scoped to the project `root` (the `web/`
-      // directory) and doesn't observe files under `src/`, so we spin up a
-      // dedicated chokidar watcher pointed at the source tree. Debounced
-      // above so a single save that fires multiple chokidar events only
-      // triggers one re-analysis.
-      //
-      // We watch the directory (not a glob) because chokidar v4 dropped
-      // built-in glob support — filtering to `.ts` happens in `isSrcFile`.
       watcher = chokidar.watch(SRC_ROOT, {
         ignoreInitial: true,
         ignored: (path, stats) => {

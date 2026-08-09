@@ -30,57 +30,18 @@
 import { closeSync, openSync, readSync } from 'node:fs';
 
 export interface ClockSources {
-  /**
-   * Wall-clock epoch milliseconds. May be overridden in tests / bench
-   * via `KIMI_CRON_CLOCK`. Used for cron matching, `createdAt`, stale
-   * judgment.
-   */
   wallNow(): number;
 
-  /**
-   * Strictly monotonic millisecond counter. Never overridden. Used for
-   * the 1-second poll cadence and the lock-heartbeat liveness window.
-   */
   monoNowMs(): number;
 }
 
 const systemMonoNowMs = (): number => Number(process.hrtime.bigint() / 1_000_000n);
 
-/**
- * Production default — `Date.now()` + `process.hrtime.bigint()`. Used
- * whenever `KIMI_CRON_CLOCK` is unset, set to `"system"`, or set to a
- * spec that fails to parse.
- */
 export const SYSTEM_CLOCKS: ClockSources = {
   wallNow: () => Date.now(),
   monoNowMs: systemMonoNowMs,
 };
 
-/**
- * Resolve a `ClockSources` implementation from a spec string (typically
- * `process.env.KIMI_CRON_CLOCK`).
- *
- *   unset / `"system"`   → {@link SYSTEM_CLOCKS}
- *   `"file:<path>"`      → `wallNow` reads the first line of `<path>`
- *                          on every call (sync — the tick path is not
- *                          async) and parses it as `Number(...)`. A
- *                          missing file or bad parse falls back to
- *                          `Date.now()` for that call. Used so a
- *                          multi-process bench can share a single
- *                          file-backed simulated clock.
- *
- * `monoNowMs` ALWAYS uses `process.hrtime.bigint()`. No spec overrides
- * it — see file header.
- *
- * Each `wallNow()` call re-reads its source. We deliberately do NOT
- * cache, because a multi-process bench tick mutating the file must be
- * picked up by every reader immediately; a cache would silently lock
- * each process to its first observation.
- *
- * Unrecognised specs fall back to {@link SYSTEM_CLOCKS} (with a
- * debug-log on stderr). This is deliberate — bricking the agent on a
- * typoed bench env var would be worse than running with system time.
- */
 export function resolveClockSources(spec?: string, debug = false): ClockSources {
   if (spec === undefined || spec === '' || spec === 'system') {
     return SYSTEM_CLOCKS;
@@ -102,9 +63,6 @@ export function resolveClockSources(spec?: string, debug = false): ClockSources 
   return SYSTEM_CLOCKS;
 }
 
-// Epoch-ms is always under 20 characters in practice; 64 bytes leaves
-// slack for a leading newline / `\r` and prevents OOM on a hostile or
-// accidentally-huge clock file (e.g. a `/dev/zero` redirect).
 const MAX_CLOCK_FILE_BYTES = 64;
 
 function readFileWall(filePath: string): number {
@@ -124,7 +82,6 @@ function readFileWall(filePath: string): number {
     try {
       closeSync(fd);
     } catch {
-      /* swallow close errors */
     }
   }
   const raw = buf.subarray(0, bytesRead).toString('utf8');
@@ -136,10 +93,6 @@ function readFileWall(filePath: string): number {
 }
 
 function debugInvalidSpec(spec: string, reason: string, debug: boolean): void {
-  // We do not pull in a logger here — `clock.ts` is the lowest layer of
-  // the cron module and must stay dependency-free so it can be imported
-  // from anywhere (including lint rules, type files). A stderr write
-  // gated on KIMI_CRON_DEBUG is enough — production is silent.
   if (debug) {
     process.stderr.write(
       `[cron/clock] invalid KIMI_CRON_CLOCK spec ${JSON.stringify(spec)}: ${reason} — falling back to system clock\n`,

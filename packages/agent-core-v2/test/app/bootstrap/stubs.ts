@@ -9,17 +9,25 @@
 import type { ServiceRegistration } from '#/_base/di/test';
 import {
   IBootstrapService,
+  resolveHostArgs,
+  type HostArgsInput,
   type PersistenceScopeName,
 } from '#/app/bootstrap/bootstrap';
 
-/**
- * An `IBootstrapService` rooted at the given home dir with the given env bag.
- */
-export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv = {}): IBootstrapService {
-  const sessionsScope = 'sessions';
+export const stubClientIdentity = {
+  productName: 'test-product',
+  version: '0.0.0-test',
+  platform: 'test_platform',
+} as const;
+
+export function stubBootstrap(
+  homeDir = '/tmp/kimi-home',
+  env: NodeJS.ProcessEnv = {},
+  args: HostArgsInput = {},
+): IBootstrapService {
   const scopes: Record<PersistenceScopeName, string> = {
     config: '',
-    sessions: sessionsScope,
+    sessions: 'sessions',
     blobs: 'blobs',
     store: 'store',
     logs: 'logs',
@@ -27,9 +35,6 @@ export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv
     credentials: 'credentials',
     cron: 'cron',
   };
-  const sessionScope = (wsId: string, sId: string): string => `${sessionsScope}/${wsId}/${sId}`;
-  const agentScope = (wsId: string, sId: string, aId: string): string =>
-    `${sessionScope(wsId, sId)}/agents/${aId}`;
   return {
     _serviceBrand: undefined,
     platform: 'linux',
@@ -39,7 +44,8 @@ export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv
     homeDir,
     configPath: `${homeDir}/config.toml`,
     configKey: 'config.toml',
-    clientVersion: '0.0.0-test',
+    clientIdentity: stubClientIdentity,
+    args: resolveHostArgs(args),
     sessionsDir: `${homeDir}/sessions`,
     blobsDir: `${homeDir}/blobs`,
     storeDir: `${homeDir}/store`,
@@ -47,14 +53,9 @@ export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv
     logsDir: `${homeDir}/logs`,
     getEnv: (name) => env[name],
     scope: (name) => scopes[name],
-    sessionScope,
-    agentScope,
-    sessionDir: (wsId, sId) => `${homeDir}/${sessionScope(wsId, sId)}`,
-    agentHomedir: (wsId, sId, aId) => `${homeDir}/${agentScope(wsId, sId, aId)}`,
   };
 }
 
-/** Register the default `IBootstrapService` rooted at an isolated temp dir. */
 export function registerBootstrapServices(reg: ServiceRegistration): void {
   const homeDir = `/tmp/kimi-code-agent-core-v2-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   reg.defineInstance(IBootstrapService, stubBootstrap(homeDir));

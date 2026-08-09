@@ -1,12 +1,13 @@
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { IModelResolver } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode } from '@moonshot-ai/protocol';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2';
+import { ErrorCode } from '../src/protocol/error-codes';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -27,7 +28,7 @@ interface FsEntryWire {
   mime?: string;
 }
 
-describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
+describe('server-v2 /api/v1 fs routes', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   /** Session work dir — kept separate from the server homeDir so the server's
@@ -38,19 +39,37 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-home-'));
     work = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-work-'));
-    const modelResolver: IModelResolver = {
+    const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
-      resolve: () => {
-        throw new Error('modelResolver.resolve not exercised in this test');
+      get: () => {
+        throw new Error('modelCatalog.get not exercised in this test');
+      },
+      getRequester: () => {
+        throw new Error('modelCatalog.getRequester not exercised in this test');
+      },
+      inspect: () => {
+        throw new Error('modelCatalog.inspect not exercised in this test');
+      },
+      ping: () => {
+        throw new Error('modelCatalog.ping not exercised in this test');
       },
       findByName: () => [],
+      listModels: async () => [],
+      listProviders: async () => [],
+      getProvider: async () => {
+        throw new Error('modelCatalog.getProvider not exercised in this test');
+      },
+      setDefaultModel: async () => {
+        throw new Error('modelCatalog.setDefaultModel not exercised in this test');
+      },
     };
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: [[IModelResolver, modelResolver]],
+      seeds: [[IModelCatalog, modelCatalog]],
     });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -61,11 +80,13 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
       server = undefined;
     }
     if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
+      // maxRetries: the async query-store shard writer can still be flushing
+      // after close (ENOTEMPTY on macOS) — same retry pattern as sessions.test.ts.
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
     }
     if (work !== undefined) {
-      await rm(work, { recursive: true, force: true });
+      await rm(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       work = undefined;
     }
   });
@@ -190,6 +211,42 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     expect(body.data.items.map((i) => i.path)).toContain('alpha.ts');
   });
 
+  it('fs:search resolves a registered workspace id when no session exists', async () => {
+    await writeFile(join(work!, 'gamma.ts'), '');
+    // Register the workspace without creating any session (the kimi-web
+    // new-session draft addresses the workspace directly).
+    const res = await fetch(`${base}/api/v1/workspaces`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ root: work }),
+    } as never);
+    const created = (await res.json()) as Envelope<{ id: string }>;
+    expect(created.code).toBe(0);
+    const body = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+      created.data.id,
+      'search',
+      { query: 'gamma' },
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('gamma.ts');
+  });
+
+  it('fs:search resolves an unregistered workspace root path', async () => {
+    await writeFile(join(work!, 'delta.ts'), '');
+    const body = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+      encodeURIComponent(work!),
+      'search',
+      { query: 'delta' },
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('delta.ts');
+  });
+
+  it('fs:search still maps an unknown ref to SESSION_NOT_FOUND', async () => {
+    const body = await postFs<null>('does-not-exist', 'search', { query: 'x' });
+    expect(body.code).toBe(ErrorCode.SESSION_NOT_FOUND);
+  });
+
   it('fs:grep finds matching lines', async () => {
     await writeFile(join(work!, 'a.txt'), 'hello world\nfoo bar\n');
     const id = await createSession();
@@ -225,6 +282,49 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     expect(body.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
   });
 
+  it('rejects reads and downloads that escape the workspace through a symlink', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-outside-'));
+    try {
+      await writeFile(join(outside, 'secret.txt'), 'top-secret');
+      await symlink(outside, join(work!, 'docs'), 'dir');
+      const id = await createSession();
+
+      const body = await postFs<null>(id, 'read', { path: 'docs/secret.txt' });
+      expect(body.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+
+      const res = await fetch(`${base}/api/v1/sessions/${id}/fs/docs/secret.txt:download`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      const downloadBody = (await res.json()) as Envelope<null>;
+      expect(downloadBody.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('serves fs actions when the session cwd itself goes through a symlink', async () => {
+    const link = join(tmpdir(), `kimi-server-v2-fs-cwd-link-${process.pid}`);
+    await symlink(work!, link, 'dir');
+    try {
+      const res = await fetch(`${base}/api/v1/sessions`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ metadata: { cwd: link } }),
+      } as never);
+      const body = (await res.json()) as Envelope<{ id: string }>;
+      expect(body.code).toBe(0);
+
+      await writeFile(join(work!, 'via-link.txt'), 'through-link');
+      const read = await postFs<{ content: string }>(body.data.id, 'read', {
+        path: 'via-link.txt',
+      });
+      expect(read.code).toBe(0);
+      expect(read.data.content).toBe('through-link');
+    } finally {
+      await rm(link, { force: true });
+    }
+  });
+
   it('GET fs/{path}:download streams the file and honors If-None-Match', async () => {
     await writeFile(join(work!, 'a.txt'), 'download-me');
     const id = await createSession();
@@ -242,5 +342,66 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
       headers: authHeaders(server as RunningServer, { 'if-none-match': etag as string }),
     } as never);
     expect(cached.status).toBe(304);
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /api/v1/workspace/fs:search — session-less workspace file search.
+  // -------------------------------------------------------------------------
+
+  async function postWorkspaceSearch<T>(body: unknown): Promise<Envelope<T>> {
+    const res = await fetch(`${base}/api/v1/workspace/fs:search`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    } as never);
+    return (await res.json()) as Envelope<T>;
+  }
+
+  it('workspace fs:search finds files by registered workspace id', async () => {
+    await writeFile(join(work!, 'epsilon.ts'), '');
+    const res = await fetch(`${base}/api/v1/workspaces`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ root: work }),
+    } as never);
+    const created = (await res.json()) as Envelope<{ id: string }>;
+    expect(created.code).toBe(0);
+
+    const body = await postWorkspaceSearch<{ items: { path: string }[]; truncated: boolean }>({
+      workspace: created.data.id,
+      query: 'epsilon',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('epsilon.ts');
+  });
+
+  it('workspace fs:search finds files by absolute root path', async () => {
+    await writeFile(join(work!, 'zeta.ts'), '');
+    const body = await postWorkspaceSearch<{ items: { path: string }[]; truncated: boolean }>({
+      workspace: work,
+      query: 'zeta',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('zeta.ts');
+  });
+
+  it('workspace fs:search lists top-level entries for an empty query', async () => {
+    await writeFile(join(work!, 'eta.ts'), '');
+    const body = await postWorkspaceSearch<{ items: { path: string }[]; truncated: boolean }>({
+      workspace: work,
+      query: '',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('eta.ts');
+  });
+
+  it('workspace fs:search maps an unknown ref to WORKSPACE_NOT_FOUND', async () => {
+    const body = await postWorkspaceSearch<null>({ workspace: 'does-not-exist', query: 'x' });
+    expect(body.code).toBe(ErrorCode.WORKSPACE_NOT_FOUND);
+  });
+
+  it('workspace fs:search rejects a missing workspace field with VALIDATION_FAILED', async () => {
+    const body = await postWorkspaceSearch<null>({ query: 'x' });
+    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
   });
 });

@@ -1,22 +1,9 @@
 import picomatch from 'picomatch';
 
+import { Error2, ErrorCodes } from '#/errors';
 import type { RunnableToolExecution } from '#/tool/toolContract';
 import type { PermissionRule } from './permissionRules';
 
-/**
- * DSL parser for PermissionRule `pattern` strings.
- *
- * Grammar:
- *   pattern    := toolName ( "(" argPattern ")" )?
- *   toolName   := identifier characters (e.g. `Bash`, `mcp__github__*`)
- *   argPattern := any string interpreted only by a tool-provided matcher
- *
- * Examples:
- *   "Write"            -> { toolName: "Write" }
- *   "Read(/etc/**)"    -> { toolName: "Read", argPattern: "/etc/**" }
- *   "Bash(!rm *)"      -> { toolName: "Bash", argPattern: "!rm *" }
- *   "mcp__github__*"   -> { toolName: "mcp__github__*" }
- */
 export interface ParsedPattern {
   readonly toolName: string;
   readonly argPattern?: string;
@@ -42,14 +29,10 @@ export interface PermissionRuleMatchInput {
   readonly execution: PermissionRuleMatchExecution;
 }
 
-/**
- * Parse a DSL pattern. Throws on malformed input (missing closing paren,
- * empty tool name). The parser is the single source of truth for DSL syntax.
- */
 export function parsePattern(pattern: string): ParsedPattern {
   const trimmed = pattern.trim();
   if (trimmed.length === 0) {
-    throw new Error('permission pattern: empty string');
+    throw new Error2(ErrorCodes.VALIDATION_FAILED, 'permission pattern: empty string');
   }
 
   const openIdx = trimmed.indexOf('(');
@@ -58,16 +41,14 @@ export function parsePattern(pattern: string): ParsedPattern {
   }
 
   if (!trimmed.endsWith(')')) {
-    throw new Error(`permission pattern: missing closing paren in "${pattern}"`);
+    throw new Error2(ErrorCodes.VALIDATION_FAILED, `permission pattern: missing closing paren in "${pattern}"`);
   }
 
   const toolName = trimmed.slice(0, openIdx);
   const argPattern = trimmed.slice(openIdx + 1, -1);
   if (toolName.length === 0) {
-    throw new Error(`permission pattern: empty tool name in "${pattern}"`);
+    throw new Error2(ErrorCodes.VALIDATION_FAILED, `permission pattern: empty tool name in "${pattern}"`);
   }
-  // `Tool()` parses to no arg pattern so it stays tool-name-only - tools without
-  // a `matchesRule` matcher (user/MCP/custom) would otherwise stop matching it.
   if (argPattern.length === 0) {
     return { toolName };
   }

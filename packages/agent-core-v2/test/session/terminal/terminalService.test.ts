@@ -73,13 +73,9 @@ function stubWorkspace(workDir = '/ws'): ISessionWorkspaceContext {
     _serviceBrand: undefined,
     workDir,
     additionalDirs: [],
-    setWorkDir: () => {},
-    setAdditionalDirs: () => {},
     resolve: (rel) => resolve(workDir, rel),
     isWithin: () => true,
     assertAllowed: (absPath) => resolve(workDir, absPath),
-    addAdditionalDir: () => {},
-    removeAdditionalDir: () => {},
   };
 }
 
@@ -260,7 +256,6 @@ describe('SessionTerminalService', () => {
   });
 });
 
-// Sanity check for the App-scoped OS HostTerminalService.
 describe('HostTerminalService (App scope)', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;

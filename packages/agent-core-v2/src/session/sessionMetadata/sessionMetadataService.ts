@@ -1,30 +1,41 @@
 /**
- * `sessionMetadata` domain (L6) — `ISessionMetadata` implementation.
+ * `sessionMetadata` domain — `ISessionMetadata` implementation.
  *
  * Persists the session metadata document (`state.json`) through the `storage`
  * access-pattern store (`IAtomicDocumentStore`), rooted at the `metaScope`
  * namespace from `sessionContext`. Loads the existing document on
- * construction (creating it on first run), and logs through `log`. Bound at
- * Session scope.
+ * construction (creating it on first run), and logs through `log`. The
+ * plain-data state (`data`) is registered into `sessionState`
+ * (`ISessionStateService`) and read/written through it. The
+ * document always carries the `agents` / `custom` maps — seeded at creation,
+ * backfilled and persisted on load for documents written before the seeding
+ * existed (without touching `updatedAt`, so a format heal never reorders
+ * session listings). Re-registering an agent whose metadata is unchanged is
+ * a no-op (no write, no mirror, no event), so resuming a session — which
+ * re-registers its agents as they materialize — never bumps `updatedAt` and
+ * never reorders session listings. Bound at Session scope.
  *
  * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
- * update is persisted, the fresh summary is mirrored into the `IQueryStore`
- * derived read model so `FileSessionIndex` can serve listings without
- * re-reading `state.json`. Mirroring is best-effort (a failure is logged, not
- * thrown) and is a no-op when the flag is off. Initial creation in `load()` is
- * intentionally not mirrored — a not-yet-mirrored session is simply a cold
- * read-model miss that `FileSessionIndex` backfills on first read.
+ * update is persisted, the fresh summary is recorded into the App-scoped
+ * `ISessionIndexMirror` — a bounded, coalescing queue that flushes to the
+ * `IQueryStore` read model off the user completion path. The mutation
+ * completes with the authoritative `state.json` write; it never waits on the
+ * derived store (no mirror flush, no query-store lock). First-time creation in
+ * `load()` records too — a new session must appear in listings immediately
+ * (the mirror's pending queue feeds the index's read-your-writes merge);
+ * loading an *existing* document (session resume) stays silent.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { IFlagService } from '#/app/flag/flag';
+import { defineState } from '#/_base/state/stateRegistry';
+import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
+import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IQueryStore } from '#/persistence/interface/queryStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
 
 import {
   ISessionMetadata,
@@ -36,8 +47,11 @@ import {
 } from './sessionMetadata';
 
 const META_KEY = 'state.json';
-const SESSION_COLLECTION = 'session';
-const READ_MODEL_FLAG = 'persistence_minidb_readmodel';
+
+export const sessionMetadataDataKey = defineState<SessionMeta | undefined>(
+  'sessionMetadata.data',
+  () => undefined,
+);
 
 export class SessionMetadata extends Disposable implements ISessionMetadata {
   declare readonly _serviceBrand: undefined;
@@ -49,19 +63,27 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
   );
   private readonly scope: string;
   private updateQueue: Promise<void> = Promise.resolve();
-  private data!: SessionMeta;
 
   constructor(
+    @ISessionStateService private readonly states: ISessionStateService,
     @ISessionContext private readonly ctx: ISessionContext,
     @IAtomicDocumentStore private readonly store: IAtomicDocumentStore,
     @ILogService private readonly log: ILogService,
-    @IQueryStore private readonly queryStore: IQueryStore,
-    @IFlagService private readonly flags: IFlagService,
+    @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
   ) {
     super();
+    this.states.register(sessionMetadataDataKey);
     this.scope = ctx.metaScope;
     this.onDidChangeMetadata = this._onDidChangeMetadata.event;
     this.ready = this.load();
+  }
+
+  private get data(): SessionMeta {
+    return this.states.get(sessionMetadataDataKey) as SessionMeta;
+  }
+
+  private set data(value: SessionMeta) {
+    this.states.set(sessionMetadataDataKey, value);
   }
 
   async read(): Promise<SessionMeta> {
@@ -77,7 +99,7 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     await this.ready;
     this.data = { ...this.data, ...patch, updatedAt: Date.now() };
     await this.store.set(this.scope, META_KEY, this.data);
-    await this.mirrorToReadModel();
+    this.mirrorToReadModel();
     this._onDidChangeMetadata.fire({
       changed: Object.keys(patch) as (keyof SessionMeta)[],
     });
@@ -94,6 +116,8 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
   async registerAgent(agentId: string, meta: AgentMeta): Promise<void> {
     return this.enqueueUpdate(async () => {
       await this.ready;
+      const existing = this.data.agents?.[agentId];
+      if (existing !== undefined && agentMetaEquals(existing, meta)) return;
       const agents = { ...this.data.agents, [agentId]: meta };
       await this.applyUpdate({ agents });
     });
@@ -105,10 +129,9 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     return run;
   }
 
-  private async mirrorToReadModel(): Promise<void> {
-    if (!this.flags.enabled(READ_MODEL_FLAG)) return;
-    try {
-      await this.queryStore.put(SESSION_COLLECTION, this.ctx.sessionId, {
+  private mirrorToReadModel(): void {
+    this.mirror.record(
+      buildSessionSummary({
         id: this.data.id,
         workspaceId: this.ctx.workspaceId,
         cwd: this.ctx.cwd,
@@ -116,21 +139,24 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
         lastPrompt: this.data.lastPrompt,
         createdAt: this.data.createdAt,
         updatedAt: this.data.updatedAt,
-        archived: this.data.archived,
+        archived: this.data.archived === true,
         custom: this.data.custom,
-      });
-    } catch (error) {
-      this.log.warn('failed to mirror session metadata to read model', {
-        sessionId: this.ctx.sessionId,
-        error: String(error),
-      });
-    }
+      }),
+    );
   }
 
   private async load(): Promise<void> {
     const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
     if (existing !== undefined) {
       this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
+      if (this.data.agents === undefined || this.data.custom === undefined) {
+        this.data = {
+          ...this.data,
+          agents: this.data.agents ?? {},
+          custom: this.data.custom ?? {},
+        };
+        await this.store.set(this.scope, META_KEY, this.data);
+      }
       return;
     }
     const now = Date.now();
@@ -141,32 +167,40 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
       createdAt: now,
       updatedAt: now,
       archived: false,
+      agents: {},
+      custom: {},
     };
     await this.store.set(this.scope, META_KEY, this.data);
+    this.mirrorToReadModel();
     this.log.debug('session metadata created', { sessionId: this.ctx.sessionId });
   }
 }
 
-/**
- * Normalize a persisted `state.json` document into the v2 `SessionMeta` shape.
- *
- * Documents tagged `version: 2` are already v2-shaped and returned as-is.
- * Legacy v1 documents (no `version`) store `createdAt`/`updatedAt` as ISO
- * strings and omit the `id` field; we coerce the timestamps to epoch ms and
- * backfill `id` from the session identity so every reader sees a consistent
- * v2-shaped object. Normalization is in-memory only — the on-disk document is
- * left untouched until an explicit write, so a read-only snapshot of a v1
- * session does not migrate it.
- */
+function agentMetaEquals(a: AgentMeta, b: AgentMeta): boolean {
+  return (
+    a.homedir === b.homedir &&
+    a.type === b.type &&
+    (a.parentAgentId ?? null) === (b.parentAgentId ?? null) &&
+    a.forkedFrom === b.forkedFrom &&
+    a.swarmItem === b.swarmItem &&
+    recordEquals(a.labels, b.labels)
+  );
+}
+
+function recordEquals(a: AgentMeta['labels'], b: AgentMeta['labels']): boolean {
+  const entriesA = Object.entries(a ?? {});
+  const entriesB = Object.entries(b ?? {});
+  return (
+    entriesA.length === entriesB.length && entriesA.every(([key, value]) => b?.[key] === value)
+  );
+}
+
 export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): SessionMeta {
   const legacy = raw as unknown as {
     createdAt?: unknown;
     updatedAt?: unknown;
     workDir?: unknown;
   };
-  // Backfill `cwd` for legacy v1 documents, which store the working directory
-  // as `workDir` (older v1 sessions used `custom.cwd`). New v2 documents already
-  // carry `cwd` and pass through unchanged.
   const cwd =
     raw.cwd ?? (typeof legacy.workDir === 'string' && legacy.workDir.length > 0
       ? legacy.workDir
@@ -184,7 +218,6 @@ export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): Sessi
   };
 }
 
-/** Coerce a persisted timestamp (v2 epoch-ms number or v1 ISO string) to epoch ms. */
 export function toEpochMs(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
@@ -198,6 +231,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionMetadata,
   SessionMetadata,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'sessionMetadata',
 );

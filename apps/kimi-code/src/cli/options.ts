@@ -44,6 +44,8 @@ export interface CLIOptions {
   outputFormat: PromptOutputFormat | undefined;
   prompt: string | undefined;
   skillsDirs: string[];
+  agent: string | undefined;
+  agentFiles: string[];
   addDirs?: string[];
 }
 
@@ -82,6 +84,26 @@ export function validateOptions(
   }
   if (promptMode && opts.plan) {
     throw new OptionConflictError('Cannot combine --prompt with --plan.');
+  }
+  if (opts.agent !== undefined && opts.agent.trim().length === 0) {
+    throw new OptionConflictError('Agent cannot be empty.');
+  }
+  if (opts.agentFiles.length > 1) {
+    throw new OptionConflictError('--agent-file may only be specified once.');
+  }
+  if (opts.agentFiles.some((file) => file.trim().length === 0)) {
+    throw new OptionConflictError('Agent file path cannot be empty.');
+  }
+  if (opts.agent !== undefined && opts.agentFiles.length > 0) {
+    throw new OptionConflictError('Cannot combine --agent with --agent-file.');
+  }
+  if (
+    (opts.agent !== undefined || opts.agentFiles.length > 0) &&
+    (opts.session !== undefined || opts.continue)
+  ) {
+    throw new OptionConflictError(
+      'Cannot combine --agent/--agent-file with --session/--continue: the agent is bound at session creation and the bound agent is restored automatically on resume.',
+    );
   }
   if (promptMode && opts.session === '') {
     throw new OptionConflictError('Cannot use --session without an id in prompt mode.');

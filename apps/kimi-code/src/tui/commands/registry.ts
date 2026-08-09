@@ -136,14 +136,14 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'yolo',
     aliases: ['yes'],
-    description: 'Toggle YOLO mode: AI auto-approves safe actions, asks for approval on risky ones.',
+    description: 'Toggle YOLO mode: auto-approve tool actions, but the agent may still ask questions.',
     priority: 101,
     availability: 'always',
   },
   {
     name: 'auto',
     aliases: [],
-    description: 'Toggle Auto mode: run all actions automatically, including risky ones.',
+    description: 'Toggle Auto mode: fully autonomous, agent decides everything without asking.',
     priority: 99,
     availability: 'always',
   },
@@ -183,6 +183,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Switch LLM model',
     priority: 100,
     availability: 'always',
+  },
+  {
+    name: 'secondary_model',
+    aliases: [],
+    description: 'Configure the secondary model for subagents',
+    priority: 90,
+    availability: 'always',
+    experimentalFlag: 'secondary-model',
   },
   {
     name: 'effort',
@@ -307,7 +315,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'fork',
     aliases: [],
-    description: 'Fork the current session',
+    description: 'Fork the current session into a copy without switching to it',
     priority: 80,
   },
   {
@@ -334,7 +342,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   },
   {
     name: 'feedback',
-    aliases: [],
+    aliases: ['bug'],
     description: 'Send feedback to make Kimi Code better',
     priority: 60,
     availability: 'always',
@@ -385,9 +393,15 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 40,
   },
   {
+    name: 'copy',
+    aliases: [],
+    description: 'Copy the last assistant message to the clipboard',
+    priority: 40,
+  },
+  {
     name: 'web',
     aliases: [],
-    description: 'Open the current session in the Web UI and exit the terminal',
+    description: 'Open the current session in the Web UI by starting a new server',
     priority: 40,
     availability: 'always',
   },

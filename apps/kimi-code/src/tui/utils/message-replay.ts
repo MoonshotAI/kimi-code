@@ -7,6 +7,7 @@ import type {
   ResumedAgentState,
   ToolCall,
 } from '@moonshot-ai/kimi-code-sdk';
+import { limitAgentReplayByTurns } from '@moonshot-ai/kimi-code-sdk';
 
 import type {
   AppState,
@@ -132,12 +133,10 @@ export function limitReplayRecordsByTurn(
   records: readonly AgentReplayRecord[],
   maxTurns: number,
 ): readonly AgentReplayRecord[] {
-  if (maxTurns <= 0) return [];
-  const turnStarts = records.flatMap((record, index) =>
-    isReplayUserTurnRecord(record) ? [index] : [],
-  );
-  if (turnStarts.length <= maxTurns) return records;
-  return records.slice(turnStarts[turnStarts.length - maxTurns]);
+  // Defensive slice — the core already trims the replay when the caller passes
+  // `replayTurnLimit` on resume; the boundary predicate lives in agent-core
+  // (`limitAgentReplayByTurns`) and is re-exported through the SDK.
+  return limitAgentReplayByTurns(records, maxTurns);
 }
 
 export function replayEntry(
@@ -262,33 +261,6 @@ export function formatHookResultMessageForTranscript(
   }
 
   return results.map(({ event, body }) => formatHookResultBlock(event, body, blocked)).join('\n\n');
-}
-
-function isReplayUserTurnRecord(record: AgentReplayRecord): boolean {
-  if (record.type !== 'message') return false;
-  const { message } = record;
-  if (message.role !== 'user') return false;
-  switch (message.origin?.kind) {
-    case undefined:
-    case 'user':
-      return true;
-    case 'skill_activation':
-      return message.origin.trigger === 'user-slash';
-    case 'plugin_command':
-      return message.origin.trigger === 'user-slash';
-    case 'shell_command':
-      // A `!` command's input is a user-turn anchor; its output is not.
-      return message.origin.phase === 'input';
-    case 'background_task':
-    case 'compaction_summary':
-    case 'cron_job':
-    case 'cron_missed':
-    case 'hook_result':
-    case 'injection':
-    case 'retry':
-    case 'system_trigger':
-      return false;
-  }
 }
 
 function parseReplayToolArguments(value: string | null): Record<string, unknown> {

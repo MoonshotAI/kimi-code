@@ -2,11 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { Graph } from '#/_base/di/graph';
 
-/**
- * Direct unit tests for the DI dependency graph. Covers the API exposed by
- * `_base/di/graph.ts` (no `lookup()`; nodes are created via
- * `lookupOrInsertNode`).
- */
 describe('Graph', () => {
   let graph: Graph<string>;
 
@@ -24,7 +19,6 @@ describe('Graph', () => {
     const node = graph.lookupOrInsertNode('ddd');
     expect(node.data).toBe('ddd');
     expect(graph.isEmpty()).toBe(false);
-    // calling again returns the same node, not a duplicate
     expect(graph.lookupOrInsertNode('ddd')).toBe(node);
   });
 
@@ -41,7 +35,6 @@ describe('Graph', () => {
     expect(roots).toHaveLength(1);
     expect(roots[0]!.data).toBe('2');
 
-    // adding the back-edge creates a cycle: no roots remain
     graph.insertEdge('2', '1');
     roots = graph.roots();
     expect(roots).toHaveLength(0);

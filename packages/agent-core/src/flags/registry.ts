@@ -32,6 +32,15 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'secondary-model',
+    title: 'Secondary model for subagents',
+    description:
+      'Let newly spawned subagents use a separately configured secondary model by default, with an explicit primary-model override for quality-sensitive tasks.',
+    env: 'KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL',
+    default: false,
+    surface: 'core',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */

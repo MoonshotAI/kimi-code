@@ -1,5 +1,5 @@
 /**
- * `task` domain (L1) — managed concurrent execution primitive.
+ * `task` domain — managed concurrent execution primitive.
  *
  * Two creation modes:
  *
@@ -8,9 +8,9 @@
  *   - `defer()` — passive wait: the caller controls when the handle
  *     settles via `resolve` / `reject`.
  *
- * Consumers that need to track handles across turns (e.g. `agent/task`)
- * compose on top of these primitives; `ITaskService` itself is stateless
- * beyond the set of live handles.
+ * Consumers that need to track handles across turns compose on top of these
+ * primitives; `ITaskService` itself is stateless beyond the set of live
+ * handles.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -49,20 +49,7 @@ export interface IDeferredHandle<T = unknown> extends ITaskHandle<T> {
 export interface ITaskService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Create a task that actively runs `fn`. The function receives an
-   * `AbortSignal` (cancelled when the handle is cancelled/disposed) and
-   * an `output` callback for streaming data (e.g. process stdout).
-   *
-   * State: pending → running → completed | failed | cancelled.
-   */
   run<T>(fn: (signal: AbortSignal, output: (data: string) => void) => Promise<T>): ITaskHandle<T>;
-  /**
-   * Create a passive task whose settlement is controlled by the caller
-   * through the returned `resolve` / `reject` methods.
-   *
-   * State: pending → completed | failed | cancelled.
-   */
   defer<T>(): IDeferredHandle<T>;
 }
 

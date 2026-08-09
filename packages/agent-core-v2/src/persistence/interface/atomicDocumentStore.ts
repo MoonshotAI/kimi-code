@@ -6,7 +6,6 @@
  * `DocumentCodec` so the same access pattern serves different on-disk formats.
  *
  * This file ships the interface, codec contract, and DI tokens only.
- * Concrete implementations live in `persistence/backends/`.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -14,7 +13,6 @@ import { type IDisposable } from '#/_base/di/lifecycle';
 import { type Event } from '#/_base/event';
 
 export interface DocumentCodec {
-  /** Wire format name (`'json'` / `'toml'`), surfaced in decode-error details. */
   readonly format: string;
   encode(value: unknown): Uint8Array;
   decode(bytes: Uint8Array): unknown;

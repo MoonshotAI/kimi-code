@@ -1,5 +1,5 @@
 /**
- * `di` domain (L0) — `TestInstantiationService` and scoped test-container helpers.
+ * `di` domain — `TestInstantiationService` and scoped test-container helpers.
  */
 
 import * as sinon from 'sinon';
@@ -53,7 +53,12 @@ export class TestInstantiationService extends InstantiationService implements ID
     id: ServiceIdentifier<T>,
     instanceOrDescriptor: T | SyncDescriptor<T>,
   ): T | SyncDescriptor<T> | undefined {
-    return this._serviceCollection.set(id, instanceOrDescriptor);
+    // Routed through provide so test overrides get production semantics:
+    // a replaced materialized instance is retired, a new generation starts.
+    // Descriptors stay lazy (constructed at first resolution), as before.
+    const prev = this._serviceCollection.get(id);
+    this.provide(id, instanceOrDescriptor, { activation: 'ondemand' });
+    return prev;
   }
 
   public mock<T>(id: ServiceIdentifier<T>): T | sinon.SinonMock {
@@ -269,14 +274,11 @@ export class TestInstantiationService extends InstantiationService implements ID
   }
 
   public override createChild(services: ServiceCollection): TestInstantiationService {
-    if (!(services instanceof ServiceCollection)) {
-      throw new TypeError(
-        'createChild requires a ServiceCollection instance (got something else)',
-      );
-    }
-    const child = new TestInstantiationService(services, false, this);
-    (this as unknown as { _children: Set<InstantiationService> })._children.add(child);
-    return child;
+    return super.createChild(services) as TestInstantiationService;
+  }
+
+  protected override _createChildService(services: ServiceCollection): InstantiationService {
+    return new TestInstantiationService(services, false, this);
   }
 
   public override dispose(): void {
@@ -292,65 +294,26 @@ interface SinonOptions {
   stub?: boolean;
 }
 
-/**
- * Registration surface handed to a {@link ServiceGroup} or to
- * `CreateServicesOptions.additionalServices`. Mirrors the three ways a test
- * supplies a service: a lazy constructor, a full instance, or a partial mock.
- */
 export interface ServiceRegistration {
-  /**
-   * Register a lazy `SyncDescriptor` for a service constructor. The service is
-   * instantiated only when first resolved from the container.
-   */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   define<T>(id: ServiceIdentifier<T>, ctor: new (...args: any[]) => T): void;
-  /** Register a fully-constructed instance. */
   defineInstance<T>(id: ServiceIdentifier<T>, instance: T): void;
-  /**
-   * Register a partial instance (a mock). Only the supplied members need to be
-   * provided; the container returns it typed as `T`.
-   */
   definePartialInstance<T>(id: ServiceIdentifier<T>, instance: Partial<T>): void;
 }
 
-/** A bundle of service registrations, typically one per domain. */
 export type ServiceGroup = (reg: ServiceRegistration) => void;
 
 export interface CreateServicesOptions {
-  /**
-   * Base service groups applied first, in order. Registrations are deduped
-   * (first writer wins) so groups can supply safe defaults without clobbering
-   * each other.
-   */
   readonly base?: readonly ServiceGroup[];
-  /**
-   * Applied after `base`. Registrations here overwrite any base default, so a
-   * test can swap a stub for a spy, register the system under test, or supply a
-   * one-off collaborator.
-   */
   readonly additionalServices?: (reg: ServiceRegistration) => void;
-  /**
-   * When `true`, resolving an unregistered service throws. Defaults to `false`
-   * to match `new TestInstantiationService()` (missing deps only warn), keeping
-   * migrated tests behavior-preserving.
-   */
   readonly strict?: boolean;
 }
 
-/**
- * Build a `TestInstantiationService` from domain service groups plus per-test
- * overrides. The container is added to `disposables`; directly-registered
- * instances are disposed with it.
- */
 export function createServices(
   disposables: DisposableStore,
   options: CreateServicesOptions = {},
 ): TestInstantiationService {
   const serviceCollection = new ServiceCollection();
-  // Directly-registered instances are not constructed by the container, so the
-  // container will not dispose them — track their ids and dispose them below.
-  // Descriptor-created services are disposed by the container itself and are
-  // intentionally not tracked here (disposing them again would double-dispose).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const instanceIds = new Set<ServiceIdentifier<any>>();
 

@@ -11,9 +11,10 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService, PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'task-test';
@@ -26,9 +27,12 @@ function buildHost(key: string): { wire: IWireService; log: IAppendLogStore; eve
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: key }]));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  return { wire: ix.get(IAgentWireService), log: ix.get(IAppendLogStore), eventBus: ix.get(IEventBus) };
+  const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
+    log: ix.get(IAppendLogStore),
+    eventBus: ix.get(IEventBus),
+  });
+  return { wire, log: ix.get(IAppendLogStore), eventBus: ix.get(IEventBus) };
 }
 
 beforeEach(() => {
@@ -40,9 +44,10 @@ beforeEach(() => {
 
 afterEach(() => disposables.dispose());
 
-async function readRecords(key = KEY): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of log.read<PersistedRecord>(SCOPE, key)) {
+async function readRecords(key = KEY): Promise<WireRecord[]> {
+  await wire.flush();
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -61,23 +66,37 @@ function info(taskId: string, status: AgentTaskInfo['status']): AgentTaskInfo {
 }
 
 describe('task ops (wire-backed)', () => {
-  it('started/terminated fold into the task map by id without persisting (live-only)', async () => {
+  it('started/terminated fold into the task map by id and persist to the journal', async () => {
     expect(wire.getModel(TaskModel).size).toBe(0);
 
     wire.dispatch(taskStarted({ info: info('t1', 'running') }));
     expect(wire.getModel(TaskModel).get('t1')?.status).toBe('running');
 
-    // A later terminated overwrites the earlier started for the same id.
     wire.dispatch(taskTerminated({ info: info('t1', 'completed') }));
     expect(wire.getModel(TaskModel).get('t1')?.status).toBe('completed');
 
     wire.dispatch(taskStarted({ info: info('t2', 'running') }));
     expect(wire.getModel(TaskModel).size).toBe(2);
 
-    // `task.started` / `task.terminated` are persist: false — the model folds
-    // live, but nothing lands on the wire log (tasks restore from their own
-    // persistence, not the session log).
-    expect(await readRecords()).toEqual([]);
+    expect(await readRecords()).toEqual([
+      { type: 'task.started', info: info('t1', 'running'), time: expect.any(Number) },
+      { type: 'task.terminated', info: info('t1', 'completed'), time: expect.any(Number) },
+      { type: 'task.started', info: info('t2', 'running'), time: expect.any(Number) },
+    ]);
+  });
+
+  it('task.terminated persists the optional outputTail snapshot (fold-only, never in the model)', async () => {
+    wire.dispatch(taskTerminated({ info: info('t1', 'completed'), outputTail: 'last lines' }));
+
+    expect(await readRecords()).toEqual([
+      {
+        type: 'task.terminated',
+        info: info('t1', 'completed'),
+        outputTail: 'last lines',
+        time: expect.any(Number),
+      },
+    ]);
+    expect(wire.getModel(TaskModel).get('t1')).toEqual(info('t1', 'completed'));
   });
 
   it('apply returns a new Map on change (the model is the restore seed)', () => {
@@ -88,32 +107,28 @@ describe('task ops (wire-backed)', () => {
     expect(after.get('t1')?.status).toBe('running');
   });
 
-  it('replay rebuilds the task map from legacy task.* records silently (no emissions, no subscriber notifications)', async () => {
-    // Live dispatch no longer persists task.* records; the ops stay registered
-    // so legacy logs that contain them still replay. Feed hand-written records
-    // directly.
-    const records: PersistedRecord[] = [
+  it('replay rebuilds the task map from persisted task.* records silently', async () => {
+    const records: WireRecord[] = [
       { type: 'task.started', info: info('t1', 'running') },
-      { type: 'task.terminated', info: info('t1', 'completed') },
+      { type: 'task.terminated', info: info('t1', 'completed'), outputTail: 'tail' },
       { type: 'task.started', info: info('t2', 'running') },
-    ] as unknown as PersistedRecord[];
+    ] as unknown as WireRecord[];
 
     const host = buildHost('task-replay');
     const emissions: string[] = [];
     host.eventBus.subscribe((e) => {
       emissions.push(e.type);
     });
-    let modelChanges = 0;
-    host.wire.subscribe(TaskModel, () => {
-      modelChanges += 1;
-    });
-
-    await host.wire.replay(...records);
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'task-replay'),
+      records,
+    );
     const model = host.wire.getModel(TaskModel);
     expect(model.size).toBe(2);
     expect(model.get('t1')?.status).toBe('completed');
     expect(model.get('t2')?.status).toBe('running');
     expect(emissions).toEqual([]);
-    expect(modelChanges).toBe(0);
   });
 });

@@ -5,6 +5,9 @@
  * responsive and bounded, we only keep the most recent N *turns* (a turn = a
  * user prompt plus everything the assistant does in response, identified by a
  * shared `turnId`), and destroy older turns wholesale (component + entry).
+ * Within a kept turn, older steps — and assistant messages beyond a cap — are
+ * folded into a collapsed summary line so a single long turn cannot grow the
+ * mounted component tree without bound.
  *
  * All threshold logic here is pure so it can be unit-tested in isolation; the
  * constants are the production defaults passed in by the TUI.
@@ -39,6 +42,19 @@ export const TRANSCRIPT_HYSTERESIS = readEnvInt('KIMI_CODE_TUI_HYSTERESIS', 5);
 
 /** Keep this many recent steps untouched inside a turn; older steps are merged into a summary. `0` disables merging. */
 export const TRANSCRIPT_KEEP_RECENT_STEPS = readEnvInt('KIMI_CODE_TUI_KEEP_RECENT_STEPS', 30);
+
+/** Keep this many recent assistant messages mounted inside the active turn; older ones fold into the step summary. `0` disables folding. */
+export const TRANSCRIPT_KEEP_RECENT_ASSISTANT = readEnvInt('KIMI_CODE_TUI_KEEP_RECENT_ASSISTANT', 20);
+
+/**
+ * Once a turn ends, fold all but its last few assistant messages into the
+ * step summary — intermediate chatter is rarely re-read, while the tail
+ * usually holds the conclusion. `0` disables folding.
+ */
+export const TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED = readEnvInt(
+  'KIMI_CODE_TUI_KEEP_RECENT_ASSISTANT_COMPLETED',
+  2,
+);
 
 export interface TranscriptTurn {
   readonly turnId: string | undefined;

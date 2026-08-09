@@ -186,6 +186,7 @@ describe('HarnessAPI session skills', () => {
       properties: {
         skill_name: 'phase-one-review',
         trigger: 'user-slash',
+        agent_id: 'main',
       },
     });
     expect(telemetryRecords.some((record) => record.event === 'flow_invoked')).toBe(false);
@@ -404,6 +405,7 @@ describe('HarnessAPI session skills', () => {
       properties: {
         skill_name: 'review-flow',
         trigger: 'user-slash',
+        agent_id: 'main',
       },
     });
     expect(telemetryRecords).toContainEqual({
@@ -411,6 +413,7 @@ describe('HarnessAPI session skills', () => {
       sessionId: created.id,
       properties: {
         flow_name: 'review-flow',
+        agent_id: 'main',
       },
     });
   });

@@ -41,7 +41,6 @@ const transientOp = testModel.defineOp('test.op.transient', {
 });
 
 function typecheckRegisteredOps(): void {
-  // The registry recovers each Op's payload from the Op's own type.
   type RegisteredPayload = OpPayload<'test.op.persisted'>;
   const registeredPayload: RegisteredPayload = { value: 1 };
   persistedOp(registeredPayload);

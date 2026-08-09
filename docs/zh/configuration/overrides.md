@@ -45,7 +45,7 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 
 > `[providers.<name>.env]` 子表只是配置文件里的一段 TOML，不会真正写入 shell 环境变量。仅当对应的直接字段（`api_key` / `base_url`）为空时，CLI 才会查这里。
 
-完整的凭证键名列表见[环境变量：供应商凭证键](./env-vars.md#供应商凭证键写在-configtoml-里)。
+完整的凭证键名列表见[环境变量：供应商凭证键](./env-vars.md#供应商凭证键-写在-config-toml-里)。
 
 ## 命令行选项
 
@@ -55,7 +55,8 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 | --- | --- |
 | `-S, --session [id]` | 恢复指定会话；不带 id 时进入交互式选择 |
 | `-c, --continue` | 续上当前目录的上一次会话 |
-| `-y, --yolo` | 自动批准所有工具调用 |
+| `-y, --yolo` | 自动批准普通工具调用，Agent 仍可能提问 |
+| `--auto` | 以 auto 权限模式启动：完全自主，Agent 不会向用户提问 |
 | `--plan` | 以 Plan 模式启动 |
 | `-m, --model <model>` | 指定本次使用的模型别名 |
 | `-p, --prompt <prompt>` | 非交互模式：执行单条提示词后退出 |

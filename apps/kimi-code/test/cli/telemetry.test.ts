@@ -29,10 +29,16 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
   withTelemetryContext: vi.fn(),
 }));
 
-vi.mock('@moonshot-ai/kimi-code-oauth', () => ({
-  createKimiDeviceId: mocks.createKimiDeviceId,
-  KIMI_CODE_PROVIDER_NAME: 'managed:kimi-code',
-}));
+vi.mock('@moonshot-ai/kimi-code-oauth', async (importOriginal) => {
+  // Spread the real module: the SDK's v2 client pulls agent-core-v2 into the
+  // import graph, which subclasses KimiOAuthToolkit from this package.
+  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-oauth')>();
+  return {
+    ...actual,
+    createKimiDeviceId: mocks.createKimiDeviceId,
+    KIMI_CODE_PROVIDER_NAME: 'managed:kimi-code',
+  };
+});
 
 vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
@@ -60,7 +66,6 @@ describe('initializeServerTelemetry', () => {
   it('configures the sink with ui_mode="web" and the CLI product identity', async () => {
     const { initializeServerTelemetry } = await import('#/cli/telemetry');
     const client = initializeServerTelemetry({ version: '1.2.3' });
-
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({
         appName: 'kimi-code-cli',
@@ -81,7 +86,10 @@ describe('initializeServerTelemetry', () => {
         setContext: expect.any(Function),
       }),
     );
-  });
+    // The first dynamic import pulls in the whole SDK/oauth chain (~3s idle,
+    // more under full-suite transform contention) — give it headroom past the
+    // 5s default timeout.
+  }, 20000);
 
   it('disables telemetry when config.toml sets telemetry = false', async () => {
     mocks.loadRuntimeConfigSafe.mockReturnValue({

@@ -73,6 +73,7 @@ import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
+import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
 import type { StreamingUIController } from './streaming-ui';
 import type { TasksBrowserController } from './tasks-browser';
 import { SubAgentEventHandler } from './subagent-event-handler';
@@ -119,8 +120,12 @@ export interface SessionEventHost {
 
 export class SessionEventHandler {
   readonly subAgentEventHandler: SubAgentEventHandler;
+  private readonly pluginUpdateNotifier: PluginUpdateNotifier;
 
-  constructor(private readonly host: SessionEventHost) {
+  constructor(
+    private readonly host: SessionEventHost,
+    pluginUpdateNotifier?: PluginUpdateNotifier,
+  ) {
     this.subAgentEventHandler = new SubAgentEventHandler(host, {
       backgroundTasks: this.backgroundTasks,
       backgroundTaskTranscriptedTerminal: this.backgroundTaskTranscriptedTerminal,
@@ -128,6 +133,15 @@ export class SessionEventHandler {
         this.syncBackgroundTaskBadge();
       },
     });
+    this.pluginUpdateNotifier =
+      pluginUpdateNotifier ??
+      new PluginUpdateNotifier({
+        getSession: () => this.host.session,
+        workDir: host.state.appState.workDir,
+        notify: (message) => {
+          this.host.showStatus(message, 'warning');
+        },
+      });
   }
 
   // Runtime state – owned by this handler, reset between sessions.
@@ -142,6 +156,8 @@ export class SessionEventHandler {
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
   private currentTurnHasAssistantText = false;
+  private pluginCommandTurns: Map<string, string> = new Map();
+  private pluginMcpToolsUsedInTurn: Set<string> = new Set();
   private pendingModelBlockedFallback: GoalChange | undefined;
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
@@ -158,6 +174,8 @@ export class SessionEventHandler {
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.currentTurnHasAssistantText = false;
+    this.pluginCommandTurns.clear();
+    this.pluginMcpToolsUsedInTurn.clear();
     this.pendingModelBlockedFallback = undefined;
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
@@ -293,9 +311,11 @@ export class SessionEventHandler {
   // Private handlers
   // ---------------------------------------------------------------------------
 
-  private handleTurnBegin(_event: TurnStartedEvent): void {
-    void _event;
+  private handleTurnBegin(event: TurnStartedEvent): void {
     this.currentTurnHasAssistantText = false;
+    if (event.origin?.kind === 'plugin_command') {
+      this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
+    }
     this.clearAgentSwarmProgress();
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.setStep(0);
@@ -348,6 +368,22 @@ export class SessionEventHandler {
     this.renderPendingModelBlockedFallback();
     this.currentTurnHasAssistantText = false;
     this.goalCompletionTurnEnded = true;
+    // Plugin usage is reported once the whole turn's output has ended — but a
+    // cancelled turn cut the output short, so skip the notice there.
+    const reportPluginUsage = event.reason !== 'cancelled';
+    const pluginCommandPluginId = this.pluginCommandTurns.get(String(event.turnId));
+    if (pluginCommandPluginId !== undefined) {
+      this.pluginCommandTurns.delete(String(event.turnId));
+      if (reportPluginUsage) {
+        void this.pluginUpdateNotifier.handlePluginCommandCompleted(pluginCommandPluginId);
+      }
+    }
+    if (reportPluginUsage) {
+      for (const toolName of this.pluginMcpToolsUsedInTurn) {
+        void this.pluginUpdateNotifier.handleMcpToolCompleted(toolName);
+      }
+    }
+    this.pluginMcpToolsUsedInTurn.clear();
     this.scheduleQueuedGoalPromotion();
   }
 
@@ -447,12 +483,13 @@ export class SessionEventHandler {
     const { state, streamingUI } = this.host;
     // Encrypted / redacted reasoning (e.g. Kimi over the Anthropic-compatible
     // protocol) streams thinking deltas whose visible text is empty — only an
-    // opaque signature rides along. Such deltas carry nothing to render, so
-    // switching into the `thinking` pane mode here would stop the "waiting"
+    // opaque signature rides along. Models also occasionally stream whitespace-
+    // only thinking (e.g. a single space). Such deltas carry nothing to render,
+    // so switching into the `thinking` pane mode here would stop the "waiting"
     // moon spinner while no ThinkingComponent is ever created (it needs visible
     // text), leaving a blank, spinner-less gap until the first real text/tool
     // token arrives. Keep the moon up until actual thinking text shows up.
-    if (event.delta.length === 0 && !streamingUI.hasThinkingDraft()) return;
+    if (event.delta.trim().length === 0 && !streamingUI.hasThinkingDraft()) return;
     streamingUI.appendThinkingDelta(event.delta);
     this.host.patchLivePane({ mode: 'idle' });
     if (state.appState.streamingPhase !== 'thinking') {
@@ -581,6 +618,11 @@ export class SessionEventHandler {
       synthetic: event.synthetic,
     };
     const matchedCall = streamingUI.completeToolResult(event.toolCallId, resultData);
+    if (matchedCall !== undefined && isPluginMcpToolName(matchedCall.name)) {
+      // Buffer plugin MCP usage for the turn; the update notice fires once the
+      // whole turn's output has ended (see handleTurnEnd).
+      this.pluginMcpToolsUsedInTurn.add(matchedCall.name);
+    }
     this.subAgentEventHandler.handleAgentSwarmToolResult(
       event.toolCallId,
       resultData,
@@ -615,6 +657,7 @@ export class SessionEventHandler {
       patch.permissionMode = event.permission;
     }
     if (event.model !== undefined) patch.model = event.model;
+    if (event.thinkingEffort !== undefined) patch.thinkingEffort = event.thinkingEffort;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
     if (event.swarmMode === false) {
       this.host.state.swarmModeEntry = undefined;
@@ -934,8 +977,9 @@ export class SessionEventHandler {
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(spinner);
     if (idx >= 0) {
+      // In-place replacement is picked up by the container's ref-checked
+      // render cache; a tree-wide invalidate is unnecessary (and costly).
       children[idx] = status;
-      state.transcriptContainer.invalidate();
     } else {
       state.transcriptContainer.addChild(status);
     }

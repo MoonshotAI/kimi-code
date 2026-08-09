@@ -5,7 +5,9 @@
  * `encodeWorkDirKey` derives the stable, opaque `workspaceId` for a working
  * directory (`wd_<slug>_<hash>`). The `workspaceId` is the backend-neutral
  * identity used to group sessions and to key the workspace registry; backends
- * never expose the raw working-directory path.
+ * never expose the raw working-directory path. `workspaceRootKey` is the
+ * comparison-only companion: it answers "is this the same directory?" without
+ * changing the id that was already minted for it.
  */
 
 import { createHash } from 'node:crypto';
@@ -30,4 +32,13 @@ export function encodeWorkDirKey(workDir: string): string {
   const slug = slugifyWorkDirName(base);
   const hash = createHash('sha256').update(normalized).digest('hex').slice(0, HASH_LENGTH);
   return `${WORKDIR_KEY_PREFIX}${slug}_${hash}`;
+}
+
+const WIN_SHAPED = /^(?:[A-Za-z]:[\\/]|\\\\|\/\/)/;
+
+export function workspaceRootKey(root: string): string {
+  const slashed = root.replaceAll('\\', '/');
+  const shaped = WIN_SHAPED.test(slashed);
+  const normalized = slashed.replace(/\/+$/, '');
+  return shaped ? normalized.toLowerCase() : normalized;
 }

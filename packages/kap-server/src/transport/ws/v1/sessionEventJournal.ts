@@ -15,7 +15,7 @@
  *     file is unreadable/corrupt at open (we start a fresh journal) — clients
  *     holding cursors from the old epoch get `resync_required(epoch_changed)`.
  *   - Only durable events are written (volatile frames never touch the journal;
- *     see `VOLATILE_EVENT_TYPES` in `@moonshot-ai/protocol`).
+ *     see `VOLATILE_EVENT_TYPES` in `./events`).
  *
  * Durability model: `append()` is synchronous (callers need the seq immediately
  * for fan-out); bytes are flushed on a microtask-scheduled async batch.
@@ -32,8 +32,8 @@ const JOURNAL_VERSION = 1;
 
 /**
  * Wire event envelope — matches `wsEventEnvelopeSchema` /
- * `sessionEventMessageSchema` in `@moonshot-ai/protocol`. Defined locally so
- * the journal does not depend on the zod schema at runtime.
+ * `sessionEventMessageSchema` in the local `protocol/ws-control` catalog. Defined
+ * structurally so the journal does not depend on the zod schema at runtime.
  */
 export interface EventEnvelope {
   readonly type: string;
@@ -67,6 +67,7 @@ export interface JournalEntry {
 /** Minimal logger surface — keeps the journal decoupled from the server logger. */
 export interface JournalLogger {
   warn(obj: unknown, msg: string): void;
+  error?(obj: unknown, msg: string): void;
 }
 
 const noopLogger: JournalLogger = { warn: () => {} };
@@ -186,6 +187,10 @@ export class SessionEventJournal {
     if (this.flushPromise !== undefined) return;
     this.flushPromise = this.flushOnce().finally(() => {
       this.flushPromise = undefined;
+      // Appends that arrived while this flush was in flight are still pending:
+      // chain the next round instead of parking them until a later append (or
+      // `close()`) happens to trigger one.
+      if (this.pendingLines.length > 0) this.scheduleFlush();
     });
   }
 

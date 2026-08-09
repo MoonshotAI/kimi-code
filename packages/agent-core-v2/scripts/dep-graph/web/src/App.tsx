@@ -11,8 +11,6 @@ import { collectTagCounts, loadTags, saveTags, tagsEqual, type TagMap } from './
 const ALL_SCOPES: ServiceScope[] = ['App', 'Session', 'Agent'];
 
 export function App(): JSX.Element {
-  // Read once at mount — deep-link params seed the initial filters; later
-  // interaction is purely client-side and does not write back to the URL.
   const queryParams = useMemo(() => readQueryParams(window.location.search), []);
 
   const domains = useMemo(
@@ -45,8 +43,6 @@ export function App(): JSX.Element {
       : undefined,
   );
 
-  // User-authored node tags, keyed by `ServiceNode.id`. Loaded once from
-  // localStorage and re-persisted on every change.
   const [tags, setTags] = useState<TagMap>(() => loadTags());
   useEffect(() => {
     saveTags(tags);

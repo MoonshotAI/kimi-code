@@ -102,4 +102,50 @@ describe('EffortSelectorComponent', () => {
     picker.handleInput(ESC);
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it('renders the warning line directly below the key-hint line when provided', () => {
+    const picker = new EffortSelectorComponent({
+      efforts: ['off', 'low', 'high', 'max'],
+      currentValue: 'high',
+      warning: 'Switching may increase token usage.',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = picker.render(120).map(strip);
+    const hintIdx = lines.findIndex((l) => l.includes('←→ switch'));
+    expect(hintIdx).toBeGreaterThanOrEqual(0);
+    expect(lines[hintIdx + 1]).toContain('Switching may increase token usage.');
+  });
+
+  it('renders no warning line without the warning option', () => {
+    const picker = new EffortSelectorComponent({
+      efforts: ['off', 'low', 'high', 'max'],
+      currentValue: 'high',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = picker.render(120).map(strip);
+    const hintIdx = lines.findIndex((l) => l.includes('←→ switch'));
+    expect(hintIdx).toBeGreaterThanOrEqual(0);
+    expect(lines[hintIdx + 1]).toBe('');
+  });
+
+  it('wraps a warning longer than the width instead of truncating it', () => {
+    const warning =
+      'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.';
+    const picker = new EffortSelectorComponent({
+      efforts: ['off', 'low', 'high', 'max'],
+      currentValue: 'high',
+      warning,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = picker.render(40).map(strip);
+    const hintIdx = lines.findIndex((l) => l.includes('←→ switch'));
+    expect(lines[hintIdx + 1]).not.toBe('');
+    expect(lines[hintIdx + 2]).not.toBe('');
+    // Word-wrapped: nothing dropped — the full warning survives across lines.
+    const squashed = lines.join('').replaceAll(/\s+/g, '');
+    expect(squashed).toContain(warning.replaceAll(/\s+/g, ''));
+  });
 });

@@ -5,23 +5,25 @@
  * its main agent) per call, delegates to the native v2 services, and projects
  * the result into the v1 wire shape. Only `updateProfile` (the cross-domain
  * `agent_config` patch), `status` (the best-effort status rollup), and `goal`
- * (the current-goal read) live here;
- * the `:undo`, `fork`-as-child, and child-listing actions were pushed down into
- * the native services (`IAgentPromptService.undo`,
- * `ISessionLifecycleService.createChild`, `ISessionIndex.list({ childOf })`) and
- * are called by the edge route directly. No business logic is duplicated here;
- * the real work stays in the native services.
+ * (the current-goal read) live here. No business logic is duplicated here.
  */
 
-import type {
-  GoalSnapshot,
-  SessionStatusResponse,
-  UpdateSessionProfileRequest,
-} from '@moonshot-ai/protocol';
+import type { GoalSnapshot } from '#/agent/goal/types';
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessionProtocol';
+
+import {
+  type IAgentScopeHandle,
+  type ISessionScopeHandle,
+  LifecycleScope,
+  ScopeActivation,
+  registerScopedService,
+} from '#/_base/di/scope';
+import {
+  IInstantiationService,
+  type ServicesAccessor,
+} from '#/_base/di/instantiation';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -29,11 +31,15 @@ import { IAgentPlanService } from '#/agent/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { IConfigService } from '#/app/config/config';
-import { IModelResolver } from '#/app/model/modelResolver';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import {
+  getLiveSessionById,
+  resumeSessionById,
+} from '#/app/workspaceLifecycle/sessionLookup';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import { ISessionActivity } from '#/session/sessionActivity/sessionActivity';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
@@ -42,13 +48,23 @@ import { ISessionLegacyService, type SessionWireFields } from './sessionLegacy';
 export class SessionLegacyService implements ISessionLegacyService {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@ISessionLifecycleService private readonly lifecycle: ISessionLifecycleService) {}
+  private readonly services: ServicesAccessor;
+
+  constructor(@IInstantiationService instantiation: IInstantiationService) {
+    this.services = {
+      get: (id) => instantiation.invokeFunction((accessor) => accessor.get(id)),
+    };
+  }
+
+  private resume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
+    return resumeSessionById(this.services, sessionId);
+  }
 
   async updateProfile(
     sessionId: string,
     body: UpdateSessionProfileRequest,
   ): Promise<SessionWireFields> {
-    const session = await this.lifecycle.resume(sessionId);
+    const session = await this.resume(sessionId);
     if (session === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
@@ -58,10 +74,6 @@ export class SessionLegacyService implements ISessionLegacyService {
       await metadata.setTitle(body.title);
     }
 
-    // v1 `ISessionService.update` writes the wire metadata patch straight into
-    // `custom` (replace, not deep-merge); `toProtocolSession` then spreads
-    // `custom` back onto the wire `Session.metadata`. An empty patch is a no-op
-    // (matches v1's `Object.keys(...).length > 0` guard).
     const metadataPatch = body.metadata;
     if (metadataPatch !== undefined && Object.keys(metadataPatch).length > 0) {
       await metadata.update({ custom: { ...(metadataPatch as Record<string, unknown>) } });
@@ -74,9 +86,6 @@ export class SessionLegacyService implements ISessionLegacyService {
     }
 
     const meta = await metadata.read();
-    // `ISessionContext` carries the frozen work dir (gap G3 closed), so an
-    // unregistered workspace does not collapse `cwd` here — matches v1, which
-    // stores `workDir` on the session itself.
     const ctx = session.accessor.get(ISessionContext);
     return {
       id: meta.id,
@@ -91,18 +100,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     };
   }
 
-  // --- internals -------------------------------------------------------------
 
-  /**
-   * Apply the v1 `agent_config` patch onto the main agent. Mirrors v1's
-   * `IPromptService.applyAgentState` (`promptService.ts:650-743`) in both order
-   * (model → thinking → permission → plan → swarm → goal) and diff behaviour:
-   * the non-idempotent `plan.enter` / `swarm.enter` are guarded behind a state
-   * read so a repeated `true` does not throw ('Already in plan mode'); the
-   * idempotent setters (model / thinking / permission) fire directly. Goal
-   * actions are one-shot and let domain errors (`goal.*`) propagate to the
-   * route's `sendMappedError`.
-   */
   private async applyAgentConfig(
     agent: IAgentScopeHandle,
     agentConfig: NonNullable<UpdateSessionProfileRequest['agent_config']>,
@@ -116,8 +114,8 @@ export class SessionLegacyService implements ISessionLegacyService {
     }
     if (agentConfig.permission_mode !== undefined) {
       agent.accessor
-        .get(IAgentPermissionModeService)
-        .setMode(agentConfig.permission_mode as PermissionMode);
+        .get(IAgentLifecycleService)
+        .broadcastPermissionMode(agentConfig.permission_mode as PermissionMode);
     }
     if (agentConfig.plan_mode !== undefined) {
       const plan = agent.accessor.get(IAgentPlanService);
@@ -146,7 +144,7 @@ export class SessionLegacyService implements ISessionLegacyService {
           await goal.pauseGoal({});
           break;
         case 'resume':
-          await goal.resumeGoal({});
+          await goal.resumeGoal({ continueIfPaused: true, continueIfBlocked: true });
           break;
         case 'cancel':
           await goal.cancelGoal({});
@@ -156,13 +154,7 @@ export class SessionLegacyService implements ISessionLegacyService {
   }
 
   private async resolveMainAgent(sessionId: string): Promise<IAgentScopeHandle> {
-    // `resume` (not `get`) so a persisted-but-cold session — freshly opened in
-    // the web UI before any prompt, or created by a previous process — is loaded
-    // from disk instead of being reported as `session.not_found`. Mirrors v1's
-    // `SessionService.undo`/`compact`, which call `resumeSession` first; `resume`
-    // returns `undefined` only when the session is unknown or its workspace is
-    // gone, so a genuinely missing session still 404s.
-    const session = await this.lifecycle.resume(sessionId);
+    const session = await this.resume(sessionId);
     if (session === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
@@ -178,41 +170,45 @@ export class SessionLegacyService implements ISessionLegacyService {
     sessionId: string,
     agent: IAgentScopeHandle,
   ): Promise<SessionStatusResponse> {
-    const session = this.lifecycle.get(sessionId);
     const profile = agent.accessor.get(IAgentProfileService);
-    const contextSize = agent.accessor.get(IAgentContextSizeService);
+    const tokenCounting = agent.accessor.get(IAgentTokenCountingService);
     const permission = agent.accessor.get(IAgentPermissionModeService);
     const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
 
-    const profileData = profile.data();
     const model = profile.getModel();
-    const caps = profile.getModelCapabilities() as { max_context_tokens?: number };
-    // v1 binds the default model to the main agent at session creation, so its
-    // status always reports a real context window. v2 creates the main agent
-    // lazily without binding a model until the first prompt/profile update, so a
-    // fresh session has no model and `max_context_tokens` resolves to 0 — the
-    // status line then shows "0/0". Mirror v1 by falling back to the configured
-    // default model's context window whenever the agent has no model bound yet.
+    const caps = profile.getModelCapabilities() as {
+      max_context_tokens?: number;
+      max_input_tokens?: number;
+    };
     const maxTokens =
-      model === '' ? resolveDefaultModelContextTokens(agent) : (caps.max_context_tokens ?? 0);
-    // `size` (measured + estimated) mirrors v1's `context.tokenCount`: it
-    // reflects the live context even before the first measured exchange, whereas
-    // `measured` stays 0 until the first LLM response lands.
-    const tokens = contextSize.get().size;
+      model === ''
+        ? resolveDefaultModelContextTokens(agent)
+        : (caps.max_input_tokens ?? caps.max_context_tokens ?? 0);
+    const tokens = tokenCounting.statusSize();
     const planData = await plan.status();
 
     return {
-      status: session?.accessor.get(ISessionActivity).status() ?? 'idle',
+      busy: this.readBusy(sessionId),
       model: model === '' ? undefined : model,
-      thinking_level: profileData.thinkingLevel,
+      thinking_level: model === '' ? '' : profile.getEffectiveThinkingLevel(),
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,
       context_tokens: tokens,
       max_context_tokens: maxTokens,
-      context_usage: maxTokens > 0 ? tokens / maxTokens : 0,
+      context_usage: maxTokens > 0 ? Math.min(1, tokens / maxTokens) : 0,
     };
+  }
+
+  private readBusy(sessionId: string): boolean {
+    const handle = getLiveSessionById(this.services, sessionId);
+    if (handle === undefined) return false;
+    for (const agent of handle.accessor.get(IAgentLifecycleService).list()) {
+      const state = agent.accessor.get(IAgentActivityView).state();
+      if (state.turn !== undefined || state.background.length > 0) return true;
+    }
+    return false;
   }
 
   async goal(sessionId: string): Promise<GoalSnapshot | null> {
@@ -221,17 +217,12 @@ export class SessionLegacyService implements ISessionLegacyService {
   }
 }
 
-/**
- * Resolve the configured default model's context window for the status line
- * when the main agent has no model bound yet (fresh session before the first
- * prompt). Returns 0 when no default model is configured or it cannot be
- * resolved (e.g. auth not ready), matching v1's "unknown" fallback.
- */
 function resolveDefaultModelContextTokens(agent: IAgentScopeHandle): number {
   const defaultModel = agent.accessor.get(IConfigService).get<string>('defaultModel');
   if (typeof defaultModel !== 'string' || defaultModel.length === 0) return 0;
   try {
-    return agent.accessor.get(IModelResolver).resolve(defaultModel).capabilities.max_context_tokens;
+    const capabilities = agent.accessor.get(IModelCatalog).get(defaultModel).capabilities;
+    return capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   } catch {
     return 0;
   }
@@ -241,6 +232,6 @@ registerScopedService(
   LifecycleScope.App,
   ISessionLegacyService,
   SessionLegacyService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnScopeCreated,
   'sessionLegacy',
 );

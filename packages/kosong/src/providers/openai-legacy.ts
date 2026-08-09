@@ -25,14 +25,13 @@ import {
   TOOL_RESULT_MEDIA_PLACEHOLDER,
   TOOL_RESULT_MEDIA_PROMPT,
   type ToolMessageConversion,
-  reasoningEffortToThinkingEffort,
-  thinkingEffortToReasoningEffort,
   toolToOpenAI,
 } from './openai-common';
 import {
   convertChatCompletionStreamToolCall,
   type BufferedChatCompletionToolCall,
 } from './chat-completions-stream';
+import { ReasoningKeyDialect } from './reasoning-key';
 import {
   mergeRequestHeaders,
   requireProviderApiKey,
@@ -44,11 +43,10 @@ import {
   type ToolCallIdPolicy,
 } from './tool-call-id';
 
-// Inbound: scan in priority order; first string value wins. Outbound: the first
-// entry doubles as the default field we serialize ThinkPart back into. Both
-// arms can be overridden by an explicit `reasoningKey` on the provider config.
-const KNOWN_REASONING_KEYS = ['reasoning_content', 'reasoning_details', 'reasoning'] as const;
-const DEFAULT_OUTBOUND_REASONING_KEY = KNOWN_REASONING_KEYS[0];
+// Inbound: scan the known reasoning field names in priority order; first
+// string value wins. Outbound: echo the dialect the endpoint actually spoke
+// (detected by ReasoningKeyDialect), defaulting to `reasoning_content`. Both
+// arms can be pinned by an explicit `reasoningKey` on the provider config.
 
 /**
  * Hard upper bound on `max_tokens` for OpenAI-compatible chat-completions
@@ -76,20 +74,6 @@ function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown>
   };
 }
 
-function extractReasoningContent(
-  source: unknown,
-  explicitKey: string | undefined,
-): string | undefined {
-  if (typeof source !== 'object' || source === null) return undefined;
-  const record = source as Record<string, unknown>;
-  const keys: readonly string[] = explicitKey !== undefined ? [explicitKey] : KNOWN_REASONING_KEYS;
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === 'string' && value.length > 0) return value;
-  }
-  return undefined;
-}
-
 export interface OpenAILegacyOptions {
   apiKey?: string | undefined;
   baseUrl?: string | undefined;
@@ -97,10 +81,24 @@ export interface OpenAILegacyOptions {
   stream?: boolean | undefined;
   maxTokens?: number | undefined;
   reasoningKey?: string | undefined;
+  /**
+   * The effort value that encodes "thinking off" on this wire (e.g. `'none'`
+   * for xai grok). When set, `withThinking('off')` sends it as
+   * `reasoning_effort` instead of omitting the field — required by models
+   * whose default is to reason.
+   */
+  offEffort?: string | undefined;
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
   toolMessageConversion?: ToolMessageConversion | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => OpenAI;
+  /**
+   * Construction-time free-form request kwargs (e.g. `prompt_cache_key` for
+   * session affinity), merged into every request at generate time. Explicit
+   * first-class options (`maxTokens`) win on conflict; the
+   * `withGenerationKwargs` morph layers on top of both.
+   */
+  generationKwargs?: OpenAILegacyGenerationKwargs | undefined;
 }
 
 export interface OpenAILegacyGenerationKwargs {
@@ -159,14 +157,16 @@ function normalizeGenerationKwargs(
 
 function convertMessage(
   message: Message,
-  reasoningKey: string | undefined,
+  reasoningKey: string,
   toolMessageConversion: ToolMessageConversion,
 ): OpenAIMessage {
   let reasoningContent = '';
+  let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
 
   for (const part of message.content) {
     if (part.type === 'think') {
+      hasReasoningPart = true;
       reasoningContent += part.think;
     } else {
       nonThinkParts.push(part);
@@ -231,13 +231,14 @@ function convertMessage(
     result.tool_call_id = message.toolCallId;
   }
 
-  // Round-trip thinking content back to the server. Default to the de facto
-  // `reasoning_content` field so OpenAI-compatible reasoners (DeepSeek, Qwen,
-  // One API gateways) work without per-provider configuration. Servers that
-  // don't understand the field ignore it; servers that require a specific
-  // field can override via the explicit `reasoningKey`.
-  if (reasoningContent) {
-    result[reasoningKey ?? DEFAULT_OUTBOUND_REASONING_KEY] = reasoningContent;
+  // Round-trip thinking content back to the server under the dialect the
+  // endpoint actually spoke (detected from inbound responses; defaults to the
+  // de facto `reasoning_content` so OpenAI-compatible reasoners — DeepSeek,
+  // Qwen, One API gateways — work out of the box). Servers that don't
+  // understand the field ignore it; an explicit `reasoningKey` config pins
+  // the dialect instead of detecting it.
+  if (hasReasoningPart) {
+    result[reasoningKey] = reasoningContent;
   }
 
   return result;
@@ -296,7 +297,7 @@ function appendToolResultMediaMessage(
 
 function convertHistoryMessages(
   history: readonly Message[],
-  reasoningKey: string | undefined,
+  reasoningKey: string,
   toolMessageConversion: ToolMessageConversion,
 ): OpenAIMessage[] {
   const messages: OpenAIMessage[] = [];
@@ -329,17 +330,17 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
   constructor(
     response: OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
     isStream: boolean,
-    reasoningKey: string | undefined,
+    reasoningKeyDialect: ReasoningKeyDialect,
   ) {
     if (isStream) {
       this._iter = this._convertStreamResponse(
         response as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
-        reasoningKey,
+        reasoningKeyDialect,
       );
     } else {
       this._iter = this._convertNonStreamResponse(
         response as OpenAI.Chat.ChatCompletion,
-        reasoningKey,
+        reasoningKeyDialect,
       );
     }
   }
@@ -372,7 +373,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
   private async *_convertNonStreamResponse(
     response: OpenAI.Chat.ChatCompletion,
-    reasoningKey: string | undefined,
+    reasoningKeyDialect: ReasoningKeyDialect,
   ): AsyncGenerator<StreamedMessagePart> {
     this._id = response.id;
     if (response.usage) {
@@ -384,9 +385,9 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     if (!message) return;
 
     // Reasoning content: honor the explicit key when set, otherwise scan the
-    // de facto field set so hand-written configs work without it.
-    const reasoning = extractReasoningContent(message, reasoningKey);
-    if (reasoning) {
+    // de facto field set and remember the dialect for outbound echo.
+    const reasoning = reasoningKeyDialect.observe(message);
+    if (reasoning !== undefined) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
 
@@ -409,7 +410,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
   private async *_convertStreamResponse(
     response: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
-    reasoningKey: string | undefined,
+    reasoningKeyDialect: ReasoningKeyDialect,
   ): AsyncGenerator<StreamedMessagePart> {
     const bufferedToolCalls = new Map<number | string, BufferedChatCompletionToolCall>();
 
@@ -439,9 +440,9 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
         const delta = choice.delta;
 
         // Reasoning content: honor the explicit key when set, otherwise scan
-        // the de facto field set so hand-written configs work without it.
-        const reasoning = extractReasoningContent(delta, reasoningKey);
-        if (reasoning) {
+        // the de facto field set and remember the dialect for outbound echo.
+        const reasoning = reasoningKeyDialect.observe(delta);
+        if (reasoning !== undefined) {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 
@@ -481,8 +482,9 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private _apiKey: string | undefined;
   private _baseUrl: string | undefined;
   private _defaultHeaders: Record<string, string> | undefined;
-  private _reasoningKey: string | undefined;
-  private _reasoningEffort: string | undefined;
+  private _reasoningKeyDialect: ReasoningKeyDialect;
+  private _thinkingEffort: ThinkingEffort | undefined;
+  private _offEffort: string | undefined;
   private _generationKwargs: OpenAILegacyGenerationKwargs;
   private _toolMessageConversion: ToolMessageConversion;
   private _client: OpenAI | undefined;
@@ -501,13 +503,19 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     // would otherwise disable the default field scan and route reads/writes
     // through an empty property name.
     const normalizedReasoningKey = options.reasoningKey?.trim();
-    this._reasoningKey =
+    this._reasoningKeyDialect = new ReasoningKeyDialect(
       normalizedReasoningKey !== undefined && normalizedReasoningKey.length > 0
         ? normalizedReasoningKey
-        : undefined;
-    this._reasoningEffort = undefined;
-    this._generationKwargs =
-      options.maxTokens !== undefined ? completionTokenKwargs(this._model, options.maxTokens) : {};
+        : undefined,
+    );
+    this._thinkingEffort = undefined;
+    this._offEffort = options.offEffort;
+    this._generationKwargs = {
+      ...options.generationKwargs,
+      ...(options.maxTokens !== undefined
+        ? completionTokenKwargs(this._model, options.maxTokens)
+        : {}),
+    };
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
     this._clientFactory = options.clientFactory;
@@ -520,7 +528,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   get thinkingEffort(): ThinkingEffort | null {
-    return reasoningEffortToThinkingEffort(this._reasoningEffort);
+    return this._thinkingEffort ?? null;
   }
 
   get modelParameters(): Record<string, unknown> {
@@ -546,7 +554,11 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       OPENAI_CHAT_TOOL_CALL_ID_POLICY,
     );
     messages.push(
-      ...convertHistoryMessages(normalizedHistory, this._reasoningKey, this._toolMessageConversion),
+      ...convertHistoryMessages(
+        normalizedHistory,
+        this._reasoningKeyDialect.outboundKey(),
+        this._toolMessageConversion,
+      ),
     );
 
     const kwargs: Record<string, unknown> = normalizeGenerationKwargs(
@@ -554,16 +566,34 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       this._generationKwargs,
     );
 
-    // Determine reasoning_effort
-    let reasoningEffort: string | undefined = this._reasoningEffort;
+    // Determine reasoning_effort. 'on' has no wire encoding on
+    // chat-completions APIs, so it sends no reasoning_effort field; only a
+    // concrete effort (low/medium/high/...) is passed through verbatim.
+    // 'off' sends the model's declared off value (e.g. 'none') when one is
+    // configured — models that reason by default need the explicit value to
+    // actually disable reasoning; otherwise the field is omitted as before.
+    const effort = this._thinkingEffort;
+    let reasoningEffort: string | undefined =
+      effort === 'off'
+        ? this._offEffort
+        : effort === undefined || effort === 'on'
+          ? undefined
+          : effort;
 
     // Auto-enable reasoning_effort when the history contains ThinkPart but reasoning
     // was not explicitly configured. This prevents server validation errors from APIs
     // (e.g. One API) that require reasoning_effort when messages contain reasoning_content.
     // Skip when the caller already pinned reasoning_effort via withGenerationKwargs —
-    // their value would otherwise be silently overwritten below.
+    // their value would otherwise be silently overwritten below. An explicit 'off'
+    // from withThinking is honored as well: with thinking turned off the
+    // auto-enable must not silently switch reasoning back on (or leak the field
+    // to models that reject it).
     // See: https://github.com/MoonshotAI/kimi-code/issues/1616
-    if (reasoningEffort === undefined && kwargs['reasoning_effort'] === undefined) {
+    if (
+      reasoningEffort === undefined &&
+      effort !== 'off' &&
+      kwargs['reasoning_effort'] === undefined
+    ) {
       const hasThinkPart = history.some((message) =>
         message.content.some((part) => part.type === 'think'),
       );
@@ -610,16 +640,18 @@ export class OpenAILegacyChatProvider implements ChatProvider {
         createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
         options?.signal ? { signal: options.signal } : undefined,
       )) as unknown as OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
-      return new OpenAILegacyStreamedMessage(response, this._stream, this._reasoningKey);
+      return new OpenAILegacyStreamedMessage(response, this._stream, this._reasoningKeyDialect);
     } catch (error: unknown) {
       throw convertOpenAIError(error);
     }
   }
 
   withThinking(effort: ThinkingEffort): OpenAILegacyChatProvider {
-    const reasoningEffort = thinkingEffortToReasoningEffort(effort);
     const clone = this._clone();
-    clone._reasoningEffort = reasoningEffort;
+    // Store the requested effort verbatim; the wire encoding is derived per
+    // request so an explicit 'off' stays distinguishable from "never
+    // configured" (which the history-based auto-enable relies on).
+    clone._thinkingEffort = effort;
     return clone;
   }
 
@@ -651,6 +683,9 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       this,
     );
     clone._generationKwargs = { ...this._generationKwargs };
+    // `_reasoningKeyDialect` stays shared by reference: the dialect learned
+    // from a response on any per-step clone must steer the next request's
+    // outbound reasoning key.
     return clone;
   }
 

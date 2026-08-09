@@ -1,8 +1,8 @@
 /**
- * `externalHooksRunner` domain (L6) — pure hook matching/dispatch logic.
+ * `externalHooksRunner` domain — pure hook matching/dispatch logic.
  *
- * Owns everything the `IExternalHooksRunnerService` needs to decide *which*
- * hooks run for an event and to execute them: building the event→hooks index,
+ * Owns deciding *which* hooks run for an event and executing them: building
+ * the event→hooks index,
  * regex matching by matcher value, de-duplication per `(cwd, command)`, and
  * spawning each matched command via the shared `runHook` spawner (which runs
  * through the App-scope `IHostProcessService` passed in by the service). Holds
@@ -34,7 +34,6 @@ export interface HookRunCallbacks {
   ) => void;
 }
 
-/** Group hook definitions by event name, preserving declaration order. */
 export function indexHooks(hooks: readonly HookDef[]): Map<string, HookDef[]> {
   const byEvent = new Map<string, HookDef[]>();
   for (const hook of hooks) {
@@ -45,7 +44,6 @@ export function indexHooks(hooks: readonly HookDef[]): Map<string, HookDef[]> {
   return byEvent;
 }
 
-/** Run every hook in `byEvent` whose matcher matches `args.matcherValue`. */
 export async function runMatchedHooks(
   hostProcess: IHostProcessService,
   byEvent: ReadonlyMap<string, readonly HookDef[]>,
@@ -103,7 +101,6 @@ export async function runMatchedHooks(
   return results;
 }
 
-/** Reduce a trigger's results into a single block/allow decision. */
 export function blockDecision(
   event: string,
   results: readonly HookResult[],

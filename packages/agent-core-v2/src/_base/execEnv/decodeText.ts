@@ -1,10 +1,9 @@
 /**
- * `_base/execEnv` (L0) — Python-compatible text decoding with `errors` handling.
+ * `_base/execEnv` — Python-compatible text decoding with `errors` handling.
  *
- * Vendored from `@moonshot-ai/kaos` `internal.ts`. Kept as a pure helper with
- * no DI dependencies. Used by session-scoped fs implementations to read text
- * files with the same `strict`/`replace`/`ignore` semantics Python's
- * `open(..., errors=)` provides.
+ * Reads text with the same `strict`/`replace`/`ignore` semantics Python's
+ * `open(..., errors=)` provides. Kept as a pure helper with no DI
+ * dependencies.
  */
 
 export type TextDecodeErrors = 'strict' | 'replace' | 'ignore';
@@ -129,26 +128,12 @@ function decodeUtf16LeIgnore(data: Buffer): string {
   return output;
 }
 
-/**
- * Decode a Buffer into a string with Python-compatible `errors` handling.
- *
- * - `'strict'` (default): throw on invalid sequences (via TextDecoder `fatal: true`)
- * - `'replace'`: substitute each invalid sequence with U+FFFD (TextDecoder default)
- * - `'ignore'`: drop invalid input sequences while preserving valid U+FFFD characters
- *
- * Falls back to `Buffer.toString(encoding)` for encodings TextDecoder does not
- * support (e.g. `hex`, `base64`, `binary`, `latin1`) — those are lossless
- * byte-to-character mappings so `errors` has no effect.
- */
 export function decodeTextWithErrors(
   data: Buffer,
   encoding: BufferEncoding,
   errors: TextDecodeErrors = 'strict',
   ignoreBOM: boolean = false,
 ): string {
-  // Map Node's BufferEncoding names to Web TextDecoder labels where the two
-  // diverge. Only UTF-family encodings participate in the strict/replace/
-  // ignore dance; the others are lossless and use Buffer.toString directly.
   let webLabel: string | undefined;
   // eslint-disable-next-line typescript-eslint/switch-exhaustiveness-check
   switch (encoding) {
@@ -166,8 +151,6 @@ export function decodeTextWithErrors(
   }
 
   if (webLabel === undefined) {
-    // Non-UTF encodings (hex/base64/latin1/binary/ascii) are lossless byte↔
-    // character mappings; `errors` is meaningless for them. Return raw.
     return data.toString(encoding);
   }
 
@@ -175,13 +158,9 @@ export function decodeTextWithErrors(
     return new TextDecoder(webLabel, { fatal: true, ignoreBOM }).decode(data);
   }
 
-  // 'ignore' must skip invalid input bytes/code units, not delete every
-  // replacement character in the decoded output. A file can contain a valid
-  // U+FFFD, and Python preserves it under errors="ignore".
   if (errors === 'ignore') {
     return webLabel === 'utf-8' ? decodeUtf8Ignore(data) : decodeUtf16LeIgnore(data);
   }
 
-  // 'replace' → substitute each invalid sequence with U+FFFD (default).
   return new TextDecoder(webLabel, { fatal: false, ignoreBOM }).decode(data);
 }

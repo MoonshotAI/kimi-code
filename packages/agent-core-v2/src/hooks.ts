@@ -5,6 +5,7 @@
  * forks. Bound as utility infrastructure, not a scoped Service.
  */
 import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
+import { BugIndicatingError } from "#/errors";
 
 export type Hooks<TEvents extends Record<string, unknown>> = {
   readonly [K in keyof TEvents]: HookSlot<TEvents[K]>;
@@ -46,7 +47,7 @@ export class OrderedHookSlot<TContext> implements HookSlot<TContext> {
     options: HookRegisterOptions = {},
   ): IDisposable {
     if (options.before !== undefined && options.after !== undefined) {
-      throw new Error('Hook registration cannot specify both before and after');
+      throw new BugIndicatingError('Hook registration cannot specify both before and after');
     }
 
     this.delete(id);
@@ -59,7 +60,7 @@ export class OrderedHookSlot<TContext> implements HookSlot<TContext> {
 
     const targetIndex = this.entries.findIndex((item) => item.id === target);
     if (targetIndex < 0) {
-      throw new Error(`Hook target "${target}" is not registered`);
+      throw new BugIndicatingError(`Hook target "${target}" is not registered`);
     }
 
     const insertAt = options.before !== undefined ? targetIndex : targetIndex + 1;

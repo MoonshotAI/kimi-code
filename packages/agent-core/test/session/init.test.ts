@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
 import { trimTrailingOpenToolExchange } from '../../src/agent/context/projector';
+import type { KimiConfig } from '../../src/config';
+import { FlagResolver } from '../../src/flags';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
@@ -208,6 +210,50 @@ describe('Session.init', () => {
 
       expect(resumedAgent.config.systemPrompt).toContain('updated resume instructions');
       expect(resumedAgent.config.systemPrompt).not.toContain('initial resume instructions');
+    } finally {
+      await resumedSession.close();
+    }
+  });
+
+  it('resumes a v2 session from the standard path instead of persisted homedir', async () => {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+    const options = {
+      id: 'test-resume-without-agent-homedir',
+      kaos: testKaos.withCwd(workDir),
+      persistenceKaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc([]),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+    };
+    const firstSession = new Session(options);
+    try {
+      await firstSession.createMain();
+    } finally {
+      await firstSession.closeForReload();
+    }
+
+    const statePath = join(sessionDir, 'state.json');
+    const now = Date.now();
+    await writeFile(statePath, JSON.stringify({
+      id: options.id,
+      version: 2,
+      createdAt: now,
+      updatedAt: now,
+      archived: false,
+      cwd: workDir,
+      agents: { main: { homedir: '/stale/session/agents/main', type: 'main' } },
+      custom: {},
+    }), 'utf-8');
+
+    const resumedSession = new Session(options);
+    try {
+      await resumedSession.resume();
+      const main = await resumedSession.ensureAgentResumed('main');
+
+      expect(main.homedir).toBe(join(sessionDir, 'agents', 'main'));
+      expect(main.config.systemPrompt).not.toBe('');
     } finally {
       await resumedSession.close();
     }
@@ -649,6 +695,171 @@ describe('AgentAPI.startBtw', () => {
       expect(enabledSkills.map((skill) => skill.name)).toContain('sub-skill.consolidate');
     } finally {
       await enabledSession.close();
+    }
+  });
+});
+
+describe('Session secondary-model live config', () => {
+  const SECONDARY_BASE_CONFIG: KimiConfig = {
+    providers: {
+      test: { type: MOCK_PROVIDER.type, apiKey: MOCK_PROVIDER.apiKey },
+    },
+    models: {
+      [MOCK_PROVIDER.model]: {
+        provider: 'test',
+        model: MOCK_PROVIDER.model,
+        maxContextSize: 1_000_000,
+      },
+    },
+  };
+  const SECONDARY_POINTER_CONFIG: KimiConfig = {
+    ...SECONDARY_BASE_CONFIG,
+    secondaryModel: { model: MOCK_PROVIDER.model },
+  };
+  const SECONDARY_PATCHED_CONFIG: KimiConfig = {
+    ...SECONDARY_BASE_CONFIG,
+    models: {
+      ...SECONDARY_BASE_CONFIG.models,
+      __secondary__: {
+        ...SECONDARY_BASE_CONFIG.models![MOCK_PROVIDER.model]!,
+        overrides: { defaultEffort: 'low' },
+      },
+    },
+    secondaryModel: { model: MOCK_PROVIDER.model, defaultEffort: 'low' },
+  };
+
+  async function makeSession(config?: KimiConfig): Promise<Session> {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+    return new Session({
+      id: 'test-secondary-model',
+      kaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc([]),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+      experimentalFlags: new FlagResolver({
+        KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '1',
+      }),
+      config,
+    });
+  }
+
+  it('live-applies the recipe to the session snapshot and live agents', async () => {
+    const session = await makeSession(SECONDARY_BASE_CONFIG);
+    try {
+      const { agent } = await session.createAgent(
+        { type: 'main', generate: createScriptedGenerate().generate },
+        { profile: testProfile() },
+      );
+
+      session.setSecondaryModelConfig(SECONDARY_POINTER_CONFIG);
+
+      expect(session.kimiConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
+      expect(agent.kimiConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
+      // A pointer-only recipe synthesizes no derived entry.
+      expect(session.kimiConfig?.models?.['__secondary__']).toBeUndefined();
+
+      // Agents created after the switch read the updated snapshot too.
+      const { agent: second } = await session.createAgent(
+        { type: 'sub', generate: createScriptedGenerate().generate },
+        { profile: testProfile(), parentAgentId: 'main' },
+      );
+      expect(second.kimiConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('refreshes collaboration tool descriptions when live-applying a recipe', async () => {
+    const session = await makeSession(SECONDARY_BASE_CONFIG);
+    try {
+      const { agent } = await session.createAgent(
+        { type: 'main', generate: createScriptedGenerate().generate },
+        { profile: { ...testProfile(), tools: ['Agent', 'AgentSwarm'] } },
+      );
+      agent.config.update({ modelAlias: MOCK_PROVIDER.model, thinkingEffort: 'off' });
+
+      const descriptionsBefore = Object.fromEntries(
+        agent.tools.loopTools.map((tool) => [tool.name, tool.description]),
+      );
+      expect(descriptionsBefore['Agent']).not.toContain('Available models');
+      expect(descriptionsBefore['AgentSwarm']).not.toContain('Available models');
+
+      session.setSecondaryModelConfig(SECONDARY_POINTER_CONFIG);
+
+      const descriptionsAfter = Object.fromEntries(
+        agent.tools.loopTools.map((tool) => [tool.name, tool.description]),
+      );
+      expect(descriptionsAfter['Agent']).toContain('- secondary: mock-model');
+      expect(descriptionsAfter['AgentSwarm']).toContain('- secondary: mock-model');
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('replaces a patched runtime snapshot with a pointer-only runtime snapshot', async () => {
+    const session = await makeSession(SECONDARY_BASE_CONFIG);
+    try {
+      session.setSecondaryModelConfig(SECONDARY_PATCHED_CONFIG);
+      const derived = session.kimiConfig?.models?.['__secondary__'];
+      expect(derived).toBeDefined();
+      expect(derived?.overrides?.defaultEffort).toBe('low');
+
+      session.setSecondaryModelConfig(SECONDARY_POINTER_CONFIG);
+      expect(session.kimiConfig?.models?.['__secondary__']).toBeUndefined();
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('keeps unrelated session settings when applying a secondary-model config', async () => {
+    const session = await makeSession({
+      ...SECONDARY_BASE_CONFIG,
+      loopControl: { maxStepsPerTurn: 7 },
+    });
+    try {
+      session.setSecondaryModelConfig({
+        ...SECONDARY_POINTER_CONFIG,
+        loopControl: { maxStepsPerTurn: 99 },
+      });
+
+      expect(session.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(7);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('rejects a dangling pointer with the wrapped secondary-model error', async () => {
+    const session = await makeSession(SECONDARY_BASE_CONFIG);
+    try {
+      expect(() =>
+        session.setSecondaryModelConfig({
+          ...SECONDARY_BASE_CONFIG,
+          secondaryModel: { model: 'missing-model' },
+        }),
+      ).toThrow(/\[secondary_model\]\.model/);
+      expect(session.kimiConfig?.secondaryModel).toBeUndefined();
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('rejects when the complete config has no persisted secondary recipe', async () => {
+    const session = await makeSession(SECONDARY_BASE_CONFIG);
+    try {
+      expect(() => session.setSecondaryModelConfig(SECONDARY_BASE_CONFIG)).toThrow(/persist/);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('rejects when the session has no config', async () => {
+    const session = await makeSession();
+    try {
+      expect(() => session.setSecondaryModelConfig(SECONDARY_POINTER_CONFIG)).toThrow(/no config/);
+    } finally {
+      await session.close();
     }
   });
 });
