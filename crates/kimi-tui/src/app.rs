@@ -687,6 +687,62 @@ fn build_goal_report(goal: &serde_json::Value) -> Vec<String> {
     ]
 }
 
+/// Multi-line MCP server report (TS `mcp-status-panel` parity, simplified):
+/// one row per server — name, status, transport, tool count.
+fn build_mcp_report(servers: &[serde_json::Value]) -> Vec<String> {
+    if servers.is_empty() {
+        return vec![t("tui.mcp.none").to_string()];
+    }
+    servers
+        .iter()
+        .filter_map(|s| {
+            let name = s["name"]
+                .as_str()
+                .or_else(|| s["server_name"].as_str())
+                .unwrap_or("?");
+            let status = s["status"].as_str().unwrap_or("?");
+            let transport = s["transport"].as_str().unwrap_or("");
+            let tools = s["tools"].as_array().map(|a| a.len()).unwrap_or(0);
+            let mut line = format!("  {name}  [{status}]");
+            if !transport.is_empty() {
+                line.push_str(&format!("  ({transport})"));
+            }
+            if tools > 0 {
+                line.push_str(&format!("  {tools} tools"));
+            }
+            Some(line)
+        })
+        .collect()
+}
+
+/// Multi-line plugin report (TS `plugins-status-panel` parity, simplified):
+/// one row per plugin — id, on/off state, version.
+fn build_plugins_report(plugins: &[serde_json::Value]) -> Vec<String> {
+    if plugins.is_empty() {
+        return vec![t("tui.plugins.none").to_string()];
+    }
+    plugins
+        .iter()
+        .filter_map(|p| {
+            let id = p["id"].as_str()?;
+            let enabled = p["enabled"].as_bool().unwrap_or(false);
+            let version = p["version"].as_str().unwrap_or("");
+            let mut line = format!(
+                "  {id}  [{}]",
+                if enabled {
+                    t("tui.status.on")
+                } else {
+                    t("tui.status.off")
+                }
+            );
+            if !version.is_empty() {
+                line.push_str(&format!("  v{version}"));
+            }
+            Some(line)
+        })
+        .collect()
+}
+
 /// Generate a fresh session id for `/new` (timestamp-based, unique enough for
 /// an interactive session).
 fn fresh_session_id() -> String {
@@ -1418,28 +1474,9 @@ impl App {
                             }
                             Some("list") => match self.harness.list_plugins().await {
                                 Ok(plugins) => {
-                                    if plugins.is_empty() {
-                                        self.view.transcript.push_line(TranscriptLine::status(t(
-                                            "tui.plugins.none",
-                                        )));
-                                    } else {
-                                        let lines: Vec<String> = plugins
-                                            .iter()
-                                            .map(|p| {
-                                                let id = p["id"].as_str().unwrap_or("?");
-                                                let enabled =
-                                                    p["enabled"].as_bool().unwrap_or(false);
-                                                format!(
-                                                    "{id} {}",
-                                                    if enabled { "[on]" } else { "[off]" }
-                                                )
-                                            })
-                                            .collect();
-                                        self.push_line(TranscriptLine::status(t!(
-                                            "tui.plugins.list",
-                                            lines.len(),
-                                            lines.join(", ")
-                                        )));
+                                    let lines = build_plugins_report(&plugins);
+                                    for line in lines {
+                                        self.push_line(TranscriptLine::status(line));
                                     }
                                 }
                                 Err(e) => self.view.transcript.push_line(TranscriptLine::error(
@@ -1760,10 +1797,17 @@ impl App {
                                         .transcript
                                         .push_line(TranscriptLine::status(t("tui.mcp.none")));
                                 } else {
-                                    self.push_line(TranscriptLine::status(t!(
-                                        "tui.mcp.list",
-                                        names.join(", ")
-                                    )));
+                                    // Full report: reuse the parsed list for
+                                    // the structured rows.
+                                    let list: Vec<serde_json::Value> = servers["mcp_servers"]
+                                        .as_array()
+                                        .or_else(|| servers["result"]["mcp_servers"].as_array())
+                                        .or_else(|| servers["servers"].as_array())
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    for line in build_mcp_report(&list) {
+                                        self.push_line(TranscriptLine::status(line));
+                                    }
                                 }
                             }
                             Err(e) => self
@@ -4621,5 +4665,55 @@ mod tests {
             .contains("failed"));
         // Unknown tools fall back (None).
         assert_eq!(tool_result_chip("WebSearch", "results", false), None);
+    }
+
+    #[test]
+    fn mcp_report_renders_server_rows() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        let servers = vec![
+            serde_json::json!({
+                "name": "filesystem",
+                "status": "connected",
+                "transport": "stdio",
+                "tools": [{ "name": "read" }, { "name": "write" }],
+            }),
+            serde_json::json!({
+                "server_name": "github",
+                "status": "failed",
+            }),
+        ];
+        let lines = build_mcp_report(&servers);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("filesystem"), "{}", lines[0]);
+        assert!(lines[0].contains("connected"));
+        assert!(lines[0].contains("stdio"));
+        assert!(lines[0].contains("2 tools"));
+        assert!(lines[1].contains("github"), "{}", lines[1]);
+        assert!(lines[1].contains("failed"));
+        // Empty -> none line.
+        assert_eq!(build_mcp_report(&[]).len(), 1);
+    }
+
+    #[test]
+    fn plugins_report_renders_plugin_rows() {
+        crate::i18n::set_locale(crate::i18n::Locale::En);
+        let plugins = vec![
+            serde_json::json!({
+                "id": "kimi-plugins",
+                "enabled": true,
+                "version": "0.3.0",
+            }),
+            serde_json::json!({
+                "id": "old-plugin",
+                "enabled": false,
+            }),
+        ];
+        let lines = build_plugins_report(&plugins);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("kimi-plugins"), "{}", lines[0]);
+        assert!(lines[0].contains("[on]"));
+        assert!(lines[0].contains("v0.3.0"));
+        assert!(lines[1].contains("[off]"), "{}", lines[1]);
+        assert!(!lines[1].contains('v'), "no version: {}", lines[1]);
     }
 }
