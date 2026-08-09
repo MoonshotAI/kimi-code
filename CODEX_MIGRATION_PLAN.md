@@ -513,6 +513,13 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 
 ## 9. 迁移推进会话快照（2026-08，分支 feat/rust-agent-engine-migration）
 
+**2026-08-09 引擎修复：`prompt_cache_key` 无条件发送破坏非 Moonshot 端点（真实 400）**：
+- **现象**：真实冒烟（spawn kimi-server-serve + 用户 native LLM 端点 tokenrhythm/DeepSeek）prompt 报 `400 UNKNOWN_FIELD prompt_cache_key`——native LLM 路径对非 Moonshot 端点**必然失败**
+- **根因**（GitHub 上游代码比对证实）：`prompt_cache_key` 是 **Kimi 官方 API 专属**的 prompt 前缀缓存命名空间（上游 TS 侧仅 kimi provider 条件发送，openai-legacy/responses 经 `cacheKey` 选项可选传入；kimi.contrib 测试断言该字段仅 Kimi wire 编码）。本 fork 的 Rust 引擎（08-05 会话引入，注释声称 "Moonshot/OpenAI" 属**未验证假设**）在 `openai.rs::build_request_with_options` **无条件**对一切 OpenAI-compatible 请求发该字段——DeepSeek/第三方代理严格拒绝未知字段，OpenAI 官方也无此字段
+- **修复**（对齐上游语义）：`build_request_with_options` 加 `cache_key: Option<&str>`（None 不发）；`http.rs` 新增 `is_moonshot_official(base_url)`（host == api.moonshot.ai 或 *.moonshot.ai，URL 解析失败降级 false）——仅 Moonshot 官方端点发 `MOONSHOT_CACHE_KEY`。测试：openai 条件发送断言（Some 发/None 不发）+ `moonshot_official_endpoint_detection` 4 断言
+- **验证**：重建 kimi-server-serve 后真实冒烟 **PROMPT OK（stop_reason: EndTurn + llm.delta 流式）**——**真实 LLM 端到端首次打通**（关闭文档验证类挂起项）；kimi-agent lib **2084/2084** 全绿、workspace --all-targets 0 errors
+- **遗留**：`kimi print`/TUI 全交互流式在真实 LLM 下的完整人工验证（引擎侧已通）
+
 **2026-08-09 G-4 分片 K：后台任务/子代理卡片 + tool.native 渲染修复**：
 - **根因**：① `tool.native` 事件（引擎原生工具执行的最终结果：Bash 后台任务、原生工具集）不在 kimi-ui `render_event` 匹配列表 → TUI 显示**裸 JSON**；② `session.task.started/terminated` 只渲染 "task xxx started" 状态行（无 description/kind/status），子代理（kind=agent）无生命周期展示（TS `background-agent-status`/tool-call 子代理窗口的简化缺口）
 - **修复**：`TranscriptEntry::Task(TaskEntry)` 变体（task_id/description/kind/status/ended/起止时间戳）；`upsert_task_card` 纯函数（started 建卡、terminated 落终态+时长、ghost 兜底）；pump 分发 task 事件；`tool.native` 归入工具卡片 settled 语义（结果落卡）；chatwidget 渲染 `⚙ task <id> <desc> — <status> [时长]`；`/export-md` 加 Task 块；kimi-ui render.rs 的 task 渲染增强（description/kind/status）+ `tool.native` 分支（CLI --verbose 兜底）

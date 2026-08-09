@@ -18,29 +18,31 @@ use crate::turn_loop::types::{ContentBlock, LLMChatResponse, ToolCall, ToolInfo}
 /// - Tool results become `{ role: "tool", tool_call_id, content }`.
 /// - An assistant turn that only calls tools sends `content: null`.
 pub fn build_request(model: &str, messages: &[WireMessage], tools: &[ToolInfo]) -> Value {
-    build_request_with_options(model, messages, tools, false)
+    build_request_with_options(model, messages, tools, false, None)
 }
 
-/// Prompt-cache namespace shared by every session (Moonshot/OpenAI
-/// `prompt_cache_key`). The system prompt and tool table are byte-stable
-/// across sessions, so a single global key lets the provider's prefix cache
-/// be shared model-wide: every session re-uses the same prefill for
-/// system + tools. A per-session key would partition identical prefixes into
-/// separate buckets and force each session to re-prefill the shared prefix.
-const GLOBAL_CACHE_KEY: &str = "kimi-code";
+/// Prompt-cache namespace for the Moonshot official API (the only
+/// OpenAI-compatible surface documented to honor `prompt_cache_key`; the
+/// upstream TS provider sends it only for the kimi provider). The system
+/// prompt and tool table are byte-stable across sessions, so a single global
+/// key lets Moonshot's prefix cache be shared model-wide: every session
+/// re-uses the same prefill for system + tools. Other OpenAI-compatible
+/// endpoints (DeepSeek, proxies, …) reject unknown fields, so the key is
+/// sent ONLY for Moonshot's own endpoint — see `NativeHttpLlm::chat_impl`.
+pub const MOONSHOT_CACHE_KEY: &str = "kimi-code";
 
 /// Build an OpenAI Chat Completions request body, optionally streaming.
 /// Streaming requests set `stream_options.include_usage` so the final
 /// chunk carries token usage.
 ///
-/// The request always carries a stable `prompt_cache_key`, scoping the
-/// provider's prefix cache to the global namespace (system prompt + tool
-/// tables are session-independent).
+/// `cache_key` carries the Moonshot prefix-cache namespace; `None` (the
+/// default for non-Moonshot endpoints) omits the field entirely.
 pub fn build_request_with_options(
     model: &str,
     messages: &[WireMessage],
     tools: &[ToolInfo],
     stream: bool,
+    cache_key: Option<&str>,
 ) -> Value {
     let msgs: Vec<Value> = messages.iter().map(project_message).collect();
 
@@ -52,7 +54,9 @@ pub fn build_request_with_options(
     if stream {
         req["stream_options"] = json!({ "include_usage": true });
     }
-    req["prompt_cache_key"] = json!(GLOBAL_CACHE_KEY);
+    if let Some(key) = cache_key {
+        req["prompt_cache_key"] = json!(key);
+    }
 
     if !tools.is_empty() {
         let tool_defs: Vec<Value> = tools
@@ -447,20 +451,30 @@ mod tests {
 
     #[test]
     fn build_request_streaming_sets_stream_options() {
-        let req = build_request_with_options("m", &[WireMessage::text("user", "x")], &[], true);
+        let req = build_request_with_options("m", &[WireMessage::text("user", "x")], &[], true, None);
         assert_eq!(req["stream"], true);
         assert_eq!(req["stream_options"]["include_usage"], true);
     }
 
     #[test]
-    fn build_request_carries_global_prompt_cache_key() {
-        // System prompt + tool tables are byte-stable across sessions, so the
-        // cache key must be session-independent to share the prefix globally.
-        let req = build_request_with_options("m", &[WireMessage::text("user", "x")], &[], false);
+    fn build_request_carries_moonshot_cache_key_conditionally() {
+        // The cache key is a Moonshot-only surface: sent only when the
+        // caller opts in (Moonshot's endpoint), omitted otherwise — other
+        // OpenAI-compatible endpoints reject unknown fields (DeepSeek 400).
+        let req = build_request_with_options(
+            "m",
+            &[WireMessage::text("user", "x")],
+            &[],
+            false,
+            Some(MOONSHOT_CACHE_KEY),
+        );
         assert_eq!(req["prompt_cache_key"], "kimi-code");
 
+        let req = build_request_with_options("m", &[WireMessage::text("user", "x")], &[], false, None);
+        assert!(req.get("prompt_cache_key").is_none(), "omitted: {req}");
+
         let req = build_request("m", &[WireMessage::text("user", "x")], &[]);
-        assert_eq!(req["prompt_cache_key"], "kimi-code");
+        assert!(req.get("prompt_cache_key").is_none(), "omitted: {req}");
     }
 
     #[test]

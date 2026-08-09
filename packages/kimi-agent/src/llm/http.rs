@@ -77,6 +77,18 @@ fn set_header(req: reqwest::RequestBuilder, name: &str, value: &str) -> reqwest:
     req.headers(map)
 }
 
+/// Whether the endpoint is the Moonshot official API — the only
+/// OpenAI-compatible surface documented to honor `prompt_cache_key`
+/// (upstream TS provider sends it for the kimi provider only). An unparsable
+/// URL degrades to false (never assume a custom endpoint understands it).
+fn is_moonshot_official(base_url: &str) -> bool {
+    base_url
+        .parse::<reqwest::Url>()
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .is_some_and(|host| host == "api.moonshot.ai" || host.ends_with(".moonshot.ai"))
+}
+
 /// Fire-and-forget sink for streaming events (text deltas). The value is a
 /// JSON event object; the receiver forwards it to the JS host transcript.
 pub type EventSink = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
@@ -238,6 +250,10 @@ impl NativeHttpLlm {
                     &wire,
                     &params.tools,
                     true,
+                    // Moonshot is the only OpenAI-compatible surface that
+                    // honors `prompt_cache_key`; other endpoints (DeepSeek,
+                    // proxies, …) reject unknown fields with a 400.
+                    is_moonshot_official(&self.config.base_url).then_some(openai::MOONSHOT_CACHE_KEY),
                 );
                 // Reasoning models: emit `reasoning_effort` when configured
                 // (set at create or via `session/set_thinking`).
@@ -512,6 +528,16 @@ mod tests {
             reasoning_effort: None,
             session_id: None,
         }
+    }
+
+    #[test]
+    fn moonshot_official_endpoint_detection() {
+        // The prompt-cache key rides only on Moonshot's own endpoint.
+        assert!(is_moonshot_official("https://api.moonshot.ai/v1"));
+        assert!(is_moonshot_official("https://api.moonshot.ai"));
+        assert!(!is_moonshot_official("https://api.deepseek.com/v1"));
+        assert!(!is_moonshot_official("https://opencode.ai/zen/go/v1"));
+        assert!(!is_moonshot_official("not a url"));
     }
 
     #[test]
