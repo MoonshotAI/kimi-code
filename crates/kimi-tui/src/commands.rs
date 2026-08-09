@@ -277,18 +277,8 @@ impl super::app::App {
                             }
                         }
                     }
-                    "/config" => {
-                        let config = self.harness.config().await;
-                        match config {
-                            Ok(cfg) => self.push_line(TranscriptLine::status(t!(
-                                "tui.config.show",
-                                serde_json::to_string_pretty(&cfg).unwrap_or_default()
-                            ))),
-                            Err(e) => self
-                                .view
-                                .transcript
-                                .push_line(TranscriptLine::error(t!("tui.err.configFailed", e))),
-                        }
+                    "/config" | "/plan" | "/thinking" | "/permission" | "/yolo" | "/auto" | "/theme" | "/models" | "/model" | "/reload" | "/reload-tui" | "/locale" | "/editor" | "/settings" | "/provider" | "/experiments" | "/multi-llm" | "/feedback" | "/web" => {
+                        return self.cmd_config(terminal, cmd, rest).await;
                     }
                     "/skills" => {
                         let skills = self.session.as_mut().expect("session").list_skills().await;
@@ -359,30 +349,6 @@ impl super::app::App {
                                 .push_line(TranscriptLine::error(t!("tui.err.skillsFailed", e))),
                         }
                     }
-                    "/plan" => {
-                        if rest == "clear" {
-                            // `/plan clear` drops the current plan (TS parity).
-                            self.session.as_mut().expect("session").clear_plan().await?;
-                            self.push_line(TranscriptLine::status(t("tui.plan.cleared")));
-                            self.refresh_status().await;
-                        } else {
-                            let enabled = rest == "on" || rest.is_empty();
-                            self.session
-                                .as_mut()
-                                .expect("session")
-                                .set_plan_mode(enabled)
-                                .await?;
-                            self.push_line(TranscriptLine::status(t!(
-                                "tui.status.plan",
-                                t(if enabled {
-                                    "tui.status.on"
-                                } else {
-                                    "tui.status.off"
-                                })
-                            )));
-                            self.refresh_status().await;
-                        }
-                    }
                     "/swarm" => {
                         let enabled = rest == "on" || rest.is_empty();
                         self.session
@@ -399,103 +365,6 @@ impl super::app::App {
                             })
                         )));
                         self.refresh_status().await;
-                    }
-                    "/thinking" => {
-                        if rest.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.thinking.usage")));
-                        } else {
-                            self.session
-                                .as_mut()
-                                .expect("session")
-                                .set_thinking(Some(rest))
-                                .await?;
-                            self.push_line(TranscriptLine::status(t!("tui.thinking.set", rest)));
-                        }
-                    }
-                    "/permission" => {
-                        if rest.is_empty() {
-                            // No arg: pick a permission mode (TS picker parity)
-                            // with a mode description per row.
-                            let items: Vec<crate::picker::PickerItem> = [
-                                ("manual", "tui.permission.descManual"),
-                                ("plan", "tui.permission.descPlan"),
-                                ("auto", "tui.permission.descAuto"),
-                                ("yolo", "tui.permission.descYolo"),
-                            ]
-                            .iter()
-                            .map(|(mode, desc_key)| {
-                                crate::picker::PickerItem::new(*mode, *mode)
-                                    .with_description(t(desc_key))
-                            })
-                            .collect();
-                            let opts =
-                                crate::picker::PickerOptions::new(t("tui.picker.selectPermission"));
-                            match crate::picker::select_picker(
-                                terminal,
-                                self.view.theme,
-                                &opts,
-                                &items,
-                            )? {
-                                Some(mode) => {
-                                    self.session
-                                        .as_mut()
-                                        .expect("session")
-                                        .set_permission(&mode)
-                                        .await?;
-                                    self.view.transcript.push_line(TranscriptLine::status(t!(
-                                        "tui.permission.mode",
-                                        mode
-                                    )));
-                                }
-                                None => self.view.transcript.push_line(TranscriptLine::status(t(
-                                    "tui.permission.cancelled",
-                                ))),
-                            }
-                        } else {
-                            let mode = rest;
-                            self.session
-                                .as_mut()
-                                .expect("session")
-                                .set_permission(mode)
-                                .await?;
-                            self.view
-                                .transcript
-                                .push_line(TranscriptLine::status(t!("tui.permission.mode", mode)));
-                        }
-                    }
-                    "/yolo" => {
-                        let current = self.session.as_mut().expect("session").get_status().await;
-                        let on = current["result"]["permission"].as_str() != Some("yolo");
-                        self.session
-                            .as_mut()
-                            .expect("session")
-                            .set_permission(if on { "yolo" } else { "manual" })
-                            .await?;
-                        self.push_line(TranscriptLine::status(t!(
-                            "tui.permission.yolo",
-                            t(if on {
-                                "tui.status.on"
-                            } else {
-                                "tui.status.off"
-                            })
-                        )));
-                    }
-                    "/auto" => {
-                        let current = self.session.as_mut().expect("session").get_status().await;
-                        let on = current["result"]["permission"].as_str() != Some("auto");
-                        self.session
-                            .as_mut()
-                            .expect("session")
-                            .set_permission(if on { "auto" } else { "manual" })
-                            .await?;
-                        self.push_line(TranscriptLine::status(t!(
-                            "tui.permission.auto",
-                            t(if on {
-                                "tui.status.on"
-                            } else {
-                                "tui.status.off"
-                            })
-                        )));
                     }
                     "/mcp" => {
                         match self
@@ -626,58 +495,6 @@ impl super::app::App {
                             }
                         }
                     }
-                    "/theme" => {
-                        // Pick dark / light / auto (persisted to tui.toml). A
-                        // bare `/theme` opens the picker; an argument applies
-                        // directly (TS theme-selector parity).
-                        let apply = |app: &mut Self, choice: &str| match choice {
-                            "light" => {
-                                app.view.theme = crate::theme::Theme::light();
-                                app.view.dark_mode = false;
-                            }
-                            _ => {
-                                // dark, auto (auto approximates dark for now).
-                                app.view.theme = crate::theme::Theme::dark();
-                                app.view.dark_mode = true;
-                            }
-                        };
-                        let choice = if rest.is_empty() {
-                            let items: Vec<(String, String)> = ["dark", "light", "auto"]
-                                .iter()
-                                .map(|m| (m.to_string(), String::new()))
-                                .collect();
-                            match crate::picker::select(
-                                terminal,
-                                self.view.theme,
-                                t("tui.picker.selectTheme"),
-                                &items,
-                            )? {
-                                Some(choice) => choice,
-                                None => {
-                                    self.push_line(TranscriptLine::status(t(
-                                        "tui.theme.cancelled",
-                                    )));
-                                    return Ok(false);
-                                }
-                            }
-                        } else {
-                            rest.to_string()
-                        };
-                        if !matches!(choice.as_str(), "dark" | "light" | "auto") {
-                            self.push_line(TranscriptLine::status(t("tui.theme.usage")));
-                            return Ok(false);
-                        }
-                        apply(self, &choice);
-                        if let Err(e) = crate::theme::set_tui_config_field(
-                            "theme",
-                            toml::Value::String(choice.clone()),
-                        ) {
-                            self.push_line(TranscriptLine::error(format!(
-                                "theme save failed: {e}"
-                            )));
-                        }
-                        self.push_line(TranscriptLine::status(t!("tui.theme.set", choice)));
-                    }
                     "/version" => match self.harness.core_version().await {
                         Ok(v) => self
                             .view
@@ -688,91 +505,6 @@ impl super::app::App {
                             .transcript
                             .push_line(TranscriptLine::error(t!("tui.err.versionFailed", e))),
                     },
-                    "/models" => {
-                        let (aliases, default_model) = self.harness.list_models().await?;
-                        if aliases.is_empty() {
-                            self.push_line(TranscriptLine::status(t("tui.models.none")));
-                        }
-                        for alias in aliases.iter().take(20) {
-                            self.push_line(TranscriptLine::status(alias.clone()));
-                        }
-                        if let Some(default_model) = default_model {
-                            self.push_line(TranscriptLine::status(t!(
-                                "tui.models.default",
-                                default_model
-                            )));
-                        }
-                    }
-                    "/model" => {
-                        if rest.is_empty() {
-                            // No arg: interactively pick a model from the aliases
-                            // (TS `/model` picker parity) instead of a usage error.
-                            let items: Vec<crate::picker::PickerItem> = self
-                                .model_aliases
-                                .iter()
-                                .map(|alias| {
-                                    crate::picker::PickerItem::new(alias.clone(), String::new())
-                                })
-                                .collect();
-                            if items.is_empty() {
-                                self.push_line(TranscriptLine::status(t("tui.models.none")));
-                            } else {
-                                let opts = crate::picker::PickerOptions::new(t(
-                                    "tui.picker.selectModel",
-                                ))
-                                .filterable()
-                                .paged(10);
-                                match crate::picker::select_picker(
-                                    terminal,
-                                    self.view.theme,
-                                    &opts,
-                                    &items,
-                                )? {
-                                    Some(model) => {
-                                        self.session
-                                            .as_mut()
-                                            .expect("session")
-                                            .set_model(&model)
-                                            .await?;
-                                        self.view.transcript.push_line(TranscriptLine::status(t!(
-                                            "tui.models.set",
-                                            model
-                                        )));
-                                    }
-                                    None => self.view.transcript.push_line(TranscriptLine::status(
-                                        t("tui.models.cancelled"),
-                                    )),
-                                }
-                            }
-                        } else {
-                            self.session
-                                .as_mut()
-                                .expect("session")
-                                .set_model(rest)
-                                .await?;
-                            self.push_line(TranscriptLine::status(t!("tui.models.set", rest)));
-                        }
-                    }
-                    "/reload" => {
-                        // Re-load the persisted session state into the live agent
-                        // (create already happened; load restores context + goal).
-                        match self.session.as_mut().expect("session").load().await {
-                            Ok(()) => self.push_line(TranscriptLine::status(t("tui.reload.ok"))),
-                            Err(e) => {
-                                self.push_line(TranscriptLine::error(t!("tui.err.reloadFailed", e)))
-                            }
-                        }
-                    }
-                    "/reload-tui" => {
-                        // Re-read tui.toml preferences (theme + locale).
-                        crate::i18n::reload_locale();
-                        self.view.theme = crate::theme::load_theme();
-                        self.view.dark_mode = !matches!(
-                            crate::theme::tui_theme_choice(),
-                            crate::theme::ThemeChoice::Light
-                        );
-                        self.push_line(TranscriptLine::status(t("tui.reloadTui.ok")));
-                    }
                     "/goal" | "/goal-cancel" | "/goal-pause" | "/goal-resume" | "/goal-status" => {
                         return self.cmd_goal(terminal, cmd, rest).await;
                     }
@@ -944,111 +676,6 @@ impl super::app::App {
                             self.push_line(TranscriptLine::error(t!("tui.err.logoutFailed", e)))
                         }
                     },
-                    "/locale" => {
-                        let locale = if rest.is_empty() {
-                            // No arg: pick en/zh (TS locale-selector parity).
-                            let items: Vec<(String, String)> = ["en", "zh"]
-                                .iter()
-                                .map(|m| (m.to_string(), String::new()))
-                                .collect();
-                            match crate::picker::select(
-                                terminal,
-                                self.view.theme,
-                                t("tui.picker.selectLocale"),
-                                &items,
-                            )? {
-                                Some(choice) => match choice.as_str() {
-                                    "zh" => crate::i18n::Locale::Zh,
-                                    _ => crate::i18n::Locale::En,
-                                },
-                                None => {
-                                    self.push_line(TranscriptLine::status(t(
-                                        "tui.locale.cancelled",
-                                    )));
-                                    return Ok(false);
-                                }
-                            }
-                        } else {
-                            match rest {
-                                "zh" => crate::i18n::Locale::Zh,
-                                "en" => crate::i18n::Locale::En,
-                                _ => {
-                                    self.push_line(TranscriptLine::status(t("tui.locale.usage")));
-                                    return Ok(false);
-                                }
-                            }
-                        };
-                        // Persist to tui.toml first, then switch the runtime locale
-                        // so subsequent renders use the new language immediately.
-                        if let Err(e) = crate::i18n::save_locale(locale) {
-                            self.push_line(TranscriptLine::error(format!(
-                                "locale save failed: {e}"
-                            )));
-                        }
-                        crate::i18n::set_locale(locale);
-                        self.push_line(TranscriptLine::status(t!("tui.locale.set", rest)));
-                    }
-                    "/editor" => {
-                        if rest.is_empty() {
-                            // Show the current editor.
-                            match crate::editor::resolve_editor() {
-                                Some(cmd) => self.push_line(TranscriptLine::status(t!(
-                                    "tui.editor.current",
-                                    cmd
-                                ))),
-                                None => {
-                                    self.push_line(TranscriptLine::status(t("tui.editor.noEditor")))
-                                }
-                            }
-                        } else {
-                            match crate::editor::save_editor(rest) {
-                                Ok(()) => self
-                                    .push_line(TranscriptLine::status(t!("tui.editor.set", rest))),
-                                Err(e) => {
-                                    self.push_line(TranscriptLine::error(format!("editor: {e}")))
-                                }
-                            }
-                        }
-                    }
-                    "/settings" => {
-                        // Unified settings menu (TS settings-selector parity):
-                        // pick an entry and dispatch to the underlying command.
-                        let items: Vec<(String, String)> = [
-                            ("model", t("tui.settings.model")),
-                            ("theme", t("tui.settings.theme")),
-                            ("editor", t("tui.settings.editor")),
-                            ("language", t("tui.settings.language")),
-                            ("permission", t("tui.settings.permission")),
-                        ]
-                        .into_iter()
-                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                        .collect();
-                        match crate::picker::select(
-                            terminal,
-                            self.view.theme,
-                            t("tui.picker.selectSetting"),
-                            &items,
-                        )? {
-                            Some(choice) => {
-                                let cmd = match choice.as_str() {
-                                    "model" => "/model",
-                                    "theme" => "/theme",
-                                    "editor" => "/editor",
-                                    "language" => "/locale",
-                                    "permission" => "/permission",
-                                    _ => return Ok(false),
-                                };
-                                // Re-enter dispatch with the subcommand; a quit
-                                // from within propagates.
-                                if self.dispatch(terminal, cmd).await? {
-                                    return Ok(true);
-                                }
-                            }
-                            None => {
-                                self.push_line(TranscriptLine::status(t("tui.settings.cancelled")))
-                            }
-                        }
-                    }
                     "/discuss" => {
                         // Multi-agent discussion (TS `handleDiscussCommand`
                         // parity, simplified): enable swarm mode, then send the
@@ -1112,158 +739,6 @@ impl super::app::App {
                             format!("Run the workflow \"{trimmed}\" using the Workflow tool.")
                         };
                         return self.dispatch(terminal, &prompt).await;
-                    }
-                    "/provider" => {
-                        // Provider management (TS `handleProviderCommand` parity,
-                        // simplified): interactive picker, or list / remove /
-                        // add as commands.
-                        let parts: Vec<&str> = rest.split_whitespace().collect();
-                        match parts.first().copied() {
-                            None => {
-                                // Interactive provider browser: pick a provider
-                                // to remove it (with a y/N confirm); adding is
-                                // pointed at /login / config.toml.
-                                match self.harness.config().await {
-                                    Ok(cfg) => {
-                                        let providers =
-                                            cfg["providers"].as_object().cloned().unwrap_or_default();
-                                        if providers.is_empty() {
-                                            self.push_line(TranscriptLine::status(t(
-                                                "tui.provider.none",
-                                            )));
-                                        } else {
-                                            let items: Vec<crate::picker::PickerItem> = providers
-                                                .iter()
-                                                .map(|(name, p)| {
-                                                    let has_key = p["apiKey"]
-                                                        .as_str()
-                                                        .is_some_and(|k| !k.is_empty());
-                                                    let key_state = if has_key {
-                                                        t("tui.provider.keySet")
-                                                    } else {
-                                                        t("tui.provider.keyMissing")
-                                                    };
-                                                    let base =
-                                                        p["baseUrl"].as_str().unwrap_or("");
-                                                    crate::picker::PickerItem::new(
-                                                        name.clone(),
-                                                        format!("{name}  {key_state}"),
-                                                    )
-                                                    .with_description(base)
-                                                })
-                                                .collect();
-                                            let opts = crate::picker::PickerOptions::new(t!(
-                                                "tui.provider.select"
-                                            ))
-                                            .filterable()
-                                            .paged(10);
-                                            match crate::picker::select_picker(
-                                                terminal,
-                                                self.view.theme,
-                                                &opts,
-                                                &items,
-                                            )? {
-                                                Some(name) => {
-                                                    if self
-                                                        .confirm(
-                                                            terminal,
-                                                            &t!(
-                                                                "tui.provider.confirmRemove",
-                                                                name
-                                                            ),
-                                                        )
-                                                        .await?
-                                                    {
-                                                        return self
-                                                            .dispatch(
-                                                                terminal,
-                                                                &format!("/provider remove {name}"),
-                                                            )
-                                                            .await;
-                                                    }
-                                                }
-                                                None => self.push_line(TranscriptLine::status(t(
-                                                    "tui.provider.cancelled",
-                                                ))),
-                                            }
-                                        }
-                                    }
-                                    Err(e) => self.push_line(TranscriptLine::error(t!(
-                                        "tui.err.configFailed",
-                                        e
-                                    ))),
-                                }
-                            }
-                            Some("list") => match self.harness.config().await {
-                                Ok(cfg) => {
-                                    let providers =
-                                        cfg["providers"].as_object().cloned().unwrap_or_default();
-                                    if providers.is_empty() {
-                                        self.push_line(TranscriptLine::status(t(
-                                            "tui.provider.none",
-                                        )));
-                                    } else {
-                                        self.push_line(TranscriptLine::status(t!(
-                                            "tui.provider.list",
-                                            providers.len()
-                                        )));
-                                        for (name, p) in providers {
-                                            let has_key =
-                                                p["apiKey"].as_str().is_some_and(|k| !k.is_empty());
-                                            let key_state = if has_key {
-                                                t("tui.provider.keySet")
-                                            } else {
-                                                t("tui.provider.keyMissing")
-                                            };
-                                            let base = p["baseUrl"].as_str().unwrap_or("");
-                                            self.push_line(TranscriptLine::status(format!(
-                                                "  {name}  {key_state}  {base}"
-                                            )));
-                                        }
-                                    }
-                                }
-                                Err(e) => self.push_line(TranscriptLine::error(t!(
-                                    "tui.err.configFailed",
-                                    e
-                                ))),
-                            },
-                            Some("remove") if parts.len() >= 2 => {
-                                let name = parts[1];
-                                match self
-                                    .harness
-                                    .set_config(serde_json::json!({ "providers": { name: null } }))
-                                    .await
-                                {
-                                    Ok(_) => self.push_line(TranscriptLine::status(t!(
-                                        "tui.provider.removed",
-                                        name
-                                    ))),
-                                    Err(e) => self.push_line(TranscriptLine::error(t!(
-                                        "tui.err.configFailed",
-                                        e
-                                    ))),
-                                }
-                            }
-                            Some("add") => {
-                                self.push_line(TranscriptLine::status(t("tui.provider.addHint")))
-                            }
-                            _ => self.push_line(TranscriptLine::status(t("tui.provider.usage"))),
-                        }
-                    }
-                    "/experiments" => {
-                        // No engine data source in Rust yet (TS FlagId registry
-                        // is retired with agent-core); point at config.toml.
-                        self.push_line(TranscriptLine::status(t("tui.experiments.hint")));
-                    }
-                    "/multi-llm" => {
-                        // Concurrent-provider settings live in config.toml.
-                        self.push_line(TranscriptLine::status(t("tui.multiLlm.hint")));
-                    }
-                    "/feedback" => {
-                        self.push_line(TranscriptLine::status(t("tui.feedback.hint")));
-                    }
-                    "/web" => {
-                        self.push_line(TranscriptLine::status(t("tui.web.hint")));
                     }
                     other => self
                         .view
@@ -1782,6 +1257,549 @@ impl super::app::App {
         Err(e) => self
             .push_line(TranscriptLine::error(t!("tui.err.exportMdFailed", e))),
     }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+}
+
+impl super::app::App {
+    /// `config` command group (extracted from dispatch for readability).
+    async fn cmd_config(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        cmd: &str,
+        rest: &str,
+    ) -> anyhow::Result<bool> {
+        match cmd {
+            "/config" => {
+    let config = self.harness.config().await;
+    match config {
+        Ok(cfg) => self.push_line(TranscriptLine::status(t!(
+            "tui.config.show",
+            serde_json::to_string_pretty(&cfg).unwrap_or_default()
+        ))),
+        Err(e) => self
+            .view
+            .transcript
+            .push_line(TranscriptLine::error(t!("tui.err.configFailed", e))),
+    }
+            }
+            "/plan" => {
+    if rest == "clear" {
+        // `/plan clear` drops the current plan (TS parity).
+        self.session.as_mut().expect("session").clear_plan().await?;
+        self.push_line(TranscriptLine::status(t("tui.plan.cleared")));
+        self.refresh_status().await;
+    } else {
+        let enabled = rest == "on" || rest.is_empty();
+        self.session
+            .as_mut()
+            .expect("session")
+            .set_plan_mode(enabled)
+            .await?;
+        self.push_line(TranscriptLine::status(t!(
+            "tui.status.plan",
+            t(if enabled {
+                "tui.status.on"
+            } else {
+                "tui.status.off"
+            })
+        )));
+        self.refresh_status().await;
+    }
+            }
+            "/thinking" => {
+    if rest.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.thinking.usage")));
+    } else {
+        self.session
+            .as_mut()
+            .expect("session")
+            .set_thinking(Some(rest))
+            .await?;
+        self.push_line(TranscriptLine::status(t!("tui.thinking.set", rest)));
+    }
+            }
+            "/permission" => {
+    if rest.is_empty() {
+        // No arg: pick a permission mode (TS picker parity)
+        // with a mode description per row.
+        let items: Vec<crate::picker::PickerItem> = [
+            ("manual", "tui.permission.descManual"),
+            ("plan", "tui.permission.descPlan"),
+            ("auto", "tui.permission.descAuto"),
+            ("yolo", "tui.permission.descYolo"),
+        ]
+        .iter()
+        .map(|(mode, desc_key)| {
+            crate::picker::PickerItem::new(*mode, *mode)
+                .with_description(t(desc_key))
+        })
+        .collect();
+        let opts =
+            crate::picker::PickerOptions::new(t("tui.picker.selectPermission"));
+        match crate::picker::select_picker(
+            terminal,
+            self.view.theme,
+            &opts,
+            &items,
+        )? {
+            Some(mode) => {
+                self.session
+                    .as_mut()
+                    .expect("session")
+                    .set_permission(&mode)
+                    .await?;
+                self.view.transcript.push_line(TranscriptLine::status(t!(
+                    "tui.permission.mode",
+                    mode
+                )));
+            }
+            None => self.view.transcript.push_line(TranscriptLine::status(t(
+                "tui.permission.cancelled",
+            ))),
+        }
+    } else {
+        let mode = rest;
+        self.session
+            .as_mut()
+            .expect("session")
+            .set_permission(mode)
+            .await?;
+        self.view
+            .transcript
+            .push_line(TranscriptLine::status(t!("tui.permission.mode", mode)));
+    }
+            }
+            "/yolo" => {
+    let current = self.session.as_mut().expect("session").get_status().await;
+    let on = current["result"]["permission"].as_str() != Some("yolo");
+    self.session
+        .as_mut()
+        .expect("session")
+        .set_permission(if on { "yolo" } else { "manual" })
+        .await?;
+    self.push_line(TranscriptLine::status(t!(
+        "tui.permission.yolo",
+        t(if on {
+            "tui.status.on"
+        } else {
+            "tui.status.off"
+        })
+    )));
+            }
+            "/auto" => {
+    let current = self.session.as_mut().expect("session").get_status().await;
+    let on = current["result"]["permission"].as_str() != Some("auto");
+    self.session
+        .as_mut()
+        .expect("session")
+        .set_permission(if on { "auto" } else { "manual" })
+        .await?;
+    self.push_line(TranscriptLine::status(t!(
+        "tui.permission.auto",
+        t(if on {
+            "tui.status.on"
+        } else {
+            "tui.status.off"
+        })
+    )));
+            }
+            "/theme" => {
+    // Pick dark / light / auto (persisted to tui.toml). A
+    // bare `/theme` opens the picker; an argument applies
+    // directly (TS theme-selector parity).
+    let apply = |app: &mut Self, choice: &str| match choice {
+        "light" => {
+            app.view.theme = crate::theme::Theme::light();
+            app.view.dark_mode = false;
+        }
+        _ => {
+            // dark, auto (auto approximates dark for now).
+            app.view.theme = crate::theme::Theme::dark();
+            app.view.dark_mode = true;
+        }
+    };
+    let choice = if rest.is_empty() {
+        let items: Vec<(String, String)> = ["dark", "light", "auto"]
+            .iter()
+            .map(|m| (m.to_string(), String::new()))
+            .collect();
+        match crate::picker::select(
+            terminal,
+            self.view.theme,
+            t("tui.picker.selectTheme"),
+            &items,
+        )? {
+            Some(choice) => choice,
+            None => {
+                self.push_line(TranscriptLine::status(t(
+                    "tui.theme.cancelled",
+                )));
+                return Ok(false);
+            }
+        }
+    } else {
+        rest.to_string()
+    };
+    if !matches!(choice.as_str(), "dark" | "light" | "auto") {
+        self.push_line(TranscriptLine::status(t("tui.theme.usage")));
+        return Ok(false);
+    }
+    apply(self, &choice);
+    if let Err(e) = crate::theme::set_tui_config_field(
+        "theme",
+        toml::Value::String(choice.clone()),
+    ) {
+        self.push_line(TranscriptLine::error(format!(
+            "theme save failed: {e}"
+        )));
+    }
+    self.push_line(TranscriptLine::status(t!("tui.theme.set", choice)));
+            }
+            "/models" => {
+    let (aliases, default_model) = self.harness.list_models().await?;
+    if aliases.is_empty() {
+        self.push_line(TranscriptLine::status(t("tui.models.none")));
+    }
+    for alias in aliases.iter().take(20) {
+        self.push_line(TranscriptLine::status(alias.clone()));
+    }
+    if let Some(default_model) = default_model {
+        self.push_line(TranscriptLine::status(t!(
+            "tui.models.default",
+            default_model
+        )));
+    }
+            }
+            "/model" => {
+    if rest.is_empty() {
+        // No arg: interactively pick a model from the aliases
+        // (TS `/model` picker parity) instead of a usage error.
+        let items: Vec<crate::picker::PickerItem> = self
+            .model_aliases
+            .iter()
+            .map(|alias| {
+                crate::picker::PickerItem::new(alias.clone(), String::new())
+            })
+            .collect();
+        if items.is_empty() {
+            self.push_line(TranscriptLine::status(t("tui.models.none")));
+        } else {
+            let opts = crate::picker::PickerOptions::new(t(
+                "tui.picker.selectModel",
+            ))
+            .filterable()
+            .paged(10);
+            match crate::picker::select_picker(
+                terminal,
+                self.view.theme,
+                &opts,
+                &items,
+            )? {
+                Some(model) => {
+                    self.session
+                        .as_mut()
+                        .expect("session")
+                        .set_model(&model)
+                        .await?;
+                    self.view.transcript.push_line(TranscriptLine::status(t!(
+                        "tui.models.set",
+                        model
+                    )));
+                }
+                None => self.view.transcript.push_line(TranscriptLine::status(
+                    t("tui.models.cancelled"),
+                )),
+            }
+        }
+    } else {
+        self.session
+            .as_mut()
+            .expect("session")
+            .set_model(rest)
+            .await?;
+        self.push_line(TranscriptLine::status(t!("tui.models.set", rest)));
+    }
+            }
+            "/reload" => {
+    // Re-load the persisted session state into the live agent
+    // (create already happened; load restores context + goal).
+    match self.session.as_mut().expect("session").load().await {
+        Ok(()) => self.push_line(TranscriptLine::status(t("tui.reload.ok"))),
+        Err(e) => {
+            self.push_line(TranscriptLine::error(t!("tui.err.reloadFailed", e)))
+        }
+    }
+            }
+            "/reload-tui" => {
+    // Re-read tui.toml preferences (theme + locale).
+    crate::i18n::reload_locale();
+    self.view.theme = crate::theme::load_theme();
+    self.view.dark_mode = !matches!(
+        crate::theme::tui_theme_choice(),
+        crate::theme::ThemeChoice::Light
+    );
+    self.push_line(TranscriptLine::status(t("tui.reloadTui.ok")));
+            }
+            "/locale" => {
+    let locale = if rest.is_empty() {
+        // No arg: pick en/zh (TS locale-selector parity).
+        let items: Vec<(String, String)> = ["en", "zh"]
+            .iter()
+            .map(|m| (m.to_string(), String::new()))
+            .collect();
+        match crate::picker::select(
+            terminal,
+            self.view.theme,
+            t("tui.picker.selectLocale"),
+            &items,
+        )? {
+            Some(choice) => match choice.as_str() {
+                "zh" => crate::i18n::Locale::Zh,
+                _ => crate::i18n::Locale::En,
+            },
+            None => {
+                self.push_line(TranscriptLine::status(t(
+                    "tui.locale.cancelled",
+                )));
+                return Ok(false);
+            }
+        }
+    } else {
+        match rest {
+            "zh" => crate::i18n::Locale::Zh,
+            "en" => crate::i18n::Locale::En,
+            _ => {
+                self.push_line(TranscriptLine::status(t("tui.locale.usage")));
+                return Ok(false);
+            }
+        }
+    };
+    // Persist to tui.toml first, then switch the runtime locale
+    // so subsequent renders use the new language immediately.
+    if let Err(e) = crate::i18n::save_locale(locale) {
+        self.push_line(TranscriptLine::error(format!(
+            "locale save failed: {e}"
+        )));
+    }
+    crate::i18n::set_locale(locale);
+    self.push_line(TranscriptLine::status(t!("tui.locale.set", rest)));
+            }
+            "/editor" => {
+    if rest.is_empty() {
+        // Show the current editor.
+        match crate::editor::resolve_editor() {
+            Some(cmd) => self.push_line(TranscriptLine::status(t!(
+                "tui.editor.current",
+                cmd
+            ))),
+            None => {
+                self.push_line(TranscriptLine::status(t("tui.editor.noEditor")))
+            }
+        }
+    } else {
+        match crate::editor::save_editor(rest) {
+            Ok(()) => self
+                .push_line(TranscriptLine::status(t!("tui.editor.set", rest))),
+            Err(e) => {
+                self.push_line(TranscriptLine::error(format!("editor: {e}")))
+            }
+        }
+    }
+            }
+            "/settings" => {
+    // Unified settings menu (TS settings-selector parity):
+    // pick an entry and dispatch to the underlying command.
+    let items: Vec<(String, String)> = [
+        ("model", t("tui.settings.model")),
+        ("theme", t("tui.settings.theme")),
+        ("editor", t("tui.settings.editor")),
+        ("language", t("tui.settings.language")),
+        ("permission", t("tui.settings.permission")),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    match crate::picker::select(
+        terminal,
+        self.view.theme,
+        t("tui.picker.selectSetting"),
+        &items,
+    )? {
+        Some(choice) => {
+            let cmd = match choice.as_str() {
+                "model" => "/model",
+                "theme" => "/theme",
+                "editor" => "/editor",
+                "language" => "/locale",
+                "permission" => "/permission",
+                _ => return Ok(false),
+            };
+            // Re-enter dispatch with the subcommand; a quit
+            // from within propagates.
+            if self.dispatch(terminal, cmd).await? {
+                return Ok(true);
+            }
+        }
+        None => {
+            self.push_line(TranscriptLine::status(t("tui.settings.cancelled")))
+        }
+    }
+            }
+            "/provider" => {
+    // Provider management (TS `handleProviderCommand` parity,
+    // simplified): interactive picker, or list / remove /
+    // add as commands.
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    match parts.first().copied() {
+        None => {
+            // Interactive provider browser: pick a provider
+            // to remove it (with a y/N confirm); adding is
+            // pointed at /login / config.toml.
+            match self.harness.config().await {
+                Ok(cfg) => {
+                    let providers =
+                        cfg["providers"].as_object().cloned().unwrap_or_default();
+                    if providers.is_empty() {
+                        self.push_line(TranscriptLine::status(t(
+                            "tui.provider.none",
+                        )));
+                    } else {
+                        let items: Vec<crate::picker::PickerItem> = providers
+                            .iter()
+                            .map(|(name, p)| {
+                                let has_key = p["apiKey"]
+                                    .as_str()
+                                    .is_some_and(|k| !k.is_empty());
+                                let key_state = if has_key {
+                                    t("tui.provider.keySet")
+                                } else {
+                                    t("tui.provider.keyMissing")
+                                };
+                                let base =
+                                    p["baseUrl"].as_str().unwrap_or("");
+                                crate::picker::PickerItem::new(
+                                    name.clone(),
+                                    format!("{name}  {key_state}"),
+                                )
+                                .with_description(base)
+                            })
+                            .collect();
+                        let opts = crate::picker::PickerOptions::new(t!(
+                            "tui.provider.select"
+                        ))
+                        .filterable()
+                        .paged(10);
+                        match crate::picker::select_picker(
+                            terminal,
+                            self.view.theme,
+                            &opts,
+                            &items,
+                        )? {
+                            Some(name) => {
+                                if self
+                                    .confirm(
+                                        terminal,
+                                        &t!(
+                                            "tui.provider.confirmRemove",
+                                            name
+                                        ),
+                                    )
+                                    .await?
+                                {
+                                    return self
+                                        .dispatch(
+                                            terminal,
+                                            &format!("/provider remove {name}"),
+                                        )
+                                        .await;
+                                }
+                            }
+                            None => self.push_line(TranscriptLine::status(t(
+                                "tui.provider.cancelled",
+                            ))),
+                        }
+                    }
+                }
+                Err(e) => self.push_line(TranscriptLine::error(t!(
+                    "tui.err.configFailed",
+                    e
+                ))),
+            }
+        }
+        Some("list") => match self.harness.config().await {
+            Ok(cfg) => {
+                let providers =
+                    cfg["providers"].as_object().cloned().unwrap_or_default();
+                if providers.is_empty() {
+                    self.push_line(TranscriptLine::status(t(
+                        "tui.provider.none",
+                    )));
+                } else {
+                    self.push_line(TranscriptLine::status(t!(
+                        "tui.provider.list",
+                        providers.len()
+                    )));
+                    for (name, p) in providers {
+                        let has_key =
+                            p["apiKey"].as_str().is_some_and(|k| !k.is_empty());
+                        let key_state = if has_key {
+                            t("tui.provider.keySet")
+                        } else {
+                            t("tui.provider.keyMissing")
+                        };
+                        let base = p["baseUrl"].as_str().unwrap_or("");
+                        self.push_line(TranscriptLine::status(format!(
+                            "  {name}  {key_state}  {base}"
+                        )));
+                    }
+                }
+            }
+            Err(e) => self.push_line(TranscriptLine::error(t!(
+                "tui.err.configFailed",
+                e
+            ))),
+        },
+        Some("remove") if parts.len() >= 2 => {
+            let name = parts[1];
+            match self
+                .harness
+                .set_config(serde_json::json!({ "providers": { name: null } }))
+                .await
+            {
+                Ok(_) => self.push_line(TranscriptLine::status(t!(
+                    "tui.provider.removed",
+                    name
+                ))),
+                Err(e) => self.push_line(TranscriptLine::error(t!(
+                    "tui.err.configFailed",
+                    e
+                ))),
+            }
+        }
+        Some("add") => {
+            self.push_line(TranscriptLine::status(t("tui.provider.addHint")))
+        }
+        _ => self.push_line(TranscriptLine::status(t("tui.provider.usage"))),
+    }
+            }
+            "/experiments" => {
+    // No engine data source in Rust yet (TS FlagId registry
+    // is retired with agent-core); point at config.toml.
+    self.push_line(TranscriptLine::status(t("tui.experiments.hint")));
+            }
+            "/multi-llm" => {
+    // Concurrent-provider settings live in config.toml.
+    self.push_line(TranscriptLine::status(t("tui.multiLlm.hint")));
+            }
+            "/feedback" => {
+    self.push_line(TranscriptLine::status(t("tui.feedback.hint")));
+            }
+            "/web" => {
+    self.push_line(TranscriptLine::status(t("tui.web.hint")));
             }
             _ => {}
         }
