@@ -431,6 +431,25 @@ mod tests {
     }
 
     #[test]
+    fn test_load_from_paths_empty_home_respects_validate_flag() {
+        // An empty home (no config files anywhere) must load successfully with
+        // validation off — this is the `config/get` / `config/set` contract
+        // (`load_config_with_env_unvalidated`). The same load fails with the
+        // default validation on, which is what `doctor` / startup enforce.
+        let paths = vec![PathBuf::from("__kimi_agent_no_such_file__.toml")];
+
+        let unvalidated =
+            load_from_paths(&paths, false, false).expect("empty load without validation must succeed");
+        assert!(unvalidated.providers.is_none());
+
+        let validated = load_from_paths(&paths, false, true);
+        assert!(
+            validated.is_err(),
+            "empty config must fail validation with the default loader"
+        );
+    }
+
+    #[test]
     fn test_partition_paths_without_env_override() {
         let paths = vec![
             PathBuf::from(".kimi-code/config.toml"),

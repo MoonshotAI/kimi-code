@@ -2099,7 +2099,7 @@ async fn main() -> anyhow::Result<()> {
     // service. Secrets are NOT redacted here — the host projects + redacts.
     RpcServer::register_arc(&server, types::methods::CONFIG_GET, move |_| {
         Box::pin(async move {
-            match kimi_agent::config::loader::load_config_with_env() {
+            match kimi_agent::config::loader::load_config_with_env_unvalidated() {
                 Ok(config) => serde_json::to_value(&config)
                     .map_err(|e| types::JsonRpcError::internal_error(format!("Serialize error: {e}"))),
                 Err(error) => Err(types::JsonRpcError::internal_error(format!(
@@ -2116,7 +2116,7 @@ async fn main() -> anyhow::Result<()> {
         Box::pin(async move {
             let input: types::ConfigSetParams = serde_json::from_value(params)
                 .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
-            let mut base = kimi_agent::config::loader::load_config_with_env()
+            let mut base = kimi_agent::config::loader::load_config_with_env_unvalidated()
                 .map_err(|e| types::JsonRpcError::internal_error(format!("config load: {e}")))?;
             // Null-valued entries in the patch's `providers` / `models`
             // sections are delete markers (the v1 write surface removes
