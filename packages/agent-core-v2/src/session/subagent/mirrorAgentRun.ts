@@ -129,6 +129,18 @@ export function emitAgentRunSpawned(
   });
 }
 
+export function emitAgentRunFailed(
+  eventBus: IEventBus | undefined,
+  targetAgentId: string,
+  error: string,
+): void {
+  eventBus?.publish({
+    type: 'subagent.failed',
+    subagentId: targetAgentId,
+    error,
+  });
+}
+
 export async function mirrorAgentRun(
   requester: IAgentScopeHandle,
   run: AgentRunHandle,
@@ -174,11 +186,7 @@ export async function mirrorAgentRun(
     return result;
   } catch (error) {
     if (!isAbortError(error) && !shouldSuppressFailure(options, error)) {
-      eventBus?.publish({
-        type: 'subagent.failed',
-        subagentId: run.agentId,
-        error: errorMessage(error),
-      });
+      emitAgentRunFailed(eventBus, run.agentId, errorMessage(error));
     }
     throw error;
   }

@@ -1748,6 +1748,23 @@ describe('Agent tool execution contract', () => {
       output: 'Too many background tasks are already running.',
     });
     expect(lifecycle.create).toHaveBeenCalledTimes(2);
+
+    // The spawn was already announced, so clients tracking the run (task
+    // panels, the TUI background-agent badge) need a terminal signal —
+    // without one the rejected launch lingers as a ghost "running" entry.
+    const events = lifecycle.publishedEvents;
+    const spawnedIndex = events.findIndex(
+      (event) => event.type === 'subagent.spawned' && event.subagentId === 'agent-second',
+    );
+    const failedEvents = events.filter(
+      (event) => event.type === 'subagent.failed' && event.subagentId === 'agent-second',
+    );
+    expect(spawnedIndex).toBeGreaterThanOrEqual(0);
+    expect(failedEvents).toHaveLength(1);
+    expect(events.indexOf(failedEvents[0]!)).toBeGreaterThan(spawnedIndex);
+    expect(failedEvents[0]).toMatchObject({
+      error: 'Too many background tasks are already running.',
+    });
     completions[0]?.resolve({ summary: 'finished later' });
   });
 
