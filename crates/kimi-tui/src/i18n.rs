@@ -180,6 +180,7 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tui.help.commands", "commands: {0}", "命令：{0}"),
     ("tui.help.title", "help", "帮助"),
     ("tui.help.shortcuts", "shortcuts", "快捷键"),
+    ("tui.help.scrollHint", "↑/↓ scroll · Esc close", "↑/↓ 滚动 · Esc 关闭"),
     (
         "tui.help.detailHint",
         "type /help <command> for a command's description",

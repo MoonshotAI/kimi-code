@@ -3837,7 +3837,7 @@ impl App {
     /// Draw the full-screen `/help` panel over the chat layout.
     fn render_help_modal(&self, frame: &mut ratatui::Frame<'_>, panel: &HelpPanel) {
         let height = frame.area().height.saturating_sub(2) as usize;
-        let rows: Vec<crate::modal::ModalRow> = panel
+        let mut rows: Vec<crate::modal::ModalRow> = panel
             .visible(height)
             .iter()
             .map(|row| {
@@ -3848,6 +3848,9 @@ impl App {
                 }
             })
             .collect();
+        if panel.rows.len() > height {
+            rows.push(crate::modal::ModalRow::new(t("tui.help.scrollHint").to_string()));
+        }
         crate::modal::render_modal(frame, t("tui.help.title"), &rows, self.view.theme);
     }
 
