@@ -57,7 +57,7 @@ vi.mock('../../../src/cli/update/install-state', () => ({
   writeUpdateInstallState: mocks.writeUpdateInstallState,
 }));
 
-vi.mock('../../../src/tui/config', () => ({
+vi.mock('../../../src/shared/tui-config', () => ({
   loadTuiConfig: mocks.loadTuiConfig,
   TuiConfigParseError: class TuiConfigParseError extends Error {
     readonly fallback: TuiConfig;

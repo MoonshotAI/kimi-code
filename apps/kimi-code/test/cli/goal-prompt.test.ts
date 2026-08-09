@@ -99,9 +99,9 @@ const mocks = vi.hoisted(() => {
     }),
     prompt: vi.fn(async () => {
       for (const handler of eventHandlers) {
-        handler(mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
-        handler(mainEvent({ type: 'assistant.delta', turnId: 1, delta: 'done' }));
-        handler(mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+        handler(mainEvent({ type: 'session.turn.started', turn_id: 1 }));
+        handler(mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'done' } }));
+        handler(mainEvent({ type: 'session.turn.ended', turn_id: 1, stop_reason: 'EndTurn' }));
       }
     }),
     waitForBackgroundTasksOnPrint: vi.fn(async () => {}),
@@ -232,13 +232,13 @@ describe('runPrompt headless goal mode', () => {
       for (const handler of mocks.eventHandlers) {
         handler(
           mocks.mainEvent({
-            type: 'goal.updated',
+            type: 'session.goal.updated',
+            status: 'complete',
             snapshot: completed,
-            change: { kind: 'completion', status: 'complete' },
           }),
         );
-        handler(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 1 }));
+        handler(mocks.mainEvent({ type: 'session.turn.ended', turn_id: 1, stop_reason: 'EndTurn' }));
       }
     });
     const stdout = writer();
@@ -274,28 +274,22 @@ describe('runPrompt headless goal mode', () => {
     mocks.session.getGoal.mockResolvedValueOnce({ goal: active } as never);
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 1, delta: '1' }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 1 }));
+        handler(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: '1' } }));
+        handler(mocks.mainEvent({ type: 'session.turn.ended', turn_id: 1, stop_reason: 'EndTurn' }));
       }
       await Promise.resolve();
       for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 2 }));
+        handler(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: '2' } }));
         handler(
           mocks.mainEvent({
-            type: 'turn.started',
-            turnId: 2,
-            origin: { kind: 'system_trigger', name: 'goal_continuation' },
-          }),
-        );
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 2, delta: '2' }));
-        handler(
-          mocks.mainEvent({
-            type: 'goal.updated',
+            type: 'session.goal.updated',
+            status: 'complete',
             snapshot: completed,
-            change: { kind: 'completion', status: 'complete' },
           }),
         );
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
+        handler(mocks.mainEvent({ type: 'session.turn.ended', turn_id: 2, stop_reason: 'EndTurn' }));
       }
     });
     const stdout = writer();
@@ -327,24 +321,20 @@ describe('runPrompt headless goal mode', () => {
           handler(mocks.mainEvent(event));
         }
       };
-      emit({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
-      emit({ type: 'assistant.delta', turnId: 1, delta: '1' });
-      emit({ type: 'turn.ended', turnId: 1, reason: 'completed' });
+      emit({ type: 'session.turn.started', turn_id: 1 });
+      emit({ type: 'llm.delta', part: { type: 'text', text: '1' } });
+      emit({ type: 'session.turn.ended', turn_id: 1, stop_reason: 'EndTurn' });
+      emit({ type: 'session.turn.started', turn_id: 2 });
+      emit({ type: 'llm.delta', part: { type: 'text', text: '2' } });
       emit({
-        type: 'turn.started',
-        turnId: 2,
-        origin: { kind: 'system_trigger', name: 'goal_continuation' },
-      });
-      emit({ type: 'assistant.delta', turnId: 2, delta: '2' });
-      emit({
-        type: 'goal.updated',
+        type: 'session.goal.updated',
+        status: 'complete',
         snapshot: completed,
-        change: { kind: 'completion', status: 'complete' },
       });
       resolveFirstGoal?.({ goal: null });
       await Promise.resolve();
-      emit({ type: 'assistant.delta', turnId: 2, delta: ' tail' });
-      emit({ type: 'turn.ended', turnId: 2, reason: 'completed' });
+      emit({ type: 'llm.delta', part: { type: 'text', text: ' tail' } });
+      emit({ type: 'session.turn.ended', turn_id: 2, stop_reason: 'EndTurn' });
     });
     const stdout = writer();
     const stderr = writer();

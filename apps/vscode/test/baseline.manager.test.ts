@@ -352,7 +352,9 @@ describe('baseline boundaries (errors, cleanup, and platform paths)', () => {
     );
   });
 
-  it('normalizes case differences in an in-workspace UNC path', async () => {
+  it.skipIf(process.platform === 'win32')(
+    'normalizes case differences in an in-workspace UNC path',
+    async () => {
     const session: BaselineSession = {
       id: 'ses-unc',
       workDir: '\\\\Server\\Share\\Workspace',

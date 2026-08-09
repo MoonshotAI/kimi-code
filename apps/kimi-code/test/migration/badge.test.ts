@@ -5,7 +5,7 @@ import { formatSessionLabel } from '#/migration/badge';
 vi.mock('#/i18n', () => ({
   t: (key: string) => {
     const translations: Record<string, string> = {
-      'migration.badgeImported': '[imported]',
+      'tui.migration.badgeImported': '[imported]',
     };
     return translations[key] ?? key;
   },

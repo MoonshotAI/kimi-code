@@ -32,12 +32,12 @@ const mocks = vi.hoisted(() => {
     }),
     prompt: vi.fn(async () => {
       for (const handler of eventHandlers) {
+        handler(mainEvent({ type: 'session.turn.started', turn_id: 1 }));
+        handler(mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'hello' } }));
+        handler(mainEvent({ type: 'llm.delta', part: { type: 'text', text: ' world' } }));
         handler(
-          mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }),
+          mainEvent({ type: 'session.turn.ended', turn_id: 1, stop_reason: 'EndTurn', steps: 1 }),
         );
-        handler(mainEvent({ type: 'assistant.delta', turnId: 1, delta: 'hello' }));
-        handler(mainEvent({ type: 'assistant.delta', turnId: 1, delta: ' world' }));
-        handler(mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
       }
     }),
     waitForBackgroundTasksOnPrint: vi.fn(async () => {}),
@@ -196,7 +196,9 @@ describe('runPrompt', () => {
   });
 
   afterEach(() => {
-    vi.clearAllMocks();
+    // reset (not clear) so mockImplementationOnce/mockRejectedValueOnce queues
+    // cannot leak into the next test after one fails midway.
+    vi.resetAllMocks();
     vi.unstubAllEnvs();
     mocks.eventHandlers.clear();
     mocks.createKimiDeviceId.mockImplementation(() => 'device-1');
@@ -405,25 +407,30 @@ describe('runPrompt', () => {
   it('formats thinking and assistant output as transcript blocks', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(
-          mocks.mainEvent({ type: 'turn.started', turnId: 3, origin: { kind: 'user' } }),
-        );
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 3 }));
         handler(
           mocks.mainEvent({
-            type: 'thinking.delta',
-            turnId: 3,
-            delta: 'The user wants an exact reply.',
+            type: 'llm.delta',
+            part: { type: 'think', think: 'The user wants an exact reply.' },
           }),
         );
         handler(
           mocks.mainEvent({
-            type: 'thinking.delta',
-            turnId: 3,
-            delta: '\nNo tools are needed.',
+            type: 'llm.delta',
+            part: { type: 'think', think: '\nNo tools are needed.' },
           }),
         );
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 3, delta: 'prompt-mode-ok' }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 3, reason: 'completed' }));
+        handler(
+          mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'prompt-mode-ok' } }),
+        );
+        handler(
+          mocks.mainEvent({
+            type: 'session.turn.ended',
+            turn_id: 3,
+            stop_reason: 'EndTurn',
+            steps: 1,
+          }),
+        );
       }
     });
     const stdout = writer();
@@ -443,19 +450,24 @@ describe('runPrompt', () => {
   it('formats hook results as their own transcript block', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(
-          mocks.mainEvent({ type: 'turn.started', turnId: 3, origin: { kind: 'user' } }),
-        );
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 3 }));
         handler(
           mocks.mainEvent({
-            type: 'hook.result',
-            turnId: 3,
-            hookEvent: 'UserPromptSubmit',
+            type: 'session.hook.result',
+            hook_event: 'UserPromptSubmit',
             content: '{}',
+            blocked: false,
           }),
         );
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 3, delta: 'answer' }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 3, reason: 'completed' }));
+        handler(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'answer' } }));
+        handler(
+          mocks.mainEvent({
+            type: 'session.turn.ended',
+            turn_id: 3,
+            stop_reason: 'EndTurn',
+            steps: 1,
+          }),
+        );
       }
     });
     const stdout = writer();
@@ -470,12 +482,21 @@ describe('runPrompt', () => {
   it('wraps transcript blocks with hanging indentation when terminal width is known', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 4 }));
         handler(
-          mocks.mainEvent({ type: 'turn.started', turnId: 4, origin: { kind: 'user' } }),
+          mocks.mainEvent({ type: 'llm.delta', part: { type: 'think', think: 'thinking-wrap' } }),
         );
-        handler(mocks.mainEvent({ type: 'thinking.delta', turnId: 4, delta: 'thinking-wrap' }));
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 4, delta: 'answer-wrap' }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 4, reason: 'completed' }));
+        handler(
+          mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'answer-wrap' } }),
+        );
+        handler(
+          mocks.mainEvent({
+            type: 'session.turn.ended',
+            turn_id: 4,
+            stop_reason: 'EndTurn',
+            steps: 1,
+          }),
+        );
       }
     });
     const stdout = writer(10);
@@ -495,25 +516,32 @@ describe('runPrompt', () => {
         }
       };
 
-      emit(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+      emit(mocks.mainEvent({ type: 'session.turn.started', turn_id: 1 }));
+      emit(mocks.agentEvent('child-agent', { type: 'session.turn.started', turn_id: 1 }));
       emit(
         mocks.agentEvent('child-agent', {
-          type: 'turn.started',
-          turnId: 1,
-          origin: { kind: 'user' },
+          type: 'llm.delta',
+          part: { type: 'text', text: 'sub answer' },
         }),
       );
       emit(
         mocks.agentEvent('child-agent', {
-          type: 'assistant.delta',
-          turnId: 1,
-          delta: 'sub answer',
+          type: 'session.turn.ended',
+          turn_id: 1,
+          stop_reason: 'EndTurn',
+          steps: 1,
         }),
       );
-      emit(mocks.agentEvent('child-agent', { type: 'turn.ended', turnId: 1, reason: 'completed' }));
       await Promise.resolve();
-      emit(mocks.mainEvent({ type: 'assistant.delta', turnId: 1, delta: 'main answer' }));
-      emit(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+      emit(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'main answer' } }));
+      emit(
+        mocks.mainEvent({
+          type: 'session.turn.ended',
+          turn_id: 1,
+          stop_reason: 'EndTurn',
+          steps: 1,
+        }),
+      );
     });
     const stdout = writer();
     const stderr = writer();
@@ -532,7 +560,7 @@ describe('runPrompt', () => {
         }
       };
 
-      emit(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+      emit(mocks.mainEvent({ type: 'session.turn.started', turn_id: 1 }));
       emit(
         mocks.agentEvent('child-agent', {
           type: 'error',
@@ -541,8 +569,15 @@ describe('runPrompt', () => {
         }),
       );
       await Promise.resolve();
-      emit(mocks.mainEvent({ type: 'assistant.delta', turnId: 1, delta: 'main recovered' }));
-      emit(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+      emit(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'main recovered' } }));
+      emit(
+        mocks.mainEvent({
+          type: 'session.turn.ended',
+          turn_id: 1,
+          stop_reason: 'EndTurn',
+          steps: 1,
+        }),
+      );
     });
     const stdout = writer();
     const stderr = writer();
@@ -636,29 +671,34 @@ describe('runPrompt', () => {
   it('writes stream-json tool calls and tool results as JSONL messages', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(
-          mocks.mainEvent({ type: 'turn.started', turnId: 8, origin: { kind: 'user' } }),
-        );
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 8, delta: 'checking' }));
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 8 }));
+        handler(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'checking' } }));
         handler(
           mocks.mainEvent({
-            type: 'tool.call.started',
-            turnId: 8,
-            toolCallId: 'tc_1',
-            name: 'Shell',
-            args: { command: 'ls' },
+            type: 'session.tool.started',
+            tool_call_id: 'tc_1',
+            tool_name: 'Shell',
+            arguments: { command: 'ls' },
           }),
         );
         handler(
           mocks.mainEvent({
-            type: 'tool.result',
-            turnId: 8,
-            toolCallId: 'tc_1',
-            output: 'file1.py\nfile2.py',
+            type: 'session.tool.settled',
+            tool_call_id: 'tc_1',
+            tool_name: 'Shell',
+            content: 'file1.py\nfile2.py',
+            is_error: false,
           }),
         );
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 8, delta: 'done' }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 8, reason: 'completed' }));
+        handler(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'done' } }));
+        handler(
+          mocks.mainEvent({
+            type: 'session.turn.ended',
+            turn_id: 8,
+            stop_reason: 'EndTurn',
+            steps: 1,
+          }),
+        );
       }
     });
     const stdout = writer();
@@ -677,28 +717,23 @@ describe('runPrompt', () => {
     );
   });
 
-  it('emits a stream-json meta line on retry and discards the failed attempt output', async () => {
+  it('emits no retry meta and keeps failed attempt output out of stream-json', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(mocks.mainEvent({ type: 'turn.started', turnId: 10, origin: { kind: 'user' } }));
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 10, delta: 'partial attempt' }));
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 10 }));
+        // The engine retries failed steps internally; a failed attempt's partial
+        // deltas never reach the host stream, and no retry meta line is emitted.
+        handler(
+          mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'final answer' } }),
+        );
         handler(
           mocks.mainEvent({
-            type: 'turn.step.retrying',
-            turnId: 10,
-            step: 1,
-            stepId: 'step-uuid',
-            failedAttempt: 1,
-            nextAttempt: 2,
-            maxAttempts: 3,
-            delayMs: 300,
-            errorName: 'APIProviderRateLimitError',
-            errorMessage: 'llmproxy/openai/responses/resp_abc.json status_code=429',
-            statusCode: 429,
+            type: 'session.turn.ended',
+            turn_id: 10,
+            stop_reason: 'EndTurn',
+            steps: 2,
           }),
         );
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 10, delta: 'final answer' }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 10, reason: 'completed' }));
       }
     });
     const stdout = writer();
@@ -706,26 +741,16 @@ describe('runPrompt', () => {
 
     await runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', { stdout, stderr });
 
-    const retryMeta = JSON.stringify({
-      role: 'meta',
-      type: 'turn.step.retrying',
-      failed_attempt: 1,
-      next_attempt: 2,
-      max_attempts: 3,
-      delay_ms: 300,
-      error_name: 'APIProviderRateLimitError',
-      error_message: 'llmproxy/openai/responses/resp_abc.json status_code=429',
-      status_code: 429,
-    });
     expect(stdout.text()).toBe(
       [
-        retryMeta,
         '{"role":"assistant","content":"final answer"}',
         '{"role":"meta","type":"session.resume_hint","session_id":"ses_prompt","command":"kimi -r ses_prompt","content":"To resume this session: kimi -r ses_prompt"}',
         '',
       ].join('\n'),
     );
-    // The failed attempt's partial text must not leak as an assistant line.
+    // The v1 turn.step.retrying meta line is gone from the engine contract:
+    // retries are engine-internal, so no meta line or partial text may leak.
+    expect(stdout.text()).not.toContain('turn.step.retrying');
     expect(stdout.text()).not.toContain('partial attempt');
     expect(stderr.text()).toBe('');
   });
@@ -739,9 +764,18 @@ describe('runPrompt', () => {
 
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(mocks.mainEvent({ type: 'turn.started', turnId: 9, origin: { kind: 'user' } }));
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 9, delta: 'final answer' }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 9, reason: 'completed' }));
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 9 }));
+        handler(
+          mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'final answer' } }),
+        );
+        handler(
+          mocks.mainEvent({
+            type: 'session.turn.ended',
+            turn_id: 9,
+            stop_reason: 'EndTurn',
+            steps: 1,
+          }),
+        );
       }
     });
 
@@ -770,9 +804,16 @@ describe('runPrompt', () => {
 
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(mocks.mainEvent({ type: 'turn.started', turnId: 10, origin: { kind: 'user' } }));
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 10, delta: 'first' }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 10, reason: 'completed' }));
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 10 }));
+        handler(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'first' } }));
+        handler(
+          mocks.mainEvent({
+            type: 'session.turn.ended',
+            turn_id: 10,
+            stop_reason: 'EndTurn',
+            steps: 1,
+          }),
+        );
       }
     });
 
@@ -794,15 +835,16 @@ describe('runPrompt', () => {
     // turn (the runtime does this via turn.steer; here we drive the events
     // directly to verify the driver follows and finishes only after it).
     for (const handler of mocks.eventHandlers) {
+      handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 11 }));
+      handler(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'second' } }));
       handler(
         mocks.mainEvent({
-          type: 'turn.started',
-          turnId: 11,
-          origin: { kind: 'background_task' },
+          type: 'session.turn.ended',
+          turn_id: 11,
+          stop_reason: 'EndTurn',
+          steps: 1,
         }),
       );
-      handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 11, delta: 'second' }));
-      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 11, reason: 'completed' }));
     }
 
     await runPromise;
@@ -874,16 +916,11 @@ describe('runPrompt', () => {
   it('restores resumed session permission even when the turn fails', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 5 }));
+        // The engine surfaces a failed turn as an error event; the driver maps
+        // it to `code: message` and finishes (no session.turn.ended follows).
         handler(
-          mocks.mainEvent({ type: 'turn.started', turnId: 5, origin: { kind: 'user' } }),
-        );
-        handler(
-          mocks.mainEvent({
-            type: 'turn.ended',
-            turnId: 5,
-            reason: 'failed',
-            error: { code: 'provider.error', message: 'model failed' },
-          }),
+          mocks.mainEvent({ type: 'error', code: 'provider.error', message: 'model failed' }),
         );
       }
     });
@@ -906,9 +943,7 @@ describe('runPrompt', () => {
     let releasePrompt!: () => void;
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(
-          mocks.mainEvent({ type: 'turn.started', turnId: 6, origin: { kind: 'user' } }),
-        );
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 6 }));
       }
       await new Promise<void>((resolve) => {
         releasePrompt = resolve;
@@ -937,7 +972,14 @@ describe('runPrompt', () => {
     expect(processMock.exit).toHaveBeenCalledWith(130);
 
     for (const handler of mocks.eventHandlers) {
-      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 6, reason: 'completed' }));
+      handler(
+        mocks.mainEvent({
+          type: 'session.turn.ended',
+          turn_id: 6,
+          stop_reason: 'EndTurn',
+          steps: 1,
+        }),
+      );
     }
     releasePrompt();
     await run;
@@ -952,9 +994,7 @@ describe('runPrompt', () => {
     let releasePrompt!: () => void;
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(
-          mocks.mainEvent({ type: 'turn.started', turnId: 7, origin: { kind: 'user' } }),
-        );
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 7 }));
       }
       await new Promise<void>((resolve) => {
         releasePrompt = resolve;
@@ -978,7 +1018,14 @@ describe('runPrompt', () => {
     expect(processMock.exit).toHaveBeenCalledWith(exitCode);
 
     for (const handler of mocks.eventHandlers) {
-      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 7, reason: 'completed' }));
+      handler(
+        mocks.mainEvent({
+          type: 'session.turn.ended',
+          turn_id: 7,
+          stop_reason: 'EndTurn',
+          steps: 1,
+        }),
+      );
     }
     releasePrompt();
     await run;
@@ -996,9 +1043,7 @@ describe('runPrompt', () => {
     });
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(
-          mocks.mainEvent({ type: 'turn.started', turnId: 7, origin: { kind: 'user' } }),
-        );
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 7 }));
       }
       await new Promise<void>((resolve) => {
         releasePrompt = resolve;
@@ -1034,7 +1079,14 @@ describe('runPrompt', () => {
       expect(mocks.session.prompt).toHaveBeenCalledWith('say hello');
     });
     for (const handler of mocks.eventHandlers) {
-      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 7, reason: 'completed' }));
+      handler(
+        mocks.mainEvent({
+          type: 'session.turn.ended',
+          turn_id: 7,
+          stop_reason: 'EndTurn',
+          steps: 1,
+        }),
+      );
     }
     releasePrompt();
     await run;
@@ -1069,16 +1121,9 @@ describe('runPrompt', () => {
   it('rejects when the turn fails and still closes resources', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 2 }));
         handler(
-          mocks.mainEvent({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }),
-        );
-        handler(
-          mocks.mainEvent({
-            type: 'turn.ended',
-            turnId: 2,
-            reason: 'failed',
-            error: { code: 'provider.error', message: 'model failed' },
-          }),
+          mocks.mainEvent({ type: 'error', code: 'provider.error', message: 'model failed' }),
         );
       }
     });
@@ -1097,18 +1142,14 @@ describe('runPrompt', () => {
   it('rejects with a friendly message when the provider filters the response', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(mocks.mainEvent({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 2 }));
         handler(
           mocks.mainEvent({
-            type: 'turn.ended',
-            turnId: 2,
-            reason: 'failed',
-            error: {
-              code: 'provider.filtered',
-              message: 'Provider safety policy blocked the response.',
-              name: 'ProviderFilteredError',
-              retryable: false,
-            },
+            type: 'error',
+            code: 'provider.filtered',
+            message: 'Provider safety policy blocked the response.',
+            name: 'ProviderFilteredError',
+            retryable: false,
           }),
         );
       }
@@ -1148,9 +1189,18 @@ describe('runPrompt', () => {
   it('does not settle on end_turn while a goal is still active', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 1, delta: 'created a goal' }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 1 }));
+        handler(
+          mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'created a goal' } }),
+        );
+        handler(
+          mocks.mainEvent({
+            type: 'session.turn.ended',
+            turn_id: 1,
+            stop_reason: 'EndTurn',
+            steps: 1,
+          }),
+        );
       }
     });
     // First evaluation (after turn 1) sees an active goal; the continuation
@@ -1172,15 +1222,16 @@ describe('runPrompt', () => {
     // The goal driver launches the continuation turn on its own; the run
     // streams it and settles only once no goal is active anymore.
     for (const handler of mocks.eventHandlers) {
+      handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 2 }));
+      handler(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'goal work' } }));
       handler(
         mocks.mainEvent({
-          type: 'turn.started',
-          turnId: 2,
-          origin: { kind: 'system_trigger' },
+          type: 'session.turn.ended',
+          turn_id: 2,
+          stop_reason: 'EndTurn',
+          steps: 1,
         }),
       );
-      handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 2, delta: 'goal work' }));
-      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
     }
 
     await run;
@@ -1191,14 +1242,21 @@ describe('runPrompt', () => {
   it('settles when the goal reaches a terminal state between turns with no trailing turn.ended', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 1, delta: 'working' }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 1 }));
+        handler(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'working' } }));
+        handler(
+          mocks.mainEvent({
+            type: 'session.turn.ended',
+            turn_id: 1,
+            stop_reason: 'EndTurn',
+            steps: 1,
+          }),
+        );
       }
     });
     // Turn 1's evaluation sees the goal still active; the terminal
-    // goal.updated (e.g. the driver blocked it on a hard budget) arrives with
-    // no further turn.ended and must settle the run itself.
+    // session.goal.updated (e.g. the driver blocked it on a hard budget) arrives
+    // with no further session.turn.ended and must settle the run itself.
     mocks.session.getGoal
       .mockResolvedValueOnce({ goal: { status: 'active' } } as never)
       .mockResolvedValue({ goal: { status: 'blocked' } } as never);
@@ -1218,9 +1276,9 @@ describe('runPrompt', () => {
     for (const handler of mocks.eventHandlers) {
       handler(
         mocks.mainEvent({
-          type: 'goal.updated',
+          type: 'session.goal.updated',
+          status: 'blocked',
           snapshot: { status: 'blocked' },
-          change: { kind: 'blocked' },
         }),
       );
     }
@@ -1232,9 +1290,21 @@ describe('runPrompt', () => {
   it('does not settle on end_turn while a cron task is pending, then lets the fire drive a turn', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
-        handler(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
-        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 1, delta: 'scheduled a reminder' }));
-        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+        handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 1 }));
+        handler(
+          mocks.mainEvent({
+            type: 'llm.delta',
+            part: { type: 'text', text: 'scheduled a reminder' },
+          }),
+        );
+        handler(
+          mocks.mainEvent({
+            type: 'session.turn.ended',
+            turn_id: 1,
+            stop_reason: 'EndTurn',
+            steps: 1,
+          }),
+        );
       }
     });
     // Turn 1 leaves a pending one-shot cron task; its fire steers turn 2, and
@@ -1269,15 +1339,16 @@ describe('runPrompt', () => {
     // The cron fire steers a fresh turn; the run streams it and settles once
     // no pending tasks remain.
     for (const handler of mocks.eventHandlers) {
+      handler(mocks.mainEvent({ type: 'session.turn.started', turn_id: 2 }));
+      handler(mocks.mainEvent({ type: 'llm.delta', part: { type: 'text', text: 'cron ran' } }));
       handler(
         mocks.mainEvent({
-          type: 'turn.started',
-          turnId: 2,
-          origin: { kind: 'cron_job' },
+          type: 'session.turn.ended',
+          turn_id: 2,
+          stop_reason: 'EndTurn',
+          steps: 1,
         }),
       );
-      handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 2, delta: 'cron ran' }));
-      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
     }
 
     await run;

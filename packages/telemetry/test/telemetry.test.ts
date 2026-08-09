@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1225,7 +1226,7 @@ function numberProperty(
 ): number {
   const value = properties[key];
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new Error(`Expected property ${key} to be a finite number, got ${String(value)}`);
+    throw new TypeError(`Expected property ${key} to be a finite number, got ${String(value)}`);
   }
   return value;
 }
@@ -1256,7 +1257,7 @@ async function runTelemetryCrashScript(body: string): Promise<number> {
   const scriptPath = join(dir, 'crash-worker.ts');
   const testDir = import.meta.dirname;
   const tsxCli = join(
-    dirname(fileURLToPath(import.meta.resolve('tsx/package.json'))),
+    dirname(createRequire(import.meta.url).resolve('tsx/package.json')),
     'dist/cli.mjs',
   );
   const crashModuleUrl = pathToFileURL(join(testDir, '../src/crash.ts')).href;
