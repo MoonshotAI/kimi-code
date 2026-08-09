@@ -910,3 +910,36 @@ kimi-protocol ← kimi-core ← kimi-server ← kimi-server-transport
 - [x] 阶段 B-5 kap-server 测试平移（377 基线）→ 同 E-5，定案"重写而非平移"，关闭
 - [ ] §3 中未建 crate 标注：`kimi-core`/`kimi-state`（保留 `packages/kimi-agent` 未拆分）、`crates/utils/*`（并入 native-tools/kimi-shared）——计划与现状偏差已在 §10 记录，如需执行拆分再更新 §3
 - ✅ **2026-08-05 已提交**：`/session`（显示/重命名）与 `/plugins`（list/enable/disable/remove/reload/install）命令 TUI+REPL 落地；间歇性 DNS 依赖测试修复（kimi-native-tools fetch_url `example.com`→IP 字面量 + kimi-agent `is_private_host` 同修）——workspace 全绿稳定（连续 3 次无失败）
+
+---
+
+## 11. G-4 攻坚完成状态（2026-08-09，分支 feat/rust-agent-engine-migration）
+
+> 依据：用户定案"先把最大的迁移了再说"→ 计划（P0-P6 分片）→ 逐片实现并提交。
+> kimi-tui 测试基线：**99 → 117 全绿 0 warnings**（P0-P5 各片提交：8ea596663 / d49bfc81d / e939d85c9 / ad6224ca2 / c7d564298 / f3cbf902c / f233128eb）。
+
+### 功能对拍矩阵（TS TUI → Rust kimi-tui）
+
+**命令面（TS 42 条全部覆盖）**：`/quit /help /approvals /approve /deny /status /info /session /plugins /config /skills /plan /swarm /thinking /effort /permission /yolo /auto /new /init /title /mcp /tasks /theme /version /models /model /reload /resume /goal /add-dir /clear /compact /usage /undo /fork /steer /import /sessions /export /archive /btw /login /logout /locale /editor /settings /copy /export-md /discuss /workflow /provider /reload-tui`——Rust 侧 61 命令 + 别名全部有处理分支；`/experiments /multi-llm /feedback /web` 为提示命令（引擎侧无数据源，见简化项）。
+
+**主要交互**：
+| 交互 | Rust 状态 |
+|---|---|
+| 审批（y/n/s/v、/approve /deny /approvals、队列、auto-allow、全屏 modal） | ✅ P1 已有 + 危险命令检测（8 正则，TS detectDanger parity） |
+| Tab 补全（命令/别名/参数集/模型别名/路径/@mention，弹窗描述列） | ✅ 既有 + P4 ghost hint |
+| 选择器（可搜索/分页/notice/description，model/session/permission/skills/plugins/provider/tasks） | ✅ P0-P2 |
+| @mention 文件补全（fd/fs、空格引号） | ✅ 既有 |
+| bash 模式（`!` 执行 + 历史过滤 + 路径补全） | ✅ P4 |
+| 外部编辑器（Ctrl-G）、剪贴板图片粘贴 | ✅ 既有 |
+| 帮助面板（modal + 滚动）、/status /usage /goal 行构建器面板、/mcp /plugins 报告 | ✅ P1-P3 |
+| 工具结果 chip 摘要（Edit/Write/Read/Bash） | ✅ P3 |
+| 会话恢复 replay（history 消息级渲染：user/assistant/tool_calls/tool） | ✅ 既有（P5 评估：goal/cron 状态引擎快照无数据源，经命令查询） |
+| 任务浏览器（picker + 输出查看）、登录 device flow | ✅ P5 / 既有 |
+| 启动 picker、主题切换、locale、设置菜单 | ✅ 既有（P1 升级） |
+
+**简化项（对拍矩阵记录，非缺失）**：agent-group/read-group 组卡片（Rust 单卡片渲染，不合并同 step 多调用）；banner 网络拉取（footer 本地 tips 轮换）；experiments/multi-llm/feedback/web 为提示命令；easter-eggs 未迁移。
+
+### 剩余（P6）
+- [ ] TS TUI 删除（apps/kimi-code/src/tui → 移除，run-shell.ts 改走 Rust bin）
+- [ ] TS 侧 tui 测试退役（test/tui/** 随目录删除）
+- [ ] 手动冒烟（真实终端）与 i18n 覆盖核对（Rust 内置 en/zh vs TS 1637 key 已对齐关键文案，非关键保留回退显示）
