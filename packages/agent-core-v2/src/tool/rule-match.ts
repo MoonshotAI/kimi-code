@@ -5,10 +5,12 @@
  * and the rule-subject helpers (`literalRulePattern`,
  * `escapeRuleSubjectLiteral`, `matchesGlobRuleSubject`,
  * `matchesPathRuleSubject`) that tool implementations use to build their
- * `matchesRule` closures and canonical rule strings. Glob matching treats
- * subjects as opaque text, so `*` crosses `/`. Path matching compares
- * normalized path variants, so `./a`, `dir/../a`, and Windows separator or
- * case variants can match the same rule. Pure functions; no scoped service.
+ * `matchesRule` closures and canonical rule strings. Glob matching accepts a
+ * subject under path-glob semantics or as opaque text where `*` also crosses
+ * `/`; NUL-bearing subjects match under path-glob semantics only. Path
+ * matching compares normalized path variants, so `./a`, `dir/../a`, and
+ * Windows separator or case variants can match the same rule. Pure
+ * functions; no scoped service.
  */
 
 import { isAbsolute, join, parse } from 'pathe';
@@ -31,13 +33,9 @@ interface PathMatchSemantics {
 const SLASH_PLACEHOLDER = '\0';
 
 export function globMatch(value: string, pattern: string, options?: { nocase?: boolean }): boolean {
-  // Try the historical path-semantics match first so rules that matched
-  // before keep matching (e.g. `a/**/b` still matches `a/b`).
   if (pathSegmentGlobMatch(value, pattern, options)) return true;
+  if (value.includes(SLASH_PLACEHOLDER) || pattern.includes(SLASH_PLACEHOLDER)) return false;
 
-  // Then match the subject as opaque text: picomatch gives wildcards path
-  // semantics (`*` stops at `/` and refuses dot segments), so rewrite `/` to
-  // a placeholder and allow dots instead.
   const opaqueOptions = { ...options, dot: true };
   if (picomatch.isMatch(asOpaqueText(value), asOpaqueText(pattern), opaqueOptions)) return true;
 
@@ -52,8 +50,7 @@ export function globMatch(value: string, pattern: string, options?: { nocase?: b
 }
 
 function asOpaqueText(value: string): string {
-  // Strip real NUL bytes first so one cannot be mistaken for a rewritten `/`.
-  return value.replaceAll(SLASH_PLACEHOLDER, '').replaceAll('/', SLASH_PLACEHOLDER);
+  return value.replaceAll('/', SLASH_PLACEHOLDER);
 }
 
 function stripLeadingDotSlash(value: string): string {

@@ -28,7 +28,11 @@ export function globMatch(value: string, pattern: string, options?: { nocase?: b
 
   // Then match the subject as opaque text: picomatch gives wildcards path
   // semantics (`*` stops at `/` and refuses dot segments), so rewrite `/` to
-  // a placeholder and allow dots instead.
+  // a placeholder and allow dots instead. NUL-bearing subjects skip this:
+  // the historical match above already compares them literally, and the
+  // rewrite must stay injective so distinct subjects cannot collide.
+  if (value.includes(SLASH_PLACEHOLDER) || pattern.includes(SLASH_PLACEHOLDER)) return false;
+
   const opaqueOptions = { ...options, dot: true };
   if (picomatch.isMatch(asOpaqueText(value), asOpaqueText(pattern), opaqueOptions)) return true;
 
@@ -43,8 +47,7 @@ export function globMatch(value: string, pattern: string, options?: { nocase?: b
 }
 
 function asOpaqueText(value: string): string {
-  // Strip real NUL bytes first so one cannot be mistaken for a rewritten `/`.
-  return value.replaceAll(SLASH_PLACEHOLDER, '').replaceAll('/', SLASH_PLACEHOLDER);
+  return value.replaceAll('/', SLASH_PLACEHOLDER);
 }
 
 function stripLeadingDotSlash(value: string): string {

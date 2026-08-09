@@ -155,7 +155,13 @@ describe('permissionRules/matchPermissionRule', () => {
     expect(matchesGlobRuleSubject('**/*.ts', 'a.ts')).toBe(true);
     expect(matchesGlobRuleSubject('a/**/b', 'a/b')).toBe(true);
     expect(matchesGlobRuleSubject('a/**/b', 'a/x/y/b')).toBe(true);
+  });
+
+  it('keeps NUL-bearing subjects distinct instead of conflating them', () => {
+    expect(matchesGlobRuleSubject('ab', 'a\u0000b')).toBe(false);
     expect(matchesGlobRuleSubject('a/b', 'a\u0000b')).toBe(false);
+    expect(matchesGlobRuleSubject('a\u0000b', 'a\u0000b')).toBe(true);
+    expect(matchesGlobRuleSubject('a*', 'a\u0000b')).toBe(true);
   });
 
   it('keeps path rule subjects on path semantics where * does not cross /', () => {
