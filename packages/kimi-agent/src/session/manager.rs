@@ -194,6 +194,25 @@ impl SessionManager {
         }
     }
 
+    /// Force-record the session's working directory, overwriting any value.
+    /// Used by `session/create` when the host passes an explicit `work_dir` —
+    /// the host is authoritative at creation, even when the store still holds
+    /// a stale value from an earlier run with the same session id.
+    pub fn set_work_dir_force(&mut self, id: &str, work_dir: &str) {
+        if work_dir.is_empty() {
+            return;
+        }
+        if let Some(record) = self.sessions.get_mut(id) {
+            if record.work_dir != work_dir {
+                record.work_dir = work_dir.to_string();
+                let updated = record.clone();
+                if let Err(e) = self.save_to_store(&updated) {
+                    eprintln!("[session] failed to persist work_dir for {}: {e}", id);
+                }
+            }
+        }
+    }
+
     /// Rename a session: update the persisted title (SDK `renameSession`
     /// parity). Returns the updated record, or `None` when the session is
     /// not in the live cache (must be created/loaded first).

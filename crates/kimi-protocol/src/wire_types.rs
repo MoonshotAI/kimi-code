@@ -789,6 +789,10 @@ pub struct SessionSummaryRpc {
     pub updated_at: String,
     pub title: String,
     pub work_dir: String,
+    /// Host custom metadata (shallow-merged via `session/update_metadata`),
+    /// persisted in the durable agent state. Absent for legacy records.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub metadata: serde_json::Value,
 }
 
 /// Result of `session/list`.

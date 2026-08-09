@@ -2187,6 +2187,9 @@ any partial output shown above is incomplete. The user's next message continues 
             "plan_active": self.plan.is_active(),
             "plan_id": self.plan.plan_id(),
             "token_count": self.context.token_count(),
+            // Host-owned custom metadata (approval flags, imported-from
+            // markers, …) must survive close/reopen and cross-host resume.
+            "metadata": self.metadata,
         })
     }
 
@@ -2229,6 +2232,11 @@ any partial output shown above is incomplete. The user's next message continues 
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         self.plan.restore(plan_active, plan_id);
+        // Restore host-owned custom metadata so close/reopen keeps approval
+        // flags, imported-from markers, etc.
+        if let Some(metadata) = state.get("metadata") {
+            self.metadata = metadata.clone();
+        }
         if let Some(token_count) = state.get("token_count").and_then(|v| v.as_u64()) {
             self.context.update_token_count(token_count);
         }

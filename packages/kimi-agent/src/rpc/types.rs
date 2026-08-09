@@ -46,6 +46,11 @@ pub struct SessionCreateParams {
     pub session_id: Option<String>,
     #[serde(default)]
     pub homedir: Option<String>,
+    /// The session's real working directory. Distinct from `homedir` — the
+    /// engine records it as `work_dir` so `session/list` filtering and cross-
+    /// host resume see the workspace the host opened, not the home dir.
+    #[serde(default)]
+    pub work_dir: Option<String>,
     #[serde(default)]
     pub system_prompt: Option<String>,
     #[serde(default)]

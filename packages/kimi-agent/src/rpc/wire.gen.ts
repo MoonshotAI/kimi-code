@@ -75,6 +75,7 @@ export interface HookDef {
 export interface SessionCreateParams {
   session_id?: string | undefined;
   homedir?: string | undefined;
+  work_dir?: string | undefined;
   system_prompt?: string | undefined;
   provider?: string | undefined;
   model?: string | undefined;
@@ -385,6 +386,60 @@ export interface PluginGetParams {
   id: string;
 }
 
+export interface PluginInstallParams {
+  source: string;
+}
+
+export interface PluginSetEnabledParams {
+  id: string;
+  enabled: boolean;
+}
+
+export interface PluginSetMcpEnabledParams {
+  id: string;
+  server: string;
+  enabled: boolean;
+}
+
+export interface PluginRemoveParams {
+  id: string;
+}
+
+export interface PluginRemoveResult {
+  removed: boolean;
+}
+
+export interface PluginReloadResult {
+  ok: boolean;
+}
+
+export interface PluginCommandRpc {
+  plugin_id: string;
+  name: string;
+  description: string;
+  /** Command body; `$ARGUMENTS` is replaced with the invocation args. */
+  body: string;
+}
+
+export interface PluginListCommandsParams {
+  id: string;
+}
+
+export interface PluginListCommandsResult {
+  commands: Array<PluginCommandRpc>;
+}
+
+export interface PluginActivateCommandParams {
+  session_id: string;
+  plugin_id: string;
+  command_name: string;
+  args?: string | undefined;
+}
+
+export interface PluginActivateCommandResult {
+  accepted: boolean;
+}
+
 export interface SessionExportParams {
   /** Session id to export. */
   session_id: string;
@@ -661,6 +716,7 @@ export interface SessionSummaryRpc {
   updated_at: string;
   title: string;
   work_dir: string;
+  metadata?: unknown;
 }
 
 export interface SessionListResult {

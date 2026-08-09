@@ -443,7 +443,12 @@ async fn main() -> anyhow::Result<()> {
                 },
             );
             // Record the workspace so `session/list` can filter by directory.
-            manager.set_work_dir(&id, input.homedir.as_deref().unwrap_or(""));
+            // `work_dir` is the host's real workspace; fall back to `homedir`
+            // for hosts that predate the field. The host is authoritative at
+            // creation, so a stale store value (same id, earlier run) is
+            // overwritten.
+            let work_dir = input.work_dir.as_deref().or(input.homedir.as_deref()).unwrap_or("");
+            manager.set_work_dir_force(&id, work_dir);
             let rpc_callbacks: Arc<dyn HostCallbacks> =
                 Arc::new(RpcHostCallbacks { server: srv.clone() });
             let mcp_servers = std::mem::take(&mut input.mcp_servers);
@@ -1166,6 +1171,28 @@ async fn main() -> anyhow::Result<()> {
         })
     });
 
+    // Cancel an in-flight compaction (SDK `cancelCompaction` parity). The
+    // engine's compaction is synchronous — `session/compact` completes or
+    // errors before returning — so there is never an in-flight operation to
+    // cancel; verify the session exists and answer success (no-op), per the
+    // protocol contract in kimi-protocol methods.rs.
+    let mgr = session_manager.clone();
+    RpcServer::register_arc(&server, types::methods::SESSION_CANCEL_COMPACT, move |params| {
+        let mgr = mgr.clone();
+        Box::pin(async move {
+            let input: types::SessionCompactParams = serde_json::from_value(params)
+                .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
+            let mut manager = mgr.lock().await;
+            let _agent = manager.get_agent(&input.session_id).ok_or_else(|| {
+                types::JsonRpcError::internal_error(format!(
+                    "no agent for session: {}",
+                    input.session_id
+                ))
+            })?;
+            Ok(serde_json::json!({ "cancelled": false }))
+        })
+    });
+
     // Pending approvals (web-facing approval surface): list the session's
     // deferred tool approvals so the UI can render approval cards. Uses the
     // process-wide store directly — never the session-manager lock, which a
@@ -1818,6 +1845,11 @@ async fn main() -> anyhow::Result<()> {
                         updated_at: record.updated_at,
                         title: rich.title,
                         work_dir: rich.work_dir,
+                        metadata: rich
+                            .agent_state
+                            .get("metadata")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
                     }
                 })
                 .collect::<Vec<_>>();
