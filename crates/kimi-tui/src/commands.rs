@@ -1551,7 +1551,7 @@ impl super::app::App {
     /// `goal` command group (extracted from dispatch for readability).
     async fn cmd_goal(
         &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        _terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         cmd: &str,
         rest: &str,
     ) -> anyhow::Result<bool> {
