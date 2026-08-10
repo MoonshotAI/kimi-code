@@ -33,7 +33,7 @@ import {
   createKimiHarness,
   type KimiConfig,
   type KimiHarness,
-} from '@moonshot-ai/kimi-code-sdk';
+} from './provider-local';
 import type { Command } from 'commander';
 
 import { createKimiCodeHostIdentity, createKimiCodeUserAgent } from '#/cli/version';

@@ -151,7 +151,8 @@ describe('NativeSessionAdapter', () => {
 
     const seen: string[] = [];
     adapter.onEvent(
-      (e) => e.type === 'llm.delta' && e.part.type === 'text' && seen.push(e.part.text ?? ''),
+      (e: { type: string; part?: { type?: string; text?: string } }) =>
+        e.type === 'llm.delta' && e.part?.type === 'text' && seen.push(e.part?.text ?? ''),
     );
 
     fake.emitEvent(rawTextDelta('mine'));

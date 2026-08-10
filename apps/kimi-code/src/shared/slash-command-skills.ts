@@ -1,8 +1,9 @@
-import type { Session, SkillSummary } from '@moonshot-ai/kimi-code-sdk';
+import type { SkillSummary } from '#/cli/sdk-types-local';
 
 import type { KimiSlashCommand } from './slash-command-types';
 
-export type SkillListSession = Pick<Session, 'listSkills'>;
+/** The `listSkills` slice of a session the skill slash-command builder needs. */
+export type SkillListSession = { listSkills(): Promise<readonly SkillSummary[]> };
 
 export interface SkillSlashCommands {
   readonly commands: readonly KimiSlashCommand[];

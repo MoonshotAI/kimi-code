@@ -18,7 +18,7 @@
  * the tool approval gate auto-allows; interactive approval UI arrives with the
  * TUI integration.
  */
-import type { Event } from '@moonshot-ai/kimi-code-sdk';
+import type { Event } from './sdk-types-local';
 import { loadNativeLlmDef, loadSessionHooks, loadSessionMcpServers, loadSessionSystemPrompt } from './rust-engine';
 import { NativeSessionAdapter } from './native-session-adapter';
 import { NativeServerClient } from './native-server-client';
@@ -55,18 +55,30 @@ export function formatSessionPrintEvent(
 ): { stdout?: string; stderr?: string } {
   switch (event.type) {
     case 'llm.delta': {
-      const part = event.part;
-      if (part.type !== 'text' || part.text === undefined) return {};
+      // The local `Event` mirror only carries the routing fields; the payload
+      // lives on the engine wire shapes, so narrow via a local cast.
+      const part = (event as { part?: { type?: string; text?: string } }).part;
+      if (part === undefined || part.type !== 'text' || part.text === undefined) return {};
       return { stdout: part.text };
     }
     case 'session.tool.started': {
-      toolNames.set(event.tool_call_id, event.tool_name);
-      return { stderr: `[tool] ${event.tool_name}${previewToolArgs(event.arguments)}\n` };
+      const started = event as {
+        tool_call_id?: string;
+        tool_name?: string;
+        arguments?: unknown;
+      };
+      toolNames.set(started.tool_call_id ?? '', started.tool_name ?? '');
+      return { stderr: `[tool] ${started.tool_name ?? ''}${previewToolArgs(started.arguments)}\n` };
     }
     case 'session.tool.settled': {
-      const name = toolNames.get(event.tool_call_id) ?? event.tool_call_id;
-      if (event.is_error) {
-        const firstLine = String(event.content).split('\n')[0]?.slice(0, 200) ?? '';
+      const settled = event as {
+        tool_call_id?: string;
+        content?: unknown;
+        is_error?: boolean;
+      };
+      const name = toolNames.get(settled.tool_call_id ?? '') ?? settled.tool_call_id ?? '';
+      if (settled.is_error === true) {
+        const firstLine = String(settled.content).split('\n')[0]?.slice(0, 200) ?? '';
         return { stderr: `[tool] ${name} failed: ${firstLine}\n` };
       }
       return { stderr: `[tool] ${name} ok\n` };

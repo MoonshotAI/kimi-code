@@ -1,4 +1,4 @@
-import type { Event } from '@moonshot-ai/kimi-code-sdk';
+import type { Event } from '#/cli/sdk-types-local';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { formatSessionPrintEvent, isSessionEngineEnabled } from '#/cli/session-engine';

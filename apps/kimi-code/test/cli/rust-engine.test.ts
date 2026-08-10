@@ -1,4 +1,4 @@
-import type { McpServerConfigEntry } from '@moonshot-ai/kimi-code-sdk';
+import type { McpServerConfigEntry } from '#/cli/mcp-local';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

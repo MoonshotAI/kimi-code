@@ -1,14 +1,11 @@
+import { KimiAuthFacade } from '#/cli/auth-local';
 import { createKimiDeviceId, KIMI_CODE_PROVIDER_NAME } from '#/cli/oauth-local';
 import {
   loadRuntimeConfigSafe,
   resolveConfigPath,
   resolveKimiHome,
+  type RuntimeConfig,
 } from '#/cli/runtime-config';
-import {
-  KimiAuthFacade,
-  type KimiConfig,
-  type TelemetryClient,
-} from '@moonshot-ai/kimi-code-sdk';
 
 import type { PromptHarness } from './prompt-session';
 import {
@@ -28,10 +25,29 @@ export interface CliTelemetryBootstrap {
   readonly firstLaunch: boolean;
 }
 
+export type TelemetryProperties = Readonly<
+  Record<string, boolean | number | string | undefined | null>
+>;
+
+export interface TelemetryContextPatch {
+  readonly sessionId?: string | null;
+}
+
+/**
+ * Local mirror of the SDK `TelemetryClient` contract (node-sdk
+ * `legacy/telemetry.ts`) — the `kimi web` server host hands this to
+ * `startServer` via `coreProcessOptions.telemetry`.
+ */
+export interface TelemetryClient {
+  track(event: string, properties?: TelemetryProperties): void;
+  withContext?(patch: TelemetryContextPatch): TelemetryClient;
+  setContext?(patch: TelemetryContextPatch): void;
+}
+
 export interface InitializeCliTelemetryOptions {
   readonly harness: PromptHarness;
   readonly bootstrap: CliTelemetryBootstrap;
-  readonly config: Pick<KimiConfig, 'defaultModel' | 'telemetry'>;
+  readonly config: Pick<RuntimeConfig, 'defaultModel' | 'telemetry'>;
   readonly version: string;
   readonly uiMode: string;
   readonly model?: string;
@@ -119,7 +135,7 @@ export function initializeServerTelemetry(
 
 function readServerTelemetryConfig(
   configPath: string,
-): Pick<KimiConfig, 'telemetry' | 'defaultModel'> {
+): Pick<RuntimeConfig, 'telemetry' | 'defaultModel'> {
   try {
     const { config, fileError } = loadRuntimeConfigSafe(configPath);
     // A broken config fails the server on its own inside KimiCore; for

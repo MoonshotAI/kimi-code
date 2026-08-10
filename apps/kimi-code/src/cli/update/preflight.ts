@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 
-import { log, type Logger } from '@moonshot-ai/kimi-code-sdk';
 import type { TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
 
 import {
@@ -13,6 +12,7 @@ import { loadTuiConfig } from '#/shared/tui-config';
 import { readUpdateCache } from './cache';
 import { tryAcquireUpdateInstallLock } from './install-lock';
 import { emptyUpdateInstallState, readUpdateInstallState, writeUpdateInstallState } from './install-state';
+import { log, type Logger } from './local-logger';
 import {
   CHANGELOG_URL,
   promptForInstallChoice,

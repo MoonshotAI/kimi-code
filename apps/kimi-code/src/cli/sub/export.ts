@@ -8,11 +8,22 @@
 import { createInterface } from 'node:readline/promises';
 
 import {
+  initializeTelemetry,
   setTelemetryContext,
   shutdownTelemetry,
   track,
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
+import type { Command } from 'commander';
+
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
+import { t } from '#/i18n';
+import { KIMI_CODE_PROVIDER_NAME } from '#/cli/oauth-local';
+import { createCliTelemetryBootstrap } from '#/cli/telemetry';
+import { detectInstallSource } from '#/cli/update/source';
+import { createKimiCodeHostIdentity } from '#/cli/version';
+import { detectShellEnvironment } from '#/utils/process/shell-env';
+
 import {
   createKimiHarness,
   type ExportSessionInput,
@@ -21,15 +32,7 @@ import {
   type SessionSummary,
   type ShellEnvironment,
   type TelemetryClient,
-} from '@moonshot-ai/kimi-code-sdk';
-import type { Command } from 'commander';
-
-import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
-import { t } from '#/i18n';
-import { createCliTelemetryBootstrap, initializeCliTelemetry } from '#/cli/telemetry';
-import { detectInstallSource } from '#/cli/update/source';
-import { createKimiCodeHostIdentity } from '#/cli/version';
-import { detectShellEnvironment } from '#/utils/process/shell-env';
+} from './export-local';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -159,13 +162,24 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
     const currentHarness = getHarness();
     await currentHarness.ensureConfigFile();
     const config = await currentHarness.getConfig();
-    initializeCliTelemetry({
-      harness: currentHarness,
-      bootstrap: currentTelemetryBootstrap,
-      config,
+    // Inline of `initializeCliTelemetry` (cli/telemetry.ts): the local harness
+    // only implements the `kimi export` surface, not the full SDK `PromptHarness`
+    // the shared helper types against. Behavior mirrors the shared helper.
+    initializeTelemetry({
+      homeDir: currentHarness.homeDir,
+      deviceId: currentTelemetryBootstrap.deviceId,
+      enabled: config.telemetry !== false,
+      appName: CLI_USER_AGENT_PRODUCT,
       version: identity.version,
       uiMode: CLI_UI_MODE,
+      model: config.defaultModel,
+      sessionId: undefined,
+      getAccessToken: async () =>
+        (await currentHarness.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
     });
+    if (currentTelemetryBootstrap.firstLaunch) {
+      currentHarness.track('first_launch');
+    }
     telemetryInitialized = true;
   };
   const shutdownDefaultTelemetry = async (): Promise<void> => {

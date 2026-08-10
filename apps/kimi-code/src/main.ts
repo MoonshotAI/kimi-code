@@ -11,15 +11,7 @@
  * outer update preflight, then delegates to the requested UI runner.
  */
 
-import {
-  createKimiHarness,
-  flushDiagnosticLogs,
-  installGlobalProxyDispatcher,
-  log,
-  resolveGlobalLogPath,
-  resolveKimiHome,
-  type TelemetryClient,
-} from '@moonshot-ai/kimi-code-sdk';
+import { installGlobalProxyDispatcher } from '@moonshot-ai/kimi-agent/runtime';
 import {
   installCrashHandlers,
   setTelemetryContext,
@@ -34,6 +26,14 @@ import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
 import { t } from '#/i18n';
+import {
+  createKimiHarness,
+  flushDiagnosticLogs,
+  log,
+  resolveGlobalLogPath,
+  type TelemetryClient,
+} from '#/cli/main-local';
+import { resolveKimiHome } from '#/cli/runtime-config';
 import { runShell } from './cli/run-shell';
 import { formatStartupError } from './cli/startup-error';
 import { runPluginNodeEntry } from './cli/sub/plugin-run-node';

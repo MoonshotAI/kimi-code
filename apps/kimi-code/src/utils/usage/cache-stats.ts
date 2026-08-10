@@ -10,7 +10,7 @@
  * caching backends.
  */
 
-import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
+import type { TokenUsage } from '#/cli/sdk-types-local';
 
 /**
  * A step whose prior prefix was at least this many tokens is eligible for

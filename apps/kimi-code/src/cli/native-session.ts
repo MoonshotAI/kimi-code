@@ -25,14 +25,10 @@
  *    engine RPCs / host delegation that removes each degradation.
  */
 import type {
-  AgentContextData,
-  AgentReplayRecord,
-  ResumedAgentState,
-  SwarmModeTrigger,
-} from '@moonshot-ai/kimi-code-sdk';
-import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
+  AgentContextData,
+  AgentReplayRecord,
   ApprovalHandler,
   ApprovalRequest,
   BackgroundTaskInfo,
@@ -52,6 +48,7 @@ import type {
   PromptInput,
   ReloadSessionOptions,
   ReloadSummary,
+  ResumedAgentState,
   ResumedSessionState,
   ResumedSessionSummary,
   Session,
@@ -60,12 +57,14 @@ import type {
   SessionSummary,
   SessionUsage,
   SkillSummary,
+  SwarmModeTrigger,
   ThinkingEffort,
   Unsubscribe,
-} from '@moonshot-ai/kimi-code-sdk';
+} from './sdk-types-local';
 
 /** `SessionWarning` is not re-exported from the SDK root; derive it from the
- *  `Session` surface so it stays in sync without guessing its module. */
+ *  local `Session` surface (the SDK's `getSessionWarnings` resolves through a
+ *  `Promise<any>` rpc) so it stays in sync without guessing its module. */
 type SessionWarning = Awaited<ReturnType<Session['getSessionWarnings']>>[number];
 
 import { resolve } from 'pathe';

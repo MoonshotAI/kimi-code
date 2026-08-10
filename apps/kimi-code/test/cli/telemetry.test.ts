@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
       fileError: undefined,
     }),
   ),
-  getCachedAccessToken: vi.fn(async () => 'tok'),
+  getCachedAccessToken: vi.fn(() => Promise.resolve('tok')),
 }));
 
 vi.mock('@moonshot-ai/kimi-telemetry', () => ({
@@ -40,15 +40,11 @@ vi.mock('#/cli/runtime-config', () => ({
   loadRuntimeConfigSafe: mocks.loadRuntimeConfigSafe,
 }));
 
-vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
-  return {
-    ...actual,
-    KimiAuthFacade: vi.fn(function () {
-      return { getCachedAccessToken: mocks.getCachedAccessToken };
-    }),
-  };
-});
+vi.mock('#/cli/auth-local', () => ({
+  KimiAuthFacade: vi.fn(function () {
+    return { getCachedAccessToken: mocks.getCachedAccessToken };
+  }),
+}));
 
 describe('initializeServerTelemetry', () => {
   beforeEach(() => {
@@ -83,9 +79,8 @@ describe('initializeServerTelemetry', () => {
         setContext: expect.any(Function),
       }),
     );
-    // The first dynamic import pulls in the whole SDK/oauth chain (~3s idle,
-    // more under full-suite transform contention) — give it headroom past the
-    // 5s default timeout.
+    // The first dynamic import pulls in the full telemetry/auth chain — give
+    // it headroom past the 5s default timeout.
   }, 20000);
 
   it('disables telemetry when config.toml sets telemetry = false', async () => {

@@ -2,14 +2,14 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 
+import type { Command } from 'commander';
+import { z } from 'zod';
+
 import {
   createKimiConfigRpc,
   type KimiConfigRpc,
   type KimiConfigValidationIssue,
-} from '@moonshot-ai/kimi-code-sdk';
-import type { Command } from 'commander';
-import { z } from 'zod';
-
+} from '#/cli/sub/config-rpc-local';
 import { t } from '#/i18n';
 import { getTuiConfigPath, parseTuiConfig } from '#/shared/tui-config';
 

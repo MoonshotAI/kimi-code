@@ -2,7 +2,7 @@
  * `kimi acp`
  *
  * Verifies that the ACP sub-command is registered on the program and
- * that the action wires the harness into `@moonshot-ai/acp-adapter`'s
+ * that the action wires the local harness into `@moonshot-ai/acp-adapter`'s
  * `runAcpServer` (the real server is stubbed so the test doesn't
  * actually take over stdio).
  */
@@ -13,6 +13,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@moonshot-ai/acp-adapter', () => ({
   ACP_BUILTIN_SLASH_COMMANDS: [],
   runAcpServer: vi.fn(async () => undefined),
+}));
+
+const { mockLogin } = vi.hoisted(() => ({
+  mockLogin: vi.fn(async () => ({ providerName: 'kimi-code', ok: true })),
+}));
+
+vi.mock('#/cli/sub/login-local', () => ({
+  managedKimiLogin: mockLogin,
+  kimiAuthStatus: vi.fn(async () => ({ providers: [] })),
 }));
 
 import { runAcpServer } from '@moonshot-ai/acp-adapter';
@@ -28,9 +37,14 @@ class ExitCalled extends Error {
 describe('kimi acp', () => {
   let exitSpy: ReturnType<typeof vi.spyOn>;
   let stderrSpy: ReturnType<typeof vi.spyOn>;
+  let agentHome: string | undefined;
 
   beforeEach(() => {
     vi.mocked(runAcpServer).mockClear();
+    mockLogin.mockClear();
+    // `createAcpHarness` pins KIMI_AGENT_HOME for the native session store;
+    // snapshot it so the test process is left untouched.
+    agentHome = process.env['KIMI_AGENT_HOME'];
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number | string | null) => {
       throw new ExitCalled(code);
     }) as never);
@@ -40,6 +54,11 @@ describe('kimi acp', () => {
   afterEach(() => {
     exitSpy.mockRestore();
     stderrSpy.mockRestore();
+    if (agentHome === undefined) {
+      delete process.env['KIMI_AGENT_HOME'];
+    } else {
+      process.env['KIMI_AGENT_HOME'] = agentHome;
+    }
   });
 
   it('registers an `acp` subcommand on the program', () => {
@@ -130,37 +149,17 @@ describe('kimi acp', () => {
   });
 
   it('exits without starting the ACP server when --login is passed', async () => {
-    // Stub the harness module so runLoginFlow doesn't hit a real OAuth
-    // endpoint: harness.auth.login resolves immediately and triggers exit 0.
-    // `importOriginal` preserves the other named exports (`ErrorCodes`, etc.)
-    // that constant/app.ts depends on at module load.
-    const loginStub = vi.fn(async () => ({ providerName: 'kimi-code' }));
-    vi.doMock(import('@moonshot-ai/kimi-code-sdk'), async (importOriginal) => {
-      const actual = await importOriginal();
-      return {
-        ...actual,
-        createKimiHarness: () =>
-          ({
-            auth: { login: loginStub },
-          }) as unknown as ReturnType<typeof actual.createKimiHarness>,
-      };
-    });
-    vi.resetModules();
-    const { registerAcpCommand: freshRegister } = await import('#/cli/sub/acp');
-    try {
-      const program = new Command('kimi').exitOverride();
-      freshRegister(program);
+    // `managedKimiLogin` (stubbed at module level) resolves immediately and
+    // triggers exit 0 — the device flow never hits a real OAuth endpoint.
+    const program = new Command('kimi').exitOverride();
+    registerAcpCommand(program);
 
-      await expect(program.parseAsync(['node', 'kimi', 'acp', '--login'])).rejects.toThrow(
-        ExitCalled,
-      );
+    await expect(program.parseAsync(['node', 'kimi', 'acp', '--login'])).rejects.toThrow(
+      ExitCalled,
+    );
 
-      expect(loginStub).toHaveBeenCalledTimes(1);
-      expect(runAcpServer).not.toHaveBeenCalled();
-      expect(exitSpy).toHaveBeenCalledWith(0);
-    } finally {
-      vi.doUnmock('@moonshot-ai/kimi-code-sdk');
-      vi.resetModules();
-    }
+    expect(mockLogin).toHaveBeenCalledTimes(1);
+    expect(runAcpServer).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(0);
   });
 });

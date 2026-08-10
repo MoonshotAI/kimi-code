@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
     initializeCliTelemetry: vi.fn(),
     handleUpgrade: vi.fn(),
     flushDiagnosticLogs: vi.fn(),
+    resolveGlobalLogPath: vi.fn(),
     finalizeHeadlessRun: vi.fn(),
     log: {
       info: vi.fn(),
@@ -47,7 +48,6 @@ const mocks = vi.hoisted(() => {
       close: vi.fn(),
       track: vi.fn(),
     },
-    KimiHarness: vi.fn(),
     createKimiHarness: vi.fn(),
   };
 });
@@ -60,32 +60,15 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
   shutdownTelemetry: mocks.shutdownTelemetry,
 }));
 
-vi.mock('@moonshot-ai/kimi-code-sdk', async () => {
-  const actual = await vi.importActual<typeof import('@moonshot-ai/kimi-code-sdk')>(
-    '@moonshot-ai/kimi-code-sdk',
-  );
-  class MockKimiHarness {
-    readonly homeDir = mocks.harness.homeDir;
-    readonly ensureConfigFile = mocks.harness.ensureConfigFile;
-    readonly getConfig = mocks.harness.getConfig;
-    readonly close = mocks.harness.close;
-    readonly track = mocks.harness.track;
-
-    constructor(...args: unknown[]) {
-      mocks.KimiHarness(...args);
-    }
-  }
-  return {
-    ...actual,
-    createKimiHarness: (...args: unknown[]) => {
-      mocks.createKimiHarness(...args);
-      return mocks.harness;
-    },
-    flushDiagnosticLogs: mocks.flushDiagnosticLogs,
-    KimiHarness: MockKimiHarness,
-    log: mocks.log,
-  };
-});
+vi.mock('../../src/cli/main-local', () => ({
+  createKimiHarness: (...args: unknown[]) => {
+    mocks.createKimiHarness(...args);
+    return mocks.harness;
+  },
+  flushDiagnosticLogs: mocks.flushDiagnosticLogs,
+  log: mocks.log,
+  resolveGlobalLogPath: mocks.resolveGlobalLogPath,
+}));
 
 vi.mock('../../src/cli/telemetry', () => ({
   createCliTelemetryBootstrap: mocks.createCliTelemetryBootstrap,

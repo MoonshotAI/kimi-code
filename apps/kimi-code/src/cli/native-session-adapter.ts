@@ -23,7 +23,7 @@
  * (mirrors the print pilot's `auto`); wire `permissionMode: 'manual'` + a
  * handler for real gating.
  */
-import type { Event } from '@moonshot-ai/kimi-code-sdk';
+import type { Event } from './sdk-types-local';
 
 import type {
   EngineMcpServerInfo,

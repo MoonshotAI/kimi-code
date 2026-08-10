@@ -1022,7 +1022,7 @@ mod tests {
 
         // The projector path never mutated the shared map: the REST handler's
         // context (empty buffer — no N-fold delta accumulation) still awaits
-        // the async-submit 100ms fallback take_turn.
+        // the async-submit fallback take_turn.
         let ctx = shared.take_turn(sid).expect("ctx reserved for http.rs fallback");
         assert_eq!(ctx.buffer, "");
     }
@@ -1133,7 +1133,7 @@ mod tests {
 
         // The shared map is untouched by the projector path: the REST
         // handler's context (empty buffer — no N-fold accumulation) still
-        // awaits the async-submit 100ms fallback take_turn.
+        // awaits the async-submit fallback take_turn.
         let ctx = shared.take_turn("sess_1").expect("ctx not consumed by projectors");
         assert_eq!(ctx.buffer, "");
     }

@@ -1,14 +1,6 @@
 import os from 'node:os';
 
 import {
-  createKimiHarness,
-  log,
-  type Event,
-  type GoalSnapshot,
-  type SessionStatus,
-  type TelemetryClient,
-} from '@moonshot-ai/kimi-code-sdk';
-import {
   setCrashPhase,
   setTelemetryContext,
   shutdownTelemetry,
@@ -18,6 +10,7 @@ import {
 import chalk from 'chalk';
 import { resolve } from 'pathe';
 
+import { log } from '#/cli/update/local-logger';
 import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
 import { t } from '#/i18n';
 
@@ -30,9 +23,15 @@ import {
 } from './goal-prompt';
 import { resolveOutputFormat } from './options';
 import type { CLIOptions, PromptOutputFormat } from './options';
+import { createKimiHarness } from './prompt-harness-local';
 import { PromptJsonWriter, PromptTranscriptWriter, writeResumeHint } from './prompt-render';
 import type { PromptHarness, PromptSession } from './prompt-session';
-import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
+import type { Event, GoalSnapshot, SessionStatus } from './prompt-session-local';
+import {
+  createCliTelemetryBootstrap,
+  initializeCliTelemetry,
+  type TelemetryClient,
+} from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
 /**

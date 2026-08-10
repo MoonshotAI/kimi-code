@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { Command } from 'commander';
-import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiConfig } from '#/cli/sub/provider-local';
 
 import {
   handleCatalogAdd,

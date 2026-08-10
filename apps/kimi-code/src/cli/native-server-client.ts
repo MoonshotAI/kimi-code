@@ -15,7 +15,9 @@
  * with the TS host (G-6).
  *
  * The wire types and `map*` translation helpers were localized from
- * `node-sdk/src/rust/wire.ts` (2026-08-09, G-1 `/rust` consumption rewrite):
+ * `node-sdk/src/rust/wire.ts` (2026-08-09, G-1 `/rust` consumption rewrite);
+ * the SDK type annotations they carry now come from the local
+ * `./sdk-types-local` mirror (2026-08-10, G-1 host-side consumption rewrite):
  * hosts shape adapter signatures against them unchanged.
  */
 import type { ChildProcess } from 'node:child_process';
@@ -38,7 +40,7 @@ import type {
   SessionUsage,
   SkillSummary,
   ToolCall,
-} from '@moonshot-ai/kimi-code-sdk';
+} from './sdk-types-local';
 
 // ── Engine wire shapes (localized mirror of the generated RPC wire
 //    contract; serde snake_case) ─────────────────────────────────────────
@@ -508,7 +510,8 @@ export class NativeServerClient {
 }
 
 // ── Wire → SDK translation helpers (localized from node-sdk/rust/wire.ts;
-//    the engine reports snake_case, hosts consume the SDK's camelCase) ─────
+//    the engine reports snake_case, hosts consume the SDK's camelCase — now
+//    via the local `./sdk-types-local` type mirror) ─────────────────────────
 
 /** Extract the plain text of a prompt input; multimodal parts degrade to text. */
 export function promptText(input: string | readonly { type: string; text?: string }[]): string {

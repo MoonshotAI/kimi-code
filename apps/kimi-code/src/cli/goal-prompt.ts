@@ -1,4 +1,4 @@
-import type { GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
+import type { GoalSnapshot } from './sdk-types-local';
 import { t } from '#/i18n';
 import { parseGoalCommand } from '#/shared/goal-command';
 

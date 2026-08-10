@@ -6,9 +6,9 @@
  * a kimi-code session.
  *
  * Wire-up:
- *  - A {@link KimiHarness} is constructed with the kimi-code host identity
- *    and a dedicated `uiMode: 'acp'` so downstream telemetry can
- *    distinguish ACP sessions from the TUI.
+ *  - A local ACP harness ({@link createAcpHarness}, `acp-local.ts`) drives
+ *    native Rust engine sessions. It is the structural `KimiHarness` the
+ *    adapter consumes (auth gate, configOptions, session create/resume/list).
  *  - {@link runAcpServer} owns the JSON-RPC stdio bridge and redirects
  *    rogue `console.*` traffic to stderr.
  *  - `--login` pivots into the device-code login flow instead of
@@ -25,13 +25,13 @@ import type {
   AvailableCommand,
   SlashCommandsSnapshot,
 } from '@moonshot-ai/acp-adapter';
-import { createKimiHarness, type Session, type SkillSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
-import { createKimiCodeHostIdentity, getVersion } from '#/cli/version';
+import { getVersion } from '#/cli/version';
 import { t } from '#/i18n';
 import { buildSkillSlashCommands } from '#/shared/slash-command-skills';
 
+import { createAcpHarness, type Session, type SkillSummary } from './acp-local';
 import { runLoginFlow } from './login-flow';
 
 export function registerAcpCommand(parent: Command): void {
@@ -49,13 +49,9 @@ export function registerAcpCommand(parent: Command): void {
         return;
       }
       const { ACP_BUILTIN_SLASH_COMMANDS, runAcpServer } = await import('@moonshot-ai/acp-adapter');
-      const identity = createKimiCodeHostIdentity();
-      // ACP sessions run real turns; the SDK harness drives the Rust engine
-      // (no host-side runTurnOverride bridge needed).
-      const harness = createKimiHarness({
-        identity,
-        uiMode: 'acp',
-      });
+      // ACP sessions run real turns; the local harness drives the Rust
+      // engine (no host-side runTurnOverride bridge needed).
+      const harness = createAcpHarness();
       // Forward `KIMI_CODE_HOME` (if set) into `authMethods[0].env` so the
       // `kimi login` subprocess clients spawn for terminal-auth writes its
       // token under the same data root the ACP server reads from. Used for
@@ -111,14 +107,20 @@ export function registerAcpCommand(parent: Command): void {
         };
       };
       try {
-        await runAcpServer(harness, {
-          agentInfo: { name: 'Kimi Code CLI', version: getVersion() },
-          slashCommands: resolveSlashCommands,
-          ...(terminalAuthEnv ? { terminalAuthEnv } : {}),
-          ...(legacyCommand !== undefined && legacyCommand.length > 0
-            ? { terminalAuthLegacyCommand: legacyCommand }
-            : {}),
-        });
+        // The adapter's `KimiHarness` parameter is the SDK class shape; the
+        // local harness is a structural match for the runtime surface it
+        // consumes, so the boundary casts once here.
+        await runAcpServer(
+          harness as unknown as Parameters<typeof runAcpServer>[0],
+          {
+            agentInfo: { name: 'Kimi Code CLI', version: getVersion() },
+            slashCommands: resolveSlashCommands,
+            ...(terminalAuthEnv ? { terminalAuthEnv } : {}),
+            ...(legacyCommand !== undefined && legacyCommand.length > 0
+              ? { terminalAuthLegacyCommand: legacyCommand }
+              : {}),
+          },
+        );
         process.exit(0);
       } catch (error) {
         process.stderr.write(t('tui.statusMessages.acpFatalError', { error: String(error) }) + '\n');

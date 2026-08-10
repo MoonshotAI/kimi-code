@@ -16,15 +16,13 @@ import {
   resolveConfigPath,
   resolveKimiHome,
 } from '#/cli/runtime-config';
-import {
-  DEFAULT_AGENT_PROFILES,
-  loadMcpServers,
-  PluginManager,
-  prepareSystemPromptContext,
-} from '@moonshot-ai/kimi-code-sdk';
-import type { McpServerConfigEntry } from '@moonshot-ai/kimi-code-sdk';
 import { LocalKaos } from '@moonshot-ai/kaos';
+import { coderSystemPrompt } from './coder-profile-local';
+import type { McpServerConfigEntry } from './mcp-local';
+import { loadUserMcpServers } from './mcp-local';
 import type { HookDefInput, McpServerInput } from './native-server-client';
+import { PluginManager } from './plugin-local';
+import { prepareSystemPromptContext } from './system-prompt-local';
 
 interface NativeLlmDef {
   protocol: 'openai' | 'anthropic' | 'google';
@@ -149,18 +147,14 @@ export function mapMcpServerConfig(
  */
 export async function loadSessionMcpServers(
   homeDir?: string,
-  cwd?: string,
+  _cwd?: string,
 ): Promise<McpServerInput[]> {
   // Keyed by name so plugin runtime names (namespaced) and user names coexist;
   // on an unexpected collision the later source wins deterministically.
   const merged = new Map<string, McpServerInput>();
 
   try {
-    const servers = await loadMcpServers({
-      cwd: cwd ?? process.cwd(),
-      homeDir,
-      trustProjectMcpConfig: false,
-    });
+    const servers = await loadUserMcpServers(homeDir);
     for (const [name, config] of Object.entries(servers)) {
       merged.set(name, mapMcpServerConfig(name, config));
     }
@@ -234,12 +228,10 @@ export async function loadSessionSystemPrompt(
   cwd?: string,
 ): Promise<string | undefined> {
   try {
-    const profile = DEFAULT_AGENT_PROFILES['coder'];
-    if (profile === undefined) return undefined;
     const base = await LocalKaos.create();
     const kaos = cwd !== undefined ? base.withCwd(cwd) : base;
     const context = await prepareSystemPromptContext(kaos, homeDir);
-    return profile.systemPrompt({
+    return coderSystemPrompt({
       osEnv: kaos.osEnv,
       cwd: kaos.getcwd(),
       cwdListing: context.cwdListing,

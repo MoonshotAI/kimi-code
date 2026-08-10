@@ -3,26 +3,27 @@
  * subcommand) and `kimi acp --login` (the first-class ACP terminal-auth
  * entry point). Exiting the process is part of the contract — callers
  * MUST treat the returned promise as `Promise<never>`.
+ *
+ * The flow runs against the local managed kimi-code login (`login-local.ts`,
+ * ported from the SDK `KimiAuthFacade.login` device flow) and prints the
+ * device code / verification URL to stderr before opening the browser.
  */
-
-import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 import { createKimiCodeHostIdentity } from '#/cli/version';
 import { t } from '#/i18n';
 import { openUrl } from '#/utils/open-url';
 
+import { managedKimiLogin } from './login-local';
+
 export async function runLoginFlow(): Promise<never> {
   const identity = createKimiCodeHostIdentity();
-  const harness = createKimiHarness({
-    identity,
-    uiMode: 'cli',
-  });
   const controller = new AbortController();
   process.once('SIGINT', () => {
     controller.abort();
   });
   try {
-    const result = await harness.auth.login(undefined, {
+    const result = await managedKimiLogin({
+      identity,
       signal: controller.signal,
       onDeviceCode: (data) => {
         const url = data.verificationUriComplete || data.verificationUri;

@@ -20,7 +20,7 @@ import type {
   ExportSessionManifest,
   ExportSessionResult,
   SessionSummary,
-} from '@moonshot-ai/kimi-code-sdk';
+} from '#/cli/sub/export-local';
 
 let tmp: string;
 
@@ -60,30 +60,26 @@ vi.mock('#/cli/runtime-config', () => ({
   loadRuntimeConfigSafe: mocks.loadRuntimeConfigSafe,
 }));
 
-vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
-  return {
-    ...actual,
-    createKimiHarness: (...args: unknown[]) => {
-      const options = args[0] as { readonly homeDir?: string } | undefined;
-      const homeDir = options?.homeDir ?? '/tmp/kimi-export-home';
-      if (mocks.harnessCreatesDeviceIdOnConstruction) {
-        mocks.createKimiDeviceId(homeDir);
-      }
-      mocks.kimiHarnessConstructor(...args);
-      return {
-        homeDir,
-        auth: {
-          getCachedAccessToken: mocks.harnessGetCachedAccessToken,
-        },
-        ensureConfigFile: mocks.harnessEnsureConfigFile,
-        getConfig: mocks.harnessGetConfig,
-        track: mocks.harnessTrack,
-        exportSession: mocks.harnessExportSession,
-      };
-    },
-  };
-});
+vi.mock('#/cli/sub/export-local', () => ({
+  createKimiHarness: (...args: unknown[]) => {
+    const options = args[0] as { readonly homeDir?: string } | undefined;
+    const homeDir = options?.homeDir ?? '/tmp/kimi-export-home';
+    if (mocks.harnessCreatesDeviceIdOnConstruction) {
+      mocks.createKimiDeviceId(homeDir);
+    }
+    mocks.kimiHarnessConstructor(...args);
+    return {
+      homeDir,
+      auth: {
+        getCachedAccessToken: mocks.harnessGetCachedAccessToken,
+      },
+      ensureConfigFile: mocks.harnessEnsureConfigFile,
+      getConfig: mocks.harnessGetConfig,
+      track: mocks.harnessTrack,
+      exportSession: mocks.harnessExportSession,
+    };
+  },
+}));
 
 vi.mock('#/cli/oauth-local', async () => {
   const actual = await vi.importActual<typeof import('#/cli/oauth-local')>('#/cli/oauth-local');

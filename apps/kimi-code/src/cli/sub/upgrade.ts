@@ -1,7 +1,7 @@
-import { log, type Logger } from '@moonshot-ai/kimi-code-sdk';
 import { track as trackTelemetry, type TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
 
 import { t } from '#/i18n';
+import { log, type Logger } from '#/cli/update/local-logger';
 import { refreshUpdateCache } from '#/cli/update/refresh';
 import { selectUpdateTarget } from '#/cli/update/select';
 import { detectInstallSource } from '#/cli/update/source';

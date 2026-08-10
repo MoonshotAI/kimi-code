@@ -94,33 +94,29 @@ vi.mock('#/cli/runtime-config', () => ({
   loadRuntimeConfigSafe: mocks.loadRuntimeConfigSafe,
 }));
 
-vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
-  return {
-    ...actual,
-    createKimiHarness: (...args: unknown[]) => {
-      const options = args[0] as { readonly homeDir?: string } | undefined;
-      const homeDir = options?.homeDir ?? '/tmp/kimi-code-test-home';
-      if (mocks.harnessCreatesDeviceIdOnConstruction) {
-        mocks.createKimiDeviceId(homeDir);
-      }
-      mocks.kimiHarnessConstructor(...args);
-      return {
-        homeDir,
-        auth: { getCachedAccessToken: mocks.harnessGetCachedAccessToken },
-        ensureConfigFile: mocks.harnessEnsureConfigFile,
-        getConfig: mocks.harnessGetConfig,
-        getConfigDiagnostics: mocks.harnessGetConfigDiagnostics,
-        getExperimentalFeatures: mocks.harnessGetExperimentalFeatures,
-        createSession: mocks.harnessCreateSession,
-        resumeSession: mocks.harnessResumeSession,
-        listSessions: mocks.harnessListSessions,
-        close: mocks.harnessClose,
-        track: mocks.harnessTrack,
-      };
-    },
-  };
-});
+vi.mock('#/cli/prompt-harness-local', () => ({
+  createKimiHarness: (...args: unknown[]) => {
+    const options = args[0] as { readonly homeDir?: string } | undefined;
+    const homeDir = options?.homeDir ?? '/tmp/kimi-code-test-home';
+    if (mocks.harnessCreatesDeviceIdOnConstruction) {
+      mocks.createKimiDeviceId(homeDir);
+    }
+    mocks.kimiHarnessConstructor(...args);
+    return {
+      homeDir,
+      auth: { getCachedAccessToken: mocks.harnessGetCachedAccessToken },
+      ensureConfigFile: mocks.harnessEnsureConfigFile,
+      getConfig: mocks.harnessGetConfig,
+      getConfigDiagnostics: mocks.harnessGetConfigDiagnostics,
+      getExperimentalFeatures: mocks.harnessGetExperimentalFeatures,
+      createSession: mocks.harnessCreateSession,
+      resumeSession: mocks.harnessResumeSession,
+      listSessions: mocks.harnessListSessions,
+      close: mocks.harnessClose,
+      track: mocks.harnessTrack,
+    };
+  },
+}));
 
 vi.mock('#/cli/oauth-local', async () => {
   const actual = await vi.importActual<typeof KimiCodeOAuth>('#/cli/oauth-local');
