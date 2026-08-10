@@ -542,6 +542,28 @@ describe('reduceAppEvent sessions reference stability', () => {
     expect(next.sessions).toBe(state.sessions);
   });
 
+  it('carries the protocol status onto the message (G-2 #5)', () => {
+    // Regression: messageUpdated used to drop `status`, leaving streamed
+    // messages forever in their initial/pending state even after the Rust
+    // server projected the completed close-out.
+    const state = {
+      ...createInitialState(),
+      messagesBySession: { s1: [makeMessage('s1', '2026-01-01T00:00:00.000Z')] },
+    };
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'messageUpdated',
+        sessionId: 's1',
+        messageId: 'msg_2026-01-01T00:00:00.000Z',
+        content: [{ type: 'text', text: 'final' }],
+        status: 'completed',
+      },
+      { sessionId: 's1', seq: 2 },
+    );
+    expect(next.messagesBySession['s1']?.[0]?.status).toBe('completed');
+  });
+
   it('produces a new sessions array for an event that changes sessions', () => {
     const state = {
       ...createInitialState(),

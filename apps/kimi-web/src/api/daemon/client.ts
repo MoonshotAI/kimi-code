@@ -517,7 +517,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       query,
     );
     return {
-      items: data.items.map(toAppMessage),
+      items: data.items.map((m) => toAppMessage(m, 'completed')),
       hasMore: data.has_more,
     };
   }
@@ -537,8 +537,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
         asOfSeq: data.as_of_seq,
         epoch: data.epoch,
         session: toAppSession(data.session),
-        // Snapshot messages are already chronological ascending.
-        messages: data.messages.items.map(toAppMessage),
+        // Snapshot messages are already chronological ascending; they are
+        // completed history (live state comes from WS message.updated).
+        messages: data.messages.items.map((m) => toAppMessage(m, 'completed')),
         hasMoreMessages: data.messages.has_more,
         inFlightTurn:
           data.in_flight_turn === null

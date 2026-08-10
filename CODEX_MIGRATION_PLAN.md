@@ -210,7 +210,8 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 - [x] config snake_case 投影、wire_message_from_context 的 ContentPart→WireMessageContent 映射（think/tool_use/tool_result/image）、thinking_level 字段、usage/goal/turn.ended 事件投影（2026-08-10 复核：均已实现且有测试）
 - [x] **compaction 事件投影**（2026-08-10：`session.compaction.started` → `event.session.compaction_started`；引擎无完成事件，`session/compact` RPC resolve 判定）
 - [x] **tasks cancel 走 task 域**（2026-08-10：`task/cancel` 方法 + 处理器 + client typed；bg/stop 保留给后台任务）
-- [ ] code review 遗留：v1 #2（take_turn 100ms 与投影器竞争，慢客户端丢收尾）、#3（usage 事件被前端 turn.ended 全零覆盖——Rust 侧已投影真实 usage，剩余是 kimi-web 消费端）、#5（消息 status 恒 pending）、MINOR 批
+- [x] code review 遗留 v1 #2/#3/#5（2026-08-10 复核）：#2 take_turn 100ms 竞争 → 2000ms 宽限（5b073f396）；#3 usage 全零覆盖 → Rust 投影真实 usage + 前端 usageSeen 守卫 + mappers `event.session.usage_updated` 消费；#5 消息 status 恒 pending → eventReducer `messageUpdated` 传递 status + AppMessage.status 字段 + REST 快照默认 completed（kimi-web）
+- [ ] code review 遗留：MINOR 批（无原始记录，待复核）
 
 ## G-3 — CLI 消费面
 

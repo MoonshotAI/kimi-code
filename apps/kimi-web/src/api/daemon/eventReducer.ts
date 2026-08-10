@@ -521,6 +521,9 @@ export function reduceAppEvent(
           ...m,
           content: event.content,
           durationMs: event.durationMs ?? m.durationMs,
+          // The protocol projection carries the terminal state (G-2 #5);
+          // keep it instead of leaving the message stuck in 'pending'.
+          status: event.status ?? m.status,
         };
       });
       break;

@@ -170,6 +170,11 @@ export interface AppMessage {
   parentMessageId?: string;
   /** Client-side measured duration from turn.started to turn.ended (ms). */
   durationMs?: number;
+  /**
+   * Stream state: 'pending' while streaming, 'completed' at rest ('error'
+   * for failed turns). REST snapshot messages are completed history.
+   */
+  status?: 'pending' | 'completed' | 'error';
   metadata?: Record<string, unknown>;
 }
 

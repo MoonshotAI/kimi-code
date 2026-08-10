@@ -185,7 +185,7 @@ export function toAppMessageContent(wire: WireMessageContent): AppMessageContent
   }
 }
 
-export function toAppMessage(wire: WireMessage): AppMessage {
+export function toAppMessage(wire: WireMessage, status?: AppMessage['status']): AppMessage {
   return {
     id: wire.id,
     sessionId: wire.session_id,
@@ -195,6 +195,9 @@ export function toAppMessage(wire: WireMessage): AppMessage {
     promptId: wire.prompt_id,
     parentMessageId: wire.parent_message_id,
     metadata: wire.metadata,
+    // REST snapshot messages are completed history; live stream state comes
+    // from WS message.updated (G-2 #5). Pass 'completed' for snapshots.
+    ...(status !== undefined ? { status } : {}),
   };
 }
 
