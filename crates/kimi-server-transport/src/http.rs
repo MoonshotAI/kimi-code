@@ -1017,7 +1017,15 @@ async fn session_prompt_async(
         if response.get("error").is_some() {
             eprintln!("v1 prompt turn failed: {response}");
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Grace period before clearing the shared turn context. WS projectors
+        // snapshot it at `turn.started`; a slow/backlogged projector may only
+        // reach that event after the RPC returned, so the fallback must stay
+        // well past the last plausible turn.started processing (100ms was too
+        // tight — a lagging connection dropped the whole turn projection and
+        // left its messages stuck in `pending`). The projector path never
+        // deletes the context itself (per-connection consumers race), so this
+        // window is the only bound on the busy flag for REST-only clients.
+        tokio::time::sleep(std::time::Duration::from_millis(2_000)).await;
         let _ = v1.take_turn(&session_key);
     });
     Json(ok(json!({

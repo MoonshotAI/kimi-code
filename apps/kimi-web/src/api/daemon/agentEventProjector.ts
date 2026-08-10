@@ -116,6 +116,10 @@ interface SessionState {
   totalOutput: number;
   totalCacheRead: number;
   totalCacheCreate: number;
+  /** True once a step reported real usage — the turn-end usage snapshot is
+   *  only emitted then, so it never overwrites the authoritative
+   *  `event.session.usage_updated` projection with zeros (G-2 #3). */
+  usageSeen: boolean;
   contextTokens: number;
   contextLimit: number;
   turnCount: number;
@@ -145,6 +149,7 @@ function createSessionState(): SessionState {
     totalOutput: 0,
     totalCacheRead: 0,
     totalCacheCreate: 0,
+    usageSeen: false,
     contextTokens: 0,
     contextLimit: 0,
     turnCount: 0,
@@ -716,6 +721,9 @@ export function createAgentProjector(): AgentProjector {
         // Fresh turn → fresh step stream offsets.
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
+        // Per-turn usage gating (G-2 #3): only a turn that reported step
+        // usage may emit its end snapshot.
+        s.usageSeen = false;
         // Main-conversation liveness (the moon) keys off the main agent's turn
         // boundary directly — only main-agent frames reach this switch arm.
         out.push({ type: 'turnActiveChanged', sessionId, active: true });
@@ -927,6 +935,9 @@ export function createAgentProjector(): AgentProjector {
         s.totalOutput += u.output;
         s.totalCacheRead += u.cacheRead;
         s.totalCacheCreate += u.cacheCreate;
+        if (u.input > 0 || u.output > 0 || u.cacheRead > 0 || u.cacheCreate > 0) {
+          s.usageSeen = true;
+        }
 
         if (msgId) {
           finishAssistantMessage(s, msgId);
@@ -1004,8 +1015,15 @@ export function createAgentProjector(): AgentProjector {
         }
 
         s.turnCount++;
-        const usageSnapshot = buildUsageSnapshot(s);
-        out.push({ type: 'sessionUsageUpdated', sessionId, usage: usageSnapshot });
+        // Only emit the client-accumulated snapshot when this turn actually
+        // reported usage; otherwise the authoritative
+        // `event.session.usage_updated` projection (real engine numbers)
+        // would be clobbered with zeros (G-2 #3). The snapshot carries the
+        // client-side turnCount either way.
+        if (s.usageSeen) {
+          const usageSnapshot = buildUsageSnapshot(s);
+          out.push({ type: 'sessionUsageUpdated', sessionId, usage: usageSnapshot });
+        }
 
         // No busy projection here — see turn.started. The daemon's
         // `event.session.work_changed` flips the session busy fact.

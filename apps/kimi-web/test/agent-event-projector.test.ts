@@ -200,6 +200,7 @@ describe('session status single-sourcing', () => {
     const projector = createAgentProjector();
     projector.project('turn.started', { turnId: 1 }, 's1');
     projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
+    projector.project('turn.step.completed', { turnId: 1, step: 1, usage: { inputOther: 10, output: 5 } }, 's1');
     const events = projector.project(
       'turn.ended',
       { turnId: 1, reason: 'completed', durationMs: 123 },
@@ -210,6 +211,21 @@ describe('session status single-sourcing', () => {
       expect.objectContaining({ type: 'messageUpdated', status: 'completed', durationMs: 123 }),
     );
     expect(events).toContainEqual(expect.objectContaining({ type: 'sessionUsageUpdated' }));
+  });
+
+  it('turn.ended without step usage keeps the authoritative usage projection', () => {
+    // G-2 #3 regression: a turn that reported no step usage must not emit a
+    // zeroed usage snapshot that overwrites the engine's real
+    // `event.session.usage_updated` numbers.
+    const projector = createAgentProjector();
+    projector.project('turn.started', { turnId: 1 }, 's1');
+    projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
+    const events = projector.project(
+      'turn.ended',
+      { turnId: 1, reason: 'completed' },
+      's1',
+    );
+    expect(events.some((e) => e.type === 'sessionUsageUpdated')).toBe(false);
   });
 
   it('seedInFlight returns only the seeded message — status comes from the snapshot', () => {
