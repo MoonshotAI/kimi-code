@@ -1,7 +1,7 @@
 import type * as vscode from "vscode";
 import type { FileManager } from "../managers/file.manager";
 import type { BaselineManager } from "../managers/baseline.manager";
-import type { KimiHarness } from "@moonshot-ai/kimi-code-sdk";
+import type { LocalKimiHarness } from "../sdk-local/harness";
 import type { KimiRuntime } from "../runtime/kimi-runtime";
 import type { SessionRuntime } from "../runtime/session-runtime";
 
@@ -24,7 +24,7 @@ export interface HandlerContext {
   fileManager: FileManager;
   baselineManager: BaselineManager;
   runtime: KimiRuntime;
-  harness: KimiHarness;
+  harness: LocalKimiHarness;
   reloadWebview: () => void;
   showLogs: () => void;
   logError: (message: string, error: unknown) => void;

@@ -46,7 +46,8 @@ export interface UnknownBlock {
 export type DisplayBlock = BriefBlock | DiffBlock | TodoBlock | ShellBlock | UnknownBlock;
 
 export interface ToolCall {
-  type: 'function';
+  /** Legacy discriminator; the engine wire omits it (node-sdk parity). */
+  type?: 'function';
   id: string;
   function: { name: string; arguments?: string | null };
   extras?: Record<string, unknown> | null;

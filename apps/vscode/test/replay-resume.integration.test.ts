@@ -9,12 +9,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  createKimiHarness,
-  type Event,
-  type KimiHarness,
-  type Session,
-} from "@moonshot-ai/kimi-code-sdk";
+import { createLocalHarness, type LocalKimiHarness } from "../src/sdk-local/harness";
+import type { SessionLike } from "../src/sdk-local/session";
+import type { EngineEvent } from "../src/sdk-local/types";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -28,7 +25,7 @@ const MODEL_ALIAS = "vscode-replay-test";
 interface ReplayRig {
   readonly rootDir: string;
   readonly workDir: string;
-  readonly harness: KimiHarness;
+  readonly harness: LocalKimiHarness;
   readonly provider: FakeProviderHarness;
 }
 
@@ -44,7 +41,7 @@ async function createReplayRig(): Promise<ReplayRig> {
   const workDir = join(rootDir, "workspace");
   await Promise.all([mkdir(homeDir), mkdir(workDir)]);
   const provider = await createFakeProviderHarness();
-  const harness = createKimiHarness({
+  const harness = createLocalHarness({
     homeDir,
     identity: { userAgentProduct: "kimi-code-vscode", version: "test" },
   });
@@ -92,7 +89,7 @@ function completionChunk(
   };
 }
 
-async function runPrompt(session: Session, prompt: string): Promise<void> {
+async function runPrompt(session: SessionLike, prompt: string): Promise<void> {
   const ended = waitForEvent(
     session,
     (event) => event.type === "session.turn.ended" && event.agentId === "main",
@@ -102,9 +99,9 @@ async function runPrompt(session: Session, prompt: string): Promise<void> {
 }
 
 function waitForEvent(
-  session: Session,
-  predicate: (event: Event) => boolean,
-): Promise<Event> {
+  session: SessionLike,
+  predicate: (event: EngineEvent) => boolean,
+): Promise<EngineEvent> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       unsubscribe();

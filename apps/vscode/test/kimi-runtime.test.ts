@@ -5,28 +5,24 @@
  * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts test/kimi-runtime.test.ts
  */
 
+import type { LocalKimiHarness, CreateSessionOptions, ResumeSessionInput } from "../src/sdk-local/harness";
+import type { ApprovalHandler, QuestionHandler, SessionLike } from "../src/sdk-local/session";
 import type {
-  ApprovalHandler,
-  CreateSessionOptions,
-  Event,
+  EngineEvent,
   JsonObject,
-  KimiHarness,
   PermissionMode,
   PromptInput,
-  QuestionHandler,
-  ResumeSessionInput,
-  Session,
   SessionStatus,
   SessionSummary,
   ThinkingEffort,
-} from "@moonshot-ai/kimi-code-sdk";
+} from "../src/sdk-local/types";
 import { describe, expect, it } from "vitest";
 
 import { Events } from "../shared/bridge";
 import { KimiRuntime, type OpenSessionOptions } from "../src/runtime/kimi-runtime";
 
 interface FakeSessionBoundary {
-  readonly session: Session;
+  readonly session: SessionLike;
   readonly setModels: string[];
   readonly setThinkingEfforts: ThinkingEffort[];
   readonly setPermissions: PermissionMode[];
@@ -34,7 +30,7 @@ interface FakeSessionBoundary {
   readonly handlerInstallations: { approval: number; question: number };
   readonly subscriptionCount: () => number;
   readonly closeCount: () => number;
-  readonly emit: (event: Event) => void;
+  readonly emit: (event: EngineEvent) => void;
   readonly setPromptImpl: (impl: (input: string | PromptInput) => Promise<void>) => void;
 }
 
@@ -44,7 +40,7 @@ function createFakeSession(
   initial: Partial<SessionStatus> = {},
   metadata?: JsonObject,
 ): FakeSessionBoundary {
-  const listeners = new Set<(event: Event) => void>();
+  const listeners = new Set<(event: EngineEvent) => void>();
   const setModels: string[] = [];
   const setThinkingEfforts: ThinkingEffort[] = [];
   const setPermissions: PermissionMode[] = [];
@@ -86,7 +82,7 @@ function createFakeSession(
     setQuestionHandler(handler: QuestionHandler | undefined) {
       if (handler !== undefined) handlerInstallations.question += 1;
     },
-    onEvent(listener: (event: Event) => void) {
+    onEvent(listener: (event: EngineEvent) => void) {
       subscriptions += 1;
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -118,7 +114,7 @@ function createFakeSession(
     async close() {
       closes += 1;
     },
-  } as unknown as Session;
+  } as unknown as SessionLike;
 
   return {
     session,
@@ -129,7 +125,7 @@ function createFakeSession(
     handlerInstallations,
     subscriptionCount: () => subscriptions,
     closeCount: () => closes,
-    emit: (event: Event) => {
+    emit: (event: EngineEvent) => {
       for (const listener of [...listeners]) listener(event);
     },
     setPromptImpl: (impl) => {
@@ -139,7 +135,7 @@ function createFakeSession(
 }
 
 interface FakeHarnessBoundary {
-  readonly harness: KimiHarness;
+  readonly harness: LocalKimiHarness;
   readonly createInputs: CreateSessionOptions[];
   readonly resumeInputs: ResumeSessionInput[];
   readonly closeSessionIds: string[];
@@ -188,7 +184,7 @@ function createFakeHarness(
           thinkingEffort: options.thinking,
           permission: options.permission,
         },
-        options.metadata,
+        options.metadata as JsonObject | undefined,
       ).session;
     },
     async resumeSession(input: ResumeSessionInput) {
@@ -206,7 +202,7 @@ function createFakeHarness(
     async close() {
       closes += 1;
     },
-  } as unknown as KimiHarness;
+  } as unknown as LocalKimiHarness;
 
   return {
     harness,
@@ -594,7 +590,7 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       agentId: "main",
       sessionId: opened.id,
       turn_id: 7,
-    } as unknown as Event);
+    } as unknown as EngineEvent);
     expect(opened.isBusy).toBe(true);
 
     await expect(opened.prompt("concurrent message")).resolves.toEqual({ status: "failed" });
@@ -616,7 +612,7 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       turn_id: 7,
       stop_reason: "EndTurn",
       steps: 1,
-    } as unknown as Event);
+    } as unknown as EngineEvent);
     releaseTurn();
     await expect(first).resolves.toEqual({ status: "finished" });
     expect(opened.isBusy).toBe(false);
@@ -661,7 +657,7 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       agentId: "main",
       sessionId: opened.id,
       turn_id: 7,
-    } as unknown as Event);
+    } as unknown as EngineEvent);
 
     boundary.emit({
       type: "error",
@@ -669,7 +665,7 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       sessionId: opened.id,
       code: "records.write_failed",
       message: "Failed to write agent records: EACCES",
-    } as unknown as Event);
+    } as unknown as EngineEvent);
 
     // The turn is still running: no settlement, no terminal error on the wire.
     expect(opened.isBusy).toBe(true);
@@ -688,7 +684,7 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
       turn_id: 7,
       stop_reason: "EndTurn",
       steps: 1,
-    } as unknown as Event);
+    } as unknown as EngineEvent);
     releaseTurn();
     await expect(first).resolves.toEqual({ status: "finished" });
     expect(opened.isBusy).toBe(false);

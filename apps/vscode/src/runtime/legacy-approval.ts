@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { JsonObject, PermissionMode } from "@moonshot-ai/kimi-code-sdk";
+import type { JsonObject, PermissionMode } from "../sdk-local/types";
 
 export const LEGACY_APPROVAL_METADATA_KEY = "vscode_legacy_approval";
 

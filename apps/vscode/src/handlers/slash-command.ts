@@ -51,8 +51,9 @@ export async function runHostSlashCommand(
 ): Promise<boolean> {
   if (command.name.startsWith("skill:")) {
     const skillName = command.name.slice("skill:".length);
-    const result = await runtime.runTurnAction(command.raw, () =>
-      runtime.session.activateSkill(skillName, command.args || undefined));
+    const result = await runtime.runTurnAction(command.raw, async () => {
+      await runtime.session.activateSkill(skillName, command.args || undefined);
+    });
     return result.status === "finished";
   }
 
@@ -143,7 +144,7 @@ async function runPlanCommand(
   const subcommand = args.trim().toLowerCase();
   if (subcommand === "view") {
     const plan = await runtime.session.getPlan();
-    emit(plan?.content.trim() || "No plan file found for this session.");
+    emit(plan?.content?.trim() || "No plan file found for this session.");
     return;
   }
   if (subcommand === "clear") {
@@ -201,7 +202,7 @@ async function exportContext(
     sessionId: runtime.id,
     workDir: runtime.session.workDir,
     history: context.history,
-    tokenCount: context.tokenCount,
+    tokenCount: context.tokenCount ?? 0,
     now,
   });
   await mkdir(dirname(outputPath), { recursive: true });

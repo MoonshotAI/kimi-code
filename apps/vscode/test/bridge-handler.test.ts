@@ -23,13 +23,13 @@ const host = vi.hoisted(() => {
   };
   const harness = {
     homeDir: "/tmp/kimi-code-test-home",
-    close: vi.fn(async () => undefined),
+    close: vi.fn(async () => {}),
     getConfig: vi.fn(),
-    setConfig: vi.fn(async () => undefined),
+    setConfig: vi.fn(async () => {}),
     listSessions: vi.fn(async () => []),
     resumeSession: vi.fn(),
     forkSession: vi.fn(),
-    deleteSession: vi.fn(async () => undefined),
+    deleteSession: vi.fn(async () => {}),
   };
   const showWarningMessage = vi.fn(async () => undefined as string | undefined);
 
@@ -73,9 +73,9 @@ vi.mock("vscode", () => ({
   window: { showWarningMessage: host.showWarningMessage },
 }));
 
-vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@moonshot-ai/kimi-code-sdk")>();
-  return { ...original, createKimiHarness: () => host.harness };
+vi.mock("../src/sdk-local/harness", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../src/sdk-local/harness")>();
+  return { ...original, createLocalHarness: () => host.harness };
 });
 
 let bridge: BridgeHandler;
@@ -93,7 +93,7 @@ beforeEach(async () => {
   host.harness.getConfig.mockReset();
   host.harness.getConfig.mockResolvedValue({ models: {} });
   host.showWarningMessage.mockReset();
-  host.showWarningMessage.mockResolvedValue(undefined);
+  host.showWarningMessage.mockResolvedValue();
   workspaceState = { get: vi.fn((_key, fallback) => fallback), update: vi.fn() };
   bridge = new BridgeHandler(
     vi.fn(),
@@ -138,7 +138,7 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
   });
 
   it("cancels the view's runtime when aborting a chat", async () => {
-    const cancel = vi.fn(async () => undefined);
+    const cancel = vi.fn(async () => {});
     vi.spyOn(bridge.runtime, "getSessionForView").mockReturnValue({ cancel } as never);
 
     const result = await bridge.handle({ id: "rpc-1", method: Methods.AbortChat }, "view-1");
@@ -339,7 +339,7 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
   it("closes and removes a fork when its baseline cannot be materialized", async () => {
     const source = { id: "session-1", workDir: root, updatedAt: 123 };
     const target = { id: "session-2", workDir: root, updatedAt: 124 };
-    const close = vi.fn(async () => undefined);
+    const close = vi.fn(async () => {});
     host.harness.listSessions.mockResolvedValueOnce([source] as never);
     host.harness.forkSession.mockResolvedValueOnce({ summary: target, close });
     vi.spyOn(bridge.baselineManager, "materializeToFork").mockRejectedValueOnce(
@@ -514,7 +514,7 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
 });
 
 function createResumedSession(id: string, workDir: string) {
-  const close = vi.fn(async () => undefined);
+  const close = vi.fn(async () => {});
   const summary = {
     id,
     workDir,
@@ -558,10 +558,10 @@ function createResumedSession(id: string, workDir: string) {
       },
     }),
     getStatus: async () => ({ permission: "manual" }),
-    setPermission: async () => undefined,
-    updateMetadata: async () => undefined,
-    setApprovalHandler: () => undefined,
-    setQuestionHandler: () => undefined,
-    onEvent: () => () => undefined,
+    setPermission: async () => {},
+    updateMetadata: async () => {},
+    setApprovalHandler: () => {},
+    setQuestionHandler: () => {},
+    onEvent: () => () => {},
   };
 }

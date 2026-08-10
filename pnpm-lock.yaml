@@ -385,9 +385,6 @@ importers:
       '@moonshot-ai/i18n-shared':
         specifier: workspace:^
         version: link:../../packages/i18n-shared
-      '@moonshot-ai/kimi-code-sdk':
-        specifier: workspace:^
-        version: link:../../packages/node-sdk
       '@moonshot-ai/migration-legacy':
         specifier: workspace:^
         version: link:../../packages/migration-legacy

@@ -11,7 +11,7 @@ import type {
   ResumedAgentState,
   ResumedSessionState,
   ToolCall,
-} from "@moonshot-ai/kimi-code-sdk";
+} from "../src/sdk-local/types";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -20,7 +20,7 @@ import {
   replayToWebviewEvents,
 } from "../src/runtime/replay-adapter";
 
-type ReplayMessage = Extract<AgentReplayRecord, { type: "message" }>["message"];
+type ReplayMessage = NonNullable<AgentReplayRecord["message"]>;
 
 function message(
   role: ReplayMessage["role"],
@@ -274,9 +274,7 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
       record(
         message("assistant", [], {
           toolCalls: [
-            {
-              type: "function",
-              id: "tool-1",
+            { id: "tool-1",
               name: "Read",
               arguments: '{"path":"README.md"}',
             },
@@ -288,9 +286,7 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
 
     expect(events).toContainEqual({
       type: "ToolCall",
-      payload: {
-        type: "function",
-        id: "tool-1",
+      payload: { id: "tool-1",
         function: { name: "ReadFile", arguments: '{"path":"README.md"}' },
       },
       _sessionId: "session-1",
@@ -511,14 +507,14 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
     const main = resumedAgent([
       record(message("user", [{ type: "text", text: "First" }], { origin: { kind: "user" } }), 1),
       record(message("assistant", [], {
-        toolCalls: [{ type: "function", id: "agent-call-1", name: "Agent", arguments: "{}" }],
+        toolCalls: [{ id: "agent-call-1", name: "Agent", arguments: "{}" }],
       }), 2),
       record(message("tool", [{ type: "text", text: "agent_id: sub-1\nstatus: completed" }], {
         toolCallId: "agent-call-1",
       }), 5),
       record(message("user", [{ type: "text", text: "Second" }], { origin: { kind: "user" } }), 10),
       record(message("assistant", [], {
-        toolCalls: [{ type: "function", id: "agent-call-2", name: "Agent", arguments: "{}" }],
+        toolCalls: [{ id: "agent-call-2", name: "Agent", arguments: "{}" }],
       }), 11),
       record(message("tool", [{ type: "text", text: "agent_id: sub-1\nstatus: completed" }], {
         toolCallId: "agent-call-2",

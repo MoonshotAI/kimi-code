@@ -1,10 +1,6 @@
 import * as vscode from "vscode";
-import {
-  effectiveModelAlias,
-  type KimiConfig as SdkKimiConfig,
-  type ModelAlias,
-  type ThinkingEffort,
-} from "@moonshot-ai/kimi-code-sdk";
+import { effectiveModelAlias } from "../sdk-local/model-alias";
+import type { KimiConfig as SdkKimiConfig, ModelAlias, ThinkingEffort } from "../sdk-local/types";
 
 import { Methods } from "../../shared/bridge";
 import type {
@@ -141,7 +137,7 @@ function toWebviewModel(id: string, model: ModelAlias): ModelConfig {
   return {
     id,
     name: effective.displayName ?? effective.model ?? id,
-    provider: effective.provider,
+    provider: effective.provider ?? "",
     capabilities: [...(effective.capabilities ?? [])],
     adaptive_thinking: effective.adaptiveThinking,
     support_efforts:

@@ -1,9 +1,4 @@
-import type {
-  ContentPart,
-  ContextMessage,
-  PromptOrigin,
-  ToolCall,
-} from "@moonshot-ai/kimi-code-sdk";
+import type { ContentPart, ContextMessage, PromptOrigin, ToolCall } from "../sdk-local/types";
 
 const INTERNAL_ORIGINS = new Set<PromptOrigin["kind"]>([
   "injection",
@@ -196,6 +191,7 @@ function formatPartMarkdown(part: ContentPart): string {
     case "image_url": return "[image]";
     case "audio_url": return "[audio]";
     case "video_url": return "[video]";
+    case "encrypted": return "[encrypted]";
   }
 }
 

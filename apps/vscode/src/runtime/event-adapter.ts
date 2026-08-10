@@ -1,4 +1,4 @@
-import type { Event } from '@moonshot-ai/kimi-code-sdk';
+import type { EngineEvent } from '../sdk-local/types';
 
 import type { LegacyWireEvent, StatusUpdate, TurnBegin } from '../../shared/legacy-sdk';
 import type { ErrorPhase, UIStreamEvent } from '../../shared/types';
@@ -49,7 +49,7 @@ export function createEventAdapterState(): EventAdapterState {
  */
 export function adaptSdkEvent(
   state: EventAdapterState,
-  sdkEvent: Event,
+  sdkEvent: EngineEvent,
   options: AdaptSdkEventOptions = {},
 ): EventAdapterResult {
   const mainAgentId = options.mainAgentId ?? DEFAULT_MAIN_AGENT_ID;
@@ -79,8 +79,8 @@ export function adaptSdkEvent(
         key: `${sdkEvent.sessionId}:${sdkEvent.agentId}:${sdkEvent.turn_id}`,
         sessionId: sdkEvent.sessionId,
         agentId: sdkEvent.agentId,
-        turnId: sdkEvent.turn_id,
-        reason: mapStopReason(sdkEvent.stop_reason),
+        turnId: sdkEvent.turn_id ?? 0,
+        reason: mapStopReason(sdkEvent.stop_reason ?? ''),
       },
     };
   }
@@ -91,9 +91,9 @@ export function adaptSdkEvent(
       state,
       event: {
         type: 'error',
-        code: sdkEvent.code,
-        message: sdkEvent.message,
-        detail: serializeDetails(sdkEvent.details),
+        code: sdkEvent.code ?? 'internal',
+        message: sdkEvent.message ?? '',
+        detail: serializeDetails(sdkEvent.details as Record<string, unknown> | undefined),
         phase: options.errorPhase ?? 'runtime',
         _sessionId: sdkEvent.sessionId,
       },
@@ -133,7 +133,7 @@ interface MappedLegacyWireEvent {
 
 function mapEngineEvent(
   state: EventAdapterState,
-  sdkEvent: Event,
+  sdkEvent: EngineEvent,
 ): MappedLegacyWireEvent {
   switch (sdkEvent.type) {
     case 'llm.step.begin':
@@ -143,13 +143,13 @@ function mapEngineEvent(
       };
     case 'llm.delta': {
       const part = sdkEvent.part;
-      if (part.type === 'text' && part.text !== undefined && part.text.length > 0) {
+      if (part !== undefined && part.type === 'text' && part.text !== undefined && part.text.length > 0) {
         return {
           state,
           event: { type: 'ContentPart', payload: { type: 'text', text: part.text } },
         };
       }
-      if (part.type === 'think' && part.think !== undefined && part.think.length > 0) {
+      if (part !== undefined && part.type === 'think' && part.think !== undefined && part.think.length > 0) {
         return {
           state,
           event: { type: 'ContentPart', payload: { type: 'think', think: part.think } },
@@ -181,7 +181,7 @@ function mapEngineEvent(
             type: 'function',
             id: sdkEvent.tool_call_id,
             function: {
-              name: toLegacyToolName(sdkEvent.tool_name),
+              name: toLegacyToolName(sdkEvent.tool_name ?? ''),
               arguments: serializeArguments(sdkEvent.arguments),
             },
           },

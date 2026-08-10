@@ -5,18 +5,16 @@
  * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts apps/vscode/test/session-runtime.test.ts
  */
 
+import type { SessionLike, ApprovalHandler, QuestionHandler } from "../src/sdk-local/session";
 import type {
-  ApprovalHandler,
   ApprovalRequest,
-  Event,
+  EngineEvent,
   JsonObject,
   PermissionMode,
   PromptInput,
-  QuestionHandler,
   QuestionRequest,
-  Session,
   SessionSummary,
-} from "@moonshot-ai/kimi-code-sdk";
+} from "../src/sdk-local/types";
 import { describe, expect, it } from "vitest";
 
 import { Events } from "../shared/bridge";
@@ -36,7 +34,7 @@ interface BaselineRecord {
 }
 
 interface FakeSessionBoundary {
-  readonly session: Session;
+  readonly session: SessionLike;
   readonly promptInputs: Array<string | PromptInput>;
   readonly steerInputs: Array<string | PromptInput>;
   readonly handlerInstallations: { approval: number; question: number };
@@ -46,7 +44,7 @@ interface FakeSessionBoundary {
   readonly cancelCount: () => number;
   readonly cancelCompactionCount: () => number;
   readonly closeCount: () => number;
-  emit(event: Event): void;
+  emit(event: EngineEvent): void;
   rejectNextPrompt(error: Error): void;
   rejectNextMetadataUpdate(error: Error): void;
   requestApproval(request: ApprovalRequest): Promise<Awaited<ReturnType<ApprovalHandler>>>;
@@ -56,7 +54,7 @@ interface FakeSessionBoundary {
 const DEFAULT_LEGACY_APPROVAL: LegacyApprovalFlags = { yolo: false, afk: false };
 
 function createFakeSession(): FakeSessionBoundary {
-  const listeners = new Set<(event: Event) => void>();
+  const listeners = new Set<(event: EngineEvent) => void>();
   const promptInputs: Array<string | PromptInput> = [];
   const steerInputs: Array<string | PromptInput> = [];
   const handlerInstallations = { approval: 0, question: 0 };
@@ -93,7 +91,7 @@ function createFakeSession(): FakeSessionBoundary {
       questionHandler = handler;
       if (handler !== undefined) handlerInstallations.question += 1;
     },
-    onEvent(listener: (event: Event) => void) {
+    onEvent(listener: (event: EngineEvent) => void) {
       subscriptions += 1;
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -140,7 +138,7 @@ function createFakeSession(): FakeSessionBoundary {
     async close() {
       closes += 1;
     },
-  } as unknown as Session;
+  } as unknown as SessionLike;
 
   return {
     session,
@@ -194,7 +192,7 @@ function streamData(records: readonly BroadcastRecord[]): unknown[] {
   return records.filter((record) => record.event === Events.StreamEvent).map((record) => record.data);
 }
 
-function turnStarted(): Event {
+function turnStarted(): EngineEvent {
   return {
     type: "session.turn.started",
     sessionId: "session-1",
@@ -203,7 +201,7 @@ function turnStarted(): Event {
   };
 }
 
-function turnEnded(stopReason: string): Event {
+function turnEnded(stopReason: string): EngineEvent {
   return {
     type: "session.turn.ended",
     sessionId: "session-1",

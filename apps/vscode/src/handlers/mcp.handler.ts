@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { McpServerConfig as SdkMcpServerConfig, McpTestResult } from "@moonshot-ai/kimi-code-sdk";
+import type { McpServerConfig as SdkMcpServerConfig, McpTestResult } from "../sdk-local/types";
 
 import { Events, Methods } from "../../shared/bridge";
 import {
@@ -282,7 +282,7 @@ async function updateOrRenameServer(
   try {
     return await harness.removeMcpServer(originalName);
   } catch (error) {
-    await harness.removeMcpServer(next.name).catch(() => undefined);
+    await harness.removeMcpServer(next.name).catch(() => {});
     throw error;
   }
 }

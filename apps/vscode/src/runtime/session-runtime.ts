@@ -1,11 +1,6 @@
-import {
-  isKimiError,
-  type ContentPart as SdkContentPart,
-  type Event,
-  type PromptInput,
-  type Session,
-  type SessionSummary,
-} from "@moonshot-ai/kimi-code-sdk";
+import { isKimiError } from "../sdk-local/errors";
+import type { SessionLike } from "../sdk-local/session";
+import type { ContentPart as SdkContentPart, EngineEvent, PromptInput, SessionSummary } from "../sdk-local/types";
 
 import type { ContentPart as LegacyContentPart, ApprovalResponse } from "../../shared/legacy-sdk";
 import { Events } from "../../shared/bridge";
@@ -27,7 +22,7 @@ import { ReverseRpcController } from "./reverse-rpc";
 export type RuntimeBroadcast = (event: string, data: unknown, webviewId?: string) => void;
 
 export interface SessionRuntimeOptions {
-  readonly session: Session;
+  readonly session: SessionLike;
   readonly legacyApproval: LegacyApprovalFlags;
   readonly broadcast: RuntimeBroadcast;
   readonly captureBaseline: (
@@ -63,7 +58,7 @@ interface PendingHostCompaction {
  * handler or duplicating streamed events.
  */
 export class SessionRuntime {
-  readonly session: Session;
+  readonly session: SessionLike;
 
   private readonly broadcast: RuntimeBroadcast;
   private readonly captureBaseline: SessionRuntimeOptions["captureBaseline"];
@@ -429,7 +424,7 @@ export class SessionRuntime {
       await this.session.updateMetadata(legacyApprovalMetadata(flags));
     } catch (error) {
       if (permissionChanged) {
-        await this.session.setPermission(status.permission).catch((rollbackError: unknown) => {
+        await this.session.setPermission(status.permission ?? "manual").catch((rollbackError: unknown) => {
           this.log("Failed to restore session permission after a metadata error", rollbackError);
         });
       }
@@ -438,7 +433,7 @@ export class SessionRuntime {
     this.legacyApproval = flags;
   }
 
-  private onSdkEvent(event: Event): void {
+  private onSdkEvent(event: EngineEvent): void {
     if (this.closed) return;
 
     if (event.type === 'session.turn.started' && event.agentId === 'main' && this.activePrompt !== undefined) {
@@ -477,7 +472,8 @@ export class SessionRuntime {
     }
   }
 
-  private captureFileBaseline(event: Extract<Event, { type: 'session.tool.started' }>): void {
+  private captureFileBaseline(event: EngineEvent): void {
+    if (event.type !== 'session.tool.started') return;
     if (event.tool_name !== 'Write' && event.tool_name !== 'Edit') return;
     if (!isRecord(event.arguments)) return;
     const filePath = event.arguments['path'];

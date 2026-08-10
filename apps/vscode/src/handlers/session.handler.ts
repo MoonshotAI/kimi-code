@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import type { SessionSummary } from "@moonshot-ai/kimi-code-sdk";
+import type { SessionSummary } from "../sdk-local/types";
 
 import { Events, Methods } from "../../shared/bridge";
 import type { SessionInfo } from "../../shared/legacy-sdk";

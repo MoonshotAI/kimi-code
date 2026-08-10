@@ -10,7 +10,8 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Event, Session } from "@moonshot-ai/kimi-code-sdk";
+import type { SessionLike } from "../src/sdk-local/session";
+import type { EngineEvent } from "../src/sdk-local/types";
 import type * as vscode from "vscode";
 import { Methods } from "../shared/bridge";
 import { BridgeHandler } from "../src/bridge-handler";
@@ -133,11 +134,11 @@ vi.mock("vscode", () => ({
   },
 }));
 
-vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@moonshot-ai/kimi-code-sdk")>();
+vi.mock("../src/sdk-local/harness", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../src/sdk-local/harness")>();
   return {
     ...original,
-    createKimiHarness: () => ({
+    createLocalHarness: () => ({
       homeDir: "/tmp/kimi-code-test-home",
       close: vi.fn(),
     }),
@@ -290,19 +291,19 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     await writeFile(outside, "secret");
     await symlink(outside, linkedFile);
     const bridge = createBridge();
-    let emit!: (event: Event) => void;
+    let emit!: (event: EngineEvent) => void;
     const session = {
       id: "session-1",
       workDir,
       summary: { id: "session-1", workDir },
       setApprovalHandler: vi.fn(),
       setQuestionHandler: vi.fn(),
-      onEvent(listener: (event: Event) => void) {
+      onEvent(listener: (event: EngineEvent) => void) {
         emit = listener;
         return vi.fn();
       },
       close: vi.fn(),
-    } as unknown as Session;
+    } as unknown as SessionLike;
     const runtime = new SessionRuntime({
       session,
       legacyApproval: { yolo: false, afk: false },

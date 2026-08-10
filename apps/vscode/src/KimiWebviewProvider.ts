@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { KimiHarness } from "@moonshot-ai/kimi-code-sdk";
+import type { LocalKimiHarness } from "./sdk-local/harness";
 import { Events } from "../shared/bridge";
 import { BridgeHandler } from "./bridge-handler";
 
@@ -35,7 +35,7 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
     return this.bridgeHandler.dispose();
   }
 
-  get harness(): KimiHarness {
+  get harness(): LocalKimiHarness {
     return this.bridgeHandler.runtime.harness;
   }
 

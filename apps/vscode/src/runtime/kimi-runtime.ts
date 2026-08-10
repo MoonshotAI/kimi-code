@@ -1,10 +1,6 @@
-import {
-  createKimiHarness,
-  type KimiHarness,
-  type Session,
-  type SessionSummary,
-  type ThinkingEffort,
-} from "@moonshot-ai/kimi-code-sdk";
+import { createLocalHarness, type LocalKimiHarness } from "../sdk-local/harness";
+import type { SessionLike } from "../sdk-local/session";
+import type { SessionSummary, ThinkingEffort } from "../sdk-local/types";
 
 import type { RuntimeBroadcast } from "./session-runtime";
 import {
@@ -28,7 +24,7 @@ export interface KimiRuntimeOptions {
   ) => void;
   readonly log: (message: string, error?: unknown) => void;
   readonly homeDir?: string;
-  readonly harness?: KimiHarness;
+  readonly harness?: LocalKimiHarness;
 }
 
 export interface OpenSessionOptions {
@@ -42,7 +38,7 @@ export interface OpenSessionOptions {
 
 /** Extension-host owner for one in-process Node SDK harness. */
 export class KimiRuntime {
-  readonly harness: KimiHarness;
+  readonly harness: LocalKimiHarness;
 
   private readonly broadcast: RuntimeBroadcast;
   private readonly captureBaseline: KimiRuntimeOptions["captureBaseline"];
@@ -57,7 +53,7 @@ export class KimiRuntime {
     this.log = options.log;
     this.harness =
       options.harness ??
-      createKimiHarness({
+      createLocalHarness({
         ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
         identity: {
           userAgentProduct: "kimi-code-vscode",
@@ -136,7 +132,7 @@ export class KimiRuntime {
 
   async attachResumedSession(
     webviewId: string,
-    session: Session,
+    session: SessionLike,
     defaultYoloMode = false,
   ): Promise<SessionRuntime> {
     const existing = this.sessions.get(session.id);
@@ -221,7 +217,7 @@ export class KimiRuntime {
     await this.harness.close();
   }
 
-  private wrapSession(session: Session, legacyApproval: LegacyApprovalFlags): SessionRuntime {
+  private wrapSession(session: SessionLike, legacyApproval: LegacyApprovalFlags): SessionRuntime {
     const runtime = new SessionRuntime({
       session,
       legacyApproval,
@@ -234,7 +230,7 @@ export class KimiRuntime {
   }
 
   private async readMigratedLegacyApproval(
-    session: Session,
+    session: SessionLike,
   ): Promise<LegacyApprovalFlags | undefined> {
     const metadata = session.summary?.metadata;
     try {
@@ -251,7 +247,7 @@ export class KimiRuntime {
 }
 
 async function applySessionSettings(
-  session: Session,
+  session: SessionLike,
   options: OpenSessionOptions,
   legacyApproval: LegacyApprovalFlags,
 ): Promise<void> {
@@ -275,7 +271,7 @@ function flagsDiffer(a: LegacyApprovalFlags, b: LegacyApprovalFlags): boolean {
   return a.yolo !== b.yolo || a.afk !== b.afk;
 }
 
-function assertSessionWorkDir(session: Pick<Session, "workDir">, expectedWorkDir: string): void {
+function assertSessionWorkDir(session: Pick<SessionLike, "workDir">, expectedWorkDir: string): void {
   if (!areSameFsPath(session.workDir, expectedWorkDir)) {
     throw new Error("The selected session belongs to a different working directory.");
   }

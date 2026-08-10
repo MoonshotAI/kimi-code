@@ -9,10 +9,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  createKimiHarness,
-  type KimiHarness,
-} from "@moonshot-ai/kimi-code-sdk";
+import { createLocalHarness, type LocalKimiHarness } from "../src/sdk-local/harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("vscode", () => ({
@@ -71,7 +68,7 @@ interface RuntimeRig {
 }
 
 interface McpHandlerRig {
-  readonly harness: KimiHarness;
+  readonly harness: LocalKimiHarness;
   readonly broadcasts: BroadcastRecord[];
   readonly logs: LogRecord[];
 }
@@ -138,8 +135,8 @@ async function createRuntimeRig(extraAliases: readonly string[] = []): Promise<R
   };
 }
 
-async function createPlainHarness(homeDir: string): Promise<KimiHarness> {
-  const harness = createKimiHarness({
+async function createPlainHarness(homeDir: string): Promise<LocalKimiHarness> {
+  const harness = createLocalHarness({
     homeDir,
     identity: { userAgentProduct: "kimi-code-cli", version: "test" },
   });
@@ -1162,7 +1159,13 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     const command = runSlash(runtime, "/compact keep decisions");
     expect(runtime.isBusy).toBe(true);
 
-    await expect(command).rejects.toThrow(/Compaction is unavailable/);
+    // The local harness derives a native LLM from the test provider, so the
+    // engine's summarizer path engages and fails on the (tiny) context —
+    // "no safe split point" — instead of the no-delegate `compaction.unable`
+    // error a host without any native LLM sees. Either surface is acceptable.
+    await expect(command).rejects.toThrow(
+      /No safe compaction split point|Compaction is unavailable/,
+    );
     expect(runtime.isBusy).toBe(false);
   });
 
@@ -1338,12 +1341,14 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     // The Rust stdio RPC channel has no error-code lane: provider failures
     // surface as internal errors with the detail in the message. Assert the
     // phase + detail instead of the retired provider.connection_error code.
+    // The engine's reqwest transport reports `error sending request for url`
+    // (not the node-fetch "fetch failed" wording of the retired stack).
     expect(streamEvents(rig.broadcasts)).toContainEqual(
       expect.objectContaining({
         type: "error",
         code: "internal",
         phase: "runtime",
-        detail: expect.stringContaining("fetch failed"),
+        detail: expect.stringMatching(/error sending request|fetch failed/),
       }),
     );
   });

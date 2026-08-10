@@ -5,7 +5,7 @@ import type {
   ApprovalResponse as CoreApprovalResponse,
   QuestionRequest,
   QuestionResult,
-} from "@moonshot-ai/kimi-code-sdk";
+} from "../sdk-local/types";
 
 import type { ApprovalResponse, QuestionRequest as LegacyQuestionRequest } from "../../shared/legacy-sdk";
 import { describeToolDisplay, toLegacyDisplay } from "./tool-display";
