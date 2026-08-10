@@ -6,14 +6,18 @@ import {
   applyManagedKimiCodeLogoutConfig,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
+  OAuthConnectionError,
+  OAuthUnauthorizedError,
   resolveKimiCodeLoginAuth,
   resolveKimiCodeRuntimeAuth,
+  RetryableRefreshError,
   type BearerTokenProvider,
   type KimiHostIdentity,
   type KimiOAuthLoginOptions,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 
+import { ErrorCodes, KimiError } from '../../errors';
 import type { IEnvironmentService } from '../environment/environment';
 
 type ServicesManagedConfig = KimiConfig & ManagedKimiConfigShape;
@@ -125,10 +129,25 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
     providerName: string,
     oauthRef?: OAuthRef | undefined,
   ): BearerTokenProvider => {
-    return this.toolkit.tokenProvider(
+    const provider = this.toolkit.tokenProvider(
       providerName,
       this.runtimeOAuthRef(providerName, oauthRef),
     );
+    // Classify OAuth token failures into the public KimiError protocol so the
+    // turn surfaces `auth.login_required` / `provider.connection_error` instead
+    // of collapsing everything to `internal`. Without this, a transport failure
+    // (e.g. auth host connect timeout during a long task) propagates as a raw
+    // `OAuthConnectionError` and serializes as `[internal]`, losing the
+    // retryable flag and the dedicated pause reason.
+    return {
+      getAccessToken: async (options) => {
+        try {
+          return await provider.getAccessToken(options);
+        } catch (error) {
+          throw mapOAuthTokenError(error, providerName) ?? error;
+        }
+      },
+    };
   };
 
   private resolveManagedAuth(providerName?: string | undefined): {
@@ -175,4 +194,33 @@ export function createManagedAuthFacade(
   identity?: KimiHostIdentity,
 ): ServicesAuthFacade {
   return new ServicesManagedAuthFacade(env, identity);
+}
+
+/**
+ * Classify an OAuth token-fetch failure into the public {@link KimiError}
+ * protocol so callers (turn serialization, SDK clients) can react on `code`
+ * rather than on class identity.
+ *
+ * Mirrors `mapOAuthTokenError` in `@moonshot-ai/kimi-code-sdk`; kept local
+ * because agent-core cannot import the SDK (the dependency direction is
+ * reversed). Only positively-identified errors are mapped — the rest return
+ * `undefined` so the caller rethrows raw and surfaces as `internal`, which is
+ * correct for genuinely unrecognized failures (e.g. storage or lock errors).
+ */
+function mapOAuthTokenError(error: unknown, providerName: string): KimiError | undefined {
+  if (error instanceof OAuthUnauthorizedError) {
+    return new KimiError(
+      ErrorCodes.AUTH_LOGIN_REQUIRED,
+      `OAuth provider "${providerName}" requires login before it can be used.`,
+      { cause: error },
+    );
+  }
+  if (error instanceof OAuthConnectionError || error instanceof RetryableRefreshError) {
+    return new KimiError(
+      ErrorCodes.PROVIDER_CONNECTION_ERROR,
+      `OAuth provider "${providerName}" failed to fetch an access token: ${error.message}`,
+      { cause: error },
+    );
+  }
+  return undefined;
 }

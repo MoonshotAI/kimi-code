@@ -20,7 +20,10 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
   kimiCodeBaseUrl,
+  OAuthConnectionError,
   OAuthError,
+  OAuthUnauthorizedError,
+  RetryableRefreshError,
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
   fetchManagedKimiCodeModels,
@@ -47,6 +50,8 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2, ErrorCodes } from '#/errors';
+import { AuthErrors } from '#/app/auth/errors';
+import { ProtocolErrors } from '#/kosong/protocol/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
@@ -261,7 +266,25 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined {
-    return this.toolkit.tokenProvider(provider, this.resolveRuntimeOAuthRef(provider, oauthRef));
+    const tokenProvider = this.toolkit.tokenProvider(
+      provider,
+      this.resolveRuntimeOAuthRef(provider, oauthRef),
+    );
+    // Classify OAuth token failures into coded `Error2`s at the auth-domain
+    // boundary (`_base/errors` deliberately never imports a business domain, so
+    // the translation must happen here — see `_base/errors/serialize.ts`).
+    // Without this, a transport failure (e.g. auth host connect timeout during
+    // a long task) propagates as a raw `OAuthConnectionError` and serializes as
+    // `[internal]`, losing the retryable flag and the connection pause reason.
+    return {
+      getAccessToken: async (options) => {
+        try {
+          return await tokenProvider.getAccessToken(options);
+        } catch (error) {
+          throw classifyOAuthTokenError(error, provider) ?? error;
+        }
+      },
+    };
   }
 
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined> {
@@ -857,6 +880,31 @@ function managedModel(
   alias: string,
 ): ManagedModel | undefined {
   return config.models?.[alias] as ManagedModel | undefined;
+}
+
+/**
+ * Classify an OAuth token-fetch failure into a coded `Error2` at the auth-
+ * domain boundary, so the turn serializes a precise code (`auth.login_required`
+ * / `provider.connection_error`) instead of the catch-all `internal`. Only
+ * positively-identified errors are mapped; the rest return `undefined` so the
+ * caller rethrows raw.
+ */
+function classifyOAuthTokenError(error: unknown, provider: string): Error2 | undefined {
+  if (error instanceof OAuthUnauthorizedError) {
+    return new Error2(
+      AuthErrors.codes.AUTH_LOGIN_REQUIRED,
+      `OAuth provider "${provider}" requires login before it can be used.`,
+      { cause: error },
+    );
+  }
+  if (error instanceof OAuthConnectionError || error instanceof RetryableRefreshError) {
+    return new Error2(
+      ProtocolErrors.codes.PROVIDER_CONNECTION_ERROR,
+      `OAuth provider "${provider}" failed to fetch an access token: ${error.message}`,
+      { cause: error },
+    );
+  }
+  return undefined;
 }
 
 class OAuthToolkitService extends KimiOAuthToolkit implements IOAuthToolkit {

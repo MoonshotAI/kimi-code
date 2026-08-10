@@ -25,15 +25,25 @@
  *   - logout → delegates to facade.logout
  */
 
-import { assert, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DeviceCodeTimeoutError,
+  KIMI_CODE_PROVIDER_NAME,
+  KimiOAuthToolkit,
+  OAuthConnectionError,
   OAuthError,
+  OAuthUnauthorizedError,
+  RetryableRefreshError,
   type DeviceAuthorization,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import type { ServicesAuthFacade } from '../../src/services/auth/managedAuth';
+import { ErrorCodes, KimiError } from '../../src/errors';
+import { createManagedAuthFacade, type ServicesAuthFacade } from '../../src/services/auth/managedAuth';
 import { IEnvironmentService } from '../../src/services/environment/environment';
 import { OAuthService } from '../../src/services/oauth/oauthService';
 
@@ -335,5 +345,75 @@ describe('OAuthService.logout', () => {
     // After logout, the in-memory flow is in 'cancelled' terminal state
     expect(impl.getFlow()!.status).toBe('cancelled');
     expect(mock.loginCalls[0]!.signal!.aborted).toBe(true);
+  });
+});
+
+describe('ServicesManagedAuthFacade.resolveOAuthTokenProvider — OAuth error classification', () => {
+  // Without classification at the facade boundary, a transport failure (e.g.
+  // auth host connect timeout during a long task) propagates as a raw
+  // `OAuthConnectionError` and serializes as `[internal]`, losing the retryable
+  // flag and the dedicated pause reason. See MoonshotAI/kimi-code#2786.
+  let homeDir: string;
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-managed-auth-'));
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  async function caughtTokenError(tokenError: unknown): Promise<unknown> {
+    vi.spyOn(KimiOAuthToolkit.prototype, 'tokenProvider').mockReturnValue({
+      async getAccessToken() {
+        throw tokenError;
+      },
+    });
+    const facade = createManagedAuthFacade({ homeDir, configPath: join(homeDir, 'config.toml') });
+    return facade
+      .resolveOAuthTokenProvider(KIMI_CODE_PROVIDER_NAME)!
+      .getAccessToken()
+      .catch((caught: unknown) => caught);
+  }
+
+  it('maps transient OAuth transport failures to provider.connection_error', async () => {
+    const tokenErrors = [
+      new OAuthConnectionError(
+        'OAuth request to https://auth.kimi.com/api/oauth/token failed: fetch failed',
+      ),
+      new RetryableRefreshError('Token refresh failed (HTTP 503).'),
+    ];
+
+    for (const tokenError of tokenErrors) {
+      const error = await caughtTokenError(tokenError);
+
+      expect(error).toBeInstanceOf(KimiError);
+      expect(error).toMatchObject({
+        code: ErrorCodes.PROVIDER_CONNECTION_ERROR,
+        message: expect.stringContaining(tokenError.message),
+        cause: tokenError,
+      });
+    }
+  });
+
+  it('maps OAuth unauthorized failures to auth.login_required', async () => {
+    const tokenError = new OAuthUnauthorizedError('Stored token was rejected; re-login required.');
+
+    const error = await caughtTokenError(tokenError);
+
+    expect(error).toBeInstanceOf(KimiError);
+    expect(error).toMatchObject({
+      code: ErrorCodes.AUTH_LOGIN_REQUIRED,
+      cause: tokenError,
+    });
+  });
+
+  it('rethrows unrecognized errors raw instead of guessing a category', async () => {
+    const tokenError = new Error('storage exploded');
+
+    const error = await caughtTokenError(tokenError);
+
+    expect(error).toBe(tokenError);
+    expect(error).not.toBeInstanceOf(KimiError);
   });
 });
