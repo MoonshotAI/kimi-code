@@ -13,7 +13,7 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
-import { EMPTY_AGENT_STATE } from '@moonshot-ai/transcript';
+import { EMPTY_AGENT_STATE } from '../../transcript-data';
 
 import { diffValue, type DiffNode } from '../../audit/diff';
 import { serializeState } from '../../audit/serialize';

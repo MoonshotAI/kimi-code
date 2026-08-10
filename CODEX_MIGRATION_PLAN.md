@@ -136,7 +136,7 @@ kimi-protocol ← kimi-agent(引擎) ← kimi-server ← kimi-server-transport
 | `acp-adapter` | 5.4k | 迁 Rust | kimi-acp | ✅ → **已退役**（retired/，2026-08-10） |
 | `protocol` | 5.2k | 迁 Rust | kimi-protocol | ✅ → **已退役**（retired/，2026-08-10） |
 | `kaos` | 3.1k | 退役/并 | SSH 面评估后裁并 | ✅ → **已退役**（retired/，2026-08-10） |
-| `transcript` | 5k | 退役/并 | 引擎回调 | 待 G-5 |
+| `transcript` | 5k | 退役/并 | 本地化至 kimi-inspect | ✅ **已退役**（2026-08-10：唯一消费者 kimi-inspect 本地化，zod 依赖随迁） |
 | `migration-legacy` | 4.2k | 退役 | 一次性数据迁移 | 待 G-6 |
 | `pi-tui` | 13.2k | 退役 | kimi-tui 完成后删除 | 待 G-6 |
 | `kimi-agent` 内 TS（rust-loop 3.4k + runtime 兼容 4k） | 7.4k | 退役 | Rust transport 已覆盖 | ✅ **已删除**（2026-08-10）：kimi-agent 包仅剩 Rust + 生成文件；proxy/logging-core 本地化至 apps/kimi-code |
@@ -191,7 +191,7 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 | G-3 | apps/kimi-code CLI 消费面切 kimi-cli | 🔶 native-session 已完成 plugin/cron/archive；oauth 消费已本地化 + workspace 依赖清零（2026-08-10）；telemetry 面待续 |
 | G-4 | TUI → kimi-tui 分片搬运（长杆） | ✅ 攻坚完成（P0-P6 分片，§6.4） |
 | G-5 | kosong/kaos/protocol LLM 面并入；transcript/telemetry 收编 | 🔶 kimi-schema 规范化移植完成；kosong 核心能力引擎已覆盖（评估定案）；kimi-files 上传/capability/Astron 数据项随 node-sdk 退役 |
-| G-6 | 退役（node-sdk/kap-server/acp-adapter/oauth/protocol/kaos → retired/；删 rust-loop.ts、TS i18n、TS 入口、pi-tui） | 🔶 10 包/模块退役完成（2026-08-10：8 包 → retired/ + rust-loop/runtime 删除）；剩余 transcript/migration-legacy/pi-tui/TS 入口，前置 G-5 |
+| G-6 | 退役（node-sdk/kap-server/acp-adapter/oauth/protocol/kaos → retired/；删 rust-loop.ts、TS i18n、TS 入口、pi-tui） | 🔶 11 包/模块退役完成（2026-08-10：9 包 → retired/ + rust-loop/runtime 删除）；剩余 migration-legacy/pi-tui/TS 入口 |
 | G-7 | web-only 验证 + 删除全部旧 TS 测试 | ⏳ |
 
 ---

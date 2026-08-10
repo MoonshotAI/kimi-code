@@ -55,7 +55,7 @@ import {
   type TranscriptUsage,
   type TurnOrigin,
   type TurnState,
-} from '@moonshot-ai/transcript';
+} from '../transcript-data';
 
 import { useConnection } from '../connection';
 import { AuditTrail } from '../audit/trail';

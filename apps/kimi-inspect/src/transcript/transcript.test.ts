@@ -13,7 +13,7 @@ import {
   type TranscriptTurn,
   type TurnHeader,
   type TurnState,
-} from '@moonshot-ai/transcript';
+} from '../transcript-data';
 
 import type { WsLike } from '../channel/wsLike';
 import {

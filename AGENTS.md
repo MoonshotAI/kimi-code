@@ -99,12 +99,11 @@ Before writing any TS change, ask: *is this engine functionality?* If yes → im
 
 | 冻结包 | 目标 Rust | 备注 |
 |---|---|---|
-| `packages/transcript` | 收编/退役 | — |
 | `packages/migration-legacy` | 退役 | 一次性数据迁移 |
 | `packages/pi-tui` | 退役 | — |
 | `apps/kimi-code` 剩余 TS（`src/main.ts` 入口） | kimi-cli | G-3 切换中 |
 
-> **2026-08-10 已退役（→ `retired/`）**：`node-sdk`、`kap-server`、`acp-adapter`、`oauth`、`protocol`、`kaos`、`kosong`、`telemetry`——不再扩展、不再恢复；引用它们的代码不得回引。`kimi-agent/rust-loop.ts` 与 `kimi-agent/runtime/`（TS 桥/兼容层）已删除（2026-08-10）——kimi-agent 包仅剩 Rust + 生成文件 `src/rpc/wire.gen.ts`；apps/kimi-code 经 `NativeServerClient`（stdio RPC）直连引擎，telemetry 已本地化至 `apps/kimi-code/src/utils/telemetry`。
+> **2026-08-10 已退役（→ `retired/`）**：`node-sdk`、`kap-server`、`acp-adapter`、`oauth`、`protocol`、`kaos`、`kosong`、`telemetry`、`transcript`——不再扩展、不再恢复；引用它们的代码不得回引。`kimi-agent/rust-loop.ts` 与 `kimi-agent/runtime/`（TS 桥/兼容层）已删除（2026-08-10）——kimi-agent 包仅剩 Rust + 生成文件 `src/rpc/wire.gen.ts`；apps/kimi-code 经 `NativeServerClient`（stdio RPC）直连引擎，telemetry/transcript 已本地化至宿主与 kimi-inspect。
 
 **保留 TS（不受冻结）**：`kimi-web` / `kimi-inspect` / `vis/web`（web 前端）、`apps/vscode`（壳）、npm 薄壳（`kimi.mjs`）——仍遵守"引擎逻辑不得写 TS"白名单。
 

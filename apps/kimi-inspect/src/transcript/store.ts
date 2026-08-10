@@ -25,7 +25,7 @@ import {
   type AgentState,
   type TranscriptItem,
   type TranscriptOperation,
-} from '@moonshot-ai/transcript';
+} from '../transcript-data';
 
 import type { TranscriptPage } from './api';
 

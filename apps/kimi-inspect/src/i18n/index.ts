@@ -11,13 +11,13 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { createI18n } from '@moonshot-ai/i18n-shared/web';
-import type { Locale, TranslationKey } from '@moonshot-ai/i18n-shared';
+import type { Locale, TranslationKey as I18nTranslationKey } from '@moonshot-ai/i18n-shared';
 
 import en from './locales/en';
 import zh from './locales/zh';
 
 export type { Locale };
-export type TranslationKey = TranslationKey<typeof en>;
+export type TranslationKey = I18nTranslationKey<typeof en>;
 
 const i18n = createI18n(
   { en, zh },

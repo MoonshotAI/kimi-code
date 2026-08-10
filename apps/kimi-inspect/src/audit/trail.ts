@@ -13,7 +13,7 @@ import type {
   AgentState,
   AgentTranscriptSnapshot,
   TranscriptOperation,
-} from '@moonshot-ai/transcript';
+} from '../transcript-data';
 
 import type { TranscriptPage } from '../transcript/api';
 

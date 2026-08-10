@@ -22,10 +22,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@moonshot-ai/transcript": "workspace:^",
+    "@moonshot-ai/i18n-shared": "workspace:^",
     "@tanstack/react-query": "^5.74.4",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.4",

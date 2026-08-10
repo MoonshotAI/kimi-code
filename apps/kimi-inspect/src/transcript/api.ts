@@ -24,7 +24,7 @@ import {
   type TranscriptOperation,
   type TranscriptTask,
   type TranscriptTodo,
-} from '@moonshot-ai/transcript';
+} from '../transcript-data';
 
 /** One transcript page as merged by the chat store. */
 export interface TranscriptPage {

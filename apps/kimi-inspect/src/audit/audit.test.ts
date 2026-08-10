@@ -9,7 +9,7 @@ import {
   EMPTY_AGENT_STATE,
   type AgentState,
   type TranscriptTurn,
-} from '@moonshot-ai/transcript';
+} from '../transcript-data';
 
 import { diffValue, type DiffNode } from './diff';
 import { serializeState } from './serialize';
