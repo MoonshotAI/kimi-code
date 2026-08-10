@@ -234,6 +234,13 @@ describe('FileSkillDiscovery', () => {
     const result = await discover([skillRoot('skills')]);
 
     expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        path: skillMdPath,
+        type: 'invalid',
+        reason: `Missing frontmatter in ${skillMdPath}`,
+      },
+    ]);
     expect(warnings).toEqual([
       {
         message: `Skipping invalid skill at ${skillMdPath}: Missing frontmatter in ${skillMdPath}`,

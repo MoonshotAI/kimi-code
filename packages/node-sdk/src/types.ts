@@ -66,6 +66,8 @@ export type {
   ServicesConfig,
   ShellEnvironment,
   SkillSummary,
+  SkillDiscoveryDiagnostic,
+  SkillDiscoveryReport,
   ThinkingConfig,
   ToolInfo,
   GlobalMcpServerConfig as McpServerConfig,

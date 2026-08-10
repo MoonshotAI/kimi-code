@@ -309,6 +309,17 @@ export interface SkillSummary {
   readonly isSubSkill?: boolean | undefined;
 }
 
+export interface SkillDiscoveryDiagnostic {
+  readonly path: string;
+  readonly type: string;
+  readonly reason: string;
+}
+
+export interface SkillDiscoveryReport {
+  readonly skills: readonly SkillSummary[];
+  readonly diagnostics: readonly SkillDiscoveryDiagnostic[];
+}
+
 export interface ActivateSkillPayload {
   readonly name: string;
   readonly args?: string | undefined;
@@ -526,6 +537,7 @@ export interface SessionAPI extends AgentAPIWithId {
   updateSessionMetadata: (payload: UpdateSessionMetadataPayload) => void;
   getSessionMetadata: (payload: EmptyPayload) => SessionMeta;
   listSkills: (payload: EmptyPayload) => readonly SkillSummary[];
+  inspectSkills: (payload: EmptyPayload) => SkillDiscoveryReport;
   listPluginCommands: (payload: EmptyPayload) => readonly PluginCommandDef[];
   listMcpServers: (payload: EmptyPayload) => readonly McpServerInfo[];
   getMcpStartupMetrics: (payload: EmptyPayload) => McpStartupMetrics;
@@ -571,6 +583,7 @@ export interface CoreAPI extends SessionAPIWithId {
   listSessions: (payload: ListSessionsPayload) => readonly SessionSummary[];
   exportSession: (payload: ExportSessionPayload) => ExportSessionResult;
   listWorkspaceSkills: (payload: ListWorkspaceSkillsPayload) => Promise<readonly SkillSummary[]>;
+  inspectWorkspaceSkills: (payload: ListWorkspaceSkillsPayload) => Promise<SkillDiscoveryReport>;
   listPlugins: (payload: EmptyPayload) => readonly PluginSummary[];
   installPlugin: (payload: InstallPluginPayload) => PluginSummary;
   setPluginEnabled: (payload: SetPluginEnabledPayload) => void;

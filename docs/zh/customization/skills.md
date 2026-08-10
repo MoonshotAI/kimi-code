@@ -83,6 +83,19 @@ extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 
 **内置 Skills** 随 CLI 一起分发，优先级最低。它们为常见任务提供开箱即用的工作流，例如配置 MCP server、定制 TUI 主题和编辑配置文件。完整列表详见[内置 Skill 命令](../reference/slash-commands.md#内置-skill-命令)。其中介绍 Kimi Code 自身的部分可以通过顶层 [`builtin_product_skills`](../configuration/config-files.md#顶层字段) 字段关闭。
 
+## 查看已加载的 Skills
+
+在 TUI 中运行 `/skills`，可打开当前会话可用 Skills 的可搜索列表。每一项都会显示实际斜杠命令、名称、来源、类型、描述和文件路径。选中可通过斜杠命令调用的 Skill 后，命令会被填入编辑器，但不会立即执行。
+
+脚本和故障排查可以从 shell 查看同一份 workspace Skill 目录：
+
+```sh
+kimi skills list
+kimi skills list --json
+```
+
+两种形式都会报告因 frontmatter 无效、类型不受支持或发现过程失败而被跳过的文件。JSON 形式分别返回 `skills` 和 `diagnostics` 数组；每个 Skill 都包含一个可为 `null` 的 `slashCommand` 字段。
+
 ## 调用 Skill
 
 用户通过斜杠命令主动调用：

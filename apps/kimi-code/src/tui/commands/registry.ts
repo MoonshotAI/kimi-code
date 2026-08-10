@@ -254,6 +254,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'skills',
+    aliases: [],
+    description: 'Browse loaded skills and discovery issues',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'add-dir',
     aliases: [],
     description: 'Add or list an additional workspace directory',

@@ -301,6 +301,7 @@ import type {
   SessionSummary,
   SessionUsage,
   SkillSummary,
+  SkillDiscoveryReport,
   TelemetryClient,
   WorkspaceTrustInfo,
 } from '#/types';
@@ -564,6 +565,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const catalog = handler.accessor.get(IWorkspaceSkillCatalog);
     await catalog.ready;
     return catalog.catalog.listSkills().map(summarizeSkill);
+  }
+
+  override async inspectWorkspaceSkills(workDir: string): Promise<SkillDiscoveryReport> {
+    const handler = await this.engineAccessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: normalizeRequiredWorkDir('inspectWorkspaceSkills', workDir) });
+    const catalog = handler.accessor.get(IWorkspaceSkillCatalog);
+    await catalog.ready;
+    return {
+      skills: catalog.catalog.listSkills().map(summarizeSkill),
+      diagnostics: catalog.catalog.getSkippedByPolicy(),
+    };
   }
 
   /**
@@ -1289,6 +1302,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const catalog = this.requireLiveSession(input.sessionId).accessor.get(ISessionSkillCatalog);
     await catalog.ready;
     return catalog.catalog.listSkills().map(summarizeSkill);
+  }
+
+  override async inspectSkills(input: SessionIdRpcInput): Promise<SkillDiscoveryReport> {
+    const catalog = this.requireLiveSession(input.sessionId).accessor.get(ISessionSkillCatalog);
+    await catalog.ready;
+    return {
+      skills: catalog.catalog.listSkills().map(summarizeSkill),
+      diagnostics: catalog.catalog.getSkippedByPolicy(),
+    };
   }
 
   // -----------------------------------------------------------------------

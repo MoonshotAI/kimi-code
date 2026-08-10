@@ -375,6 +375,17 @@ kimi provider catalog list anthropic          # Browse available models first
 kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-opus-4-7
 ```
 
+### `kimi skills list`
+
+List the Skills available in the current working directory without creating a chat session. The text output shows each Skill's effective slash command, name, source, type, description, and path, followed by any discovery issues.
+
+```sh
+kimi skills list
+kimi skills list --json
+```
+
+Use `--json` for a machine-readable object with `skills` and `diagnostics` arrays. Each Skill includes `slashCommand`, which is `null` when the Skill cannot be invoked manually.
+
 ## Next steps
 
 - [Slash Commands](./slash-commands.md) — Quick reference for control commands in the interactive TUI

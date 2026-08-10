@@ -375,6 +375,17 @@ kimi provider catalog list anthropic          # 先看可选的模型
 kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-opus-4-7
 ```
 
+### `kimi skills list`
+
+在不创建聊天会话的情况下，列出当前工作目录可用的 Skills。文本输出会显示每个 Skill 的实际斜杠命令、名称、来源、类型、描述和路径，最后列出所有发现问题。
+
+```sh
+kimi skills list
+kimi skills list --json
+```
+
+使用 `--json` 可得到包含 `skills` 和 `diagnostics` 数组的机器可读对象。每个 Skill 都包含 `slashCommand`；无法手动调用时，该字段为 `null`。
+
 ## 下一步
 
 - [斜杠命令](./slash-commands.md) — 交互式 TUI 内的控制命令速查

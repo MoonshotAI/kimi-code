@@ -332,6 +332,39 @@ describe('KimiHarness workspace skills', () => {
     }
   });
 
+  it('reports invalid workspace skills without creating a session', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-workspace-skills-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-workspace-skills-work-');
+    await writeSkill(workDir, 'valid', [
+      '---',
+      'name: valid',
+      'description: Valid skill',
+      '---',
+    ]);
+    await writeSkill(workDir, 'broken', ['Missing frontmatter']);
+    const harness = createKimiHarness({
+      homeDir,
+      identity: TEST_IDENTITY,
+      skillDirs: [join(workDir, '.kimi-code', 'skills')],
+    });
+
+    try {
+      const report = await harness.inspectWorkspaceSkills(workDir);
+
+      expect(report.skills.some((skill) => skill.name === 'valid')).toBe(true);
+      expect(report.diagnostics).toContainEqual(
+        expect.objectContaining({
+          path: expect.stringContaining('/broken/SKILL.md'),
+          type: 'invalid',
+          reason: expect.stringContaining('Missing frontmatter'),
+        }),
+      );
+      expect(harness.sessions.size).toBe(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('preserves the core error when workDir is empty', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-workspace-skills-home-');
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });

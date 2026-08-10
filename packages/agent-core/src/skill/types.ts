@@ -52,6 +52,11 @@ export interface SkippedSkill {
   readonly reason: string;
 }
 
+export interface SkillDiscoveryReport {
+  readonly skills: readonly SkillSummary[];
+  readonly diagnostics: readonly SkippedSkill[];
+}
+
 export interface SkillCatalog {
   getSkill(name: string): SkillDefinition | undefined;
   listSkills(): readonly SkillDefinition[];

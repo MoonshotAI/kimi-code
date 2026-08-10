@@ -107,6 +107,7 @@ Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and
 | `/status` | — | Show the current session runtime state: version, model, working directory, permission mode, etc. | Yes |
 | `/mcp` | — | List MCP servers and their connection status in the current session | Yes |
 | `/plugins` | — | Open the interactive plugin manager | Yes |
+| `/skills` | — | Browse loaded Skills, their effective slash commands and source paths, plus discovery issues | Yes |
 | `/version` | — | Display the Kimi Code CLI version number | Yes |
 | `/feedback` | `/bug` | Submit feedback with optional diagnostic logs and codebase context | Yes |
 

@@ -141,6 +141,7 @@ import type {
   SetPluginEnabledPayload,
   SetPluginMcpServerEnabledPayload,
   SetThinkingPayload,
+  SkillDiscoveryReport,
   SkillSummary,
   PluginCommandDef,
   SteerPayload,
@@ -1063,6 +1064,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).listSkills(payload);
   }
 
+  inspectSkills({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<EmptyPayload>): Promise<SkillDiscoveryReport> {
+    return this.sessionApi(sessionId).inspectSkills(payload);
+  }
+
   /**
    * List the skills available for a workspace working directory without
    * requiring a session. Mirrors `Session.loadSkills` exactly (same roots,
@@ -1074,6 +1082,17 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     workDir,
   }: ListWorkspaceSkillsPayload): Promise<readonly SkillSummary[]> {
     const cwd = requiredWorkDir('listWorkspaceSkills', workDir);
+    return (await this.inspectWorkspaceSkillsAt(cwd)).skills;
+  }
+
+  async inspectWorkspaceSkills({
+    workDir,
+  }: ListWorkspaceSkillsPayload): Promise<SkillDiscoveryReport> {
+    const cwd = requiredWorkDir('inspectWorkspaceSkills', workDir);
+    return this.inspectWorkspaceSkillsAt(cwd);
+  }
+
+  private async inspectWorkspaceSkillsAt(cwd: string): Promise<SkillDiscoveryReport> {
     await this.pluginsReady;
     const skills = this.resolveSessionSkillConfig(this.reloadProviderManager());
     const roots = await resolveSkillRoots({
@@ -1091,7 +1110,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const registry = new SessionSkillRegistry({});
     await registry.loadRoots(roots);
     registerBuiltinSkills(registry);
-    return registry.listSkills().map(summarizeSkill);
+    return {
+      skills: registry.listSkills().map(summarizeSkill),
+      diagnostics: registry.getSkippedByPolicy(),
+    };
   }
 
   listPluginCommands({

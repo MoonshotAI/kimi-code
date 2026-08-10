@@ -60,6 +60,7 @@ import type {
   ResumedSessionSummary,
   SessionSummary,
   SkillSummary,
+  SkillDiscoveryReport,
   PluginCommandDef,
   Unsubscribe,
   WorkspaceTrustInfo,
@@ -227,6 +228,11 @@ export abstract class SDKRpcClientBase {
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listWorkspaceSkills({ workDir });
+  }
+
+  async inspectWorkspaceSkills(workDir: string): Promise<SkillDiscoveryReport> {
+    const rpc = await this.getRpc();
+    return rpc.inspectWorkspaceSkills({ workDir });
   }
 
   /**
@@ -659,6 +665,11 @@ export abstract class SDKRpcClientBase {
   async listSkills(input: SessionIdRpcInput): Promise<readonly SkillSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listSkills({ sessionId: input.sessionId });
+  }
+
+  async inspectSkills(input: SessionIdRpcInput): Promise<SkillDiscoveryReport> {
+    const rpc = await this.getRpc();
+    return rpc.inspectSkills({ sessionId: input.sessionId });
   }
 
   async listPluginCommands(input: SessionIdRpcInput): Promise<readonly PluginCommandDef[]> {

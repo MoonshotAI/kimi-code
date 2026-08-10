@@ -35,6 +35,7 @@ import type {
   SessionSummary,
   SessionUsage,
   SkillSummary,
+  SkillDiscoveryReport,
   PluginCommandDef,
   ThinkingEffort,
   Unsubscribe,
@@ -365,6 +366,11 @@ export class Session {
   async listSkills(): Promise<readonly SkillSummary[]> {
     this.ensureOpen();
     return this.rpc.listSkills({ sessionId: this.id });
+  }
+
+  async inspectSkills(): Promise<SkillDiscoveryReport> {
+    this.ensureOpen();
+    return this.rpc.inspectSkills({ sessionId: this.id });
   }
 
   async listPluginCommands(): Promise<readonly PluginCommandDef[]> {

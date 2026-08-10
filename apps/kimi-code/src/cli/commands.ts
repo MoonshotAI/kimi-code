@@ -8,6 +8,7 @@ import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
+import { registerSkillsCommand } from './sub/skills';
 import { registerVisCommand } from './sub/vis';
 import { registerWebCommand } from './sub/web';
 
@@ -115,6 +116,7 @@ export function createProgram(
 
   registerExportCommand(program);
   registerProviderCommand(program);
+  registerSkillsCommand(program, version);
   registerAcpCommand(program);
   registerWebCommand(program);
   registerLoginCommand(program);

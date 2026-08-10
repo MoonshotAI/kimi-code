@@ -30,6 +30,7 @@ import type {
   SetPermissionPayload,
   SetThinkingPayload,
   SkillSummary,
+  SkillDiscoveryReport,
   PluginCommandDef,
   SteerPayload,
   StopBackgroundPayload,
@@ -81,6 +82,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   listSkills(_payload: EmptyPayload): Promise<readonly SkillSummary[]> {
     return this.session.listSkills();
+  }
+
+  inspectSkills(_payload: EmptyPayload): Promise<SkillDiscoveryReport> {
+    return this.session.inspectSkills();
   }
 
   listPluginCommands(_payload: EmptyPayload): readonly PluginCommandDef[] {

@@ -62,6 +62,7 @@ import {
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+import { handleSkillsCommand } from './skills';
 import { handleSwarmCommand } from './swarm';
 import { handleUndoCommand } from './undo';
 import { handleWebCommand } from './web';
@@ -418,6 +419,9 @@ async function handleBuiltInSlashCommand(
       } catch (error) {
         host.showError(formatErrorMessage(error));
       }
+      return;
+    case 'skills':
+      await handleSkillsCommand(host);
       return;
     case 'add-dir':
       await handleAddDirCommand(host, args);

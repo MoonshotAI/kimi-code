@@ -155,6 +155,11 @@ export async function discoverSkills(
       // is deterministic rather than dependent on filesystem readdir order.
       entries = [...(await readdir(dirPath))].toSorted();
     } catch (error) {
+      skip({
+        path: dirPath,
+        type: 'unreadable',
+        reason: error instanceof Error ? error.message : 'failed to read skill directory',
+      });
       warn(`Failed to read skill directory ${dirPath}`, error);
       return;
     }
@@ -406,8 +411,18 @@ async function parseAndRegister(input: {
         reason: `unsupported skill type "${error.skillType}"`,
       });
     } else if (error instanceof SkillParseError) {
+      input.skip({
+        path: input.skillMdPath,
+        type: 'invalid',
+        reason: error.message,
+      });
       input.warn(`Skipping invalid skill at ${input.skillMdPath}: ${error.message}`, error);
     } else {
+      input.skip({
+        path: input.skillMdPath,
+        type: 'error',
+        reason: error instanceof Error ? error.message : 'unexpected discovery error',
+      });
       input.warn(`Skipping skill at ${input.skillMdPath} due to unexpected error`, error);
     }
     return undefined;

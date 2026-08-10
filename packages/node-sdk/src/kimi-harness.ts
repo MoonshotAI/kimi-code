@@ -36,6 +36,7 @@ import type {
   ReloadSessionInput,
   SessionSummary,
   SkillSummary,
+  SkillDiscoveryReport,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
@@ -261,6 +262,11 @@ export class KimiHarness {
   /** Skills visible to a new session in `workDir`, without creating that session. */
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     return this.rpc.listWorkspaceSkills(workDir);
+  }
+
+  /** Skills and discovery diagnostics visible to a new session in `workDir`. */
+  async inspectWorkspaceSkills(workDir: string): Promise<SkillDiscoveryReport> {
+    return this.rpc.inspectWorkspaceSkills(workDir);
   }
 
   /**

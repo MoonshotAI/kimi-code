@@ -61,6 +61,7 @@ import {
   resolveSkillRoots,
   summarizeSkill,
   type SkillRoot,
+  type SkillDiscoveryReport,
   type SkillSummary,
 } from '../skill';
 import { noopTelemetryClient, type TelemetryClient, withTelemetryProperties } from '../telemetry';
@@ -1071,8 +1072,15 @@ export class Session {
   }
 
   async listSkills(): Promise<readonly SkillSummary[]> {
+    return (await this.inspectSkills()).skills;
+  }
+
+  async inspectSkills(): Promise<SkillDiscoveryReport> {
     await this.skillsReady;
-    return this.skills.listSkills().map(summarizeSkill);
+    return {
+      skills: this.skills.listSkills().map(summarizeSkill),
+      diagnostics: this.skills.getSkippedByPolicy(),
+    };
   }
 
   listPluginCommands(): readonly PluginCommandDef[] {

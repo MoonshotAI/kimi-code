@@ -4,7 +4,13 @@ import path from 'pathe';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { discoverSkills, resolveSkillRoots, SessionSkillRegistry, type SkillRoot } from '../../src/skill';
+import {
+  discoverSkills,
+  resolveSkillRoots,
+  SessionSkillRegistry,
+  type SkillRoot,
+  type SkippedSkill,
+} from '../../src/skill';
 
 // Mirror `resolveSkillRoots`' internal realpath (fs.realpath + forward-slash
 // normalization, see scanner.ts) so `root.path` comparisons hold on Windows,
@@ -185,9 +191,11 @@ describe('skill discovery', () => {
     ]);
 
     const warnings: string[] = [];
+    const diagnostics: SkippedSkill[] = [];
     const skills = await discoverSkills({
       roots: [{ path: projectRoot, source: 'project' }],
       onWarning: (message) => warnings.push(message),
+      onSkippedByPolicy: (diagnostic) => diagnostics.push(diagnostic),
     });
 
     expect(skills.map((skill) => skill.name)).toEqual(['valid']);
@@ -195,6 +203,35 @@ describe('skill discovery', () => {
     expect(warnings.some((message) => message.includes('Missing frontmatter'))).toBe(true);
     expect(warnings.some((message) => message.includes('"name"'))).toBe(true);
     expect(warnings.some((message) => message.includes('"description"'))).toBe(true);
+    expect(diagnostics).toHaveLength(3);
+    expect(diagnostics.every((diagnostic) => diagnostic.type === 'invalid')).toBe(true);
+    expect(diagnostics.some((diagnostic) => diagnostic.reason.includes('Missing frontmatter'))).toBe(
+      true,
+    );
+  });
+
+  it('reports unreadable skill roots as diagnostics', async () => {
+    const diagnostics: SkippedSkill[] = [];
+    const warnings: string[] = [];
+
+    const skills = await discoverSkills({
+      roots: [{ path: '/unreadable/skills', source: 'user' }],
+      readdir: async () => {
+        throw new Error('permission denied');
+      },
+      onSkippedByPolicy: (diagnostic) => diagnostics.push(diagnostic),
+      onWarning: (message) => warnings.push(message),
+    });
+
+    expect(skills).toEqual([]);
+    expect(diagnostics).toEqual([
+      {
+        path: '/unreadable/skills',
+        type: 'unreadable',
+        reason: 'permission denied',
+      },
+    ]);
+    expect(warnings).toEqual(['Failed to read skill directory /unreadable/skills']);
   });
 });
 
