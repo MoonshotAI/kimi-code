@@ -52,7 +52,7 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('@moonshot-ai/kimi-telemetry', () => ({
+vi.mock('#/utils/telemetry', () => ({
   installCrashHandlers: mocks.installCrashHandlers,
   track: mocks.track,
   setTelemetryContext: mocks.setTelemetryContext,

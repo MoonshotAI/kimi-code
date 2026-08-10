@@ -70,7 +70,6 @@
         ./packages/migration-legacy
         ./packages/pi-tui
         ./packages/server
-        ./packages/telemetry
         ./packages/transcript
         ./apps/kimi-code
         ./apps/vscode
@@ -91,7 +90,6 @@
         "@moonshot-ai/kimi-code-rust"
         "@moonshot-ai/pi-tui"
         "@moonshot-ai/server"
-        "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/transcript"
         "@moonshot-ai/kimi-code"
         "kimi-code"

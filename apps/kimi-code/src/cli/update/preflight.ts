@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-import type { TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
+import type { TelemetryProperties } from '#/utils/telemetry';
 
 import {
   KIMI_CODE_OFFICIAL_INSTALL_URL,

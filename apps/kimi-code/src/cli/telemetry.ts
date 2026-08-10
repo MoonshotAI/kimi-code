@@ -13,7 +13,7 @@ import {
   setTelemetryContext,
   track,
   withTelemetryContext,
-} from '@moonshot-ai/kimi-telemetry';
+} from '#/utils/telemetry';
 
 import { CLI_USER_AGENT_PRODUCT, WEB_UI_MODE } from '#/constant/app';
 

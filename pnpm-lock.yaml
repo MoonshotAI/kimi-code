@@ -95,9 +95,6 @@ importers:
       '@moonshot-ai/kimi-agent':
         specifier: workspace:^
         version: link:../../packages/kimi-agent
-      '@moonshot-ai/kimi-telemetry':
-        specifier: workspace:^
-        version: link:../../packages/telemetry
       '@moonshot-ai/migration-legacy':
         specifier: workspace:^
         version: link:../../packages/migration-legacy
@@ -574,8 +571,6 @@ importers:
       chalk:
         specifier: ^5.4.1
         version: 5.6.2
-
-  packages/telemetry: {}
 
   packages/transcript:
     dependencies:

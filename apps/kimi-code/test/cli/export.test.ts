@@ -90,7 +90,7 @@ vi.mock('#/cli/oauth-local', async () => {
   };
 });
 
-vi.mock('@moonshot-ai/kimi-telemetry', () => ({
+vi.mock('#/utils/telemetry', () => ({
   initializeTelemetry: mocks.initializeTelemetry,
   shutdownTelemetry: mocks.shutdownTelemetry,
   track: mocks.telemetryTrack,

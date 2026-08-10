@@ -18,7 +18,7 @@ import {
   shutdownTelemetry,
   track,
   withTelemetryContext,
-} from '@moonshot-ai/kimi-telemetry';
+} from '#/utils/telemetry';
 
 import { createProgram } from './cli/commands';
 import { finalizeHeadlessRun } from './cli/headless-exit';

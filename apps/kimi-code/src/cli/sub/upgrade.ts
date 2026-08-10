@@ -1,4 +1,4 @@
-import { track as trackTelemetry, type TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
+import { track as trackTelemetry, type TelemetryProperties } from '#/utils/telemetry';
 
 import { t } from '#/i18n';
 import { log, type Logger } from '#/cli/update/local-logger';

@@ -13,7 +13,7 @@ import {
   shutdownTelemetry,
   track,
   withTelemetryContext,
-} from '@moonshot-ai/kimi-telemetry';
+} from '#/utils/telemetry';
 import type { Command } from 'commander';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, CLI_USER_AGENT_PRODUCT } from '#/constant/app';

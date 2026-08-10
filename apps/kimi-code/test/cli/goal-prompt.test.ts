@@ -135,7 +135,7 @@ vi.mock('#/cli/prompt-harness-local', () => ({
   }),
 }));
 
-vi.mock('@moonshot-ai/kimi-telemetry', () => ({
+vi.mock('#/utils/telemetry', () => ({
   initializeTelemetry: vi.fn(),
   setCrashPhase: vi.fn(),
   shutdownTelemetry: vi.fn(),

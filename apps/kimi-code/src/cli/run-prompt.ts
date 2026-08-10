@@ -6,7 +6,7 @@ import {
   shutdownTelemetry,
   track,
   withTelemetryContext,
-} from '@moonshot-ai/kimi-telemetry';
+} from '#/utils/telemetry';
 import chalk from 'chalk';
 import { resolve } from 'pathe';
 

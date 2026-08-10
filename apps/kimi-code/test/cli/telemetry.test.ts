@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => ({
   getCachedAccessToken: vi.fn(() => Promise.resolve('tok')),
 }));
 
-vi.mock('@moonshot-ai/kimi-telemetry', () => ({
+vi.mock('#/utils/telemetry', () => ({
   initializeTelemetry: mocks.initializeTelemetry,
   setTelemetryContext: vi.fn(),
   track: vi.fn(),
