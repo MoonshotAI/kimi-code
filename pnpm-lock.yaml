@@ -98,15 +98,9 @@ importers:
       '@moonshot-ai/kimi-agent':
         specifier: workspace:^
         version: link:../../packages/kimi-agent
-      '@moonshot-ai/kimi-code-oauth':
-        specifier: workspace:^
-        version: link:../../packages/oauth
       '@moonshot-ai/kimi-telemetry':
         specifier: workspace:^
         version: link:../../packages/telemetry
-      '@moonshot-ai/kimi-web':
-        specifier: workspace:^
-        version: link:../kimi-web
       '@moonshot-ai/migration-legacy':
         specifier: workspace:^
         version: link:../../packages/migration-legacy
