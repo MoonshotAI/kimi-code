@@ -92,6 +92,10 @@ async fn main() -> anyhow::Result<()> {
     // `kimi-server-serve --http <addr> [--assets <dir>]`: serve the same
     // processor over the HTTP/REST `/api/v1` projection (the web-host wire).
     // With `--assets`, also serve the bundled SPA (the `kimi web` replacement).
+    // `--allowed-host <host...>` / `KIMI_CODE_ALLOWED_HOSTS` extend the
+    // host-header allowlist; `--insecure-no-tls` permits a non-loopback bind
+    // without TLS; `--allow-remote-shutdown` enables `POST /api/v1/shutdown`
+    // on a non-loopback bind (kap-server startup parity).
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(pos) = args.iter().position(|a| a == "--http") {
         let addr = args
@@ -101,10 +105,45 @@ async fn main() -> anyhow::Result<()> {
         let listener = tokio::net::TcpListener::bind(&addr).await?;
         let assets = args.iter().position(|a| a == "--assets").and_then(|p| args.get(p + 1).cloned());
         let no_auth = args.iter().any(|a| a == "--no-auth");
+        let insecure_no_tls = args.iter().any(|a| a == "--insecure-no-tls");
+        let allow_remote_shutdown = args.iter().any(|a| a == "--allow-remote-shutdown");
+        let mut allowed_hosts: Vec<String> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.as_str() == "--allowed-host")
+            .filter_map(|(i, _)| args.get(i + 1).cloned())
+            .flat_map(|v| v.split(',').map(str::trim).map(str::to_string).collect::<Vec<_>>())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if let Ok(env) = std::env::var("KIMI_CODE_ALLOWED_HOSTS") {
+            allowed_hosts.extend(
+                env.split(',')
+                    .map(str::trim)
+                    .map(str::to_string)
+                    .filter(|s| !s.is_empty()),
+            );
+        }
+        let bound_host = addr.rsplit_once(':').map(|(h, _)| h.to_string()).unwrap_or_else(|| addr.clone());
+        let loopback = kimi_server_transport::http::is_loopback_host(&bound_host);
+        if !loopback && !insecure_no_tls {
+            anyhow::bail!(
+                "refusing to bind {addr} without TLS; terminate TLS at a reverse proxy or pass --insecure-no-tls"
+            );
+        }
         let auth = auth_config(no_auth);
         eprintln!("kimi-server-serve: http on {addr}");
+        // Arm `/api/v1/shutdown` so `POST /api/v1/shutdown` stops the server
+        // gracefully (the `kimi web` foreground runner relies on it).
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let state = kimi_server_transport::http::HttpState::with_events(processor, server.state.event_sender())
-            .with_auth(auth);
+            .with_auth(auth)
+            .with_host_check(kimi_server_transport::http::HostCheckConfig {
+                bound_host: Some(bound_host),
+                extra: allowed_hosts,
+                disable: std::env::var("KIMI_CODE_DISABLE_HOST_CHECK").as_deref() == Ok("1"),
+            })
+            .with_allow_remote_shutdown(loopback || allow_remote_shutdown)
+            .with_shutdown(Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx))));
         let router = match assets.as_deref() {
             Some(assets_dir) => {
                 eprintln!("kimi-server-serve: serving web assets from {assets_dir}");
@@ -112,7 +151,11 @@ async fn main() -> anyhow::Result<()> {
             }
             None => kimi_server_transport::http::router(state),
         };
-        axum::serve(listener, kimi_server_transport::http::colon_make_service(router)).await?;
+        axum::serve(listener, kimi_server_transport::http::colon_make_service(router))
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await?;
         return Ok(());
     }
 

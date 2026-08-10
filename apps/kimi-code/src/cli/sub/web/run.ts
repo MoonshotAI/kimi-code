@@ -1,30 +1,24 @@
 /**
  * `kimi web` — run the local server in the foreground and open the web UI.
  *
- * The server always runs in the current process, attached to the terminal,
- * and shuts down cleanly on SIGINT/SIGTERM. `--no-open` skips the browser.
- * Multiple instances can share the home directory: each registers itself in
- * the instance registry and takes the next free port (see kap-server's
- * `startServer`).
+ * The server always runs in the foreground (the Rust `kimi-server-serve --http`
+ * binary), attached to the terminal, and shuts down cleanly on
+ * SIGINT/SIGTERM. `--no-open` skips the browser.
  */
 
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
-import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
-import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command } from 'commander';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
 import { t } from '#/i18n';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/shared/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
 
-import { initializeServerTelemetry } from '../../telemetry';
 import { getHostPackageRoot, getVersion } from '../../version';
 import {
   accessUrlLines,
@@ -47,17 +41,6 @@ import {
 
 const WEB_ASSETS_DIR = 'dist-web';
 
-/**
- * Minimal surface `runServerInProcess` needs from the server. kap-server's
- * `RunningServer` is adapted to it (it returns `{ host, port, close }`
- * instead of `{ address, logger, close }`).
- */
-interface RoutedServer {
-  readonly address: string;
-  readonly logger: ServerLogger;
-  close(): Promise<void>;
-}
-
 export interface WebCliOptions extends ServerCliOptions {
   open?: boolean;
 }
@@ -68,7 +51,7 @@ export interface StartForegroundHooks {
 }
 
 export interface WebCommandDeps {
-  /** Foreground runner; defaults to the real in-process runner when omitted. */
+  /** Foreground runner; defaults to the real Rust-server runner when omitted. */
   startServerForeground?: (
     options: ParsedServerOptions,
     hooks?: StartForegroundHooks,
@@ -149,12 +132,9 @@ export async function handleWebCommand(
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
-  // Rust-server cutover (env-gated): when `KIMI_WEB_RUST_SERVER` is set, run
-  // the Rust `kimi-server-serve --http` binary instead of in-process kap-server.
-  const useRustServer = process.env['KIMI_WEB_RUST_SERVER'] === '1';
-  const run =
-    deps.startServerForeground ??
-    (useRustServer ? startRustServerForeground : startServerForeground);
+  // The Rust `kimi-server-serve --http` binary is the only server flavor
+  // (the "only web is TS" direction); tests inject a fake runner.
+  const run = deps.startServerForeground ?? startRustServerForeground;
   await run(parsed, {
     onReady: (origin) => {
       // Resolve the persistent token only once the server is up: a fresh
@@ -206,20 +186,8 @@ function formatDangerNoticeLines(): string[] {
 }
 
 /**
- * `kimi web` — runs the local server in-process, attached to the current
- * terminal. Resolves only via `process.exit` (SIGINT/SIGTERM).
- */
-export async function startServerForeground(
-  options: ParsedServerOptions,
-  hooks: StartForegroundHooks = {},
-): Promise<never> {
-  return runServerInProcess(options, hooks.onReady);
-}
-
-/**
  * Run the Rust `kimi-server-serve` binary in the foreground (the "only web is
  * TS" cutover: the Rust server replaces kap-server for REST/WS + the SPA).
- * Gated by `KIMI_WEB_RUST_SERVER=1`; falls back to kap-server otherwise.
  */
 export async function startRustServerForeground(
   options: ParsedServerOptions,
@@ -227,10 +195,9 @@ export async function startRustServerForeground(
 ): Promise<never> {
   const bin = resolveRustServeBin();
   if (!bin) {
-    process.stderr.write(
-      'kimi web: KIMI_WEB_RUST_SERVER is set but kimi-server-serve was not found; falling back to kap-server\n',
+    throw new Error(
+      'kimi web: kimi-server-serve binary not found (set KIMI_RUST_SERVE_BIN or build target/debug/kimi-server-serve)',
     );
-    return runServerInProcess(options, hooks.onReady);
   }
   const args = ['--http', `${options.host}:${options.port}`];
   if (options.dangerousBypassAuth) args.push('--no-auth');
@@ -238,18 +205,23 @@ export async function startRustServerForeground(
     const assets = serverWebAssetsDir();
     if (assets) args.push('--assets', assets);
   }
+  if (options.insecureNoTls) args.push('--insecure-no-tls');
+  if (options.allowRemoteShutdown) args.push('--allow-remote-shutdown');
+  for (const host of options.allowedHosts) {
+    args.push('--allowed-host', host);
+  }
   process.stderr.write(`kimi web: starting Rust server: ${bin} ${args.join(' ')}\n`);
   const child = spawn(bin, args, { stdio: 'inherit' });
 
   let stopping = false;
-  async function shutdown(): Promise<void> {
+  function shutdown(): void {
     if (stopping) return;
     stopping = true;
     child.kill('SIGTERM');
     process.exit(0);
   }
-  process.once('SIGINT', () => void shutdown());
-  process.once('SIGTERM', () => void shutdown());
+  process.once('SIGINT', () => shutdown());
+  process.once('SIGTERM', () => shutdown());
 
   const origin = `http://${options.host}:${options.port}`;
   await waitForHealth(origin);
@@ -268,7 +240,9 @@ function resolveRustServeBin(): string | null {
   return null;
 }
 
-/** Probe `GET /api/v1/health` until the server answers (or 15s elapse). */
+/** Probe `GET /api/v1/healthz` until the server answers (or 15s elapse).
+ *  healthz is auth-bypassed (kap-server parity), so the probe works before
+ *  the token file exists. */
 async function waitForHealth(origin: string): Promise<void> {
   const deadline = Date.now() + 15_000;
   for (;;) {
@@ -276,89 +250,15 @@ async function waitForHealth(origin: string): Promise<void> {
       throw new Error(`kimi web: Rust server did not become healthy at ${origin}`);
     }
     try {
-      const res = await fetch(`${origin}/api/v1/health`);
+      const res = await fetch(`${origin}/api/v1/healthz`);
       if (res.ok) return;
     } catch {
       // not up yet
     }
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 200);
+    });
   }
-}
-
-/**
- * Start the server in the current process and block until shutdown.
- * `onReady` fires once the server is listening.
- */
-async function runServerInProcess(
-  options: ParsedServerOptions,
-  onReady?: (origin: string) => void,
-): Promise<never> {
-  const version = getVersion();
-  // Registers the telemetry provider for `track` / `shutdownTelemetry`; the
-  // client itself is not passed into kap-server.
-  initializeServerTelemetry({ version });
-
-  let running: RoutedServer | undefined;
-  let stopping = false;
-
-  async function shutdown(reason: string): Promise<void> {
-    if (stopping) return;
-    stopping = true;
-    running?.logger.info({ reason }, 'server shutting down');
-    try {
-      await running?.close();
-      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
-    } catch (error) {
-      running?.logger.error(
-        { err: error instanceof Error ? error : new Error(String(error)) },
-        'server shutdown error',
-      );
-    }
-    process.exit(0);
-  }
-
-  // kap-server (the Rust engine server) is the only server flavor. Its
-  // `startServer` returns `{ host, port, close }` rather than `{ address,
-  // logger, close }`, so adapt it to the `RoutedServer` surface the rest of
-  // this runner consumes.
-  const logger = createServerLogger({ level: options.logLevel });
-  const v2 = await startServer({
-    host: options.host,
-    port: options.port,
-    // Report the CLI's product version as `server_version` (/meta, web UI)
-    // rather than kap-server's private package version.
-    version,
-    logLevel: options.logLevel,
-    logger,
-    insecureNoTls: options.insecureNoTls,
-    allowRemoteShutdown: options.allowRemoteShutdown,
-    allowedHosts: options.allowedHosts,
-    disableAuth: options.dangerousBypassAuth,
-    webAssetsDir: serverWebAssetsDir(),
-  });
-  logger.info('serving the REST/WS API and the bundled web UI');
-  running = {
-    address: `http://${v2.host}:${v2.port}`,
-    logger,
-    close: () => v2.close(),
-  };
-
-  track('server_started', { daemon: false });
-
-  process.once('SIGINT', () => {
-    void shutdown('SIGINT');
-  });
-  process.once('SIGTERM', () => {
-    void shutdown('SIGTERM');
-  });
-
-  running.logger.info({ address: running.address }, 'server ready');
-
-  onReady?.(running.address);
-
-  return new Promise<never>(() => {
-    // Keeps the event loop alive; the process ends via shutdown()/process.exit.
-  });
 }
 
 function serverWebAssetsDir(): string {
@@ -447,7 +347,7 @@ export function formatReadyBanner(
 }
 
 const DEFAULT_WEB_COMMAND_DEPS: WebCommandDeps = {
-  startServerForeground,
+  startServerForeground: startRustServerForeground,
   openUrl: defaultOpenUrl,
   resolveToken: () => {
     // Read the persistent `<homeDir>/server.token` written on first boot

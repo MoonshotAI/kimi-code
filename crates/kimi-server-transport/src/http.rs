@@ -43,6 +43,99 @@ pub struct AuthConfig {
     pub token: Option<String>,
 }
 
+/// Host-header allowlist (DNS-rebinding defence, kap-server `hostnames.ts`
+/// parity). Default-allow set: `localhost` / `*.localhost`, loopback IPs, any
+/// literal IP, the bound host, and caller-supplied extras (a leading `.`
+/// matches the bare domain and any subdomain).
+#[derive(Clone, Debug, Default)]
+pub struct HostCheckConfig {
+    /// The host the server bound to; always allowed (port stripped both sides).
+    pub bound_host: Option<String>,
+    /// Extra allowed hosts / domain-suffix patterns (from `--allowed-host` /
+    /// `KIMI_CODE_ALLOWED_HOSTS`).
+    pub extra: Vec<String>,
+    /// Disable the check entirely (`KIMI_CODE_DISABLE_HOST_CHECK=1`; test-only).
+    pub disable: bool,
+}
+
+/// Strip a trailing `:port` from a `Host` value and lowercase it. Handles
+/// bracketed IPv6 with a port (`[::1]:80` → `[::1]`), host/IPv4 with a port
+/// (`localhost:80` → `localhost`), and bare IPv6 without brackets (multiple
+/// colons — no unambiguous port to strip).
+fn strip_port(host: &str) -> String {
+    if host.starts_with('[') {
+        return match host.find(']') {
+            Some(end) => host[..=end].to_ascii_lowercase(),
+            None => host.to_ascii_lowercase(),
+        };
+    }
+    let first_colon = host.find(':');
+    if first_colon.is_none() {
+        return host.to_ascii_lowercase();
+    }
+    let last_colon = host.rfind(':');
+    if first_colon == last_colon {
+        let after = &host[last_colon.unwrap() + 1..];
+        if !after.is_empty() && after.chars().all(|c| c.is_ascii_digit()) {
+            return host[..last_colon.unwrap()].to_ascii_lowercase();
+        }
+    }
+    // Multiple colons (bare IPv6) or a non-digit suffix — no port to strip.
+    host.to_ascii_lowercase()
+}
+
+/// True when `host` parses as a literal IP address.
+fn is_literal_ip(host: &str) -> bool {
+    host.parse::<std::net::IpAddr>().is_ok()
+}
+
+/// Decide whether a `Host` value is allowed under the given options
+/// (kap-server `isAllowedHost` parity). Missing/empty `Host` is rejected
+/// (HTTP/1.1 requires it); the check is a no-op when `disable` is set.
+pub fn is_allowed_host(host: Option<&str>, opts: &HostCheckConfig) -> bool {
+    if opts.disable {
+        return true;
+    }
+    let Some(host) = host else {
+        return false;
+    };
+    if host.is_empty() {
+        return false;
+    }
+    let h = strip_port(host);
+    if h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]" {
+        return true;
+    }
+    if h.ends_with(".localhost") {
+        return true;
+    }
+    if is_literal_ip(&h) {
+        return true;
+    }
+    if let Some(bound) = &opts.bound_host {
+        if h == strip_port(bound) {
+            return true;
+        }
+    }
+    for entry in &opts.extra {
+        if let Some(base) = entry.strip_prefix('.') {
+            if h == base || h.ends_with(entry) {
+                return true;
+            }
+        } else if h == *entry {
+            return true;
+        }
+    }
+    false
+}
+
+/// True when the bound host is a loopback address (drives the shutdown-route
+/// gate and the non-loopback TLS refusal, kap-server `classify` parity).
+pub fn is_loopback_host(host: &str) -> bool {
+    let h = strip_port(host);
+    h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]"
+}
+
 /// Shared handler state: the processor all transports serve, plus the engine
 /// event source (when present) so WS clients receive live session events.
 #[derive(Clone)]
@@ -57,6 +150,11 @@ pub struct HttpState {
     /// `/api/v1/shutdown` fires this channel when configured. `Arc<Mutex>`
     /// so handler clones (per request) share the same sender.
     shutdown: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
+    /// Host-header allowlist (DNS-rebinding defence).
+    host_check: HostCheckConfig,
+    /// When false (non-loopback bind without `--allow-remote-shutdown`), the
+    /// `/api/v1/shutdown` route answers a refusal instead of firing.
+    allow_remote_shutdown: bool,
     /// Active OAuth device flow for `/api/v1/oauth/login` (start/poll/cancel).
     oauth_flow: Arc<tokio::sync::Mutex<Option<OAuthFlowState>>>,
     /// Shared v1-contract turn state (async prompt submit ↔ WS projector).
@@ -89,6 +187,8 @@ impl HttpState {
                 .map(|d| d.as_secs().to_string())
                 .unwrap_or_default(),
             shutdown: None,
+            host_check: HostCheckConfig::default(),
+            allow_remote_shutdown: true,
             oauth_flow: Arc::new(tokio::sync::Mutex::new(None)),
             v1: v1::V1Shared::new(),
         }
@@ -118,6 +218,8 @@ impl HttpState {
                 .map(|d| d.as_secs().to_string())
                 .unwrap_or_default(),
             shutdown: None,
+            host_check: HostCheckConfig::default(),
+            allow_remote_shutdown: true,
             oauth_flow: Arc::new(tokio::sync::Mutex::new(None)),
             v1: v1::V1Shared::new(),
         }
@@ -136,6 +238,19 @@ impl HttpState {
     /// WS `kimi-code.bearer.*` subprotocol).
     pub fn with_auth(mut self, auth: AuthConfig) -> Self {
         self.auth = auth;
+        self
+    }
+
+    /// Attach the host-header allowlist (DNS-rebinding defence).
+    pub fn with_host_check(mut self, check: HostCheckConfig) -> Self {
+        self.host_check = check;
+        self
+    }
+
+    /// Gate `/api/v1/shutdown`: when `false` (non-loopback bind without
+    /// `--allow-remote-shutdown`), the route answers a refusal.
+    pub fn with_allow_remote_shutdown(mut self, allow: bool) -> Self {
+        self.allow_remote_shutdown = allow;
         self
     }
 
@@ -167,6 +282,7 @@ impl HttpState {
 /// Build the `/api/v1` router.
 pub fn router(state: HttpState) -> Router {
     let middleware = axum::middleware::from_fn_with_state(state.clone(), require_auth);
+    let host_middleware = axum::middleware::from_fn_with_state(state.clone(), require_allowed_host);
     Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/healthz", get(health))
@@ -267,7 +383,11 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/v1/providers/{id}/refresh", post(providers_refresh_one))
         .route("/api/v1/providers:refresh_oauth", post(providers_refresh_oauth))
         .route("/api/v1/ws", get(ws_upgrade))
+        // axum layers are LIFO: the last-added runs first. The host check
+        // must run before auth (kap-server hook order parity) so a rebinding
+        // attacker is rejected even before the credential gate.
         .layer(middleware)
+        .layer(host_middleware)
         .with_state(state)
 }
 
@@ -399,6 +519,8 @@ where
 /// Bearer-credential guard for the REST surface (mirrors kap-server's auth
 /// middleware). Skips WebSocket-upgrade requests — WS carries the credential
 /// in the `kimi-code.bearer.*` subprotocol, validated in `ws_upgrade`.
+/// `GET /api/v1/healthz` is bypassed (liveness probe for supervisors / load
+/// balancers, kap-server `defaultIsBypassed` parity).
 async fn require_auth(
     State(state): State<HttpState>,
     req: axum::http::Request<axum::body::Body>,
@@ -415,16 +537,47 @@ async fn require_auth(
         .map(|v| v.eq_ignore_ascii_case("websocket"))
         .unwrap_or(false);
     if !is_ws {
-        let authorized = req
-            .headers()
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|t| t == expected)
-            .unwrap_or(false);
-        if !authorized {
-            return Json(err(40101, "unauthorized")).into_response();
+        let is_healthz =
+            req.method() == axum::http::Method::GET && req.uri().path() == "/api/v1/healthz";
+        if !is_healthz {
+            let authorized = req
+                .headers()
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|t| t == expected)
+                .unwrap_or(false);
+            if !authorized {
+                return Json(err(40101, "unauthorized")).into_response();
+            }
         }
+    }
+    next.run(req).await
+}
+
+/// Host-header allowlist guard (DNS-rebinding defence, kap-server
+/// `createHostCheck` parity): rejects requests whose `Host` header is not in
+/// the allowlist with a `403 Invalid Host header` envelope. WebSocket-upgrade
+/// requests are checked too (the WS facade is equally reachable by a rebinding
+/// attacker).
+async fn require_allowed_host(
+    State(state): State<HttpState>,
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Response {
+    let host = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok());
+    if !is_allowed_host(host, &state.host_check) {
+        let label = host.map(|h| strip_port(h)).unwrap_or_else(|| "<missing>".to_string());
+        return Json(err(
+            40301,
+            &format!(
+                "Invalid Host header: {label}; allow this host with KIMI_CODE_ALLOWED_HOSTS={label} or 'kimi web --allowed-host {label}'."
+            ),
+        ))
+        .into_response();
     }
     next.run(req).await
 }
@@ -469,14 +622,27 @@ pub async fn serve_with_events(
 
 /// Serve the full web server — the `/api/v1` projection with engine events,
 /// plus the bundled SPA from `assets_dir` — the `kimi web` Rust replacement.
+/// `host_check` / `allow_remote_shutdown` mirror the kap-server startup
+/// options (`--allowed-host` / `--allow-remote-shutdown`); the shutdown route
+/// is armed so `POST /api/v1/shutdown` stops the server gracefully.
 pub async fn serve_web(
     processor: Arc<MessageProcessor>,
     events: tokio::sync::broadcast::Sender<serde_json::Value>,
     assets_dir: &str,
     listener: tokio::net::TcpListener,
+    host_check: HostCheckConfig,
+    allow_remote_shutdown: bool,
 ) -> anyhow::Result<()> {
-    let state = HttpState::with_events(processor, events);
-    axum::serve(listener, colon_make_service(router_with_assets(state, assets_dir))).await?;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let state = HttpState::with_events(processor, events)
+        .with_host_check(host_check)
+        .with_allow_remote_shutdown(allow_remote_shutdown)
+        .with_shutdown(Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx))));
+    axum::serve(listener, colon_make_service(router_with_assets(state, assets_dir)))
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.await;
+        })
+        .await?;
     Ok(())
 }
 
@@ -510,8 +676,16 @@ async fn meta(State(state): State<HttpState>) -> Json<Value> {
 }
 
 /// `POST /api/v1/shutdown` — fire the graceful-shutdown channel (reply first
-/// so the caller gets a clean 200 instead of a dropped connection).
+/// so the caller gets a clean 200 instead of a dropped connection). On a
+/// non-loopback bind without `--allow-remote-shutdown` the route answers a
+/// refusal instead (kap-server parity: remote shutdown is opt-in).
 async fn shutdown(State(state): State<HttpState>) -> Json<Value> {
+    if !state.allow_remote_shutdown {
+        return Json(err(
+            40302,
+            "remote shutdown is disabled on this bind; restart with --allow-remote-shutdown to enable it",
+        ));
+    }
     if let Some(arc) = &state.shutdown {
         let mut guard = arc.lock().await;
         if let Some(tx) = guard.take() {
@@ -2426,6 +2600,65 @@ mod tests {
         let mut processor = MessageProcessor::new();
         HealthProcessor.register(&mut processor);
         Arc::new(processor)
+    }
+
+    /// Host-header allowlist (kap-server `isAllowedHost` parity): loopback
+    /// names/IPs and literal IPs are always allowed, the bound host is allowed,
+    /// `.suffix` extras match the bare domain and subdomains, and a missing
+    /// `Host` is rejected.
+    #[test]
+    fn host_check_allows_loopback_and_extras() {
+        let opts = HostCheckConfig {
+            bound_host: Some("192.168.1.5".into()),
+            extra: vec![".example.com".into(), "app.test".into()],
+            disable: false,
+        };
+        for allowed in [
+            "localhost",
+            "localhost:58627",
+            "sub.localhost",
+            "127.0.0.1",
+            "127.0.0.1:8080",
+            "::1",
+            "[::1]:8080",
+            "10.0.0.1",
+            "192.168.1.5",
+            "192.168.1.5:58627",
+            "example.com",
+            "a.example.com",
+            "app.test",
+        ] {
+            assert!(is_allowed_host(Some(allowed), &opts), "should allow {allowed}");
+        }
+        for denied in ["evil.test", "example.com.evil.net", "app.test.evil.net", ""] {
+            assert!(!is_allowed_host(Some(denied), &opts), "should deny {denied}");
+        }
+        assert!(!is_allowed_host(None, &opts), "missing Host is denied");
+        // `disable` bypasses the check entirely.
+        let disabled = HostCheckConfig { disable: true, ..Default::default() };
+        assert!(is_allowed_host(None, &disabled), "disabled check allows everything");
+    }
+
+    /// `strip_port` handles bracketed IPv6, host:port, and bare IPv6.
+    #[test]
+    fn strip_port_normalizes_host_values() {
+        assert_eq!(strip_port("localhost:80"), "localhost");
+        assert_eq!(strip_port("1.2.3.4:5678"), "1.2.3.4");
+        assert_eq!(strip_port("[::1]:80"), "[::1]");
+        assert_eq!(strip_port("::1"), "::1");
+        assert_eq!(strip_port("EXAMPLE.com"), "example.com");
+        assert_eq!(strip_port("host:notaport"), "host:notaport");
+    }
+
+    /// `is_loopback_host` drives the shutdown gate and the TLS refusal.
+    #[test]
+    fn loopback_classification() {
+        for host in ["127.0.0.1", "localhost", "::1", "[::1]", "127.0.0.1:58627"] {
+            assert!(is_loopback_host(host), "loopback: {host}");
+        }
+        for host in ["0.0.0.0", "192.168.1.5", "example.com"] {
+            assert!(!is_loopback_host(host), "non-loopback: {host}");
+        }
     }
 
     /// Spawn the HTTP projection on an ephemeral port and return its base URL.

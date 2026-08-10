@@ -188,6 +188,88 @@ async fn bearer_auth_gates_rest_and_ws() {
 }
 
 #[tokio::test]
+async fn host_check_rejects_disallowed_host_headers() {
+    home("host-check");
+    let server = Server::build().expect("server");
+    let processor = Arc::new(server.processor);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let serving = tokio::spawn(async move {
+        let state = kimi_server_transport::http::HttpState::with_events(
+            processor,
+            server.state.event_sender(),
+        )
+        .with_host_check(kimi_server_transport::http::HostCheckConfig {
+            bound_host: Some("127.0.0.1".into()),
+            extra: vec![".example.com".into()],
+            disable: false,
+        });
+        let _ = axum::serve(listener, kimi_server_transport::http::router(state)).await;
+    });
+    let base = format!("http://{addr}");
+
+    // A disallowed Host header → 403 envelope (DNS-rebinding defence).
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/api/v1/health"))
+        .header("Host", "evil.test")
+        .send()
+        .await
+        .expect("request")
+        .json::<serde_json::Value>()
+        .await
+        .expect("json");
+    assert_eq!(resp["code"], 40301, "disallowed host: {resp}");
+
+    // The bound host and an allowed suffix pass.
+    for host in ["127.0.0.1", "a.example.com"] {
+        let resp = reqwest::Client::new()
+            .get(format!("{base}/api/v1/health"))
+            .header("Host", host)
+            .send()
+            .await
+            .expect("request")
+            .json::<serde_json::Value>()
+            .await
+            .expect("json");
+        assert_eq!(resp["code"], 0, "allowed host {host}: {resp}");
+    }
+
+    serving.abort();
+}
+
+#[tokio::test]
+async fn shutdown_route_gated_on_non_loopback_bind() {
+    home("shutdown-gate");
+    let server = Server::build().expect("server");
+    let processor = Arc::new(server.processor);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let serving = tokio::spawn(async move {
+        let state = kimi_server_transport::http::HttpState::with_events(
+            processor,
+            server.state.event_sender(),
+        )
+        // Simulate a non-loopback bind: remote shutdown is refused unless
+        // explicitly allowed.
+        .with_allow_remote_shutdown(false);
+        let _ = axum::serve(listener, kimi_server_transport::http::router(state)).await;
+    });
+    let base = format!("http://{addr}");
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/v1/shutdown"))
+        .send()
+        .await
+        .expect("request")
+        .json::<serde_json::Value>()
+        .await
+        .expect("json");
+    assert_eq!(resp["code"], 40302, "gated shutdown: {resp}");
+
+    serving.abort();
+}
+
+#[tokio::test]
 async fn http_v1_session_contract() {
     let (base, serving) = spawn_http("contract").await;
     let client = reqwest::Client::new();

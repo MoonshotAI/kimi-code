@@ -101,9 +101,6 @@ importers:
       '@moonshot-ai/kaos':
         specifier: workspace:^
         version: link:../../packages/kaos
-      '@moonshot-ai/kap-server':
-        specifier: workspace:^
-        version: link:../../packages/kap-server
       '@moonshot-ai/kimi-agent':
         specifier: workspace:^
         version: link:../../packages/kimi-agent
