@@ -29,7 +29,6 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
-    "@moonshot-ai/protocol": "workspace:^",
     "hono": "^4.7.7",
     "yauzl": "^3.3.0"
   },

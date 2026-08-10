@@ -287,9 +287,6 @@ importers:
       '@hono/node-server':
         specifier: '>=2.0.5'
         version: 2.0.11(hono@4.12.32)
-      '@moonshot-ai/protocol':
-        specifier: workspace:^
-        version: link:../../../packages/protocol
       hono:
         specifier: '>=4.12.18'
         version: 4.12.32

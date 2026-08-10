@@ -9,8 +9,7 @@
  * protocol, so a local copy stays in sync by definition.
  */
 
-import type { ContentPart, FinishReason, Message, TokenUsage } from './wire-types';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ContentPart, FinishReason, Message, TokenUsage, ToolInputDisplay } from './wire-types';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Wire protocol
