@@ -42,7 +42,7 @@ function fakeClient(options: {
     approvalResolve: () => Promise.resolve(true),
     onEvent: () => () => {},
     onSessionEvent: () => () => {},
-    close: () => {},
+    close: async () => {},
   };
 }
 

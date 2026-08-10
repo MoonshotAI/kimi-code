@@ -594,9 +594,10 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
   for (let i = text.length - 1; i >= 0; i--) {
     let isAscii = false;
     const code = text.codePointAt(i);
+    if (code === undefined) break;
     if (code >= 0xdc00 && code <= 0xdfff && i > 0) {
       const high = text.codePointAt(i - 1);
-      if (high >= 0xd800 && high <= 0xdbff) {
+      if (high !== undefined && high >= 0xd800 && high <= 0xdbff) {
         i--;
       }
     } else {

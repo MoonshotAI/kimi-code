@@ -219,7 +219,7 @@ export function createKimiHarness(options: CreateKimiHarnessOptions = {}): KimiH
     listSessions,
     exportSession,
     async close() {
-      client?.close();
+      await client?.close();
       client = undefined;
     },
   };

@@ -34,30 +34,6 @@ const SKIP_DIRS = new Set([
 // Module definitions
 const MODULES = [
   {
-    name: 'agent-core',
-    srcDir: 'packages/agent-core/src',
-    localeDir: 'packages/i18n/src/locales',
-    localeEn: 'packages/i18n/src/locales/en.ts',
-    localeZh: 'packages/i18n/src/locales/zh.ts',
-    tPattern: /\bt\(['"]/,
-    importPattern: /t\b.*from\s+['"]@moonshot-ai\/kimi-i18n['"]/,
-    skipDirs: ['i18n-locales'],
-    fileTypes: ['.ts'],
-    tImportName: 't',
-  },
-  {
-    name: 'kap-server',
-    srcDir: 'packages/kap-server/src',
-    localeDir: 'packages/i18n/src/locales',
-    localeEn: 'packages/i18n/src/locales/en.ts',
-    localeZh: 'packages/i18n/src/locales/zh.ts',
-    tPattern: /\bt\(['"]/,
-    importPattern: /t\b.*from\s+['"]@moonshot-ai\/kimi-i18n['"]/,
-    skipDirs: ['i18n-locales'],
-    fileTypes: ['.ts'],
-    tImportName: 't',
-  },
-  {
     name: 'kimi-code',
     srcDir: 'apps/kimi-code/src',
     localeDir: 'apps/kimi-code/src/i18n/locales',
@@ -117,7 +93,7 @@ const MODULES = [
     skipDirs: ['i18n'],
     fileTypes: ['.ts', '.tsx'],
     tImportName: 't',
-  },
+  }
 ];
 
 // ── TS module loader ───────────────────────────────────────────────────────

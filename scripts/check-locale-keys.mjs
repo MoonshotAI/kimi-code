@@ -27,19 +27,9 @@ const LOCALE_SOURCES = [
     zh: 'packages/i18n/src/locales/zh.ts',
   },
   {
-    name: 'agent-core',
-    en: 'packages/agent-core/src/i18n-locales/en.ts',
-    zh: 'packages/agent-core/src/i18n-locales/zh.ts',
-  },
-  {
     name: 'kimi-code',
     en: 'apps/kimi-code/src/i18n/locales/en.ts',
     zh: 'apps/kimi-code/src/i18n/locales/zh.ts',
-  },
-  {
-    name: 'kap-server',
-    en: 'packages/kap-server/src/i18n-locales/en.ts',
-    zh: 'packages/kap-server/src/i18n-locales/zh.ts',
   },
   {
     name: 'kimi-inspect',
@@ -60,7 +50,7 @@ const LOCALE_SOURCES = [
     name: 'kimi-web',
     src: 'apps/kimi-web/src/i18n/locales/index.ts',
     extract: true,
-  },
+  }
 ];
 
 // ── Key collection ───────────────────────────────────────────────────────────

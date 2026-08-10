@@ -299,7 +299,7 @@ export interface NativeServerClientLike {
     sessionId: string,
     listener: (event: Record<string, unknown>) => void,
   ): () => void;
-  close(): void;
+  close(): Promise<void>;
 }
 
 /**
@@ -401,10 +401,22 @@ export class NativeServerClient {
   }
 
   /** Terminate the server process; in-flight calls reject. */
-  close(): void {
+  /** Terminate the child and wait for it to exit (so callers can clean the
+   *  home dir immediately after — the engine holds file handles until the
+   *  process is gone; Windows unlink would otherwise hit EBUSY). */
+  async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    this.child.kill();
+    if (this.child.exitCode === null && this.child.signalCode === null) {
+      this.child.kill();
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 2_000);
+        this.child.once('exit', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    }
   }
 
   // ── High-frequency typed calls (the rest go through `call`) ────────────

@@ -201,6 +201,9 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
         try {
           return await getHarness().exportSession(input);
         } finally {
+          // One export per command: release the engine RPC client so the
+          // spawned kimi-server-serve exits before the process does.
+          await getHarness().close?.().catch(() => {});
           await shutdownDefaultTelemetry();
         }
       }),

@@ -181,7 +181,7 @@ export function createKimiHarness(options: KimiHarnessOptions): PromptHarness {
       );
     },
     close: async (): Promise<void> => {
-      client?.close();
+      await client?.close();
       client = undefined;
     },
   };

@@ -521,7 +521,7 @@ describe('shared parsers stay strict', () => {
   it('rejects unknown --log-level values', async () => {
     const { parseLogLevel } = await import('#/cli/sub/web/shared');
     expect(() => parseLogLevel('shout')).toThrow(/invalid --log-level/);
-    expect(parseLogLevel()).toBe('info');
+    expect(parseLogLevel(undefined)).toBe('info');
     expect(parseLogLevel('debug')).toBe('debug');
   });
 });
@@ -845,7 +845,7 @@ describe('accessUrlLines', () => {
 
   it('returns a single URL line for a specific host (no token)', async () => {
     const { accessUrlLines } = await import('#/cli/sub/web/access-urls');
-    const lines = accessUrlLines('192.168.1.5', 58627);
+    const lines = accessUrlLines('192.168.1.5', 58627, undefined);
     expect(lines).toEqual([{ label: 'URL:      ', url: 'http://192.168.1.5:58627/' }]);
   });
 

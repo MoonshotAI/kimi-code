@@ -20,9 +20,7 @@ const LOCALE_SOURCES = [
   // The main i18n package — the single source of truth consumed by all packages at runtime
   { en: 'packages/i18n/src/locales/en.ts', zh: 'packages/i18n/src/locales/zh.ts', out: 'packages/i18n/src/locales' },
   // Per-package subsets used for package-level JSON generation
-  { en: 'packages/agent-core/src/i18n-locales/en.ts', zh: 'packages/agent-core/src/i18n-locales/zh.ts', out: 'packages/agent-core/src/i18n-locales' },
   { en: 'apps/kimi-code/src/i18n/locales/en.ts', zh: 'apps/kimi-code/src/i18n/locales/zh.ts', out: 'apps/kimi-code/src/i18n/locales' },
-  { en: 'packages/kap-server/src/i18n-locales/en.ts', zh: 'packages/kap-server/src/i18n-locales/zh.ts', out: 'packages/kap-server/src/i18n-locales' },
   { en: 'apps/kimi-inspect/src/i18n/locales/en.ts', zh: 'apps/kimi-inspect/src/i18n/locales/zh.ts', out: 'apps/kimi-inspect/src/i18n/locales' },
   { en: 'apps/vis/web/src/i18n/locales/en.ts', zh: 'apps/vis/web/src/i18n/locales/zh.ts', out: 'apps/vis/web/src/i18n/locales' },
   { en: 'apps/vscode/webview-ui/src/i18n/locales/en.ts', zh: 'apps/vscode/webview-ui/src/i18n/locales/zh.ts', out: 'apps/vscode/webview-ui/src/i18n/locales' },
@@ -42,7 +40,7 @@ const LOCALE_SOURCES = [
       }
       throw new Error('Cannot extract en/zh from module');
     },
-  },
+  }
 ];
 
 let generated = 0;

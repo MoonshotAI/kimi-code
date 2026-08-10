@@ -9,83 +9,58 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { registerExportCommand } from '#/cli/sub/export';
 import { createKimiCodeHostIdentity } from '#/cli/version';
 import { createKimiHarness } from '#/cli/prompt-harness-local';
-import { log } from '../../src/cli/logging-core';
-import { __resetRootLoggerForTest } from '../../src/cli/logging-core';
 
-const SESSION_LOG = 'logs/kimi-code.log';
-const GLOBAL_LOG = 'logs/global/kimi-code.log';
-const MAIN_WIRE = 'agents/main/wire.jsonl';
 const ENABLED = process.env['KIMI_E2E'] === '1';
 
 let homeDir: string;
 let workDir: string;
 let oldHome: string | undefined;
-let oldLogLevel: string | undefined;
 
 beforeEach(async () => {
-  await __resetRootLoggerForTest();
   homeDir = await mkdtemp(join(tmpdir(), 'kimi-cli-log-home-'));
   workDir = await mkdtemp(join(tmpdir(), 'kimi-cli-log-work-'));
   oldHome = process.env['KIMI_CODE_HOME'];
-  oldLogLevel = process.env['KIMI_LOG_LEVEL'];
   process.env['KIMI_CODE_HOME'] = homeDir;
-  process.env['KIMI_LOG_LEVEL'] = 'info';
 });
 
 afterEach(async () => {
-  await __resetRootLoggerForTest();
   if (oldHome === undefined) {
     delete process.env['KIMI_CODE_HOME'];
   } else {
     process.env['KIMI_CODE_HOME'] = oldHome;
   }
-  if (oldLogLevel === undefined) {
-    delete process.env['KIMI_LOG_LEVEL'];
-  } else {
-    process.env['KIMI_LOG_LEVEL'] = oldLogLevel;
-  }
   await rm(homeDir, { recursive: true, force: true });
   await rm(workDir, { recursive: true, force: true });
 });
 
-describe.skipIf(!ENABLED)('local logging export e2e', () => {
-  it('exports session log and global log by default, and allows skipping global log', async () => {
+describe.skipIf(!ENABLED)('kimi export e2e', () => {
+  it('exports the engine archive: manifest + wire records + session files', async () => {
     const harness = createKimiHarness({
       homeDir,
       identity: createKimiCodeHostIdentity('0.1.1'),
     });
     try {
       const session = await harness.createSession({
-        id: 'ses_cli_logging_export',
+        id: 'ses_cli_export',
         workDir,
       });
-      log.warn('cli logging export marker', { sessionId: session.id });
-      log.warn('cli global marker');
 
-      const defaultZip = join(workDir, 'default.zip');
-      await runKimiExport([session.id, '-o', defaultZip]);
-      const defaultEntries = readZipEntries(await readFile(defaultZip));
-      expect(defaultEntries.has(MAIN_WIRE)).toBe(true);
-      expect(defaultEntries.has(SESSION_LOG)).toBe(true);
-      expect(defaultEntries.has(GLOBAL_LOG)).toBe(true);
-      expect(defaultEntries.get(SESSION_LOG)!.toString('utf-8')).toContain(
-        'cli logging export marker',
-      );
-      expect(defaultEntries.get(GLOBAL_LOG)!.toString('utf-8')).toContain('cli global marker');
-      const defaultManifest = JSON.parse(
-        defaultEntries.get('manifest.json')!.toString('utf-8'),
-      ) as Record<string, unknown>;
-      expect(defaultManifest['sessionLogPath']).toBe(SESSION_LOG);
-      expect(defaultManifest['globalLogPath']).toBe(GLOBAL_LOG);
+      const zipPath = join(workDir, 'default.zip');
+      await runKimiExport([session.id, '-o', zipPath]);
+      const entries = readZipEntries(await readFile(zipPath));
 
-      const noGlobalZip = join(workDir, 'no-global.zip');
-      await runKimiExport([session.id, '-o', noGlobalZip, '--no-include-global-log']);
-      const noGlobalEntries = readZipEntries(await readFile(noGlobalZip));
-      expect(noGlobalEntries.has(GLOBAL_LOG)).toBe(false);
-      const noGlobalManifest = JSON.parse(
-        noGlobalEntries.get('manifest.json')!.toString('utf-8'),
+      // Engine export semantics (G-2/G-6): the archive carries
+      // `manifest.json`, the session's wire records as `wire.json`, and the
+      // session-directory files. The legacy SDK export bundled host logs
+      // (logs/kimi-code.log) with manifest sessionLogPath/globalLogPath —
+      // the Rust engine does not collect host logs (retired with the SDK).
+      expect(entries.has('manifest.json')).toBe(true);
+      expect(entries.has('wire.json')).toBe(true);
+      const manifest = JSON.parse(
+        entries.get('manifest.json')!.toString('utf-8'),
       ) as Record<string, unknown>;
-      expect(noGlobalManifest['globalLogPath']).toBeUndefined();
+      expect(manifest['sessionId']).toBe(session.id);
+      expect(typeof manifest['protocolVersion']).toBe('number');
     } finally {
       await harness.close().catch(() => {});
     }

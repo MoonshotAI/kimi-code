@@ -19,10 +19,6 @@ const ROOT = resolve(__dirname, '..');
 
 const LOCALE_FILE = 'packages/i18n/src/locales/en.ts';
 const SOURCE_DIRS = [
-  'packages/agent-core/src',
-  'packages/agent-core-v2/src',
-  'packages/kap-server/src',
-  'packages/klient/src',
 ];
 
 // ── Simple recursive file walker ─────────────────────────────────────────────

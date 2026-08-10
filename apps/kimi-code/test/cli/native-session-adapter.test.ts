@@ -91,7 +91,9 @@ class FakeServerClient implements NativeServerClientLike {
     });
   }
 
-  close(): void {}
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
 
   /** Test hook: deliver a raw engine wire event to every subscriber. */
   emitEvent(event: Record<string, unknown>): void {

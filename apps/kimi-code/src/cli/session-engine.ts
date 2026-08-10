@@ -211,6 +211,6 @@ export async function tryRunSessionEnginePrompt(
     await adapter.save();
     return true;
   } finally {
-    client.close();
+    await client.close();
   }
 }
