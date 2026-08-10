@@ -1359,6 +1359,7 @@ mod tests {
         assert_eq!(p["source"], json!("manual"));
         assert_eq!(p["tokens_before"], json!(12345));
     }
+    #[test]
     fn goal_updated_projects_snapshot() {
         let shared = V1Shared::new();
         let mut local = HashMap::new();
