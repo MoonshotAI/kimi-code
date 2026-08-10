@@ -23,12 +23,14 @@ import {
   applyCatalogProvider,
   catalogProviderModels,
   CatalogFetchError,
-  createKimiHarness,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
   resolveCatalogImport,
   type Catalog,
   type CatalogProviderEntry,
+} from '#/cli/catalog-local';
+import {
+  createKimiHarness,
   type KimiConfig,
   type KimiHarness,
 } from '@moonshot-ai/kimi-code-sdk';
