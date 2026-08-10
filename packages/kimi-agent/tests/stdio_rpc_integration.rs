@@ -3546,12 +3546,14 @@ fn session_persists_assistant_replies_across_turns() {
 }
 
 #[test]
-fn session_compact_requires_a_native_summarizer() {
+fn session_compact_host_proxy_gets_a_summarizer_delegate() {
     // The compaction write-back is unit-tested in
     // `compaction::native_delegate::tests` (deterministic, no LLM). Here we
-    // assert the RPC wiring + guard end to end: a session without a native-LLM
-    // provider has no summarizer, so `session/compact` must surface a clear
-    // error rather than silently no-op.
+    // assert the RPC wiring end to end: a session without a native-LLM
+    // provider now gets a host-proxy summarizer delegate (G-2 dual-channel
+    // gap), so `session/compact` must advance to the strategy phase — it must
+    // NOT fail with a missing-delegate error. On an empty history the
+    // strategy reports the no-safe-split-point error instead.
     let binary = match find_binary() {
         Some(b) => b,
         None => {
@@ -3614,8 +3616,12 @@ fn session_compact_requires_a_native_summarizer() {
         .and_then(|m| m.as_str())
         .unwrap_or("");
     assert!(
-        message.contains("delegate"),
-        "compact without a native summarizer must error clearly, got: {resp}"
+        !message.contains("delegate"),
+        "host-proxy sessions must have a summarizer delegate now, got: {resp}"
+    );
+    assert!(
+        message.contains("split point"),
+        "compact on empty history must surface the strategy error, got: {resp}"
     );
 
     let _ = child.kill();

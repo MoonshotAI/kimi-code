@@ -53,6 +53,62 @@ pub fn compaction_result_to_shape_input(
     }
 }
 
+/// Summarize a compaction request through any [`LLM`] implementation. Shared
+/// by the native delegate (standalone engine) and the host-proxy delegate
+/// (sessions whose LLM channel runs through the host). The `CompactionDelegate`
+/// contract is synchronous, so the async transport is bridged with
+/// `block_in_place` + `Handle::block_on` — legal inside the RPC handler / turn
+/// loop's multi-threaded tokio runtime.
+fn summarize_with_llm(
+    llm: &dyn LLM,
+    request: &CompactionRequest<'_>,
+    tokens_before: u64,
+) -> Result<CompactionResult, String> {
+    let head_len = request.compacted_count.min(request.messages.len());
+    if head_len == 0 {
+        return Err("nothing to summarize".to_string());
+    }
+
+    // The messages the summary must cover, plus the instruction turn.
+    let mut messages: Vec<LLMMessage> =
+        request.messages[..head_len].iter().map(project_for_summary).collect();
+    let instruction = match request.instruction.as_deref().map(str::trim) {
+        Some(extra) if !extra.is_empty() => {
+            format!("{COMPACTION_USER_INSTRUCTION}\n\nAdditional instruction: {extra}")
+        }
+        _ => COMPACTION_USER_INSTRUCTION.to_string(),
+    };
+    messages.push(LLMMessage { role: "user".into(), content: instruction, ..Default::default() });
+
+    let params = LLMChatParams { messages, tools: Vec::new() };
+
+    // Bridge the async transport into the synchronous delegate contract.
+    let response = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(llm.chat(params))
+    })
+    .map_err(|e| e.to_string())?;
+
+    // The transport returns plain text; wrap it as a single text part so
+    // the shared `collect_summary` (truncation / empty-response guards)
+    // applies exactly as on the host path.
+    let content = [ContentPart::Text { text: response.content }];
+    let summary = collect_summary(response.finish_reason.as_deref(), &content)
+        .map_err(|e| e.to_string())?;
+
+    Ok(CompactionResult {
+        context_summary: Some(build_compaction_summary_text(&summary)),
+        summary,
+        compacted_count: head_len,
+        tokens_before,
+        // Left for the context shaper to estimate from the rewritten
+        // history (it recomputes when the input's `tokens_after` is None).
+        tokens_after: 0,
+        kept_user_message_count: None,
+        kept_head_user_message_count: None,
+        dropped_count: None,
+    })
+}
+
 /// A [`CompactionDelegate`] that summarizes via the session's native-LLM
 /// provider. Holds the provider config plus the pre-compaction token count so
 /// the produced [`CompactionResult`] can report `tokens_before` accurately.
@@ -88,50 +144,29 @@ fn project_for_summary(message: &crate::context::types::ContextMessage) -> LLMMe
 
 impl CompactionDelegate for NativeLlmCompactionDelegate {
     fn compact(&self, request: &CompactionRequest<'_>) -> Result<CompactionAttempt, String> {
-        let head_len = request.compacted_count.min(request.messages.len());
-        if head_len == 0 {
-            return Err("nothing to summarize".to_string());
-        }
-
-        // The messages the summary must cover, plus the instruction turn.
-        let mut messages: Vec<LLMMessage> =
-            request.messages[..head_len].iter().map(project_for_summary).collect();
-        let instruction = match request.instruction.as_deref().map(str::trim) {
-            Some(extra) if !extra.is_empty() => {
-                format!("{COMPACTION_USER_INSTRUCTION}\n\nAdditional instruction: {extra}")
-            }
-            _ => COMPACTION_USER_INSTRUCTION.to_string(),
-        };
-        messages.push(LLMMessage { role: "user".into(), content: instruction, ..Default::default() });
-
         let llm = NativeHttpLlm::new(self.config.clone(), COMPACTION_SYSTEM_PROMPT.to_string());
-        let params = LLMChatParams { messages, tools: Vec::new() };
+        summarize_with_llm(&llm, request, self.tokens_before).map(CompactionAttempt::Done)
+    }
+}
 
-        // Bridge the async transport into the synchronous delegate contract.
-        let response = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(llm.chat(params))
-        })
-        .map_err(|e| e.to_string())?;
+/// A [`CompactionDelegate`] that summarizes through an arbitrary [`LLM`]
+/// implementation — the host-proxy channel (`HostLlmProxy` over
+/// `HostCallbacks::llm_chat`) for sessions whose LLM runs through the host.
+/// Without this, host-proxy sessions could never compact (`compaction.unable`).
+pub struct LlmCompactionDelegate {
+    llm: Box<dyn LLM>,
+    tokens_before: u64,
+}
 
-        // The transport returns plain text; wrap it as a single text part so
-        // the shared `collect_summary` (truncation / empty-response guards)
-        // applies exactly as on the host path.
-        let content = [ContentPart::Text { text: response.content }];
-        let summary = collect_summary(response.finish_reason.as_deref(), &content)
-            .map_err(|e| e.to_string())?;
+impl LlmCompactionDelegate {
+    pub fn new(llm: Box<dyn LLM>, tokens_before: u64) -> Self {
+        Self { llm, tokens_before }
+    }
+}
 
-        Ok(CompactionAttempt::Done(CompactionResult {
-            context_summary: Some(build_compaction_summary_text(&summary)),
-            summary,
-            compacted_count: head_len,
-            tokens_before: self.tokens_before,
-            // Left for the context shaper to estimate from the rewritten
-            // history (it recomputes when the input's `tokens_after` is None).
-            tokens_after: 0,
-            kept_user_message_count: None,
-            kept_head_user_message_count: None,
-            dropped_count: None,
-        }))
+impl CompactionDelegate for LlmCompactionDelegate {
+    fn compact(&self, request: &CompactionRequest<'_>) -> Result<CompactionAttempt, String> {
+        summarize_with_llm(&*self.llm, request, self.tokens_before).map(CompactionAttempt::Done)
     }
 }
 
@@ -140,6 +175,8 @@ mod tests {
     use super::*;
     use crate::context::context_memory::ContextMemory;
     use crate::context::types::{ContentPart, ContextMessage, MessageOrigin};
+    use crate::rpc::types::TokenUsage;
+    use crate::turn_loop::types::LLMChatResponse;
 
     fn user(text: &str) -> ContextMessage {
         ContextMessage {
@@ -244,5 +281,87 @@ mod tests {
         assert_eq!(input.compacted_count, 3);
         assert_eq!(input.kept_user_message_count, Some(2));
         assert_eq!(input.dropped_count, Some(4));
+    }
+
+    /// Stub LLM for the host-proxy delegate test: returns a fixed summary
+    /// text and records the request it was handed.
+    struct StubLlm {
+        content: String,
+    }
+
+    impl LLM for StubLlm {
+        fn system_prompt(&self) -> &str {
+            "stub"
+        }
+        fn model_name(&self) -> &str {
+            "stub"
+        }
+        fn is_retryable_error(&self, _error: &str) -> bool {
+            false
+        }
+        fn chat(
+            &self,
+            _params: LLMChatParams,
+        ) -> crate::rpc::types::BoxFuture<
+            '_, Result<LLMChatResponse, Box<dyn std::error::Error + Send + Sync>>,
+        > {
+            let content = self.content.clone();
+            Box::pin(async move {
+                Ok(LLMChatResponse {
+                    content,
+                    tool_calls: Vec::new(),
+                    finish_reason: Some("stop".to_string()),
+                    usage: TokenUsage::default(),
+                })
+            })
+        }
+    }
+
+    /// G-2 gap: a host-proxy session (LLM through `HostLlmProxy`, no native
+    /// provider) must be able to compact — the generic delegate summarizes
+    /// through any LLM implementation instead of bailing out with
+    /// `compaction.unable`. The delegate bridges the async transport with
+    /// `block_in_place`, so the test runs on a multi-threaded tokio runtime.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn llm_delegate_summarizes_through_arbitrary_llm() {
+        let delegate = LlmCompactionDelegate::new(
+            Box::new(StubLlm { content: "STUB_SUMMARY".into() }),
+            100,
+        );
+        let messages = [user("first user message about ALPHA"), assistant("assistant reply")];
+        let request = CompactionRequest {
+            source: crate::compaction::strategy::CompactionSource::Auto,
+            instruction: None,
+            compacted_count: 2,
+            messages: &messages,
+            attempt: 1,
+        };
+        match delegate.compact(&request).expect("compact ok") {
+            CompactionAttempt::Done(result) => {
+                assert!(result.summary.contains("STUB_SUMMARY"), "summary: {}", result.summary);
+                assert_eq!(result.compacted_count, 2);
+                assert_eq!(result.tokens_before, 100);
+            }
+            CompactionAttempt::Overflowed => panic!("unexpected overflow"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn llm_delegate_rejects_empty_input() {
+        let delegate = LlmCompactionDelegate::new(
+            Box::new(StubLlm { content: "STUB_SUMMARY".into() }),
+            0,
+        );
+        let request = CompactionRequest {
+            source: crate::compaction::strategy::CompactionSource::Auto,
+            instruction: None,
+            compacted_count: 0,
+            messages: &[],
+            attempt: 1,
+        };
+        match delegate.compact(&request) {
+            Err(err) => assert!(err.contains("nothing to summarize"), "err: {err}"),
+            Ok(_) => panic!("empty input must fail"),
+        }
     }
 }

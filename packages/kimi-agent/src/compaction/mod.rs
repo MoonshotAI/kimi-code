@@ -15,7 +15,7 @@ pub mod ops;
 pub mod strategy;
 pub mod utils;
 
-pub use native_delegate::NativeLlmCompactionDelegate;
+pub use native_delegate::{LlmCompactionDelegate, NativeLlmCompactionDelegate};
 pub use ops::{
     apply_begin, apply_cancel, apply_complete, begin_event, normalise_restored_phase,
     CompactionBeginData, CompactionEvent, CompactionPhase,

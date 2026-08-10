@@ -2031,15 +2031,33 @@ any partial output shown above is incomplete. The user's next message continues 
     }
 
     /// Ensure the compaction state machine has a delegate that can actually
-    /// summarize. In the standalone engine that means the native-LLM provider;
-    /// without one there is no summarizer, so compaction stays a no-op. Returns
-    /// whether a delegate is now available.
+    /// summarize. The standalone engine prefers the native-LLM provider; a
+    /// host-proxy session (no native LLM) summarizes through the host LLM
+    /// channel instead. Returns whether a delegate is now available.
     fn ensure_compaction_delegate(&mut self, tokens_before: u64) -> bool {
-        let Some(cfg) = self.native_llm.clone() else {
-            return false;
-        };
+        if let Some(cfg) = self.native_llm.clone() {
+            self.compaction.set_delegate(Box::new(
+                crate::compaction::NativeLlmCompactionDelegate::new(cfg, tokens_before),
+            ));
+            return true;
+        }
+        // Host-proxy sessions: route the summarizer through the host LLM
+        // channel (`HostCallbacks::llm_chat`) — the same proxy the main turn
+        // loop uses, so compaction works without a native provider.
         self.compaction.set_delegate(Box::new(
-            crate::compaction::NativeLlmCompactionDelegate::new(cfg, tokens_before),
+            crate::compaction::LlmCompactionDelegate::new(
+                Box::new(
+                    crate::llm::proxy::HostLlmProxy::new(
+                        self.config.system_prompt.clone(),
+                        self.config
+                            .model_alias
+                            .clone()
+                            .unwrap_or_else(|| "default".to_string()),
+                    )
+                    .with_callbacks(self.callbacks.clone()),
+                ),
+                tokens_before,
+            ),
         ));
         true
     }
