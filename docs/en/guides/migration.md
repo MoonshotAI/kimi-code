@@ -6,6 +6,19 @@ Kimi Code CLI has gone through a major version upgrade — moving from Python/uv
 
 If you are migrating from the legacy version, follow the steps below — a single command migrates your config, MCP servers, and session history to the new version.
 
+## Which CLI should I use?
+
+`kimi-cli` and Kimi Code CLI are two generations of the terminal coding agent from the same team. For a new installation, use Kimi Code CLI. `kimi-cli` remains available for existing installations while that project is gradually wound down.
+
+| | `kimi-cli` | Kimi Code CLI |
+| --- | --- | --- |
+| Status | Earlier implementation, kept available for existing installations | Current generation, recommended for new installations |
+| Implementation | Python application installed with `uv` | TypeScript/Node.js codebase distributed as a standalone binary; users do not need to install Node.js |
+| Data directory | `~/.kimi/` | `~/.kimi-code/` |
+| Migration role | Source of supported config and optional session data | Destination for data imported by `kimi migrate` |
+
+Kimi Code CLI is a separate implementation, not an in-place update of the Python package. The migration command copies supported data into the new data directory without changing or deleting your `kimi-cli` data.
+
 ## What's new
 
 - **No more Python / uv**: Rebuilt on Node.js — no Python environment needed, simpler to install

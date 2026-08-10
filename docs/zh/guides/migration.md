@@ -6,6 +6,19 @@ Kimi Code CLI 已完成重大版本升级，底层从 Python/uv 迁移至 Node.j
 
 如果你正在从旧版迁移，按照以下步骤操作——一条命令就能把配置、MCP server 与会话历史一并迁移至新版。
 
+## 应该使用哪个 CLI？
+
+`kimi-cli` 和 Kimi Code CLI 是同一团队推出的两代终端编程 Agent。全新安装时应选择 Kimi Code CLI；`kimi-cli` 仍可供已有安装继续使用，但该项目将逐步停止维护。
+
+| | `kimi-cli` | Kimi Code CLI |
+| --- | --- | --- |
+| 状态 | 较早的实现，继续供已有安装使用 | 当前一代，推荐用于全新安装 |
+| 实现方式 | Python 应用，通过 `uv` 安装 | TypeScript/Node.js 代码库，以独立二进制形式交付；用户无需安装 Node.js |
+| 数据目录 | `~/.kimi/` | `~/.kimi-code/` |
+| 迁移角色 | 提供受支持的配置和可选会话数据 | 通过 `kimi migrate` 接收导入的数据 |
+
+Kimi Code CLI 是独立实现，并非 Python 软件包的原地更新。迁移命令会把受支持的数据复制到新的数据目录，不会改动或删除 `kimi-cli` 的数据。
+
 ## 新版优势
 
 - **不再依赖 Python / uv**：基于 Node.js 重写，无需配置 Python 环境，安装更简单
