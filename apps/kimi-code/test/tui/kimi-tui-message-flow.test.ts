@@ -4600,6 +4600,93 @@ command = "vim"
     expect(driver.state.editor.getText()).toBe('');
   });
 
+  it('restores the draft when a cancelled turn ends with no step event', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.handleUserInput('early cancel');
+    expect(session.prompt).toHaveBeenCalledWith('early cancel');
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+
+    // No turn.step.interrupted: the engine goes straight to turn.ended when a
+    // turn is cancelled before the first step (e.g. during prompt hooks / media
+    // resolution), so draft restore must not depend on a step-interrupted event.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'cancelled',
+      } as Event,
+      sendQueued,
+    );
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.editor.getText()).toBe('early cancel');
+    });
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Interrupted by user');
+    expect(driver.state.transcriptEntries).toEqual([]);
+  });
+
+  it('does not clobber the editor if the user types during the async undo', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.handleUserInput('original');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+      } as Event,
+      sendQueued,
+    );
+
+    // Stall the undo RPC so we can act during its in-flight window.
+    let resolveUndo: () => void = () => {};
+    session.undoHistory = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveUndo = resolve;
+        }),
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'cancelled',
+      } as Event,
+      sendQueued,
+    );
+    await vi.waitFor(() => expect(session.undoHistory).toHaveBeenCalledWith(1));
+
+    // The user starts a new draft while the undo RPC is still in flight.
+    driver.state.editor.setText('typed during undo');
+    resolveUndo();
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+
+    expect(driver.state.editor.getText()).toBe('typed during undo');
+  });
+
   it('appends the /export-debug-zip hint beneath session error messages', async () => {
     const { driver } = await makeDriver();
 

@@ -168,8 +168,6 @@ export class SessionEventHandler {
   private goalCompletionTurnEnded = false;
   /** Non-empty assistant text or any tool call this turn — blocks ESC draft restore. */
   private currentTurnHasMeaningfulOutput = false;
-  /** Armed by user-cancel with no meaningful output; consumed on turn.ended. */
-  private pendingDraftRestore = false;
   private pluginCommandTurns: Map<string, string> = new Map();
   private pluginMcpToolsUsedInTurn: Set<string> = new Set();
   private pendingModelBlockedFallback: GoalChange | undefined;
@@ -188,7 +186,6 @@ export class SessionEventHandler {
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.currentTurnHasMeaningfulOutput = false;
-    this.pendingDraftRestore = false;
     this.pluginCommandTurns.clear();
     this.pluginMcpToolsUsedInTurn.clear();
     this.pendingModelBlockedFallback = undefined;
@@ -328,7 +325,6 @@ export class SessionEventHandler {
 
   private handleTurnBegin(event: TurnStartedEvent): void {
     this.currentTurnHasMeaningfulOutput = false;
-    this.pendingDraftRestore = false;
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
     }
@@ -383,10 +379,12 @@ export class SessionEventHandler {
     this.host.streamingUI.finalizeTurn(sendQueued);
     this.host.recordSessionActivity();
     this.renderPendingModelBlockedFallback();
-    const shouldRestoreDraft =
-      event.reason === 'cancelled' && this.pendingDraftRestore && !this.currentTurnHasMeaningfulOutput;
+    // A cancelled turn with no meaningful output and a stashed draft is eligible
+    // for ESC draft restore — including early cancels that reach turn.ended with
+    // no prior turn.step.interrupted (e.g. aborts during prompt hooks / media
+    // resolution, for which the engine never emits a step event).
+    const shouldRestoreDraft = event.reason === 'cancelled' && this.isEligibleForDraftRestore();
     this.currentTurnHasMeaningfulOutput = false;
-    this.pendingDraftRestore = false;
     this.goalCompletionTurnEnded = true;
     // Plugin usage is reported once the whole turn's output has ended — but a
     // cancelled turn cut the output short, so skip the notice there.
@@ -412,15 +410,23 @@ export class SessionEventHandler {
     }
   }
 
+  /** A cancelled turn may restore the stashed draft iff no meaningful output ran. */
+  private isEligibleForDraftRestore(): boolean {
+    return (
+      !this.currentTurnHasMeaningfulOutput && this.host.peekPendingRestoreDraft() !== undefined
+    );
+  }
+
   private async maybeRestoreDraftAfterCancel(): Promise<void> {
-    const draft = this.host.peekPendingRestoreDraft();
+    // Take (own) the draft up front: a prompt submitted during the async undo
+    // below must get a fresh draft rather than be clobbered by this restore.
+    const draft = this.host.takePendingRestoreDraft();
     if (draft === undefined) return;
 
     const editorText = this.host.state.editor.getText();
     if (editorText.length > 0) {
       // User typed while waiting; keep their new draft and leave the submitted
-      // turn in place (status was already skipped when we armed restore).
-      this.host.clearPendingRestoreDraft();
+      // turn in place (the red status was already skipped on this cancelled turn).
       return;
     }
     // finalizeTurn may have already shifted a queued message for dispatch.
@@ -428,11 +434,9 @@ export class SessionEventHandler {
       this.host.state.queuedMessages.length > 0 ||
       this.host.state.queuedMessageDispatchPending
     ) {
-      this.host.clearPendingRestoreDraft();
       return;
     }
     if (this.host.state.appState.goal?.status === 'active') {
-      this.host.clearPendingRestoreDraft();
       return;
     }
 
@@ -440,19 +444,22 @@ export class SessionEventHandler {
       (entry) => entry.kind === 'user',
     );
     if (lastUser === undefined || lastUser.content !== draft.text) {
-      this.host.clearPendingRestoreDraft();
       this.host.showStatus('Interrupted by user', 'error');
       return;
     }
 
     const undone = await this.host.undoLastUserTurn();
     if (!undone) {
-      this.host.clearPendingRestoreDraft();
       this.host.showStatus('Interrupted by user', 'error');
       return;
     }
 
-    this.host.takePendingRestoreDraft();
+    // Revalidate after the await: a new prompt/turn may have started while the
+    // undo RPC was in flight. If so, leave the user's new input alone — do not
+    // overwrite the editor or mutate history.
+    if (this.host.state.editor.getText().length > 0) return;
+    if (this.host.state.appState.streamingPhase !== 'idle') return;
+
     this.host.removeLastInputHistory(draft.text);
     this.host.restoreInputText(draft.text);
   }
@@ -537,11 +544,10 @@ export class SessionEventHandler {
     if (reason === 'aborted' || reason === undefined || reason === '') {
       this.markActiveAgentSwarmsCancelled();
       if (event.message === undefined || event.message === '') {
-        // No meaningful assistant output yet: skip the red Interrupted status
-        // and arm draft restore for turn.ended (Claude-style pre-reply cancel).
-        if (!this.currentTurnHasMeaningfulOutput && this.host.peekPendingRestoreDraft() !== undefined) {
-          this.pendingDraftRestore = true;
-        } else {
+        // No meaningful assistant output yet: skip the red Interrupted status —
+        // turn.ended will restore the draft instead (Claude-style pre-reply
+        // cancel). Falls back to the red status when not eligible.
+        if (!this.isEligibleForDraftRestore()) {
           this.host.showStatus('Interrupted by user', 'error');
         }
       } else {
