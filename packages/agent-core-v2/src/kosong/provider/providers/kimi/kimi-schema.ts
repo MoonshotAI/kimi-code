@@ -147,15 +147,10 @@ function flattenRootUnion(root: Record<string, unknown>): void {
       } else if (isObjectBranch(branch)) {
         variants.push({ kind: 'object', schema: branch });
       }
-      // Anything else cannot match an object and contributes nothing.
     }
     delete root[key];
   }
   if (!flattened) return;
-  // One unrestricted variant means no branch-derived constraint can be
-  // imposed on the root: for `anyOf` the union accepts any object, and for
-  // `oneOf` it makes the other variants invalid rather than more permissive —
-  // widening is the only representable outcome either way.
   const unrestricted = variants.some((variant) => variant.kind === 'any');
   const branches = unrestricted
     ? []
@@ -178,7 +173,6 @@ function flattenRootUnion(root: Record<string, unknown>): void {
     );
   }
   for (const name of branchKeys) {
-    // The root's own property constraint already applied to every branch.
     if (hasOwn(properties, name)) continue;
     const variants = new Map<string, Record<string, unknown>>();
     let unconstrained = false;
@@ -226,8 +220,6 @@ function flattenRootUnion(root: Record<string, unknown>): void {
   const rootRequired = Array.isArray(root['required'])
     ? root['required'].filter((name): name is string => typeof name === 'string')
     : [];
-  // A `required` naming a property that is not in `properties` is rejected
-  // outright, and dropping one only widens what the wire accepts.
   const required = [...new Set([...rootRequired, ...alwaysRequired])].filter((name) =>
     hasOwn(properties, name),
   );
@@ -278,8 +270,6 @@ function summarizeVariants(
     if (optional.length > 0) parts.push(`optional: ${optional.join(', ')}`);
     if (parts.length > 0) described.push(`(${index + 1}) ${parts.join('; ')}.`);
   }
-  // An `anyOf` with an unrestricted variant accepts any object, so listing
-  // combinations would only mislead; the dropped field names still help.
   const unrestricted = variants.some((variant) => variant.kind === 'any');
   if (described.length >= 2 && (exclusive || !unrestricted)) {
     lines.push(
@@ -315,7 +305,6 @@ function mayAcceptAnyObject(branch: unknown): boolean {
       ? [branch['const']]
       : undefined;
   if (values !== undefined) {
-    // Fixed values only match an object when one of them is an object.
     return values.some((value) => isRecord(value));
   }
   return !hasAnyKey(branch, OBJECT_STRUCTURE_KEYS);
@@ -373,8 +362,6 @@ function hoistCombinatorTypes(node: Record<string, unknown>): void {
         branches[i] = { type: cloneJsonValue(parentType) };
         continue;
       }
-      // A boolean `false` (or any non-schema) branch is not accepted on the
-      // wire; dropping it only widens the union.
       if (!isRecord(branch)) {
         branches.splice(i, 1);
         continue;
@@ -384,8 +371,6 @@ function hoistCombinatorTypes(node: Record<string, unknown>): void {
       }
     }
     if (branches.length === 0) {
-      // No live branch left: drop the union and keep the parent constraint —
-      // neither an empty array nor a boolean branch is a legal union member.
       delete node[key];
     } else {
       delete node['type'];
@@ -423,8 +408,6 @@ function constrainBranchType(
     if (kept.length === 0) return 'dead';
     const groups = groupValuesByType(kept);
     if (groups !== undefined && groups.size > 1 && !hasOwn(branch, 'anyOf')) {
-      // A mixed-type enum cannot carry one `type`; split it into one typed
-      // variant per value type instead of emitting a mixed declaration.
       delete branch['type'];
       delete branch['enum'];
       branch['anyOf'] = [...groups].map(([type, values]) => ({ type, enum: values }));
