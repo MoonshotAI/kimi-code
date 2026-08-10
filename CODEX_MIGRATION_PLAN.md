@@ -176,6 +176,7 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 ## 6.6 阶段 F — 退役 🔶（主体完成）
 
 - ✅ npm 分发薄壳（kimi-code-rust-bin：bin 包装 + pack.mjs CI 打包 + KIMI_RUST_BIN 覆盖）
+- ✅ **Rust CLI 分发打包接入（2026-08-10）**：`_rust-bin-build.yml`（6 平台矩阵：cargo build kimi-cli + kimi-server-serve → pack.mjs → artifact）+ release.yml 注入（changesets publish 前下载合并进包 bin/，macOS codesign）——`@moonshot-ai/kimi-code-rust` 发布时携带全平台二进制（含 server-serve）
 - ✅ 入口切换 wrapper（bin/kimi.mjs：优先平台 Rust 二进制，回退 TS dist/main.mjs；SIGINT/SIGTERM/SIGHUP 转发 + 退出码镜像；smoke:entry 冒烟双路径通过）
 - ✅ klient 退役（2026-08-05 → retired/klient）
 - ✅ F-5 全链路 Rust e2e（CLI/TUI/API/web 全 Rust：`--http` + `--assets` 端到端 + WS 事件流）

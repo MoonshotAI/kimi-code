@@ -8,8 +8,23 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
+  build-rust-bin:
+    name: Build Rust CLI binaries
+    uses: ./.github/workflows/_rust-bin-build.yml
+    with:
+      upload-artifact-prefix: kimi-rust-bin
+      retention-days: 7
+      sign-macos: true
+    secrets:
+      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+
   release:
     name: Release
+    needs: build-rust-bin
     runs-on: ubuntu-latest
     outputs:
       packages_published: ${{ steps.changesets.outputs.published }}
@@ -40,6 +55,24 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Download Rust CLI binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kimi-rust-bin-*
+          path: "${{ runner.temp }}/rust-bin"
+          merge-multiple: true
+
+      - name: Inject Rust binaries into the npm shell package
+        run: |
+          mkdir -p packages/kimi-code-rust-bin/bin
+          # Each artifact carries the platform binary (kimi-<target>[.exe]
+          # + kimi-server-serve-<target>[.exe]); merge all platforms into
+          # the package bin/ so bin/kimi.js finds its binary at install.
+          if [ -d "${{ runner.temp }}/rust-bin" ]; then
+            cp -f "${{ runner.temp }}"/rust-bin/* packages/kimi-code-rust-bin/bin/ 2>/dev/null || true
+          fi
+          ls -la packages/kimi-code-rust-bin/bin/
 
       - name: Generate Kimi Code built-in catalog
         shell: bash
