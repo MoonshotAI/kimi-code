@@ -91,7 +91,6 @@
     "@moonshot-ai/kap-server": "workspace:^",
     "@moonshot-ai/kimi-agent": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
-    "@moonshot-ai/kimi-code-sdk": "workspace:^",
     "@moonshot-ai/kimi-telemetry": "workspace:^",
     "@moonshot-ai/kimi-web": "workspace:^",
     "@moonshot-ai/migration-legacy": "workspace:^",

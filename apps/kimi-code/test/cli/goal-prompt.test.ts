@@ -119,25 +119,21 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
-  return {
-    ...actual,
-    createKimiHarness: () => ({
-      homeDir: '/tmp/kimi-goal-home',
-      auth: { getCachedAccessToken: vi.fn() },
-      ensureConfigFile: vi.fn(),
-      getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'k2', telemetry: true })),
-      getConfigDiagnostics: vi.fn(async () => ({ warnings: [] as readonly string[] })),
-      getExperimentalFeatures: vi.fn(async () => mocks.experimentalFeatures),
-      createSession: vi.fn(async () => mocks.session),
-      resumeSession: vi.fn(async () => mocks.session),
-      listSessions: vi.fn(async () => mocks.sessions),
-      close: vi.fn(),
-      track: vi.fn(),
-    }),
-  };
-});
+vi.mock('#/cli/prompt-harness-local', () => ({
+  createKimiHarness: () => ({
+    homeDir: '/tmp/kimi-goal-home',
+    auth: { getCachedAccessToken: vi.fn() },
+    ensureConfigFile: vi.fn(),
+    getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'k2', telemetry: true })),
+    getConfigDiagnostics: vi.fn(async () => ({ warnings: [] as readonly string[] })),
+    getExperimentalFeatures: vi.fn(async () => mocks.experimentalFeatures),
+    createSession: vi.fn(async () => mocks.session),
+    resumeSession: vi.fn(async () => mocks.session),
+    listSessions: vi.fn(async () => mocks.sessions),
+    close: vi.fn(),
+    track: vi.fn(),
+  }),
+}));
 
 vi.mock('@moonshot-ai/kimi-telemetry', () => ({
   initializeTelemetry: vi.fn(),

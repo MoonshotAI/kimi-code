@@ -35,6 +35,8 @@ export type PromptInput = readonly PromptPart[];
 
 export interface CreateSessionOptions {
   readonly workDir: string;
+  /** Explicit session id (e2e/embedding use); print mode lets the engine mint one. */
+  readonly id?: string;
   readonly model?: string | undefined;
   readonly permission?: PermissionMode | undefined;
   readonly additionalDirs?: readonly string[];

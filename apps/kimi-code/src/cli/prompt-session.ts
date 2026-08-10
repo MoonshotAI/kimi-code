@@ -15,7 +15,6 @@ import type {
   ConfigDiagnostics,
   CreateGoalInput,
   CreateSessionOptions,
-  Event,
   GetCronTasksResult,
   GoalSnapshot,
   GoalToolResult,
@@ -31,6 +30,10 @@ import type {
   TelemetryProperties,
   Unsubscribe,
 } from './prompt-session-local';
+// Engine-event shape shared with the native bridge (`NativeSession.onEvent`);
+// the print driver only reads `type`/`agentId`/`sessionId` plus loose payload
+// fields, so the wide shape is the right contract here.
+import type { Event } from '#/cli/sdk-types-local';
 
 export interface PromptHarness {
   readonly homeDir: string;
