@@ -247,7 +247,8 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 - **`prompt_cache_key` Moonshot 专属**：仅官方端点（api.moonshot.ai / *.moonshot.ai）发送，非 Moonshot 端点不发（真实 400 修复，对齐上游）
 - **GitHub 工具族**：29 工具已移植（表驱动 + reqwest + 审批白名单）；**Workflow 不补**（Rust background+Swarm 已覆盖）
 - **kosong 不搬运**：三协议 + SSE + 重试 + prompt_cache_key + usage 引擎已独立覆盖；独有缺口（kimi-schema $ref 规范化已移植、anthropic-profile 已复制本地化、kimi-files/capability/Astron 数据项）随 node-sdk 退役
-- **image 不迁 kimi-sdk**：压缩核心已两处 Rust（native codec + engine media pipeline）；TS 退役后以 native codec 为基准合并（两套 Rust 压缩已 drift：EXIF/Triangle vs Lanczos3/alpha）
+- **image 不迁 kimi-sdk**：压缩核心已两处 Rust（native codec + engine media pipeline）。**2026-08-10 合并评估定案：保留两套**——EXIF 已对齐（native `decode_with_orientation` 与 engine `apply_exif_orientation` 均为 image crate `apply_orientation`，等价实现 + 双方测试锁定）；alpha 均保留（PNG/WebP 走 RGBA，仅 JPEG 分支转 RGB）；唯一差异为滤波算法（native Triangle=jimp 历史基准 vs engine Lanczos3=质量优先），**有意取舍非 drift**；共享核心下沉 kimi-shared 需 image 依赖 + 行为对拍，成本>收益，不做
+- **summarizer 双通道** ✅ 已补（2026-08-10）：`LlmCompactionDelegate` 经 `HostLlmProxy` 支持 host-proxy 会话（原报 `compaction.unable`）；SDK 的 `agent.nativeLlmProvider` opt-in 接线保留（主回合语义不变）
 - **compaction 同步语义**：引擎 compact 是同步 RPC，无 in-flight 可取消 → `session/cancel_compact` no-op（契约注释早已承诺，2026-08-10 补注册）
 - **summarizer 仅 native LLM**：host-proxy 会话 compact 报 `compaction.unable`（SDK 精确映射）；summarizer 独立通道是引擎设计缺口（§1.4.1），SDK 已按 `agent.nativeLlmProvider` 显式 opt-in 接线
 - **kimi-sdk `set_question_handler` 不实现**（2026-08-10 定案）：引擎 AskUserQuestion 工具已改为"格式化内容 + stop_turn + 答案作为下一条消息"（`tools/ask_user.rs`），无反向 RPC；question 面由该机制覆盖

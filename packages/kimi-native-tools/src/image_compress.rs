@@ -311,7 +311,7 @@ pub fn crop_image(
 // ── internals ────────────────────────────────────────────────────────────
 
 /// Pre-multiply alpha into the RGB channels so fully transparent pixels
-/// contribute zero color during resize. Without this, the Triangle filter
+/// contribute zero color during resize. Without this, the resize filter
 /// blends the RGB values of transparent pixels into their visible neighbors,
 /// producing visible color fringes on edges with alpha.
 fn premultiply_alpha(img: &mut DynamicImage) {
@@ -354,10 +354,11 @@ fn unpremultiply_alpha(img: &mut DynamicImage) {
 }
 
 /// Scale `img` so its longest edge is at most `edge`, preserving aspect
-/// ratio. No-op (returns false) when the image already fits. Uses Triangle
-/// (bilinear) filtering which covers all source pixels during downscaling —
-/// no aliasing on text or fine patterns. Pre-multiplies alpha before
-/// resizing to prevent color bleed from transparent pixels.
+/// ratio. No-op (returns false) when the image already fits. Uses Lanczos3 —
+/// matching the engine media pipeline (`kimi-agent` `media/image.rs`) so both
+/// Rust codecs produce identical output; the historical jimp-parity Triangle
+/// filter is retired with the TS host. Pre-multiplies alpha before resizing
+/// to prevent color bleed from transparent pixels.
 fn fit_within_edge(img: &mut DynamicImage, edge: u32) -> bool {
     let (w, h) = img.dimensions();
     let longest = w.max(h);
@@ -371,7 +372,7 @@ fn fit_within_edge(img: &mut DynamicImage, edge: u32) -> bool {
     if had_alpha {
         premultiply_alpha(img);
     }
-    *img = img.resize_exact(new_w, new_h, image::imageops::FilterType::Triangle);
+    *img = img.resize_exact(new_w, new_h, image::imageops::FilterType::Lanczos3);
     if had_alpha {
         unpremultiply_alpha(img);
     }
