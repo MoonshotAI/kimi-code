@@ -6,7 +6,7 @@ Minimal terminal UI framework with differential rendering and synchronized outpu
 
 - **Differential Rendering**: Three-strategy rendering system that only updates what changed
 - **Synchronized Output**: Uses CSI 2026 for atomic screen updates (no flicker)
-- **Bracketed Paste Mode**: Handles large pastes correctly with markers for >10 line pastes
+- **Bracketed Paste Mode**: Handles large pastes correctly with markers for long pastes
 - **Component-based**: Simple Component interface with render() method
 - **Theme Support**: Components accept theme interfaces for customizable styling
 - **Built-in Components**: Text, TruncatedText, Input, Editor, Markdown, Loader, SelectList, SettingsList, Spacer, Image, Box, Container
@@ -320,7 +320,7 @@ editor.getPaddingX();  // Get current padding
 - Multi-line editing with word wrap
 - Slash command autocomplete (type `/`)
 - File path autocomplete (press `Tab`)
-- Large paste handling (>10 lines creates `[paste #1 +50 lines]` marker)
+- Large paste handling (>800 chars or >10 newlines creates `[Pasted text #1 +50 lines]` marker)
 - Horizontal lines above/below editor
 - Fake cursor rendering (hidden real cursor)
 

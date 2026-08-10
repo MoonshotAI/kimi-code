@@ -479,11 +479,11 @@ describe('CustomEditor paste marker expansion', () => {
     const longText = 'line\n'.repeat(15).trimEnd();
     simulateLargePaste(editor, longText);
 
-    expect(editor.getText()).toMatch(/\[paste #1 \+15 lines\]/);
+    expect(editor.getText()).toMatch(/\[Pasted text #1 \+\d+ lines\]/);
 
     simulateLargePaste(editor, 'anything');
 
-    expect(editor.getText()).not.toContain('[paste #');
+    expect(editor.getText()).not.toMatch(/\[(?:Pasted text|paste) #/);
     expect(editor.getText()).toContain(longText);
   });
 
@@ -495,14 +495,14 @@ describe('CustomEditor paste marker expansion', () => {
     editor.handleInput('hello');
 
     const textBefore = editor.getText();
-    expect(textBefore).toContain('[paste #1');
+    expect(textBefore).toContain('[Pasted text #1');
     expect(textBefore).toContain('hello');
 
     const anotherLong = 'other\n'.repeat(15).trimEnd();
     simulateLargePaste(editor, anotherLong);
 
-    expect(editor.getText()).toContain('[paste #1');
-    expect(editor.getText()).toContain('[paste #2');
+    expect(editor.getText()).toContain('[Pasted text #1');
+    expect(editor.getText()).toContain('[Pasted text #2');
   });
 
   it('expands only the marker under cursor when multiple markers exist', () => {
@@ -513,10 +513,11 @@ describe('CustomEditor paste marker expansion', () => {
     editor.handleInput(' ');
     simulateLargePaste(editor, text2);
 
-    expect(editor.getText()).toContain('[paste #1');
-    expect(editor.getText()).toContain('[paste #2');
+    expect(editor.getText()).toContain('[Pasted text #1');
+    expect(editor.getText()).toContain('[Pasted text #2');
 
-    editor.setText('[paste #1 +15 lines] [paste #2 +15 lines]');
+    // Legacy marker strings must still expand (dual-format regex).
+    editor.setText('[paste #1 +14 lines] [paste #2 +14 lines]');
 
     simulateLargePaste(editor, 'anything');
 
@@ -531,11 +532,11 @@ describe('CustomEditor paste marker expansion', () => {
     const longText = 'line\n'.repeat(15).trimEnd();
     simulateLargePaste(editor, longText);
 
-    expect(editor.getText()).toMatch(/\[paste #1/);
+    expect(editor.getText()).toMatch(/\[Pasted text #1/);
 
     editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
 
-    expect(editor.getText()).not.toContain('[paste #');
+    expect(editor.getText()).not.toMatch(/\[(?:Pasted text|paste) #/);
     expect(editor.getText()).toContain(longText);
   });
 
@@ -545,7 +546,7 @@ describe('CustomEditor paste marker expansion', () => {
     simulateLargePaste(editor, longText);
 
     const markerText = editor.getText();
-    expect(markerText).toMatch(/\[paste #1/);
+    expect(markerText).toMatch(/\[Pasted text #1/);
 
     simulateLargePaste(editor, 'anything');
     expect(editor.getText()).toContain(longText);
@@ -553,7 +554,7 @@ describe('CustomEditor paste marker expansion', () => {
     editor.setText(markerText);
 
     simulateLargePaste(editor, 'anything');
-    expect(editor.getText()).not.toContain('[paste #');
+    expect(editor.getText()).not.toMatch(/\[(?:Pasted text|paste) #/);
     expect(editor.getText()).toContain(longText);
   });
 

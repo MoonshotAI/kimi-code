@@ -23,6 +23,11 @@ const ESC = "\x1b";
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
 
+/** Plain-text chunk size that is treated as a non-bracketed paste start (Claude Code uses 800). */
+export const PASTE_CHUNK_THRESHOLD = 800;
+/** Idle window to coalesce Node stdin paste batches into one paste event. */
+export const PASTE_FLUSH_MS = 100;
+
 /**
  * Check if a string is a complete escape sequence or needs more data
  */
@@ -278,6 +283,10 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private pasteMode: boolean = false;
 	private pasteBuffer: string = "";
 	private pendingKittyPrintableCodepoint: number | undefined;
+	/** Coalesces large non-bracketed paste batches (Node often splits them). */
+	private nonBracketedPastePending = false;
+	private nonBracketedPasteBuffer = "";
+	private nonBracketedPasteTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(options: StdinBufferOptions = {}) {
 		super();
@@ -305,8 +314,24 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			str = data;
 		}
 
-		if (str.length === 0 && this.buffer.length === 0) {
+		if (str.length === 0 && this.buffer.length === 0 && !this.nonBracketedPastePending) {
 			this.emitDataSequence("");
+			return;
+		}
+
+		// Continue a non-bracketed paste coalescing window. If a bracketed paste
+		// marker appears, flush the pending plain paste first, then re-process.
+		if (this.nonBracketedPastePending) {
+			const bracketStart = str.indexOf(BRACKETED_PASTE_START);
+			if (bracketStart !== -1) {
+				this.nonBracketedPasteBuffer += str.slice(0, bracketStart);
+				this.flushNonBracketedPaste();
+				if (bracketStart < str.length) {
+					this.process(str.slice(bracketStart));
+				}
+				return;
+			}
+			this.appendNonBracketedPaste(str);
 			return;
 		}
 
@@ -368,6 +393,17 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			return;
 		}
 
+		// Large plain-text stdin batches without bracketed paste markers: coalesce
+		// into one paste event so the editor can collapse to a marker instead of
+		// inserting character-by-character (which freezes the TUI).
+		if (!this.buffer.includes(ESC) && this.buffer.length > PASTE_CHUNK_THRESHOLD) {
+			const pending = this.buffer;
+			this.buffer = "";
+			this.pendingKittyPrintableCodepoint = undefined;
+			this.appendNonBracketedPaste(pending);
+			return;
+		}
+
 		const result = extractCompleteSequences(this.buffer);
 		this.buffer = result.remainder;
 
@@ -383,6 +419,32 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 					this.emitDataSequence(sequence);
 				}
 			}, this.timeoutMs);
+		}
+	}
+
+	private appendNonBracketedPaste(chunk: string): void {
+		this.nonBracketedPastePending = true;
+		this.nonBracketedPasteBuffer += chunk;
+		if (this.nonBracketedPasteTimeout) {
+			clearTimeout(this.nonBracketedPasteTimeout);
+		}
+		this.nonBracketedPasteTimeout = setTimeout(() => {
+			this.nonBracketedPasteTimeout = null;
+			this.flushNonBracketedPaste();
+		}, PASTE_FLUSH_MS);
+	}
+
+	private flushNonBracketedPaste(): void {
+		if (this.nonBracketedPasteTimeout) {
+			clearTimeout(this.nonBracketedPasteTimeout);
+			this.nonBracketedPasteTimeout = null;
+		}
+		const content = this.nonBracketedPasteBuffer;
+		this.nonBracketedPastePending = false;
+		this.nonBracketedPasteBuffer = "";
+		this.pendingKittyPrintableCodepoint = undefined;
+		if (content.length > 0) {
+			this.emit("paste", content);
 		}
 	}
 
@@ -418,9 +480,15 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			clearTimeout(this.timeout);
 			this.timeout = null;
 		}
+		if (this.nonBracketedPasteTimeout) {
+			clearTimeout(this.nonBracketedPasteTimeout);
+			this.nonBracketedPasteTimeout = null;
+		}
 		this.buffer = "";
 		this.pasteMode = false;
 		this.pasteBuffer = "";
+		this.nonBracketedPastePending = false;
+		this.nonBracketedPasteBuffer = "";
 		this.pendingKittyPrintableCodepoint = undefined;
 	}
 
