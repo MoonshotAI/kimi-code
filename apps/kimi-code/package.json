@@ -85,7 +85,6 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
-    "@moonshot-ai/acp-adapter": "workspace:^",
     "@moonshot-ai/i18n-shared": "workspace:^",
     "@moonshot-ai/kimi-agent": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",

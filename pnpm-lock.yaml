@@ -92,9 +92,6 @@ importers:
 
   apps/kimi-code:
     devDependencies:
-      '@moonshot-ai/acp-adapter':
-        specifier: workspace:^
-        version: link:../../packages/acp-adapter
       '@moonshot-ai/i18n-shared':
         specifier: workspace:^
         version: link:../../packages/i18n-shared

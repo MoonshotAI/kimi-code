@@ -19,7 +19,7 @@ const HERE = import.meta.dirname;
  * probing (Windows requires the `.exe` suffix). `KIMI_RUST_BIN` wins; a
  * set-but-missing path is a config error and fails fast.
  */
-function findRustBinary(): string | null {
+export function findRustBinary(): string | null {
   const explicit = process.env['KIMI_RUST_BIN'];
   if (explicit) {
     if (existsSync(explicit)) return explicit;

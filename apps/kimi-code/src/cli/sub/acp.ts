@@ -5,33 +5,23 @@
  * ACP-compatible clients (editors, IDEs, custom front-ends) can drive
  * a kimi-code session.
  *
- * Wire-up:
- *  - A local ACP harness ({@link createAcpHarness}, `acp-local.ts`) drives
- *    native Rust engine sessions. It is the structural `KimiHarness` the
- *    adapter consumes (auth gate, configOptions, session create/resume/list).
- *  - {@link runAcpServer} owns the JSON-RPC stdio bridge and redirects
- *    rogue `console.*` traffic to stderr.
- *  - `--login` pivots into the device-code login flow instead of
- *    starting the server. This is the entry point ACP clients hit
- *    via the first-class `AuthMethodTerminal` path when they re-invoke
- *    the agent binary with the advertised `args:['--login']` appended.
- *  - On stream close or unhandled error the process exits with the
- *    appropriate code.
+ * The ACP server itself lives in Rust (`kimi-acp`, served by the `kimi`
+ * binary's `acp` command). This TS sub-command is a pure forwarder: it
+ * re-executes the platform Rust binary with the original argv so the Rust
+ * CLI parses the flags itself and mirrors the child's exit code — the same
+ * pattern `run-shell.ts` uses for the interactive shell. `--login` pivots
+ * into the local device-code login flow (the first-class ACP terminal-auth
+ * entry point ACP clients hit when they re-invoke the agent binary with
+ * `args:['--login']` appended).
  */
+
+import { spawnSync } from 'node:child_process';
 
 import type { Command } from 'commander';
 
-import type {
-  AvailableCommand,
-  SlashCommandsSnapshot,
-} from '@moonshot-ai/acp-adapter';
-
-import { KIMI_CODE_HOME_ENV } from '#/constant/app';
-import { getVersion } from '#/cli/version';
 import { t } from '#/i18n';
-import { buildSkillSlashCommands } from '#/shared/slash-command-skills';
 
-import { createAcpHarness, type Session, type SkillSummary } from './acp-local';
+import { findRustBinary } from '../run-shell';
 import { runLoginFlow } from './login-flow';
 
 export function registerAcpCommand(parent: Command): void {
@@ -48,83 +38,21 @@ export function registerAcpCommand(parent: Command): void {
         await runLoginFlow();
         return;
       }
-      const { ACP_BUILTIN_SLASH_COMMANDS, runAcpServer } = await import('@moonshot-ai/acp-adapter');
-      // ACP sessions run real turns; the local harness drives the Rust
-      // engine (no host-side runTurnOverride bridge needed).
-      const harness = createAcpHarness();
-      // Forward `KIMI_CODE_HOME` (if set) into `authMethods[0].env` so the
-      // `kimi login` subprocess clients spawn for terminal-auth writes its
-      // token under the same data root the ACP server reads from. Used for
-      // sandboxed test setups (Zed's `agent_servers.*.env.KIMI_CODE_HOME =
-      // /tmp/...`). Production runs leave the env unset and the field stays
-      // empty.
-      const sandboxHome = process.env[KIMI_CODE_HOME_ENV];
-      const terminalAuthEnv =
-        sandboxHome !== undefined && sandboxHome.length > 0
-          ? { [KIMI_CODE_HOME_ENV]: sandboxHome }
-          : undefined;
-      // Legacy `_meta.terminal-auth` fallback for clients that don't yet
-      // honor the first-class `type:'terminal'` (Zed without the
-      // AcpBetaFeatureFlag, current JetBrains plugin, etc.). `command` is
-      // the absolute path to this very binary (`process.argv[1]`) so the
-      // client can spawn it with `args:['login']` for the top-level
-      // `kimi login` subcommand — matches kimi-cli `acp/server.py:77-96`.
-      const legacyCommand = process.argv[1];
-      const builtinCommands: AvailableCommand[] = (ACP_BUILTIN_SLASH_COMMANDS as readonly AvailableCommand[]).map((cmd) => ({
-        name: cmd.name,
-        description: cmd.description,
-        input: cmd.input,
-      }));
-      // Skills are session-scoped (per-cwd config), so we defer the
-      // listSkills() call until the adapter hands us the just-created
-      // Session — mirrors opencode's per-directory snapshot. A
-      // listSkills() failure degrades to builtins-only so a broken
-      // skill source never blanks the palette.
-      const resolveSlashCommands = async (
-        session: Session,
-      ): Promise<SlashCommandsSnapshot> => {
-        let skills: readonly SkillSummary[] = [];
-        try {
-          skills = await session.listSkills();
-        } catch {
-          skills = [];
-        }
-        // `buildSkillSlashCommands` already returns both views — the
-        // palette entries (advertised via `available_commands_update`)
-        // and the `commandName → skillName` map the adapter uses to
-        // intercept `/skill:<name>` inputs and route them to
-        // `Session.activateSkill`. Passing both through keeps the two
-        // surfaces in lockstep (palette ↔ interceptable set) without
-        // a second `listSkills()` round trip.
-        const built = buildSkillSlashCommands(skills);
-        const skillCommands = built.commands.map((cmd) => ({
-          name: cmd.name,
-          description: cmd.description,
-        }));
-        return {
-          commands: [...builtinCommands, ...skillCommands],
-          skillCommandMap: built.commandMap,
-        };
-      };
-      try {
-        // The adapter's `KimiHarness` parameter is the SDK class shape; the
-        // local harness is a structural match for the runtime surface it
-        // consumes, so the boundary casts once here.
-        await runAcpServer(
-          harness as unknown as Parameters<typeof runAcpServer>[0],
-          {
-            agentInfo: { name: 'Kimi Code CLI', version: getVersion() },
-            slashCommands: resolveSlashCommands,
-            ...(terminalAuthEnv ? { terminalAuthEnv } : {}),
-            ...(legacyCommand !== undefined && legacyCommand.length > 0
-              ? { terminalAuthLegacyCommand: legacyCommand }
-              : {}),
-          },
-        );
-        process.exit(0);
-      } catch (error) {
-        process.stderr.write(t('tui.statusMessages.acpFatalError', { error: String(error) }) + '\n');
+      const bin = findRustBinary();
+      if (bin === null) {
+        process.stderr.write(t('tui.statusMessages.shellNoRustBinary') + '\n');
         process.exit(1);
+        return;
       }
+      // Replay the original argv so the Rust CLI parses the ACP flags itself
+      // (the Rust `kimi acp` serves the protocol over stdio).
+      const result = spawnSync(bin, process.argv.slice(2), { stdio: 'inherit' });
+      if (result.status !== null) {
+        process.exit(result.status);
+      }
+      if (result.signal !== null) {
+        process.kill(process.pid, result.signal);
+      }
+      process.exit(1);
     });
 }
