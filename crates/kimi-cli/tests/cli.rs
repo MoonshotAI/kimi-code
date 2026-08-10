@@ -560,6 +560,21 @@ fn print_accepts_model_and_plan_flags() {
 }
 
 #[test]
+fn print_dash_p_alias_runs_the_print_subcommand() {
+    // TS parity: the documented headless form `kimi -p "..."` must resolve to
+    // the `print` subcommand (clap matches the plain alias on the first token
+    // before option parsing).
+    let home = temp_dir("print-dash-p");
+    let out = run(&home, &["-p", "--plan", "--model", "flag-test-model", "hi"]);
+    assert!(!out.status.success(), "no LLM -> print errors: {}", out.status);
+    let err = stderr(&out);
+    assert!(err.contains("error"), "stderr: {err}");
+    let out = run(&home, &["-p", ""]);
+    assert!(!out.status.success(), "empty prompt must fail");
+    assert!(stderr(&out).contains("cannot be empty"), "stderr: {}", stderr(&out));
+}
+
+#[test]
 fn print_continue_resumes_latest_session() {
     // `print --continue` reuses the most recently updated session instead of
     // creating the default kimi-exec session.

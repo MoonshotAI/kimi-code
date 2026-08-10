@@ -16,10 +16,13 @@ function kimiBuildPath() {
   const ext = process.platform === 'win32' ? '.exe' : '';
   const repoRoot = resolve(appRoot, '..', '..');
   const candidates = [
+    // Cargo workspace output — the root Cargo.toml has no target-dir, so
+    // `cargo build -p kimi-build` lands in <repoRoot>/target/{release,debug}.
+    resolve(repoRoot, 'target/release/kimi-build' + ext),
+    resolve(repoRoot, 'target/debug/kimi-build' + ext),
+    // Legacy layout: a binary manually copied into the package target dir.
     resolve(repoRoot, 'packages/kimi-build/target/release/kimi-build' + ext),
     resolve(repoRoot, 'packages/kimi-build/target/debug/kimi-build' + ext),
-    resolve(appRoot, 'packages/kimi-build/target/release/kimi-build' + ext),
-    resolve(appRoot, 'packages/kimi-build/target/debug/kimi-build' + ext),
   ];
   for (const candidate of candidates) {
     try {
@@ -104,7 +107,8 @@ async function injectSeaBlob(target) {
   const kimiBuild = kimiBuildPath();
   if (!kimiBuild) {
     fail(
-      'No SEA injector available. Install postject or build kimi-build: cd packages/kimi-build && cargo build --release',
+      'No SEA injector available. Install postject, or build kimi-build with `cargo build --release -p kimi-build` ' +
+        '(the artifact lands in <repo>/target/release/kimi-build, which this script probes).',
     );
   }
   await run(kimiBuild, ['inject', out, nativeBlobPath(), '-o', out]);

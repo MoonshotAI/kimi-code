@@ -255,13 +255,18 @@ async fn run_web(
     let server = kimi_server::Server::build()?;
     let processor = std::sync::Arc::new(server.processor);
     let auth = web_auth_config(no_auth);
+    // The SPA reads the bearer credential from `#token=` (apps/kimi-web
+    // serverAuth.ts); append it so the opened page authenticates.
+    let url = match &auth.token {
+        Some(token) => format!("http://{host}:{port}/#token={token}"),
+        None => format!("http://{host}:{port}"),
+    };
     let state = kimi_server_transport::http::HttpState::with_events(
         processor,
         server.state.event_sender(),
     )
     .with_auth(auth);
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
-    let url = format!("http://{host}:{port}");
     println!("Kimi Code web server running at {url}");
     if !no_open {
         open_browser(&url);
@@ -1665,7 +1670,7 @@ async fn main() -> anyhow::Result<()> {
         let mut cmd = Cli::command();
         cmd.print_help()?;
         println!();
-        println!("interactive TUI needs a terminal — use `kimi chat` for a plain-text REPL or `kimi print -p \"...\"` for one-shot runs");
+        println!("interactive TUI needs a terminal — use `kimi chat` for a plain-text REPL or `kimi -p \"...\"` for one-shot runs");
         return Ok(());
     };
     match command {

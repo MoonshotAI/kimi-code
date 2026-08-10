@@ -63,6 +63,21 @@ function findRustBinary() {
 }
 
 /**
+ * The Rust `web` subcommand serves the SPA only when `--assets` is given
+ * (API-only otherwise). The TS distribution ships dist-web next to this
+ * wrapper, so point the Rust binary at it. The TS fallback resolves assets
+ * itself and must never receive the flag.
+ */
+function forwardArgs(raw) {
+  if (raw[0] !== 'web') return raw;
+  if (raw.slice(1).includes('--assets')) return raw;
+  const distWeb = resolve(HERE, '..', 'dist-web');
+  if (!existsSync(distWeb)) return raw;
+  debug(`injecting --assets ${distWeb} for the web subcommand`);
+  return [raw[0], '--assets', distWeb, ...raw.slice(1)];
+}
+
+/**
  * Spawn the child with inherited stdio, forward termination signals, and
  * mirror its exit code (or re-raise the terminating signal) in the parent.
  */
@@ -104,7 +119,7 @@ async function runChild(command, args) {
 const rustBinary = findRustBinary();
 if (rustBinary) {
   debug(`using Rust binary: ${rustBinary}`);
-  await runChild(rustBinary, process.argv.slice(2));
+  await runChild(rustBinary, forwardArgs(process.argv.slice(2)));
 } else if (existsSync(TS_ENTRY)) {
   debug(`Rust binary not found; falling back to TS entry: ${TS_ENTRY}`);
   await runChild(process.execPath, [TS_ENTRY, ...process.argv.slice(2)]);
