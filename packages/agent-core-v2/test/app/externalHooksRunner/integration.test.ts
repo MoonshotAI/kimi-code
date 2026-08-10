@@ -69,6 +69,7 @@ import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
+import { registerLogServices } from '../../_base/log/stubs';
 
 function nodeCommand(source: string): string {
   return `node -e ${JSON.stringify(source.replaceAll(/\s*\n\s*/g, ' '))}`;
@@ -602,6 +603,7 @@ describe('IExternalHooksRunnerService integration', () => {
         strict: true,
         additionalServices: (reg) => {
           registerStateServices(reg);
+          registerLogServices(reg);
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
@@ -863,6 +865,7 @@ describe('IExternalHooksRunnerService integration', () => {
         strict: true,
         additionalServices: (reg) => {
           registerStateServices(reg);
+          registerLogServices(reg);
           reg.defineInstance(ISessionContext, {
             _serviceBrand: undefined,
             sessionId: 'session-1',
@@ -1071,6 +1074,7 @@ describe('IExternalHooksRunnerService integration', () => {
         strict: true,
         additionalServices: (reg) => {
           registerStateServices(reg);
+          registerLogServices(reg);
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.defineInstance(ISessionLifecycleHooks, lifecycleHooks);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));

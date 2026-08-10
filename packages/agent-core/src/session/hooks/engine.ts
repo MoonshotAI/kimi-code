@@ -91,6 +91,10 @@ export class HookEngine {
         }),
       ),
     );
+    for (const [index, result] of results.entries()) {
+      if (!isHookFailure(result, args.signal?.aborted === true)) continue;
+      this.emitFailed(event, matched[index]!.command, result);
+    }
     const { action, reason } = aggregateResults(event, results);
     this.emitResolved(event, matcherValue, action, reason, Date.now() - startedAt);
     return results;
@@ -128,6 +132,18 @@ export class HookEngine {
       this.options.onResolved?.(event, target, action, reason, durationMs);
     } catch {}
   }
+
+  private emitFailed(event: string, command: string, result: HookResult): void {
+    try {
+      this.options.onFailed?.(event, command, result);
+    } catch {}
+  }
+}
+
+function isHookFailure(result: HookResult, aborted: boolean): boolean {
+  if (result.timedOut === true) return true;
+  if (result.exitCode !== undefined) return result.exitCode !== 0 && result.exitCode !== 2;
+  return !aborted && (result.stderr?.trim().length ?? 0) > 0;
 }
 
 function matches(pattern: string, value: string): boolean {

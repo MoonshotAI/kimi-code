@@ -11,6 +11,7 @@
  */
 
 import { Event } from '#/_base/event';
+import type { LogPayload } from '#/_base/log/log';
 import { ExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunnerService';
 import { HOOKS_SECTION } from '#/agent/externalHooks/configSection';
 import type { HookDef } from '#/agent/externalHooks/types';
@@ -18,6 +19,8 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+
+import { stubLog } from '../../_base/log/stubs';
 
 export function makeHookRunner(
   hooks: readonly HookDef[],
@@ -31,6 +34,7 @@ export function makeHookRunner(
       reason: string | undefined,
       durationMs: number,
     ) => void;
+    onWarn?: (message: string, payload?: LogPayload) => void;
   } = {},
 ): ExternalHooksRunnerService {
   return new ExternalHooksRunnerService(
@@ -50,6 +54,7 @@ export function makeHookRunner(
       clientIdentity: { productName: 'test', version: '0.0.0-test', platform: 'test_platform' },
     } as unknown as IBootstrapService,
     new HostProcessService(),
+    { ...stubLog(), warn: options.onWarn ?? (() => {}) },
     { onTriggered: options.onTriggered, onResolved: options.onResolved },
   );
 }

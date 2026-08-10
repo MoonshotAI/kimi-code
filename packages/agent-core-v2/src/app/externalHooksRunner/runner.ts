@@ -32,6 +32,7 @@ export interface HookRunCallbacks {
     reason: string | undefined,
     durationMs: number,
   ) => void;
+  readonly onFailed?: (event: string, command: string, result: HookResult) => void;
 }
 
 export function indexHooks(hooks: readonly HookDef[]): Map<string, HookDef[]> {
@@ -86,6 +87,12 @@ export async function runMatchedHooks(
       }),
     ),
   );
+  for (const [index, result] of results.entries()) {
+    if (!isHookFailure(result, args.signal?.aborted === true)) continue;
+    try {
+      callbacks.onFailed?.(event, matched[index]!.command, result);
+    } catch {}
+  }
 
   const decision = blockDecision(event, results);
   try {
@@ -99,6 +106,12 @@ export async function runMatchedHooks(
   } catch {}
 
   return results;
+}
+
+function isHookFailure(result: HookResult, aborted: boolean): boolean {
+  if (result.timedOut === true) return true;
+  if (result.exitCode !== undefined) return result.exitCode !== 0 && result.exitCode !== 2;
+  return !aborted && (result.stderr?.trim().length ?? 0) > 0;
 }
 
 export function blockDecision(

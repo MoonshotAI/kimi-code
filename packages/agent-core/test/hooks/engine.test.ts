@@ -22,6 +22,7 @@ interface HookResult {
   reason?: string;
   stdout?: string;
   stderr?: string;
+  exitCode?: number;
   timedOut?: boolean;
 }
 
@@ -46,6 +47,7 @@ interface HookEngineCtor {
         reason: string | undefined,
         durationMs: number,
       ) => void;
+      onFailed?: (event: string, command: string, result: HookResult) => void;
     },
   ): {
     trigger: (
@@ -324,6 +326,39 @@ describe('HookEngine', () => {
     });
 
     await expect(engine.fireAndForgetTrigger('Notification')).resolves.toEqual([]);
+  });
+
+  it('reports a non-zero hook exit without changing fail-open behavior', async () => {
+    const { HookEngine } = await importEngine();
+    const failures: Array<[string, string, HookResult]> = [];
+    const command = 'node -e "process.stderr.write(\'bad hook\\nsecond line\'); process.exit(1)"';
+    const engine = new HookEngine([{ event: 'UserPromptSubmit', command, timeout: 5 }], {
+      onFailed: (event, failedCommand, result) => {
+        failures.push([event, failedCommand, result]);
+      },
+    });
+
+    const results = await engine.trigger('UserPromptSubmit');
+
+    expect(results[0]?.action).toBe('allow');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.[0]).toBe('UserPromptSubmit');
+    expect(failures[0]?.[1]).toBe(command);
+    expect(failures[0]?.[2]).toMatchObject({ exitCode: 1, stderr: 'bad hook\nsecond line' });
+  });
+
+  it('does not report an intentional exit-code-2 block as a hook failure', async () => {
+    const { HookEngine } = await importEngine();
+    const onFailed = vi.fn();
+    const engine = new HookEngine(
+      [{ event: 'PreToolUse', command: 'node -e "process.exit(2)"', timeout: 5 }],
+      { onFailed },
+    );
+
+    const results = await engine.trigger('PreToolUse');
+
+    expect(results[0]?.action).toBe('block');
+    expect(onFailed).not.toHaveBeenCalled();
   });
 
   it('preserves a PreToolUse block result even when telemetry throws (no fail-open)', async () => {
