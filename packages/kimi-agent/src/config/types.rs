@@ -436,6 +436,8 @@ default_model = "deepseek-v4-flash"
             model_catalog: None,
             mcp: None,
             hooks: None,
+            thinking: None,
+            yolo: None,
             background: None,
             subagent: None,
             secondary_model: None,
