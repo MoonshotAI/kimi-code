@@ -1,5 +1,5 @@
-import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/kimi-code-oauth';
-import type * as KimiCodeOAuth from '@moonshot-ai/kimi-code-oauth';
+import type { createKimiDeviceId as createKimiDeviceIdFn } from '#/cli/oauth-local';
+import type * as KimiCodeOAuth from '#/cli/oauth-local';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runPrompt } from '#/cli/run-prompt';
@@ -110,8 +110,8 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   };
 });
 
-vi.mock('@moonshot-ai/kimi-code-oauth', async () => {
-  const actual = await vi.importActual<typeof KimiCodeOAuth>('@moonshot-ai/kimi-code-oauth');
+vi.mock('#/cli/oauth-local', async () => {
+  const actual = await vi.importActual<typeof KimiCodeOAuth>('#/cli/oauth-local');
   return {
     ...actual,
     createKimiDeviceId: mocks.createKimiDeviceId,

@@ -1,12 +1,47 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
-import { resolveKimiCodeOAuthKey } from '@moonshot-ai/kimi-code-oauth';
 import { describe, expect, it } from 'vitest';
+
+/**
+ * Local copy of the oauth package's `resolveKimiCodeOAuthKey` (the package is
+ * retired in the G-3 cutover; the credential-slot derivation is pinned here so
+ * the plugin's standalone digest keeps matching the canonical resolver).
+ */
+const KIMI_CODE_OAUTH_KEY = 'oauth/kimi-code';
+const KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX = 'oauth/kimi-code-env-';
+const DEFAULT_KIMI_CODE_OAUTH_HOST = 'https://auth.kimi.com';
+const DEFAULT_KIMI_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
+const SHARED_DEFAULT_BASE_URLS: readonly string[] = new Set([
+  DEFAULT_KIMI_CODE_BASE_URL.replace(/\/+$/, ''),
+]);
+
+function resolveKimiCodeOAuthKey(options: {
+  readonly oauthHost?: string | undefined;
+  readonly baseUrl?: string | undefined;
+}): string {
+  const oauthHost = (options.oauthHost ?? DEFAULT_KIMI_CODE_OAUTH_HOST)
+    .trim()
+    .replace(/\/+$/, '');
+  const baseUrl = (options.baseUrl ?? process.env['KIMI_CODE_BASE_URL'] ?? DEFAULT_KIMI_CODE_BASE_URL)
+    .replace(/\/+$/, '');
+  const defaultOauthHost = DEFAULT_KIMI_CODE_OAUTH_HOST.replace(/\/+$/, '');
+
+  if (oauthHost === defaultOauthHost && SHARED_DEFAULT_BASE_URLS.has(baseUrl)) {
+    return KIMI_CODE_OAUTH_KEY;
+  }
+
+  const digest = createHash('sha256')
+    .update(JSON.stringify({ oauthHost, baseUrl }))
+    .digest('hex')
+    .slice(0, 16);
+  return `${KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX}${digest}`;
+}
 
 const REPO_ROOT = join(import.meta.dirname, '../../../..');
 const SERVER_ENTRY = join(REPO_ROOT, 'plugins/official/kimi-datasource/bin/kimi-datasource.mjs');
@@ -407,7 +442,8 @@ describe('kimi-datasource MCP server', () => {
 
 // Pin the expected credential file name to the canonical OAuth-key resolver so
 // this test fails if the plugin's standalone digest drifts from the source of
-// truth in @moonshot-ai/kimi-code-oauth. The credential file name is the OAuth
+// truth (the local `resolveKimiCodeOAuthKey` above, ported from the retired
+// `@moonshot-ai/kimi-code-oauth`). The credential file name is the OAuth
 // key with its `oauth/` prefix stripped.
 function kimiCodeEnvCredentialName(options: {
   readonly oauthHost: string;

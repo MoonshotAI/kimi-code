@@ -148,6 +148,7 @@
         "eslint/no-unsafe-optional-chaining": "off",
         "jest/valid-expect": "off",
         "unicorn/no-useless-spread": "off",
+        "unicorn/no-useless-undefined": "off",
         "import/no-cycle": "off",
         "typescript/no-meaningless-void-operator": "off",
         "typescript/require-array-sort-compare": "off",

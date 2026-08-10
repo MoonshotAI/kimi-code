@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/kimi-code-oauth';
+import type { createKimiDeviceId as createKimiDeviceIdFn } from '#/cli/oauth-local';
 import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -73,10 +73,8 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   };
 });
 
-vi.mock('@moonshot-ai/kimi-code-oauth', async () => {
-  const actual = await vi.importActual<typeof import('@moonshot-ai/kimi-code-oauth')>(
-    '@moonshot-ai/kimi-code-oauth',
-  );
+vi.mock('#/cli/oauth-local', async () => {
+  const actual = await vi.importActual<typeof import('#/cli/oauth-local')>('#/cli/oauth-local');
   return {
     ...actual,
     createKimiDeviceId: mocks.createKimiDeviceId,

@@ -93,7 +93,7 @@ beforeEach(async () => {
   host.harness.getConfig.mockReset();
   host.harness.getConfig.mockResolvedValue({ models: {} });
   host.showWarningMessage.mockReset();
-  host.showWarningMessage.mockResolvedValue();
+  host.showWarningMessage.mockResolvedValue(undefined);
   workspaceState = { get: vi.fn((_key, fallback) => fallback), update: vi.fn() };
   bridge = new BridgeHandler(
     vi.fn(),

@@ -18,7 +18,7 @@ import {
   fetchCustomRegistry,
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
-} from '@moonshot-ai/kimi-code-oauth';
+} from '#/cli/provider-registry';
 import {
   applyCatalogProvider,
   catalogProviderModels,

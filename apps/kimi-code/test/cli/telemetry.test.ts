@@ -29,7 +29,7 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
   withTelemetryContext: vi.fn(),
 }));
 
-vi.mock('@moonshot-ai/kimi-code-oauth', () => ({
+vi.mock('#/cli/oauth-local', () => ({
   createKimiDeviceId: mocks.createKimiDeviceId,
   KIMI_CODE_PROVIDER_NAME: 'managed:kimi-code',
 }));
