@@ -16,7 +16,7 @@ import {
   resolveConfigPath,
   resolveKimiHome,
 } from '#/cli/runtime-config';
-import { LocalKaos } from '@moonshot-ai/kaos';
+import { LocalKaos } from './kaos-local';
 import { coderSystemPrompt } from './coder-profile-local';
 import type { McpServerConfigEntry } from './mcp-local';
 import { loadUserMcpServers } from './mcp-local';

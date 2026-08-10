@@ -98,9 +98,6 @@ importers:
       '@moonshot-ai/i18n-shared':
         specifier: workspace:^
         version: link:../../packages/i18n-shared
-      '@moonshot-ai/kaos':
-        specifier: workspace:^
-        version: link:../../packages/kaos
       '@moonshot-ai/kimi-agent':
         specifier: workspace:^
         version: link:../../packages/kimi-agent

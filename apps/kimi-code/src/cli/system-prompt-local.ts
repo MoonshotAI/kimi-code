@@ -7,7 +7,7 @@
  */
 import { basename, dirname, join } from 'pathe';
 
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { LocalKaos } from './kaos-local';
 
 export interface PreparedSystemPromptContext {
   readonly cwdListing: string;
@@ -21,7 +21,7 @@ export interface PreparedSystemPromptContext {
  * win), and additional-dirs listings.
  */
 export async function prepareSystemPromptContext(
-  kaos: Kaos,
+  kaos: LocalKaos,
   brandHome?: string,
 ): Promise<PreparedSystemPromptContext> {
   const [cwdListing, agentsMd] = await Promise.all([
@@ -32,7 +32,7 @@ export async function prepareSystemPromptContext(
 }
 
 async function loadAgentsMdForRoots(
-  kaos: Kaos,
+  kaos: LocalKaos,
   brandHome: string | undefined,
   workDirs: readonly string[],
 ): Promise<string> {
@@ -84,14 +84,14 @@ interface AgentFile {
   readonly content: string;
 }
 
-async function readAgentFile(kaos: Kaos, path: string): Promise<AgentFile | undefined> {
+async function readAgentFile(kaos: LocalKaos, path: string): Promise<AgentFile | undefined> {
   if (!(await isFile(kaos, path))) return undefined;
   const content = (await kaos.readText(path, { errors: 'ignore' })).trim();
   if (content.length === 0) return undefined;
   return { path, content };
 }
 
-async function findProjectRoot(kaos: Kaos, workDir: string): Promise<string> {
+async function findProjectRoot(kaos: LocalKaos, workDir: string): Promise<string> {
   const initial = kaos.normpath(workDir);
   let current = initial;
 
@@ -103,7 +103,7 @@ async function findProjectRoot(kaos: Kaos, workDir: string): Promise<string> {
   }
 }
 
-function dirsRootToLeaf(kaos: Kaos, workDir: string, projectRoot: string): string[] {
+function dirsRootToLeaf(kaos: LocalKaos, workDir: string, projectRoot: string): string[] {
   const dirs: string[] = [];
   let current = kaos.normpath(workDir);
 
@@ -118,7 +118,7 @@ function dirsRootToLeaf(kaos: Kaos, workDir: string, projectRoot: string): strin
   return dirs.toReversed();
 }
 
-async function pathExists(kaos: Kaos, path: string): Promise<boolean> {
+async function pathExists(kaos: LocalKaos, path: string): Promise<boolean> {
   try {
     await kaos.stat(path);
     return true;
@@ -132,7 +132,7 @@ async function pathExists(kaos: Kaos, path: string): Promise<boolean> {
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
-async function isFile(kaos: Kaos, path: string): Promise<boolean> {
+async function isFile(kaos: LocalKaos, path: string): Promise<boolean> {
   try {
     const stat = await kaos.stat(path);
     return (stat.stMode & S_IFMT) === S_IFREG;
@@ -167,7 +167,7 @@ interface Entry {
 }
 
 async function collectEntries(
-  kaos: Kaos,
+  kaos: LocalKaos,
   dirPath: string,
   maxWidth: number,
 ): Promise<{ entries: Entry[]; total: number; readable: boolean }> {
@@ -201,7 +201,7 @@ function shouldCollapseDirectory(entry: Entry, options: ListDirectoryOptions): b
 }
 
 export async function listDirectory(
-  kaos: Kaos,
+  kaos: LocalKaos,
   workDir: string = kaos.getcwd(),
   options: ListDirectoryOptions = {},
 ): Promise<string> {
