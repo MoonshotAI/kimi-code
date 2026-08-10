@@ -27,6 +27,12 @@ struct Cli {
         default_missing_value = "@picker"
     )]
     session: Option<Option<String>>,
+    /// Run one prompt non-interactively (TS `--prompt`/`-p` parity — the
+    /// documented `kimi --prompt "..."` form). `-p` as the first token still
+    /// resolves to the `print` subcommand via its plain alias; this option
+    /// covers the long form and `-p<value>` attached values.
+    #[arg(long = "prompt", short = 'p')]
+    prompt: Option<String>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -1651,7 +1657,24 @@ async fn handle_chat_command(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     use clap::CommandFactory;
-    let Cli { server, session, command } = Cli::parse();
+    let Cli { server, session, command, prompt } = Cli::parse();
+    // Top-level `--prompt`/`-p` (long form or attached value) routes into the
+    // `print` subcommand with defaults — TS parity for `kimi --prompt "..."`.
+    let command = match command {
+        Some(cmd) => Some(cmd),
+        None => prompt.map(|prompt| Commands::Print {
+            prompt,
+            verbose: false,
+            json: false,
+            goal: None,
+            model: None,
+            plan: false,
+            continue_: false,
+            output_format: PrintOutputFormat::Text,
+            yolo: false,
+            auto: false,
+        }),
+    };
     let Some(command) = command else {
         // No subcommand: enter the interactive TUI (stage D) when the
         // terminal supports it; otherwise fall back to help + a hint.

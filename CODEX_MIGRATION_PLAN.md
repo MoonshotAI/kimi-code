@@ -217,6 +217,7 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 - [x] oauth 消费本地化 + 依赖清零（3dcc1ea88 / 157bcd224，2026-08-10）
 - [x] telemetry 消费面本地化（2026-08-10：6 处 import + 5 处 vi.mock → `#/utils/telemetry`；包已退役）
 - [x] 入口差距评估（2026-08-10）：TS 入口命令面（chat/print/export/migrate/upgrade/acp/doctor/login/provider/vis/web/__plugin_run_node）与 kimi-cli 等价——`__plugin_run_node` 已被引擎插件模型（plugin/activate_command 命令展开）替代，随 G-7 消失；vis/web 前端资产由 TS 分发提供（Rust 响亮失败/API-only）。**无代码差距；TS 入口退役的前置 = stage F 分发打包（pack.mjs 接入 CI/发布）**
+- [x] `--prompt` 长选项 + `-p<value>` 连写补齐（2026-08-10）：顶层 `#[arg(long = "prompt", short = 'p')]` 路由进 print 流程（`-p` 首 token 仍走子命令 alias）——docs `kimi-command.md` 声称兑现，回归测试覆盖三种形态
 
 ## G-4 — TUI 剩余
 

@@ -579,6 +579,22 @@ fn print_dash_p_alias_runs_the_print_subcommand() {
 }
 
 #[test]
+fn print_long_prompt_and_attached_value_match_the_subcommand() {
+    // TS parity: `kimi --prompt "..."` (documented long form) and the
+    // attached `-p<value>` shape both route into the `print` flow.
+    let home = temp_dir("print-long-prompt");
+    let out = run(&home, &["--prompt", ""]);
+    assert!(!out.status.success(), "empty prompt must fail");
+    assert!(stderr(&out).contains("cannot be empty"), "stderr: {}", stderr(&out));
+    let out = run(&home, &["--prompt", "--model", "flag-test-model", "hi"]);
+    assert!(!out.status.success(), "no LLM -> print errors: {}", out.status);
+    assert!(stderr(&out).contains("error"), "stderr: {}", stderr(&out));
+    let out = run(&home, &["-phello"]);
+    assert!(!out.status.success(), "no LLM -> print errors: {}", out.status);
+    assert!(stderr(&out).contains("error"), "stderr: {}", stderr(&out));
+}
+
+#[test]
 fn print_continue_resumes_latest_session() {
     // `print --continue` reuses the most recently updated session instead of
     // creating the default kimi-exec session.
