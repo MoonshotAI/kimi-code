@@ -10,8 +10,7 @@
     "esModuleInterop": true,
     "paths": {
       "@/*": ["./src/*"],
-      "shared/*": ["./shared/*"],
-      "@moonshot-ai/kimi-code-sdk": ["../../packages/node-sdk/src/index.ts"]
+      "shared/*": ["./shared/*"]
     }
   },
   "include": ["src/**/*", "shared/**/*", "test/**/*"],

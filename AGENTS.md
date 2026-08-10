@@ -84,7 +84,6 @@ This is a TypeScript monorepo built for agent-assisted development. This file is
 | Scope | Files | Reason |
 |-------|-------|--------|
 | Rust bridge / adapter | `packages/kimi-agent/rust-loop.ts`, `apps/kimi-code/src/cli/rust-engine.ts`, `apps/kimi-code/src/cli/native-session.ts` | glue host ↔ Rust RPC |
-| Server host layer | `packages/kap-server/` (routes, `rustSessions.ts`, `RustSessionService`) | REST/WS projection over Rust RPC |
 | Generated files | `packages/kimi-agent/src/rpc/wire.gen.ts` | regenerated via `pnpm gen:wire`, never hand-edited |
 | CLI / TUI / Web / VS Code shells | `apps/*` UI + i18n | pure UI, no engine logic（目标迁入 crates/） |
 | Test adaptation | TS tests asserting against the Rust engine | keep host behavior verified |
@@ -100,18 +99,14 @@ Before writing any TS change, ask: *is this engine functionality?* If yes → im
 
 | 冻结包 | 目标 Rust | 备注 |
 |---|---|---|
-| `packages/node-sdk` | kimi-sdk | G-1 主攻在 Rust 侧 |
 | `packages/kosong` | kimi-sdk LLM 面 | 随 G-6 退役 |
-| `packages/kap-server` | kimi-server | Rust server 已主体 |
-| `packages/oauth` | kimi-oauth | 授权码流做在 Rust |
-| `packages/acp-adapter` | kimi-acp | — |
-| `packages/protocol` | kimi-protocol | — |
-| `packages/kaos` | 裁并评估 | — |
 | `packages/transcript` / `packages/telemetry` | 收编/退役 | — |
 | `packages/migration-legacy` | 退役 | 一次性数据迁移 |
 | `packages/pi-tui` | 退役 | — |
-| `packages/kimi-agent/rust-loop.ts` | Rust transport | 被 kap-server 运行时依赖阻塞 |
+| `packages/kimi-agent/rust-loop.ts` | Rust transport | 被 apps/kimi-code TS 侧引用 |
 | `apps/kimi-code` 剩余 TS（`src/main.ts` 入口） | kimi-cli | G-3 切换中 |
+
+> **2026-08-10 已退役（→ `retired/`）**：`node-sdk`、`kap-server`、`acp-adapter`、`oauth`、`protocol`、`kaos`——不再扩展、不再恢复；引用它们的代码不得回引。
 
 **保留 TS（不受冻结）**：`kimi-web` / `kimi-inspect` / `vis/web`（web 前端）、`apps/vscode`（壳）、npm 薄壳（`kimi.mjs`）——仍遵守"引擎逻辑不得写 TS"白名单。
 
@@ -126,7 +121,7 @@ apps/
   kimi-code/        — Main CLI / TUI application (entry point)
   kimi-web/         — Browser web UI (Vue 3 + Vite)
   vscode/           — VS Code extension (React 19 webview)
-  kimi-inspect/     — Web inspector for kap-server /api/v1/debug RPC surface
+  kimi-inspect/     — Web inspector for the Rust kimi-server /api/v1/debug RPC surface
   vis/              — Session replay & debugging visualizer
 ```
 
@@ -176,7 +171,7 @@ src/
 
 #### `apps/kimi-web` — Browser Web UI
 
-Peer to the TUI. Vue 3 + Vite + vue-i18n; talks to the server over REST + WebSocket under `/api/v1`. It must not depend on `@moonshot-ai/agent-core` (wire types are re-implemented locally). Debug against the Rust-backed kap-server via the root `pnpm dev:v2` script. See `apps/kimi-web/AGENTS.md`.
+Peer to the TUI. Vue 3 + Vite + vue-i18n; talks to the server over REST + WebSocket under `/api/v1`. It must not depend on `@moonshot-ai/agent-core` (wire types are re-implemented locally). Debug against the Rust-backed server via the root `pnpm dev:v2` script. See `apps/kimi-web/AGENTS.md`.
 
 #### `apps/vscode` — VS Code Extension
 
@@ -190,7 +185,7 @@ Key contributions:
 
 #### `apps/kimi-inspect` — Web Inspector
 
-Web inspector for the kap-server `/api/v1/debug` RPC surface. Workspace/session browser, per-session chat, and Service panels. React 19 + Vite. Built on a `ProxyChannel` model similar to VS Code.
+Web inspector for the Rust kimi-server `/api/v1/debug` RPC surface. Workspace/session browser, per-session chat, and Service panels. React 19 + Vite. Built on a `ProxyChannel` model similar to VS Code.
 
 #### `apps/vis` — Session Visualizer
 
@@ -202,16 +197,10 @@ Debug visualization tool for kimi-code sessions. Composed of `vis/server` (backe
 packages/
   agent-core-v2/     — Agent engine v2 (DI × Scope architecture) — FROZEN (see below)
   kosong/            — LLM / provider abstraction layer
-  kaos/              — Execution environment & file/process abstractions
   klient/            — Client SDK (Rust transport in progress; see below)
-  kap-server/        — Kimi Code local server (REST + WebSocket, Rust-backed)
-  acp-adapter/       — Agent Client Protocol adapter (public package)
-  node-sdk/          — Public TypeScript SDK (@moonshot-ai/kimi-code-sdk)
-  protocol/          — Shared REST + WS protocol schemas (Zod types)
   transcript/        — Isomorphic transcript rendering data layer
   i18n/              — Shared i18n infrastructure (t() with en/zh support)
   i18n-shared/       — Shared i18n core (types, locale detection, web-safe)
-  oauth/             — Kimi OAuth and managed auth utilities
   telemetry/         — Shared client-side telemetry infrastructure
   minidb/            — Embedded key-value DB (Redis-style in-memory + SQLite-style WAL)
   migration-legacy/  — Data migration from kimi-cli (~/.kimi/) to kimi-code (~/.kimi-code/)
@@ -230,11 +219,7 @@ packages/
 
 **`kosong`** (v0.6.0) — The LLM / provider abstraction layer. Supports Anthropic, Google Gemini, and OpenAI-compatible providers. Uses `zod-to-json-schema` for tool schema conversion.
 
-**`kaos`** (v0.1.6) — Execution environment abstraction. File system operations, process management, SSH execution via `ssh2`. Used by the tool execution system.
-
 **`klient`** (v0.1.0) — Client SDK. A contract-driven facade with aggregated `global.*` / `session(id).*` / `agent(id).*` methods and zod validation on every call. The v2 dispatcher transport (ipc or memory) is being replaced by the Rust transport (⑤); once that lands, `agent-core-v2` moves to `retired/`.
-
-**`kap-server`** — The Kimi Code local server. Backed by the Rust engine (`rustSession` via `rust-loop` RPC; zero `agent-core-v2` imports). Exposes sessions over REST + WebSocket (`/api/v1` + `/api/v1/ws`). Debug surface at `/api/v1/debug/*`. Bootstrapped from `src/start.ts`.
 
 **`transcript`** (v0.0.1) — Isomorphic transcript rendering data layer. Pure TypeScript (browser-safe). Agent-granular L1 store, idempotent L2 operations, granularity-gated L3 subscriptions (`off/turn/block/delta`), framework-free L4 view registry. Owns all transcript contract types in `src/contract/`.
 

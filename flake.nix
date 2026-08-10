@@ -62,19 +62,14 @@
       # pnpmConfigHook (dependencies for that workspace won't be fetched).
       # -------------------------------------------------------------------
       workspacePaths = [
-        ./packages/acp-adapter
         ./packages/i18n
         ./packages/i18n-shared
-        ./packages/kap-server
-        ./packages/kaos
         ./packages/kimi-native-tools
         ./packages/kimi-agent
+        ./packages/kimi-code-rust-bin
         ./packages/kosong
         ./packages/migration-legacy
-        ./packages/node-sdk
-        ./packages/oauth
         ./packages/pi-tui
-        ./packages/protocol
         ./packages/server
         ./packages/telemetry
         ./packages/transcript
@@ -89,19 +84,14 @@
       ];
 
       workspaceNames = [
-        "@moonshot-ai/acp-adapter"
         "@moonshot-ai/kimi-i18n"
         "@moonshot-ai/i18n-shared"
-        "@moonshot-ai/kap-server"
-        "@moonshot-ai/kaos"
         "@moonshot-ai/kosong"
         "@moonshot-ai/migration-legacy"
-        "@moonshot-ai/kimi-code-sdk"
-        "@moonshot-ai/kimi-code-oauth"
         "@moonshot-ai/kimi-native-tools"
         "@moonshot-ai/kimi-agent"
+        "@moonshot-ai/kimi-code-rust"
         "@moonshot-ai/pi-tui"
-        "@moonshot-ai/protocol"
         "@moonshot-ai/server"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/transcript"

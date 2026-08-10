@@ -28,7 +28,5 @@
     "smol-toml": "^1.6.1",
     "zod": "^4.3.6"
   },
-  "devDependencies": {
-    "@moonshot-ai/kaos": "workspace:^"
-  }
+  "devDependencies": {}
 }
