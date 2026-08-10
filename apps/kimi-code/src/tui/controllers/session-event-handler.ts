@@ -82,6 +82,7 @@ import type {
   AppState,
   LivePaneState,
   QueuedMessage,
+  PendingRestoreDraft,
   ToolCallBlockData,
   ToolResultBlockData,
   TranscriptEntry,
@@ -108,6 +109,7 @@ export interface SessionEventHost {
   recordSessionActivity(): void;
   noteStepUsage(usage: TokenUsage | undefined): void;
   noteCompactionFinished(): void;
+  noteContextCut(): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
@@ -118,6 +120,11 @@ export interface SessionEventHost {
   updateTerminalTitle(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
+  takePendingRestoreDraft(): PendingRestoreDraft | undefined;
+  peekPendingRestoreDraft(): PendingRestoreDraft | undefined;
+  clearPendingRestoreDraft(): void;
+  removeLastInputHistory(expected: string): void;
+  undoLastUserTurn(): Promise<boolean>;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
 }
@@ -159,7 +166,10 @@ export class SessionEventHandler {
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
-  private currentTurnHasAssistantText = false;
+  /** Non-empty assistant text or any tool call this turn — blocks ESC draft restore. */
+  private currentTurnHasMeaningfulOutput = false;
+  /** Armed by user-cancel with no meaningful output; consumed on turn.ended. */
+  private pendingDraftRestore = false;
   private pluginCommandTurns: Map<string, string> = new Map();
   private pluginMcpToolsUsedInTurn: Set<string> = new Set();
   private pendingModelBlockedFallback: GoalChange | undefined;
@@ -177,7 +187,8 @@ export class SessionEventHandler {
     this.mcpServers.clear();
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
-    this.currentTurnHasAssistantText = false;
+    this.currentTurnHasMeaningfulOutput = false;
+    this.pendingDraftRestore = false;
     this.pluginCommandTurns.clear();
     this.pluginMcpToolsUsedInTurn.clear();
     this.pendingModelBlockedFallback = undefined;
@@ -316,7 +327,8 @@ export class SessionEventHandler {
   // ---------------------------------------------------------------------------
 
   private handleTurnBegin(event: TurnStartedEvent): void {
-    this.currentTurnHasAssistantText = false;
+    this.currentTurnHasMeaningfulOutput = false;
+    this.pendingDraftRestore = false;
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
     }
@@ -371,7 +383,10 @@ export class SessionEventHandler {
     this.host.streamingUI.finalizeTurn(sendQueued);
     this.host.recordSessionActivity();
     this.renderPendingModelBlockedFallback();
-    this.currentTurnHasAssistantText = false;
+    const shouldRestoreDraft =
+      event.reason === 'cancelled' && this.pendingDraftRestore && !this.currentTurnHasMeaningfulOutput;
+    this.currentTurnHasMeaningfulOutput = false;
+    this.pendingDraftRestore = false;
     this.goalCompletionTurnEnded = true;
     // Plugin usage is reported once the whole turn's output has ended — but a
     // cancelled turn cut the output short, so skip the notice there.
@@ -390,6 +405,56 @@ export class SessionEventHandler {
     }
     this.pluginMcpToolsUsedInTurn.clear();
     this.scheduleQueuedGoalPromotion();
+    if (shouldRestoreDraft) {
+      void this.maybeRestoreDraftAfterCancel();
+    } else {
+      this.host.clearPendingRestoreDraft();
+    }
+  }
+
+  private async maybeRestoreDraftAfterCancel(): Promise<void> {
+    const draft = this.host.peekPendingRestoreDraft();
+    if (draft === undefined) return;
+
+    const editorText = this.host.state.editor.getText();
+    if (editorText.length > 0) {
+      // User typed while waiting; keep their new draft and leave the submitted
+      // turn in place (status was already skipped when we armed restore).
+      this.host.clearPendingRestoreDraft();
+      return;
+    }
+    // finalizeTurn may have already shifted a queued message for dispatch.
+    if (
+      this.host.state.queuedMessages.length > 0 ||
+      this.host.state.queuedMessageDispatchPending
+    ) {
+      this.host.clearPendingRestoreDraft();
+      return;
+    }
+    if (this.host.state.appState.goal?.status === 'active') {
+      this.host.clearPendingRestoreDraft();
+      return;
+    }
+
+    const lastUser = this.host.state.transcriptEntries.findLast(
+      (entry) => entry.kind === 'user',
+    );
+    if (lastUser === undefined || lastUser.content !== draft.text) {
+      this.host.clearPendingRestoreDraft();
+      this.host.showStatus('Interrupted by user', 'error');
+      return;
+    }
+
+    const undone = await this.host.undoLastUserTurn();
+    if (!undone) {
+      this.host.clearPendingRestoreDraft();
+      this.host.showStatus('Interrupted by user', 'error');
+      return;
+    }
+
+    this.host.takePendingRestoreDraft();
+    this.host.removeLastInputHistory(draft.text);
+    this.host.restoreInputText(draft.text);
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
@@ -472,7 +537,13 @@ export class SessionEventHandler {
     if (reason === 'aborted' || reason === undefined || reason === '') {
       this.markActiveAgentSwarmsCancelled();
       if (event.message === undefined || event.message === '') {
-        this.host.showStatus('Interrupted by user', 'error');
+        // No meaningful assistant output yet: skip the red Interrupted status
+        // and arm draft restore for turn.ended (Claude-style pre-reply cancel).
+        if (!this.currentTurnHasMeaningfulOutput && this.host.peekPendingRestoreDraft() !== undefined) {
+          this.pendingDraftRestore = true;
+        } else {
+          this.host.showStatus('Interrupted by user', 'error');
+        }
       } else {
         this.host.showError(event.message);
       }
@@ -511,7 +582,7 @@ export class SessionEventHandler {
     }
 
     if (event.delta.trim().length > 0) {
-      this.currentTurnHasAssistantText = true;
+      this.currentTurnHasMeaningfulOutput = true;
       this.pendingModelBlockedFallback = undefined;
     }
     streamingUI.appendAssistantDelta(event.delta);
@@ -534,7 +605,7 @@ export class SessionEventHandler {
     }
     this.host.streamingUI.finalizeAssistantStream();
     if (event.content.trim().length > 0) {
-      this.currentTurnHasAssistantText = true;
+      this.currentTurnHasMeaningfulOutput = true;
       this.pendingModelBlockedFallback = undefined;
     }
     this.host.appendTranscriptEntry({
@@ -554,6 +625,8 @@ export class SessionEventHandler {
   private handleToolCall(event: ToolCallStartedEvent): void {
     const { streamingUI } = this.host;
     streamingUI.flushNow();
+    this.currentTurnHasMeaningfulOutput = true;
+    this.pendingModelBlockedFallback = undefined;
     const { turnId, step } = streamingUI.getTurnContext();
     const toolCall: ToolCallBlockData = {
       id: event.toolCallId,
@@ -717,7 +790,7 @@ export class SessionEventHandler {
     if (change.kind === 'lifecycle' && change.status === 'blocked') {
       void this.notifyQueuedGoalWaitingOnBlocked();
       if (change.actor === 'model' || change.reason === undefined) {
-        this.pendingModelBlockedFallback = this.currentTurnHasAssistantText
+        this.pendingModelBlockedFallback = this.currentTurnHasMeaningfulOutput
           ? undefined
           : change;
         return;

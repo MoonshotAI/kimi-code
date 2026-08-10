@@ -77,6 +77,11 @@ export async function handleUndoCommand(
   await undoByCount(host, count);
 }
 
+/** Undo the most recent user turn (context + transcript UI). Used by `/undo` and ESC draft restore. */
+export async function undoLastUserTurn(host: SlashCommandHost): Promise<boolean> {
+  return undoByCount(host, 1);
+}
+
 async function undoByCount(host: SlashCommandHost, count: number): Promise<boolean> {
   const session = host.session;
   if (session === undefined) {

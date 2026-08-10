@@ -4290,6 +4290,316 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).toContain('Interrupted by user');
   });
 
+  it('restores the draft and undoes the turn when Esc cancels before any assistant output', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.handleUserInput('please help');
+    expect(session.prompt).toHaveBeenCalledWith('please help');
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.editor.getText()).toBe('');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        reason: 'aborted',
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Interrupted by user');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'cancelled',
+      } as Event,
+      sendQueued,
+    );
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.editor.getText()).toBe('please help');
+    });
+    expect(stripSgr(renderTranscript(driver))).not.toContain('please help');
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Interrupted by user');
+    expect(driver.state.transcriptEntries).toEqual([]);
+  });
+
+  it('keeps Interrupted status and does not restore after assistant text has started', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.handleUserInput('hello');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        delta: 'Hi',
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        reason: 'aborted',
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'cancelled',
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderTranscript(driver))).toContain('Interrupted by user');
+    expect(session.undoHistory).not.toHaveBeenCalled();
+    expect(driver.state.editor.getText()).toBe('');
+    expect(driver.state.transcriptEntries.some((e) => e.kind === 'user' && e.content === 'hello')).toBe(
+      true,
+    );
+  });
+
+  it('keeps Interrupted status and does not restore after a tool call has started', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.handleUserInput('run something');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_1',
+        name: 'Bash',
+        args: { command: 'ls' },
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        reason: 'aborted',
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'cancelled',
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderTranscript(driver))).toContain('Interrupted by user');
+    expect(session.undoHistory).not.toHaveBeenCalled();
+    expect(driver.state.editor.getText()).toBe('');
+  });
+
+  it('restores the draft when only thinking streamed before cancel', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.handleUserInput('think first');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        delta: 'reasoning...',
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        reason: 'aborted',
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Interrupted by user');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'cancelled',
+      } as Event,
+      sendQueued,
+    );
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.editor.getText()).toBe('think first');
+    });
+  });
+
+  it('does not overwrite editor text typed while waiting for a cancelled turn', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.handleUserInput('original');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+      } as Event,
+      sendQueued,
+    );
+    driver.state.editor.setText('typed while waiting');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        reason: 'aborted',
+      } as Event,
+      sendQueued,
+    );
+    // Armed restore skips Interrupted, but turn.ended must not clobber the new draft.
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Interrupted by user');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'cancelled',
+      } as Event,
+      sendQueued,
+    );
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(session.undoHistory).not.toHaveBeenCalled();
+    expect(driver.state.editor.getText()).toBe('typed while waiting');
+    expect(driver.state.transcriptEntries.some((e) => e.kind === 'user' && e.content === 'original')).toBe(
+      true,
+    );
+  });
+
+  it('does not restore when messages are queued during the cancelled turn', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.handleUserInput('original');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+      } as Event,
+      sendQueued,
+    );
+    driver.state.queuedMessages = [{ text: 'queued next' }];
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        reason: 'aborted',
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'cancelled',
+      } as Event,
+      sendQueued,
+    );
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(session.undoHistory).not.toHaveBeenCalled();
+    expect(driver.state.editor.getText()).toBe('');
+  });
+
   it('appends the /export-debug-zip hint beneath session error messages', async () => {
     const { driver } = await makeDriver();
 

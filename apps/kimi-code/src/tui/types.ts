@@ -241,6 +241,15 @@ export interface QueuedMessage {
 }
 
 /**
+ * Draft stashed when a user prompt is sent, so ESC cancel before any
+ * meaningful assistant output can rewind the turn and put the text back.
+ */
+export interface PendingRestoreDraft {
+  readonly text: string;
+  readonly imageAttachmentIds?: readonly number[];
+}
+
+/**
  * One unit of Ctrl-S steer input: a queued message or the editor draft,
  * with the media parts extracted at submit/paste time so images and video
  * tags survive the steer path (which accepts full prompt parts, not just

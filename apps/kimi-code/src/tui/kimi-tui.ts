@@ -50,6 +50,7 @@ import {
   type SkillListSession,
 } from './commands';
 import * as slashCommands from './commands/dispatch';
+import { undoLastUserTurn as undoLastUserTurnCommand } from './commands/undo';
 import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
@@ -134,6 +135,7 @@ import {
   type KimiTUIOptions,
   type LivePaneState,
   type LoginProgressSpinnerHandle,
+  type PendingRestoreDraft,
   type QueuedMessage,
   type SteerInputItem,
   type TranscriptEntry,
@@ -349,6 +351,8 @@ export class KimiTUI {
   private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =
     undefined;
   private lastHistoryContent: string | undefined;
+  /** Stashed when a normal user prompt is sent; used to restore on pre-reply ESC cancel. */
+  private pendingRestoreDraft: PendingRestoreDraft | undefined;
   // Live `!` shell output entries, keyed by commandId so concurrent commands
   // each update their own card and stale events are dropped. Mutated in place
   // as `shell.output` events arrive; removed when the command completes.
@@ -1343,8 +1347,11 @@ export class KimiTUI {
   private async persistInputHistory(text: string): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
-    if (trimmed === this.lastHistoryContent) return;
+    // Always try the in-memory ring: after ESC draft restore pops the entry,
+    // a resubmit of the same text must re-seed ↑ history even when the JSONL
+    // file already has it (lastHistoryContent match).
     this.state.editor.addToHistory(trimmed);
+    if (trimmed === this.lastHistoryContent) return;
     try {
       const file = getInputHistoryFile(this.state.appState.workDir);
       const written = await appendInputHistory(file, trimmed, this.lastHistoryContent);
@@ -1438,6 +1445,11 @@ export class KimiTUI {
       imageAttachmentIds,
     });
 
+    this.pendingRestoreDraft = {
+      text: input,
+      imageAttachmentIds,
+    };
+
     this.beginSessionRequest();
 
     const sdkInput = options?.parts ?? input;
@@ -1453,12 +1465,14 @@ export class KimiTUI {
         // TUI to the waiting phase, and no turn events may follow a failed
         // steer (e.g. the session is gone), which would leave the UI stuck
         // queueing input behind a request that never completes.
+        this.clearPendingRestoreDraft();
         this.failSessionRequest(`Failed to steer: ${message}`);
       });
       return;
     }
     void session.prompt(sdkInput).catch((error: unknown) => {
       const message = formatErrorMessage(error);
+      this.clearPendingRestoreDraft();
       this.failSessionRequest(`Failed to send: ${message}`);
     });
   }
@@ -3088,6 +3102,28 @@ export class KimiTUI {
     this.state.editor.setText(text);
     this.updateEditorBorderHighlight(text);
     this.state.ui.requestRender();
+  }
+
+  peekPendingRestoreDraft(): PendingRestoreDraft | undefined {
+    return this.pendingRestoreDraft;
+  }
+
+  takePendingRestoreDraft(): PendingRestoreDraft | undefined {
+    const draft = this.pendingRestoreDraft;
+    this.pendingRestoreDraft = undefined;
+    return draft;
+  }
+
+  clearPendingRestoreDraft(): void {
+    this.pendingRestoreDraft = undefined;
+  }
+
+  removeLastInputHistory(expected: string): void {
+    this.state.editor.removeLastFromHistory?.(expected);
+  }
+
+  async undoLastUserTurn(): Promise<boolean> {
+    return undoLastUserTurnCommand(this);
   }
 
   /** Latest in-process LLM round-trip; feeds the idle cache-hint scenario. */

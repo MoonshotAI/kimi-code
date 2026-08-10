@@ -114,6 +114,27 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "second prompt");
 		});
 
+		it("removeLastFromHistory drops the most recent entry when it matches", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+
+			editor.addToHistory("first");
+			editor.addToHistory("second");
+			editor.removeLastFromHistory("second");
+
+			editor.handleInput("\x1b[A");
+			assert.strictEqual(editor.getText(), "first");
+		});
+
+		it("removeLastFromHistory is a no-op when expected does not match", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+
+			editor.addToHistory("kept");
+			editor.removeLastFromHistory("other");
+
+			editor.handleInput("\x1b[A");
+			assert.strictEqual(editor.getText(), "kept");
+		});
+
 		it("cycles through history entries on repeated Up arrow", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 

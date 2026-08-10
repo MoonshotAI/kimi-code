@@ -441,6 +441,21 @@ export class Editor implements Component, Focusable {
 		}
 	}
 
+	/**
+	 * Drop the most recent history entry (index 0). When `expected` is set,
+	 * only remove if it matches that entry after trim — used when a just-
+	 * submitted prompt is restored to the editor so ↑ does not immediately
+	 * resurface the same text.
+	 */
+	removeLastFromHistory(expected?: string): void {
+		if (this.history.length === 0) return;
+		if (expected !== undefined && this.history[0] !== expected.trim()) return;
+		this.history.shift();
+		if (this.historyIndex >= 0) {
+			this.historyIndex = Math.max(-1, this.historyIndex - 1);
+		}
+	}
+
 	private isEditorEmpty(): boolean {
 		return this.state.lines.length === 1 && this.state.lines[0] === "";
 	}

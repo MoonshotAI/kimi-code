@@ -96,6 +96,12 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
     sendNormalUserInput: vi.fn(),
     sendQueuedMessage: vi.fn(),
     shiftQueuedMessage: vi.fn(),
+    peekPendingRestoreDraft: vi.fn(() => undefined),
+    takePendingRestoreDraft: vi.fn(() => undefined),
+    clearPendingRestoreDraft: vi.fn(),
+    removeLastInputHistory: vi.fn(),
+    undoLastUserTurn: vi.fn(async () => false),
+    noteContextCut: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
     tasksBrowserController: {},
   };
