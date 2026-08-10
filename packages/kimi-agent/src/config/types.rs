@@ -248,6 +248,18 @@ pub struct MoonshotServiceConfig {
 
 // ── Top-level KimiConfig ──────────────────────────────────────────────────────
 
+/// Default thinking settings (`[thinking]`), host-facing (node-sdk
+/// `KimiConfig.thinking` parity). Round-tripped through `config/get` /
+/// `config/set`; the engine itself does not consume it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThinkingConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+}
+
 /// The top-level Kimi Code CLI configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KimiConfig {
@@ -281,6 +293,19 @@ pub struct KimiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hooks: Option<HookDefConfig>,
 
+    /// TS `thinking` — host-facing default thinking settings (`[thinking]`).
+    /// Pure host data: the engine does not read it, but `config/get` and
+    /// `config/set` must round-trip it (hosts persist it through the config
+    /// surface).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ThinkingConfig>,
+
+    /// TS `yolo` — the global yolo-mode default (`yolo = true` in TOML).
+    /// Host-facing like `thinking`: round-tripped through `config/get` /
+    /// `config/set`, not consumed by the engine itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yolo: Option<bool>,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<BackgroundConfig>,
 
@@ -307,6 +332,8 @@ impl KimiConfig {
             model_catalog: None,
             mcp: None,
             hooks: None,
+            thinking: None,
+            yolo: None,
             background: None,
             subagent: None,
             secondary_model: None,

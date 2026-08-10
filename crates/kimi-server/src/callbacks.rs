@@ -118,9 +118,14 @@ impl ServerHostCallbacks {
 
 impl HostCallbacks for ServerHostCallbacks {
     fn supports_tool_lifecycle(&self) -> bool {
-        // No host tool-lifecycle handlers registered yet — native execution
-        // is engine-side and host approval is wired via the approval store.
-        false
+        // Native execution is engine-side: write/bash/network tools run in
+        // the engine behind the permission gate and the shared approval
+        // store (`session/approval_list` + `session/approval_resolve`), so
+        // the lifecycle hooks a host would otherwise provide are satisfied
+        // by the store. `prepare`/`authorize`/`finalize` fall through to the
+        // trait defaults (allow unchanged); interactive approvals go through
+        // `defer_to_host` → approval store, which this server owns.
+        true
     }
 
     fn llm_chat(

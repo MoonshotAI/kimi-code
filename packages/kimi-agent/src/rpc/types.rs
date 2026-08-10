@@ -95,6 +95,11 @@ pub struct SessionCreateParams {
     /// and the pending-approval store. False keeps every tool at the host.
     #[serde(default = "default_true")]
     pub native_tools: bool,
+    /// Workspace root used to sandbox native tool execution (distinct from
+    /// `homedir`): the directory the session's file tools operate on.
+    /// Falls back to `work_dir`, the persisted record, then `homedir`.
+    #[serde(default)]
+    pub workspace_root: Option<String>,
 }
 
 fn default_true() -> bool {

@@ -18,6 +18,8 @@ pub fn merge_configs(base: KimiConfig, overrides: KimiConfig) -> KimiConfig {
         model_catalog: overrides.model_catalog.or(base.model_catalog),
         mcp: overrides.mcp.or(base.mcp),
         hooks: overrides.hooks.or(base.hooks),
+        thinking: merge_thinking(base.thinking, overrides.thinking),
+        yolo: overrides.yolo.or(base.yolo),
         background: overrides.background.or(base.background),
         subagent: overrides.subagent.or(base.subagent),
         secondary_model: overrides.secondary_model.or(base.secondary_model),
@@ -25,8 +27,22 @@ pub fn merge_configs(base: KimiConfig, overrides: KimiConfig) -> KimiConfig {
     }
 }
 
-fn merge_agent(base: Option<AgentConfig>, overrides: Option<AgentConfig>) -> Option<AgentConfig> {
+fn merge_thinking(
+    base: Option<ThinkingConfig>,
+    overrides: Option<ThinkingConfig>,
+) -> Option<ThinkingConfig> {
     match (base, overrides) {
+        (None, None) => None,
+        (Some(b), None) => Some(b),
+        (None, Some(o)) => Some(o),
+        (Some(b), Some(o)) => Some(ThinkingConfig {
+            enabled: o.enabled.or(b.enabled),
+            effort: o.effort.or(b.effort),
+        }),
+    }
+}
+
+fn merge_agent(base: Option<AgentConfig>, overrides: Option<AgentConfig>) -> Option<AgentConfig> {    match (base, overrides) {
         (None, None) => None,
         (Some(b), None) => Some(b),
         (None, Some(o)) => Some(o),

@@ -194,6 +194,11 @@ impl SessionManager {
         }
     }
 
+    /// Read back the cached work_dir for a session (`None` when absent).
+    pub fn work_dir(&self, id: &str) -> Option<String> {
+        self.sessions.get(id).map(|record| record.work_dir.clone())
+    }
+
     /// Force-record the session's working directory, overwriting any value.
     /// Used by `session/create` when the host passes an explicit `work_dir` —
     /// the host is authoritative at creation, even when the store still holds

@@ -88,13 +88,35 @@ impl Processor for SessionProcessor {
                         max_tokens: None,
                     },
                 );
-                manager.set_work_dir(&id, input.homedir.as_deref().unwrap_or(""));
+                // The host is authoritative for the workspace at creation:
+                // `work_dir` is the real session workspace (distinct from
+                // `homedir` — see `SessionCreateParams.work_dir`). An
+                // explicit `work_dir` overwrites any stale store value; when
+                // absent (the resume path re-creating a persisted session)
+                // the persisted record keeps its own — homedir only seeds a
+                // brand-new session that has nothing persisted yet.
+                match input.work_dir.as_deref() {
+                    Some(wd) if !wd.is_empty() => manager.set_work_dir_force(&id, wd),
+                    _ => manager.set_work_dir(&id, input.homedir.as_deref().unwrap_or("")),
+                }
                 let rpc_callbacks = callbacks;
                 let mcp_servers = std::mem::take(&mut input.mcp_servers);
                 let workspace_trusted = input.workspace_trusted;
                 let skills = std::mem::take(&mut input.skills);
                 let external_hooks = std::mem::take(&mut input.hooks);
                 let native_tools = input.native_tools;
+                // Native tool sandbox root: the explicit `workspace_root`
+                // wins, then the session's own `work_dir`, then the persisted
+                // record's work_dir (resume path), then homedir as a last
+                // resort. The engine binary's create path uses
+                // `workspace_root`; kimi-server must mirror that instead of
+                // sandboxing tools on the home dir (G-1 vscode localization).
+                let sandbox_root = input
+                    .workspace_root
+                    .clone()
+                    .or_else(|| input.work_dir.clone())
+                    .or_else(|| manager.work_dir(&id))
+                    .or_else(|| input.homedir.clone());
                 let homedir = input.homedir.clone();
                 let (mcp_runtime, cancellation, steer_queue) = {
                     let secondary_native_llm = input.native_llm.as_ref().and_then(|primary| {
@@ -143,8 +165,8 @@ impl Processor for SessionProcessor {
                         )
                         .map_err(|e| JsonRpcError::internal_error(e.to_string()))?;
                     if native_tools {
-                        if let Some(home) = homedir.as_deref() {
-                            if let Some(toolset) = kimi_agent::tools::NativeToolset::new(home) {
+                        if let Some(root) = sandbox_root.as_deref() {
+                            if let Some(toolset) = kimi_agent::tools::NativeToolset::new(root) {
                                 let gated = kimi_agent::callbacks::NativeToolCallbacks {
                                     inner: agent.callbacks.clone(),
                                     toolset: std::sync::Arc::new(toolset),
@@ -293,19 +315,23 @@ impl Processor for SessionProcessor {
                     }
                 };
                 // Interrupt hooks: fire-and-forget when the cancel actually took
-                // effect (a flag existed for this session).
+                // effect (a flag existed for this session). Never block the
+                // cancel on the manager lock: a long-running `session/init`
+                // holds it across its LLM turn, and cancellation must not wait
+                // for that (the host's Stop button would hang instead).
                 if cancelled {
-                    let mut manager = mgr.lock().await;
-                    if let Some(agent) = manager.get_agent(&input.session_id) {
-                        agent
-                            .fire_lifecycle_hook(
-                                kimi_agent::hooks::external::HookEventType::Interrupt,
-                                serde_json::json!({
-                                    "session_id": input.session_id,
-                                    "reason": "user_cancelled",
-                                }),
-                            )
-                            .await;
+                    if let Ok(mut manager) = mgr.try_lock() {
+                        if let Some(agent) = manager.get_agent(&input.session_id) {
+                            agent
+                                .fire_lifecycle_hook(
+                                    kimi_agent::hooks::external::HookEventType::Interrupt,
+                                    serde_json::json!({
+                                        "session_id": input.session_id,
+                                        "reason": "user_cancelled",
+                                    }),
+                                )
+                                .await;
+                        }
                     }
                 }
                 Ok(serde_json::json!({ "cancelled": cancelled }))
@@ -2695,5 +2721,144 @@ mod create_tests {
             .await;
         assert!(body.get("error").is_none(), "archive unknown: {body}");
         assert_eq!(body["result"]["archived"], false, "unknown archived: {body}");
+    }
+
+    #[tokio::test]
+    async fn create_records_explicit_work_dir_over_homedir() {
+        // Regression: `session/create` used to persist `homedir` as the
+        // session's `work_dir`, so `session/list` filtering and cross-host
+        // resume lost the real workspace (G-1 vscode localization).
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({
+                    "session_id": "s-work-dir",
+                    "homedir": "/home/example",
+                    "work_dir": "/workspace/project-a",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/list".into(),
+                params: serde_json::json!({ "limit": 50 }),
+            })
+            .await;
+        let sessions = body["result"]["sessions"].as_array().expect("sessions");
+        let record = sessions
+            .iter()
+            .find(|s| s["id"] == "s-work-dir")
+            .expect("created session listed");
+        assert_eq!(
+            record["work_dir"],
+            "/workspace/project-a",
+            "explicit work_dir must win over homedir: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_falls_back_to_homedir_when_work_dir_absent() {
+        // Callers that predate the `work_dir` param keep the homedir fallback.
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({
+                    "session_id": "s-home-fallback",
+                    "homedir": "/home/legacy",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/list".into(),
+                params: serde_json::json!({ "limit": 50 }),
+            })
+            .await;
+        let sessions = body["result"]["sessions"].as_array().expect("sessions");
+        let record = sessions
+            .iter()
+            .find(|s| s["id"] == "s-home-fallback")
+            .expect("created session listed");
+        assert_eq!(record["work_dir"], "/home/legacy", "homedir fallback: {body}");
+    }
+
+    #[tokio::test]
+    async fn create_without_work_dir_preserves_persisted_work_dir() {
+        // Resume path: re-creating a persisted session without a `work_dir`
+        // must not clobber its workspace with homedir (regression from the
+        // G-1 vscode localization: homedir was overwriting work_dir).
+        let state = crate::state::ServerState::new().expect("state");
+        let processor = SessionProcessor::with_state(state);
+        let mut server = MessageProcessor::new();
+        processor.register(&mut server);
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(1),
+                method: "session/create".into(),
+                params: serde_json::json!({
+                    "session_id": "s-resume-keep",
+                    "homedir": "/home/example",
+                    "work_dir": "/workspace/project-b",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "create failed: {body}");
+
+        // Re-create under the same id (resume) without a work_dir.
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(2),
+                method: "session/create".into(),
+                params: serde_json::json!({
+                    "session_id": "s-resume-keep",
+                    "homedir": "/home/example",
+                }),
+            })
+            .await;
+        assert!(body.get("error").is_none(), "recreate failed: {body}");
+
+        let body = server
+            .handle(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: serde_json::json!(3),
+                method: "session/list".into(),
+                params: serde_json::json!({ "limit": 50 }),
+            })
+            .await;
+        let sessions = body["result"]["sessions"].as_array().expect("sessions");
+        let record = sessions
+            .iter()
+            .find(|s| s["id"] == "s-resume-keep")
+            .expect("session listed");
+        assert_eq!(
+            record["work_dir"],
+            "/workspace/project-b",
+            "resume must keep the persisted workspace: {body}"
+        );
     }
 }

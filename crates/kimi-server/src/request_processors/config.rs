@@ -295,4 +295,57 @@ mod tests {
         }
         let _ = std::fs::remove_file(&tmp);
     }
+
+    #[tokio::test]
+    async fn config_roundtrips_thinking_section() {
+        // Regression (G-1 vscode localization): `KimiConfig` dropped the
+        // host-facing `[thinking]` section, so `config/set` → `config/get`
+        // lost it (hosts persist default thinking through this surface).
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _home = isolate_user_config();
+        let tmp = std::env::temp_dir().join(format!("kimi-config-thinking-{}", std::process::id()));
+        std::fs::write(&tmp, "").expect("seed config");
+        let previous = std::env::var_os("KIMI_CONFIG_PATH");
+        std::env::set_var("KIMI_CONFIG_PATH", &tmp);
+
+        async {
+            let mut processor = MessageProcessor::new();
+            ConfigProcessor.register(&mut processor);
+            let body = processor
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(1),
+                    method: "config/set".into(),
+                    params: serde_json::json!({
+                        "patch": { "thinking": { "enabled": true, "effort": "high" } }
+                    }),
+                })
+                .await;
+            assert!(body.get("error").is_none(), "config/set failed: {body}");
+            assert_eq!(body["result"]["ok"], true);
+
+            // The section lands on disk in TOML spelling.
+            let on_disk = std::fs::read_to_string(&tmp).expect("read back");
+            assert!(on_disk.contains("[thinking]"), "thinking section: {on_disk}");
+
+            // And config/get returns it in the camelCase wire shape.
+            let body = processor
+                .handle(JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: serde_json::json!(2),
+                    method: "config/get".into(),
+                    params: serde_json::Value::Null,
+                })
+                .await;
+            assert_eq!(body["result"]["thinking"]["enabled"], true, "get: {body}");
+            assert_eq!(body["result"]["thinking"]["effort"], "high", "get: {body}");
+        }
+        .await;
+
+        match previous {
+            Some(v) => std::env::set_var("KIMI_CONFIG_PATH", v),
+            None => std::env::remove_var("KIMI_CONFIG_PATH"),
+        }
+        let _ = std::fs::remove_file(&tmp);
+    }
 }
