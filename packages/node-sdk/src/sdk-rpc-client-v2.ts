@@ -27,12 +27,12 @@
  *   every read behind its own initial load, so there is no ready trap here.
  * - `listSessions` / `createSession` / `renameSession` / `forkSession` /
  *   `closeSession` / `resumeSession` / `reloadSession` /
- *   `updateSessionMetadata` / `addAdditionalDir` → the session lifecycle
+ *   `updateSessionMetadata` / `addAdditionalDir` / `removeAdditionalDir` → the session lifecycle
  *   batch: `klient.global.sessions.list` plus the `klient.session(id)`
  *   metadata mutations where the facade reaches, and the
  *   `IWorkspaceLifecycleService` / handler chain / session-scope services through
  *   {@link engineAccessor} where it does not (explicit session ids, resume,
- *   fork ids, the workspace-level add-dir surface). The v1 `SessionSummary` / `SessionMeta`
+ *   fork ids, the workspace-level directory-management surface). The v1 `SessionSummary` / `SessionMeta`
  *   shapes are restored by the pure mapping layer in
  *   `src/v2/session-mapper.ts`. `deleteSession` stays `not_implemented` —
  *   the v2 engine has no session-deletion capability anywhere (tracked in
@@ -292,6 +292,8 @@ import type {
   PluginInfo,
   PluginSummary,
   ReloadSummary,
+  RemoveAdditionalDirInput,
+  RemoveAdditionalDirResult,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedAgentState,
@@ -1248,6 +1250,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return handle.accessor
       .get(IWorkspaceDirs)
       .addDir({ path: input.path, persist: input.persist });
+  }
+
+  override async removeAdditionalDir(
+    input: RemoveAdditionalDirInput,
+  ): Promise<RemoveAdditionalDirResult> {
+    const handle = this.requireLiveSession(input.id);
+    return handle.accessor
+      .get(IWorkspaceDirs)
+      .removeDir({ path: input.path, forget: input.forget });
   }
 
   /**

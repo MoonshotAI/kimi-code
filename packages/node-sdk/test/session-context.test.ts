@@ -45,6 +45,29 @@ describe('Session context', () => {
     }
   });
 
+  it('removes a session-only additional directory from the live session and resume metadata', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-remove-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-remove-work-');
+    const additionalDir = await makeTempDir(tempDirs, 'kimi-sdk-remove-dir-');
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_additional_remove', workDir });
+      await session.addAdditionalDir(additionalDir, { persist: false });
+
+      await expect(
+        session.removeAdditionalDir(additionalDir, { forget: false }),
+      ).resolves.toMatchObject({ additionalDirs: [], forgotten: false });
+      expect(session.summary?.additionalDirs).toEqual([]);
+      await session.close();
+
+      const resumed = await harness.resumeSession({ id: 'ses_additional_remove' });
+      expect(resumed.summary?.additionalDirs).toEqual([]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('clears context without replacing the session', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-work-');

@@ -460,6 +460,58 @@ describe('workspace add-dir (handler chain)', () => {
     expect(dirsOf(s2)).toEqual([extra]);
   });
 
+  it('removes an ephemeral dir from every live session without touching local.toml', async () => {
+    const homeDir = await makeRoot('kimi-remove-dir-home-');
+    const root = await makeProjectRoot();
+    const extra = await makeRoot('kimi-remove-dir-extra-');
+    const host = buildHost(homeDir);
+    const { service, dirs } = await handlerFor(host, root);
+    const s1 = await service.create({ sessionId: 's1', workDir: root });
+    await dirs.addDir({ path: extra, persist: false });
+
+    const result = await dirs.removeDir({ path: extra, forget: false });
+
+    expect(result).toMatchObject({ additionalDirs: [], forgotten: false });
+    expect(dirsOf(s1)).toEqual([]);
+    await expect(readFile(join(root, '.kimi-code', 'local.toml'), 'utf8')).rejects.toThrow();
+  });
+
+  it('forgets a persisted dir and allows cleanup after the directory was deleted', async () => {
+    const homeDir = await makeRoot('kimi-remove-dir-home-');
+    const root = await makeProjectRoot();
+    const extra = await makeRoot('kimi-remove-dir-extra-');
+    const host = buildHost(homeDir);
+    const { service, dirs } = await handlerFor(host, root);
+    const s1 = await service.create({ sessionId: 's1', workDir: root });
+    await dirs.addDir({ path: extra, persist: true });
+    await rm(extra, { recursive: true });
+
+    const result = await dirs.removeDir({ path: extra, forget: true });
+
+    expect(result).toMatchObject({ additionalDirs: [], forgotten: true });
+    expect(dirsOf(s1)).toEqual([]);
+    expect(await readFile(join(root, '.kimi-code', 'local.toml'), 'utf8')).not.toContain(extra);
+  });
+
+  it('rejects removing remembered roots without forgetting, unknown roots, and the primary root', async () => {
+    const homeDir = await makeRoot('kimi-remove-dir-home-');
+    const root = await makeProjectRoot();
+    const extra = await makeRoot('kimi-remove-dir-extra-');
+    const host = buildHost(homeDir);
+    const { dirs } = await handlerFor(host, root);
+    await dirs.addDir({ path: extra, persist: true });
+
+    await expect(dirs.removeDir({ path: extra, forget: false })).rejects.toThrow(
+      'choose the forget option',
+    );
+    await expect(dirs.removeDir({ path: join(root, 'missing'), forget: true })).rejects.toThrow(
+      'not an additional workspace root',
+    );
+    await expect(dirs.removeDir({ path: root, forget: true })).rejects.toThrow(
+      'primary workspace directory',
+    );
+  });
+
   it('refreshes live session views when another process edits local.toml', async () => {
     const homeDir = await makeRoot('kimi-add-dir-home-');
     const root = await makeProjectRoot();

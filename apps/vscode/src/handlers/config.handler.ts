@@ -32,6 +32,11 @@ const SLASH_COMMANDS: SlashCommandInfo[] = [
     aliases: [],
     description: "Add a directory to the workspace. Usage: /add-dir <path>",
   },
+  {
+    name: "remove-dir",
+    aliases: [],
+    description: "Remove a workspace directory. Usage: /remove-dir [--forget] <path>",
+  },
   { name: "export", aliases: [], description: "Export current session context to a markdown file" },
   { name: "import", aliases: [], description: "Import context from a file or session ID" },
 ];

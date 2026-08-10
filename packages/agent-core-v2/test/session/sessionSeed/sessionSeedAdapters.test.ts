@@ -156,6 +156,10 @@ class WorkspaceDirsStub implements IWorkspaceDirs {
     return Promise.reject(new Error('not implemented'));
   }
 
+  removeDir(): Promise<never> {
+    return Promise.reject(new Error('not implemented'));
+  }
+
   mergeAdditionalDirs(): Promise<void> {
     return Promise.resolve();
   }

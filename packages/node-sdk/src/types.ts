@@ -185,6 +185,17 @@ export interface AddAdditionalDirOptions {
   readonly persist: boolean;
 }
 
+export interface RemoveAdditionalDirInput {
+  readonly id: string;
+  readonly path: string;
+  readonly forget: boolean;
+}
+
+export interface RemoveAdditionalDirOptions {
+  /** Remove a remembered entry from project config as well as the live session. */
+  readonly forget: boolean;
+}
+
 export interface ForkSessionInput {
   readonly id: string;
   readonly forkId?: string;
@@ -297,6 +308,13 @@ export interface AddAdditionalDirResult {
   readonly projectRoot: string;
   readonly configPath: string;
   readonly persisted: boolean;
+}
+
+export interface RemoveAdditionalDirResult {
+  readonly additionalDirs: readonly string[];
+  readonly projectRoot: string;
+  readonly configPath: string;
+  readonly forgotten: boolean;
 }
 
 export type ResumedSessionState = Pick<ResumeSessionResult, 'sessionMetadata' | 'agents' | 'warning'>;

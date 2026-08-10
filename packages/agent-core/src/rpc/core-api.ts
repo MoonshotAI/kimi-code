@@ -428,6 +428,18 @@ export interface AddAdditionalDirResult {
   readonly persisted: boolean;
 }
 
+export interface RemoveAdditionalDirPayload {
+  readonly path: string;
+  readonly forget: boolean;
+}
+
+export interface RemoveAdditionalDirResult {
+  readonly additionalDirs: readonly string[];
+  readonly projectRoot: string;
+  readonly configPath: string;
+  readonly forgotten: boolean;
+}
+
 export interface RenameSessionPayload {
   readonly title: string;
 }
@@ -535,6 +547,7 @@ export interface SessionAPI extends AgentAPIWithId {
   waitForBackgroundTasksOnPrint: (payload: EmptyPayload) => void;
   handlePrintMainTurnCompleted: (payload: EmptyPayload) => 'finish' | 'continue';
   addAdditionalDir: (payload: AddAdditionalDirPayload) => AddAdditionalDirResult;
+  removeAdditionalDir: (payload: RemoveAdditionalDirPayload) => RemoveAdditionalDirResult;
 }
 
 type SessionAPIWithId = WithSessionId<SessionAPI>;

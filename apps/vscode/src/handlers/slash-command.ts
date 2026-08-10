@@ -23,6 +23,7 @@ const HOST_COMMANDS = new Set([
   "afk",
   "plan",
   "add-dir",
+  "remove-dir",
   "export",
   "import",
 ]);
@@ -94,6 +95,9 @@ export async function runHostSlashCommand(
           break;
         case "add-dir":
           await runAddDirCommand(runtime, command.args, emit);
+          break;
+        case "remove-dir":
+          await runRemoveDirCommand(runtime, command.args, emit);
           break;
         case "export":
           await exportContext(runtime, command.args, emit);
@@ -182,6 +186,27 @@ async function runAddDirCommand(
   }
   const result = await runtime.session.addAdditionalDir(input, { persist: false });
   emit(`Added directory to workspace: ${result.additionalDirs.at(-1) ?? input}`);
+}
+
+async function runRemoveDirCommand(
+  runtime: SessionRuntime,
+  args: string,
+  emit: (text: string) => void,
+): Promise<void> {
+  const raw = args.trim();
+  const forget = raw.startsWith("--forget ");
+  const input = stripMatchingQuotes((forget ? raw.slice("--forget ".length) : raw).trim());
+  if (!input) {
+    const dirs = runtime.session.summary?.additionalDirs ?? [];
+    emit(dirs.length === 0
+      ? "No additional directories. Usage: /remove-dir [--forget] <path>"
+      : ["Additional directories:", ...dirs.map((path) => `  - ${path}`)].join("\n"));
+    return;
+  }
+  const result = await runtime.session.removeAdditionalDir(input, { forget });
+  emit(result.forgotten
+    ? `Removed and forgot workspace directory: ${input}`
+    : `Removed directory from this session: ${input}`);
 }
 
 async function exportContext(

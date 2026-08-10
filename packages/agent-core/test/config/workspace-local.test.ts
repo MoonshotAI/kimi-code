@@ -11,6 +11,7 @@ import {
   loadWorkspaceLocalConfig,
   normalizeAdditionalDirs,
   readWorkspaceAdditionalDirs,
+  removeWorkspaceAdditionalDir,
 } from '../../src/config/workspace-local';
 
 const tempDirs: string[] = [];
@@ -174,6 +175,46 @@ describe('workspace local config', () => {
     const result = await appendWorkspaceAdditionalDir(testKaos, root, './shared', []);
 
     expect(result.additionalDirs).toEqual([sharedDir]);
+    await expect(readFile(configPath, 'utf-8')).resolves.toBe(before);
+  });
+
+  it('removes a remembered directory even after the directory was deleted', async () => {
+    const root = await makeProject();
+    const sharedDir = join(root, 'shared');
+    const otherDir = join(root, 'other');
+    await mkdir(sharedDir, { recursive: true });
+    await mkdir(otherDir, { recursive: true });
+    await mkdir(join(root, '.kimi-code'), { recursive: true });
+    const configPath = join(root, '.kimi-code', 'local.toml');
+    await writeFile(
+      configPath,
+      `[workspace]\nadditional_dir = ["shared", "other"]\nlabel = "keep"\n`,
+      'utf-8',
+    );
+    await rm(sharedDir, { recursive: true });
+
+    const result = await removeWorkspaceAdditionalDir(testKaos, root, 'shared');
+
+    expect(result).toMatchObject({ additionalDirs: [otherDir], removed: true });
+    const written = await readFile(configPath, 'utf-8');
+    expect(written).toContain(otherDir);
+    expect(written).not.toContain(sharedDir);
+    expect(written).toContain('label = "keep"');
+  });
+
+  it('does not rewrite local.toml when the removal target is not remembered', async () => {
+    const root = await makeProject();
+    const sharedDir = join(root, 'shared');
+    await mkdir(sharedDir, { recursive: true });
+    await mkdir(join(root, '.kimi-code'), { recursive: true });
+    const configPath = join(root, '.kimi-code', 'local.toml');
+    const before = '[workspace]\nadditional_dir = ["shared"]\n';
+    await writeFile(configPath, before, 'utf-8');
+
+    await expect(removeWorkspaceAdditionalDir(testKaos, root, 'other')).resolves.toMatchObject({
+      additionalDirs: [sharedDir],
+      removed: false,
+    });
     await expect(readFile(configPath, 'utf-8')).resolves.toBe(before);
   });
 

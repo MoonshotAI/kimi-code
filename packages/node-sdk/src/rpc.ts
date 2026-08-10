@@ -50,6 +50,8 @@ import type {
   PluginInfo,
   PluginSummary,
   ReloadSummary,
+  RemoveAdditionalDirInput,
+  RemoveAdditionalDirResult,
   CompactOptions,
   SessionPlan,
   SessionStatus,
@@ -426,6 +428,17 @@ export abstract class SDKRpcClientBase {
   async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
     const rpc = await this.getRpc();
     return rpc.addAdditionalDir({ sessionId: input.id, path: input.path, persist: input.persist });
+  }
+
+  async removeAdditionalDir(
+    input: RemoveAdditionalDirInput,
+  ): Promise<RemoveAdditionalDirResult> {
+    const rpc = await this.getRpc();
+    return rpc.removeAdditionalDir({
+      sessionId: input.id,
+      path: input.path,
+      forget: input.forget,
+    });
   }
 
   async startBtw(input: SessionIdRpcInput): Promise<string> {

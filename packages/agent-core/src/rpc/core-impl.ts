@@ -128,6 +128,8 @@ import type {
   RegisterToolPayload,
   ReloadSessionPayload,
   ReloadPluginsResult,
+  RemoveAdditionalDirPayload,
+  RemoveAdditionalDirResult,
   RemoveKimiProviderPayload,
   RemovePluginPayload,
   RenameSessionPayload,
@@ -1151,6 +1153,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     ...payload
   }: SessionScopedPayload<AddAdditionalDirPayload>): Promise<AddAdditionalDirResult> {
     return this.requireSession(sessionId).addAdditionalDir(payload.path, payload.persist);
+  }
+
+  removeAdditionalDir({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<RemoveAdditionalDirPayload>): Promise<RemoveAdditionalDirResult> {
+    return this.requireSession(sessionId).removeAdditionalDir(payload.path, payload.forget);
   }
 
   startBtw({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>): Promise<string> {

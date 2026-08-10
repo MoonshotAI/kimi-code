@@ -4,8 +4,8 @@
  *
  * Defines `IWorkspaceDirs`, the handler-level owner of the workspace's
  * `{root, additionalDirs[]}` set: at handler materialization it loads the
- * project-local `.kimi-code/local.toml` set; afterwards `addDir` mutations
- * (persisted appends or session-caller in-memory unions) and fs watch on
+ * project-local `.kimi-code/local.toml` set; afterwards `addDir` / `removeDir`
+ * mutations (persisted edits or session-caller in-memory changes) and fs watch on
  * `local.toml` (cross-process edits) refresh the set, fanning the change
  * out to every session of the handler through the `ISessionWorkspaceInfo`
  * seed (`sessionInfo()`). The set is shared by all sessions of the
@@ -23,11 +23,23 @@ export interface WorkspaceAddDirInput {
   readonly persist?: boolean;
 }
 
+export interface WorkspaceRemoveDirInput {
+  readonly path: string;
+  readonly forget?: boolean;
+}
+
 export interface WorkspaceAdditionalDirsResult {
   readonly projectRoot: string;
   readonly configPath: string;
   readonly additionalDirs: readonly string[];
   readonly persisted: boolean;
+}
+
+export interface WorkspaceRemoveDirResult {
+  readonly projectRoot: string;
+  readonly configPath: string;
+  readonly additionalDirs: readonly string[];
+  readonly forgotten: boolean;
 }
 
 export interface IWorkspaceDirs {
@@ -37,6 +49,7 @@ export interface IWorkspaceDirs {
   readonly additionalDirs: readonly string[];
   readonly onDidChange: Event<void>;
   addDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult>;
+  removeDir(input: WorkspaceRemoveDirInput): Promise<WorkspaceRemoveDirResult>;
   mergeAdditionalDirs(baseDir: string, dirs: readonly string[]): Promise<void>;
   sessionInfo(): ISessionWorkspaceInfo;
 }

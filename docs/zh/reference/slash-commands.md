@@ -39,6 +39,7 @@
 | `/export-debug-zip` | — | 将当前会话导出为调试用 ZIP 压缩包（与 [`kimi export`](./kimi-command.md#kimi-export) 行为一致） | 否 |
 | `/copy` | — | 将最后一条 AI 回复复制到剪贴板 | 否 |
 | `/add-dir [<path>]` | — | 为当前会话添加额外的工作目录。不带路径（或传入 `list`）运行时列出已配置的目录。添加时可选择是否将目录记入项目的 `.kimi-code/local.toml` | 否 |
+| `/remove-dir [<path>]` | — | 移除额外工作目录。不带路径时可从已配置根目录中选择。仅会话目录可直接从当前会话移除；项目记住的目录必须选择“移除并忘记”，以同步更新 `.kimi-code/local.toml`、文件工具和文件引用补全 | 否 |
 | `/web` | — | 在 web UI 中打开当前会话：选择一个运行中的实例进行连接，或在 TUI 退出后新开一个前台服务器。参见 [`kimi web`](./kimi-command.md#kimi-web) | 是 |
 
 ## 模式与运行控制

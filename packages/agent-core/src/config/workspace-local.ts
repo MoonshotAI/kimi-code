@@ -25,6 +25,10 @@ export interface WorkspaceAdditionalDirsLoadResult {
   readonly warning?: string;
 }
 
+export interface WorkspaceAdditionalDirRemoveResult extends WorkspaceAdditionalDirsLoadResult {
+  readonly removed: boolean;
+}
+
 export type WorkspaceLocalConfig = WorkspaceAdditionalDirsLoadResult;
 
 interface WorkspaceLocalTomlFile {
@@ -92,6 +96,44 @@ export async function appendWorkspaceAdditionalDir(
   await kaos.writeText(configPath, `${stringifyToml(file.raw)}\n`);
 
   return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir] };
+}
+
+export async function removeWorkspaceAdditionalDir(
+  kaos: Kaos,
+  workDir: string,
+  inputPath: string,
+): Promise<WorkspaceAdditionalDirRemoveResult> {
+  const projectRoot = await findProjectRoot(kaos, workDir);
+  const configPath = getWorkspaceLocalConfigPath(projectRoot);
+  const target = resolveWorkspaceAdditionalDirPath(kaos, workDir, inputPath);
+  const file = await readWorkspaceLocalToml(kaos, configPath);
+  if (file === undefined) {
+    return { projectRoot, configPath, additionalDirs: [], removed: false };
+  }
+
+  const fileAdditionalDirs = file.parsed.workspace?.additional_dir ?? [];
+  const existingDirs = resolveExistingAdditionalDirs(kaos, projectRoot, fileAdditionalDirs);
+  const additionalDirs = existingDirs.filter(
+    (dir) => normalizeForCompare(kaos, dir) !== normalizeForCompare(kaos, target),
+  );
+  if (additionalDirs.length === existingDirs.length) {
+    return { projectRoot, configPath, additionalDirs: existingDirs, removed: false };
+  }
+
+  const workspace = cloneRecord(file.raw['workspace']);
+  workspace['additional_dir'] = additionalDirs;
+  file.raw['workspace'] = workspace;
+  await kaos.writeText(configPath, `${stringifyToml(file.raw)}\n`);
+  return { projectRoot, configPath, additionalDirs, removed: true };
+}
+
+/** Resolve a removal target lexically without requiring it to still exist. */
+export function resolveWorkspaceAdditionalDirPath(
+  kaos: Kaos,
+  baseDir: string,
+  inputPath: string,
+): string {
+  return resolvePath(kaos, baseDir, normalizeAdditionalDirInput(inputPath));
 }
 
 export function normalizeAdditionalDirs(additionalDirs: readonly string[]): string[] {

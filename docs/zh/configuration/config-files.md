@@ -464,7 +464,7 @@ auto_install = true
 
 除了 `~/.kimi-code` 下的用户级文件，Kimi Code 还会读取位于 `<项目根目录>/.kimi-code/local.toml` 的项目级本地配置文件。它保存的是与某一个项目检出相关、通常不应与队友共享的设置。
 
-该文件会在你通过 [`/add-dir`](../reference/slash-commands.md) 添加额外工作目录并选择记入项目时自动创建，通常无需手动编辑。
+当你通过 [`/add-dir`](../reference/slash-commands.md) 记住额外工作目录，或通过 [`/remove-dir`](../reference/slash-commands.md) 忘记目录时，该文件会自动更新，通常无需手动编辑。
 
 ### `[workspace]`
 
@@ -472,7 +472,7 @@ auto_install = true
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `additional_dir` | `array<string>` | 否 | 额外工作目录列表，以绝对路径存储。在 `/add-dir` 中确认"记住此目录"时自动写入；启动时读回，使这些目录在该项目的每个会话中都可用 |
+| `additional_dir` | `array<string>` | 否 | 额外工作目录列表，以绝对路径存储。由 `/add-dir` 的“记住”选项和 `/remove-dir` 的“忘记”选项自动更新；启动时读回，使这些目录在该项目的每个会话中都可用 |
 
 ```toml
 [workspace]

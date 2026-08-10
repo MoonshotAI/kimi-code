@@ -16,15 +16,24 @@ export interface ProjectAdditionalDirsLoadResult {
   readonly additionalDirs: readonly string[];
 }
 
+export interface ProjectAdditionalDirRemoveResult extends ProjectAdditionalDirsLoadResult {
+  readonly removed: boolean;
+}
+
 export interface IProjectLocalConfigService {
   readonly _serviceBrand: undefined;
 
   readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult>;
   resolveAdditionalDirs(baseDir: string, additionalDirs: readonly string[]): Promise<string[]>;
+  resolveAdditionalDirPath(baseDir: string, inputPath: string): string;
   appendAdditionalDir(
     workDir: string,
     inputPath: string,
   ): Promise<ProjectAdditionalDirsLoadResult>;
+  removeAdditionalDir(
+    workDir: string,
+    inputPath: string,
+  ): Promise<ProjectAdditionalDirRemoveResult>;
 }
 
 export const IProjectLocalConfigService: ServiceIdentifier<IProjectLocalConfigService> =

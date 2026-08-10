@@ -22,6 +22,8 @@ import type {
   PromptPayload,
   RunShellCommandPayload,
   ReconnectMcpServerPayload,
+  RemoveAdditionalDirPayload,
+  RemoveAdditionalDirResult,
   RenameSessionPayload,
   RegisterToolPayload,
   SessionAPI,
@@ -118,6 +120,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   addAdditionalDir(payload: AddAdditionalDirPayload): Promise<AddAdditionalDirResult> {
     return this.session.addAdditionalDir(payload.path, payload.persist);
+  }
+
+  removeAdditionalDir(payload: RemoveAdditionalDirPayload): Promise<RemoveAdditionalDirResult> {
+    return this.session.removeAdditionalDir(payload.path, payload.forget);
   }
 
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {

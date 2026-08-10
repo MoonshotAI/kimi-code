@@ -360,7 +360,9 @@ describe('WorkspaceLifecycleService', () => {
           }),
         resolveAdditionalDirs: (_base: string, dirs: readonly string[]) =>
           Promise.resolve([...dirs]),
+        resolveAdditionalDirPath: (_base: string, input: string) => input,
         appendAdditionalDir: () => Promise.reject(new Error('not implemented')),
+        removeAdditionalDir: () => Promise.reject(new Error('not implemented')),
       } satisfies IProjectLocalConfigService),
       stubPair(IHostFsWatchService, {
         _serviceBrand: undefined,

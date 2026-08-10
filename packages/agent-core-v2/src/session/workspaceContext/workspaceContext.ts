@@ -5,8 +5,8 @@
  * paths against the session work directory and to enforce that file/process
  * operations stay within the workspace (plus any additional dirs). The view is
  * read-only: `workDir` is fixed at session creation; `additionalDirs` mirrors
- * the handler-shared set and refreshes when the workspace-level add-dir
- * surface changes it. Pure configuration + boundary — it performs no IO.
+ * the handler-shared set and refreshes when the workspace-level directory
+ * management surface changes it. Pure configuration + boundary — it performs no IO.
  * Session-scoped.
  */
 

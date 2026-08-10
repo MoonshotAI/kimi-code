@@ -17,6 +17,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IProjectLocalConfigService,
+  type ProjectAdditionalDirRemoveResult,
   type ProjectAdditionalDirsLoadResult,
 } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
@@ -67,6 +68,10 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     return this.resolveAdditionalDirsInternal(baseDir, additionalDirs);
   }
 
+  resolveAdditionalDirPath(baseDir: string, inputPath: string): string {
+    return this.resolvePath(baseDir, normalizeAdditionalDirInput(inputPath));
+  }
+
   async appendAdditionalDir(
     workDir: string,
     inputPath: string,
@@ -94,6 +99,38 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     }
 
     return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir] };
+  }
+
+  async removeAdditionalDir(
+    workDir: string,
+    inputPath: string,
+  ): Promise<ProjectAdditionalDirRemoveResult> {
+    const projectRoot = await this.findProjectRoot(workDir);
+    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    const target = this.resolveAdditionalDirPath(workDir, inputPath);
+    const file = await this.readProjectLocalToml(configPath);
+    if (file === undefined) {
+      return { projectRoot, configPath, additionalDirs: [], removed: false };
+    }
+
+    const fileAdditionalDirs = file.parsed.workspace?.additional_dir ?? [];
+    const existingDirs = this.resolveExistingAdditionalDirs(projectRoot, fileAdditionalDirs);
+    const additionalDirs = existingDirs.filter(
+      (dir) => normalize(dir) !== normalize(target),
+    );
+    if (additionalDirs.length === existingDirs.length) {
+      return { projectRoot, configPath, additionalDirs: existingDirs, removed: false };
+    }
+
+    const workspace = cloneRecord(file.raw['workspace']);
+    workspace['additional_dir'] = additionalDirs;
+    file.raw['workspace'] = workspace;
+    try {
+      await this.fs.writeText(configPath, `${stringifyToml(file.raw)}\n`);
+    } catch (error: unknown) {
+      throw toStorageIoError(error, { path: configPath, op: 'write' });
+    }
+    return { projectRoot, configPath, additionalDirs, removed: true };
   }
 
   private getProjectLocalConfigPath(projectRoot: string): string {

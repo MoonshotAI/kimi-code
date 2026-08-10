@@ -20,6 +20,8 @@ import {
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   readWorkspaceAdditionalDirs,
+  removeWorkspaceAdditionalDir,
+  resolveWorkspaceAdditionalDirPath,
   resolveWorkspaceAdditionalDirs,
   resolveConfigValue,
   type BackgroundConfig,
@@ -394,10 +396,76 @@ export class Session {
     };
   }
 
+  async removeAdditionalDir(
+    path: string,
+    forget = false,
+  ): Promise<WorkspaceAdditionalDirsLoadResult & { readonly forgotten: boolean }> {
+    const cwd = this.toolKaos.getcwd();
+    const systemKaos = this.systemContextKaos(cwd);
+    const target = resolveWorkspaceAdditionalDirPath(systemKaos, cwd, path);
+    const samePath = (candidate: string): boolean =>
+      systemKaos.normpath(candidate) === systemKaos.normpath(target);
+
+    if (systemKaos.normpath(target) === systemKaos.normpath(cwd)) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'The primary workspace directory cannot be removed',
+      );
+    }
+    if (!this.additionalDirs.some(samePath)) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        `Directory is not an additional workspace root: ${target}`,
+      );
+    }
+
+    const workspace = forget
+      ? await removeWorkspaceAdditionalDir(systemKaos, cwd, target)
+      : await readWorkspaceAdditionalDirs(systemKaos, cwd).then((currentConfig) => {
+          if (currentConfig.additionalDirs.some(samePath)) {
+            throw new KimiError(
+              ErrorCodes.REQUEST_INVALID,
+              'This directory is remembered by the project; choose the forget option to remove it',
+            );
+          }
+          return { ...currentConfig, removed: false };
+        });
+
+    const nextSessionAdditionalDirs = this.sessionAdditionalDirs.filter((dir) => !samePath(dir));
+    if (nextSessionAdditionalDirs.length !== this.sessionAdditionalDirs.length) {
+      const previousMetadata = this.metadata;
+      this.metadata = { ...this.metadata, additionalDirs: nextSessionAdditionalDirs };
+      try {
+        await this.writeMetadata();
+      } catch (error) {
+        this.metadata = previousMetadata;
+        throw error;
+      }
+      this.sessionAdditionalDirs = nextSessionAdditionalDirs;
+    }
+
+    const additionalDirs = this.additionalDirs.filter((dir) => !samePath(dir));
+    await this.setAdditionalDirs(additionalDirs);
+    this.notifyAdditionalDirRemoved(target, workspace.removed, workspace.configPath);
+    return {
+      projectRoot: workspace.projectRoot,
+      configPath: workspace.configPath,
+      additionalDirs,
+      forgotten: workspace.removed,
+    };
+  }
+
   private notifyAdditionalDirAdded(path: string, persisted: boolean, configPath: string): void {
     const message = persisted
       ? `Added workspace directory:\n  ${path}\n  Saved to:\n  ${configPath}`
       : `Added workspace directory:\n  ${path}\n  For this session only`;
+    this.requireMainAgent().context.appendLocalCommandStdout(message);
+  }
+
+  private notifyAdditionalDirRemoved(path: string, forgotten: boolean, configPath: string): void {
+    const message = forgotten
+      ? `Removed workspace directory:\n  ${path}\n  Removed from:\n  ${configPath}`
+      : `Removed workspace directory:\n  ${path}\n  For this session only`;
     this.requireMainAgent().context.appendLocalCommandStdout(message);
   }
 

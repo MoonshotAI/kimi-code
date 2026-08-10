@@ -4,6 +4,7 @@ import {
   parseSlashInput,
   resolveSlashCommandAvailability,
   addDirArgumentCompletions,
+  removeDirArgumentCompletions,
   sortSlashCommands,
   swarmArgumentCompletions,
   type KimiSlashCommand,
@@ -96,6 +97,14 @@ describe('built-in slash command registry', () => {
     expect(homeCompletions.some((value) => value.startsWith('~/sers/'))).toBe(false);
   });
 
+  it('offers path-only remove-dir completions because bare input opens the selector', () => {
+    expect(removeDirArgumentCompletions('')).toBeNull();
+    expect(removeDirArgumentCompletions('list')).toBeNull();
+    const absolute = removeDirArgumentCompletions('/') ?? [];
+    expect(absolute.length).toBeGreaterThan(0);
+    expect(absolute.every((item) => item.value.startsWith('/'))).toBe(true);
+  });
+
   it('defaults commands without explicit availability to idle-only', () => {
     const command: KimiSlashCommand = {
       name: 'example',
@@ -150,6 +159,7 @@ describe('built-in slash command registry', () => {
     expect(names).toEqual(
       expect.arrayContaining([
         'add-dir',
+        'remove-dir',
         'compact',
         'btw',
         'editor',

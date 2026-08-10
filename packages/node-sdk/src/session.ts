@@ -27,6 +27,8 @@ import type {
   PluginSummary,
   PromptInput,
   ReloadSessionOptions,
+  RemoveAdditionalDirOptions,
+  RemoveAdditionalDirResult,
   ReloadSummary,
   ResumedSessionState,
   ResumedSessionSummary,
@@ -198,6 +200,25 @@ export class Session {
       id: this.id,
       path: normalized,
       persist: options?.persist ?? true,
+    });
+    this.summary = { ...this.requireSummary(), additionalDirs: result.additionalDirs };
+    return result;
+  }
+
+  async removeAdditionalDir(
+    path: string,
+    options?: RemoveAdditionalDirOptions,
+  ): Promise<RemoveAdditionalDirResult> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      path,
+      'Additional directory cannot be empty',
+      ErrorCodes.REQUEST_INVALID,
+    );
+    const result = await this.rpc.removeAdditionalDir({
+      id: this.id,
+      path: normalized,
+      forget: options?.forget ?? false,
     });
     this.summary = { ...this.requireSummary(), additionalDirs: result.additionalDirs };
     return result;

@@ -1566,12 +1566,49 @@ describe('v1↔v2 session lifecycle parity', () => {
         additionalDirs: [persistedDir, sessionOnlyDir],
         persisted: false,
       });
+      const [v1RemovedSession, v2RemovedSession] = await Promise.all([
+        pair.v1.removeAdditionalDir({
+          id: 'session_parity_adddir',
+          path: sessionOnlyDir,
+          forget: false,
+        }),
+        pair.v2.removeAdditionalDir({
+          id: 'session_parity_adddir',
+          path: sessionOnlyDir,
+          forget: false,
+        }),
+      ]);
+      expect(v2RemovedSession).toEqual(v1RemovedSession);
+      expect(v1RemovedSession).toMatchObject({
+        additionalDirs: [persistedDir],
+        forgotten: false,
+      });
+      const v1Forgotten = await pair.v1.removeAdditionalDir({
+        id: 'session_parity_adddir',
+        path: persistedDir,
+        forget: true,
+      });
+      const v2Forgotten = await pair.v2.removeAdditionalDir({
+        id: 'session_parity_adddir',
+        path: persistedDir,
+        forget: true,
+      });
+      expect(v1Forgotten).toMatchObject({ additionalDirs: [], forgotten: true });
+      // The clients share one project config in this parity fixture, so v1
+      // performs the disk deletion before v2; both live views still converge.
+      expect(v2Forgotten).toMatchObject({ additionalDirs: [] });
       // v1 requires the active session on both engines.
       await expect(
         pair.v1.addAdditionalDir({ id: 'session_missing', path: persistedDir, persist: true }),
       ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
       await expect(
         pair.v2.addAdditionalDir({ id: 'session_missing', path: persistedDir, persist: true }),
+      ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+      await expect(
+        pair.v1.removeAdditionalDir({ id: 'session_missing', path: persistedDir, forget: true }),
+      ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+      await expect(
+        pair.v2.removeAdditionalDir({ id: 'session_missing', path: persistedDir, forget: true }),
       ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
     } finally {
       await closeSessionPair(pair);

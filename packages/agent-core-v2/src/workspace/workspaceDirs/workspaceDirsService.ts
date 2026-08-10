@@ -8,7 +8,7 @@
  * change — including writes from OTHER processes), `ephemeralDirs` is the
  * in-memory union of non-persisted `addDir` calls and caller-provided dirs
  * from session create/resume options (it dies with the handler). Every
- * mutation serializes on one tail queue; the change event fires only when
+ * Add and remove mutations serialize on one tail queue; the change event fires only when
  * the combined list actually changed. The set reaches every session of the
  * handler through the `ISessionWorkspaceInfo` seed (`sessionInfo()`), a
  * live read view over this service. The plain-data state (`fileDirs`,
@@ -26,6 +26,7 @@ import { defineState } from '#/_base/state/stateRegistry';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import { Error2, ErrorCodes } from '#/errors';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -35,6 +36,8 @@ import {
   IWorkspaceDirs,
   type WorkspaceAddDirInput,
   type WorkspaceAdditionalDirsResult,
+  type WorkspaceRemoveDirInput,
+  type WorkspaceRemoveDirResult,
 } from './workspaceDirs';
 
 const WATCH_DEBOUNCE_MS = 200;
@@ -99,6 +102,10 @@ export class WorkspaceDirsService extends Service implements IWorkspaceDirs {
     return this.enqueue(() => this.applyAddDir(input));
   }
 
+  removeDir(input: WorkspaceRemoveDirInput): Promise<WorkspaceRemoveDirResult> {
+    return this.enqueue(() => this.applyRemoveDir(input));
+  }
+
   mergeAdditionalDirs(baseDir: string, dirs: readonly string[]): Promise<void> {
     if (dirs.length === 0) return Promise.resolve();
     return this.enqueue(async () => {
@@ -158,6 +165,48 @@ export class WorkspaceDirsService extends Service implements IWorkspaceDirs {
       configPath: onDisk.configPath,
       additionalDirs: this.additionalDirs,
       persisted: false,
+    };
+  }
+
+  private async applyRemoveDir(input: WorkspaceRemoveDirInput): Promise<WorkspaceRemoveDirResult> {
+    const target = this.localConfig.resolveAdditionalDirPath(this.workspace.cwd, input.path);
+    if (target === this.workspace.cwd) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'The primary workspace directory cannot be removed',
+      );
+    }
+    if (!this.additionalDirs.includes(target)) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        `Directory is not an additional workspace root: ${target}`,
+      );
+    }
+    if (input.forget !== true && this.fileDirs.includes(target)) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'This directory is remembered by the project; choose the forget option to remove it',
+      );
+    }
+
+    const before = this.additionalDirs;
+    let forgotten = false;
+    if (input.forget === true) {
+      const result = await this.localConfig.removeAdditionalDir(this.workspace.cwd, target);
+      this.projectRoot = result.projectRoot;
+      this.configPath = result.configPath;
+      this.fileDirs = result.additionalDirs;
+      forgotten = result.removed;
+    }
+    this.ephemeralDirs = this.ephemeralDirs.filter((dir) => dir !== target);
+    if (!sameStringList(before, this.additionalDirs)) {
+      this.onDidChangeEmitter.fire();
+    }
+    return {
+      projectRoot: this.projectRoot,
+      configPath: this.configPath,
+      additionalDirs: this.additionalDirs,
+      forgotten,
     };
   }
 

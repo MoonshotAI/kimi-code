@@ -372,6 +372,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       "auto",
       "plan",
       "add-dir",
+      "remove-dir",
       "export",
       "import",
       "skill:review",
@@ -1102,6 +1103,21 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     const resumed = await openRuntimeSession(rig, sessionId);
 
     expect(resumed.session.summary?.additionalDirs).toContain(additionalDir);
+  });
+
+  it("removes a session-only slash-added directory before resume", async () => {
+    const rig = await createRuntimeRig();
+    const additionalDir = join(rig.workDir, "temporary workspace");
+    await mkdir(additionalDir);
+    const runtime = await openRuntimeSession(rig);
+    await runSlash(runtime, `/add-dir "${additionalDir}"`);
+
+    await expect(runSlash(runtime, `/remove-dir "${additionalDir}"`)).resolves.toBe(true);
+    expect(runtime.session.summary?.additionalDirs).not.toContain(additionalDir);
+    const sessionId = runtime.id;
+    await rig.runtime.detachView("view-1");
+    const resumed = await openRuntimeSession(rig, sessionId);
+    expect(resumed.session.summary?.additionalDirs).not.toContain(additionalDir);
   });
 
   it("rejects an invalid plan subcommand without leaving the runtime busy", async () => {

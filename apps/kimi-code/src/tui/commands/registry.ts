@@ -57,6 +57,11 @@ export function addDirArgumentCompletions(argumentPrefix: string): AutocompleteI
   return completeLeadingArg(ADD_DIR_ARG_COMPLETIONS, argumentPrefix);
 }
 
+/** Path-only argument autocompletion for `/remove-dir`; bare input opens its selector. */
+export function removeDirArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  return isPathLikeAddDirArgument(argumentPrefix) ? completeAddDirPath(argumentPrefix) : null;
+}
+
 function isPathLikeAddDirArgument(argumentPrefix: string): boolean {
   return argumentPrefix === '.' || argumentPrefix === '..' || argumentPrefix.startsWith('./') || argumentPrefix.startsWith('../') || argumentPrefix.startsWith('/') || argumentPrefix.startsWith('~');
 }
@@ -261,6 +266,15 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'idle-only',
     argumentHint: '[list] | <path>',
     completeArgs: addDirArgumentCompletions,
+  },
+  {
+    name: 'remove-dir',
+    aliases: [],
+    description: 'Remove an additional workspace directory',
+    priority: 60,
+    availability: 'idle-only',
+    argumentHint: '[<path>]',
+    completeArgs: removeDirArgumentCompletions,
   },
   {
     name: 'experiments',
