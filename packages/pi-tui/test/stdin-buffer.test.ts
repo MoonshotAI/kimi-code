@@ -484,6 +484,53 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedSequences, ["h", "e", "l", "l", "o"]);
 			assert.deepStrictEqual(emittedPaste, []);
 		});
+
+		it("flushes the pending paste and dispatches a following arrow key", () => {
+			const content = "a".repeat(801);
+			processInput(content);
+			assert.deepStrictEqual(emittedPaste, []);
+			assert.deepStrictEqual(emittedSequences, []);
+
+			// Left arrow right after the paste must be dispatched, not swallowed.
+			processInput("\x1b[D");
+			assert.deepStrictEqual(emittedPaste, [content]);
+			assert.deepStrictEqual(emittedSequences, ["\x1b[D"]);
+		});
+
+		it("flushes the pending paste and dispatches a following backspace", () => {
+			const content = "a".repeat(801);
+			processInput(content);
+
+			processInput("\x7f");
+			assert.deepStrictEqual(emittedPaste, [content]);
+			assert.deepStrictEqual(emittedSequences, ["\x7f"]);
+		});
+
+		it("coalesces a plain prefix, then dispatches the trailing interactive key", () => {
+			const content = "a".repeat(801);
+			processInput(content);
+
+			// A chunk carrying more paste text AND an interactive key: the plain
+			// prefix joins the paste, the key is dispatched separately.
+			processInput("moretext\x1b[C");
+			assert.deepStrictEqual(emittedPaste, [content + "moretext"]);
+			assert.deepStrictEqual(emittedSequences, ["\x1b[C"]);
+		});
+
+		it("coalesces continuation chunks that only add newlines/CR/tab", async () => {
+			// \r / \n / \t are paste content, not interactive keys: a multi-line
+			// paste split across reads must not be flushed mid-stream.
+			const content = "a".repeat(801);
+			processInput(content);
+			processInput("\r\nmore\t");
+
+			assert.deepStrictEqual(emittedPaste, []);
+			assert.deepStrictEqual(emittedSequences, []);
+
+			await wait(120);
+			assert.deepStrictEqual(emittedPaste, [content + "\r\nmore\t"]);
+			assert.deepStrictEqual(emittedSequences, []);
+		});
 	});
 
 	describe("Destroy", () => {

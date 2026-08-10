@@ -29,6 +29,21 @@ export const PASTE_CHUNK_THRESHOLD = 800;
 export const PASTE_FLUSH_MS = 100;
 
 /**
+ * First index of a byte that is an interactive keystroke, not paste content:
+ * an escape sequence (ESC), backspace (DEL), or any C0 control other than
+ * newline / CR / tab. Returns -1 when the whole chunk is plain paste text.
+ */
+function firstInteractiveByteIndex(str: string): number {
+	for (let i = 0; i < str.length; i++) {
+		const code = str.charCodeAt(i);
+		if (code === 0x7f || (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d)) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+/**
  * Check if a string is a complete escape sequence or needs more data
  */
 function isCompleteSequence(data: string): "complete" | "incomplete" | "not-escape" {
@@ -319,16 +334,18 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			return;
 		}
 
-		// Continue a non-bracketed paste coalescing window. If a bracketed paste
-		// marker appears, flush the pending plain paste first, then re-process.
+		// Continue a non-bracketed paste coalescing window. Only coalesce chunks
+		// that are still plain paste content; an interactive keystroke (arrow /
+		// backspace / Ctrl / a fresh bracketed paste, all ESC- or C0-led) flushes
+		// the pending paste first so it is dispatched instead of being swallowed.
 		if (this.nonBracketedPastePending) {
-			const bracketStart = str.indexOf(BRACKETED_PASTE_START);
-			if (bracketStart !== -1) {
-				this.nonBracketedPasteBuffer += str.slice(0, bracketStart);
-				this.flushNonBracketedPaste();
-				if (bracketStart < str.length) {
-					this.process(str.slice(bracketStart));
+			const interactiveAt = firstInteractiveByteIndex(str);
+			if (interactiveAt !== -1) {
+				if (interactiveAt > 0) {
+					this.nonBracketedPasteBuffer += str.slice(0, interactiveAt);
 				}
+				this.flushNonBracketedPaste();
+				this.process(str.slice(interactiveAt));
 				return;
 			}
 			this.appendNonBracketedPaste(str);
