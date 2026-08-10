@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -38,6 +38,7 @@ import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
 import { UndoSelectorComponent } from '#/tui/components/dialogs/undo-selector';
+import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import {
   PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
@@ -2093,6 +2094,46 @@ command = "vim"
         content: 'hello',
       }),
     ]);
+  });
+
+  it('rewinds workspace files and conversation history from a pre-turn checkpoint', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'kimi-code-rewind-flow-'));
+    tempDirs.push(parent);
+    const workDir = join(parent, 'workspace');
+    const sessionDir = join(parent, 'session');
+    await mkdir(workDir);
+    const source = join(workDir, 'source.ts');
+    await writeFile(source, 'before\n');
+    const session = makeSession({
+      summary: { title: null, sessionDir, workDir, additionalDirs: [] },
+    });
+    const startup = makeStartupInput();
+    const { driver } = await makeDriver(session, {}, { ...startup, workDir });
+
+    driver.handleUserInput('change source.ts');
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('change source.ts');
+    });
+    await writeFile(source, 'after\n');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/rewind 1');
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ChoicePickerComponent);
+    });
+    const confirmation = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    confirmation.handleInput('\u001B[B');
+    confirmation.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+    await vi.waitFor(async () => {
+      expect(await readFile(source, 'utf8')).toBe('before\n');
+    });
+    expect(driver.state.transcriptEntries).not.toContainEqual(
+      expect.objectContaining({ kind: 'user', content: 'change source.ts' }),
+    );
   });
 
   it('keeps the transcript intact when undo RPC fails', async () => {

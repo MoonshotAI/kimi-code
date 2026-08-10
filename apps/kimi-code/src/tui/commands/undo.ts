@@ -30,7 +30,7 @@ import type { SlashCommandHost } from './dispatch';
 // Undo command
 // ---------------------------------------------------------------------------
 
-interface UndoAvailability {
+export interface UndoAvailability {
   readonly maxCount: number;
   readonly stoppedAtCompaction: boolean;
 }
@@ -77,7 +77,11 @@ export async function handleUndoCommand(
   await undoByCount(host, count);
 }
 
-async function undoByCount(host: SlashCommandHost, count: number): Promise<boolean> {
+export async function undoByCount(
+  host: SlashCommandHost,
+  count: number,
+  options: { readonly preserveWorkspaceCheckpoints?: boolean } = {},
+): Promise<boolean> {
   const session = host.session;
   if (session === undefined) {
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
@@ -122,6 +126,17 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
     renderWelcome(host);
   }
 
+  if (options.preserveWorkspaceCheckpoints !== true) {
+    try {
+      await host.getWorkspaceCheckpointStore?.()?.discardLast(count);
+    } catch (error) {
+      host.showStatus(
+        `Conversation was undone, but workspace checkpoint cleanup failed: ${formatErrorMessage(error)}`,
+        'warning',
+      );
+    }
+  }
+
   host.state.ui.requestRender();
   return true;
 }
@@ -162,7 +177,7 @@ async function showUndoSelector(host: SlashCommandHost): Promise<void> {
   );
 }
 
-function parseUndoCount(args: string): number | undefined {
+export function parseUndoCount(args: string): number | undefined {
   const value = args.trim();
   if (value.length === 0) return 1;
   if (!/^[1-9]\d*$/.test(value)) return undefined;
@@ -170,7 +185,7 @@ function parseUndoCount(args: string): number | undefined {
   return Number.isSafeInteger(count) ? count : undefined;
 }
 
-async function resolveUndoAvailability(
+export async function resolveUndoAvailability(
   host: SlashCommandHost,
 ): Promise<UndoAvailability> {
   const local = undoAvailabilityFromTranscript(
@@ -246,7 +261,7 @@ function isContextUndoAnchor(message: ContextMessage): boolean {
   return false;
 }
 
-function createUndoChoices(
+export function createUndoChoices(
   entries: readonly TranscriptEntry[],
   children: readonly Component[],
   maxCount: number,

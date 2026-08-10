@@ -355,6 +355,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'idle-only',
   },
   {
+    name: 'rewind',
+    aliases: [],
+    description: 'Restore prompts and workspace files from local checkpoints',
+    priority: 80,
+    availability: 'idle-only',
+  },
+  {
     name: 'editor',
     aliases: [],
     description: 'Set the external editor for Ctrl-G',

@@ -22,6 +22,7 @@ export interface UndoChoice {
 }
 
 export interface UndoSelectorOptions {
+  readonly title?: string;
   readonly choices: readonly UndoChoice[];
   readonly onSelect: (choice: UndoChoice) => void;
   readonly onCancel: () => void;
@@ -70,7 +71,7 @@ export class UndoSelectorComponent extends Container implements Focusable {
 
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', ' Select messages to undo'),
+      currentTheme.boldFg('primary', ` ${this.opts.title ?? 'Select messages to undo'}`),
       currentTheme.fg('textMuted', ' ' + hintParts.join(' · ')),
       '',
     ];

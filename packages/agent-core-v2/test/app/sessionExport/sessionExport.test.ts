@@ -92,6 +92,8 @@ describe('sessionExport', () => {
     await mkdir(join(sessionDir, 'agents', 'main'), { recursive: true });
     await mkdir(join(sessionDir, 'logs'), { recursive: true });
     await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+    await mkdir(join(sessionDir, 'workspace-checkpoints', 'blobs'), { recursive: true });
+    await writeFile(join(sessionDir, 'workspace-checkpoints', 'blobs', 'source-content'), 'private source');
     await writeFile(join(sessionDir, 'logs', 'kimi-code.log'), '{"msg":"session"}\n', 'utf-8');
     await writeFile(
       join(sessionDir, 'agents', 'main', 'wire.jsonl'),
@@ -130,6 +132,7 @@ describe('sessionExport', () => {
       'state.json',
       'logs/global/kimi-code.log',
     ]);
+    expect(result.entries.some((entry) => entry.startsWith('workspace-checkpoints/'))).toBe(false);
     expect(result.manifest).toMatchObject({
       sessionId: 'ses_demo',
       kimiCodeVersion: '1.0.0-test',

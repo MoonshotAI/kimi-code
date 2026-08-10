@@ -89,6 +89,11 @@ describe('resolveSlashCommandInput', () => {
       commandName: 'undo',
       reason: 'streaming',
     });
+    expect(resolve('/rewind', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'rewind',
+      reason: 'streaming',
+    });
     expect(resolve('/reload', { isStreaming: true })).toEqual({
       kind: 'blocked',
       commandName: 'reload',

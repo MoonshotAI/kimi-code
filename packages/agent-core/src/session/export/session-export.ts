@@ -14,6 +14,7 @@ import type { ExportSessionPayload, ExportSessionResult, SessionSummary } from '
 
 const SESSION_LOG_REL = 'logs/kimi-code.log';
 const GLOBAL_LOG_REL = 'logs/global/kimi-code.log';
+const NON_EXPORTABLE_SESSION_DIRECTORIES = ['workspace-checkpoints'] as const;
 
 export async function exportSessionDirectory(input: {
   readonly request: ExportSessionPayload;
@@ -22,7 +23,9 @@ export async function exportSessionDirectory(input: {
   readonly globalLogPath?: string | undefined;
 }): Promise<ExportSessionResult> {
   const sessionDir = input.summary.sessionDir;
-  const sessionFiles = await collectFilesRecursive(sessionDir);
+  const sessionFiles = await collectFilesRecursive(sessionDir, {
+    excludeTopLevelDirectories: NON_EXPORTABLE_SESSION_DIRECTORIES,
+  });
   if (sessionFiles.length === 0) {
     throw new KimiError(ErrorCodes.SESSION_EXPORT_NOT_FOUND, `Session "${input.summary.id}" has no exportable directory at "${sessionDir}"`, {
       details: { sessionId: input.summary.id, sessionDir },

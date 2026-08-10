@@ -122,6 +122,8 @@ describe('exportSessionDirectory', () => {
     );
     await writeFile(join(sessionDir, 'state.json'), JSON.stringify({ session_id: sid }), 'utf-8');
     await writeFile(join(sessionDir, 'subagents', 'a.txt'), 'child', 'utf-8');
+    await mkdir(join(sessionDir, 'workspace-checkpoints', 'blobs'), { recursive: true });
+    await writeFile(join(sessionDir, 'workspace-checkpoints', 'blobs', 'source-content'), 'private source');
 
     const outputPath = join(tmp, 'out.zip');
     const result = await exportSessionDirectory({
@@ -158,6 +160,7 @@ describe('exportSessionDirectory', () => {
     expect(entries.get('state.json')?.toString('utf-8')).toContain(sid);
     expect(entries.get('subagents/a.txt')?.toString('utf-8')).toBe('child');
     expect([...entries.keys()].some((name) => name.includes(tmp))).toBe(false);
+    expect([...entries.keys()].some((name) => name.startsWith('workspace-checkpoints/'))).toBe(false);
 
     const manifest = JSON.parse(entries.get('manifest.json')!.toString('utf-8')) as {
       sessionId: string;

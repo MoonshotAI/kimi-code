@@ -118,6 +118,7 @@ import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController } from './controllers/tasks-browser';
 import { installRainbowDance } from './easter-eggs/dance';
+import { WorkspaceCheckpointStore } from './workspace-checkpoints';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
 import { createApprovalRequestHandler } from './reverse-rpc/approval/handler';
@@ -349,6 +350,9 @@ export class KimiTUI {
   private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =
     undefined;
   private lastHistoryContent: string | undefined;
+  private workspaceCheckpointCache:
+    | { readonly key: string; readonly store: WorkspaceCheckpointStore }
+    | undefined;
   // Live `!` shell output entries, keyed by commandId so concurrent commands
   // each update their own card and stale events are dropped. Mutated in place
   // as `shell.output` events arrive; removed when the command completes.
@@ -1447,7 +1451,7 @@ export class KimiTUI {
     // the message. Steer instead: the engine buffers it into the running goal
     // turn, or launches a turn of its own if the loop just ended.
     if (this.state.appState.goal?.status === 'active') {
-      void session.steer(sdkInput).catch((error: unknown) => {
+      void this.runCheckpointedSessionRequest(session, () => session.steer(sdkInput)).catch((error: unknown) => {
         const message = formatErrorMessage(error);
         // Same reset as the prompt path: beginSessionRequest already moved the
         // TUI to the waiting phase, and no turn events may follow a failed
@@ -1457,7 +1461,7 @@ export class KimiTUI {
       });
       return;
     }
-    void session.prompt(sdkInput).catch((error: unknown) => {
+    void this.runCheckpointedSessionRequest(session, () => session.prompt(sdkInput)).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.failSessionRequest(`Failed to send: ${message}`);
     });
@@ -1479,7 +1483,10 @@ export class KimiTUI {
     }
     if (!this.validateMediaCapabilities(rewrite)) return;
     this.beginSessionRequest();
-    void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
+    void this.runCheckpointedSessionRequest(
+      session,
+      () => session.activateSkill(skillName, rewrite.text),
+    ).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.failSessionRequest(`Skill "${skillName}" failed: ${message}`);
     });
@@ -1503,12 +1510,76 @@ export class KimiTUI {
     }
     if (!this.validateMediaCapabilities(rewrite)) return;
     this.beginSessionRequest();
-    void session
-      .activatePluginCommand(pluginId, commandName, rewrite.text)
+    void this.runCheckpointedSessionRequest(
+      session,
+      () => session.activatePluginCommand(pluginId, commandName, rewrite.text),
+    )
       .catch((error: unknown) => {
         const message = formatErrorMessage(error);
         this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
       });
+  }
+
+  getWorkspaceCheckpointStore(): WorkspaceCheckpointStore | undefined {
+    const session = this.session;
+    return session === undefined ? undefined : this.workspaceCheckpointStoreFor(session);
+  }
+
+  private workspaceCheckpointStoreFor(session: Session): WorkspaceCheckpointStore | undefined {
+    const summary = session.summary;
+    if (
+      summary === undefined ||
+      typeof summary.sessionDir !== 'string' ||
+      summary.sessionDir.trim().length === 0 ||
+      typeof summary.workDir !== 'string' ||
+      summary.workDir.trim().length === 0
+    ) {
+      return undefined;
+    }
+    const roots = [summary.workDir, ...(summary.additionalDirs ?? [])];
+    const key = JSON.stringify([session.id, summary.sessionDir, roots]);
+    if (this.workspaceCheckpointCache?.key === key) return this.workspaceCheckpointCache.store;
+    const store = new WorkspaceCheckpointStore(summary.sessionDir, roots);
+    this.workspaceCheckpointCache = { key, store };
+    return store;
+  }
+
+  private async runCheckpointedSessionRequest(
+    session: Session,
+    request: () => Promise<void>,
+  ): Promise<void> {
+    const store = this.workspaceCheckpointStoreFor(session);
+    let checkpointId: string | undefined;
+    if (store !== undefined) {
+      try {
+        checkpointId = await store.captureBeforeTurn();
+      } catch (error) {
+        // A missing checkpoint must invalidate older entries: otherwise the
+        // newest stored before-image would no longer align with `/undo 1`.
+        try {
+          await store.invalidate();
+        } catch {
+          // The original capture error is the actionable one.
+        }
+        this.showStatus(
+          `Workspace rewind unavailable for this turn: ${formatErrorMessage(error)}`,
+          'warning',
+        );
+      }
+    }
+    try {
+      await request();
+    } catch (error) {
+      if (store !== undefined && checkpointId !== undefined) {
+        try {
+          await store.discardCaptured(checkpointId);
+        } catch {
+          // The request failure remains primary; stale checkpoints fail closed
+          // during `/rewind` root/tail validation.
+        }
+      }
+      throw error;
+    }
   }
 
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {

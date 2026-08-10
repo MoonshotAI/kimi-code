@@ -34,6 +34,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/title [<text>]` | `/rename` | Without arguments, display the current session title; with an argument, set a new title (max 200 characters) | Yes |
 | `/compact [<instruction>]` | — | Compact the current conversation context to free up token usage; an optional custom instruction can hint to the model what to preserve | No |
 | `/undo [<count>]` | — | Undo recent prompts from the active context. Without a count, opens a selector; with a count, undoes that many prompts. Prompts before the last compaction cannot be undone. Undoing also rolls back the todo list and plan mode state produced by those prompts (code changes are not reverted) | No |
+| `/rewind [<count>]` | — | Rewind recent prompts and tracked workspace files to their pre-prompt checkpoint. Without a count, opens a selector; with a count, prepares that many prompts for rewind. A file preview and explicit confirmation are required | No |
 | `/reload` | — | Reload the current session and apply the latest `config.toml` settings (providers, models, etc.) and `tui.toml` UI preferences, without restarting the CLI | No |
 | `/reload-tui` | — | Reload only the `tui.toml` UI preferences (theme, editor, notifications, etc.) without rebuilding the session | Yes |
 | `/init` | — | Analyze the current codebase and generate `AGENTS.md` | No |
@@ -42,6 +43,14 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/copy` | — | Copy the last assistant message to the clipboard | No |
 | `/add-dir [<path>]` | — | Add an extra workspace directory to the current session. Run without a path (or with `list`) to list configured directories. When adding, choose whether to remember the directory for the project in `.kimi-code/local.toml` | No |
 | `/web` | — | Open the current session in the web UI: pick a running server to connect to, or start a new foreground server after the TUI exits. See [`kimi web`](./kimi-command.md#kimi-web) | Yes |
+
+### Workspace rewind
+
+`/rewind` is the filesystem-restoring counterpart to `/undo`. Before each user-initiated prompt, skill activation, or plugin command, the TUI stores a pre-prompt file snapshot under the session directory; identical file contents are stored only once. The command compares that checkpoint with the current workspace and previews which files it will delete, restore, or replace. If any affected file changes after the preview opens, the operation aborts before conversation history is changed.
+
+The checkpoint covers the primary workspace and additional directories. It does not follow symbolic links, and excludes version-control metadata, `node_modules`, and paths matched by the workspace root's `.gitignore` or `.ignore`. A checkpoint is skipped entirely above 50,000 files, 512 MiB total content, or 64 MiB for one file; the prompt still runs, but older checkpoints are invalidated so that a later rewind cannot target the wrong turn. Each session retains the latest 20 checkpoints. Checkpoints begin with prompts submitted by a version that supports `/rewind`; earlier session history has no file snapshot.
+
+Workspace snapshots cannot tell whether a tracked change came from Kimi Code, a formatter, or the user. Rewinding therefore restores the entire tracked workspace delta since the selected prompt, not only tool-authored edits. Review the preview before confirming. The content store is local to the session, is excluded from session and debug exports, and does not require or modify Git history.
 
 ## Modes & Run Control
 

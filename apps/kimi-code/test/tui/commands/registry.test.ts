@@ -39,6 +39,7 @@ describe('built-in slash command registry', () => {
     expect(findBuiltInSlashCommand('mcp')?.name).toBe('mcp');
     expect(findBuiltInSlashCommand('status')?.name).toBe('status');
     expect(findBuiltInSlashCommand('usage')?.aliases).not.toContain('status');
+    expect((findBuiltInSlashCommand('rewind') as KimiSlashCommand).availability).toBe('idle-only');
     expect(findBuiltInSlashCommand('unknown')).toBeUndefined();
   });
 

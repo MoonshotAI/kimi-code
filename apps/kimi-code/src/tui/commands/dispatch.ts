@@ -12,6 +12,7 @@ import type { TasksBrowserController } from '../controllers/tasks-browser';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
 import type { ResolvedTheme } from '../theme/colors';
 import type { TUIState } from '../tui-state';
+import type { WorkspaceCheckpointStore } from '../workspace-checkpoints';
 import type {
   AppState,
   LoginProgressSpinnerHandle,
@@ -64,6 +65,7 @@ import {
 } from './session';
 import { handleSwarmCommand } from './swarm';
 import { handleUndoCommand } from './undo';
+import { handleRewindCommand } from './rewind';
 import { handleWebCommand } from './web';
 
 // ---------------------------------------------------------------------------
@@ -102,6 +104,7 @@ export {
   handleTitleCommand,
 } from './session';
 export { handleUndoCommand } from './undo';
+export { handleRewindCommand } from './rewind';
 export { handleWebCommand } from './web';
 
 // ---------------------------------------------------------------------------
@@ -166,6 +169,8 @@ export interface SlashCommandHost {
   /** Reset the client-side cache-break baseline after the context was cut
    *  (/undo): the next step's cache-read drop is expected, not a break. */
   noteContextCut?(): void;
+  /** Session-local filesystem before-images used by `/rewind`. */
+  getWorkspaceCheckpointStore?(): WorkspaceCheckpointStore | undefined;
 
   // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;
@@ -342,6 +347,7 @@ const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set
   'goal',
   'init',
   'plan',
+  'rewind',
   'swarm',
   'undo',
   'web',
@@ -511,6 +517,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'undo':
       await handleUndoCommand(host, args);
+      return;
+    case 'rewind':
+      await handleRewindCommand(host, args);
       return;
     case 'web':
       await handleWebCommand(host);

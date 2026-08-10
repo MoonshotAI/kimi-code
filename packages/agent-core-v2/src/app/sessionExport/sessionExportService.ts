@@ -47,6 +47,7 @@ const SESSION_LOG_REL = 'logs/kimi-code.log';
 const GLOBAL_LOG_REL = 'logs/global/kimi-code.log';
 const WEB_LOG_REL = 'logs/kimi-web.jsonl';
 const DESKTOP_LOG_REL = 'logs/kimi-desktop.log';
+const NON_EXPORTABLE_SESSION_DIRECTORIES = ['workspace-checkpoints'] as const;
 
 export class SessionExportService implements ISessionExportService {
   declare readonly _serviceBrand: undefined;
@@ -205,7 +206,9 @@ export async function exportSessionDirectory(input: {
     if (input.desktopLogPath !== undefined) {
       desktopSource = await openOptionalZipSource(input.desktopLogPath, input.signal);
     }
-    const sessionFiles = await collectFilesRecursive(sessionDir);
+    const sessionFiles = await collectFilesRecursive(sessionDir, {
+      excludeTopLevelDirectories: NON_EXPORTABLE_SESSION_DIRECTORIES,
+    });
     if (sessionFiles.length === 0 && sessionLogSource === undefined) {
       throw new Error2(
         ErrorCodes.SESSION_EXPORT_NOT_FOUND,

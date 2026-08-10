@@ -23,12 +23,17 @@ import {
 } from './file-source';
 import type { ExportSessionManifest } from './sessionExport';
 
-export async function collectFilesRecursive(root: string): Promise<string[]> {
+export async function collectFilesRecursive(
+  root: string,
+  options: { readonly excludeTopLevelDirectories?: readonly string[] } = {},
+): Promise<string[]> {
+  const excluded = new Set(options.excludeTopLevelDirectories ?? []);
   try {
     const entries = await readdir(root, { recursive: true, withFileTypes: true });
     return entries
       .filter((entry) => entry.isFile())
       .map((entry) => join(entry.parentPath, entry.name))
+      .filter((path) => !excluded.has(relative(root, path).split(/[\\/]/, 1)[0] ?? ''))
       .toSorted((a, b) => a.localeCompare(b));
   } catch (error) {
     if (!isMissingPath(error)) throw error;
