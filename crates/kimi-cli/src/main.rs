@@ -576,6 +576,9 @@ enum Commands {
     Logout,
     /// Update the CLI to the latest version (managed by the distribution).
     Upgrade,
+    /// Migrate legacy kimi-cli data — a one-time step handled by the TS
+    /// distribution (the Rust binary does not bundle the migration screen).
+    Migrate,
     /// Launch the web UI server (the Rust `/api/v1` + WS surface; the SPA
     /// frontend is served from `--assets` when given, otherwise it ships with
     /// the TS distribution).
@@ -2269,6 +2272,14 @@ async fn main() -> anyhow::Result<()> {
             println!("upgrade is managed by your package manager:");
             println!("  npm i -g kimi-code@latest        # TS distribution");
             println!("  npm i -g kimi-code-rust-bin@latest  # Rust-first wrapper");
+        }
+        Commands::Migrate => {
+            // Legacy data migration (~/.kimi -> ~/.kimi-code) is a one-time
+            // host-level step owned by the TS distribution; the Rust binary
+            // does not bundle the migration engine or screen.
+            println!("migrating legacy kimi-cli data is a one-time step handled by the TS distribution:");
+            println!("  npm i -g kimi-code@latest && kimi migrate");
+            println!("(the Rust distribution does not bundle the legacy migration screen)");
         }
         Commands::Web { port, host, dangerous_bypass_auth, no_open, assets } => {
             // Launch the Rust web server in-process (API + WS + optional SPA

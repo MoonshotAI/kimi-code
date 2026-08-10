@@ -508,6 +508,10 @@ fn upgrade_and_frontend_commands_are_recognized() {
     assert!(out.status.success(), "upgrade exits 0: {}", out.status);
     let text = stdout(&out);
     assert!(text.contains("package manager"), "upgrade hint: {text}");
+    let out = run(&home, &["migrate"]);
+    assert!(out.status.success(), "migrate exits 0: {}", out.status);
+    let text = stdout(&out);
+    assert!(text.contains("TS distribution"), "migrate hint: {text}");
     let out = run(&home, &["vis"]);
     assert!(!out.status.success(), "vis exits non-zero");
     let err = stderr(&out);
