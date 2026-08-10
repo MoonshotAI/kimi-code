@@ -34,13 +34,16 @@ vi.mock('#/cli/oauth-local', () => ({
   KIMI_CODE_PROVIDER_NAME: 'managed:kimi-code',
 }));
 
+vi.mock('#/cli/runtime-config', () => ({
+  resolveKimiHome: mocks.resolveKimiHome,
+  resolveConfigPath: mocks.resolveConfigPath,
+  loadRuntimeConfigSafe: mocks.loadRuntimeConfigSafe,
+}));
+
 vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
   return {
     ...actual,
-    resolveKimiHome: mocks.resolveKimiHome,
-    resolveConfigPath: mocks.resolveConfigPath,
-    loadRuntimeConfigSafe: mocks.loadRuntimeConfigSafe,
     KimiAuthFacade: vi.fn(function () {
       return { getCachedAccessToken: mocks.getCachedAccessToken };
     }),

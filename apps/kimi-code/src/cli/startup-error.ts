@@ -1,4 +1,4 @@
-import { isKimiError, resolveErrorTitle } from '@moonshot-ai/kimi-code-sdk';
+import { isKimiError, resolveErrorTitle } from '#/cli/sdk-errors';
 import { chalkStderr } from 'chalk';
 
 import { STARTUP_ERROR_COLOR } from '#/constant/startup-error';

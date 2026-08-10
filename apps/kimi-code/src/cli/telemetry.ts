@@ -1,9 +1,11 @@
 import { createKimiDeviceId, KIMI_CODE_PROVIDER_NAME } from '#/cli/oauth-local';
 import {
-  KimiAuthFacade,
   loadRuntimeConfigSafe,
   resolveConfigPath,
   resolveKimiHome,
+} from '#/cli/runtime-config';
+import {
+  KimiAuthFacade,
   type KimiConfig,
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';

@@ -1,4 +1,4 @@
-import { ErrorCodes } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes } from '#/cli/sdk-errors';
 
 export const PRODUCT_NAME = 'Kimi Code';
 export const CLI_COMMAND_NAME = 'kimi';

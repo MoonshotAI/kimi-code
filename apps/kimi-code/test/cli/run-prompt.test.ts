@@ -77,15 +77,27 @@ const mocks = vi.hoisted(() => {
     withTelemetryContext: vi.fn(() => ({ track: vi.fn() })),
     createKimiDeviceId: vi.fn<CreateKimiDeviceId>(() => 'device-1'),
     resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
+    resolveConfigPath: vi.fn(() => '/tmp/kimi-code-test-home/config.toml'),
+    loadRuntimeConfigSafe: vi.fn(() => ({
+      config: {},
+      fileWarnings: [],
+      envWarnings: [],
+      fileError: undefined,
+    })),
     harnessCreatesDeviceIdOnConstruction: false,
   };
 });
+
+vi.mock('#/cli/runtime-config', () => ({
+  resolveKimiHome: mocks.resolveKimiHome,
+  resolveConfigPath: mocks.resolveConfigPath,
+  loadRuntimeConfigSafe: mocks.loadRuntimeConfigSafe,
+}));
 
 vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
   return {
     ...actual,
-    resolveKimiHome: mocks.resolveKimiHome,
     createKimiHarness: (...args: unknown[]) => {
       const options = args[0] as { readonly homeDir?: string } | undefined;
       const homeDir = options?.homeDir ?? '/tmp/kimi-code-test-home';

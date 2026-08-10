@@ -17,7 +17,7 @@ const KIMI_CODE_OAUTH_KEY = 'oauth/kimi-code';
 const KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX = 'oauth/kimi-code-env-';
 const DEFAULT_KIMI_CODE_OAUTH_HOST = 'https://auth.kimi.com';
 const DEFAULT_KIMI_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
-const SHARED_DEFAULT_BASE_URLS: readonly string[] = new Set([
+const SHARED_DEFAULT_BASE_URLS: ReadonlySet<string> = new Set([
   DEFAULT_KIMI_CODE_BASE_URL.replace(/\/+$/, ''),
 ]);
 

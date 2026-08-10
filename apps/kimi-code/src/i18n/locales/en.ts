@@ -135,6 +135,8 @@ export default {
       sessionWithoutIdInPromptMode: 'Cannot use --session without an id in prompt mode.',
       cannotCombineContinueAndSession: 'Cannot combine --continue, --session.',
       cannotCombineYoloAndAuto: 'Cannot combine --yolo with --auto.',
+      authLoginRequired: 'Login required.',
+      shellGitBashNotFound: 'Git Bash not found',
     },
   },
   startup: {

@@ -133,6 +133,8 @@ export default {
       sessionWithoutIdInPromptMode: '在提示模式下不能不带 ID 使用 --session。',
       cannotCombineContinueAndSession: '--continue 不能与 --session 同时使用。',
       cannotCombineYoloAndAuto: '--yolo 不能与 --auto 同时使用。',
+      authLoginRequired: '需要登录。',
+      shellGitBashNotFound: '未找到 Git Bash',
     },
   },
   startup: {

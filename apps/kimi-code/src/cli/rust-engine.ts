@@ -15,7 +15,7 @@ import {
   loadRuntimeConfigSafe,
   resolveConfigPath,
   resolveKimiHome,
-} from '@moonshot-ai/kimi-code-sdk';
+} from '#/cli/runtime-config';
 import {
   DEFAULT_AGENT_PROFILES,
   loadMcpServers,
@@ -200,7 +200,8 @@ export async function loadSessionHooks(
     const loaded = loadRuntimeConfigSafe(resolvedConfig);
     if (loaded.fileError === undefined) {
       for (const hook of loaded.config.hooks ?? []) {
-        hooks.push({ ...hook });
+        // The engine validates the wire shape; the host passes entries through.
+        hooks.push({ ...hook } as unknown as HookDefInput);
       }
     }
   } catch {

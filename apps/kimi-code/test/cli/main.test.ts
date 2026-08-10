@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ErrorCodes, KimiError } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes, KimiError } from '#/cli/sdk-errors';
 
 import { validateOptions } from '#/cli/options';
 import type { CLIOptions } from '#/cli/options';

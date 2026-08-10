@@ -3,7 +3,7 @@ import { appendFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { readKimiDeviceId } from '#/cli/oauth-local';
-import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
+import { resolveKimiHome } from '#/cli/runtime-config';
 
 import { getUpdateRolloutLogFile } from '#/utils/paths';
 
