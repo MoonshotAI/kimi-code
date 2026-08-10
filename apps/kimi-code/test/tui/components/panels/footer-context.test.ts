@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import chalk from 'chalk';
 
-import { FooterComponent, formatFooterGitBadge, buildWeightedTips } from '#/tui/components/chrome/footer';
+import {
+  FooterComponent,
+  formatFooterContextStatus,
+  formatFooterGitBadge,
+  formatManagedUsageFooterSegments,
+  buildWeightedTips,
+} from '#/tui/components/chrome/footer';
 import { darkColors } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 
@@ -161,6 +167,49 @@ describe('FooterComponent — context NaN resilience', () => {
     } finally {
       chalk.level = previousLevel;
     }
+  });
+});
+
+describe('FooterComponent — managed quota', () => {
+  const fiveHourReset = new Date(2030, 5, 24, 15, 30).toISOString();
+  const weeklyReset = new Date(2030, 5, 24, 9, 30).toISOString();
+  const managedUsage = {
+    summary: {
+      window: { duration: 1 as const, unit: 'week' as const },
+      used: 48,
+      limit: 100,
+      resetAt: weeklyReset,
+    },
+    limits: [
+      {
+        window: { duration: 5 as const, unit: 'hour' as const },
+        used: 7,
+        limit: 100,
+        resetAt: fiveHourReset,
+      },
+    ],
+    extraUsage: null,
+  };
+
+  it('formats remaining 5-hour and weekly quotas with local reset times', () => {
+    expect(formatManagedUsageFooterSegments(managedUsage)).toEqual([
+      '5h: 93% left · reset 15:30',
+      'weekly: 52% left · reset 06-24 09:30',
+    ]);
+  });
+
+  it('drops lower-priority quota segments rather than clipping them on narrow terminals', () => {
+    const line = formatFooterContextStatus(0.2, 20_000, 100_000, managedUsage, 65);
+
+    expect(line).toContain('context: 20%');
+    expect(line).toContain('5h: 93% left');
+    expect(line).not.toContain('weekly:');
+  });
+
+  it('keeps the existing context-only line when quota data is unavailable', () => {
+    expect(formatFooterContextStatus(0.2, 20_000, 100_000, null, 120)).toBe(
+      'context: 20% (19.5k/97.7k)',
+    );
   });
 });
 

@@ -68,7 +68,11 @@ export interface IOAuthToolkit {
   tokenProvider(providerName?: string, oauthRef?: KimiOAuthTokenRef): BearerTokenProvider;
   getManagedUsage(
     providerName?: string,
-    options?: { readonly oauthRef?: KimiOAuthTokenRef; readonly baseUrl?: string },
+    options?: {
+      readonly oauthRef?: KimiOAuthTokenRef;
+      readonly baseUrl?: string;
+      readonly accessToken?: string;
+    },
   ): Promise<AuthManagedUsageResult>;
   getManagedUserInfo(
     providerName?: string,

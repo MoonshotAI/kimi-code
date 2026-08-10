@@ -63,6 +63,7 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
     spinner = undefined;
     try {
       await host.authFlow.refreshConfigAfterLogin();
+      void host.refreshManagedUsage(true);
     } catch (refreshError) {
       const message = formatErrorMessage(refreshError);
       host.showError(`Authentication successful, but failed to refresh config: ${message}`);
@@ -237,6 +238,7 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
   }
 
   host.track('logout', { provider: target });
+  void host.refreshManagedUsage(true);
   const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;
   host.showStatus(`Logged out from ${label}.`);
 }

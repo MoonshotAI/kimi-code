@@ -270,6 +270,7 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   getManagedUsage(provider = KIMI_CODE_PROVIDER_NAME): Promise<AuthManagedUsageResult> {
     const configured = this.providerService.get(provider);
+    const apiKey = nonEmpty(configured?.apiKey) ?? nonEmpty(configured?.env?.['KIMI_API_KEY']);
     const auth = resolveKimiCodeRuntimeAuth({
       configuredBaseUrl: configured?.baseUrl,
       configuredOAuthRef: configured?.oauth,
@@ -277,6 +278,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     return this.toolkit.getManagedUsage(provider, {
       oauthRef: auth.oauthRef,
       baseUrl: auth.baseUrl,
+      ...(apiKey === undefined ? {} : { accessToken: apiKey }),
     });
   }
 

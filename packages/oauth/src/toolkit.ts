@@ -285,13 +285,16 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     options: {
       readonly oauthRef?: KimiOAuthTokenRef | undefined;
       readonly baseUrl?: string | undefined;
+      readonly accessToken?: string | undefined;
     } = {},
   ): Promise<AuthManagedUsageResult> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     try {
-      const accessToken = await this.ensureFresh(name, {
-        oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
-      });
+      const accessToken =
+        options.accessToken ??
+        (await this.ensureFresh(name, {
+          oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
+        }));
       const result = await fetchManagedUsage(managedUsageUrl(options.baseUrl), accessToken);
       if (result.kind === 'error') return result;
       return {

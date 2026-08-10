@@ -695,6 +695,23 @@ describe('OAuthService', () => {
     });
   });
 
+  it('getManagedUsage prefers the configured API key over OAuth storage', async () => {
+    providers[OAUTH_PROVIDER] = {
+      ...providers[OAUTH_PROVIDER]!,
+      apiKey: 'sk-configured',
+    };
+    const usage = { kind: 'ok' as const, summary: null, limits: [], extraUsage: null };
+    toolkit.getManagedUsage.mockResolvedValue(usage);
+    const svc = createService();
+
+    await expect(svc.getManagedUsage(OAUTH_PROVIDER)).resolves.toBe(usage);
+    expect(toolkit.getManagedUsage).toHaveBeenCalledWith(OAUTH_PROVIDER, {
+      oauthRef: EXAMPLE_COM_SCOPED_REF,
+      baseUrl: 'https://api.example.com',
+      accessToken: 'sk-configured',
+    });
+  });
+
   it('getManagedUserInfo resolves the managed runtime auth and delegates to the toolkit', async () => {
     const userInfo = {
       kind: 'ok' as const,

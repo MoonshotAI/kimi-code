@@ -7,6 +7,7 @@ import type { ColorToken, ThemeName } from '#/tui/theme';
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import type { AuthFlowController } from '../controllers/auth-flow';
 import type { BtwPanelController } from '../controllers/btw-panel';
+import type { ManagedUsageResult } from '../controllers/managed-usage';
 import type { StreamingUIController } from '../controllers/streaming-ui';
 import type { TasksBrowserController } from '../controllers/tasks-browser';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
@@ -118,6 +119,7 @@ export interface SlashCommandHost {
   deferUserMessages: boolean;
 
   setAppState(patch: Partial<AppState>): void;
+  refreshManagedUsage(force?: boolean): Promise<ManagedUsageResult | undefined>;
   resetLivePane(): void;
   showError(msg: string): void;
   showStatus(msg: string, color?: ColorToken): void;

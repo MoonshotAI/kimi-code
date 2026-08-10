@@ -618,6 +618,30 @@ describe('KimiOAuthToolkit', () => {
     });
   });
 
+  it('uses an explicit API key for managed usage without reading OAuth storage', async () => {
+    const storage = new MemoryTokenStorage();
+    const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer sk-managed');
+      return new Response(JSON.stringify({ usage: { used: 1, limit: 10 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+    });
+
+    await expect(
+      toolkit.getManagedUsage(undefined, { accessToken: 'sk-managed' }),
+    ).resolves.toMatchObject({ kind: 'ok', summary: { used: 1, limit: 10 } });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(storage.tokens.size).toBe(0);
+  });
+
   it('returns null extraUsage when the payload has no boosterWallet', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('kimi-code', token('access-1'));

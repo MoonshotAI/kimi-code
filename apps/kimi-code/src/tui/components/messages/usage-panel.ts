@@ -6,7 +6,12 @@
 
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
-import { formatDuration } from '@moonshot-ai/kimi-code-oauth';
+import {
+  formatDuration,
+  type ParsedManagedUsage,
+  type UsageRow,
+  type UsageWindow,
+} from '@moonshot-ai/kimi-code-oauth';
 import type { SessionUsage, TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 
 import {
@@ -25,18 +30,8 @@ const BOX_OVERHEAD = LEFT_MARGIN + 2 + 2 * SIDE_PADDING;
 
 type Colorize = (text: string) => string;
 
-export interface ManagedUsageWindow {
-  readonly duration: number;
-  readonly unit: 'minute' | 'hour' | 'day' | 'week';
-}
-
-export interface ManagedUsageRow {
-  readonly name?: string;
-  readonly window?: ManagedUsageWindow;
-  readonly used: number;
-  readonly limit: number;
-  readonly resetAt?: string;
-}
+export type ManagedUsageWindow = UsageWindow;
+export type ManagedUsageRow = UsageRow;
 
 function usageRowLabel(row: ManagedUsageRow): string {
   const window = row.window;
@@ -57,14 +52,7 @@ function usageRowResetHint(row: ManagedUsageRow): string | undefined {
   return `resets in ${formatDuration(diffSec)}`;
 }
 
-export interface BoosterWalletInfo {
-  readonly balanceCents: number;
-  readonly totalCents: number;
-  readonly monthlyChargeLimitEnabled: boolean;
-  readonly monthlyChargeLimitCents: number;
-  readonly monthlyUsedCents: number;
-  readonly currency: string;
-}
+export type BoosterWalletInfo = NonNullable<ParsedManagedUsage['extraUsage']>;
 
 export interface ManagedUsageReport {
   readonly summary: ManagedUsageRow | null;

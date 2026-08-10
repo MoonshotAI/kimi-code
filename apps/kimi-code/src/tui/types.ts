@@ -8,6 +8,7 @@ import type {
   ThinkingEffort,
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
+import type { ParsedManagedUsage } from '@moonshot-ai/kimi-code-oauth';
 
 import type { NotificationsConfig, StatusLineConfig, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
@@ -60,6 +61,8 @@ export interface AppState {
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
+  /** Last successful managed Kimi Code quota snapshot for the footer. */
+  managedUsage?: ParsedManagedUsage | null;
   isCompacting: boolean;
   isReplaying: boolean;
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing' | 'shell';

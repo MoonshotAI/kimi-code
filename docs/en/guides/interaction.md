@@ -2,6 +2,8 @@
 
 Kimi Code CLI runs as an interactive TUI (terminal user interface) built around three components: the input box, the conversation view, and the status bar. This page covers how to enter text, paste media, navigate the approval flow, and switch between modes.
 
+When the active model uses the managed Kimi Code provider, the footer's context line also shows the remaining 5-hour and weekly plan quota with each window's local reset time. The CLI refreshes this data in the background and falls back to the context-only line when usage is unavailable or authentication fails.
+
 ## Input box basics
 
 The input box accepts free-form text. Press `Enter` to send, or `Shift-Enter` / `Ctrl-J` to insert a newline. When the input box is empty, press `↑` / `↓` to browse the input history for the current working directory, including previous shell commands.

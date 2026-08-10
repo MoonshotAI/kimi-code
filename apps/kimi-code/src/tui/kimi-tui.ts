@@ -113,6 +113,10 @@ import { AuthFlowController } from './controllers/auth-flow';
 import { BtwPanelController } from './controllers/btw-panel';
 import { ClipboardImageHintController } from './controllers/clipboard-image-hint';
 import { EditorKeyboardController } from './controllers/editor-keyboard';
+import {
+  ManagedUsageController,
+  type ManagedUsageResult,
+} from './controllers/managed-usage';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
@@ -237,6 +241,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 0,
+    managedUsage: null,
     isCompacting: false,
     isReplaying: false,
     streamingPhase: 'idle',
@@ -359,6 +364,7 @@ export class KimiTUI {
   >();
   readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
+  readonly managedUsage: ManagedUsageController;
   readonly btwPanelController: BtwPanelController;
   readonly sessionEventHandler: SessionEventHandler;
   readonly sessionReplay: SessionReplayRenderer;
@@ -442,6 +448,14 @@ export class KimiTUI {
     );
     this.streamingUI = new StreamingUIController(this);
     this.authFlow = new AuthFlowController(this);
+    this.managedUsage = new ManagedUsageController({
+      currentProvider: () => {
+        const { model, availableModels } = this.state.appState;
+        return availableModels[model]?.provider;
+      },
+      load: (provider) => this.harness.auth.getManagedUsage(provider),
+      update: (usage) => this.setAppState({ managedUsage: usage }),
+    });
     this.btwPanelController = new BtwPanelController(this);
     this.sessionEventHandler = new SessionEventHandler(this);
     this.sessionReplay = new SessionReplayRenderer(this);
@@ -691,6 +705,7 @@ export class KimiTUI {
 
     // Mount only after init() succeeds; see mountFooter().
     this.mountFooter();
+    this.managedUsage.start();
     this.renderWelcome();
     void this.loadBanner();
     this.setupAutocomplete();
@@ -947,6 +962,7 @@ export class KimiTUI {
     this.streamingUI.resetToolUi();
     this.disposeTranscriptChildren();
     this.editorKeyboard.dispose();
+    this.managedUsage.dispose();
     this.state.footer.dispose();
     for (const dispose of this.reverseRpcDisposers) {
       dispose();
@@ -1629,7 +1645,10 @@ export class KimiTUI {
       'additionalDirs' in patch &&
       !sameStringArrays(this.state.appState.additionalDirs, patch.additionalDirs ?? []);
     const busyChanged = 'streamingPhase' in patch || 'isCompacting' in patch;
+    const managedUsageProviderMayHaveChanged =
+      'model' in patch || 'availableModels' in patch || 'availableProviders' in patch;
     Object.assign(this.state.appState, patch);
+    if (managedUsageProviderMayHaveChanged) this.managedUsage.syncProvider();
     if ('planMode' in patch) this.updateEditorBorderHighlight();
     this.state.footer.setState(this.state.appState);
     this.updateActivityPane();
@@ -3093,6 +3112,11 @@ export class KimiTUI {
   /** Latest in-process LLM round-trip; feeds the idle cache-hint scenario. */
   recordSessionActivity(): void {
     this.cacheHint.recordActivity();
+    void this.managedUsage.refresh();
+  }
+
+  refreshManagedUsage(force = false): Promise<ManagedUsageResult | undefined> {
+    return this.managedUsage.refresh({ force });
   }
 
   /** Per-step usage for the client-side cache-break detector. */

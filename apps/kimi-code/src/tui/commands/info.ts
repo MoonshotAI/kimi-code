@@ -237,15 +237,5 @@ async function loadManagedUsageReport(host: SlashCommandHost): Promise<ManagedUs
   const alias = host.state.appState.model;
   const providerKey = host.state.appState.availableModels[alias]?.provider;
   if (!isManagedUsageProvider(providerKey)) return undefined;
-
-  let res;
-  try {
-    res = await host.harness.auth.getManagedUsage(providerKey);
-  } catch (error) {
-    return { error: formatErrorMessage(error) };
-  }
-  if (res.kind === 'error') {
-    return { error: res.message };
-  }
-  return { usage: { summary: res.summary, limits: res.limits, extraUsage: res.extraUsage } };
+  return host.refreshManagedUsage(true);
 }

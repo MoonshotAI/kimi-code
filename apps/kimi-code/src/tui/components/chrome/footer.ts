@@ -10,6 +10,7 @@ import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import type { ParsedManagedUsage, UsageRow } from '@moonshot-ai/kimi-code-oauth';
 
 import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
@@ -178,6 +179,67 @@ function formatContextStatus(usage: number, tokens?: number, maxTokens?: number)
   return `context: ${String(usagePercentFromRatio(usage))}%`;
 }
 
+function isFiveHourRow(row: UsageRow): boolean {
+  return row.window?.unit === 'hour' && row.window.duration === 5;
+}
+
+function isWeeklyRow(row: UsageRow): boolean {
+  return (
+    row.window?.unit === 'week' ||
+    (row.window?.unit === 'day' && row.window.duration === 7) ||
+    row.name?.toLowerCase().includes('week') === true
+  );
+}
+
+function formatResetTime(resetAt: string | undefined, weekly: boolean): string | undefined {
+  if (resetAt === undefined) return undefined;
+  const parsed = new Date(resetAt);
+  if (!Number.isFinite(parsed.getTime())) return undefined;
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  const time = `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+  return weekly ? `${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${time}` : time;
+}
+
+function formatQuotaSegment(label: string, row: UsageRow, weekly: boolean): string | undefined {
+  if (!Number.isFinite(row.limit) || row.limit <= 0) return undefined;
+  const used = Number.isFinite(row.used) ? row.used : 0;
+  const remainingRatio = Math.max(0, Math.min(1, (row.limit - used) / row.limit));
+  const percent = Math.round(remainingRatio * 100);
+  const reset = formatResetTime(row.resetAt, weekly);
+  return `${label}: ${String(percent)}% left${reset === undefined ? '' : ` · reset ${reset}`}`;
+}
+
+export function formatManagedUsageFooterSegments(
+  usage: ParsedManagedUsage | null | undefined,
+): readonly string[] {
+  if (usage === null || usage === undefined) return [];
+  const rows = usage.summary === null ? [...usage.limits] : [usage.summary, ...usage.limits];
+  const fiveHour = rows.find(isFiveHourRow);
+  const weekly = rows.find(isWeeklyRow);
+  const segments = [
+    fiveHour === undefined ? undefined : formatQuotaSegment('5h', fiveHour, false),
+    weekly === undefined ? undefined : formatQuotaSegment('weekly', weekly, true),
+  ];
+  return segments.filter((segment): segment is string => segment !== undefined);
+}
+
+export function formatFooterContextStatus(
+  usage: number,
+  tokens: number | undefined,
+  maxTokens: number | undefined,
+  managedUsage: ParsedManagedUsage | null | undefined,
+  maxWidth: number,
+): string {
+  const context = formatContextStatus(usage, tokens, maxTokens);
+  let line = context;
+  for (const segment of formatManagedUsageFooterSegments(managedUsage)) {
+    const candidate = `${line} | ${segment}`;
+    if (visibleWidth(candidate) > maxWidth) break;
+    line = candidate;
+  }
+  return line;
+}
+
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {
   const base = chalk.hex(colors.textDim)(formatGitBadgeBase(status));
   if (status.pullRequest === null) return base;
@@ -326,10 +388,16 @@ export class FooterComponent implements Component {
     }
 
     // ── Line 2: transient hint (bottom-left) + context (right) ──
-    const contextText = formatContextStatus(
+    const reservedHintWidth =
+      this.transientHint === null
+        ? 0
+        : Math.min(visibleWidth(this.transientHint) + 1, Math.max(0, width - 1));
+    const contextText = formatFooterContextStatus(
       state.contextUsage,
       state.contextTokens,
       state.maxContextTokens,
+      state.managedUsage,
+      Math.max(0, width - reservedHintWidth),
     );
     const contextWidth = visibleWidth(contextText);
     let line2: string;
@@ -446,6 +514,7 @@ export class FooterComponent implements Component {
       contextUsage: state.contextUsage,
       contextTokens: state.contextTokens,
       maxContextTokens: state.maxContextTokens,
+      managedUsage: state.managedUsage ?? null,
       sessionId: state.sessionId,
       version: state.version,
     };

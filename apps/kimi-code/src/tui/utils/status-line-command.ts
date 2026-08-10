@@ -9,6 +9,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import type { ParsedManagedUsage } from '@moonshot-ai/kimi-code-oauth';
 
 export const STATUS_LINE_COMMAND_TIMEOUT_MS = 300;
 export const STATUS_LINE_RERUN_INTERVAL_MS = 1_000;
@@ -23,6 +24,7 @@ export interface StatusLinePayload {
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
+  managedUsage: ParsedManagedUsage | null;
   sessionId: string;
   version: string;
 }

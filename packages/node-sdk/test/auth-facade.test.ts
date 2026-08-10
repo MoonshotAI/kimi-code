@@ -675,6 +675,36 @@ max_context_size = 262144
     expect(headers.get('x-msh-platform')).toBeNull();
   });
 
+  it('uses the managed provider KIMI_API_KEY fallback for usage', async () => {
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[providers."managed:kimi-code"]
+type = "kimi"
+api_key = ""
+
+[providers."managed:kimi-code".env]
+KIMI_API_KEY = "sk-configured"
+`,
+    );
+    const fetchMock = vi.fn<FetchMock>(
+      async (_input, _init) =>
+        new Response(JSON.stringify({ usage: { used: 2, limit: 10 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = createKimiHarness({ homeDir });
+
+    await expect(harness.auth.getManagedUsage()).resolves.toMatchObject({
+      kind: 'ok',
+      summary: { used: 2, limit: 10 },
+    });
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('authorization')).toBe('Bearer sk-configured');
+  });
+
   it('uses configured scoped OAuth refs and base URLs for managed usage and feedback', async () => {
     const baseUrl = 'https://api.dev.example.test/coding/v1';
     const oauthKey = resolveKimiCodeOAuthKey({

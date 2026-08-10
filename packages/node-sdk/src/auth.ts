@@ -169,9 +169,11 @@ export class KimiAuthFacade {
 
   async getManagedUsage(providerName?: string | undefined): Promise<AuthManagedUsageResult> {
     const auth = this.resolveRuntimeManagedAuth(providerName);
+    const apiKey = this.resolveManagedApiKey(providerName);
     return this.toolkit.getManagedUsage(providerName, {
       oauthRef: auth.oauthRef,
       baseUrl: auth.baseUrl,
+      ...(apiKey === undefined ? {} : { accessToken: apiKey }),
     });
   }
 
@@ -305,6 +307,13 @@ export class KimiAuthFacade {
     });
   }
 
+  private resolveManagedApiKey(providerName?: string | undefined): string | undefined {
+    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const config = loadRuntimeConfigSafe(this.options.configPath).config;
+    const provider = config.providers[name];
+    return nonEmpty(provider?.apiKey) ?? nonEmpty(provider?.env?.['KIMI_API_KEY']);
+  }
+
   private runtimeOAuthRef(
     providerName: string | undefined,
     oauthRef?: OAuthRef | undefined,
@@ -316,4 +325,9 @@ export class KimiAuthFacade {
       configuredOAuthRef: oauthRef ?? auth.oauthRef,
     }).oauthRef;
   }
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }

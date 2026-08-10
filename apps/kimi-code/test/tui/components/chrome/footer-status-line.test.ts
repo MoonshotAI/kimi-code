@@ -50,6 +50,7 @@ const payload: StatusLinePayload = {
   contextUsage: 12,
   contextTokens: 1024,
   maxContextTokens: 8192,
+  managedUsage: null,
   sessionId: 'ses-1',
   version: '1.2.3',
 };
@@ -142,6 +143,7 @@ describe('runStatusLineCommand', () => {
     expect(parsed.model).toBe('kimi-k2');
     expect(parsed.gitBranch).toBe('main');
     expect(parsed.cwd).toBe('/tmp/project');
+    expect(parsed.managedUsage).toBeNull();
   });
 
   it('returns null on a nonzero exit', async () => {
