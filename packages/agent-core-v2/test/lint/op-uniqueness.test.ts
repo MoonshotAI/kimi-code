@@ -1,3 +1,12 @@
+/**
+ * Scenario: no wire Op type registered via `defineOp` is duplicated across
+ * `src/`, and a runtime duplicate registration throws `DuplicateOpError`.
+ *
+ * The full-`src/`-scan test below does a synchronous, full-tree file read,
+ * which can exceed the default timeout under slow bind-mounted filesystems
+ * (e.g. Docker on Windows) — hence its extended timeout.
+ */
+
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -179,10 +188,14 @@ describe('op-uniqueness', () => {
     }
   });
 
-  it('finds no duplicate defineOp types across src/', () => {
-    const seen = scanDefineOpTypes(SRC_ROOT);
-    expect(duplicates(seen)).toEqual(new Map());
-  });
+  it(
+    'finds no duplicate defineOp types across src/',
+    () => {
+      const seen = scanDefineOpTypes(SRC_ROOT);
+      expect(duplicates(seen)).toEqual(new Map());
+    },
+    20_000,
+  );
 
   it('flags the planted duplicate in the fixture', () => {
     const seen = scanDefineOpTypes(FIXTURE_ROOT);

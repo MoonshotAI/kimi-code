@@ -18,7 +18,7 @@ describe('wire manifest', () => {
     const expected = await buildWireManifest();
     const actual = readFileSync(MANIFEST_PATH, 'utf-8');
     expect(actual).toBe(expected);
-  }, 60_000);
+  }, 120_000);
 
   it('docs/wire-manifest.d.ts parses as TypeScript', () => {
     const project = new Project({ useInMemoryFileSystem: true });

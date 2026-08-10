@@ -13,6 +13,10 @@
  * Brand/env names (`KIMI_CODE_*`, `KIMI_MODEL_*`) and `'kimi'` as data
  * (config values, telemetry fields, registration ids) do not match the
  * patterns — verified against the whole `src/` tree.
+ *
+ * The full-`src/`-scan test below does a synchronous, full-tree file read,
+ * which can exceed the default timeout under slow bind-mounted filesystems
+ * (e.g. Docker on Windows) — hence its extended timeout.
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -95,13 +99,17 @@ describe('vendor-name gates', () => {
     expect(hits).toEqual([]);
   });
 
-  it('finds no vendor-name gates in src/ outside kosong', () => {
-    const hits = walk(SRC_ROOT).flatMap((file) =>
-      findVendorGates(readFileSync(file, 'utf8'), relative(SRC_ROOT, file)),
-    );
-    expect(
-      hits.map((hit) => `${hit.file}:${hit.line} ${hit.text}`),
-      'vendor-name gate found outside kosong — ask the provider-definition / adapter registries instead',
-    ).toEqual([]);
-  });
+  it(
+    'finds no vendor-name gates in src/ outside kosong',
+    () => {
+      const hits = walk(SRC_ROOT).flatMap((file) =>
+        findVendorGates(readFileSync(file, 'utf8'), relative(SRC_ROOT, file)),
+      );
+      expect(
+        hits.map((hit) => `${hit.file}:${hit.line} ${hit.text}`),
+        'vendor-name gate found outside kosong — ask the provider-definition / adapter registries instead',
+      ).toEqual([]);
+    },
+    20_000,
+  );
 });

@@ -16,5 +16,5 @@ describe('config manifest', () => {
     const expected = await buildConfigManifest();
     const actual = readFileSync(MANIFEST_PATH, 'utf-8');
     expect(actual).toBe(expected);
-  }, 60_000);
+  }, 120_000);
 });

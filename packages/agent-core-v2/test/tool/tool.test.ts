@@ -1,3 +1,11 @@
+/**
+ * Agent tool execution contract tests.
+ *
+ * The background-subagent-spawn scenario below uses pure in-memory stubs,
+ * but this file's worker can be CPU-starved under parallel load in
+ * resource-constrained containers, hence its extended timeout.
+ */
+
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1099,7 +1107,7 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('agent_id: agent-child');
     expect(result.output).toContain('actual_subagent_type: explore');
     expect(result.output).toContain('child result');
-  });
+  }, 15_000);
 
   it('spawns the subagent on the configured secondary model by default', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });

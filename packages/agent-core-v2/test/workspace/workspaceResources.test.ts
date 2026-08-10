@@ -263,7 +263,9 @@ describe('workspace resource sharing (handler chain)', () => {
   afterEach(async () => {
     host?.dispose();
     host = undefined;
-    await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
+    await Promise.all(
+      tmpRoots.map((root) => rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 })),
+    );
   });
 
   async function makeRoot(prefix: string): Promise<string> {
