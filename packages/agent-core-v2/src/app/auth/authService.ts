@@ -270,12 +270,6 @@ export class OAuthService extends Disposable implements IOAuthService {
       provider,
       this.resolveRuntimeOAuthRef(provider, oauthRef),
     );
-    // Classify OAuth token failures into coded `Error2`s at the auth-domain
-    // boundary (`_base/errors` deliberately never imports a business domain, so
-    // the translation must happen here — see `_base/errors/serialize.ts`).
-    // Without this, a transport failure (e.g. auth host connect timeout during
-    // a long task) propagates as a raw `OAuthConnectionError` and serializes as
-    // `[internal]`, losing the retryable flag and the connection pause reason.
     return {
       getAccessToken: async (options) => {
         try {
@@ -882,13 +876,6 @@ function managedModel(
   return config.models?.[alias] as ManagedModel | undefined;
 }
 
-/**
- * Classify an OAuth token-fetch failure into a coded `Error2` at the auth-
- * domain boundary, so the turn serializes a precise code (`auth.login_required`
- * / `provider.connection_error`) instead of the catch-all `internal`. Only
- * positively-identified errors are mapped; the rest return `undefined` so the
- * caller rethrows raw.
- */
 function classifyOAuthTokenError(error: unknown, provider: string): Error2 | undefined {
   if (error instanceof OAuthUnauthorizedError) {
     return new Error2(
