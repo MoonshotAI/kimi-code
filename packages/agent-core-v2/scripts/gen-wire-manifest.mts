@@ -23,8 +23,10 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { relative } from 'pathe';
 
 import { MODEL_CROSS_REDUCERS } from '#/wire/model';
 import { OP_REGISTRY } from '#/wire/op';

@@ -22,8 +22,10 @@
  */
 
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { relative } from 'pathe';
 
 import { getConfigOverlayContributions } from '#/app/config/configOverlayContributions';
 import type { ConfigSectionContribution } from '#/app/config/configSectionContributions';
