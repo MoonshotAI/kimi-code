@@ -8,7 +8,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::agent::subagent::{run_child_agent, run_child_agent_with_model};
+use crate::agent::subagent::{
+    run_child_agent, run_child_agent_persistent_with_model, run_child_agent_with_model,
+};
 use crate::agent::types::*;
 use crate::callbacks::HostCallbacks;
 use crate::callbacks::NativeToolCallbacks;
@@ -604,21 +606,47 @@ impl HostCallbacks for SubagentInterceptor {
         });
 
         Box::pin(async move {
-            match run_child_agent_with_model(
-                host,
-                homedir,
-                native_llm,
-                permission,
-                &parent_prompt,
-                max_steps,
-                child_depth,
-                &subagent_type,
-                &prompt,
-                hooks,
-                model_override,
-            )
-            .await
-            {
+            // Persist the child's conversation when the task is tracked
+            // (agent_id = task_id), so the resume surface has a subagent data
+            // source (G-2 replay gap): swarm children persist the same way.
+            // Untracked bare agents keep the non-persistent path.
+            let run_result = match task_id {
+                Some(ref id) => {
+                    run_child_agent_persistent_with_model(
+                        host,
+                        homedir,
+                        native_llm,
+                        permission,
+                        &parent_prompt,
+                        max_steps,
+                        child_depth,
+                        &subagent_type,
+                        &prompt,
+                        hooks,
+                        id,
+                        model_override,
+                    )
+                    .await
+                    .map(|(_agent_id, text)| text)
+                }
+                None => {
+                    run_child_agent_with_model(
+                        host,
+                        homedir,
+                        native_llm,
+                        permission,
+                        &parent_prompt,
+                        max_steps,
+                        child_depth,
+                        &subagent_type,
+                        &prompt,
+                        hooks,
+                        model_override,
+                    )
+                    .await
+                }
+            };
+            match run_result {
                 Ok(text) => {
                     settle_task(&task_service, &task_id, false, None);
                     if let (Some(ts), Some(id)) = (&task_service, &task_id) {

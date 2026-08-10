@@ -47,11 +47,10 @@
 ## 1.4 已知缺口（不阻塞主线的记录）
 
 1. **compaction summarizer 双通道**：引擎 summarizer 仅支持 native LLM；host-proxy 会话（SDK 默认 llmStep）compact 报 `compaction.unable`。SDK 侧已按 `agent.nativeLlmProvider` 显式 opt-in 接线（不自动派生——native_llm 会使引擎回合脱离宿主 llmStep，破坏 host identity UA/事件流）。需引擎支持 summarizer 独立通道
-2. **子代理 replay 无数据源**：引擎 `Task` 工具无 host-visible 记录，resume 面无 subagent 数据（vscode 测试已跳过）
-3. **vscode legacy backfill 链路未闭环**：`kimi_cli_source_path` → `vscode_legacy_approval` metadata 回填（测试已跳过）
-4. **用户真实 config.toml 损坏**：`duplicate defaultModel`（defaultModel 与 default_model 并存）导致 Rust TOML 严格解析拒绝整个配置（用户禁止修改真实文件，隔离配置验证绕开；建议用户侧删 camelCase 行）
+2. **子代理 replay 数据源**：🔶 部分补（2026-08-10）：Task 工具子代理在任务被跟踪时（task_service 存在）经 `run_child_agent_persistent_with_model` 持久化对话到 session store（agent_id = task_id，swarm 同一机制）——resume 面的**数据源已建立**；剩余：resume/session RPC 的 `include_subagents` 读取面（引擎无此参数）待补，vscode replay 测试仍跳过
+3. **用户真实 config.toml 损坏**：`duplicate defaultModel`（defaultModel 与 default_model 并存）导致 Rust TOML 严格解析拒绝整个配置（用户禁止修改真实文件，隔离配置验证绕开；建议用户侧删 camelCase 行）
 
-> **2026-08-10 收口复核**：原第 4-6 项已消失——vscode typecheck 全过（`replay-adapter.ts` 错误已随 sdk-local 完成消除）；kosong 已退役（flaky 测试随包）；发布打包已接入 CI（`_rust-bin-build.yml` + release 注入）。另：apps/kimi-code 的 `@moonshot-ai/kimi-agent` devDep 已删（全仓无真实 import，仅注释引用 wire.gen）。
+> **2026-08-10 收口复核**：原第 4-6 项已消失——vscode typecheck 全过（`replay-adapter.ts` 错误已随 sdk-local 完成消除）；kosong 已退役（flaky 测试随包）；发布打包已接入 CI（`_rust-bin-build.yml` + release 注入）；**vscode legacy backfill 已闭环**（kimi-runtime.ts 迁移会话读 `kimi_cli_source_path` → 写 `vscode_legacy_approval` metadata → session-runtime 消费，create/resume 全链路完整）。另：apps/kimi-code 的 `@moonshot-ai/kimi-agent` devDep 已删（全仓无真实 import，仅注释引用 wire.gen）。
 
 ---
 
