@@ -22,7 +22,7 @@
 
 **明确不建** `sdk/typescript`——外部消费者使用 `kimi-sdk`(Rust) 或 HTTP 协议。`i18n` 文案沉淀为 JSON 数据文件。
 
-**TS 冻结已落地（2026-08-10）**：`kosong` / `transcript` / `telemetry` / `migration-legacy` / `pi-tui` / `kimi-agent/rust-loop.ts` / `apps/kimi-code` 剩余 TS 一律**冻结**——入口文件带 FROZEN banner，规则见根 AGENTS.md「TS 冻结清单」。只允许关键 bug 修复（崩溃/数据丢失/安全/日志污染）与测试基线适配；新能力一律写 Rust。**已退役（2026-08-10，→ retired/）**：`node-sdk` / `kap-server` / `oauth` / `acp-adapter` / `protocol` / `kaos`。
+**TS 冻结已落地（2026-08-10）**：`migration-legacy` / `pi-tui` / `apps/kimi-code` 剩余 TS 一律**冻结**——入口文件带 FROZEN banner，规则见根 AGENTS.md「TS 冻结清单」。只允许关键 bug 修复（崩溃/数据丢失/安全/日志污染）与测试基线适配；新能力一律写 Rust。**已退役（2026-08-10，→ retired/）**：`node-sdk` / `kap-server` / `oauth` / `acp-adapter` / `protocol` / `kaos` / `kosong` / `telemetry` / `transcript`。
 
 ## 1.2 完成度（2026-08-10 实测）
 
@@ -49,10 +49,9 @@
 1. **compaction summarizer 双通道**：引擎 summarizer 仅支持 native LLM；host-proxy 会话（SDK 默认 llmStep）compact 报 `compaction.unable`。SDK 侧已按 `agent.nativeLlmProvider` 显式 opt-in 接线（不自动派生——native_llm 会使引擎回合脱离宿主 llmStep，破坏 host identity UA/事件流）。需引擎支持 summarizer 独立通道
 2. **子代理 replay 无数据源**：引擎 `Task` 工具无 host-visible 记录，resume 面无 subagent 数据（vscode 测试已跳过）
 3. **vscode legacy backfill 链路未闭环**：`kimi_cli_source_path` → `vscode_legacy_approval` metadata 回填（测试已跳过）
-4. **`apps/vscode` typecheck 遗留**：`replay-adapter.ts` 未迁移（旧文件错误，非新引入）
-5. **kosong 2 测试全量并发 flaky**（openai-legacy parallel tool args / openai-responses streaming，隔离跑全绿）
-6. **发布打包补 kimi-server-serve**：已修（2026-08-10，pack.mjs 随主二进制打包 serve；缺失时警告）；`KIMI_SERVER_BIN` 仍可显式指定
-7. **用户真实 config.toml 损坏**：`duplicate defaultModel`（defaultModel 与 default_model 并存）导致 Rust TOML 严格解析拒绝整个配置（用户禁止修改真实文件，隔离配置验证绕开；建议用户侧删 camelCase 行）
+4. **用户真实 config.toml 损坏**：`duplicate defaultModel`（defaultModel 与 default_model 并存）导致 Rust TOML 严格解析拒绝整个配置（用户禁止修改真实文件，隔离配置验证绕开；建议用户侧删 camelCase 行）
+
+> **2026-08-10 收口复核**：原第 4-6 项已消失——vscode typecheck 全过（`replay-adapter.ts` 错误已随 sdk-local 完成消除）；kosong 已退役（flaky 测试随包）；发布打包已接入 CI（`_rust-bin-build.yml` + release 注入）。另：apps/kimi-code 的 `@moonshot-ai/kimi-agent` devDep 已删（全仓无真实 import，仅注释引用 wire.gen）。
 
 ---
 
@@ -202,8 +201,8 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 ## G-1 — node-sdk → kimi-sdk 补齐（当前主攻）
 
 - [x] kimi-sdk 大块（2026-08-10）：事件广播（subscribe/on_event/EventSubscription）、approval handler 事件驱动自动 resolve、tool handler（embedded HostCallbacks 注入）、MCP 全局配置（mcp.json store + OAuth flow + stdio 探测）、workspace skills、config diagnostics/ensure/removeProvider/getExperimentalFeatures（stub）、auth status 泛化 + getManagedUsage/submitFeedback/upload 三件套
-- [ ] kimi-sdk 补齐 session/harness 剩余面（API 差异表：Session 51 方法 ~70% 对应，TOP 缺口为 onEvent/setApprovalHandler——**已完成**（事件驱动）；`set_question_handler` 定案不实现——引擎 AskUserQuestion 走 stop_turn + 下一条消息（§8））
-- [ ] vscode 面：21 类型本地化（wire 生成或局部定义）后 `@moonshot-ai/kimi-code-sdk` 依赖可彻底删除（运行时可整体移除：isKimiError/createKimiHarness/effectiveModelAlias 已识别）
+- [x] kimi-sdk 补齐 session/harness 剩余面（事件驱动 onEvent/setApprovalHandler 已完成；`set_question_handler` 定案不实现——引擎 AskUserQuestion 走 stop_turn + 下一条消息（§8））
+- [x] vscode 面：21 类型本地化完成（9918e2b4e，sdk-local）——`@moonshot-ai/kimi-code-sdk` 依赖已彻底删除（包已退役）
 - [x] 发布打包补 kimi-server-serve（pack.mjs，2026-08-10：存在时随主二进制一起打包，缺失时警告并提示构建命令）
 
 ## G-2 — Rust server v1 wire 遗留投影
@@ -228,8 +227,7 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 
 ## G-5 — LLM 面并入
 
-- [ ] kimi-files 上传（引擎无对应需求，随 node-sdk 退役）
-- [ ] capability 矩阵 / Astron（数据项，随退役）
+- [x] kimi-files 上传 / capability 矩阵 / Astron 数据项——随 kosong 退役（2026-08-10，retired/）
 
 ## 验证类
 

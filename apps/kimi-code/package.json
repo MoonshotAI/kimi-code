@@ -87,7 +87,6 @@
   },
   "devDependencies": {
     "@moonshot-ai/i18n-shared": "workspace:^",
-    "@moonshot-ai/kimi-agent": "workspace:^",
     "@moonshot-ai/migration-legacy": "workspace:^",
     "@moonshot-ai/pi-tui": "workspace:^",
     "@moonshot-ai/vis-server": "workspace:^",
