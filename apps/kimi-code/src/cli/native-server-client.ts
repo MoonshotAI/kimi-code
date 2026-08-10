@@ -51,6 +51,8 @@ export interface EngineSessionRecord {
   updated_at: string;
   title: string;
   work_dir: string;
+  /** Session metadata (approval flags etc.), when the engine records it. */
+  metadata?: Record<string, unknown> | undefined;
 }
 
 export interface EngineSessionStatus {

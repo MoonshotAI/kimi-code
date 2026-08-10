@@ -5,10 +5,10 @@
  * `kimi export` 只消费 SDK `KimiHarness` 的一小片表面,这里实现该子集:
  *   - config: `ensureConfigFile` / `getConfig` 直接读写 host 的 config.toml
  *     (复用 `#/cli/runtime-config`,与 SDK 的 host-data 模型一致);
- *   - sessions: `listSessions` / `exportSession` 走 Rust engine 的
- *     `session/list` / `session/export` RPC(`@moonshot-ai/kimi-agent/rust-loop`
- *     桥)。engine 侧生成完整 zip(manifest + wire records + session 目录文件),
- *     宿主只负责落盘。
+ *   - sessions: `listSessions` / `exportSession` 走 `kimi-server-serve` 的
+ *     `session/list` / `session/export` RPC(`NativeServerClient`,与
+ *     native-session 同一条 stdio 通道)。engine 侧生成完整 zip(manifest +
+ *     wire records + session 目录文件),宿主只负责落盘。
  *
  * 类型只覆盖本文件消费的字段(宽松形状);engine 不可用时明确降级
  * (空列表 / 抛出可读错误),不伪造数据。
@@ -17,8 +17,8 @@
 import { mkdir, open, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
-import type { EngineSessionRecord } from '@moonshot-ai/kimi-agent/rust-loop';
-import { sessionExport, sessionList } from '@moonshot-ai/kimi-agent/rust-loop';
+import type { EngineSessionRecord } from '../native-server-client';
+import { NativeServerClient } from '../native-server-client';
 
 import type { KimiHostIdentity } from '#/cli/oauth-local';
 import {
@@ -101,6 +101,8 @@ export interface KimiHarness {
   getConfig(): Promise<{ readonly defaultModel?: string; readonly telemetry?: boolean }>;
   listSessions(options?: { readonly workDir?: string }): Promise<readonly SessionSummary[]>;
   exportSession(input: ExportSessionInput): Promise<ExportSessionResult>;
+  /** 释放引擎 RPC 客户端(幂等;进程即将退出时可不调)。 */
+  close(): Promise<void>;
 }
 
 export interface CreateKimiHarnessOptions {
@@ -126,12 +128,27 @@ export function createKimiHarness(options: CreateKimiHarnessOptions = {}): KimiH
   const homeDir = resolveKimiHome(options.homeDir);
   const configPath = resolveConfigPath({ homeDir });
   const telemetry = options.telemetry;
+  let client: NativeServerClient | undefined;
+
+  /** Lazy stdio RPC client — the engine may be absent (TS fallback path). */
+  const getClient = (): NativeServerClient => {
+    client ??= new NativeServerClient();
+    return client;
+  };
 
   const listSessions = async (
     input: { readonly workDir?: string } = {},
   ): Promise<SessionSummary[]> => {
-    const result = await sessionList();
-    const records = result?.sessions ?? [];
+    let records: EngineSessionRecord[];
+    try {
+      const result = (await getClient().call('session/list', { limit: 50, offset: 0 })) as {
+        sessions: EngineSessionRecord[];
+      } | null;
+      records = result?.sessions ?? [];
+    } catch {
+      // Engine unavailable → empty list (degrade, never fake data).
+      records = [];
+    }
     const normalizedWorkDir = input.workDir === undefined ? undefined : resolve(input.workDir);
     return records
       .filter(
@@ -151,8 +168,18 @@ export function createKimiHarness(options: CreateKimiHarnessOptions = {}): KimiH
     }
     // The engine assembles the full archive (manifest + wire records + session
     // directory files); the host only persists the returned zip.
-    const exported = await sessionExport(input.id, summary.sessionDir);
-    if (exported === null) {
+    let exported: { zip_base64?: string } | null;
+    try {
+      exported = (await getClient().call('session/export', {
+        session_id: input.id,
+        homedir: summary.sessionDir,
+      })) as { zip_base64?: string } | null;
+    } catch (error) {
+      throw new Error(
+        `Session export failed: ${input.id}: ${error instanceof Error ? error.message : String(error)}`, { cause: error },
+      );
+    }
+    if (exported === null || typeof exported.zip_base64 !== 'string') {
       throw new Error(`Session export failed: ${input.id}`);
     }
     const zipPath = resolve(input.outputPath ?? defaultExportZipName(input.id));
@@ -191,6 +218,10 @@ export function createKimiHarness(options: CreateKimiHarnessOptions = {}): KimiH
     },
     listSessions,
     exportSession,
+    async close() {
+      client?.close();
+      client = undefined;
+    },
   };
 }
 

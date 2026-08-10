@@ -83,7 +83,7 @@ This is a TypeScript monorepo built for agent-assisted development. This file is
 
 | Scope | Files | Reason |
 |-------|-------|--------|
-| Rust bridge / adapter | `packages/kimi-agent/rust-loop.ts`, `apps/kimi-code/src/cli/rust-engine.ts`, `apps/kimi-code/src/cli/native-session.ts` | glue host ↔ Rust RPC |
+| Rust bridge / adapter | `apps/kimi-code/src/cli/rust-engine.ts`, `apps/kimi-code/src/cli/native-session.ts` | glue host ↔ Rust RPC |
 | Generated files | `packages/kimi-agent/src/rpc/wire.gen.ts` | regenerated via `pnpm gen:wire`, never hand-edited |
 | CLI / TUI / Web / VS Code shells | `apps/*` UI + i18n | pure UI, no engine logic（目标迁入 crates/） |
 | Test adaptation | TS tests asserting against the Rust engine | keep host behavior verified |
@@ -99,14 +99,12 @@ Before writing any TS change, ask: *is this engine functionality?* If yes → im
 
 | 冻结包 | 目标 Rust | 备注 |
 |---|---|---|
-| `packages/kosong` | kimi-sdk LLM 面 | 随 G-6 退役 |
 | `packages/transcript` / `packages/telemetry` | 收编/退役 | — |
 | `packages/migration-legacy` | 退役 | 一次性数据迁移 |
 | `packages/pi-tui` | 退役 | — |
-| `packages/kimi-agent/rust-loop.ts` | Rust transport | 被 apps/kimi-code TS 侧引用 |
 | `apps/kimi-code` 剩余 TS（`src/main.ts` 入口） | kimi-cli | G-3 切换中 |
 
-> **2026-08-10 已退役（→ `retired/`）**：`node-sdk`、`kap-server`、`acp-adapter`、`oauth`、`protocol`、`kaos`——不再扩展、不再恢复；引用它们的代码不得回引。
+> **2026-08-10 已退役（→ `retired/`）**：`node-sdk`、`kap-server`、`acp-adapter`、`oauth`、`protocol`、`kaos`、`kosong`——不再扩展、不再恢复；引用它们的代码不得回引。`kimi-agent/rust-loop.ts` 与 `kimi-agent/runtime/`（TS 桥/兼容层）已删除（2026-08-10）——kimi-agent 包仅剩 Rust + 生成文件 `src/rpc/wire.gen.ts`；apps/kimi-code 经 `NativeServerClient`（stdio RPC）直连引擎。
 
 **保留 TS（不受冻结）**：`kimi-web` / `kimi-inspect` / `vis/web`（web 前端）、`apps/vscode`（壳）、npm 薄壳（`kimi.mjs`）——仍遵守"引擎逻辑不得写 TS"白名单。
 

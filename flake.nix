@@ -67,7 +67,6 @@
         ./packages/kimi-native-tools
         ./packages/kimi-agent
         ./packages/kimi-code-rust-bin
-        ./packages/kosong
         ./packages/migration-legacy
         ./packages/pi-tui
         ./packages/server
@@ -86,7 +85,6 @@
       workspaceNames = [
         "@moonshot-ai/kimi-i18n"
         "@moonshot-ai/i18n-shared"
-        "@moonshot-ai/kosong"
         "@moonshot-ai/migration-legacy"
         "@moonshot-ai/kimi-native-tools"
         "@moonshot-ai/kimi-agent"

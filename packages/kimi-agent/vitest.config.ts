@@ -4,11 +4,8 @@ export default defineConfig({
   test: {
     include: [
       'napi-integration.test.ts',
-      'rust-loop.test.ts',
       'napi-cancel.test.ts',
       'napi-gated-write.test.ts',
-      'session-client.test.ts',
-      'session-native-llm.test.ts',
     ],
   },
 });

@@ -9,8 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { registerExportCommand } from '#/cli/sub/export';
 import { createKimiCodeHostIdentity } from '#/cli/version';
 import { createKimiHarness } from '#/cli/prompt-harness-local';
-import { log } from '@moonshot-ai/kimi-agent/runtime/logging-core';
-import { __resetRootLoggerForTest } from '@moonshot-ai/kimi-agent/runtime/logging-core';
+import { log } from '../../src/cli/logging-core';
+import { __resetRootLoggerForTest } from '../../src/cli/logging-core';
 
 const SESSION_LOG = 'logs/kimi-code.log';
 const GLOBAL_LOG = 'logs/global/kimi-code.log';

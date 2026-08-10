@@ -20,7 +20,6 @@ export default defineConfig({
   plugins: [rawTextPlugin()],
   alias: {
     '@moonshot-ai/migration-legacy': resolve(root, '../../packages/migration-legacy/src/index.ts'),
-    '@moonshot-ai/kosong': resolve(root, '../../packages/kosong/src/index.ts'),
   },
   define: {
     __EXTENSION_VERSION__: JSON.stringify(pkg.version),

@@ -131,7 +131,7 @@ kimi-protocol ← kimi-agent(引擎) ← kimi-server ← kimi-server-transport
 | `apps/kimi-code` i18n/utils/constant | 9.4k | 迁/数据化 | kimi-tui + JSON 数据 | 🔶 |
 | `kap-server` | 16.2k | 迁 Rust | kimi-server | ✅ 主体完成 → **已退役**（retired/，2026-08-10） |
 | `node-sdk` | 16.2k | 迁 Rust | kimi-sdk | ✅ 消费面切换完成 → **已退役**（retired/，2026-08-10） |
-| `kosong` | 11.1k | 迁 Rust | kimi-sdk LLM 面 | 🔶 核心能力引擎已覆盖（§8 决策）；随 G-6 |
+| `kosong` | 11.1k | 迁 Rust | kimi-sdk LLM 面 | ✅ 核心能力引擎已覆盖（§8 决策）→ **已退役**（retired/，2026-08-10） |
 | `oauth` | 5.5k | 迁 Rust | kimi-oauth | ✅ device flow → **已退役**（retired/，2026-08-10） |
 | `acp-adapter` | 5.4k | 迁 Rust | kimi-acp | ✅ → **已退役**（retired/，2026-08-10） |
 | `protocol` | 5.2k | 迁 Rust | kimi-protocol | ✅ → **已退役**（retired/，2026-08-10） |
@@ -139,7 +139,7 @@ kimi-protocol ← kimi-agent(引擎) ← kimi-server ← kimi-server-transport
 | `transcript` / `telemetry` | 5k | 退役/并 | 引擎回调 / 并入 kimi-core | 待 G-5 |
 | `migration-legacy` | 4.2k | 退役 | 一次性数据迁移 | 待 G-6 |
 | `pi-tui` | 13.2k | 退役 | kimi-tui 完成后删除 | 待 G-6 |
-| `kimi-agent` 内 TS（rust-loop 3.4k + runtime 兼容 4k） | 7.4k | 退役 | Rust transport 已覆盖 | 待 G-6（被 apps/kimi-code TS 侧引用） |
+| `kimi-agent` 内 TS（rust-loop 3.4k + runtime 兼容 4k） | 7.4k | 退役 | Rust transport 已覆盖 | ✅ **已删除**（2026-08-10）：kimi-agent 包仅剩 Rust + 生成文件；proxy/logging-core 本地化至 apps/kimi-code |
 | `kimi-web`/`kimi-inspect`/`vis/web`/`vscode` | 60k | **保留** | 唯一 web/壳 | ✅ |
 
 **退役消费图（2026-08-10 复核）**：node-sdk(0)/kap-server(0)/acp-adapter(0)/oauth(0)/protocol(0)/kaos(0) 环外引用已清零 → 6 包退役落地；kosong(21，kimi-agent TS 侧)/transcript(11)/migration-legacy(9)/i18n(7)/telemetry(6) 仍活跃，待 G-5/G-6。
@@ -191,7 +191,7 @@ kimi-sdk（Session 45/45 + Harness + catalog 归一化 + config/errors + /btw）
 | G-3 | apps/kimi-code CLI 消费面切 kimi-cli | 🔶 native-session 已完成 plugin/cron/archive；oauth 消费已本地化 + workspace 依赖清零（2026-08-10）；telemetry 面待续 |
 | G-4 | TUI → kimi-tui 分片搬运（长杆） | ✅ 攻坚完成（P0-P6 分片，§6.4） |
 | G-5 | kosong/kaos/protocol LLM 面并入；transcript/telemetry 收编 | 🔶 kimi-schema 规范化移植完成；kosong 核心能力引擎已覆盖（评估定案）；kimi-files 上传/capability/Astron 数据项随 node-sdk 退役 |
-| G-6 | 退役（node-sdk/kap-server/acp-adapter/oauth/protocol/kaos → retired/；删 rust-loop.ts、TS i18n、TS 入口、pi-tui） | 🔶 第一批 6 包退役完成（2026-08-10）；剩余 kosong/transcript/telemetry/migration-legacy/pi-tui/rust-loop.ts/TS 入口，前置 G-3 telemetry 面 + G-5 |
+| G-6 | 退役（node-sdk/kap-server/acp-adapter/oauth/protocol/kaos → retired/；删 rust-loop.ts、TS i18n、TS 入口、pi-tui） | 🔶 第一批 6 包退役（2026-08-10）+ kosong 退役 + rust-loop/runtime 删除（2026-08-10）；剩余 transcript/telemetry/migration-legacy/pi-tui/TS 入口，前置 G-3 telemetry 面 + G-5 |
 | G-7 | web-only 验证 + 删除全部旧 TS 测试 | ⏳ |
 
 ---

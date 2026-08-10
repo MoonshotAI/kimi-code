@@ -11,7 +11,7 @@
  * outer update preflight, then delegates to the requested UI runner.
  */
 
-import { installGlobalProxyDispatcher } from '@moonshot-ai/kimi-agent/runtime';
+import { installGlobalProxyDispatcher } from '#/utils/proxy';
 import {
   installCrashHandlers,
   setTelemetryContext,
