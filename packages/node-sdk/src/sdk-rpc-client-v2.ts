@@ -164,9 +164,11 @@ import {
   ensureKimiHome,
   ensureMainAgent,
   IAgentActivityView,
+  IAgentContextInjectorService,
   IAgentContextMemoryService,
   IAgentFullCompactionService,
   IAgentGoalService,
+  IAgentPluginService,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPermissionModeService,
@@ -718,7 +720,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async reloadPlugins(): Promise<ReloadSummary> {
-    return this.klient.global.plugins.reload();
+    const summary = await this.klient.global.plugins.reload();
+    await this.refreshPluginSessionStarts();
+    return summary;
   }
 
   override async getPluginInfo(id: string): Promise<PluginInfo> {
@@ -1187,8 +1191,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * the live session, resume from disk. The v2 busy check reads each live
    * agent's activity view (turn lane only — background tasks do not block,
    * matching v1's `hasActiveTurn`). `forcePluginSessionStartReminder` has no
-   * v2 channel (the engine owns plugin session-start injection) and is
-   * ignored.
+   * v2 channel (the engine owns plugin session-start injection), so reload
+   * refreshes the durable guidance snapshot through the Agent service.
    */
   override async reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary> {
     const sessionId = input.sessionId;
@@ -1209,6 +1213,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     await this.configReady;
     await this.klient.global.config.reload();
     await this.klient.global.plugins.reload();
+    await this.refreshPluginSessionStarts(sessionId);
     if (live !== undefined) {
       await closeSessionById(this.engineAccessor, sessionId);
     }
@@ -1217,8 +1222,28 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     this.printSteerStates.delete(sessionId);
     const handle = await resumeSessionById(this.engineAccessor, sessionId);
     if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
+    const main = handle.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+    await main?.accessor.get(IAgentPluginService).refreshSessionStart();
     this.wireSession(handle);
     return this.resumedSessionSummary(handle);
+  }
+
+  private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {
+    const workspaceLifecycle = this.engineAccessor.get(IWorkspaceLifecycleService);
+    await Promise.all(
+      workspaceLifecycle.handlers.list().map(async (handler) => {
+        await handler.accessor.get(IWorkspaceSkillCatalog).reload();
+        const sessions = handler.accessor.get(ISessionLifecycleService).list();
+        await Promise.all(
+          sessions.map(async (session) => {
+            if (session.id === excludedSessionId) return;
+            const main = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+            if (main === undefined) return;
+            await main.accessor.get(IAgentPluginService).refreshSessionStart();
+          }),
+        );
+      }),
+    );
   }
 
   /**
@@ -1815,9 +1840,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const swarm = agent.accessor.get(IAgentSwarmService);
     if (input.enabled) {
       swarm.enter(input.trigger);
-      return;
+    } else {
+      swarm.exit();
     }
-    swarm.exit();
+    await agent.accessor.get(IAgentContextInjectorService).reconcileWhenIdle('swarm_mode');
   }
 
   /** v1's `swarm()` composition: enter with the one-shot `task` trigger, then prompt. */

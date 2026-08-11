@@ -195,6 +195,41 @@ describe('AgentContextInjectorService', () => {
     expect(context.get()).toHaveLength(1);
   });
 
+  it('reconciles only providers registered under the requested name while idle', async () => {
+    const seen: string[] = [];
+    injector(ix).register('target', () => {
+      seen.push('target');
+      return 'target reminder';
+    });
+    injector(ix).register('other', () => {
+      seen.push('other');
+      return 'other reminder';
+    });
+
+    await injector(ix).reconcileWhenIdle('target');
+
+    expect(seen).toEqual(['target']);
+    expect(context.get()).toHaveLength(1);
+    expect(context.get()[0]?.origin).toEqual({ kind: 'injection', variant: 'target' });
+  });
+
+  it('leaves reconciliation to a normal boundary when quiescence cannot be acquired', async () => {
+    let calls = 0;
+    injector(ix).register('target', () => {
+      calls++;
+      return 'target reminder';
+    });
+    loop.settled = async () => {
+      throw new Error('idle reconciliation must not wait for an active turn');
+    };
+    loop.tryAcquireQuiescence = () => undefined;
+
+    await injector(ix).reconcileWhenIdle('target');
+
+    expect(calls).toBe(0);
+    expect(context.get()).toHaveLength(0);
+  });
+
   it('exposes all live injection positions alongside the newest one', async () => {
     const seen: Array<readonly number[]> = [];
 

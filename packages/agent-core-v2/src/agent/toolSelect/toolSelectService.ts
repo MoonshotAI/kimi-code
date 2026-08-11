@@ -156,10 +156,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   drainPendingToolSchemas(): readonly Tool[] | undefined {
     if (!this.enabled() || this.pendingLoaded.size === 0) return undefined;
     const names = [...this.pendingLoaded].toSorted((a, b) => a.localeCompare(b));
-    for (const name of names) this.pendingLoaded.delete(name);
-    const tools = names
-      .map((name) => this.schemaOf(name))
-      .filter((tool): tool is Tool => tool !== undefined);
+    const tools: Tool[] = [];
+    for (const name of names) {
+      const tool = this.schemaOf(name);
+      if (tool === undefined) continue;
+      this.pendingLoaded.delete(name);
+      tools.push(tool);
+    }
     return tools.length === 0 ? undefined : tools;
   }
 

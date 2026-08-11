@@ -252,7 +252,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   tryAcquireQuiescence(): IDisposable | undefined {
     if (this.disposing) throw abortError('Agent loop disposed');
-    if (this.activeTurnJob !== undefined || this.hasPendingRequests()) return undefined;
+    if (
+      this.quiescenceDepth > 0 ||
+      this.activeTurnJob !== undefined ||
+      this.hasPendingRequests()
+    ) {
+      return undefined;
+    }
     this.quiescenceDepth += 1;
     return toDisposable(() => this.releaseQuiescence());
   }

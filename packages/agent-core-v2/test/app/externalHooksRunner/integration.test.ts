@@ -108,6 +108,7 @@ function stubContextMemory(): IAgentContextMemoryService & {
       messages.push(...inserted);
     },
     appendLoopEvent: () => {},
+    publishTrailingRemoval: () => false,
     clear: () => {
       messages.splice(0);
     },

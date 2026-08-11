@@ -64,6 +64,7 @@ describe('Agent loop', () => {
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [emit] context.spliced             { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
+      [wire] plugin.session_start        { "content": null, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
@@ -118,6 +119,7 @@ describe('Agent loop', () => {
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [emit] context.spliced             { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
+      [wire] plugin.session_start        { "content": null, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
@@ -337,6 +339,7 @@ describe('Agent loop', () => {
       [emit] agent.activity.updated          { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [emit] context.spliced                 { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [wire] context.append_message          { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
+      [wire] plugin.session_start            { "content": null, "time": "<time>" }
       [emit] turn.step.started               { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [emit] agent.activity.updated          { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [wire] context.append_loop_event       { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
@@ -578,6 +581,7 @@ describe('Agent loop', () => {
   it('holds new admissions until an idle quiescence lease is released', async () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();
+    expect(loop.tryAcquireQuiescence()).toBeUndefined();
     const held = loop.enqueue(nextTurnMessage('held'));
     let assigned = false;
     void held.assigned.then(() => {
@@ -997,14 +1001,14 @@ describe('interruption reminder', () => {
     ).length;
   }
 
-  it('preserves the partial stream and delivers one reminder at the next boundary on user cancel', async () => {
+  it('preserves the partial stream and appends one reminder at the cancellation event point', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
     const subscription = cancelOnFirstDelta();
     const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
 
-    expect(ctx.contextData().history).toEqual([
+    expect(ctx.contextData().history.slice(0, 2)).toEqual([
       expect.objectContaining({ role: 'user', content: [{ type: 'text', text: 'Hello' }] }),
       {
         role: 'assistant',
@@ -1013,7 +1017,7 @@ describe('interruption reminder', () => {
         partial: true,
       },
     ]);
-    expect(interruptionReminders()).toHaveLength(0);
+    expect(interruptionReminders()).toHaveLength(1);
 
     const cancelRecord = ctx.allEvents.find(
       (entry) => entry.type === '[wire]' && entry.event === 'turn.cancel',
@@ -1103,7 +1107,7 @@ describe('interruption reminder', () => {
     const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
-    expect(interruptionReminders()).toHaveLength(0);
+    expect(interruptionReminders()).toHaveLength(1);
 
     ctx.get(IEventBus).publish({
       type: 'turn.ended',
@@ -1176,13 +1180,13 @@ describe('interruption reminder', () => {
     `);
   });
 
-  it('drops the pending interruption when its cancelled turn is undone', async () => {
+  it('undo removes the event-point interruption with its cancelled turn', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
     const subscription = cancelOnFirstDelta();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
     await ctx.untilTurnEnd();
     subscription.dispose();
-    expect(interruptionReminders()).toHaveLength(0);
+    expect(interruptionReminders()).toHaveLength(1);
 
     await ctx.undoHistory(1);
 
@@ -1209,7 +1213,7 @@ describe('interruption reminder', () => {
       toolCalls: [],
       partial: true,
     });
-    expect(interruptionReminders()).toHaveLength(0);
+    expect(interruptionReminders()).toHaveLength(1);
   });
 
   it('records no partial content when the stream only produced whitespace', async () => {
@@ -1220,10 +1224,11 @@ describe('interruption reminder', () => {
     subscription.dispose();
 
     expect(contentPartRecordsIn(ctx)).toBe(0);
-    expect(ctx.contextData().history).toEqual([
+    expect(ctx.contextData().history.slice(0, 2)).toEqual([
       expect.objectContaining({ role: 'user' }),
       { role: 'assistant', content: [], toolCalls: [], partial: true },
     ]);
+    expect(interruptionReminders()).toHaveLength(1);
   });
 
   it('does not stack a second reminder around a vacuous retry turn', async () => {
@@ -1232,7 +1237,7 @@ describe('interruption reminder', () => {
     const firstTurn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
     await expect(firstTurn.result).resolves.toMatchObject({ type: 'cancelled' });
     first.dispose();
-    expect(interruptionReminders()).toHaveLength(0);
+    expect(interruptionReminders()).toHaveLength(1);
 
     ctx.mockNextResponse({ type: 'text', text: 'retried answer' });
     const onStepStarted = ctx.get(IEventBus).subscribe('turn.step.started', () => {
@@ -1292,7 +1297,7 @@ describe('interruption reminder', () => {
       await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
 
       expect(contentPartRecordsIn(local)).toBe(2);
-      expect(remindersIn(local)).toHaveLength(0);
+      expect(remindersIn(local)).toHaveLength(1);
 
       local.mockNextResponse({ type: 'text', text: 'follow-up answer' });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'again' }] });

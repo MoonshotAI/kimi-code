@@ -65,7 +65,7 @@ describe('Agent resume', () => {
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
   });
 
-  it('reconciles a legacy user interruption after restore when delivery was missing', async () => {
+  it('does not reconstruct an event-point interruption after restore', async () => {
     const persistence = new RecordingAgentPersistence([
       resumeConfigRecord(),
       {
@@ -110,13 +110,13 @@ describe('Agent resume', () => {
       ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
       await ctx.untilTurnEnd();
-      expect(ctx.context.get()).toContainEqual(
+      expect(ctx.context.get()).not.toContainEqual(
         expect.objectContaining({
           role: 'user',
           origin: { kind: 'injection', variant: 'interruption' },
         }),
       );
-      expect(persistence.appended).toContainEqual(
+      expect(persistence.appended).not.toContainEqual(
         expect.objectContaining({
           type: 'context.append_message',
           message: expect.objectContaining({

@@ -568,6 +568,7 @@ export * from '#/agent/tokenCounting/tokenCountingService';
 export * from '#/agent/contextInjector/contextInjector';
 export * from '#/agent/contextInjector/contextInjectorService';
 export * from '#/agent/plugin/agentPlugin';
+export * from '#/agent/plugin/agentPluginOps';
 export * from '#/agent/plugin/agentPluginService';
 import '#/agent/externalHooks/configSection';
 export * from '#/agent/externalHooks/externalHooks';

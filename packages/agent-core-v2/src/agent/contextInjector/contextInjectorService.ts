@@ -42,7 +42,7 @@ export class AgentContextInjectorService extends Service implements IAgentContex
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentLoopService loopService: IAgentLoopService,
+    @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
@@ -101,22 +101,39 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     await this.inject(undefined, true);
   }
 
+  async reconcileWhenIdle(name: string): Promise<void> {
+    const quiescence = this.loopService.tryAcquireQuiescence();
+    if (quiescence === undefined) return;
+    try {
+      for (const entry of this.entries) {
+        if (entry.name !== name) continue;
+        await this.injectEntry(entry, false);
+      }
+    } finally {
+      quiescence.dispose();
+    }
+  }
+
   private async inject(
     boundary: ContextInjectionEntry['boundary'] | undefined,
     isNewTurn: boolean,
   ): Promise<void> {
     for (const entry of this.entries) {
       if (boundary !== undefined && !shouldRunAtBoundary(entry, boundary)) continue;
-      let content: Awaited<ReturnType<ContextInjectionProvider>>;
-      try {
-        content = await entry.provider(this.providerContext(entry, isNewTurn));
-      } catch (error) {
-        this.log.error('context provider failed; skipping it', { name: entry.name, error });
-        continue;
-      }
-      if (!this.entries.has(entry)) continue;
-      this.appendResult(entry, content);
+      await this.injectEntry(entry, isNewTurn);
     }
+  }
+
+  private async injectEntry(entry: ContextInjectionEntry, isNewTurn: boolean): Promise<void> {
+    let content: Awaited<ReturnType<ContextInjectionProvider>>;
+    try {
+      content = await entry.provider(this.providerContext(entry, isNewTurn));
+    } catch (error) {
+      this.log.error('context provider failed; skipping it', { name: entry.name, error });
+      return;
+    }
+    if (!this.entries.has(entry)) return;
+    this.appendResult(entry, content);
   }
 
   private injectAtTurnStart(): void {

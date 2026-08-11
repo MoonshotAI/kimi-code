@@ -4,10 +4,11 @@
  * Renders session-start skills from `plugin` and `sessionSkillCatalog` through
  * `contextInjector`, reconciling the desired instructions against the latest
  * surviving render reported by the injector (`lastInjection`) and unwrapped
- * through `systemReminder`. The session-start refresh on plugin-source
- * catalog changes fires only for an explicit plugin reload: a mutation-driven
- * reload (install / enable / disable / remove) skips it — the live session
- * keeps the guidance it started with — and instead appends a `plugin_change`
+ * through `systemReminder`. The rendered guidance is frozen through a durable
+ * `wire` snapshot until an explicit reload. The session-start refresh on
+ * plugin-source catalog changes fires only for an explicit plugin reload: a
+ * mutation-driven reload (install / enable / disable / remove) skips it — the
+ * live session keeps the guidance it started with — and instead appends a `plugin_change`
  * system reminder through `systemReminder` (`plugin` `onDidMutate` — never on
  * an explicit reload, whose resumed session would otherwise inherit a stale
  * notice), naming the mutated plugin and telling the model the live session
@@ -46,8 +47,13 @@ import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
 import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { IWireService } from '#/wire/wire';
 
 import { IAgentPluginService } from './agentPlugin';
+import {
+  PluginSessionStartSnapshotModel,
+  pluginSessionStartSnapshotSet,
+} from './agentPluginOps';
 
 const SESSION_START_INJECTION_VARIANT = 'plugin_session_start';
 
@@ -94,8 +100,8 @@ export class AgentPluginService extends Service implements IAgentPluginService {
   private pendingMutationCatalogChanges = 0;
 
   constructor(
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentContextInjectorService private readonly injector: IAgentContextInjectorService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IPluginService private readonly plugins: IPluginService,
@@ -103,6 +109,7 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IWireService private readonly wire: IWireService,
   ) {
     super();
     if (scopeContext.agentId !== MAIN_AGENT_ID) return;
@@ -146,6 +153,13 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     this.states.set(pluginSessionStartRefreshPendingKey, value);
   }
 
+  async refreshSessionStart(): Promise<void> {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    this.refreshPending = true;
+    await this.skillCatalog.ready;
+    await this.injector.reconcileWhenIdle(SESSION_START_INJECTION_VARIANT);
+  }
+
   private async renderSessionStartReminder(): Promise<string | undefined> {
     const sessionStarts = await this.plugins.enabledSessionStarts();
     if (sessionStarts.length === 0) return undefined;
@@ -163,7 +177,7 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     injection: ContextInjectionContext,
   ): Promise<string | undefined> {
     const forceRefresh = this.refreshPending;
-    const desired = await this.renderSessionStartReminder();
+    const desired = await this.resolveDesiredSessionStart(injection, forceRefresh);
     this.refreshPending = false;
     const latest = injection.lastInjection;
     if (desired === undefined) {
@@ -188,6 +202,35 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     }
     return `${desired}\n\n${SUPERSEDES_SUFFIX}`;
   }
+
+  private async resolveDesiredSessionStart(
+    injection: ContextInjectionContext,
+    forceRefresh: boolean,
+  ): Promise<string | undefined> {
+    const snapshot = this.wire.getModel(PluginSessionStartSnapshotModel);
+    if (!forceRefresh && snapshot.initialized) return snapshot.content;
+    if (!forceRefresh && injection.lastInjection !== undefined) {
+      const rendered = systemReminderContent(injection.lastInjection);
+      if (rendered !== undefined) {
+        const content = frozenSessionStartContent(rendered);
+        this.recordSessionStartSnapshot(content);
+        return content;
+      }
+    }
+    const content = await this.renderSessionStartReminder();
+    this.recordSessionStartSnapshot(content);
+    return content;
+  }
+
+  private recordSessionStartSnapshot(content: string | undefined): void {
+    this.wire.dispatch(pluginSessionStartSnapshotSet({ content: content ?? null }));
+  }
+}
+
+function frozenSessionStartContent(rendered: string): string | undefined {
+  if (rendered === NO_ACTIVE_SESSION_STARTS) return undefined;
+  const suffix = `\n\n${SUPERSEDES_SUFFIX}`;
+  return rendered.endsWith(suffix) ? rendered.slice(0, -suffix.length) : rendered;
 }
 
 interface RenderPluginSessionStartReminderInput {

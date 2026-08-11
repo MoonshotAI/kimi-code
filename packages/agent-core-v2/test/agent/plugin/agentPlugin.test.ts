@@ -17,7 +17,11 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
-import type { PluginMutationSummary, ReloadSummary } from '#/app/plugin/types';
+import type {
+  EnabledPluginSessionStart,
+  PluginMutationSummary,
+  ReloadSummary,
+} from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { summarizeSkill } from '#/app/skillCatalog/types';
 import type { SkillDefinition } from '#/app/skillCatalog/types';
@@ -124,6 +128,44 @@ describe('AgentPluginService plugin session-start wiring', () => {
     await runInjectionBoundary(ctx);
 
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+  });
+
+  it('refreshes the frozen session-start guidance through the explicit service path', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(pluginSkill());
+
+    ctx = createTestAgent(
+      { autoConfigure: true },
+      appService(
+        IPluginService,
+        stubPluginService({
+          sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }],
+        }),
+      ),
+      skillServices(catalog),
+      agentService(IAgentPluginService, new SyncDescriptor(AgentPluginService)),
+    );
+
+    const plugins = ctx.get(IAgentPluginService);
+    await runInjectionBoundary(ctx);
+    expect(messageText(findPluginSessionStartMessages(ctx).at(-1)!)).toContain(
+      'Do the demo thing.',
+    );
+
+    catalog.register(
+      { ...pluginSkill(), content: 'Do the explicitly refreshed demo thing.' },
+      { replace: true },
+    );
+    await plugins.refreshSessionStart();
+
+    const messages = findPluginSessionStartMessages(ctx);
+    expect(messages).toHaveLength(2);
+    expect(messageText(messages.at(-1)!)).toContain(
+      'Do the explicitly refreshed demo thing.',
+    );
+    expect(messageText(messages.at(-1)!)).toContain(
+      'supersedes any earlier plugin_session_start reminder',
+    );
   });
 
   it('does not inject when no plugin session starts are enabled', async () => {
@@ -373,14 +415,17 @@ describe('AgentPluginService plugin-change reminder', () => {
     catalog.register(pluginSkill());
     const sinkChange = new Emitter<string>();
     const mutateEmitter = new Emitter<PluginMutationSummary>();
+    let sessionStarts: readonly EnabledPluginSessionStart[] = [
+      { pluginId: 'demo', skillName: 'demo-skill' },
+    ];
     ctx = createTestAgent(
       { autoConfigure: true },
       appService(
         IPluginService,
-        stubPluginService({
-          sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }],
-          mutateEmitter,
-        }),
+        {
+          ...stubPluginService({ sessionStarts, mutateEmitter }),
+          enabledSessionStarts: async () => sessionStarts,
+        },
       ),
       skillServices(skillCatalogWithChange(catalog, sinkChange)),
       agentService(IAgentPluginService, new SyncDescriptor(AgentPluginService)),
@@ -393,8 +438,9 @@ describe('AgentPluginService plugin-change reminder', () => {
     // mutation's onDidReload; the catalog change arrives after the async
     // re-scan.
     fireMutation(mutateEmitter, 'demo');
+    sessionStarts = [];
     sinkChange.fire('plugin');
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await runInjectionBoundary(ctx);
 
     expect(findPluginChangeMessages(ctx)).toHaveLength(1);
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);

@@ -4,10 +4,11 @@
  * Tracks swarm-mode enter/exit in the `wire` `SwarmModel` (mutated only through
  * the `swarm_mode.enter` / `swarm_mode.exit` Ops, read through `wire.getModel`),
  * derives `agent.status.updated` from the Ops' `toEvent`, announces the mode
- * through the `swarm_mode` context-injection provider (`SwarmInjection`), and
+ * through the `swarm_mode` context-injection provider (`SwarmInjection`),
+ * mirrors replayable trailing-enter removal through `contextMemory`, and
  * auto-exits on turn end via `turn`. Bound at Agent scope. The service also
  * guards AgentSwarm batch exclusivity through an `onBeforeExecuteTool` veto
- * listener: an AgentSwarm call must be the only tool call in its batch,
+ * listener: an AgentSwarm call must be the only tool call in its batch;
  * anything else is vetoed with a `toolApproval.formatDenyMessage`-formatted
  * reason.
  */
@@ -16,6 +17,7 @@ import { Service } from '#/_base/di/service';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -32,7 +34,8 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
   constructor(
     @IWireService private readonly wire: IWireService,
     @IInstantiationService instantiation: IInstantiationService,
-    @IEventBus private readonly eventBus: IEventBus,
+    @IEventBus eventBus: IEventBus,
+    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
@@ -43,7 +46,7 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
       }),
     );
     this._register(
-      this.eventBus.subscribe('turn.ended', () => {
+      eventBus.subscribe('turn.ended', () => {
         if (this.shouldAutoExit) {
           this.exit();
         }
@@ -77,7 +80,9 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
 
   exit(): void {
     if (this.wire.getModel(SwarmModel) === null) return;
+    const history = this.context.get();
     this.wire.dispatch(swarmExit({}));
+    this.context.publishTrailingRemoval(history);
   }
 
   get isActive(): boolean {

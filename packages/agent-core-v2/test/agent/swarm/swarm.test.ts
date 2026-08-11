@@ -19,13 +19,18 @@ import { stubLog } from '../../_base/log/stubs';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import {
+  IAgentSystemReminderService,
+  wrapSystemReminder,
+} from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { AgentSwarmService } from '#/agent/swarm/swarmService';
@@ -60,7 +65,6 @@ import { IWireService } from '#/wire/wire';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 
-import { stubContextMemory } from '../contextMemory/stubs';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
@@ -78,6 +82,18 @@ function messageText(message: ContextMessage | undefined): string {
   return (
     message?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? ''
   );
+}
+
+function swarmReminder(
+  content: string,
+  disclosure?: { readonly kind: 'swarm_mode'; readonly state: 'active' },
+): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: wrapSystemReminder(content) }],
+    toolCalls: [],
+    origin: { kind: 'injection', variant: 'swarm_mode', disclosure },
+  };
 }
 
 function context<Input>(
@@ -203,7 +219,12 @@ describe('AgentSwarmService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     ix.stub(ILogService, stubLog());
-    ix.stub(IAgentContextMemoryService, stubContextMemory(ix.get(IEventBus)));
+    ix.stub(IAgentTokenCountingService, {
+      estimateText: () => 0,
+      estimateMessage: () => 0,
+      estimateMessages: () => 0,
+    } as unknown as IAgentTokenCountingService);
+    ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix.stub(IAgentLoopService, stubLoopWithHooks());
@@ -286,7 +307,7 @@ describe('AgentSwarmService', () => {
     expect(context.get()).toHaveLength(1);
   });
 
-  it('renders exit guidance when manual swarm mode becomes inactive', async () => {
+  it('removes trailing enter guidance when manual swarm mode becomes inactive', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
 
@@ -295,14 +316,29 @@ describe('AgentSwarmService', () => {
     swarm.exit();
     await runInjectionBoundary(ix.get(IAgentLoopService));
 
-    const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({
+    expect(context.get()).toHaveLength(0);
+  });
+
+  it('keeps enter guidance when a later context message makes it non-trailing', async () => {
+    const swarm = ix.get(IAgentSwarmService);
+    const context = ix.get(IAgentContextMemoryService);
+
+    swarm.enter('manual');
+    await runInjectionBoundary(ix.get(IAgentLoopService));
+    context.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'later prompt' }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    });
+    swarm.exit();
+
+    expect(context.get()).toHaveLength(2);
+    expect(context.get()[0]?.origin).toMatchObject({
       kind: 'injection',
       variant: 'swarm_mode',
-      disclosure: { kind: 'swarm_mode', state: 'inactive' },
     });
-    expect(messageText(reminder)).toContain('Swarm Mode has ended.');
-    expect(context.get()).toHaveLength(2);
+    expect(messageText(context.get()[1])).toBe('later prompt');
   });
 
   it('renders no reminder at all for tool-triggered swarms', async () => {
@@ -320,15 +356,14 @@ describe('AgentSwarmService', () => {
   it('does not duplicate the enter guidance on resume while it is still live in history', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    ix.get(IAgentSystemReminderService).appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
-      kind: 'injection',
-      variant: 'swarm_mode',
-    });
     await restoreTestAgentWire(
       ix.get(IWireService),
       ix.get(IAppendLogStore),
       testWireScope('wire', 'swarm-test'),
-      [{ type: 'swarm_mode.enter', trigger: 'manual' }],
+      [
+        { type: 'context.append_message', message: swarmReminder(SWARM_MODE_ENTER_REMINDER) },
+        { type: 'swarm_mode.enter', trigger: 'manual' },
+      ],
     );
 
     await runInjectionBoundary(ix.get(IAgentLoopService));
@@ -337,48 +372,43 @@ describe('AgentSwarmService', () => {
     expect(context.get()).toHaveLength(1);
   });
 
-  it('renders a corrective exit reminder when resume finds live enter guidance but swarm is off', async () => {
+  it('replays exit by removing a trailing enter reminder', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    ix.get(IAgentSystemReminderService).appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
-      kind: 'injection',
-      variant: 'swarm_mode',
-    });
     await restoreTestAgentWire(
       ix.get(IWireService),
       ix.get(IAppendLogStore),
       testWireScope('wire', 'swarm-test'),
-      [{ type: 'swarm_mode.enter', trigger: 'manual' }, { type: 'swarm_mode.exit' }],
+      [
+        { type: 'context.append_message', message: swarmReminder(SWARM_MODE_ENTER_REMINDER) },
+        { type: 'swarm_mode.enter', trigger: 'manual' },
+        { type: 'swarm_mode.exit' },
+      ],
     );
 
     await runInjectionBoundary(ix.get(IAgentLoopService));
 
     expect(swarm.isActive).toBe(false);
-    const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({
-      kind: 'injection',
-      variant: 'swarm_mode',
-      disclosure: { kind: 'swarm_mode', state: 'inactive' },
-    });
-    const text =
-      reminder?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
-    expect(text).toContain('Swarm Mode has ended.');
-    expect(context.get()).toHaveLength(2);
+    expect(context.get()).toHaveLength(0);
   });
 
   it('derives the rendered state from the disclosure, not the reminder text', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    ix.get(IAgentSystemReminderService).appendSystemReminder('outdated enter copy', {
-      kind: 'injection',
-      variant: 'swarm_mode',
-      disclosure: { kind: 'swarm_mode', state: 'active' },
-    });
     await restoreTestAgentWire(
       ix.get(IWireService),
       ix.get(IAppendLogStore),
       testWireScope('wire', 'swarm-test'),
-      [{ type: 'swarm_mode.enter', trigger: 'manual' }],
+      [
+        {
+          type: 'context.append_message',
+          message: swarmReminder('outdated enter copy', {
+            kind: 'swarm_mode',
+            state: 'active',
+          }),
+        },
+        { type: 'swarm_mode.enter', trigger: 'manual' },
+      ],
     );
 
     await runInjectionBoundary(ix.get(IAgentLoopService));

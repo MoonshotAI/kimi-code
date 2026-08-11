@@ -44,6 +44,7 @@ const injectorStub: IAgentContextInjectorService = {
     };
   },
   registerAtTurnStart: () => ({ dispose: () => {} }),
+  reconcileWhenIdle: async () => {},
   injectAfterCompaction: async () => {},
 };
 
@@ -181,6 +182,7 @@ describe('AgentPermissionModeService (wire-backed)', () => {
         restoredProvider = provider as ContextInjectionProvider;
         return { dispose: () => {} };
       },
+      reconcileWhenIdle: async () => {},
       injectAfterCompaction: async () => {},
     });
     ix2.set(IAgentStateService, new AgentStateService());

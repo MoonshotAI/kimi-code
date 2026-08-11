@@ -53,6 +53,8 @@ export interface IAgentContextInjectorService {
     provider: SyncContextInjectionProvider<D>,
   ): IDisposable;
 
+  reconcileWhenIdle(name: string): Promise<void>;
+
   injectAfterCompaction(): Promise<void>;
 }
 

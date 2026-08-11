@@ -318,6 +318,44 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('holds the loop quiescence lease for the full manual compaction', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    let release!: () => void;
+    const canCompact = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const compactionStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const hook = ctx.get(IAgentFullCompactionService).hooks.onWillCompact.register(
+      'test-quiescence',
+      async (_task, next) => {
+        started();
+        await canCompact;
+        await next();
+      },
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+
+    expect(ctx.get(IAgentFullCompactionService).begin({ source: 'manual' })).toBe(true);
+    await compactionStarted;
+    expect(ctx.get(IAgentLoopService).tryAcquireQuiescence()).toBeUndefined();
+
+    release();
+    await ctx.get(IAgentFullCompactionService).compacting?.promise;
+    const lease = ctx.get(IAgentLoopService).tryAcquireQuiescence();
+    expect(lease).toBeDefined();
+    lease?.dispose();
+    hook.dispose();
+  });
+
   it('refreshes the active profile system prompt after compaction without resetting active tools', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'kimi-compact-refresh-home-'));
     const workDir = mkdtempSync(join(tmpdir(), 'kimi-compact-refresh-work-'));

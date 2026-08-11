@@ -18,7 +18,8 @@
  * them into assistant / tool messages both at live dispatch time and on
  * replay, so v1- and v2-written sessions reduce
  * identically. Swarm-mode announcements are owned by the `swarm` domain's
- * context-injection provider, not by this Model.
+ * context-injection provider; `swarm_mode.exit` additionally pops a trailing
+ * enter reminder through a replayable cross-model reducer.
  *
  * `context.undo` counts conversation ticks with the single `isUndoAnchor`
  * predicate — the same definition the checkpoint
@@ -117,7 +118,16 @@ export const ContextModel = defineModel<ContextMessage[]>('contextMemory', () =>
       return changed ? result : state;
     },
   },
+  reducers: {
+    'swarm_mode.exit': popSwarmModeReminder,
+  },
 });
+
+function popSwarmModeReminder(state: ContextMessage[]): ContextMessage[] {
+  const last = state.at(-1);
+  if (last?.origin?.kind !== 'injection' || last.origin.variant !== 'swarm_mode') return state;
+  return resetFold(state.slice(0, -1)) as ContextMessage[];
+}
 
 declare module '#/wire/types' {
   interface PersistedOpMap {

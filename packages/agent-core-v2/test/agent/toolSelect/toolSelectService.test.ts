@@ -267,6 +267,10 @@ class FakeContextMemory implements IAgentContextMemoryService {
     throw new Error('unused in this suite');
   }
 
+  publishTrailingRemoval(): boolean {
+    return false;
+  }
+
   clear(): void {
     this.history.length = 0;
     this.appended.length = 0;
@@ -391,8 +395,10 @@ function createExecutorHarness(): ExecutorHarness {
   };
 }
 
-function registerMcp(h: Harness, tool: StubMcpTool): void {
-  disposables.add(h.registry.register(tool, { source: 'mcp' }));
+function registerMcp(h: Harness, tool: StubMcpTool): IDisposable {
+  const registration = h.registry.register(tool, { source: 'mcp' });
+  disposables.add(registration);
+  return registration;
 }
 
 function registerBuiltin(h: Harness, tool: EchoTool): void {
@@ -757,6 +763,19 @@ describe('AgentToolSelectService.load', () => {
     h.sut.load([MCP_BETA, MCP_ALPHA]);
     const declared = await declareSchemas(h);
     expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA, MCP_BETA]);
+  });
+
+  it('declares a selected schema after its MCP tool reconnects before a later boundary', async () => {
+    const h = createHarness();
+    const registration = registerMcp(h, new StubMcpTool(MCP_ALPHA));
+
+    expect(h.sut.load([MCP_ALPHA]).toLoad).toEqual([MCP_ALPHA]);
+    registration.dispose();
+    expect(await declareSchemas(h)).toBeUndefined();
+
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    const declared = await declareSchemas(h, 2);
+    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
   });
 
   it('reports names filtered out by the profile as unknown', async () => {

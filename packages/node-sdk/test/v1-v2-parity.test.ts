@@ -16,7 +16,6 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  IAgentContextInjectorService,
   IAgentLifecycleService,
   ISessionApprovalService,
   ISessionQuestionService,
@@ -912,10 +911,30 @@ async function writeFixturePlugin(dir: string): Promise<void> {
   );
 }
 
-async function makePluginParityPair(): Promise<PluginParityPair> {
+async function writeManagedFixtureSkill(home: HomePair, body: string): Promise<void> {
+  await writeFile(
+    join(
+      home.real,
+      'plugins',
+      'managed',
+      FIXTURE_PLUGIN_ID,
+      'skills',
+      'parity-skill',
+      'SKILL.md',
+    ),
+    `---\nname: parity-skill\ndescription: Skill from the parity fixture plugin\n---\n\n${body}\n`,
+    'utf-8',
+  );
+}
+
+async function makePluginParityPair(configToml?: string): Promise<PluginParityPair> {
   const v1HomeDir = await makeTempDir('kimi-sdk-parity-v1-home-');
   const v2HomeDir = await makeTempDir('kimi-sdk-parity-v2-home-');
   const sourceDir = await makeTempDir('kimi-sdk-parity-plugin-src-');
+  if (configToml !== undefined) {
+    await writeFile(join(v1HomeDir, 'config.toml'), configToml, 'utf-8');
+    await writeFile(join(v2HomeDir, 'config.toml'), configToml, 'utf-8');
+  }
   await writeFixturePlugin(sourceDir);
   return {
     v1: new SDKRpcClient({ homeDir: v1HomeDir, identity: TEST_IDENTITY }),
@@ -1105,6 +1124,54 @@ describe('v1↔v2 plugin parity', () => {
       ]);
       expect(normalize(v2Plugins, 'id')).toEqual(normalize(v1Plugins, 'id'));
       expect(v1Plugins[0]?.version).toBe('2.0.0');
+    } finally {
+      await closePluginPair(pair);
+    }
+  });
+
+  it('reloadPlugins refreshes frozen session-start guidance in a live v2 session', async () => {
+    const pair = await makePluginParityPair(AGENT_CONFIG_TOML);
+    const workDir = await makeTempDir('kimi-sdk-parity-work-');
+    try {
+      await pair.v2.installPlugin(pair.sourceDir);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-stdio', false);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false);
+      const session = await pair.v2.createSession({ workDir, permission: 'yolo' });
+
+      await pair.v2.reloadPlugins();
+      expect(JSON.stringify((await pair.v2.getContext({ sessionId: session.id })).history)).toContain(
+        'Parity skill body.',
+      );
+
+      await writeManagedFixtureSkill(pair.v2Home, 'Live reload skill body.');
+      await pair.v2.reloadPlugins();
+
+      const history = (await pair.v2.getContext({ sessionId: session.id })).history;
+      expect(JSON.stringify(history.at(-1))).toContain('Live reload skill body.');
+    } finally {
+      await closePluginPair(pair);
+    }
+  });
+
+  it('reloadSession refreshes frozen session-start guidance for a cold v2 session', async () => {
+    const pair = await makePluginParityPair(AGENT_CONFIG_TOML);
+    const workDir = await makeTempDir('kimi-sdk-parity-work-');
+    try {
+      await pair.v2.installPlugin(pair.sourceDir);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-stdio', false);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false);
+      const session = await pair.v2.createSession({ workDir, permission: 'yolo' });
+      await pair.v2.reloadPlugins();
+      await pair.v2.closeSession({ sessionId: session.id });
+
+      await writeManagedFixtureSkill(pair.v2Home, 'Cold reload skill body.');
+      await pair.v2.reloadSession({
+        sessionId: session.id,
+        forcePluginSessionStartReminder: true,
+      });
+
+      const history = (await pair.v2.getContext({ sessionId: session.id })).history;
+      expect(JSON.stringify(history.at(-1))).toContain('Cold reload skill body.');
     } finally {
       await closePluginPair(pair);
     }
@@ -4495,13 +4562,8 @@ describe('v1↔v2 residual surface parity', () => {
       expect(v1Active.swarmMode).toBe(true);
       expect(v2Active.swarmMode).toBe(true);
       const project = KNOWN_DIFFS.getContext;
-      const [v1Entered] = await historyOnBoth();
-      const v2Session = getLiveSessionById(pair.v2.engineAccessor, input.sessionId);
-      const v2Agent = v2Session?.accessor.get(IAgentLifecycleService).get('main');
-      expect(v2Agent).toBeDefined();
-      await v2Agent!.accessor.get(IAgentContextInjectorService).injectAfterCompaction();
-      const v2Materialized = await pair.v2.getContext(input);
-      expect(project(v2Materialized)).toEqual(project(v1Entered));
+      const [v1Entered, v2Entered] = await historyOnBoth();
+      expect(project(v2Entered)).toEqual(project(v1Entered));
       expect(v1Entered.history).toHaveLength(1);
       expect(JSON.stringify(v1Entered.history[0])).toContain('<system-reminder>');
 
@@ -4524,11 +4586,7 @@ describe('v1↔v2 residual surface parity', () => {
       expect(v2Inactive.swarmMode).toBe(false);
       const [v1Exited, v2Exited] = await historyOnBoth();
       expect(v1Exited.history).toHaveLength(0);
-      expect(v2Exited.history).toHaveLength(1);
-      await v2Agent!.accessor.get(IAgentContextInjectorService).injectAfterCompaction();
-      const v2ExitMaterialized = await pair.v2.getContext(input);
-      expect(v2ExitMaterialized.history).toHaveLength(2);
-      expect(JSON.stringify(v2ExitMaterialized.history.at(-1))).toContain('Swarm Mode has ended.');
+      expect(project(v2Exited)).toEqual(project(v1Exited));
 
       // Exit is idempotent too: a second exit is a silent no-op on both.
       await Promise.all([
@@ -4537,7 +4595,7 @@ describe('v1↔v2 residual surface parity', () => {
       ]);
       const [v1Idle, v2Idle] = await historyOnBoth();
       expect(v1Idle.history).toHaveLength(0);
-      expect(v2Idle.history).toHaveLength(2);
+      expect(project(v2Idle)).toEqual(project(v1Idle));
 
       // The `tool` trigger injects no reminder on either engine.
       await Promise.all([
@@ -4549,7 +4607,7 @@ describe('v1↔v2 residual surface parity', () => {
       expect(v2Tool.swarmMode).toBe(true);
       const [v1ToolHistory, v2ToolHistory] = await historyOnBoth();
       expect(v1ToolHistory.history).toHaveLength(0);
-      expect(v2ToolHistory.history).toHaveLength(2);
+      expect(project(v2ToolHistory)).toEqual(project(v1ToolHistory));
       await Promise.all([
         pair.v1.setSwarmMode({ ...input, enabled: false }),
         pair.v2.setSwarmMode({ ...input, enabled: false }),
