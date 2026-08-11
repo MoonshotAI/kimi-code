@@ -6,8 +6,8 @@
      the only way out is a valid token. -->
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
-import { setCredential } from '../lib/serverAuth';
-import { Button, Dialog, Input } from '@moonshot-ai/web-ui';
+import { setCredential } from '@moonshot-ai/app-core/lib';
+import { Button, Dialog, Input } from '@moonshot-ai/app-ui';
 
 const credential = ref('');
 const inputRef = ref<InstanceType<typeof Input> | null>(null);

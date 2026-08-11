@@ -5,7 +5,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Button, Dialog } from '@moonshot-ai/web-ui';
+import { Button, Dialog } from '@moonshot-ai/app-ui';
 
 const props = withDefaults(defineProps<{
   open: boolean;

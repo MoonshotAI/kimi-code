@@ -18,8 +18,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Button, Checkbox, Dialog, Icon } from '@moonshot-ai/web-ui';
-import { Markdown } from '@moonshot-ai/web-markdown';
+import { Button, Checkbox, Dialog, Icon } from '@moonshot-ai/app-ui';
+import { Markdown } from '@moonshot-ai/app-markdown';
 import type { IconName } from '../lib/icons';
 import { useUpdateStatus } from '../composables/useUpdateStatus';
 

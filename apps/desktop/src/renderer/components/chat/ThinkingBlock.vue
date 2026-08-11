@@ -11,7 +11,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@moonshot-ai/web-ui';
+import { Icon } from '@moonshot-ai/app-ui';
 import { formatDuration } from '../chatTurnRendering';
 import { track } from '../../lib/track';
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { KimiEventConnection, KimiWebApi } from '@moonshot-ai/web-core/api';
+import type { KimiEventConnection, KimiWebApi } from '@moonshot-ai/app-core/api';
 
 import { createAuxiliaryTranscriptPool } from '../../src/renderer/composables/client/useAuxiliaryTranscripts';
 

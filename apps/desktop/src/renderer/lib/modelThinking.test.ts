@@ -20,8 +20,8 @@ import {
   segmentsFor,
   thinkingLevelForModelSwitch,
   thinkingLevelToConfig,
-} from './modelThinking';
-import type { ModelThinkingInfo } from './modelThinking';
+} from '@moonshot-ai/app-core/lib';
+import type { ModelThinkingInfo } from '@moonshot-ai/app-core/lib';
 
 const apiMock = vi.hoisted(() => ({
   updateSession: vi.fn(),

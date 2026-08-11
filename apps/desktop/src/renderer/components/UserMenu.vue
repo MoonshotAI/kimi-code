@@ -19,11 +19,11 @@ import {
   shouldShowUpgrade,
   usagePercent,
   usageSeverity,
-} from '../lib/planUsage';
-import { isDesktop } from '../lib/desktopFlag';
+} from '@moonshot-ai/app-core/lib';
+import { isDesktop } from '@moonshot-ai/app-core/lib';
 import { track } from '../lib/track';
-import { openUpgrade } from '../lib/upgrade';
-import { Badge, Button, Icon, Kbd, Menu, MenuItem, Spinner } from '@moonshot-ai/web-ui';
+import { openUpgrade } from '@moonshot-ai/app-core/lib';
+import { Badge, Button, Icon, Kbd, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
 
 const emit = defineEmits<{
   login: [];

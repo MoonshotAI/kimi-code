@@ -6,7 +6,7 @@
 // web UI and the CLI keep the bare URL, so the button stays hidden there.
 // Not synced to apps/web (desktop divergence).
 
-import { isDesktop } from './desktopFlag';
+import { isDesktop } from '@moonshot-ai/app-core/lib';
 
 const DESKTOP_LOGIN_SOURCE = 'kimi_code_desktop';
 

@@ -6,8 +6,8 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../../types';
-import { highlightHtml, snippet } from '../../lib/searchHighlight';
-import { Dialog, EmptyState, Icon, Input, Kbd, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import { highlightHtml, snippet } from '@moonshot-ai/app-core/lib';
+import { Dialog, EmptyState, Icon, Input, Kbd, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

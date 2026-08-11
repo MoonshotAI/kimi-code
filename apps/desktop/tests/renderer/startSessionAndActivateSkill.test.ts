@@ -12,7 +12,7 @@ vi.mock('../../src/renderer/api', () => ({ getKimiWebApi: getKimiWebApiMock }));
 vi.mock('../../src/renderer/lib/track', () => ({ track: trackMock }));
 
 import { useWorkspaceState } from '../../src/renderer/composables/client/useWorkspaceState';
-import { ackThinkingPending, foldDaemonThinkingLevel } from '../../src/renderer/lib/modelThinking';
+import { ackThinkingPending, foldDaemonThinkingLevel } from '@moonshot-ai/app-core/lib';
 
 const MODEL_DEFAULT_LEVEL = 'high';
 const DRAFT_PICK_LEVEL = 'max';

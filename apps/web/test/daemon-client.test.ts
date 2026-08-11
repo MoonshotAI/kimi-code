@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DaemonKimiWebApi } from '@moonshot-ai/web-core/api';
+import { DaemonKimiWebApi } from '@moonshot-ai/app-core/api';
 import { createAgentProjector } from '../src/api/daemon/agentEventProjector';
 import { DaemonApiError, DaemonNetworkError } from '../src/api/errors';
 import { clearTrace, traceRestFailure, traceRestRequest, traceRestResponse, traceToJsonl } from '../src/debug/trace';

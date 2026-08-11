@@ -4,10 +4,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Button, Icon, IconButton, PanelHeader, Tooltip } from '@moonshot-ai/web-ui';
+import { Button, Icon, IconButton, PanelHeader, Tooltip } from '@moonshot-ai/app-ui';
 import type { TurnFileChange } from '../chatTurnRendering';
 import HighlightedCode from '../HighlightedCode.vue';
-import { pathRelativeTo } from '../../lib/pathRelativeTo';
+import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
 
 const props = defineProps<{
   change: TurnFileChange;

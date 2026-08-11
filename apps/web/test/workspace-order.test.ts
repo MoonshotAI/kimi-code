@@ -3,7 +3,7 @@ import {
   moveInOrder,
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
-} from '../src/lib/workspaceOrder';
+} from '@moonshot-ai/app-core/lib';
 
 describe('reconcileWorkspaceOrder', () => {
   it('returns null for an empty current set so a not-yet-loaded state never wipes the order', () => {

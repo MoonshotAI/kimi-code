@@ -15,9 +15,9 @@ import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
 import type { AppSubagentPhase } from '../../../api/types';
 import type { SwarmMember } from '../../../composables/swarmGroups';
 import { toolLabel } from '../../../lib/toolMeta';
-import { parseSwarmResult } from '../../../lib/parseSwarmResult';
+import { parseSwarmResult } from '@moonshot-ai/app-core/lib';
 import { buildSwarmCardRows, type SwarmCardRow } from '../../../lib/swarmCardRows';
-import { Icon, StatusDot, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, StatusDot, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

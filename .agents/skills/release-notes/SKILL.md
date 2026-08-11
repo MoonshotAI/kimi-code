@@ -79,7 +79,7 @@ description: 发布 desktop（kimi-code-app）新版本前，生成更新弹窗�
 - 逐条对译，不增不删，不补充中文原文没有的信息（原文含糊就保持含糊，交给 review）。
 - 用户面向的短句，一条一句、每条 ≤ 15 词；同一小节内句式节奏保持一致（如同为 `Fixed ...` 起手）。中文已是压缩后的一句话，英文不得再拉长。
 - 修复类 `Fixed ...`；新功能类直接说用户得到什么（`Updates can now download in the background.`）。不出现文件名、内部包名、PR 号。
-- 产品术语对齐现有英译：翻译前先查 `packages/web-i18n/src/locales/en/` 里相应说法（如 会话→session、工作区→workspace、思考→thinking、设置→Settings），保持一致。
+- 产品术语对齐现有英译：翻译前先查 `packages/app-i18n/src/locales/en/` 里相应说法（如 会话→session、工作区→workspace、思考→thinking、设置→Settings），保持一致。
 - 拿不准如何翻译的产品名/功能名保留英文原词（如 Plan mode、Thinking）。
 
 ## 红旗

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { nextTick, ref } from 'vue';
 import { useComposerDraft } from '../src/composables/useComposerDraft';
-import { draftStorageKey } from '../src/lib/storage';
+import { draftStorageKey } from '@moonshot-ai/app-core/lib';
 
 function memoryStorage(): Storage {
   const map = new Map<string, string>();

@@ -4,12 +4,12 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { copyTextToClipboard } from '../../lib/clipboard';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import {
   useOAuthLoginFlow,
   type OAuthLoginStartResult,
 } from '../../composables/useOAuthLoginFlow';
-import { AuthStateIcon, Button, Dialog, Icon, Spinner } from '@moonshot-ai/web-ui';
+import { AuthStateIcon, Button, Dialog, Icon, Spinner } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

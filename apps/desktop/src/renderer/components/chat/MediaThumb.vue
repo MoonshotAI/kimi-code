@@ -8,7 +8,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AuthMedia from './AuthMedia.vue';
-import { Icon, Spinner, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 
 const props = withDefaults(
   defineProps<{

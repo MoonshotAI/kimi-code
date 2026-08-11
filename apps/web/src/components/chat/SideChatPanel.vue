@@ -7,7 +7,7 @@ import { computed, nextTick, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatPane from './ChatPane.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
-import { Icon, PanelHeader, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import { Icon, PanelHeader, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import type { ChatTurn } from '../../types';
 
 const props = defineProps<{

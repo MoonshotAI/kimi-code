@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { i18n } from '../src/i18n';
-import { STORAGE_KEYS, safeGetString } from '../src/lib/storage';
+import { STORAGE_KEYS, safeGetString } from '@moonshot-ai/app-core/lib';
 import {
   approvalNotificationCopy,
   completionNotificationCopy,

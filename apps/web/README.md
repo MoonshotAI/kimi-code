@@ -7,9 +7,9 @@ Since phase 3 this app is **no longer a monolith**: it aggregates the three
 source-only shared packages (`exports → ./src/*`, transpiled by this app's
 bundler) and keeps only the web-specific glue:
 
-- `@moonshot-ai/web-ui` — presentational components + design tokens.
-- `@moonshot-ai/web-markdown` — chat Markdown renderer.
-- `@moonshot-ai/web-core` — daemon transport, session state machine, state
+- `@moonshot-ai/app-ui` — presentational components + design tokens.
+- `@moonshot-ai/app-markdown` — chat Markdown renderer.
+- `@moonshot-ai/app-core` — daemon transport, session state machine, state
   container, appearance composables.
 
 ---
@@ -42,20 +42,20 @@ proxies** `/api/v1` (HTTP + WS) to the server (`vite.config.ts`):
 
 `vite.config.ts` also carries the two consumer requirements the shared packages
 need: the unplugin-icons `kimi` collection (`~icons/kimi/*`) and
-`worker: { format: 'es' }` for web-markdown's off-thread KaTeX / Mermaid workers.
+`worker: { format: 'es' }` for app-markdown's off-thread KaTeX / Mermaid workers.
 
 ---
 
 ## Architecture
 
 `src/api/bootstrap.ts` is the only module that knows both sides: it composes
-web-core's `DaemonKimiWebApi` with this app's bridges — `tracer` (`debug/trace`),
+app-core's `DaemonKimiWebApi` with this app's bridges — `tracer` (`debug/trace`),
 `credentialStore` (`lib/serverAuth`), and the required `projectorFactory`
 (`src/api/daemon/agentEventProjector.ts`) — and exposes the shared `api`
 singleton (plus a `getKimiWebApi()` back-compat accessor).
 
 `src/main.ts` stays thin: `createApp(App).use(i18n)`, an
-`app.provide(IconResolverKey, …)` that bridges web-ui's `<Icon>` to this app's
+`app.provide(IconResolverKey, …)` that bridges app-ui's `<Icon>` to this app's
 icon registry (`lib/icons.ts`), and a desktop-only theme-IPC bridge that mirrors
 `<html data-color-scheme>` to the host's `nativeTheme`. There is **no** client
 factory / `provide` of an un-singletoned client here — that is deferred to a
@@ -63,16 +63,16 @@ later phase.
 
 `src/api` keeps only the web-specific glue (`bootstrap`, `config`,
 `daemon/agentEventProjector`, `errors`, `index`, `types`); the transport,
-reducer, and state container live in `@moonshot-ai/web-core`. `i18n` and tool
+reducer, and state container live in `@moonshot-ai/app-core`. `i18n` and tool
 metadata stay in this app.
 
 ```
 server (REST + WS)
-  └─ @moonshot-ai/web-core/api   DaemonKimiWebApi (transport + projector + reducer)
+  └─ @moonshot-ai/app-core/api   DaemonKimiWebApi (transport + projector + reducer)
         └─ src/api/bootstrap.ts  injects tracer / credentialStore / projectorFactory → api
-  └─ @moonshot-ai/web-core       createKimiWebClientCore({ api, t }) → reactive state
-  └─ @moonshot-ai/web-ui         <Button> / <Dialog> / <Icon> / tokens
-  └─ @moonshot-ai/web-markdown   <Markdown>
+  └─ @moonshot-ai/app-core       createKimiWebClientCore({ api, t }) → reactive state
+  └─ @moonshot-ai/app-ui         <Button> / <Dialog> / <Icon> / tokens
+  └─ @moonshot-ai/app-markdown   <Markdown>
   └─ src/components/*.vue        render props, emit intents (no transport access)
 ```
 

@@ -23,7 +23,7 @@
      mini list of the latest 4 items (prototype v1-log-card.html ?peek). -->
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, watch } from 'vue';
-import { Icon } from '@moonshot-ai/web-ui';
+import { Icon } from '@moonshot-ai/app-ui';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ToolCall from './ToolCall.vue';
 import { formatDuration, toolStackKey } from '../chatTurnRendering';

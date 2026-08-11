@@ -17,8 +17,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@moonshot-ai/web-ui';
-import { segmentsFor, type ModelThinkingInfo } from '../../lib/modelThinking';
+import { Icon } from '@moonshot-ai/app-ui';
+import { segmentsFor, type ModelThinkingInfo } from '@moonshot-ai/app-core/lib';
 
 export type SecondaryModelGroup = { provider: string; options: Array<{ id: string; label: string }> };
 

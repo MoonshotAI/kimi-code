@@ -8,7 +8,7 @@ import { useI18n } from 'vue-i18n';
 import type { DiffViewLine } from '../../types';
 import type { DiffFullTexts } from '../../lib/diffFullTexts';
 import HighlightedCode from '../HighlightedCode.vue';
-import { Button, Icon, PanelHeader, ScrollArea, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/web-ui';
+import { Button, Icon, PanelHeader, ScrollArea, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

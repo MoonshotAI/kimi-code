@@ -1,0 +1,609 @@
+// app-core api/daemon/http.ts
+// DaemonHttpClient — REST transport with envelope unwrap and allowCodes support.
+
+import { buildRestUrl } from '../config';
+import { noopTracer } from '../../contracts';
+import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
+import { DaemonApiError, DaemonNetworkError, FileTooLargeError } from '../errors';
+import type { WireEnvelope } from './wire';
+
+/** Per-request timeout. Without one, a hung connection (half-open TCP after a
+    network change, stuck daemon) leaves promises pending for minutes — and the
+    composer's in-flight flag with them. Generous enough for slow endpoints;
+    streaming runs over the WS, not these REST calls. */
+const REQUEST_TIMEOUT_MS = 30_000;
+const EXPORT_TIMEOUT_MS = 5 * 60_000;
+const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const BODY_PREVIEW_LIMIT = 500;
+
+// Server-transport auth failure envelope code (see kap-server
+// src/middleware/auth.ts AUTH_ERROR_CODE). Distinct from provider-auth 40110–40113.
+export const SERVER_AUTH_UNAUTHORIZED_CODE = 40101;
+
+export interface DaemonHttpClientOptions {
+  origin: string;
+  identity?: ClientIdentity;
+  tracer?: Tracer;
+  credentialStore?: CredentialStore;
+  /** REST 路径前缀（默认 '/api/v1'）；v2 session 列表用 '/api/v2'。 */
+  restBasePath?: string;
+}
+
+/** Query param values: scalars, or arrays for repeated params (`?a=1&a=2`). */
+export type RestQueryValue = string | number | boolean | undefined;
+export type RestQuery = Record<string, RestQueryValue | readonly RestQueryValue[]>;
+
+function appendQuery(params: URLSearchParams, query: RestQuery): void {
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item !== undefined) params.append(key, String(item));
+      }
+    } else {
+      params.set(key, String(value));
+    }
+  }
+}
+
+/** AbortSignal.timeout with a fallback for older environments (jsdom). */
+function timeoutSignal(timeoutMs = REQUEST_TIMEOUT_MS): AbortSignal | undefined {
+  try {
+    return AbortSignal.timeout(timeoutMs);
+  } catch {
+    return undefined;
+  }
+}
+
+function encodeBase32(value: number, length: number): string {
+  let out = '';
+  let next = value;
+  for (let i = 0; i < length; i++) {
+    out = ULID_ALPHABET[next % 32] + out;
+    next = Math.floor(next / 32);
+  }
+  return out;
+}
+
+function randomBase32(length: number): string {
+  const bytes = new Uint8Array(length);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (byte) => ULID_ALPHABET[byte % 32]).join('');
+}
+
+function createRequestId(): string {
+  return `${encodeBase32(Date.now(), 10)}${randomBase32(16)}`;
+}
+
+/** Trace-only FormData summary: field names + file name/size/type, never content. */
+function describeFormData(formData: FormData): unknown {
+  try {
+    const fields: Array<Record<string, unknown>> = [];
+    formData.forEach((value, field) => {
+      if (typeof value === 'string') {
+        fields.push({ field, value });
+      } else {
+        fields.push({ field, file: value.name, size: value.size, type: value.type });
+      }
+    });
+    return { formData: fields };
+  } catch {
+    return '[FormData]';
+  }
+}
+
+async function readResponsePreview(response: Response): Promise<string | undefined> {
+  try {
+    const text = await response.text();
+    if (!text) return undefined;
+    return text.length > BODY_PREVIEW_LIMIT ? `${text.slice(0, BODY_PREVIEW_LIMIT)}...` : text;
+  } catch {
+    return undefined;
+  }
+}
+
+export class DaemonHttpClient {
+  private readonly tracer: Tracer;
+
+  constructor(private readonly opts: DaemonHttpClientOptions) {
+    this.tracer = opts.tracer ?? noopTracer;
+  }
+
+  async get<T>(path: string, query?: RestQuery): Promise<T> {
+    return this.request<T>('GET', path, undefined, query);
+  }
+
+  /** Authenticated raw-binary GET (no envelope). Used for file downloads that
+   *  must carry the Bearer token — e.g. <video>/<img> src, which the browser
+   *  fetches natively and cannot authorize on its own. Returns the body as a
+   *  Blob on 2xx; otherwise parses the daemon envelope and throws.
+   *  `maxBytes` rejects oversized bodies at the Content-Length header — before
+   *  the body is read — so a huge host file can't be fully downloaded into the
+   *  renderer (readHostFileContent's preview cap). A missing Content-Length
+   *  falls through to the caller's post-read size check. */
+  async getBlob(
+    path: string,
+    query?: RestQuery,
+    opts?: { maxBytes?: number },
+  ): Promise<Blob> {
+    let url = buildRestUrl(this.opts.origin, path, this.opts.restBasePath);
+    if (query) {
+      const params = new URLSearchParams();
+      appendQuery(params, query);
+      const qs = params.toString();
+      if (qs) url = `${url}?${qs}`;
+    }
+    const requestId = createRequestId();
+    const headers: Record<string, string> = { 'X-Request-Id': requestId };
+    this.addClientHeaders(headers);
+    const startedAt = Date.now();
+    this.tracer.restRequest?.({ method: 'GET', path, url, requestId });
+    let response: Response;
+    try {
+      response = await fetch(url, { method: 'GET', headers, signal: timeoutSignal() });
+    } catch (err) {
+      this.tracer.restFailure?.({
+        method: 'GET',
+        path,
+        requestId,
+        phase: 'fetch',
+        durationMs: Date.now() - startedAt,
+        error: err,
+      });
+      throw new DaemonNetworkError({
+        message: `Network error calling GET ${path}`,
+        cause: err,
+        method: 'GET',
+        path,
+        url,
+        requestId,
+        phase: 'fetch',
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+    if (response.ok) {
+      this.tracer.restResponse?.({
+        method: 'GET',
+        path,
+        requestId,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+        code: 0,
+        msg: '',
+      });
+      const contentLength = Number(response.headers.get('content-length') ?? 0);
+      if (opts?.maxBytes !== undefined && contentLength > opts.maxBytes) {
+        // Refuse at the header: cancel the stream so the body is never read
+        // into the renderer and the connection frees up.
+        void response.body?.cancel();
+        throw new FileTooLargeError({ size: contentLength, limit: opts.maxBytes });
+      }
+      return response.blob();
+    }
+    // Error path: the daemon sends a JSON envelope (401/404/413…).
+    let envelope: WireEnvelope<unknown> | undefined;
+    try {
+      envelope = (await response.clone().json()) as WireEnvelope<unknown>;
+    } catch {
+      // not JSON — fall back to the HTTP status below
+    }
+    this.checkAuthRequired(response, envelope?.code ?? 0);
+    this.tracer.restResponse?.({
+      method: 'GET',
+      path,
+      requestId,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      code: envelope?.code ?? response.status,
+      msg: envelope?.msg ?? response.statusText,
+      envelopeRequestId: envelope?.request_id,
+    });
+    throw new DaemonApiError({
+      code: envelope?.code ?? response.status,
+      msg: envelope?.msg ?? response.statusText,
+      requestId: envelope?.request_id ?? requestId,
+      details: envelope?.details,
+      timestamp: Date.now(),
+      durationMs: Date.now() - startedAt,
+    });
+  }
+
+  async post<T>(path: string, body?: unknown, opts?: { allowCodes?: number[] }): Promise<T> {
+    return this.request<T>('POST', path, body, undefined, opts?.allowCodes);
+  }
+
+  /** POST JSON and receive a raw ZIP. The request trace accepts a separate
+   * metadata-only body so large/sensitive export logs never enter the trace. */
+  async postZip(
+    path: string,
+    body: unknown,
+    traceBody: Record<string, number>,
+  ): Promise<{ blob: Blob; contentDisposition?: string }> {
+    const method = 'POST';
+    const url = buildRestUrl(this.opts.origin, path, this.opts.restBasePath);
+    const requestId = createRequestId();
+    const headers: Record<string, string> = {
+      'X-Request-Id': requestId,
+      'Content-Type': 'application/json; charset=utf-8',
+    };
+    this.addClientHeaders(headers);
+    const startedAt = Date.now();
+    this.tracer.restRequest?.({ method, path, url, requestId, body: traceBody });
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers,
+        body: JSON.stringify(body),
+        signal: timeoutSignal(EXPORT_TIMEOUT_MS),
+      });
+    } catch (error) {
+      this.tracer.restFailure?.({
+        method,
+        path,
+        requestId,
+        phase: 'fetch',
+        durationMs: Date.now() - startedAt,
+        error,
+      });
+      throw new DaemonNetworkError({
+        message: `Network error calling ${method} ${path}`,
+        cause: error,
+        method,
+        path,
+        url,
+        requestId,
+        phase: 'fetch',
+        timeoutMs: EXPORT_TIMEOUT_MS,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
+    const contentType = response.headers.get('content-type') ?? undefined;
+    const mediaType = contentType?.split(';', 1)[0]?.trim().toLowerCase();
+    if (!response.ok || mediaType !== 'application/zip') {
+      let envelope: WireEnvelope<unknown> | undefined;
+      try {
+        envelope = (await response.clone().json()) as WireEnvelope<unknown>;
+      } catch {
+        // A non-JSON response is diagnosed below without consuming the body.
+      }
+      this.checkAuthRequired(response, envelope?.code ?? 0);
+      if (!response.ok || (envelope !== undefined && envelope.code !== 0)) {
+        const code = envelope?.code ?? response.status;
+        const msg = envelope?.msg ?? response.statusText;
+        this.tracer.restResponse?.({
+          method,
+          path,
+          requestId,
+          status: response.status,
+          durationMs: Date.now() - startedAt,
+          code,
+          msg,
+          envelopeRequestId: envelope?.request_id,
+        });
+        throw new DaemonApiError({
+          code,
+          msg,
+          requestId: envelope?.request_id ?? requestId,
+          details: envelope?.details,
+          timestamp: Date.now(),
+          durationMs: Date.now() - startedAt,
+        });
+      }
+
+      const diagnosticResponse = response.clone();
+      const error = new TypeError(`Expected application/zip, received ${contentType ?? 'no content type'}`);
+      this.tracer.restFailure?.({
+        method,
+        path,
+        requestId,
+        phase: 'parse',
+        durationMs: Date.now() - startedAt,
+        status: response.status,
+        error,
+      });
+      throw new DaemonNetworkError({
+        message: `Invalid ZIP response from ${method} ${path}`,
+        cause: error,
+        method,
+        path,
+        url,
+        requestId,
+        phase: 'parse',
+        timeoutMs: EXPORT_TIMEOUT_MS,
+        status: response.status,
+        statusText: response.statusText,
+        contentType,
+        bodyPreview: await readResponsePreview(diagnosticResponse),
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
+    let blob: Blob;
+    try {
+      blob = await response.blob();
+    } catch (error) {
+      this.tracer.restFailure?.({
+        method,
+        path,
+        requestId,
+        phase: 'parse',
+        durationMs: Date.now() - startedAt,
+        status: response.status,
+        error,
+      });
+      throw new DaemonNetworkError({
+        message: `Failed to read ZIP response from ${method} ${path}`,
+        cause: error,
+        method,
+        path,
+        url,
+        requestId,
+        phase: 'parse',
+        timeoutMs: EXPORT_TIMEOUT_MS,
+        status: response.status,
+        statusText: response.statusText,
+        contentType,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+    this.tracer.restResponse?.({
+      method,
+      path,
+      requestId,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      code: 0,
+      msg: '',
+    });
+    return {
+      blob,
+      contentDisposition: response.headers.get('content-disposition') ?? undefined,
+    };
+  }
+
+  /** Send multipart/form-data (FormData). Does NOT set Content-Type — browser sets it with boundary. */
+  async postForm<T>(path: string, formData: FormData): Promise<T> {
+    const url = buildRestUrl(this.opts.origin, path, this.opts.restBasePath);
+    const requestId = createRequestId();
+    const headers: Record<string, string> = {
+      'X-Request-Id': requestId,
+    };
+    this.addClientHeaders(headers);
+    const startedAt = Date.now();
+    this.tracer.restRequest?.({ method: 'POST', path, url, requestId, body: describeFormData(formData) });
+    let response: Response;
+    try {
+      response = await fetch(url, { method: 'POST', headers, body: formData, signal: timeoutSignal() });
+    } catch (err) {
+      this.tracer.restFailure?.({ method: 'POST', path, requestId, phase: 'fetch', durationMs: Date.now() - startedAt, error: err });
+      throw new DaemonNetworkError({
+        message: `Network error calling POST ${path}`,
+        cause: err,
+        method: 'POST',
+        path,
+        url,
+        requestId,
+        phase: 'fetch',
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+    let envelope: WireEnvelope<T>;
+    const responseForDiagnostics = response.clone();
+    try {
+      envelope = (await response.json()) as WireEnvelope<T>;
+    } catch (err) {
+      this.tracer.restFailure?.({ method: 'POST', path, requestId, phase: 'parse', durationMs: Date.now() - startedAt, status: response.status, error: err });
+      throw new DaemonNetworkError({
+        message: `Failed to parse JSON response from POST ${path}`,
+        cause: err,
+        method: 'POST',
+        path,
+        url,
+        requestId,
+        phase: 'parse',
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        status: response.status,
+        statusText: response.statusText,
+        contentType: response.headers.get('content-type') ?? undefined,
+        bodyPreview: await readResponsePreview(responseForDiagnostics),
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+    this.tracer.restResponse?.({
+      method: 'POST',
+      path,
+      requestId,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      code: envelope.code,
+      msg: envelope.msg,
+      envelopeRequestId: envelope.request_id,
+      data: envelope.data,
+    });
+    this.checkAuthRequired(response, envelope.code);
+    if (envelope.code !== 0) {
+      throw new DaemonApiError({
+        code: envelope.code,
+        msg: envelope.msg,
+        requestId: envelope.request_id,
+        details: envelope.details,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+    return envelope.data as T;
+  }
+
+  async patch<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>('PATCH', path, body);
+  }
+
+  async put<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>('PUT', path, body);
+  }
+
+  async delete<T>(path: string): Promise<T> {
+    return this.request<T>('DELETE', path);
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    query?: RestQuery,
+    allowCodes: number[] = [],
+  ): Promise<T> {
+    // Build URL, appending query string (omit undefined values)
+    let url = buildRestUrl(this.opts.origin, path, this.opts.restBasePath);
+    if (query) {
+      const params = new URLSearchParams();
+      appendQuery(params, query);
+      const qs = params.toString();
+      if (qs) url = `${url}?${qs}`;
+    }
+
+    // Build headers
+    const requestId = createRequestId();
+    const headers: Record<string, string> = {
+      'X-Request-Id': requestId,
+    };
+    this.addClientHeaders(headers);
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json; charset=utf-8';
+    }
+
+    const startedAt = Date.now();
+    this.tracer.restRequest?.({ method, path, url, requestId, body });
+
+    // Execute fetch
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: timeoutSignal(),
+      });
+    } catch (err) {
+      this.tracer.restFailure?.({ method, path, requestId, phase: 'fetch', durationMs: Date.now() - startedAt, error: err });
+      throw new DaemonNetworkError({
+        message: `Network error calling ${method} ${path}`,
+        cause: err,
+        method,
+        path,
+        url,
+        requestId,
+        phase: 'fetch',
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
+    // Parse envelope. A bare 204 (e.g. DELETE /providers/{id}) carries no body —
+    // treat exactly that case as a successful null-data envelope. Any OTHER
+    // empty body (a proxy's bare 500, a truncated 200, …) must keep falling
+    // into the parse-failure path below instead of being forged into a success.
+    let envelope: WireEnvelope<T>;
+    const responseForDiagnostics = response.clone();
+    try {
+      const text = await response.text();
+      envelope = (
+        response.status === 204 && text === ''
+          ? { code: 0, msg: '', data: null, request_id: requestId }
+          : JSON.parse(text)
+      ) as WireEnvelope<T>;
+    } catch (err) {
+      this.tracer.restFailure?.({ method, path, requestId, phase: 'parse', durationMs: Date.now() - startedAt, status: response.status, error: err });
+      throw new DaemonNetworkError({
+        message: `Failed to parse JSON response from ${method} ${path}`,
+        cause: err,
+        method,
+        path,
+        url,
+        requestId,
+        phase: 'parse',
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        status: response.status,
+        statusText: response.statusText,
+        contentType: response.headers.get('content-type') ?? undefined,
+        bodyPreview: await readResponsePreview(responseForDiagnostics),
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
+    this.tracer.restResponse?.({
+      method,
+      path,
+      requestId,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      code: envelope.code,
+      msg: envelope.msg,
+      envelopeRequestId: envelope.request_id,
+      data: envelope.data,
+    });
+
+    this.checkAuthRequired(response, envelope.code);
+
+    // Unwrap: code 0 = success; allowed non-zero = return data; else throw.
+    // A non-envelope error body (an old server's bare fastify 404) has neither
+    // code nor msg — fall back to the HTTP status so a banner never renders
+    // an empty string.
+    if (envelope.code !== 0 && !allowCodes.includes(envelope.code)) {
+      throw new DaemonApiError({
+        code: envelope.code,
+        msg:
+          typeof envelope.msg === 'string' && envelope.msg.length > 0
+            ? envelope.msg
+            : `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`,
+        requestId: envelope.request_id ?? requestId,
+        details: envelope.details,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
+    // For both code=0 and allowed non-zero codes, return the data field.
+    // Callers that pass allowCodes handle the null/non-null data themselves.
+    return envelope.data as T;
+  }
+
+  private addClientHeaders(headers: Record<string, string>): void {
+    const token = this.opts.credentialStore?.getToken();
+    if (token !== undefined) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const identity = this.opts.identity;
+    if (identity !== undefined) {
+      headers['X-Kimi-Client-Id'] = identity.clientId;
+      headers['X-Kimi-Client-Name'] = identity.clientName;
+      headers['X-Kimi-Client-Version'] = identity.clientVersion;
+      headers['X-Kimi-Client-Ui-Mode'] = identity.clientUiMode;
+    }
+  }
+
+  private checkAuthRequired(response: Response, envelopeCode: number): void {
+    if (response.status === 401 || envelopeCode === SERVER_AUTH_UNAUTHORIZED_CODE) {
+      this.opts.credentialStore?.markAuthRequired?.();
+    }
+  }
+}

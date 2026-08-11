@@ -12,9 +12,9 @@ coverage
 .ci-signing/
 .env
 mac_keys
-packages/web-ui/src/assets/fonts/NotoSansSC\[wght\].woff2
-packages/web-ui/src/assets/fonts/SpecialGothic\[wdth,wght\].woff2
-packages/web-ui/src/assets/fonts/SchibstedGrotesk\[wght\].woff2
-packages/web-ui/src/assets/fonts/SchibstedGrotesk-Italic\[wght\].woff2
-packages/web-ui/src/assets/fonts/ZalandoSans\[wdth,wght\].woff2
-packages/web-ui/src/assets/fonts/ZalandoSans-Italic\[wdth,wght\].woff2
+packages/app-ui/src/assets/fonts/NotoSansSC\[wght\].woff2
+packages/app-ui/src/assets/fonts/SpecialGothic\[wdth,wght\].woff2
+packages/app-ui/src/assets/fonts/SchibstedGrotesk\[wght\].woff2
+packages/app-ui/src/assets/fonts/SchibstedGrotesk-Italic\[wght\].woff2
+packages/app-ui/src/assets/fonts/ZalandoSans\[wdth,wght\].woff2
+packages/app-ui/src/assets/fonts/ZalandoSans-Italic\[wdth,wght\].woff2

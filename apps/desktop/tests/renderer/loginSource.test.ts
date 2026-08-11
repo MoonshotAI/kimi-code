@@ -4,7 +4,8 @@ const { isDesktopMock } = vi.hoisted(() => ({
   isDesktopMock: { value: false },
 }));
 
-vi.mock('../../src/renderer/lib/desktopFlag', () => ({
+vi.mock('@moonshot-ai/app-core/lib', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@moonshot-ai/app-core/lib')>()),
   get isDesktop() {
     return isDesktopMock.value;
   },

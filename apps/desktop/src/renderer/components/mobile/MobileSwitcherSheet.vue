@@ -8,11 +8,11 @@
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
-import { copyTextToClipboard } from '../../lib/clipboard';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { SESSIONS_EXPAND_BATCH } from '../../composables/client/useWorkspaceState';
 import type { SessionCreatedSource } from '../../../shared/track-events';
 import BottomSheet from '../dialogs/BottomSheet.vue';
-import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

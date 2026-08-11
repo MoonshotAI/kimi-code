@@ -8,7 +8,7 @@
 <script setup lang="ts">
 import { createApp, onBeforeUnmount, onMounted, ref, type App } from 'vue';
 import KapDebugView from './KapDebugView.vue';
-import { Tooltip } from '@moonshot-ai/web-ui';
+import { Tooltip } from '@moonshot-ai/app-ui';
 
 const isOpen = ref(false);
 

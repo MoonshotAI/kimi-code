@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, IconButton } from '@moonshot-ai/web-ui';
+import { Icon, IconButton } from '@moonshot-ai/app-ui';
 import { focusLeavesWindowsMenu, StandaloneAltTracker } from '../../lib/windowsMenuAccess';
 import BrandLogo from '../onboarding/BrandLogo.vue';
 import UpdateIndicator from '../UpdateIndicator.vue';

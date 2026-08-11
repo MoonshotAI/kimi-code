@@ -6,7 +6,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { copyTextToClipboard } from '../../lib/clipboard';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import {
   useOAuthLoginFlow,
   type OAuthLoginStartResult,
@@ -14,7 +14,7 @@ import {
 // Desktop divergence (not synced to apps/web): marks the verification URL as
 // desktop-originated so the auth page can offer "open the desktop app".
 import { withDesktopLoginSource } from '../../lib/loginSource';
-import { AuthStateIcon, Button, Icon, Spinner } from '@moonshot-ai/web-ui';
+import { AuthStateIcon, Button, Icon, Spinner } from '@moonshot-ai/app-ui';
 import BrandLogo from './BrandLogo.vue';
 
 const { t } = useI18n();

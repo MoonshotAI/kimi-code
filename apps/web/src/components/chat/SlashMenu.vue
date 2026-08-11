@@ -3,7 +3,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { SlashCommand } from '../../lib/slashCommands';
+import type { SlashCommand } from '@moonshot-ai/app-core/lib';
 
 const { t } = useI18n();
 

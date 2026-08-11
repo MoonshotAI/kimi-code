@@ -4,8 +4,8 @@
 import { onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppNotice, AppWarning } from '../api/types';
-import { copyTextToClipboard } from '../lib/clipboard';
-import { Toast } from '@moonshot-ai/web-ui';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { Toast } from '@moonshot-ai/app-ui';
 
 const props = defineProps<{ warnings: AppWarning[] }>();
 const emit = defineEmits<{ dismiss: [index: number] }>();

@@ -1,5 +1,5 @@
-import { createKimiI18n, detect } from '@moonshot-ai/web-i18n';
-import { safeSetString, STORAGE_KEYS } from '../lib/storage';
+import { createKimiI18n, detect } from '@moonshot-ai/app-i18n';
+import { safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 
 export const availableLocales = [
   { code: 'en', label: 'English' },
@@ -8,7 +8,7 @@ export const availableLocales = [
 
 export type LocaleCode = (typeof availableLocales)[number]['code'];
 
-// Single app-wide i18n instance, created through the shared web-i18n factory so
+// Single app-wide i18n instance, created through the shared app-i18n factory so
 // the locale/messages live in one place. Consumers (`useKimiWebClient`, tool
 // meta, event projectors, …) import this same instance, so `setLocale` mutates
 // the translator the whole tree reads from.

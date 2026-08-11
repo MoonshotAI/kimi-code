@@ -6,12 +6,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, IconButton, Spinner, useImeComposition } from '@moonshot-ai/web-ui';
+import { Icon, IconButton, Spinner, useImeComposition } from '@moonshot-ai/app-ui';
 import {
   clearSearchHighlights,
   collectMatchRanges,
   setSearchHighlights,
-} from '../../lib/transcriptSearch';
+} from '@moonshot-ai/app-core/lib';
 import { track } from '../../lib/track';
 
 const props = withDefaults(

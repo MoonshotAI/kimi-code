@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ref, type Ref } from 'vue';
 import { useInputHistory } from '../src/composables/useInputHistory';
-import { STORAGE_KEYS } from '../src/lib/storage';
+import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 
 interface MockTextarea {
   value: string;

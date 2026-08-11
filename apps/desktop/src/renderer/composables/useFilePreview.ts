@@ -6,7 +6,7 @@ import { computed, ref, watch, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isFileTooLargeError } from '../api/errors';
-import { pathRelativeTo } from '../lib/pathRelativeTo';
+import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
 import type { FileData, FilePreviewRequest, ToolMedia } from '../types';
 import type { useKimiWebClient } from './useKimiWebClient';
 

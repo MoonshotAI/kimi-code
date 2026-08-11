@@ -8,8 +8,8 @@
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { openInAppIcon, resolveOpenInTarget, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
-import { copyTextToClipboard } from '../../lib/clipboard';
-import { Icon, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { Icon, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

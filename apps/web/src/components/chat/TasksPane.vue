@@ -5,8 +5,8 @@
 import { inject, reactive } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '../../types';
-import { copyTextToClipboard } from '../../lib/clipboard';
-import { Badge, Icon } from '@moonshot-ai/web-ui';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { Badge, Icon } from '@moonshot-ai/app-ui';
 import StatusGlyph, { type StatusGlyphStatus } from './StatusGlyph.vue';
 
 defineProps<{ tasks: TaskItem[] }>();

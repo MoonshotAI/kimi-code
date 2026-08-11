@@ -1,11 +1,11 @@
 // apps/web src/api/config.ts — reads Vite env + window, resolves the server
 // origin, and derives the stable client identity for the DaemonKimiWebApi.
 //
-// Pure URL builders (buildRestUrl / buildWsUrl) live in @moonshot-ai/web-core;
+// Pure URL builders (buildRestUrl / buildWsUrl) live in @moonshot-ai/app-core;
 // this module keeps only the consumer-runtime concerns (window / import.meta.env
 // / storage) that the package deliberately does not own.
 
-import { safeGetString, safeSetString, STORAGE_KEYS } from '../lib/storage';
+import { safeGetString, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 
 const CLIENT_ID_KEY = STORAGE_KEYS.clientId;
 const WEB_CLIENT_NAME = 'kimi-code-web';

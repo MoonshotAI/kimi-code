@@ -8,7 +8,7 @@ const { getKimiWebApiMock } = vi.hoisted(() => ({
 
 vi.mock('../src/api', () => ({ getKimiWebApi: getKimiWebApiMock }));
 
-import { DaemonApiError } from '@moonshot-ai/web-core/api';
+import { DaemonApiError } from '@moonshot-ai/app-core/api';
 import { useWorkspaceState } from '../src/composables/client/useWorkspaceState';
 import type { V2Session, V2SessionsPage } from '../src/api/types';
 

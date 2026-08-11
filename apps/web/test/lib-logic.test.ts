@@ -3,24 +3,24 @@ import {
   collectFilePathAliases,
   findFilePathLinks,
   parseFilePathLinkCandidate,
-} from '@moonshot-ai/web-markdown/lib/filePathLinks';
+} from '@moonshot-ai/app-markdown/lib/filePathLinks';
 import { parseDiff } from '../src/lib/parseDiff';
 import { buildDiffLines, buildVerbatimDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines, buildWriteContent, toolFilePath } from '../src/lib/toolDiff';
-import { parseReadOutput } from '../src/lib/readOutput';
-import { codeLanguageFromPath } from '../src/lib/codeLanguage';
-import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
-import { mergeSnapshotMessages } from '../src/lib/snapshotMessages';
-import { keepLiveSubagents, mergeSnapshotSubagents } from '../src/lib/taskMerge';
+import { parseReadOutput } from '@moonshot-ai/app-core/lib';
+import { codeLanguageFromPath } from '@moonshot-ai/app-core/lib';
+import { createCoalescedAsyncRunner } from '@moonshot-ai/app-core/lib';
+import { mergeSnapshotMessages } from '@moonshot-ai/app-core/lib';
+import { keepLiveSubagents, mergeSnapshotSubagents } from '@moonshot-ai/app-core/lib';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
-import { collapsePrompt } from '../src/lib/cronHumanize';
+import { collapsePrompt } from '@moonshot-ai/app-core/lib';
 import {
   currentValidatedWorkspacePath,
   isWorkspacePathInput,
   joinWorkspacePathCandidate,
   parseWorkspacePathInput,
-} from '../src/lib/workspacePathInput';
-import { pathRelativeTo } from '../src/lib/pathRelativeTo';
+} from '@moonshot-ai/app-core/lib';
+import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
 import {
   commitLevel,
   defaultThinkingLevelFor,
@@ -29,7 +29,7 @@ import {
   modelThinkingAvailability,
   segmentsFor,
   thinkingLevelToConfig,
-} from '../src/lib/modelThinking';
+} from '@moonshot-ai/app-core/lib';
 import type { AppMessage, AppModel, AppTask } from '../src/api/types';
 import { resolveToolRenderer } from '../src/components/chat/tool-calls/toolRegistry';
 import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';

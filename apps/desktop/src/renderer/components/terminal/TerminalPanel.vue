@@ -4,7 +4,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, Tooltip } from '@moonshot-ai/app-ui';
 import { useNativeTerminal, type NativeTerminalTab } from '../../composables/useNativeTerminal';
 import TerminalView from './TerminalView.vue';
 

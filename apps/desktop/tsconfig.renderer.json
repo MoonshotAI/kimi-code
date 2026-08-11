@@ -10,7 +10,7 @@
     // `noUncheckedIndexedAccess`, …) are inherited from tsconfig.base.json.
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["vite/client", "unplugin-icons/types/vue"],
-    // web-ui's source is imported directly (`exports → src/*.ts`) and uses
+    // app-ui's source is imported directly (`exports → src/*.ts`) and uses
     // slot index access (e.g. `slots.head`); apps/web's renderer config likewise
     // omits this flag, so relax it here to keep the dependency's own sources
     // green while the renderer's own files stay under the base strict set.

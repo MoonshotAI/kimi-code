@@ -5,7 +5,7 @@
      (design-system §03/§06) — WorkingIndicator is reserved for the chat
      working state after a prompt is sent. -->
 <script setup lang="ts">
-import { Spinner } from '@moonshot-ai/web-ui';
+import { Spinner } from '@moonshot-ai/app-ui';
 
 defineProps<{
   label: string;

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createInitialState, reduceAppEvent } from '@moonshot-ai/web-core/api';
+import { createInitialState, reduceAppEvent } from '@moonshot-ai/app-core/api';
 import type { AppApprovalRequest, AppMessage, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
 import { i18n } from '../src/i18n';
 

@@ -3,7 +3,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Markdown } from '@moonshot-ai/web-markdown';
+import { Markdown } from '@moonshot-ai/app-markdown';
 import type { FilePreviewRequest, ToolCall } from '../../../types';
 import { toolGlyph, toolLabel } from '../../../lib/toolMeta';
 import OutputPanel from './OutputPanel.vue';

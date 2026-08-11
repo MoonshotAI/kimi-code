@@ -10,8 +10,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useAppearance, type ColorScheme } from '@moonshot-ai/web-core';
-import { Button } from '@moonshot-ai/web-ui';
+import { useAppearance, type ColorScheme } from '@moonshot-ai/app-core';
+import { Button } from '@moonshot-ai/app-ui';
 import { availableLocales, setLocale, type LocaleCode } from '../../i18n';
 import { type OAuthLoginStartResult } from '../../composables/useOAuthLoginFlow';
 import { track } from '../../lib/track';

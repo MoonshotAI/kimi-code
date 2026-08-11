@@ -11,7 +11,7 @@
 
 import { ref } from 'vue';
 import { i18n } from '../../i18n';
-import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
+import { safeGetString, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 
 export function shouldNotifyCompletion(
   status: 'idle' | 'aborted',

@@ -12,10 +12,10 @@
   "ignore": [
     "kimi-code-web",
     "@moonshot-ai/vite-preset",
-    "@moonshot-ai/web-core",
-    "@moonshot-ai/web-i18n",
-    "@moonshot-ai/web-markdown",
-    "@moonshot-ai/web-ui"
+    "@moonshot-ai/app-core",
+    "@moonshot-ai/app-i18n",
+    "@moonshot-ai/app-markdown",
+    "@moonshot-ai/app-ui"
   ],
   "snapshot": {
     "useCalculatedVersion": true,

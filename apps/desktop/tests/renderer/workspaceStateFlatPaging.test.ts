@@ -9,7 +9,7 @@ const { getKimiWebApiMock, trackMock } = vi.hoisted(() => ({
 vi.mock('../../src/renderer/api', () => ({ getKimiWebApi: getKimiWebApiMock }));
 vi.mock('../../src/renderer/lib/track', () => ({ track: trackMock }));
 
-import { DaemonApiError } from '@moonshot-ai/web-core/api';
+import { DaemonApiError } from '@moonshot-ai/app-core/api';
 import { useWorkspaceState } from '../../src/renderer/composables/client/useWorkspaceState';
 import type { V2Session, V2SessionsPage } from '../../src/renderer/api/types';
 

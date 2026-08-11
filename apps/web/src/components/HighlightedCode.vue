@@ -7,8 +7,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { ThemedToken } from 'shiki';
-import { useIsDark } from '@moonshot-ai/web-core';
-import { codeLanguageFromPath } from '../lib/codeLanguage';
+import { useIsDark } from '@moonshot-ai/app-core';
+import { codeLanguageFromPath } from '@moonshot-ai/app-core/lib';
 import { splitLines } from '../lib/diffLines';
 import type { DiffFullTexts } from '../lib/diffFullTexts';
 import type { DiffViewLine } from '../types';

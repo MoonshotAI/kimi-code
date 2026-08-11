@@ -4,7 +4,7 @@
 // (src/main/dock-icon.ts). Web has no Dock and no bridge — like lib/keymap.ts,
 // this file is NOT synced to apps/web.
 import { ref, watch, type Ref } from 'vue';
-import { STORAGE_KEYS, safeGetString, safeSetString } from './storage';
+import { STORAGE_KEYS, safeGetString, safeSetString } from '@moonshot-ai/app-core/lib';
 
 export type DockIconChoice = 'light' | 'dark';
 

@@ -15,7 +15,7 @@
 import PhotoSwipe from 'photoswipe';
 import 'photoswipe/style.css';
 import './mediaPreview.css';
-import { openDialogCount } from '@moonshot-ai/web-ui';
+import { openDialogCount } from '@moonshot-ai/app-ui';
 import { getKimiWebApi } from '../api';
 import type { ToolMedia } from '../types';
 

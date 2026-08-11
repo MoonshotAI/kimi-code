@@ -5,8 +5,8 @@
      Dev tooling: labels are intentionally not localized. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { copyTextToClipboard } from '../lib/clipboard';
-import { Tooltip } from '@moonshot-ai/web-ui';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { Tooltip } from '@moonshot-ai/app-ui';
 import {
   clearTrace,
   downloadTraceLog,

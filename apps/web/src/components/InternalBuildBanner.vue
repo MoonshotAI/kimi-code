@@ -1,7 +1,7 @@
 <!-- apps/kimi-web/src/components/InternalBuildBanner.vue -->
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import { isDesktop } from '../lib/desktopFlag';
+import { isDesktop } from '@moonshot-ai/app-core/lib';
 
 const { t } = useI18n();
 

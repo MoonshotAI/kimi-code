@@ -5,7 +5,7 @@ import {
   partitionByPinned,
   pinSessionId,
   unpinSessionId,
-} from '../src/lib/pinnedSessions';
+} from '@moonshot-ai/app-core/lib';
 
 describe('pinSessionId', () => {
   it('appends a new pin to the END of the list', () => {

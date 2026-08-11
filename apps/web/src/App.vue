@@ -35,18 +35,18 @@ import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
-import { openDialogCount } from '@moonshot-ai/web-ui';
+import { openDialogCount } from '@moonshot-ai/app-ui';
 import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
-import { initServerAuth, onAuthRequired } from './lib/serverAuth';
+import { initServerAuth, onAuthRequired } from '@moonshot-ai/app-core/lib';
 import type { AppConfig, ThinkingLevel } from './api/types';
-import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
+import { commitLevel, effectiveThinkingLevel, segmentsFor } from '@moonshot-ai/app-core/lib';
 import { modelDisplayName, subagentEffortSuffix } from './lib/modelDisplay';
-import { stripSkillPrefix } from './lib/slashCommands';
-import { ActionToast, Icon, IconButton } from '@moonshot-ai/web-ui';
+import { stripSkillPrefix } from '@moonshot-ai/app-core/lib';
+import { ActionToast, Icon, IconButton } from '@moonshot-ai/app-ui';
 import InternalBuildBanner from './components/InternalBuildBanner.vue';
-import { isMacosDesktop } from './lib/desktopFlag';
-import { openUpgrade } from './lib/upgrade';
+import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
+import { openUpgrade } from '@moonshot-ai/app-core/lib';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -1566,7 +1566,7 @@ function openPr(url: string): void {
 /* macOS desktop (hidden title bar): the right panel's header row continues the
    conversation header's 48px top strip, so it joins the window-drag region.
    Interactive controls inside opt out (same pattern as ChatHeader). Cross-
-   component rule (the header is web-ui's PanelHeader), so it lives here. */
+   component rule (the header is app-ui's PanelHeader), so it lives here. */
 .app.macos-desktop .global-preview .ui-panel-header {
   -webkit-app-region: drag;
 }

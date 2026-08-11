@@ -5,7 +5,7 @@
      footer (both in ChatDock.vue). -->
 <script setup lang="ts">
 import type { AppGoal } from '../../api/types';
-import { Icon } from '@moonshot-ai/web-ui';
+import { Icon } from '@moonshot-ai/app-ui';
 import { useI18n } from 'vue-i18n';
 
 defineProps<{ goal: AppGoal }>();

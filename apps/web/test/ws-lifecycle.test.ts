@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DaemonEventSocket, type DaemonEventSocketHandlers } from '@moonshot-ai/web-core/api';
+import { DaemonEventSocket, type DaemonEventSocketHandlers } from '@moonshot-ai/app-core/api';
 
 class FakeWebSocket {
   static readonly CONNECTING = 0;

@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { ToolCall, ToolMedia } from '../../../types';
-import { Tooltip } from '@moonshot-ai/web-ui';
+import { Tooltip } from '@moonshot-ai/app-ui';
 import AuthMedia from '../AuthMedia.vue';
 
 const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });

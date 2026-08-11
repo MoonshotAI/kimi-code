@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { copyTextToClipboard } from '../src/lib/clipboard';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 
 // The web test suite runs in the default node environment (no jsdom), so we
 // mock the tiny `navigator` / `document` surface that the helper touches.

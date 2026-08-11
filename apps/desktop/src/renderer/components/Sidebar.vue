@@ -14,8 +14,8 @@ import {
   type BackendName,
   type DevBackendState,
 } from '../api/devBackend';
-import { copyTextToClipboard } from '../lib/clipboard';
-import { logWarn } from '../lib/log';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { logWarn } from '@moonshot-ai/app-core/lib';
 import {
   loadCollapsedWorkspaces,
   loadSidebarViewMode,
@@ -23,14 +23,14 @@ import {
   savePinnedCollapsed,
   saveSidebarViewMode,
   type SidebarViewMode,
-} from '../lib/storage';
-import { SESSION_ROW_DRAG_MIME } from '../lib/pinnedSessions';
-import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
+} from '@moonshot-ai/app-core/lib';
+import { SESSION_ROW_DRAG_MIME } from '@moonshot-ai/app-core/lib';
+import { moveInOrder, type DropPosition } from '@moonshot-ai/app-core/lib';
 import {
   canDropWorkspaceFolders,
   extractDroppedFolderPaths,
   looksLikeFolderDrag,
-} from '../lib/nativeWorkspaceDrop';
+} from '@moonshot-ai/app-core/lib';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import UpdateIndicator from './UpdateIndicator.vue';
@@ -38,13 +38,13 @@ import UserMenu from './UserMenu.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
 import SessionRow from './SessionRow.vue';
-import { isMacosDesktop, isWindowsDesktop } from '../lib/desktopFlag';
+import { isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
 import { useVibrancy } from '../composables/useVibrancy';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { SESSIONS_EXPAND_BATCH } from '../composables/client/useWorkspaceState';
 import { track } from '../lib/track';
 import type { SessionCreatedSource } from '../../shared/track-events';
-import { Icon, IconButton, Kbd, Menu, MenuItem, Pill, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, IconButton, Kbd, Menu, MenuItem, Pill, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

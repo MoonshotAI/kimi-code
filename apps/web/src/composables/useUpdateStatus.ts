@@ -22,7 +22,7 @@
 
 import { computed, ref, type Ref } from 'vue';
 
-import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from '../lib/storage';
+import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 
 export type UpdateState = 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
 

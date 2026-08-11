@@ -3,11 +3,11 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Markdown } from '@moonshot-ai/web-markdown';
+import { Markdown } from '@moonshot-ai/app-markdown';
 import type { FileData, FilePreviewRequest } from '../types';
-import { copyTextToClipboard } from '../lib/clipboard';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { MAX_HIGHLIGHT_CHARS } from '../lib/diffFullTexts';
-import { Button, Icon, IconButton, PanelHeader, SegmentedControl, Tooltip } from '@moonshot-ai/web-ui';
+import { Button, Icon, IconButton, PanelHeader, SegmentedControl, Tooltip } from '@moonshot-ai/app-ui';
 import HighlightedCode from './HighlightedCode.vue';
 
 const { t } = useI18n();

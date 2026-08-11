@@ -1,7 +1,7 @@
 // apps/web/src/composables/useSlashMenu.ts
 import { nextTick, ref, type Ref } from 'vue';
 import type { AppSkill } from '../api/types';
-import { buildSlashItems, filterCommands, type SlashCommand } from '../lib/slashCommands';
+import { buildSlashItems, filterCommands, type SlashCommand } from '@moonshot-ai/app-core/lib';
 
 export interface SlashMenuDeps {
   /** The live composer text — drives filtering and is rewritten on select. */

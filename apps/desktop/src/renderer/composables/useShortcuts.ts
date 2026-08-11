@@ -21,9 +21,9 @@ import {
   shortcutActionById,
   type ShortcutScope,
 } from '../lib/keymap';
-import { safeGetJson, safeSetJson, STORAGE_KEYS } from '../lib/storage';
+import { safeGetJson, safeSetJson, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import type { ShortcutActionId } from '../../shared/action-ids';
-import { isMacosDesktop } from '../lib/desktopFlag';
+import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 
 /** action id → canonical binding (null = unassigned; absent = default). */
 export type ShortcutOverrides = Record<string, string | null>;

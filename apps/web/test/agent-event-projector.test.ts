@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { classifyFrame } from '@moonshot-ai/web-core/api';
+import { classifyFrame } from '@moonshot-ai/app-core/api';
 import { createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
 
 describe('subagentProgressText', () => {

@@ -6,8 +6,8 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
 import type { ThinkingLevel } from '../../api/types';
-import { formatTokens } from '../../lib/formatTokens';
-import { Dialog } from '@moonshot-ai/web-ui';
+import { formatTokens } from '@moonshot-ai/app-core/lib';
+import { Dialog } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

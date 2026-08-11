@@ -7,7 +7,7 @@
 
 import { readonly, ref, type Ref } from 'vue';
 
-import { isMacosDesktop } from '../lib/desktopFlag';
+import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 
 // Subset of the preload `kimiDesktop` bridge this tracker needs.
 interface VibrancyBridge {

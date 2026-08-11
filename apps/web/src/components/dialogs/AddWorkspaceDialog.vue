@@ -8,7 +8,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FsBrowseEntry, FsBrowseResult } from '../../api/types';
-import { Button, Dialog, Field, Icon, IconButton, Input, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import { Button, Dialog, Field, Icon, IconButton, Input, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

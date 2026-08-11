@@ -35,25 +35,25 @@ import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
-import { openDialogCount } from '@moonshot-ai/web-ui';
+import { openDialogCount } from '@moonshot-ai/app-ui';
 import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
-import { initServerAuth, onAuthRequired } from './lib/serverAuth';
+import { initServerAuth, onAuthRequired } from '@moonshot-ai/app-core/lib';
 import {
   canPickWorkspaceDirectory,
   createAddWorkspaceEntry,
   pickWorkspaceDirectory,
 } from './lib/nativeWorkspacePicker';
 import type { AppConfig, ThinkingLevel } from './api/types';
-import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
+import { commitLevel, effectiveThinkingLevel, segmentsFor } from '@moonshot-ai/app-core/lib';
 import { modelDisplayName, subagentEffortSuffix } from './lib/modelDisplay';
-import { stripSkillPrefix } from './lib/slashCommands';
-import { ActionToast, Icon, IconButton } from '@moonshot-ai/web-ui';
-import { isMacosDesktop, isWindowsDesktop } from './lib/desktopFlag';
+import { stripSkillPrefix } from '@moonshot-ai/app-core/lib';
+import { ActionToast, Icon, IconButton } from '@moonshot-ai/app-ui';
+import { isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
 import WindowsTitleBar from './components/window/WindowsTitleBar.vue';
 import TerminalPanel from './components/terminal/TerminalPanel.vue';
 import TerminalResizeHandle from './components/terminal/TerminalResizeHandle.vue';
-import { selectContentsOf } from './lib/transcriptSelectAll';
+import { selectContentsOf } from '@moonshot-ai/app-core/lib';
 import { useFullscreen } from './composables/useFullscreen';
 import { useNativeTerminal, nativeTerminalDraftKey } from './composables/useNativeTerminal';
 import { runWhenInitialized, useTrayAttention } from './composables/useTrayAttention';
@@ -69,7 +69,7 @@ import {
   useDefaultOpenInTarget,
 } from './lib/nativeOpenIn';
 import { track } from './lib/track';
-import { openUpgrade } from './lib/upgrade';
+import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import { setSessionIntent } from './lib/session-intent';
 import type { SessionCreatedSource } from '../shared/track-events';
 import { isAppActionId, type AppActionId } from '../shared/action-ids';
@@ -2121,7 +2121,7 @@ function openPr(url: string): void {
 /* macOS desktop (hidden title bar): the right panel's header row continues the
    conversation header's 48px top strip, so it joins the window-drag region.
    Interactive controls inside opt out (same pattern as ChatHeader). Cross-
-   component rule (the header is web-ui's PanelHeader), so it lives here. */
+   component rule (the header is app-ui's PanelHeader), so it lives here. */
 .app.macos-desktop .global-preview .ui-panel-header {
   -webkit-app-region: drag;
 }

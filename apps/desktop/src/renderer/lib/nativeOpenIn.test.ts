@@ -9,7 +9,7 @@ import {
   saveDefaultOpenInTarget,
   useDefaultOpenInTarget,
 } from './nativeOpenIn';
-import { STORAGE_KEYS } from './storage';
+import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 
 // Renderer tests run in the node environment, so there is no real `window`
 // or `localStorage`; each test installs just enough of both to stand in for

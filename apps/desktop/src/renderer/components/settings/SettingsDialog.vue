@@ -14,10 +14,10 @@ import ShortcutsPanel from './ShortcutsPanel.vue';
 import ProvidersPanel from './ProvidersPanel.vue';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
 import { canSetDockIconChoice, useDockIconChoice, type DockIconChoice } from '../../lib/dockIconChoice';
-import { logWarn } from '../../lib/log';
+import { logWarn } from '@moonshot-ai/app-core/lib';
 import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
-import { isMacosDesktop } from '../../lib/desktopFlag';
+import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { useVibrancy } from '../../composables/useVibrancy';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
@@ -28,7 +28,7 @@ import PlanUsageCard from './PlanUsageCard.vue';
 import SecondaryModelPicker from './SecondaryModelPicker.vue';
 import PlanUpgradeCard from './PlanUpgradeCard.vue';
 import type { IconName } from '../../lib/icons';
-import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/web-ui';
+import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

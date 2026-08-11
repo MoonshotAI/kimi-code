@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 // ChatPane's import graph reaches markstream (KaTeX worker), which can't load
 // under node — only its props metadata is needed here, so stub Markdown out.
-vi.mock('@moonshot-ai/web-markdown', async () => {
+vi.mock('@moonshot-ai/app-markdown', async () => {
   const vue = await import('vue');
   return {
     Markdown: vue.defineComponent({ name: 'Markdown', setup: () => () => vue.h('div') }),

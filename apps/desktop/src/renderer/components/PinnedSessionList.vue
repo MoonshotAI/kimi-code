@@ -9,11 +9,11 @@
 import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
-import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
-import { SESSION_ROW_DRAG_MIME } from '../lib/pinnedSessions';
-import { loadPinnedCollapsed, savePinnedCollapsed } from '../lib/storage';
+import { moveInOrder, type DropPosition } from '@moonshot-ai/app-core/lib';
+import { SESSION_ROW_DRAG_MIME } from '@moonshot-ai/app-core/lib';
+import { loadPinnedCollapsed, savePinnedCollapsed } from '@moonshot-ai/app-core/lib';
 import SessionRow from './SessionRow.vue';
-import { Icon, IconButton } from '@moonshot-ai/web-ui';
+import { Icon, IconButton } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

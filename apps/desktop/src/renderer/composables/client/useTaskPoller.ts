@@ -5,7 +5,7 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue';
 import { getKimiWebApi } from '../../api';
 import type { AppTask } from '../../api/types';
-import { keepLiveSubagents } from '../../lib/taskMerge';
+import { keepLiveSubagents } from '@moonshot-ai/app-core/lib';
 import type { ExtendedState } from '../useKimiWebClient';
 
 const TASK_OUTPUT_POLL_INTERVAL_MS = 1000;

@@ -13,7 +13,7 @@ import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import { isManagedOAuthProvider, providerModelRows } from '../../lib/providerForm';
 import AddProviderFlow from './AddProviderFlow.vue';
 import ProviderForm from './ProviderForm.vue';
-import { Badge, Button, Icon, Spinner } from '@moonshot-ai/web-ui';
+import { Badge, Button, Icon, Spinner } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 const client = useKimiWebClient();

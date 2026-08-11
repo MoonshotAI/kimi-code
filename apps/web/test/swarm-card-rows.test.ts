@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppSubagentPhase } from '../src/api/types';
 import type { SwarmMember } from '../src/composables/swarmGroups';
-import type { SwarmResult } from '../src/lib/parseSwarmResult';
+import type { SwarmResult } from '@moonshot-ai/app-core/lib';
 import { buildSwarmCardRows, swarmMemberActivity } from '../src/lib/swarmCardRows';
 
 function member(

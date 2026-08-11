@@ -14,7 +14,7 @@
 <script setup lang="ts">
 import { computed, inject, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, StatusDot } from '@moonshot-ai/web-ui';
+import { Icon, StatusDot } from '@moonshot-ai/app-ui';
 import type { ToolCall } from '../../../types';
 import { toolLabel } from '../../../lib/toolMeta';
 import OutputPanel from './OutputPanel.vue';

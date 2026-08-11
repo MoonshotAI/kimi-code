@@ -9,9 +9,9 @@ import { ref, watch, type ComputedRef } from 'vue';
 import { getKimiWebApi } from '../../api';
 import { DaemonApiError } from '../../api/errors';
 import type { AddProviderInput, AppCatalogProvider, AppMessage, AppModel, AppProvider, AppProviderDetail, AppSession, AppSkill, DeleteProviderResult, ImportCatalogProviderInput, ImportCustomRegistryInput, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel, UpdateProviderInput } from '../../api/types';
-import { logError, logWarn } from '../../lib/log';
+import { logError, logWarn } from '@moonshot-ai/app-core/lib';
 import { attachmentsToContent } from '../../lib/attachmentsToContent';
-import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
+import { safeGetString, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import {
   ackThinkingPending,
   defaultThinkingLevelFor,
@@ -19,7 +19,7 @@ import {
   markThinkingPending,
   thinkingLevelForModelSwitch,
   thinkingLevelToConfig,
-} from '../../lib/modelThinking';
+} from '@moonshot-ai/app-core/lib';
 import { beginLocalTurn, settleLocalTurn } from './useWorkspaceState';
 import type { ActivityState } from '../../types';
 import type { ExtendedState, PromptAttachment } from '../useKimiWebClient';

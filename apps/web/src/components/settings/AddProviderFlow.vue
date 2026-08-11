@@ -24,7 +24,7 @@ import {
   Input,
   SegmentedControl,
   Spinner,
-} from '@moonshot-ai/web-ui';
+} from '@moonshot-ai/app-ui';
 
 defineProps<{
   /** Show the unsaved-changes guard bar at the top (shared by both sources). */

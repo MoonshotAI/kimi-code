@@ -8,7 +8,7 @@
 import { computed } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppTask } from '../src/api/types';
-import { createInitialState } from '@moonshot-ai/web-core/api';
+import { createInitialState } from '@moonshot-ai/app-core/api';
 import { useTaskPoller } from '../src/composables/client/useTaskPoller';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 

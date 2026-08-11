@@ -6,7 +6,7 @@
 
 import type { AppSubagentPhase } from '../api/types';
 import type { SwarmMember } from '../composables/swarmGroups';
-import type { SwarmResult, SwarmResultSubagent } from './parseSwarmResult';
+import type { SwarmResult, SwarmResultSubagent } from '@moonshot-ai/app-core/lib';
 
 export interface SwarmCardRow {
   id: string;

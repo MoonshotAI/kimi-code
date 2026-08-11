@@ -9,8 +9,8 @@
 // full REST/WS/console diagnostics never enter the archive.
 
 import { ref, shallowRef } from 'vue';
-import { logError } from '../lib/log';
-import { safeGetString, STORAGE_KEYS } from '../lib/storage';
+import { logError } from '@moonshot-ai/app-core/lib';
+import { safeGetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 
 export type TraceSource = 'rest' | 'ws' | 'client';
 

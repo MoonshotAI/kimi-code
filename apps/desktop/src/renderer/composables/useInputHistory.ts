@@ -19,7 +19,7 @@
 // entry.
 
 import { computed, nextTick, ref, watch, type Ref } from 'vue';
-import { STORAGE_KEYS, safeGetJson, safeSetJson } from '../lib/storage';
+import { STORAGE_KEYS, safeGetJson, safeSetJson } from '@moonshot-ai/app-core/lib';
 
 /** Cap each session's persisted history so storage can't grow without bound. */
 const MAX_HISTORY = 100;

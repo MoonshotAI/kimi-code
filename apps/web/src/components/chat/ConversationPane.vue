@@ -13,13 +13,13 @@ import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
 import TranscriptSearch from './TranscriptSearch.vue';
 import KimiDoodle from '../KimiDoodle.vue';
-import { Icon, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
-import { openUpgrade } from '../../lib/upgrade';
-import { getVisibleWorkspaces } from '../../lib/workspacePicker';
-import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
-import { isMacosDesktop } from '../../lib/desktopFlag';
-import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '../../lib/transcriptSelectAll';
-import { isFindKeyEvent } from '../../lib/transcriptSearch';
+import { Icon, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
+import { openUpgrade } from '@moonshot-ai/app-core/lib';
+import { getVisibleWorkspaces } from '@moonshot-ai/app-core/lib';
+import { safeRemove, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
+import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
+import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '@moonshot-ai/app-core/lib';
+import { isFindKeyEvent } from '@moonshot-ai/app-core/lib';
 import { useComposerAutoFocus } from '../../composables/useComposerAutoFocus';
 import { turnBlocks } from '../chatTurnRendering';
 import type { TurnFileChange } from '../chatTurnRendering';
@@ -470,7 +470,7 @@ function scheduleActiveTocUpdate(): void {
 }
 
 // --- TOC occlusion by wide tables -------------------------------------------
-// Manually widened markdown tables (via the toggle injected by web-markdown's
+// Manually widened markdown tables (via the toggle injected by app-markdown's
 // tableWide.ts, up to --p-table-max) can extend past the TOC rail,
 // which stays anchored to the reading-column edge. While a table actually
 // covers the rail we hide the TOC temporarily so the table stays fully
@@ -2037,7 +2037,7 @@ onMounted(() => {
     updateActiveTocQuery();
     // Table widen/restore toggles change table geometry without a scroll —
     // re-run the TOC occlusion hit test when they fire (event bubbles up from
-    // the table wrapper; see web-markdown's tableWide.ts). Anchor geometry
+    // the table wrapper; see app-markdown's tableWide.ts). Anchor geometry
     // shifts the same way, so the TOC cache goes dirty too.
     panesRef.value?.addEventListener('kimi-table-layout', onTableLayout);
     if (typeof document !== 'undefined') {

@@ -26,8 +26,8 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@moonshot-ai/web-ui';
-import { Markdown } from '@moonshot-ai/web-markdown';
+import { Icon } from '@moonshot-ai/app-ui';
+import { Markdown } from '@moonshot-ai/app-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityRun from './ActivityRun.vue';
 import ToolCall from './ToolCall.vue';

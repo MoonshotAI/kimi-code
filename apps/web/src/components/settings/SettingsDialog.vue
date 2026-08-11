@@ -19,9 +19,9 @@ import type { AppConfig, AppModel, ManagedUserInfo, ManagedUsageResult } from '.
 import PlanUsageCard from './PlanUsageCard.vue';
 import SecondaryModelPicker from './SecondaryModelPicker.vue';
 import PlanUpgradeCard from './PlanUpgradeCard.vue';
-import { logWarn } from '../../lib/log';
+import { logWarn } from '@moonshot-ai/app-core/lib';
 import type { IconName } from '../../lib/icons';
-import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/web-ui';
+import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

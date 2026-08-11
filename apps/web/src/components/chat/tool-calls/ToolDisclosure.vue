@@ -42,7 +42,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, StatusDot, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, StatusDot, Tooltip } from '@moonshot-ai/app-ui';
 
 const props = withDefaults(
   defineProps<{

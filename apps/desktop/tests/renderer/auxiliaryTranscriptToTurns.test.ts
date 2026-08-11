@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentTranscriptSnapshot } from '@moonshot-ai/web-core/transcript';
+import type { AgentTranscriptSnapshot } from '@moonshot-ai/app-core/transcript';
 
 import { auxiliaryTranscriptToTurns } from '../../src/renderer/lib/auxiliaryTranscriptToTurns';
 

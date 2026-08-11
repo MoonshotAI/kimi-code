@@ -11,9 +11,9 @@
      theme, 'hoverspace' boolean on hover, 'click_avator' trigger on click. -->
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useIsDark } from '@moonshot-ai/web-core';
+import { useIsDark } from '@moonshot-ai/app-core';
 import rivUrl from '../assets/mascot/kimi_avatar_default.riv?url';
-import { fireTrigger, setInputValue, type RiveLike } from '../lib/riveInputs';
+import { fireTrigger, setInputValue, type RiveLike } from '@moonshot-ai/app-core/lib';
 
 // Input names inside the asset (from its published strings).
 const THEME_INPUT = 'light/dark';

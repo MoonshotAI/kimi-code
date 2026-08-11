@@ -7,8 +7,8 @@
      flight. -->
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import { openUpgrade } from '../../lib/upgrade';
-import { Button } from '@moonshot-ai/web-ui';
+import { openUpgrade } from '@moonshot-ai/app-core/lib';
+import { Button } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 </script>

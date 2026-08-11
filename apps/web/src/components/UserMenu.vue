@@ -18,9 +18,9 @@ import {
   shouldShowUpgrade,
   usagePercent,
   usageSeverity,
-} from '../lib/planUsage';
-import { openUpgrade } from '../lib/upgrade';
-import { Button, Icon, Menu, MenuItem, Spinner } from '@moonshot-ai/web-ui';
+} from '@moonshot-ai/app-core/lib';
+import { openUpgrade } from '@moonshot-ai/app-core/lib';
+import { Button, Icon, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
 
 const emit = defineEmits<{
   login: [];

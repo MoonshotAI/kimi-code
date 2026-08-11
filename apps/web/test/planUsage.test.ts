@@ -9,7 +9,7 @@ import {
   shouldShowUpgrade,
   usagePercent,
   usageSeverity,
-} from '../src/lib/planUsage';
+} from '@moonshot-ai/app-core/lib';
 
 // Minimal zh-flavoured translator double: records params, renders readable keys.
 const zhStrings: Record<string, string> = {

@@ -10,10 +10,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@moonshot-ai/web-ui';
+import { Icon } from '@moonshot-ai/app-ui';
 import type { FilePreviewRequest, ToolCall } from '../../../types';
-import { basename } from '../../../lib/pathBasename';
-import { parseReadOutput } from '../../../lib/readOutput';
+import { basename } from '@moonshot-ai/app-core/lib';
+import { parseReadOutput } from '@moonshot-ai/app-core/lib';
 import { argFilePath, num, parseArgRecord, pathDirname } from './toolArgs';
 import ToolDisclosure from './ToolDisclosure.vue';
 import HighlightedCode from '../../HighlightedCode.vue';

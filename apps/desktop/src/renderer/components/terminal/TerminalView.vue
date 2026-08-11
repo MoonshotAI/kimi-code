@@ -8,7 +8,7 @@ import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
 import type { Terminal as XTerm, ITheme } from '@xterm/xterm';
 import { computed, nextTick, onMounted, onUnmounted, ref, toRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useIsDark } from '@moonshot-ai/web-core';
+import { useIsDark } from '@moonshot-ai/app-core';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
 import { matchShortcutAction, terminalPassesChordToPty } from '../../composables/useShortcuts';
 

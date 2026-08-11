@@ -21,12 +21,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(ROOT, '..', '..');
 const SRC = path.join(ROOT, 'src');
-// §06 guard also covers the design-system primitives that moved into web-ui.
+// §06 guard also covers the design-system primitives that moved into app-ui.
 // Apps/web keys keep a '' label so the exemption sets below stay keyed to
-// apps/web-relative paths; web-ui files are reported under a 'web-ui/' prefix.
+// apps/web-relative paths; app-ui files are reported under a 'app-ui/' prefix.
 const SCAN_ROOTS = [
   { dir: SRC, label: '' },
-  { dir: path.join(REPO_ROOT, 'packages', 'web-ui', 'src'), label: 'web-ui/' },
+  { dir: path.join(REPO_ROOT, 'packages', 'app-ui', 'src'), label: 'app-ui/' },
 ];
 const STRICT = process.argv.includes('--strict');
 
@@ -60,8 +60,8 @@ const FILE_EXEMPT = new Set(['views/DesignSystemView.vue']);
 // deliberately absent: its work panel stays open over the scrolling
 // transcript, where a live backdrop blur re-samples every frame and janks.
 const GLASS_MENU_EXEMPT = new Set([
-  'web-ui/components/ui/Menu.vue',
-  'web-ui/components/ui/Select.vue',
+  'app-ui/components/ui/Menu.vue',
+  'app-ui/components/ui/Select.vue',
   'components/chat/Composer.vue',
   'components/chat/SlashMenu.vue',
   'components/chat/MentionMenu.vue',

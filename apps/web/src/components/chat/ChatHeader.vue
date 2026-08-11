@@ -5,9 +5,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { copyTextToClipboard } from '../../lib/clipboard';
-import { isMacosDesktop } from '../../lib/desktopFlag';
-import { Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
+import { Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

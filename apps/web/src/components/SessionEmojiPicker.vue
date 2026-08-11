@@ -5,14 +5,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, Menu, MenuItem, useImeComposition } from '@moonshot-ai/web-ui';
+import { Icon, Menu, MenuItem, useImeComposition } from '@moonshot-ai/app-ui';
 import {
   EMOJI_ENTRIES,
   EMOJI_GROUPS,
   pushRecentEmoji,
   searchEmojis,
   type EmojiGroup,
-} from '@moonshot-ai/web-core/lib';
+} from '@moonshot-ai/app-core/lib';
 
 const { t } = useI18n();
 

@@ -1,6 +1,6 @@
 // apps/kimi-web/test/side-chat.test.ts
 import { describe, expect, it, vi } from 'vitest';
-import { createInitialState } from '@moonshot-ai/web-core/api';
+import { createInitialState } from '@moonshot-ai/app-core/api';
 import { useSideChat } from '../src/composables/client/useSideChat';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 

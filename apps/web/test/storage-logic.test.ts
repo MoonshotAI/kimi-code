@@ -15,7 +15,7 @@ import {
   safeRemove,
   safeSetJson,
   safeSetString,
-} from '../src/lib/storage';
+} from '@moonshot-ai/app-core/lib';
 
 function createMemoryStorage(): Storage {
   const data = new Map<string, string>();

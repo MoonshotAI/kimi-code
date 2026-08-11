@@ -28,7 +28,7 @@ Status: Active（自 P1 合并起强制；review 对照本文档执行）
                        │      注入（见 §2.2）              │
                        ▼                                  ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ @moonshot-ai/web-client —— Vue 状态层                                       │
+│ @moonshot-ai/app-client —— Vue 状态层                                       │
 │                                                                            │
 │  stores/   Pinia setup stores（共享状态唯一正本；写路径只走 action）         │
 │            connection · sessions · prompt · approvals · files · workspace │
@@ -40,7 +40,7 @@ Status: Active（自 P1 合并起强制；review 对照本文档执行）
                                        │ depends on
                                        ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ @moonshot-ai/web-core —— 纯逻辑 + 传输（无 DOM 依赖）                        │
+│ @moonshot-ai/app-core —— 纯逻辑 + 传输（无 DOM 依赖）                        │
 │                                                                            │
 │  api/       DaemonKimiWebApi = REST(http) + WS(ws) + wire/mappers          │
 │             + frameClassifier + agentEventProjector（t 注入）+ eventReducer │
@@ -58,8 +58,8 @@ Status: Active（自 P1 合并起强制；review 对照本文档执行）
 │ kimi-code（submodule）：kap-server · agent-core-v2 · sdk                   │
 └────────────────────────────────────────────────────────────────────────────┘
 
-既有旁路（不动）：web-ui（primitives，IconResolverKey 桥到 web-client/icons）
-                 web-i18n（locales + KimiI18nKey）· web-markdown · vite-preset
+既有旁路（不动）：app-ui（primitives，IconResolverKey 桥到 app-client/icons）
+                 app-i18n（locales + KimiI18nKey）· app-markdown · vite-preset
 ```
 
 ### 1.2 运行时数据流
@@ -70,7 +70,7 @@ Status: Active（自 P1 合并起强制；review 对照本文档执行）
 kap-server
   │ WS raw frames
   ▼
-DaemonEventSocket（web-core/api：握手 / 心跳 / 重连 / 订阅 LRU / seq+epoch 光标）
+DaemonEventSocket（app-core/api：握手 / 心跳 / 重连 / 订阅 LRU / seq+epoch 光标）
   │ frameClassifier 分流
   ├─ protocol 帧 → mappers.toAppEvent ─────────┐
   └─ agent 帧   → agentEventProjector（t 注入）─┤ AppEvent[]
@@ -95,17 +95,17 @@ DaemonEventSocket（web-core/api：握手 / 心跳 / 重连 / 订阅 LRU / seq+e
 
 | 代码 | 去向 |
 |---|---|
-| `lib/*` 纯函数（含 `storage`、`desktopFlag`、`log`） | `packages/web-core/src/lib` |
-| 渲染类型（ChatTurn/TurnBlock 等） | `packages/web-core/src/client` |
-| `eventBatcher` / `turnsProjector` / `applyRecordDiff` / `messagesToTurns` / `latestTodos` / `swarmGroups` / `auxiliaryTranscriptToTurns` | `packages/web-core/src/client` |
-| `agentEventProjector` | `packages/web-core/src/api/daemon`（`t` 注入解耦 i18n） |
-| api 壳 | 纯部分（纯 URL builder、`errors`、`types` re-export、wire/mappers）下沉 `packages/web-core/src/api`；`bootstrap` 为 `createKimiWebApi(deps)` 工厂，tracer / credentialStore / identity / mainAgentOnly 全注入。**runtime config 留两端 `src/api/` 接线层**：读 `window` / `import.meta.env` / sessionStorage / 各端 identity 常量的代码不进 web-core |
-| UI 层 composables（`useFilePreview`、`useSlashMenu`、`useMentionMenu`、`useComposerDraft` 等） | `packages/web-client/src/composables` |
-| 状态层（`useKimiWebClient`、`useWorkspaceState`、`client/*`） | `packages/web-client/src/client`（迁移期原样，拆解后逐步清空） |
-| Pinia domain stores | `packages/web-client/src/stores` |
-| `icons.ts` + `icons/kimi/*.svg` | `packages/web-client/src/icons`；两端 vite `iconsDir` 指向包内路径 |
+| `lib/*` 纯函数（含 `storage`、`desktopFlag`、`log`） | `packages/app-core/src/lib` |
+| 渲染类型（ChatTurn/TurnBlock 等） | `packages/app-core/src/client` |
+| `eventBatcher` / `turnsProjector` / `applyRecordDiff` / `messagesToTurns` / `latestTodos` / `swarmGroups` / `auxiliaryTranscriptToTurns` | `packages/app-core/src/client` |
+| `agentEventProjector` | `packages/app-core/src/api/daemon`（`t` 注入解耦 i18n） |
+| api 壳 | 纯部分（纯 URL builder、`errors`、`types` re-export、wire/mappers）下沉 `packages/app-core/src/api`；`bootstrap` 为 `createKimiWebApi(deps)` 工厂，tracer / credentialStore / identity / mainAgentOnly 全注入。**runtime config 留两端 `src/api/` 接线层**：读 `window` / `import.meta.env` / sessionStorage / 各端 identity 常量的代码不进 app-core |
+| UI 层 composables（`useFilePreview`、`useSlashMenu`、`useMentionMenu`、`useComposerDraft` 等） | `packages/app-client/src/composables` |
+| 状态层（`useKimiWebClient`、`useWorkspaceState`、`client/*`） | `packages/app-client/src/client`（迁移期原样，拆解后逐步清空） |
+| Pinia domain stores | `packages/app-client/src/stores` |
+| `icons.ts` + `icons/kimi/*.svg` | `packages/app-client/src/icons`；两端 vite `iconsDir` 指向包内路径 |
 | desktop 专属（`useNativeTerminal`、`useShortcuts`、`lib/keymap`、`lib/track`、`lib/session-intent` 等桥依赖代码） | 留 `apps/desktop/src/renderer` |
-| `ProductTracker` 埋点契约 | `packages/web-client` 定义接口 + no-op 默认；desktop 注入 `lib/track`（IPC）实现，web 注入 no-op |
+| `ProductTracker` 埋点契约 | `packages/app-client` 定义接口 + no-op 默认；desktop 注入 `lib/track`（IPC）实现，web 注入 no-op |
 
 ### 2.2 注入缝（apps → packages，平台差异的唯一通道）
 
@@ -116,7 +116,7 @@ DaemonEventSocket（web-core/api：握手 / 心跳 / 重连 / 订阅 LRU / seq+e
 | identity（clientName/uiMode） | `kimi-code-web` / `web` | `DESKTOP_PRODUCT_NAME` / `DESKTOP_UI_MODE` | `createKimiWebApi` |
 | mainAgentOnly | `false` | `true` | `createKimiWebApi` |
 | t（翻译） | `i18n.global.t` | 同左 | projector / client-core 工厂 |
-| ProductTracker | no-op | `lib/track`（IPC → 主进程遥测） | web-client 接线 |
+| ProductTracker | no-op | `lib/track`（IPC → 主进程遥测） | app-client 接线 |
 | TerminalHooks | no-op | `useNativeTerminal().destroySession` | stores 接线 |
 | SessionIntent | 无 | `lib/session-intent` | sessions store 接线 |
 

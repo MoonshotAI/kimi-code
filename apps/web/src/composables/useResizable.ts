@@ -13,7 +13,7 @@
 // neutral col-resize.
 
 import { computed, onBeforeUnmount, ref, toValue, watch, type MaybeRefOrGetter, type Ref } from 'vue';
-import { safeGetString, safeSetString } from '../lib/storage';
+import { safeGetString, safeSetString } from '@moonshot-ai/app-core/lib';
 
 export interface UseResizableOptions {
   /** localStorage key the chosen width is persisted under. */

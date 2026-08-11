@@ -8,7 +8,7 @@ import ActivityRun from './ActivityRun.vue';
 import TurnFold from './TurnFold.vue';
 import TurnFilesSummary from './TurnFilesSummary.vue';
 import NotificationCard from './NotificationCard.vue';
-import { Markdown } from '@moonshot-ai/web-markdown';
+import { Markdown } from '@moonshot-ai/app-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
 import CronNotice from './CronNotice.vue';
@@ -18,9 +18,9 @@ import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';
 import AttachmentChip from './AttachmentChip.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
-import { Icon, Kbd, Spinner, Button, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, Kbd, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
-import { copyTextToClipboard } from '../../lib/clipboard';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { openFileAttachment } from '../../lib/openFileAttachment';
 import {
   formatDuration,
@@ -1699,7 +1699,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 /* ===================== Wide tables (desktop) ===================== */
 /* Tables stay inside the reading column by default (overflowing content
    scrolls inside the table's own wrapper); the user widens an individual
-   table via the toggle injected by web-markdown's tableWide.ts, which adds
+   table via the toggle injected by app-markdown's tableWide.ts, which adds
    the `md-table-wide` class. 760px corresponds to --p-content-max.
    Container-query conditions cannot reference CSS custom properties
    directly. */

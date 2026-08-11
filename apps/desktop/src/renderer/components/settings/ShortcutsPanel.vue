@@ -11,7 +11,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Button, Icon, IconButton, Kbd } from '@moonshot-ai/web-ui';
+import { Button, Icon, IconButton, Kbd } from '@moonshot-ai/app-ui';
 import {
   bindingFromEvent,
   findConflict,

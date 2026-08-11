@@ -61,7 +61,7 @@ function readStoredCredential(): StoredCredential | undefined {
 /** Fresh module instance per test — the store keeps module-level state. */
 async function loadAuth() {
   vi.resetModules();
-  return import('../src/lib/serverAuth');
+  return import('@moonshot-ai/app-core/lib');
 }
 
 beforeEach(() => {

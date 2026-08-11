@@ -6,7 +6,7 @@
 // the bridge is missing (not desktop) callers hide the entry entirely; this
 // is a desktop-only feature by design (see docs/native-todos.md).
 
-import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from './storage';
+import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { track } from './track';
 import { ref, type Ref } from 'vue';
 

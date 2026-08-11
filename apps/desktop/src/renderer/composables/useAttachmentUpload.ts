@@ -17,7 +17,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { getKimiWebApi } from '../api';
 import { track } from '../lib/track';
-import { partitionDroppedItems } from '../lib/nativeWorkspaceDrop';
+import { partitionDroppedItems } from '@moonshot-ai/app-core/lib';
 
 export interface Attachment {
   /** Unique local id (used as :key) */

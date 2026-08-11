@@ -5,13 +5,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { copyTextToClipboard } from '../../lib/clipboard';
-import { isMacosDesktop } from '../../lib/desktopFlag';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { canOpenInNative, listNativeOpenInApps, openInNativeApp } from '../../lib/nativeOpenIn';
 import { track } from '../../lib/track';
 import OpenInMenu from './OpenInMenu.vue';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
-import { Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import { Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

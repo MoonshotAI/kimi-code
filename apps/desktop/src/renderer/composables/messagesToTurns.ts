@@ -11,7 +11,7 @@
 
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata, SessionPlan } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import { detectShellDanger } from '../lib/shellDanger';
+import { detectShellDanger } from '@moonshot-ai/app-core/lib';
 import {
   parseTaskNotifications,
   taskNotificationFromMetadata,

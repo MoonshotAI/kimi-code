@@ -3,8 +3,8 @@ import {
   TranscriptChannel,
   type AgentTranscriptSnapshot,
   type TranscriptOperation,
-} from '@moonshot-ai/web-core/transcript';
-import type { KimiEventConnection, KimiWebApi } from '@moonshot-ai/web-core/api';
+} from '@moonshot-ai/app-core/transcript';
+import type { KimiEventConnection, KimiWebApi } from '@moonshot-ai/app-core/api';
 
 export interface AuxiliaryTranscriptEntry {
   readonly channel: TranscriptChannel;

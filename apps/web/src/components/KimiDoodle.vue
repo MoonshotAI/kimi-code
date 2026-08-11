@@ -7,7 +7,7 @@
      in their place. -->
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useIsDark } from '@moonshot-ai/web-core';
+import { useIsDark } from '@moonshot-ai/app-core';
 import rivUrl from '../assets/doodle/k3_doodle1.riv?url';
 
 const ready = ref(false);

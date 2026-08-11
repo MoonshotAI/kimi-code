@@ -7,7 +7,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@moonshot-ai/web-ui';
+import { Icon } from '@moonshot-ai/app-ui';
 import type { TaskNotification } from '../../types';
 import {
   notificationStatus,
@@ -15,7 +15,7 @@ import {
   type NotificationStatus,
   type NotificationVariant,
 } from '../../lib/notificationXml';
-import { copyTextToClipboard } from '../../lib/clipboard';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import MessageTime from './MessageTime.vue';
 
 const props = defineProps<{ items: TaskNotification[] }>();

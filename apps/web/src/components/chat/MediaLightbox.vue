@@ -11,14 +11,14 @@
          and registers with the shared dialog stack (openDialogCount) — App's
          side-panel Esc handler and the conversation's Esc-interrupt both defer
          to open overlays, so a plain window-level Esc handler owns the key
-         while the preview is up (same pattern as the web-ui Dialog primitive).
+         while the preview is up (same pattern as the app-ui Dialog primitive).
      Bytes come through AuthMedia so file-store media loads with auth; local
      object URLs (composer drafts) pass through. -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AuthMedia from './AuthMedia.vue';
-import { Icon, Tooltip, openDialogCount } from '@moonshot-ai/web-ui';
+import { Icon, Tooltip, openDialogCount } from '@moonshot-ai/app-ui';
 import { openImagePreview } from '../../lib/mediaPreview';
 import type { ToolMedia } from '../../types';
 

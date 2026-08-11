@@ -2,7 +2,7 @@ import { ref } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
 
 // useFilePreview only needs a `t` pass-through; everything else (createI18n
-// for the transitive web-i18n import) stays real.
+// for the transitive app-i18n import) stays real.
 vi.mock('vue-i18n', async (importActual) => {
   const actual = await importActual<typeof import('vue-i18n')>();
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) };

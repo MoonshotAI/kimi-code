@@ -1,13 +1,13 @@
-// apps/web src/api/bootstrap.ts — composes the DaemonKimiWebApi (web-core) with
+// apps/web src/api/bootstrap.ts — composes the DaemonKimiWebApi (app-core) with
 // the apps/web tracer, credential store, and agent projector, and exposes the
 // shared singleton.
 //
-// This is the only module that knows both sides: web-core's api client and
+// This is the only module that knows both sides: app-core's api client and
 // apps/web's debug/trace + serverAuth + projector. Everything else consumes the
 // composed `api` (or the back-compat `getKimiWebApi()` accessor).
 
-import { DaemonKimiWebApi } from '@moonshot-ai/web-core/api';
-import type { CredentialStore, Tracer } from '@moonshot-ai/web-core/contracts';
+import { DaemonKimiWebApi } from '@moonshot-ai/app-core/api';
+import type { CredentialStore, Tracer } from '@moonshot-ai/app-core/contracts';
 import {
   traceRestFailure,
   traceRestRequest,
@@ -17,7 +17,7 @@ import {
   traceWsOut,
   traceKeyEvent as recordKeyEvent,
 } from '../debug/trace';
-import { getCredential, markAuthRequired } from '../lib/serverAuth';
+import { getCredential, markAuthRequired } from '@moonshot-ai/app-core/lib';
 import { readKimiApiConfig } from './config';
 import { createAgentProjector } from './daemon/agentEventProjector';
 import type { KimiWebApi } from './types';

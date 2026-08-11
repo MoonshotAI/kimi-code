@@ -10,8 +10,8 @@
 
 | 决策点 | 结论 |
 |---|---|
-| Pinia 引入范围 | **全量引入**：web-client 内 domain stores 全部用 Pinia setup store 承载，`useKimiWebClient` facade 降级为兼容聚合层逐步废弃；`apps/web` 与 `apps/desktop` 同步引入 |
-| 共享代码落点 | **两包分工**：纯逻辑进现有 `packages/web-core`；Vue composables / 状态层 / Pinia stores 进新建 `@moonshot-ai/web-client` |
+| Pinia 引入范围 | **全量引入**：app-client 内 domain stores 全部用 Pinia setup store 承载，`useKimiWebClient` facade 降级为兼容聚合层逐步废弃；`apps/web` 与 `apps/desktop` 同步引入 |
+| 共享代码落点 | **两包分工**：纯逻辑进现有 `packages/app-core`；Vue composables / 状态层 / Pinia stores 进新建 `@moonshot-ai/app-client` |
 | 组件化标准落地 | **规范文档 + 示范重构 PR**（1-2 个参照实现），后续 review 对照执行 |
 | 执行顺序 | **先收敛副本，再拆解**——拆解只在唯一正本里做一次 |
 | kimi-code 仓 `apps/kimi-web` 第三副本 | 本计划不动 submodule，冻结处理，处置建议见 §7 |
@@ -41,7 +41,7 @@
 | `composables/useAttachmentUpload.ts` | 42 | `track()` + via 参数 |
 | `composables/useOAuthLoginFlow.ts` | 65 | `track()` oauth 阶段埋点 |
 | `composables/useUpdateStatus.ts` | 31 | `track()` + source 参数 |
-| `api/bootstrap.ts` | 1 | `mainAgentOnly: true`（`DaemonKimiWebApi` 既有选项，web-core `ws.ts:101`） |
+| `api/bootstrap.ts` | 1 | `mainAgentOnly: true`（`DaemonKimiWebApi` 既有选项，app-core `ws.ts:101`） |
 
 **E. 实质分叉（需逐点对齐）**：
 
@@ -75,12 +75,12 @@
 
 ### 1.4 有利条件（已存在的基础）
 
-- `packages/web-core` 已承载 api/reducer/ws/http/mappers 与 `client/createKimiWebClientCore.ts`（per-call reactive、非单例、`t` 注入先例、`install/dispose` 生命周期钩子）；`KimiWebClientFacadeKey.ts` 也在 web-core。peer vue，exports→src 免构建。
-- 测试基础：`apps/web/test/` 8 个（event-batcher / event-reducer / agent-event-projector / workspace-state / task-poller / ws-lifecycle / side-chat / daemon-client），`packages/web-core/test/` 13 个，`apps/desktop/tests/renderer/` 若干。根 `vitest.config.ts` 以 projects 覆盖 `apps/*` 与 `packages/*`，测试随迁后 `pnpm test` 自然跑到。注意 `apps/web/test/event-reducer.test.ts` 与 `web-core/test/eventReducer.test.ts` 疑似重复，P3 时去重。
+- `packages/app-core` 已承载 api/reducer/ws/http/mappers 与 `client/createKimiWebClientCore.ts`（per-call reactive、非单例、`t` 注入先例、`install/dispose` 生命周期钩子）；`KimiWebClientFacadeKey.ts` 也在 app-core。peer vue，exports→src 免构建。
+- 测试基础：`apps/web/test/` 8 个（event-batcher / event-reducer / agent-event-projector / workspace-state / task-poller / ws-lifecycle / side-chat / daemon-client），`packages/app-core/test/` 13 个，`apps/desktop/tests/renderer/` 若干。根 `vitest.config.ts` 以 projects 覆盖 `apps/*` 与 `packages/*`，测试随迁后 `pnpm test` 自然跑到。注意 `apps/web/test/event-reducer.test.ts` 与 `app-core/test/eventReducer.test.ts` 疑似重复，P3 时去重。
 - 两端 `main.ts` 结构一致（i18n / KimiI18nKey / IconResolverKey / facade provide），desktop 仅多 vibrancy 初始化。
 - 图标集合已参数化：两端 vite 配置都用 `kimiRendererViteConfig({ iconsDir })`（vite-preset），仅 `iconsDir` 指向各自目录。
 - 组件复用抽象已正确：tool-calls 注册表（`toolRegistry.ts:24`）+ `ToolDisclosure` 共享壳；`ChatPane` 三处复用。
-- i18n 词条集中在 `packages/web-i18n/src/locales`，双端共享。
+- i18n 词条集中在 `packages/app-i18n/src/locales`，双端共享。
 
 ## 2. 目标 / 非目标
 
@@ -94,7 +94,7 @@
 **非目标**
 
 - kimi-code 仓 `apps/kimi-web` 第三副本的收敛（仅给建议，§7）。
-- chat 组件下沉 `packages/web-ui`（组件共享是下一步独立计划；本计划只动 ts 层与必要的组件 import 适配）。
+- chat 组件下沉 `packages/app-ui`（组件共享是下一步独立计划；本计划只动 ts 层与必要的组件 import 适配）。
 - 主进程安全加固（CSP / openExternal 白名单 / 死 channel 清理）——独立小 PR，见附录 A，可与本计划穿插。
 - 任何功能新增与视觉变更（§5 明确列出的行为对齐点除外）。
 
@@ -120,7 +120,7 @@
                        │      注入（见表 3.3）              │
                        ▼                                  ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ @moonshot-ai/web-client —— Vue 状态层（新建包）                              │
+│ @moonshot-ai/app-client —— Vue 状态层（新建包）                              │
 │                                                                            │
 │  stores/   Pinia setup stores（共享状态唯一正本；写路径只走 action）         │
 │            connection · sessions · prompt · approvals · files · workspace │
@@ -136,7 +136,7 @@
                                        │ depends on
                                        ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ @moonshot-ai/web-core —— 纯逻辑 + 传输（既有包扩展；无 DOM 依赖）            │
+│ @moonshot-ai/app-core —— 纯逻辑 + 传输（既有包扩展；无 DOM 依赖）            │
 │                                                                            │
 │  api/       DaemonKimiWebApi = REST(http) + WS(ws) + wire/mappers          │
 │             + frameClassifier + agentEventProjector（t 注入）+ eventReducer │
@@ -154,8 +154,8 @@
 │ kimi-code（submodule，本计划不动）：kap-server · agent-core-v2 · sdk        │
 └────────────────────────────────────────────────────────────────────────────┘
 
-既有旁路（不动）：web-ui（primitives，IconResolverKey 桥到 web-client/icons）
-                 web-i18n（locales + KimiI18nKey）· web-markdown · vite-preset
+既有旁路（不动）：app-ui（primitives，IconResolverKey 桥到 app-client/icons）
+                 app-i18n（locales + KimiI18nKey）· app-markdown · vite-preset
 ```
 
 ### 3.2 运行时数据流（server → 屏幕 → server）
@@ -166,7 +166,7 @@
   kap-server
     │ WS raw frames
     ▼
-  DaemonEventSocket（web-core/api：握手 / 心跳 / 重连 / 订阅 LRU / seq+epoch 光标）
+  DaemonEventSocket（app-core/api：握手 / 心跳 / 重连 / 订阅 LRU / seq+epoch 光标）
     │ frameClassifier 分流
     ├─ protocol 帧 → mappers.toAppEvent ─────────┐
     └─ agent 帧   → agentEventProjector（t 注入）─┤ AppEvent[]
@@ -201,7 +201,7 @@
 | identity（clientName/uiMode） | `kimi-code-web` / `web` | `DESKTOP_PRODUCT_NAME` / `DESKTOP_UI_MODE` | `createKimiWebApi` |
 | mainAgentOnly | `false` | `true` | `createKimiWebApi` |
 | t（翻译） | `i18n.global.t` | 同左 | projector / client-core 工厂 |
-| ProductTracker | no-op | `lib/track`（IPC → 主进程遥测） | web-client 接线 |
+| ProductTracker | no-op | `lib/track`（IPC → 主进程遥测） | app-client 接线 |
 | TerminalHooks | no-op | `useNativeTerminal().destroySession` | stores 接线 |
 | SessionIntent | 无 | `lib/session-intent` | sessions store 接线 |
 
@@ -215,17 +215,17 @@
 
 | 代码 | 去向 |
 |---|---|
-| `lib/*` 纯函数（含 `storage`、`desktopFlag`、`log`） | `packages/web-core/src/lib`（exports `./lib` 已存在） |
-| 渲染类型 `types.ts`（ChatTurn/TurnBlock 等） | `packages/web-core/src/client` |
-| `eventBatcher` / `turnsProjector` / `applyRecordDiff` / `messagesToTurns` / `latestTodos` / `swarmGroups` / `auxiliaryTranscriptToTurns` | `packages/web-core/src/client` |
-| `agentEventProjector` | `packages/web-core/src/api/daemon`（`t` 注入解耦 i18n） |
-| api 壳（`bootstrap`/`config`/`devBackend`/`errors`/`index`/`types` re-export） | `packages/web-core/src/api`；bootstrap 改 `createKimiWebApi(deps)` 工厂，tracer / credentialStore / identity / mainAgentOnly 全注入 |
-| UI 层 composables（`useFilePreview`、`useSlashMenu`、`useMentionMenu`、`useComposerDraft` 等） | `packages/web-client/src/composables` |
-| 状态层（`useKimiWebClient`、`useWorkspaceState`、`client/*`） | `packages/web-client/src/client`（迁移期原样） |
-| Pinia domain stores | `packages/web-client/src/stores` |
-| `icons.ts` + `icons/kimi/*.svg` | `packages/web-client/src/icons`；两端 vite `iconsDir` 指向包内路径 |
+| `lib/*` 纯函数（含 `storage`、`desktopFlag`、`log`） | `packages/app-core/src/lib`（exports `./lib` 已存在） |
+| 渲染类型 `types.ts`（ChatTurn/TurnBlock 等） | `packages/app-core/src/client` |
+| `eventBatcher` / `turnsProjector` / `applyRecordDiff` / `messagesToTurns` / `latestTodos` / `swarmGroups` / `auxiliaryTranscriptToTurns` | `packages/app-core/src/client` |
+| `agentEventProjector` | `packages/app-core/src/api/daemon`（`t` 注入解耦 i18n） |
+| api 壳（`bootstrap`/`config`/`devBackend`/`errors`/`index`/`types` re-export） | `packages/app-core/src/api`；bootstrap 改 `createKimiWebApi(deps)` 工厂，tracer / credentialStore / identity / mainAgentOnly 全注入 |
+| UI 层 composables（`useFilePreview`、`useSlashMenu`、`useMentionMenu`、`useComposerDraft` 等） | `packages/app-client/src/composables` |
+| 状态层（`useKimiWebClient`、`useWorkspaceState`、`client/*`） | `packages/app-client/src/client`（迁移期原样） |
+| Pinia domain stores | `packages/app-client/src/stores` |
+| `icons.ts` + `icons/kimi/*.svg` | `packages/app-client/src/icons`；两端 vite `iconsDir` 指向包内路径 |
 | desktop 专属（§1.1 清单） | 留 `apps/desktop/src/renderer` |
-| `ProductTracker` 埋点契约 | `packages/web-client` 定义接口 + no-op 默认；desktop 注入 `lib/track`（IPC）实现，web 注入 no-op |
+| `ProductTracker` 埋点契约 | `packages/app-client` 定义接口 + no-op 默认；desktop 注入 `lib/track`（IPC）实现，web 注入 no-op |
 
 **平台分叉规则**（替代"整目录 re-copy 保留分叉块"）：
 
@@ -251,10 +251,10 @@
 | PR | 阶段 | 规模 | 依赖 |
 |---|---|---|---|
 | P0 | 架构与组件化规范文档 | 小 | — |
-| P1 | lib 纯函数下沉 web-core | 中 | P0 |
+| P1 | lib 纯函数下沉 app-core | 中 | P0 |
 | P2 | 渲染类型 + 热路径纯模块下沉 | 中 | P1 |
 | P3 | agentEventProjector 下沉（i18n 解耦）+ api 壳合并 | 中 | P1 |
-| P4 | 新建 `@moonshot-ai/web-client` + ProductTracker 契约 + 无分叉 composables 迁移 | 中 | P2 |
+| P4 | 新建 `@moonshot-ai/app-client` + ProductTracker 契约 + 无分叉 composables 迁移 | 中 | P2 |
 | P5 | icons 资产与注册表统一 | 小 | P4 |
 | P6 | telemetry/平台分叉 composables 迁移 | 中 | P4 |
 | P7a | client 状态模块迁移（task-poller/side-chat/aux/model-provider） | 中 | P6 |
@@ -281,34 +281,34 @@
 - **store 规范**（Pinia）：全部 setup store 形态；state 不直接导出可变引用，消费端只读；写路径只走 action，**禁用 `$patch` 整表替换**（沿用 `applyRecordDiff` 逐 key 写回纪律）；高频 delta 路径（eventBatcher → reducer → 写回）不进 devtools 时间旅行，store 创建时 `devtools: false` 或按 action 粒度规避。
 - 无 changeset（纯文档）。
 
-### P1 — lib 纯函数下沉 web-core
+### P1 — lib 纯函数下沉 app-core
 
 - 范围：`lib/` 下 B 类（仅头注释）+ A 类纯函数 + `storage.ts` / `desktopFlag.ts` / `log.ts`（D 类并集）+ 随附测试（`searchHighlight.test`、`formatTokens.test`、`modelThinking.test`、`icons.test` 除外——icons 在 P5）。`nativeWorkspaceDrop.ts` 先核实是否触碰 `window.kimiDesktop`：无桥依赖则同批下沉，有则归 P6。
-- 步骤：文件移入 `packages/web-core/src/lib/`（`git mv` 保留历史）→ `lib/index.ts` 补导出 → 两端 import 批量改 `@moonshot-ai/web-core/lib` → 删双份 → 头注释统一改为新路径。
+- 步骤：文件移入 `packages/app-core/src/lib/`（`git mv` 保留历史）→ `lib/index.ts` 补导出 → 两端 import 批量改 `@moonshot-ai/app-core/lib` → 删双份 → 头注释统一改为新路径。
 - `storage.ts` 取并集时保留全部 `kimi-web.*` key 名不变。
 - `log.ts` 前缀统一 `[kimi-code]`（行为对齐点，写入 PR 描述）。
 - 验收：标准模板。
 
 ### P2 — 渲染类型 + 热路径纯模块下沉
 
-- 范围：`src/types.ts`（仅头注释差异）→ `packages/web-core/src/client/types.ts`；`composables/client/{eventBatcher,turnsProjector,applyRecordDiff}.ts`、`composables/{messagesToTurns,latestTodos,swarmGroups}.ts`、`lib/auxiliaryTranscriptToTurns.ts` → `packages/web-core/src/client/`。
+- 范围：`src/types.ts`（仅头注释差异）→ `packages/app-core/src/client/types.ts`；`composables/client/{eventBatcher,turnsProjector,applyRecordDiff}.ts`、`composables/{messagesToTurns,latestTodos,swarmGroups}.ts`、`lib/auxiliaryTranscriptToTurns.ts` → `packages/app-core/src/client/`。
 - `messagesToTurns` 等对 `../types` 与 `../lib/*` 的 import 改为包内相对路径（P1 已就位）。
-- 测试随迁：`apps/web/test/event-batcher.test.ts` → `packages/web-core/test/`。
+- 测试随迁：`apps/web/test/event-batcher.test.ts` → `packages/app-core/test/`。
 - `applyRecordDiff.ts` 头注释的 "Pure logic (no Vue)" 声明保留。
 - 验收：标准模板。
 
 ### P3 — agentEventProjector 下沉 + api 壳合并
 
 - projector 的 4 处 `i18n.global.t`（`agentEventProjector.ts:28, 216, 1125, 1294`）改为构造注入 `t`（沿用 `CreateCoreDeps.t` 模式，`createKimiWebClientCore.ts:35` 为先例）；`createAgentProjector(deps)` 签名扩展，两端 bootstrap 传 `i18n.global.t`。注意：注入 `t` 只影响之后投影的新事件，**已写入 state 的投影文本不会随切语言重算**——"切语言后已投影文本不更新"的正经修法是存 translation key/params 渲染时翻译，或切语言时重投影相关事件；P3 不承诺修复，列为已知问题待后续阶段评估（避免执行者误以为已解决）。
-- projector 移入 `packages/web-core/src/api/daemon/`；测试随迁（`agent-event-projector.test.ts`、`ws-lifecycle.test.ts`、`daemon-client.test.ts`），与 web-core 既有 `eventReducer.test.ts` 去重。
-- api 壳合并：`bootstrap.ts` 改 `createKimiWebApi(deps: { tracer, credentialStore, identity, mainAgentOnly, t })` 工厂放 web-core；两端各自保留 ~20 行接线（tracer 来自 app 侧 `debug/trace`，identity 各自常量——web `kimi-code-web`/`web`、desktop `shared/identity`）。`mainAgentOnly` 保持各端自选（desktop `true`、web 不传），写入归属矩阵。
+- projector 移入 `packages/app-core/src/api/daemon/`；测试随迁（`agent-event-projector.test.ts`、`ws-lifecycle.test.ts`、`daemon-client.test.ts`），与 app-core 既有 `eventReducer.test.ts` 去重。
+- api 壳合并：`bootstrap.ts` 改 `createKimiWebApi(deps: { tracer, credentialStore, identity, mainAgentOnly, t })` 工厂放 app-core；两端各自保留 ~20 行接线（tracer 来自 app 侧 `debug/trace`，identity 各自常量——web `kimi-code-web`/`web`、desktop `shared/identity`）。`mainAgentOnly` 保持各端自选（desktop `true`、web 不传），写入归属矩阵。
 - 完成后两端 `src/api/` 仅剩 config/identity 接线和 re-export，或整目录删除。
 - 验收：标准模板 + 外部 server 模式冒烟。
 
-### P4 — 新建 `@moonshot-ai/web-client` + 无分叉 composables 迁移
+### P4 — 新建 `@moonshot-ai/app-client` + 无分叉 composables 迁移
 
-- 包骨架：`packages/web-client/package.json`（`exports` → `./src/index.ts` 等子路径、peer `vue`、deps `@moonshot-ai/web-core` / `@moonshot-ai/web-i18n`）、`tsconfig.json`、纳入根 `vitest.config.ts` 的 packages include 列表与 `pnpm-workspace.yaml`（`packages/*` 已覆盖，无需改）。**两端 `package.json` 必须声明 `@moonshot-ai/web-client` workspace 依赖**（pnpm 包隔离，不声明则 app 内 import 不可解析）；P8 的 `pinia` 同理（apps 直接 `import { createPinia }` 就要声明，或经 web-client re-export）。
-- **约束条目随阶段更新**：本 PR 同步更新根 `AGENTS.md`「目录地图」与 apps/web 依赖约束（放行 `@moonshot-ai/web-client`），不等 P18。
+- 包骨架：`packages/app-client/package.json`（`exports` → `./src/index.ts` 等子路径、peer `vue`、deps `@moonshot-ai/app-core` / `@moonshot-ai/app-i18n`）、`tsconfig.json`、纳入根 `vitest.config.ts` 的 packages include 列表与 `pnpm-workspace.yaml`（`packages/*` 已覆盖，无需改）。**两端 `package.json` 必须声明 `@moonshot-ai/app-client` workspace 依赖**（pnpm 包隔离，不声明则 app 内 import 不可解析）；P8 的 `pinia` 同理（apps 直接 `import { createPinia }` 就要声明，或经 app-client re-export）。
+- **约束条目随阶段更新**：本 PR 同步更新根 `AGENTS.md`「目录地图」与 apps/web 依赖约束（放行 `@moonshot-ai/app-client`），不等 P18。
 - **注入缝先行**：迁移列表中直接 import app 侧 api 单例（`getKimiWebApi`）或 `vue-i18n` 的文件（如 `useTerminal`、`useFilePreview`）不是纯移动——先按 §3.3 落 api/t 构造注入，再迁；迁入前逐文件核实运行时依赖。
 - 定义 `ProductTracker` 契约（`src/contracts.ts`：`track(event, payload)` + no-op 默认实现），先不接线。
 - 迁移 A/B/C 类 composables（逻辑零变化）：`useIsMobile`、`useViewportWidth`、`useFollowScroll`、`useResizable`（web 侧测试随迁）、`useTerminal`、`useConfirmDialog`、`useComposerDraft`、`useComposerAutoFocus`、`useInputHistory`、`useSlashMenu`、`useMentionMenu`、`useSidebarLayout`、`useFilePreview`、`useDetailPanel`。
@@ -317,9 +317,9 @@
 
 ### P5 — icons 资产与注册表统一
 
-- `apps/desktop/src/renderer/icons/kimi/*.svg` 与 `apps/web/src/icons/kimi/*.svg` 合并（desktop 多 `keyboard.svg`）移入 `packages/web-client/src/icons/kimi/`。
-- 两端 vite 配置 `iconsDir` 改指包内路径（注意：`import.meta.resolve('@moonshot-ai/web-client/package.json')` 对带 exports map 的包会抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`——web-client 需显式 export `./package.json`，或改用 `createRequire` / workspace 相对 URL，执行时确定写法）。
-- `lib/icons.ts` 取并集（含 desktop 的 eye/eye-off/keyboard）下沉 `packages/web-client/src/icons/`；`icons.test.ts` 随迁。
+- `apps/desktop/src/renderer/icons/kimi/*.svg` 与 `apps/web/src/icons/kimi/*.svg` 合并（desktop 多 `keyboard.svg`）移入 `packages/app-client/src/icons/kimi/`。
+- 两端 vite 配置 `iconsDir` 改指包内路径（注意：`import.meta.resolve('@moonshot-ai/app-client/package.json')` 对带 exports map 的包会抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`——app-client 需显式 export `./package.json`，或改用 `createRequire` / workspace 相对 URL，执行时确定写法）。
+- `lib/icons.ts` 取并集（含 desktop 的 eye/eye-off/keyboard）下沉 `packages/app-client/src/icons/`；`icons.test.ts` 随迁。
 - 验收：标准模板 + **全量图标视觉验证**（DesignSystemView §02 图标目录页逐排核对）。
 
 ### P6 — telemetry / 平台分叉 composables 迁移
@@ -339,17 +339,17 @@
 
 ### P7b — 两大单例迁移（副本消灭点）
 
-- `useWorkspaceState.ts`、`useKimiWebClient.ts` 原样移入 `packages/web-client/src/client/`。
+- `useWorkspaceState.ts`、`useKimiWebClient.ts` 原样移入 `packages/app-client/src/client/`。
 - native terminal teardown 改注入：`useKimiWebClient` 新增 deps `onSessionDestroyed(sessionId)` / `onWorkspaceDestroyed(workspaceId, root)`；desktop 在接线处注入 `useNativeTerminal` 实现，web no-op。
 - `session-intent`（desktop-only lib）作为可选 deps 注入；`track` 改走 `ProductTracker`。
 - 品牌字符串统一：`[kimi-code]` 日志前缀、`workspaceName` 兜底 `kimi-code`（行为对齐点）。
-- 两端 `main.ts` 的 facade provide 改为从 `@moonshot-ai/web-client` 导入；`apps/web/src/composables/` 与 `apps/desktop/src/renderer/composables/` 至此只剩 desktop 专属文件。
+- 两端 `main.ts` 的 facade provide 改为从 `@moonshot-ai/app-client` 导入；`apps/web/src/composables/` 与 `apps/desktop/src/renderer/composables/` 至此只剩 desktop 专属文件。
 - 建议 commit 拆分：① `git mv` + 包内接线（纯移动）② 两端 import 切换 ③ 注入点接线，便于 review。
 - 验收：标准模板 + 会话全链路冒烟（新建/选择/归档/删除会话、工作区增删、prompt/审批/问题、断线重连，两端各一遍）。
 
 ### P8 — Pinia 引入 + 首个 domain store
 
-- `packages/web-client` deps 加 `pinia`；两端 `main.ts` `app.use(createPinia())`。两端 `package.json` 声明 `pinia`（或经 web-client re-export `createPinia`，执行时定）；同步更新 `apps/web/AGENTS.md` 的 no-Pinia 约定与根 `AGENTS.md` 相关条目——约束实际变化随本阶段生效，不等 P18。
+- `packages/app-client` deps 加 `pinia`；两端 `main.ts` `app.use(createPinia())`。两端 `package.json` 声明 `pinia`（或经 app-client re-export `createPinia`，执行时定）；同步更新 `apps/web/AGENTS.md` 的 no-Pinia 约定与根 `AGENTS.md` 相关条目——约束实际变化随本阶段生效，不等 P18。
 - 首个 store 建议 `useSessionsStore`（sessions 列表 + activeSessionId + select/archive/delete action）：自洽、消费方多（Sidebar/App/ConversationPane），能立刻开始消 drilling。
 - facade 对应字段改为 store 委托（getter 转发），导出数开始下降；store 外不再暴露该切片可变引用——写入纪律开始由模块边界强制。
 - store 规范随此 PR 落入规范文档 §store 章节（P0 已写初稿，此 PR 按实践校准）。
@@ -388,12 +388,12 @@
 
 - `ConversationPane.vue:534-1690` 的 ~1150 行滚动/跟随/pin/TOC/session-settle 状态机抽为 `useConversationScroll`（与既有 `useFollowScroll` 合并或取代，执行时定边界）。
 - `App.vue:996-1108` 的 slash 命令解释器下沉 `lib/slashCommands.ts`（纯函数化 + 单测）；9 个 dialog 可见性状态收一个 composable。
-- `ServerAuthDialog.vue` 补 i18n（`web-i18n` locales 双端补词条）。
+- `ServerAuthDialog.vue` 补 i18n（`app-i18n` locales 双端补词条）。
 - 验收：标准模板 + 滚动行为专项回归（跟随/钉住/折叠/TOC 锚点/Esc-undo）。
 
 ### P18 — 收尾：约定核对
 
-- 根 `AGENTS.md`：「开发顺序」「双仓工作流 - web 改动同步」「目录地图」核对补齐为 packages 正本模式；删"同步副本"描述（web-client 依赖放行与 Pinia 约定已分别在 P4 / P8 随阶段更新，本阶段只做一致性核对与补漏）。
+- 根 `AGENTS.md`：「开发顺序」「双仓工作流 - web 改动同步」「目录地图」核对补齐为 packages 正本模式；删"同步副本"描述（app-client 依赖放行与 Pinia 约定已分别在 P4 / P8 随阶段更新，本阶段只做一致性核对与补漏）。
 - `apps/desktop/docs/native-todos.md`：重写为"平台分叉已收编为包内注入/分支，剩余 desktop 专属实现清单"。
 - `apps/web/AGENTS.md`（如适用）：核对 P4/P8 已更新的条目无遗漏。
 - 无 changeset（文档）。
@@ -413,7 +413,7 @@
 
 ## 7. kimi-code 仓 `apps/kimi-web` 处置建议（不在本计划执行范围）
 
-kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 submodule。本计划完成（P7b）后，建议在 kimi-code 仓另立计划：其 `apps/kimi-web` 切换为消费 `@moonshot-ai/web-client` / `web-core`（需要 kimi-code 仓把这两个包纳入其 workspace 或发布渠道），或确认废弃删除。在此之前，kimi-code 仓对 `apps/kimi-web` 的任何修改与本仓无关、不回迁。
+kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 submodule。本计划完成（P7b）后，建议在 kimi-code 仓另立计划：其 `apps/kimi-web` 切换为消费 `@moonshot-ai/app-client` / `app-core`（需要 kimi-code 仓把这两个包纳入其 workspace 或发布渠道），或确认废弃删除。在此之前，kimi-code 仓对 `apps/kimi-web` 的任何修改与本仓无关、不回迁。
 
 ## 附录 A：可穿插的独立小 PR（不阻塞主线）
 
@@ -429,12 +429,12 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 
 - 产物：`docs/specs/2026-08-01-renderer-architecture.md`（目标架构、归属矩阵、注入缝、平台分叉规则、组件化标准、store 规范、迁移期纪律、PR 验收模板）。
 - 文档引用的反例已在代码中逐一核实：四个裸字符串 provide key（`pinScroll` / `resolveImage` / `resolveAgentTaskId` / `resolveSwarmMembers`）、`MobileSwitcherSheet` 复制 `SessionRow`、`ServerAuthDialog` 硬编码字符串。
-- 2026-08-05 按 Codex review（#184，7 条 P2）修订总计划与规范：① AGENTS.md / apps/web 约定的更新从 P18 拆到约束实际变化的阶段（P4 放行 web-client 依赖、P8 解除 no-Pinia），P18 降为一致性核对；② P3 删除"t 注入顺带修复切语言不更新"的过度承诺（注入只影响新事件，正经修法是存 key/params 或重投影，列为已知问题）；③ P4 补"注入缝先行"（`useTerminal`/`useFilePreview` 等依赖 app api 单例或 vue-i18n，非纯移动）与两端 package.json 必须声明 web-client/pinia；④ P5 修正 iconsDir 推导建议（exports map 下 `import.meta.resolve('…/package.json')` 会抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`，需显式 export）；⑤ spec 归属矩阵澄清 config 只下沉纯 builder，runtime config 留两端接线层；⑥ 台账 P1 条目在代码 PR 合并前标「进行中」，避免后续执行者误判基线。
+- 2026-08-05 按 Codex review（#184，7 条 P2）修订总计划与规范：① AGENTS.md / apps/web 约定的更新从 P18 拆到约束实际变化的阶段（P4 放行 app-client 依赖、P8 解除 no-Pinia），P18 降为一致性核对；② P3 删除"t 注入顺带修复切语言不更新"的过度承诺（注入只影响新事件，正经修法是存 key/params 或重投影，列为已知问题）；③ P4 补"注入缝先行"（`useTerminal`/`useFilePreview` 等依赖 app api 单例或 vue-i18n，非纯移动）与两端 package.json 必须声明 app-client/pinia；④ P5 修正 iconsDir 推导建议（exports map 下 `import.meta.resolve('…/package.json')` 会抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`，需显式 export）；⑤ spec 归属矩阵澄清 config 只下沉纯 builder，runtime config 留两端接线层；⑥ 台账 P1 条目在代码 PR 合并前标「进行中」，避免后续执行者误判基线。
 - 无 changeset（纯文档）。
 
 ### P1 — 🚧 进行中（2026-08-05；代码在 stacked PR #185，#185 合并后本条转「已完成」）
 
-- 完成：32 个 lib 纯函数模块下沉 `packages/web-core/src/lib/`（git mv 自 desktop 副本，头注释统一为新路径）；9 个测试迁入 `packages/web-core/test/`；两端 135 个文件 import 改指 `@moonshot-ai/web-core/lib`；web 侧副本删除。
+- 完成：32 个 lib 纯函数模块下沉 `packages/app-core/src/lib/`（git mv 自 desktop 副本，头注释统一为新路径）；9 个测试迁入 `packages/app-core/test/`；两端 135 个文件 import 改指 `@moonshot-ai/app-core/lib`；web 侧副本删除。
 - **与计划的偏差（实测驱动，§1.1 的分类未考虑依赖方向）**：
   - 依赖 `src/types`（P2 才动）→ 并入 P2：`parseDiff`、`diffLines`、`diffFullTexts`、`toolDiff`、`notificationXml`、`swarmCardRows`（后者依赖 `composables/swarmGroups`）。
   - 运行时依赖 app 侧 api 单例（`getKimiWebApi`）→ P3 工厂化后处理：`openFileAttachment`、`mediaPreview`（含 `.css`）。
@@ -442,9 +442,10 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
   - `icons.ts` / `icons.test.ts`：按计划留 P5。
 - **测试随迁的实际口径**：`searchHighlight.test` / `formatTokens.test` 实测为纯 vitest 用例（计划括号标注除外），已随迁合并去重；`shellDanger.test` / `transcriptSelectAll.test` 双份内容相同，合并为一份；desktop 独有的 `nativeWorkspaceDrop` / `planUsage` / `log` / `riveInputs` / `transcriptSearch` 测试一并迁入。`modelThinking.test` 实测 import `useModelProviderState` / `useKimiWebClient`（计划除外它的原因成立），滞留两端、仅改 import 路径，P7 后清理。
 - **storage 并集**：`openInLastTarget`（web `OpenInMenu` 在用）与 `openInDefaultTarget`（desktop `nativeOpenIn` 在用）并存；全部 `kimi-web.*` key 名不变，两端零行为变化。
-- **web-core package.json** 新增 `shiki` peer + dev 依赖（`codeLanguage` 仅类型引用 `BundledLanguage`，与 vue 同模式）。
+- **app-core package.json** 新增 `shiki` peer + dev 依赖（`codeLanguage` 仅类型引用 `BundledLanguage`，与 vue 同模式）。
 - `nativeWorkspaceDrop` 实测桥门控、无桥惰性，按 P1 允许口径同批下沉。
 - **坑**：desktop 主进程有自己的 `src/main/log.ts`，与 renderer `lib/log.ts` 同名——批量改写 import 时勿误扫 `src/main/`（本次误改已全部还原并验证）。
-- **合入 main（2026-08-05，#178/#182/#183）的冲突处置**：冲突均为 import 块——保留 main 的新 import、路径改指包。main 对已下沉 lib 模块的修改经 rename-merge 自动落进 web-core 副本（mergeWorkspaces / modelThinking / storage / nativeWorkspaceDrop 已逐一 diff 核实零丢失）。main 新增的 `lib/rootKey.ts`（mergeWorkspaces 的依赖）与 `mergeWorkspaces.test.ts` 一并下沉 web-core；`apps/web/test/log.test.ts` 与 web-core 侧重复已删除。main 还新增了双份 `lib/rootKey.ts`（已收编）、`components/sessionRowStatus.ts` 与 `lib/providerForm.ts`（web 侧新增）——后者两个是 P2+ 待收编的新共享副本。
+- **合入 main（2026-08-05，#178/#182/#183）的冲突处置**：冲突均为 import 块——保留 main 的新 import、路径改指包。main 对已下沉 lib 模块的修改经 rename-merge 自动落进 app-core 副本（mergeWorkspaces / modelThinking / storage / nativeWorkspaceDrop 已逐一 diff 核实零丢失）。main 新增的 `lib/rootKey.ts`（mergeWorkspaces 的依赖）与 `mergeWorkspaces.test.ts` 一并下沉 app-core；`apps/web/test/log.test.ts` 与 app-core 侧重复已删除。main 还新增了双份 `lib/rootKey.ts`（已收编）、`components/sessionRowStatus.ts` 与 `lib/providerForm.ts`（web 侧新增）——后者两个是 P2+ 待收编的新共享副本。
 - 验收：`pnpm test` 2414 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅（合入 main 后复测全绿）；双端发消息冒烟未跑（需人工补）。
+- **包改名（2026-08-05，随本 PR 落地）**：共享包与 desktop 共用，"web-" 前缀名不副实——`@moonshot-ai/{web-core,web-ui,web-markdown,web-i18n}` → `app-{core,ui,markdown,i18n}`，目录 `packages/web-*` 同步改 `packages/app-*`；计划中的 `web-client` 以 `app-client` 落地；`vite-preset` 不动；app 包名 `kimi-code-web` / `kimi-code-app` 不动（AGENTS.md 硬约束）。历史 plan/spec 文档保留旧名不改。改名后复测全绿（test 2414 / typecheck / lint / build）。注意根 `vitest.config.ts` 的 packages include 是花括号写法，批量 sed 会漏，需手改。
 - 无 changeset（纯重构）。

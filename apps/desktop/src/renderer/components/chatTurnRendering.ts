@@ -9,7 +9,7 @@ import { normalizeToolName } from '../lib/toolMeta';
 
 // Shared 1024-based token formatter (lib/formatTokens); re-exported so the
 // existing ChatPane import keeps working.
-export { formatTokens } from '../lib/formatTokens';
+export { formatTokens } from '@moonshot-ai/app-core/lib';
 
 /** Whole-second duration, `37s` / `1m37s` / `6m` / `1h4m` — the only
     user-visible duration vocabulary: floored to whole seconds (never a

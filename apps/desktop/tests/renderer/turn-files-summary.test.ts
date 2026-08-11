@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 // ChatPane's import graph reaches markstream (KaTeX worker), which can't load
 // under node — only its props metadata is needed here, so stub Markdown out.
-vi.mock('@moonshot-ai/web-markdown', async () => {
+vi.mock('@moonshot-ai/app-markdown', async () => {
   const vue = await import('vue');
   return {
     Markdown: vue.defineComponent({ name: 'Markdown', setup: () => () => vue.h('div') }),
@@ -12,7 +12,7 @@ vi.mock('@moonshot-ai/web-markdown', async () => {
 });
 
 // The summary only needs a `t` pass-through; everything else (createI18n for
-// the transitive web-i18n import) stays real.
+// the transitive app-i18n import) stays real.
 vi.mock('vue-i18n', async (importActual) => {
   const actual = await importActual<typeof import('vue-i18n')>();
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) };

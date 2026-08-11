@@ -11,12 +11,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@moonshot-ai/web-ui';
+import { Icon } from '@moonshot-ai/app-ui';
 import type { DiffViewLine, FilePreviewRequest, ToolCall } from '../../../types';
 import { diffStats } from '../../../lib/diffLines';
 import { buildEditDiffLines, buildWriteContent } from '../../../lib/toolDiff';
 import { normalizeToolName } from '../../../lib/toolMeta';
-import { basename } from '../../../lib/pathBasename';
+import { basename } from '@moonshot-ai/app-core/lib';
 import { argFilePath, parseArgRecord, pathDirname } from './toolArgs';
 import ToolDisclosure from './ToolDisclosure.vue';
 import HighlightedCode from '../../HighlightedCode.vue';

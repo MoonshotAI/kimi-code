@@ -5,8 +5,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
-import { formatTokens } from '../../lib/formatTokens';
-import { Dialog, Icon, IconButton, Input, Kbd, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import { formatTokens } from '@moonshot-ai/app-core/lib';
+import { Dialog, Icon, IconButton, Input, Kbd, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

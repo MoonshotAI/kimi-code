@@ -16,9 +16,9 @@ import QuestionCard from './QuestionCard.vue';
 import ApprovalCard from './ApprovalCard.vue';
 import TasksPane from './TasksPane.vue';
 import TodoCard from './TodoCard.vue';
-import { Button, Icon, Pill } from '@moonshot-ai/web-ui';
+import { Button, Icon, Pill } from '@moonshot-ai/app-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
-import { formatTokens } from '../../lib/formatTokens';
+import { formatTokens } from '@moonshot-ai/app-core/lib';
 import { formatDuration } from '../chatTurnRendering';
 
 const props = defineProps<{

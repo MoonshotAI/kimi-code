@@ -19,12 +19,12 @@ import {
   effortLabel,
   modelThinkingAvailability,
   segmentsFor,
-} from '../../lib/modelThinking';
+} from '@moonshot-ai/app-core/lib';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
-import { logWarn } from '../../lib/log';
-import { formatTokens } from '../../lib/formatTokens';
-import { Badge, Button, Icon, Input, SegmentedControl } from '@moonshot-ai/web-ui';
+import { logWarn } from '@moonshot-ai/app-core/lib';
+import { formatTokens } from '@moonshot-ai/app-core/lib';
+import { Badge, Button, Icon, Input, SegmentedControl } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 

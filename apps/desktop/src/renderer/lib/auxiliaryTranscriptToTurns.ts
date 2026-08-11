@@ -3,8 +3,8 @@ import type {
   TranscriptAttachment,
   TranscriptTask,
   TranscriptTurn,
-} from '@moonshot-ai/web-core/transcript';
-import type { AppMessage, AppMessageContent } from '@moonshot-ai/web-core/api';
+} from '@moonshot-ai/app-core/transcript';
+import type { AppMessage, AppMessageContent } from '@moonshot-ai/app-core/api';
 
 import { messagesToTurns, normalizeToolOutput } from '../composables/messagesToTurns';
 import { TASK_NOTIFICATION_METADATA_KEY } from './notificationXml';

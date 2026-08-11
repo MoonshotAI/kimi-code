@@ -80,6 +80,18 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../../kimi-code/packages/agent-core-v2
+      '@moonshot-ai/app-core':
+        specifier: workspace:*
+        version: link:../../packages/app-core
+      '@moonshot-ai/app-i18n':
+        specifier: workspace:*
+        version: link:../../packages/app-i18n
+      '@moonshot-ai/app-markdown':
+        specifier: workspace:*
+        version: link:../../packages/app-markdown
+      '@moonshot-ai/app-ui':
+        specifier: workspace:*
+        version: link:../../packages/app-ui
       '@moonshot-ai/kap-server':
         specifier: workspace:^
         version: link:../../kimi-code/packages/kap-server
@@ -92,18 +104,6 @@ importers:
       '@moonshot-ai/vite-preset':
         specifier: workspace:*
         version: link:../../packages/vite-preset
-      '@moonshot-ai/web-core':
-        specifier: workspace:*
-        version: link:../../packages/web-core
-      '@moonshot-ai/web-i18n':
-        specifier: workspace:*
-        version: link:../../packages/web-i18n
-      '@moonshot-ai/web-markdown':
-        specifier: workspace:*
-        version: link:../../packages/web-markdown
-      '@moonshot-ai/web-ui':
-        specifier: workspace:*
-        version: link:../../packages/web-ui
       '@rive-app/canvas':
         specifier: 2.38.5
         version: 2.38.5
@@ -176,18 +176,18 @@ importers:
       '@fontsource-variable/jetbrains-mono':
         specifier: ^5.2.8
         version: 5.2.8
-      '@moonshot-ai/web-core':
+      '@moonshot-ai/app-core':
         specifier: workspace:*
-        version: link:../../packages/web-core
-      '@moonshot-ai/web-i18n':
+        version: link:../../packages/app-core
+      '@moonshot-ai/app-i18n':
         specifier: workspace:*
-        version: link:../../packages/web-i18n
-      '@moonshot-ai/web-markdown':
+        version: link:../../packages/app-i18n
+      '@moonshot-ai/app-markdown':
         specifier: workspace:*
-        version: link:../../packages/web-markdown
-      '@moonshot-ai/web-ui':
+        version: link:../../packages/app-markdown
+      '@moonshot-ai/app-ui':
         specifier: workspace:*
-        version: link:../../packages/web-ui
+        version: link:../../packages/app-ui
       '@rive-app/canvas':
         specifier: 2.38.5
         version: 2.38.5
@@ -766,30 +766,15 @@ importers:
         specifier: 0.25.10
         version: 0.25.10
 
-  packages/vite-preset:
-    devDependencies:
-      '@vitejs/plugin-vue':
-        specifier: ^5.2.4
-        version: 5.2.4(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))(vue@3.5.39(typescript@6.0.2))
-      typescript:
-        specifier: 6.0.2
-        version: 6.0.2
-      unplugin-icons:
-        specifier: ^23.0.0
-        version: 23.0.1(@vue/compiler-sfc@3.5.39)
-      vite:
-        specifier: ^6.3.3
-        version: 6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
-      vitest:
-        specifier: 4.1.4
-        version: 4.1.4(@types/node@24.13.3)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  packages/web-core:
+  packages/app-core:
     dependencies:
       '@moonshot-ai/transcript':
         specifier: workspace:^
         version: link:../../kimi-code/packages/transcript
     devDependencies:
+      shiki:
+        specifier: ^4.3.0
+        version: 4.3.1
       typescript:
         specifier: 6.0.2
         version: 6.0.2
@@ -803,7 +788,7 @@ importers:
         specifier: ~3.2.0
         version: 3.2.9(typescript@6.0.2)
 
-  packages/web-i18n:
+  packages/app-i18n:
     dependencies:
       vue-i18n:
         specifier: ^11.4.5
@@ -822,17 +807,17 @@ importers:
         specifier: ~3.2.0
         version: 3.2.9(typescript@6.0.2)
 
-  packages/web-markdown:
+  packages/app-markdown:
     dependencies:
-      '@moonshot-ai/web-core':
+      '@moonshot-ai/app-core':
         specifier: workspace:*
-        version: link:../web-core
-      '@moonshot-ai/web-i18n':
+        version: link:../app-core
+      '@moonshot-ai/app-i18n':
         specifier: workspace:*
-        version: link:../web-i18n
-      '@moonshot-ai/web-ui':
+        version: link:../app-i18n
+      '@moonshot-ai/app-ui':
         specifier: workspace:*
-        version: link:../web-ui
+        version: link:../app-ui
       katex:
         specifier: ^0.17.0
         version: 0.17.0
@@ -865,11 +850,11 @@ importers:
         specifier: ~3.2.0
         version: 3.2.9(typescript@6.0.2)
 
-  packages/web-ui:
+  packages/app-ui:
     dependencies:
-      '@moonshot-ai/web-i18n':
+      '@moonshot-ai/app-i18n':
         specifier: workspace:*
-        version: link:../web-i18n
+        version: link:../app-i18n
     devDependencies:
       typescript:
         specifier: 6.0.2
@@ -880,6 +865,24 @@ importers:
       vue-tsc:
         specifier: ~3.2.0
         version: 3.2.9(typescript@6.0.2)
+
+  packages/vite-preset:
+    devDependencies:
+      '@vitejs/plugin-vue':
+        specifier: ^5.2.4
+        version: 5.2.4(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))(vue@3.5.39(typescript@6.0.2))
+      typescript:
+        specifier: 6.0.2
+        version: 6.0.2
+      unplugin-icons:
+        specifier: ^23.0.0
+        version: 23.0.1(@vue/compiler-sfc@3.5.39)
+      vite:
+        specifier: ^6.3.3
+        version: 6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
+      vitest:
+        specifier: 4.1.4
+        version: 4.1.4(@types/node@24.13.3)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))
 
 packages:
 

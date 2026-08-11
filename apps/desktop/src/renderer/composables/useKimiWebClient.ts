@@ -10,20 +10,20 @@ import {
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
   type DropPosition,
-} from '../lib/workspaceOrder';
-import { logError, logWarn } from '../lib/log';
+} from '@moonshot-ai/app-core/lib';
+import { logError, logWarn } from '@moonshot-ai/app-core/lib';
 import { track } from '../lib/track';
-import { mergeWorkspaces } from '../lib/mergeWorkspaces';
-import { basename } from '../lib/pathBasename';
+import { mergeWorkspaces } from '@moonshot-ai/app-core/lib';
+import { basename } from '@moonshot-ai/app-core/lib';
 import { sessionRowStatus } from '../components/sessionRowStatus';
-import { workspaceRootKey } from '../lib/rootKey';
-import { mergeSnapshotMessages } from '../lib/snapshotMessages';
-import { mergeSnapshotSubagents } from '../lib/taskMerge';
-import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
-import { detectShellDanger } from '../lib/shellDanger';
+import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
+import { mergeSnapshotMessages } from '@moonshot-ai/app-core/lib';
+import { mergeSnapshotSubagents } from '@moonshot-ai/app-core/lib';
+import { createCoalescedAsyncRunner } from '@moonshot-ai/app-core/lib';
+import { detectShellDanger } from '@moonshot-ai/app-core/lib';
 import { buildDiffLines, buildVerbatimDiffLines } from '../lib/diffLines';
 import type { DiffFullTexts } from '../lib/diffFullTexts';
-import { ackThinkingPending, foldDaemonThinkingLevel } from '../lib/modelThinking';
+import { ackThinkingPending, foldDaemonThinkingLevel } from '@moonshot-ai/app-core/lib';
 import {
   loadPinnedSessions,
   loadUnread,
@@ -35,14 +35,14 @@ import {
   saveUnread,
   saveWorkspaceOrder,
   STORAGE_KEYS,
-} from '../lib/storage';
+} from '@moonshot-ai/app-core/lib';
 import {
   insertPinnedAt,
   mergePinnedOrder,
   partitionByPinned,
   pinSessionId,
   unpinSessionId,
-} from '../lib/pinnedSessions';
+} from '@moonshot-ai/app-core/lib';
 import {
   coalesceAppRenderEvents,
   createEventBatcher,
@@ -51,7 +51,7 @@ import {
   type PendingAppEvent,
 } from './client/eventBatcher';
 import { applyRecordDiff } from './client/applyRecordDiff';
-import { useAppearance } from '@moonshot-ai/web-core';
+import { useAppearance } from '@moonshot-ai/app-core';
 import { useNotification, shouldNotifyCompletion } from './client/useNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
@@ -100,7 +100,7 @@ import {
   shallowEqualArray,
   type CompactionStatus,
   type KimiClientState,
-} from '@moonshot-ai/web-core/api';
+} from '@moonshot-ai/app-core/api';
 
 import { createTurnsProjector } from './client/turnsProjector';
 import { latestTodos } from './latestTodos';
@@ -140,10 +140,10 @@ const GOAL_MODE_STORAGE_KEY = STORAGE_KEYS.goalMode;
 const SESSION_NOT_FOUND_CODE = 40401;
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 
-// Appearance types + logic live in @moonshot-ai/web-core; re-exported here so
+// Appearance types + logic live in @moonshot-ai/app-core; re-exported here so
 // existing `import type { ColorScheme } from './useKimiWebClient'` callers
 // keep working.
-export type { ColorScheme, FontScale } from '@moonshot-ai/web-core';
+export type { ColorScheme, FontScale } from '@moonshot-ai/app-core';
 
 // The code-font setting was removed with its UI (b8a9e83). Clear the old
 // persisted key so users who once picked a font aren't frozen on it forever.

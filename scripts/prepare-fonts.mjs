@@ -5,7 +5,7 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { compress } from 'woff2-encoder';
 
-const FONT_DIR = fileURLToPath(new URL('../packages/web-ui/src/assets/fonts/', import.meta.url));
+const FONT_DIR = fileURLToPath(new URL('../packages/app-ui/src/assets/fonts/', import.meta.url));
 const FONT_SOURCES = [
   {
     name: 'Noto Sans SC Variable',
@@ -30,7 +30,7 @@ const FONT_SOURCES = [
   },
 ];
 const LOCK_DIR = fileURLToPath(
-  new URL('../packages/web-ui/src/assets/fonts/.font-preparation.lock', import.meta.url),
+  new URL('../packages/app-ui/src/assets/fonts/.font-preparation.lock', import.meta.url),
 );
 const LOCK_STALE_MS = 10 * 60 * 1000;
 const LOCK_WAIT_MS = 2 * 60 * 1000;
@@ -40,7 +40,7 @@ function sha256(data) {
 }
 
 function fontPath(font) {
-  return fileURLToPath(new URL(`../packages/web-ui/src/assets/fonts/${font.output}`, import.meta.url));
+  return fileURLToPath(new URL(`../packages/app-ui/src/assets/fonts/${font.output}`, import.meta.url));
 }
 
 async function hasPreparedFont(font) {

@@ -12,7 +12,7 @@ import { getKimiWebApi } from '../../api';
 import { i18n } from '../../i18n';
 import { useConfirmDialog } from '../useConfirmDialog';
 import { isDaemonApiError } from '../../api/errors';
-import { SERVER_AUTH_UNAUTHORIZED_CODE, isPageTokenMismatchError, isPlaceholderSessionUsage, toAppSessionFromV2 } from '@moonshot-ai/web-core/api';
+import { SERVER_AUTH_UNAUTHORIZED_CODE, isPageTokenMismatchError, isPlaceholderSessionUsage, toAppSessionFromV2 } from '@moonshot-ai/app-core/api';
 import type {
   AppConfig,
   AppInFlightTurn,
@@ -32,18 +32,18 @@ import {
   safeRemove,
   saveWorkspaceNameOverrides,
   STORAGE_KEYS,
-} from '../../lib/storage';
-import { isDesktop } from '../../lib/desktopFlag';
-import { logWarn } from '../../lib/log';
+} from '@moonshot-ai/app-core/lib';
+import { isDesktop } from '@moonshot-ai/app-core/lib';
+import { logWarn } from '@moonshot-ai/app-core/lib';
 import { parseDiff } from '../../lib/parseDiff';
-import { workspaceRootKey } from '../../lib/rootKey';
-import { pathRelativeTo } from '../../lib/pathRelativeTo';
+import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
+import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
 import { buildFullDiffTexts, type DiffFullTexts } from '../../lib/diffFullTexts';
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
-import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
-import { ackThinkingPending, markThinkingPending } from '../../lib/modelThinking';
+import { readSessionIdFromLocation, sessionUrl } from '@moonshot-ai/app-core/lib';
+import { ackThinkingPending, markThinkingPending } from '@moonshot-ai/app-core/lib';
 import { attachmentsToContent } from '../../lib/attachmentsToContent';
-import type { SessionUrlMode } from '../../lib/sessionRoute';
+import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import type {
   ActivityState,
   ConversationStatus,

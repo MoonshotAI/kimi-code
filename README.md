@@ -119,7 +119,7 @@ OAuth 授权完成页唤起桌面端窗口（登录态由 daemon 轮询完成，
 
 - `apps/desktop`：Electron 桌面端（`kimi-code-app`）
 - `apps/web`：浏览器 Web UI（`kimi-code-web`）
-- `packages/*`：web 共享包（web-core / web-i18n / web-markdown / web-ui / vite-preset）
+- `packages/*`：web 共享包（app-core / app-i18n / app-markdown / app-ui / vite-preset）
 - `kimi-code/`：核心仓 submodule（CLI / server / agent / packages）
 - `KIMI CODE LOGO/`：品牌设计源文件（SVG/PNG），下游图标资源由 `pnpm build:icons` 生成
 - `scripts/`：字体准备（`prepare-fonts.mjs`）、品牌图标生成（`build-brand-icons.mjs`）、web 产物同步（`sync-web-to-kimi-code.mjs`）等

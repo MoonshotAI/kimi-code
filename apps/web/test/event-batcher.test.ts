@@ -9,7 +9,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { createInitialState, reduceAppEvent, type KimiClientState } from '@moonshot-ai/web-core/api';
+import { createInitialState, reduceAppEvent, type KimiClientState } from '@moonshot-ai/app-core/api';
 import type {
   AppEvent,
   AppMessage,

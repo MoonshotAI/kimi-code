@@ -26,10 +26,10 @@ import type {
   AppTask,
 } from '../types';
 import { i18n } from '../../i18n';
-import { logError } from '../../lib/log';
+import { logError } from '@moonshot-ai/app-core/lib';
 import { toolLabel, toolSummary } from '../../lib/toolMeta';
-import { toAppMessageContent } from '@moonshot-ai/web-core/api';
-import type { AgentProjector, ProjectMeta, WireMessageContent } from '@moonshot-ai/web-core/api';
+import { toAppMessageContent } from '@moonshot-ai/app-core/api';
+import type { AgentProjector, ProjectMeta, WireMessageContent } from '@moonshot-ai/app-core/api';
 
 // Subagent turns share the parent session id: their turn / step / delta / tool
 // frames stream over the SAME session channel, each tagged with the subagent's
@@ -494,7 +494,7 @@ function buildUsageSnapshot(state: SessionState): AppSessionUsage {
 // AgentProjector
 // ---------------------------------------------------------------------------
 
-// ProjectMeta + AgentProjector contracts live in @moonshot-ai/web-core/api
+// ProjectMeta + AgentProjector contracts live in @moonshot-ai/app-core/api
 // (imported above); this is the apps/web implementation (i18n + toolMeta).
 
 export function createAgentProjector(): AgentProjector {

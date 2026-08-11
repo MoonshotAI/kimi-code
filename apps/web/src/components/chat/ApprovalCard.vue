@@ -4,8 +4,8 @@ import { computed, onMounted, onUnmounted, onUpdated, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock, FilePreviewRequest } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
-import { Markdown } from '@moonshot-ai/web-markdown';
-import { Badge, Button, Icon, IconButton, Spinner, openDialogCount, useImeComposition } from '@moonshot-ai/web-ui';
+import { Markdown } from '@moonshot-ai/app-markdown';
+import { Badge, Button, Icon, IconButton, Spinner, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';
 import HighlightedCode from '../HighlightedCode.vue';
 
 const props = defineProps<{

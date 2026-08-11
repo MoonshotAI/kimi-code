@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Badge, PanelHeader } from '@moonshot-ai/web-ui';
+import { Badge, PanelHeader } from '@moonshot-ai/app-ui';
 
 import { useFollowScroll } from '../../composables/useFollowScroll';
 import type { AgentMember, ChatTurn, FilePreviewRequest, ToolMedia } from '../../types';

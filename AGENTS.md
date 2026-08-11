@@ -10,7 +10,7 @@
 ## 硬约束
 
 - **依赖方向 `code-app → kimi-code` 单向**：desktop 只经 `@moonshot-ai/*` 包名 import kimi-code 的 packages 源码，禁止跨包相对路径 import；`kimi-code` 不得 import `code-app`。
-- `apps/web` 只依赖 `@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` 共享包，不直接 import kimi-code 的包。
+- `apps/web` 只依赖 `@moonshot-ai/{app-core,app-i18n,app-markdown,app-ui}` 共享包，不直接 import kimi-code 的包。
 - **不改包名**：`kimi-code-web`、`kimi-code-app`。
 - **两端逐步分叉是既定方向**：desktop 的原生功能（`window.kimiDesktop` 桥接）只在 `apps/desktop` 实现，web 保留原 daemon 实现、不回填；原生路径必须带无桥降级（探测不到桥时回退旧实现）。分叉清单在 `apps/desktop/docs/native-todos.md`——改两端共有的文件前先查它，手动同步副本时保留 desktop 侧的分叉块。
 - **开发顺序**：两端共有的 UI 改动优先在 `apps/desktop` 开发，完成后再同步到 `apps/web`（desktop 专属原生功能除外，见上条）。
@@ -27,7 +27,7 @@
 
 - `apps/desktop`：Electron 壳（`kimi-code-app`）；简介见 `apps/desktop/README.md`，原生功能分叉清单见 `apps/desktop/docs/native-todos.md`。新测试：主进程进 `tests/main/`，renderer 进 `tests/renderer/`。
 - `apps/web`：浏览器 Web UI（`kimi-code-web`，Vue 3 + Vite + vue-i18n）。dev 时 Vite 把 `/api/v1`（REST + WS）代理到 `KIMI_SERVER_URL`（默认 `http://127.0.0.1:58627`）。
-- `packages/*`：`@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` + `vite-preset`（exports→src，被 apps/web 与 desktop renderer 复用）；共享字体产物在 `web-ui/src/assets/fonts`（gitignored），由 `scripts/prepare-fonts.mjs` 自动准备。
+- `packages/*`：`@moonshot-ai/{app-core,app-i18n,app-markdown,app-ui}` + `vite-preset`（exports→src，被 apps/web 与 desktop renderer 复用）；共享字体产物在 `app-ui/src/assets/fonts`（gitignored），由 `scripts/prepare-fonts.mjs` 自动准备。
 - `kimi-code/`：git submodule（核心仓）。`kimi-code/packages/*` 提供 `kap-server`、`agent-core-v2`、`kimi-code-sdk` 等源码。
 - `scripts/sync-web-to-kimi-code.mjs`：`apps/web/dist` → `<kimi-code checkout>/apps/kimi-code/dist-web`（`KIMI_CODE_REPO` 必传，指定目标 checkout）。
 - `KIMI CODE LOGO/` + `scripts/build-brand-icons.mjs`：品牌源文件与 desktop 图标资源的生成脚本（`pnpm build:icons`）；`apps/desktop/build/` 的图标与 desktop 组件内联品牌标是产物，勿手改。**web 品牌已分叉**：`apps/web` 的侧栏 / onboarding / favicon 用回旧版小蓝标，不由该脚本生成（脚本刻意不再写 apps/web），勿用机器人标冲掉。

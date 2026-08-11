@@ -20,7 +20,7 @@ import {
   validateProviderForm,
   type ProviderFormState,
 } from '../../lib/providerForm';
-import { Banner, Button, Icon, IconButton, Input, Select } from '@moonshot-ai/web-ui';
+import { Banner, Button, Icon, IconButton, Input, Select } from '@moonshot-ai/app-ui';
 
 const props = defineProps<{
   mode: 'add' | 'edit';
@@ -445,7 +445,7 @@ function removeModelRow(index: number): void {
 .pf-key-wrap { position: relative; }
 .pf-key-wrap :deep(.ui-input) { padding-right: calc(var(--icon-button-sm) + var(--space-2)); }
 .pf-key-eye { position: absolute; right: var(--space-1); top: 50%; transform: translateY(-50%); }
-/* Same label styling as web-ui's Field, plus a required marker. */
+/* Same label styling as app-ui's Field, plus a required marker. */
 .pf-field-label {
   font-family: var(--font-ui);
   font-size: var(--text-sm);

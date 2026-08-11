@@ -8,9 +8,9 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
-import { copyTextToClipboard } from '../lib/clipboard';
-import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
-import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/web-core/lib';
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
+import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/app-core/lib';
 import SessionEmojiPicker from './SessionEmojiPicker.vue';
 import { sessionRowStatus } from './sessionRowStatus';
 
@@ -120,7 +120,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', closePicker);
 });
 
-// Emoji picker — picking rewrites the title's leading emoji cluster (web-core
+// Emoji picker — picking rewrites the title's leading emoji cluster (app-core
 // splitSessionEmoji) through the ordinary rename path.
 const emojiSplit = computed(() => splitSessionEmoji(props.session.title));
 /** Title text after the emoji button — the stored separator + text, byte-for-byte. */

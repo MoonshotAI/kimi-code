@@ -4,7 +4,7 @@
      vocabulary (never hardcoded characters), colored by state — keeps the
      two lists visually identical. -->
 <script setup lang="ts">
-import { Icon, StatusDot } from '@moonshot-ai/web-ui';
+import { Icon, StatusDot } from '@moonshot-ai/app-ui';
 
 export type StatusGlyphStatus = 'pending' | 'run' | 'done' | 'fail';
 

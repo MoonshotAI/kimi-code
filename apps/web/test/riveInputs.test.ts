@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { findInput, fireTrigger, setInputValue, type RiveLike } from '../src/lib/riveInputs';
+import { findInput, fireTrigger, setInputValue, type RiveLike } from '@moonshot-ai/app-core/lib';
 
 function fakeRive(inputsByMachine: Record<string, { name: string; value?: unknown; fire?: () => void }[]>): RiveLike {
   return {

@@ -5,8 +5,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
-import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX } from '../../lib/slashCommands';
-import { formatTokens } from '../../lib/formatTokens';
+import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX } from '@moonshot-ai/app-core/lib';
+import { formatTokens } from '@moonshot-ai/app-core/lib';
 import type { IconName } from '../../lib/icons';
 import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView, ToolMedia } from '../../types';
@@ -18,7 +18,7 @@ import {
   isThinkingOn,
   modelThinkingAvailability,
   segmentsFor,
-} from '../../lib/modelThinking';
+} from '@moonshot-ai/app-core/lib';
 import { useInputHistory } from '../../composables/useInputHistory';
 import { useSlashMenu } from '../../composables/useSlashMenu';
 import { useMentionMenu } from '../../composables/useMentionMenu';
@@ -27,12 +27,12 @@ import { useAttachmentUpload, type Attachment } from '../../composables/useAttac
 import { matchBinding } from '../../lib/keymap';
 import { resolvedBinding } from '../../composables/useShortcuts';
 import { openFileAttachment } from '../../lib/openFileAttachment';
-import { openUpgrade } from '../../lib/upgrade';
+import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
 import AttachmentChip from './AttachmentChip.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';
-import { Button, ContextRing, Icon, IconButton, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/web-ui';
+import { Button, ContextRing, Icon, IconButton, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -1861,7 +1861,7 @@ function selectModel(modelId: string): void {
 /* Send button — circular icon. Always "send"; while running it enqueues
    (handled upstream). Interrupt is a separate Stop button so the two are never
    confused. Fill/icon/shadow run on the dedicated --color-send-* tokens (the
-   production kimiwork neutral recipe, see web-ui style.css). */
+   production kimiwork neutral recipe, see app-ui style.css). */
 .send {
   width: var(--composer-send-size);
   height: var(--composer-send-size);
@@ -2508,7 +2508,7 @@ function selectModel(modelId: string): void {
   width: 34px;
   height: 19px;
   border-radius: 999px;
-  /* Colors mirror the design-system Switch (web-ui Switch.vue): a track that
+  /* Colors mirror the design-system Switch (app-ui Switch.vue): a track that
      stays visible on the menu surface in dark mode, and an always-white knob. */
   background: var(--color-line-strong);
   position: relative;

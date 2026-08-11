@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSwarmResult } from '../src/lib/parseSwarmResult';
+import { parseSwarmResult } from '@moonshot-ai/app-core/lib';
 
 describe('parseSwarmResult', () => {
   it('returns null when the payload is not an agent_swarm_result', () => {

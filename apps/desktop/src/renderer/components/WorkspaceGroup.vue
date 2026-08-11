@@ -9,8 +9,8 @@ import { computed, ref, type ComponentPublicInstance, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceGroup, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
-import { SESSION_ROW_DRAG_MIME } from '../lib/pinnedSessions';
-import { Icon, IconButton, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
+import { SESSION_ROW_DRAG_MIME } from '@moonshot-ai/app-core/lib';
+import { Icon, IconButton, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
