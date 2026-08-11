@@ -22,7 +22,11 @@
      stamps, so throttled tabs, session switches and remounts cannot corrupt
      it. History turns read the span straight from the server stamps. The fold
      state is a plain component ref — nothing persists, switching sessions
-     resets to folded. -->
+     resets to folded. Folded bodies UNMOUNT once the collapse transition
+     ends — a long-lived window must not carry every settled turn's component
+     tree (transcript find already skips collapsed bodies via the inert
+     filter, so nothing observable changes); expanding remounts closed and
+     flips open a frame later so the grid-rows animation still plays. -->
 <script setup lang="ts">
 import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -97,6 +101,47 @@ const phase = computed<'live' | 'parked' | 'settled'>(() => {
 const open = ref(false);
 const effectiveOpen = computed(() => streaming.value || open.value);
 
+// A folded body UNMOUNTS instead of idling in the DOM: in a long-lived
+// window every settled turn's markdown/tool component tree would otherwise
+// stay mounted and reactive forever, and every transcript-wide re-render
+// walks that ever-growing tree. Transcript find already skips collapsed
+// bodies (the [inert] filter in transcriptSearch), so unmounting changes
+// nothing observable. The body mounts closed and flips open a frame later so
+// the grid-rows transition still plays; on close it unmounts once the
+// collapse transition has ended.
+const bodyMounted = ref(effectiveOpen.value);
+const bodyOpen = ref(effectiveOpen.value);
+let unmountTimer: ReturnType<typeof setTimeout> | null = null;
+
+watch(effectiveOpen, (now) => {
+  if (now) {
+    if (unmountTimer !== null) {
+      clearTimeout(unmountTimer);
+      unmountTimer = null;
+    }
+    if (bodyMounted.value) {
+      bodyOpen.value = true;
+      return;
+    }
+    bodyMounted.value = true;
+    // Flip the class one frame after mounting closed, or the 0fr→1fr
+    // transition never runs on a fresh mount.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        bodyOpen.value = true;
+      });
+    });
+    return;
+  }
+  bodyOpen.value = false;
+  // Timer instead of transitionend: reduced-motion kills the transition, so
+  // the event may never fire. 200ms = --duration-base (160ms) + slack.
+  unmountTimer = setTimeout(() => {
+    unmountTimer = null;
+    bodyMounted.value = false;
+  }, 200);
+});
+
 const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
 const headEl = ref<HTMLElement | null>(null);
 
@@ -112,7 +157,10 @@ function stopTick(): void {
     tick = null;
   }
 }
-onUnmounted(stopTick);
+onUnmounted(() => {
+  stopTick();
+  if (unmountTimer !== null) clearTimeout(unmountTimer);
+});
 
 watch(
   phase,
@@ -211,7 +259,7 @@ function isRunStreaming(block: { items: { sourceIndex: number; kind?: string; du
       <span class="tf-sum" :title="label">{{ label }}</span>
       <Icon class="tf-car" name="chevron-right" size="sm" aria-hidden="true" />
     </button>
-    <div class="tf-body" :class="{ open: effectiveOpen }" :inert="!effectiveOpen">
+    <div v-if="bodyMounted" class="tf-body" :class="{ open: bodyOpen }" :inert="!effectiveOpen">
       <div class="tf-body-inner">
         <template v-for="(blk, bi) in items" :key="renderBlockKey(blk, bi)">
           <ThinkingBlock
