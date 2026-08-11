@@ -124,7 +124,11 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   ): Promise<void> {
     await this.ready;
     if (this.disposed) return;
-    const updatedAt = opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now();
+    // An explicit patch.updatedAt always wins (fork inherits the source's
+    // recency); otherwise management writes (touchUpdatedAt: false — rename,
+    // archive/restore) keep the current value so listings don't reorder.
+    const updatedAt =
+      patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
     this.data = { ...this.data, ...patch, updatedAt };
     await this.store.set(this.scope, META_KEY, this.data);
     if (this.disposed) return;
@@ -135,11 +139,14 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   }
 
   async setTitle(title: string): Promise<void> {
-    await this.update({ title, isCustomTitle: true });
+    await this.update({ title, isCustomTitle: true }, { touchUpdatedAt: false });
   }
 
   async setArchived(archived: boolean): Promise<void> {
-    await this.update({ archived });
+    await this.update(
+      archived ? { archived: true, archivedAt: Date.now() } : { archived: false, archivedAt: undefined },
+      { touchUpdatedAt: false },
+    );
   }
 
   async registerAgent(agentId: string, meta: AgentMeta): Promise<void> {
@@ -173,6 +180,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
           createdAt: this.data.createdAt,
           updatedAt: this.data.updatedAt,
           archived: this.data.archived === true,
+          archivedAt: this.data.archivedAt,
           custom: this.data.custom,
           lastTurnReason: this.data.lastTurnReason,
         }),

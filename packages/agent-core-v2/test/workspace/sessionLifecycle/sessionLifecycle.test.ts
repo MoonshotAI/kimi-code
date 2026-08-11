@@ -1524,6 +1524,26 @@ describe('SessionLifecycleService', () => {
       expect(forkUpdate?.lastTurnReason).toBe('failed');
     });
 
+    it('fork inherits the source session\'s updatedAt (a copy is not fresh activity)', async () => {
+      const updates: { readonly updatedAt?: unknown }[] = [];
+      const metaStub: ISessionMetadata = {
+        ...metadataStub(),
+        read: () =>
+          Promise.resolve({ updatedAt: 9876, agents: {} } as never),
+        update: (patch) => {
+          updates.push(patch);
+          return Promise.resolve();
+        },
+      };
+      const svc = await build([stubPair(ISessionMetadata, metaStub)]);
+
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      const forkUpdate = updates.find((u) => 'forkedFrom' in u);
+      expect(forkUpdate?.updatedAt).toBe(9876);
+    });
+
     it('copies blobs, plans, background tasks, and media originals into the fork', async () => {
       const root = await makeTmpRoot();
       const svc = await build([

@@ -97,6 +97,44 @@ describe('SessionMetadata', () => {
     expect(await meta.read()).toMatchObject({ title: 't', archived: true });
   });
 
+  it('setTitle keeps updatedAt (rename must not reorder listings)', async () => {
+    const meta = ix.get(ISessionMetadata);
+    const before = (await meta.read()).updatedAt;
+    await new Promise((r) => setTimeout(r, 2));
+    await meta.setTitle('renamed');
+
+    const next = await meta.read();
+    expect(next.title).toBe('renamed');
+    expect(next.updatedAt).toBe(before);
+  });
+
+  it('setArchived records archivedAt without touching updatedAt; restore clears it', async () => {
+    const meta = ix.get(ISessionMetadata);
+    const before = (await meta.read()).updatedAt;
+    await new Promise((r) => setTimeout(r, 2));
+
+    await meta.setArchived(true);
+    const archived = await meta.read();
+    expect(archived.archived).toBe(true);
+    expect(archived.archivedAt).toBeGreaterThan(before);
+    expect(archived.updatedAt).toBe(before);
+
+    await meta.setArchived(false);
+    const restored = await meta.read();
+    expect(restored.archived).toBe(false);
+    expect(restored.archivedAt).toBeUndefined();
+    expect(restored.updatedAt).toBe(before);
+  });
+
+  it('an explicit patch.updatedAt always wins (fork inherits the source recency)', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.update({ title: 'fork', updatedAt: 1234 });
+
+    const next = await meta.read();
+    expect(next.title).toBe('fork');
+    expect(next.updatedAt).toBe(1234);
+  });
+
   it('mirrors a boolean archived to the read model even when the loaded document lacks the field', async () => {
     const store = ix.get(IAtomicDocumentStore);
     await store.set(META_SCOPE, 'state.json', {

@@ -33,6 +33,10 @@ export interface SessionMeta {
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly archived: boolean;
+  /** When the session was archived (epoch ms); cleared on restore. Management
+   *  writes (title / archived) never touch `updatedAt` — it tracks content
+   *  activity only, so listings stay put on rename/archive/restore. */
+  readonly archivedAt?: number;
   readonly cwd?: string;
   readonly forkedFrom?: string;
   readonly agents?: Readonly<Record<string, AgentMeta>>;

@@ -530,6 +530,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         isCustomTitle: opts.title !== undefined ? true : sourceMeta?.isCustomTitle === true,
         forkedFrom: sourceId,
         archived: false,
+        // The fork is a copy of the source's content as of now, not fresh
+        // activity: inherit the source's recency so the fork lands next to it
+        // instead of floating to the top of the list. (createdAt stays now —
+        // that's the creation fact.)
+        updatedAt: sourceMeta?.updatedAt ?? Date.now(),
         lastPrompt: sourceMeta?.lastPrompt,
         // The fork continues the source's conversation, so it inherits the
         // last turn's outcome too — otherwise a restart would drop a failure
