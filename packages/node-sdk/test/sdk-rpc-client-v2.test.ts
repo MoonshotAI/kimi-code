@@ -85,12 +85,12 @@ async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }>
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
-  it('reports global MCP authorization from the persisted v2 credential store', async () => {
+  it('reports global MCP authorization through a connection probe', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
     const statusServer = await startMcpAuthStatusServer();
-    const authorizedUrl = 'https://authorized.example.test/mcp';
-    const requiredUrl = 'https://required.example.test/mcp';
+    const authorizedUrl = statusServer.authorizedUrl;
+    const requiredUrl = statusServer.authorizedUrl;
     const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
     externalOAuth
       .getProvider('oauth-authorized', authorizedUrl)
@@ -104,7 +104,9 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
         mcpServers: {
           stdio: { command: 'local-command' },
           plain: { transport: 'http', url: statusServer.plainUrl },
+          'oauth-optional': { transport: 'http', url: statusServer.plainUrl, auth: 'oauth' },
           detected: { transport: 'http', url: statusServer.oauthUrl },
+          unavailable: { transport: 'http', url: statusServer.unavailableUrl },
           sse: { transport: 'sse', url: statusServer.oauthUrl },
           'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
           bearer: {
@@ -132,8 +134,10 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'oauth-optional', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'oauth-required' },
-        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'unavailable', authStatus: 'unavailable' },
+        { name: 'sse', authStatus: 'oauth-required' },
         { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-required' },
@@ -142,14 +146,16 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
 
       externalOAuth
         .getProvider('oauth-required', requiredUrl)
-        .saveTokens({ access_token: 'new-test-access-token', token_type: 'Bearer' });
+        .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
       externalOAuth.invalidate('oauth-authorized', authorizedUrl, 'tokens');
 
       await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'oauth-optional', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'oauth-required' },
-        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'unavailable', authStatus: 'unavailable' },
+        { name: 'sse', authStatus: 'oauth-required' },
         { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-authorized' },

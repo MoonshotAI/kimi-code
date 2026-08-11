@@ -841,7 +841,10 @@ const FIXTURE_PLUGIN_ID = 'parity-plugin';
  * one discoverable skill, two MCP servers (stdio + http), a hook, a command
  * file, a session-start entry, and the interface block.
  */
-async function writeFixturePlugin(dir: string): Promise<void> {
+async function writeFixturePlugin(
+  dir: string,
+  options: { readonly oauthMcpUrl?: string } = {},
+): Promise<void> {
   await mkdir(join(dir, 'skills', 'parity-skill'), { recursive: true });
   await mkdir(join(dir, 'commands'), { recursive: true });
   await writeFile(
@@ -866,8 +869,9 @@ async function writeFixturePlugin(dir: string): Promise<void> {
           },
           'parity-http': {
             transport: 'http',
-            url: 'https://example.com/mcp',
-            headers: { 'X-Parity': '1' },
+            url: options.oauthMcpUrl ?? 'https://example.com/mcp',
+            headers: options.oauthMcpUrl === undefined ? { 'X-Parity': '1' } : undefined,
+            auth: options.oauthMcpUrl === undefined ? undefined : 'oauth',
           },
         },
         hooks: [{ event: 'SessionStart', command: 'echo parity' }],
@@ -896,11 +900,13 @@ async function writeFixturePlugin(dir: string): Promise<void> {
   );
 }
 
-async function makePluginParityPair(): Promise<PluginParityPair> {
+async function makePluginParityPair(
+  options: { readonly oauthMcpUrl?: string } = {},
+): Promise<PluginParityPair> {
   const v1HomeDir = await makeTempDir('kimi-sdk-parity-v1-home-');
   const v2HomeDir = await makeTempDir('kimi-sdk-parity-v2-home-');
   const sourceDir = await makeTempDir('kimi-sdk-parity-plugin-src-');
-  await writeFixturePlugin(sourceDir);
+  await writeFixturePlugin(sourceDir, options);
   return {
     v1: new SDKRpcClient({ homeDir: v1HomeDir, identity: TEST_IDENTITY }),
     v2: new SDKRpcClientV2({ homeDir: v2HomeDir, identity: TEST_IDENTITY }),
@@ -982,6 +988,63 @@ describe('v1↔v2 plugin parity', () => {
       await closePluginPair(pair);
     }
   });
+
+  it('resolves plugin MCP authorization by runtime credential identity', async () => {
+    const statusServer = await startMcpAuthStatusServer();
+    const pair = await makePluginParityPair({ oauthMcpUrl: statusServer.authorizedUrl });
+    const target = {
+      source: 'plugin' as const,
+      pluginId: FIXTURE_PLUGIN_ID,
+      serverName: 'parity-http',
+    };
+    const runtimeName = `plugin-${FIXTURE_PLUGIN_ID}:parity-http`;
+    try {
+      await installFixtureOnBoth(pair);
+      const stdioTarget = {
+        source: 'plugin' as const,
+        pluginId: FIXTURE_PLUGIN_ID,
+        serverName: 'parity-stdio',
+      };
+      await expect(pair.v1.beginMcpServerAuth(stdioTarget)).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+      });
+      await expect(pair.v2.beginMcpServerAuth(stdioTarget)).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+      });
+      for (const homeDir of [pair.v1Home.raw, pair.v2Home.raw]) {
+        new McpOAuthService({ kimiHomeDir: homeDir })
+          .getProvider(runtimeName, statusServer.authorizedUrl)
+          .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
+      }
+      await Promise.all([
+        pair.v1.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false),
+        pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false),
+      ]);
+
+      const [v1Statuses, v2Statuses] = await Promise.all([
+        pair.v1.listMcpServerAuthStatuses([target]),
+        pair.v2.listMcpServerAuthStatuses([target]),
+      ]);
+      expect(v2Statuses).toEqual(v1Statuses);
+      expect(v1Statuses).toEqual([{ target, authStatus: 'oauth-authorized' }]);
+      await expect(pair.v1.listGlobalMcpServers()).resolves.toEqual([]);
+      await expect(pair.v2.listGlobalMcpServers()).resolves.toEqual([]);
+
+      await Promise.all([
+        pair.v1.resetMcpServerAuth(target),
+        pair.v2.resetMcpServerAuth(target),
+      ]);
+      await expect(pair.v1.listMcpServerAuthStatuses([target])).resolves.toEqual([
+        { target, authStatus: 'oauth-required' },
+      ]);
+      await expect(pair.v2.listMcpServerAuthStatuses([target])).resolves.toEqual([
+        { target, authStatus: 'oauth-required' },
+      ]);
+    } finally {
+      await closePluginPair(pair);
+      await statusServer.close();
+    }
+  }, 15_000);
 
   it('setPluginEnabled toggles identically on both engines', async () => {
     const pair = await makePluginParityPair();
@@ -3463,14 +3526,16 @@ async function expectSameMcpRejection(
 }
 
 describe('v1↔v2 global MCP parity', () => {
-  it('classifies global MCP authorization identically from persisted credentials', async () => {
+  it('classifies global MCP authorization identically through connection probes', async () => {
     const statusServer = await startMcpAuthStatusServer();
-    const authorizedUrl = 'https://authorized.example.test/mcp';
+    const authorizedUrl = statusServer.authorizedUrl;
     const pair = await makeGlobalMcpParityPair({
       mcpServers: {
         stdio: { command: 'local-command' },
         plain: { transport: 'http', url: statusServer.plainUrl },
+        'oauth-optional': { transport: 'http', url: statusServer.plainUrl, auth: 'oauth' },
         detected: { transport: 'http', url: statusServer.oauthUrl },
+        unavailable: { transport: 'http', url: statusServer.unavailableUrl },
         sse: { transport: 'sse', url: statusServer.oauthUrl },
         'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
         bearer: {
@@ -3480,7 +3545,7 @@ describe('v1↔v2 global MCP parity', () => {
         },
         'oauth-required': {
           transport: 'http',
-          url: 'https://required.example.test/mcp',
+          url: statusServer.authorizedUrl,
           auth: 'oauth',
         },
         'oauth-authorized': {
@@ -3509,8 +3574,10 @@ describe('v1↔v2 global MCP parity', () => {
       expect(v1Statuses).toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'oauth-optional', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'oauth-required' },
-        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'unavailable', authStatus: 'unavailable' },
+        { name: 'sse', authStatus: 'oauth-required' },
         { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-required' },

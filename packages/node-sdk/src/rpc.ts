@@ -7,7 +7,7 @@ import {
   type AgentContextData,
   type ApprovalRequest,
   type ApprovalResponse,
-  type BeginGlobalMcpServerAuthResult,
+  type BeginMcpServerAuthResult,
   type CoreAPI,
   type Event,
   type ExperimentalFeatureState,
@@ -36,7 +36,9 @@ import type {
   ForkSessionInput,
   GetConfigOptions,
   GlobalMcpServerAuthStatus,
+  McpServerAuthStatus,
   McpServerConfig,
+  McpServerLocator,
   GoalSnapshot,
   GoalToolResult,
   JsonObject,
@@ -321,6 +323,13 @@ export abstract class SDKRpcClientBase {
     return rpc.listGlobalMcpServerAuthStatuses({});
   }
 
+  async listMcpServerAuthStatuses(
+    targets: readonly McpServerLocator[],
+  ): Promise<readonly McpServerAuthStatus[]> {
+    const rpc = await this.getRpc();
+    return rpc.listMcpServerAuthStatuses({ targets });
+  }
+
   async addGlobalMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
     const rpc = await this.getRpc();
     return rpc.addGlobalMcpServer({ server });
@@ -336,9 +345,14 @@ export abstract class SDKRpcClientBase {
     return rpc.removeGlobalMcpServer({ name });
   }
 
-  async beginGlobalMcpServerAuth(name: string): Promise<BeginGlobalMcpServerAuthResult> {
+  async beginGlobalMcpServerAuth(name: string): Promise<BeginMcpServerAuthResult> {
     const rpc = await this.getRpc();
     return rpc.beginGlobalMcpServerAuth({ name });
+  }
+
+  async beginMcpServerAuth(target: McpServerLocator): Promise<BeginMcpServerAuthResult> {
+    const rpc = await this.getRpc();
+    return rpc.beginMcpServerAuth({ target });
   }
 
   async completeGlobalMcpServerAuth(
@@ -349,14 +363,32 @@ export abstract class SDKRpcClientBase {
     return rpc.completeGlobalMcpServerAuth(input, { signal });
   }
 
+  async completeMcpServerAuth(
+    input: { readonly flowId: string; readonly timeoutMs?: number },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.completeMcpServerAuth(input, { signal });
+  }
+
   async cancelGlobalMcpServerAuth(flowId: string): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.cancelGlobalMcpServerAuth({ flowId });
   }
 
+  async cancelMcpServerAuth(flowId: string): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.cancelMcpServerAuth({ flowId });
+  }
+
   async resetGlobalMcpServerAuth(name: string): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.resetGlobalMcpServerAuth({ name });
+  }
+
+  async resetMcpServerAuth(target: McpServerLocator): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.resetMcpServerAuth({ target });
   }
 
   async testGlobalMcpServer(

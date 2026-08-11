@@ -81,13 +81,16 @@ import type {
   AddAdditionalDirResult,
   ArchiveSessionPayload,
   BeginGlobalMcpServerAuthResult,
+  BeginMcpServerAuthResult,
   BeginCompactionPayload,
   CancelGlobalMcpServerAuthPayload,
+  CancelMcpServerAuthPayload,
   CancelPayload,
   CancelPlanPayload,
   CancelShellCommandPayload,
   CloseSessionPayload,
   CompleteGlobalMcpServerAuthPayload,
+  CompleteMcpServerAuthPayload,
   ConfigDiagnostics,
   CoreAPI,
   CoreInfo,
@@ -100,7 +103,6 @@ import type {
   EnterSwarmPayload,
   GoalSnapshot,
   GoalToolResult,
-  GlobalMcpServerAuthState,
   GlobalMcpServerAuthStatus,
   GlobalMcpServerConfig,
   GlobalMcpServerNamePayload,
@@ -115,9 +117,14 @@ import type {
   GetPluginInfoPayload,
   InstallPluginPayload,
   ImportContextPayload,
+  ListMcpServerAuthStatusesPayload,
   ListSessionsPayload,
   ListWorkspaceSkillsPayload,
+  McpServerAuthState,
+  McpServerAuthStatus,
   McpServerInfo,
+  McpServerLocator,
+  McpServerTargetPayload,
   McpStartupMetrics,
   PluginInfo,
   PluginSummary,
@@ -171,8 +178,13 @@ type SessionScopedPayload<T> = T & { readonly sessionId: string };
 type SessionAgentPayload<T> = SessionScopedPayload<AgentScopedPayload<T>>;
 type RenameSessionRequest = SessionScopedPayload<RenameSessionPayload>;
 type UpdateSessionMetadataRequest = SessionScopedPayload<UpdateSessionMetadataPayload>;
-interface GlobalMcpOAuthFlow {
+interface McpOAuthFlow {
   readonly flow: BeginAuthorizationResult;
+}
+
+interface ResolvedMcpServerTarget {
+  readonly runtimeName: string;
+  readonly config: McpServerConfig;
 }
 
 export interface KimiCoreOptions {
@@ -219,8 +231,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private readonly skillDirs: readonly string[];
   private readonly sessionStore: SessionStore;
   private readonly globalMcpConfig: GlobalMcpConfigStore;
-  private readonly globalMcpOAuth: McpOAuthService;
-  private readonly globalMcpOAuthFlows = new Map<string, GlobalMcpOAuthFlow>();
+  private readonly mcpOAuth: McpOAuthService;
+  private readonly mcpOAuthFlows = new Map<string, McpOAuthFlow>();
   readonly plugins: PluginManager;
   private pluginsReady: Promise<void>;
   private pluginsLoadError: Error | undefined;
@@ -276,7 +288,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       resolveWorkspaceId: options.resolveWorkspaceId,
     });
     this.globalMcpConfig = new GlobalMcpConfigStore(this.homeDir);
-    this.globalMcpOAuth = new McpOAuthService({ kimiHomeDir: this.homeDir });
+    this.mcpOAuth = new McpOAuthService({ kimiHomeDir: this.homeDir });
     this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
     // Capture the error rather than swallow it: mutators and explicit /plugins
     // reads rethrow so the user sees what's wrong; createSession/resumeSession
@@ -775,8 +787,22 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return Promise.all(
       servers.map(async (server) => ({
         name: server.name,
-        authStatus: await this.globalMcpServerAuthState(server),
+        authStatus: await this.mcpServerAuthState({
+          runtimeName: server.name,
+          config: mcpConfigWithoutName(server),
+        }),
       })),
+    );
+  }
+
+  async listMcpServerAuthStatuses({
+    targets,
+  }: ListMcpServerAuthStatusesPayload): Promise<readonly McpServerAuthStatus[]> {
+    return Promise.all(
+      targets.map(async (target) => {
+        const server = await this.resolveMcpServerTarget(target);
+        return { target, authStatus: await this.mcpServerAuthState(server) };
+      }),
     );
   }
 
@@ -801,12 +827,18 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async beginGlobalMcpServerAuth(
     { name }: GlobalMcpServerNamePayload,
   ): Promise<BeginGlobalMcpServerAuthResult> {
-    const server = await this.globalMcpConfig.get(name);
-    const config = requireOAuthMcpServer(server);
+    return this.beginMcpServerAuth({ target: { source: 'global', name } });
+  }
+
+  async beginMcpServerAuth({
+    target,
+  }: McpServerTargetPayload): Promise<BeginMcpServerAuthResult> {
+    const server = await this.resolveMcpServerTarget(target);
+    const config = requireOAuthMcpServer(server.runtimeName, server.config);
     try {
-      const flow = await this.globalMcpOAuth.beginAuthorization(server.name, config.url);
+      const flow = await this.mcpOAuth.beginAuthorization(server.runtimeName, config.url);
       const flowId = randomUUID();
-      this.globalMcpOAuthFlows.set(flowId, { flow });
+      this.mcpOAuthFlows.set(flowId, { flow });
       return {
         status: 'authorization-required',
         flowId,
@@ -821,10 +853,17 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async completeGlobalMcpServerAuth(
-    { flowId, timeoutMs }: CompleteGlobalMcpServerAuthPayload,
+    payload: CompleteGlobalMcpServerAuthPayload,
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<void> {
-    const active = this.globalMcpOAuthFlows.get(flowId);
+    return this.completeMcpServerAuth(payload, options);
+  }
+
+  async completeMcpServerAuth(
+    { flowId, timeoutMs }: CompleteMcpServerAuthPayload,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const active = this.mcpOAuthFlows.get(flowId);
     if (active === undefined) {
       throw new KimiError(ErrorCodes.REQUEST_INVALID, `Unknown MCP OAuth flow: ${flowId}`);
     }
@@ -834,68 +873,122 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         timeoutMs: timeoutMs ?? DEFAULT_GLOBAL_MCP_AUTH_TIMEOUT_MS,
       });
     } finally {
-      this.globalMcpOAuthFlows.delete(flowId);
+      this.mcpOAuthFlows.delete(flowId);
     }
   }
 
   async cancelGlobalMcpServerAuth(
-    { flowId }: CancelGlobalMcpServerAuthPayload,
+    payload: CancelGlobalMcpServerAuthPayload,
   ): Promise<void> {
-    const active = this.globalMcpOAuthFlows.get(flowId);
+    return this.cancelMcpServerAuth(payload);
+  }
+
+  async cancelMcpServerAuth({ flowId }: CancelMcpServerAuthPayload): Promise<void> {
+    const active = this.mcpOAuthFlows.get(flowId);
     if (active === undefined) return;
-    this.globalMcpOAuthFlows.delete(flowId);
+    this.mcpOAuthFlows.delete(flowId);
     await active.flow.cancel();
   }
 
   async resetGlobalMcpServerAuth({ name }: GlobalMcpServerNamePayload): Promise<void> {
-    const server = await this.globalMcpConfig.get(name);
-    const config = requireRemoteMcpServer(server);
-    this.globalMcpOAuth.invalidate(server.name, config.url);
+    return this.resetMcpServerAuth({ target: { source: 'global', name } });
+  }
+
+  async resetMcpServerAuth({ target }: McpServerTargetPayload): Promise<void> {
+    const server = await this.resolveMcpServerTarget(target);
+    const config = requireRemoteMcpServer(server.runtimeName, server.config);
+    this.mcpOAuth.invalidate(server.runtimeName, config.url);
   }
 
   async testGlobalMcpServer(
     { name, cwd }: TestGlobalMcpServerPayload,
   ): Promise<GlobalMcpServerTestResult> {
     const server = await this.globalMcpConfig.get(name);
-    return this.withGlobalMcpServerProbe(server, cwd, (manager) =>
-      standaloneMcpTestResult(server.name, manager),
+    const resolved = {
+      runtimeName: server.name,
+      config: mcpConfigWithoutName(server),
+    };
+    return this.withMcpServerProbe(resolved, cwd, (manager) =>
+      standaloneMcpTestResult(resolved.runtimeName, manager),
     );
   }
 
-  private async withGlobalMcpServerProbe<T>(
-    server: GlobalMcpServerConfig,
+  private async withMcpServerProbe<T>(
+    server: ResolvedMcpServerTarget,
     cwd: string | undefined,
     inspect: (manager: McpConnectionManager) => T,
   ): Promise<T> {
     const manager = new McpConnectionManager({
       stdioCwd: cwd,
-      oauthService: this.globalMcpOAuth,
+      oauthService: this.mcpOAuth,
       defaultStartupTimeoutMs: resolveMcpStartupTimeoutMs(this.config.mcp?.startupTimeoutMs),
       defaultToolTimeoutMs: resolveMcpToolTimeoutMs(this.config.mcp?.toolTimeoutMs),
     });
     try {
-      await manager.connectAll({ [server.name]: mcpConfigWithoutName(server) });
+      await manager.connectAll({
+        [server.runtimeName]: { ...server.config, enabled: true },
+      });
       return inspect(manager);
     } finally {
       await manager.shutdown();
     }
   }
 
-  private async globalMcpServerAuthState(
-    server: GlobalMcpServerConfig,
-  ): Promise<GlobalMcpServerAuthState> {
-    if (server.transport === 'stdio') return 'not-applicable';
-    if (server.bearerTokenEnvVar !== undefined) return 'bearer-token';
+  private async mcpServerAuthState(
+    server: ResolvedMcpServerTarget,
+  ): Promise<McpServerAuthState> {
+    const config = server.config;
+    if (config.transport === 'stdio') return 'not-applicable';
+    if (config.bearerTokenEnvVar !== undefined) return 'bearer-token';
     // Keep status classification aligned with the existing connection manager:
     // unmarked static headers are not treated as OAuth credentials.
-    if (server.headers !== undefined && server.auth !== 'oauth') return 'not-applicable';
-    if (server.transport !== 'http' && server.auth !== 'oauth') return 'not-applicable';
-    if (this.globalMcpOAuth.hasTokens(server.name, server.url)) return 'oauth-authorized';
-    if (server.auth === 'oauth') return 'oauth-required';
+    if (config.headers !== undefined && config.auth !== 'oauth') return 'not-applicable';
 
-    return this.withGlobalMcpServerProbe(server, undefined, (manager) =>
-      manager.get(server.name)?.status === 'needs-auth' ? 'oauth-required' : 'not-applicable',
+    const connectionStatus = await this.withMcpServerProbe(server, undefined, (manager) =>
+      manager.get(server.runtimeName)?.status,
     );
+    if (connectionStatus === 'needs-auth') return 'oauth-required';
+    if (connectionStatus !== 'connected') return 'unavailable';
+    // `auth: 'oauth'` is only a configuration hint. A successful anonymous
+    // connection is not proof that an OAuth identity was accepted.
+    return this.mcpOAuth.hasTokens(server.runtimeName, config.url)
+      ? 'oauth-authorized'
+      : 'not-applicable';
+  }
+
+  private async resolveMcpServerTarget(
+    target: McpServerLocator,
+  ): Promise<ResolvedMcpServerTarget> {
+    if (target.source === 'global') {
+      const server = await this.globalMcpConfig.get(target.name);
+      return {
+        runtimeName: server.name,
+        config: mcpConfigWithoutName(server),
+      };
+    }
+
+    await this.pluginsReady;
+    this.assertPluginsLoaded();
+    const plugin = this.plugins.info(target.pluginId);
+    if (plugin === undefined) {
+      throw new KimiError(
+        ErrorCodes.PLUGIN_NOT_FOUND,
+        `Plugin "${target.pluginId}" is not installed`,
+        { details: { id: target.pluginId } },
+      );
+    }
+    const config = plugin.manifest?.mcpServers?.[target.serverName];
+    const runtimeName = plugin.mcpServers.find(
+      (server) => server.name === target.serverName,
+    )?.runtimeName;
+    if (config === undefined || runtimeName === undefined) {
+      throw new KimiError(
+        ErrorCodes.MCP_SERVER_NOT_FOUND,
+        `MCP server "${target.serverName}" was not found in plugin "${plugin.id}"`,
+        { details: { pluginId: plugin.id, serverName: target.serverName } },
+      );
+    }
+    return { runtimeName, config };
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
@@ -1461,27 +1554,32 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 }
 
-function requireRemoteMcpServer(server: GlobalMcpServerConfig): McpRemoteServerConfig {
-  const config = mcpConfigWithoutName(server);
+function requireRemoteMcpServer(
+  runtimeName: string,
+  config: McpServerConfig,
+): McpRemoteServerConfig {
   if (config.transport !== 'stdio') return config;
   throw new KimiError(
     ErrorCodes.REQUEST_INVALID,
-    `MCP server "${server.name}" does not use a remote transport`,
+    `MCP server "${runtimeName}" does not use a remote transport`,
   );
 }
 
-function requireOAuthMcpServer(server: GlobalMcpServerConfig): McpRemoteServerConfig {
-  const config = requireRemoteMcpServer(server);
+function requireOAuthMcpServer(
+  runtimeName: string,
+  server: McpServerConfig,
+): McpRemoteServerConfig {
+  const config = requireRemoteMcpServer(runtimeName, server);
   if (config.bearerTokenEnvVar !== undefined) {
     throw new KimiError(
       ErrorCodes.REQUEST_INVALID,
-      `MCP server "${server.name}" uses a static bearer token`,
+      `MCP server "${runtimeName}" uses a static bearer token`,
     );
   }
   if (config.headers !== undefined && config.auth !== 'oauth') {
     throw new KimiError(
       ErrorCodes.REQUEST_INVALID,
-      `MCP server "${server.name}" uses static headers and is not marked for OAuth`,
+      `MCP server "${runtimeName}" uses static headers and is not marked for OAuth`,
     );
   }
   return config;

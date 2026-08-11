@@ -76,14 +76,14 @@
  *   helpers and the session's per-agent task services (no v2 service owns
  *   the print policy).
  * - `listGlobalMcpServers` / `listGlobalMcpServerAuthStatuses` /
+ *   `listMcpServerAuthStatuses` /
  *   `addGlobalMcpServer` / `updateGlobalMcpServer` /
- *   `removeGlobalMcpServer` / `beginGlobalMcpServerAuth` /
- *   `completeGlobalMcpServerAuth` / `cancelGlobalMcpServerAuth` /
- *   `resetGlobalMcpServerAuth` / `testGlobalMcpServer` → the v1 user-global
- *   MCP surface, rebuilt in `src/v2/global-mcp.ts`: agent-core-v2 only reads
- *   the user-global `mcp.json` (nothing in the engine writes it) and binds
- *   its OAuth orchestrator inside the session scope, so the file store and
- *   the `require*` guards are byte-identical ports, driven by the v2
+ *   `removeGlobalMcpServer` / the global and target-aware MCP OAuth methods /
+ *   `testGlobalMcpServer` → the v1 MCP management surface, rebuilt over
+ *   `src/v2/global-mcp.ts` plus `IPluginService` target resolution:
+ *   agent-core-v2 only reads the user-global `mcp.json` (nothing in the engine
+ *   writes it) and binds its OAuth orchestrator inside the session scope, so
+ *   the file store and the `require*` guards are byte-identical ports, driven by the v2
  *   engine's own `McpOAuthService` / `McpConnectionManager` (deep imports —
  *   the package index does not re-export them) over the app-scope
  *   `IAtomicDocumentStore`, whose on-disk layout
@@ -138,13 +138,14 @@ import {
   limitAgentReplayByTurns,
   noopTelemetryClient,
   type AgentContextData,
-  type BeginGlobalMcpServerAuthResult,
+  type BeginMcpServerAuthResult,
   type ExperimentalFeatureState,
 } from '@moonshot-ai/agent-core';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { MCP_SECTION, type McpSection } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configSection';
 import { IAgentIdentity } from '@moonshot-ai/agent-core-v2/app/agentIdentity/agentIdentity';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
+import type { McpServerConfig as RuntimeMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
   AlreadyAuthorizedError,
   McpOAuthService,
@@ -184,6 +185,7 @@ import {
   IHostFileSystem,
   IModelCatalog,
   IModelService,
+  IPluginService,
   IProviderService,
   ISessionBtwService,
   ISessionContext,
@@ -273,7 +275,6 @@ import type {
   ForkSessionInput,
   GetConfigOptions,
   GetCronTasksResult,
-  GlobalMcpServerAuthState,
   GlobalMcpServerAuthStatus,
   GoalSnapshot,
   GoalToolResult,
@@ -284,6 +285,9 @@ import type {
   KimiHostIdentity,
   ListSessionsOptions,
   McpServerConfig,
+  McpServerAuthState,
+  McpServerAuthStatus,
+  McpServerLocator,
   McpServerInfo,
   McpStartupMetrics,
   McpTestResult,
@@ -352,6 +356,11 @@ const MAX_TIMER_DELAY_MS = 0x7fffffff;
 /** v1's default for `completeGlobalMcpServerAuth` when the host gives no timeout. */
 const DEFAULT_GLOBAL_MCP_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
 
+interface ResolvedMcpServerTarget {
+  readonly runtimeName: string;
+  readonly config: RuntimeMcpServerConfig;
+}
+
 export class SDKRpcClientV2 extends SDKRpcClientBase {
   readonly homeDir: string;
   readonly configPath: string;
@@ -397,9 +406,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * lazily over the app-scope `IAtomicDocumentStore` (same on-disk layout as
    * v1's `<home>/credentials/mcp/` file store).
    */
-  private globalMcpOAuth: McpOAuthService | undefined;
+  private mcpOAuth: McpOAuthService | undefined;
   /** In-flight OAuth flows keyed by the flowId handed to the host (v1 shape). */
-  private readonly globalMcpOAuthFlows = new Map<string, { flow: BeginAuthorizationResult }>();
+  private readonly mcpOAuthFlows = new Map<string, { flow: BeginAuthorizationResult }>();
   /**
    * Per-live-session event/interaction wirings (`src/v2/session-wiring.ts`):
    * created when a session materializes through this client (create / resume /
@@ -2082,31 +2091,36 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // -----------------------------------------------------------------------
 
   /**
-   * Configured custom identity announced to MCP servers, so these global flows
+   * Configured custom identity announced to MCP servers, so these OAuth flows
    * match what the workspace-owned manager sends. Reads the frozen snapshot;
-   * every path that reaches it awaited `globalMcpOAuthService()` first.
+   * every path that reaches it awaited `mcpOAuthService()` first.
    */
   private resolveMcpClientName(): string | undefined {
     return this.engineAccessor.get(IAgentIdentity).current().slug;
   }
 
   /**
-   * v1's per-core `globalMcpOAuth`, built over the app-scope document store.
+   * Cached OAuth service for interactive begin/complete/reset flows, built
+   * over the app-scope document store.
    *
    * Async on purpose: the service caches providers by store key and stamps the
    * client name when it first builds one, so any path that can materialize a
-   * provider must not run before the identity snapshot froze. Guarding here
-   * rather than at each call site means a new entry point cannot forget to.
+   * provider must not run before the identity snapshot froze. Status probes
+   * use fresh services so they re-read credentials changed by another host.
    */
-  private async globalMcpOAuthService(): Promise<McpOAuthService> {
-    await this.engineAccessor.get(IAgentIdentity).resolved();
-    if (this.globalMcpOAuth === undefined) {
-      this.globalMcpOAuth = new McpOAuthService({
-        store: createMcpOAuthStore(this.engineAccessor.get(IAtomicDocumentStore)),
-        resolveClientName: () => this.resolveMcpClientName(),
-      });
+  private async mcpOAuthService(): Promise<McpOAuthService> {
+    if (this.mcpOAuth === undefined) {
+      this.mcpOAuth = await this.createMcpOAuthService();
     }
-    return this.globalMcpOAuth;
+    return this.mcpOAuth;
+  }
+
+  private async createMcpOAuthService(): Promise<McpOAuthService> {
+    await this.engineAccessor.get(IAgentIdentity).resolved();
+    return new McpOAuthService({
+      store: createMcpOAuthStore(this.engineAccessor.get(IAtomicDocumentStore)),
+      resolveClientName: () => this.resolveMcpClientName(),
+    });
   }
 
   override async listGlobalMcpServers(): Promise<readonly McpServerConfig[]> {
@@ -2117,14 +2131,32 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     readonly GlobalMcpServerAuthStatus[]
   > {
     const servers = await this.globalMcpConfig.list();
-    const oauth = new McpOAuthService({
-      store: createMcpOAuthStore(this.engineAccessor.get(IAtomicDocumentStore)),
-    });
+    if (servers.length === 0) return [];
+    const oauth = await this.createMcpOAuthService();
     return Promise.all(
       servers.map(async (server) => ({
         name: server.name,
-        authStatus: await this.globalMcpServerAuthState(server, oauth),
+        authStatus: await this.mcpServerAuthState(
+          {
+            runtimeName: server.name,
+            config: mcpConfigWithoutName(server),
+          },
+          oauth,
+        ),
       })),
+    );
+  }
+
+  override async listMcpServerAuthStatuses(
+    targets: readonly McpServerLocator[],
+  ): Promise<readonly McpServerAuthStatus[]> {
+    if (targets.length === 0) return [];
+    const oauth = await this.createMcpOAuthService();
+    return Promise.all(
+      targets.map(async (target) => {
+        const server = await this.resolveMcpServerTarget(target);
+        return { target, authStatus: await this.mcpServerAuthState(server, oauth) };
+      }),
     );
   }
 
@@ -2151,14 +2183,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * a flowId. The OAuth work itself is the v2 engine's `McpOAuthService`
    * (same begin/complete/cancel contract as v1's).
    */
-  override async beginGlobalMcpServerAuth(name: string): Promise<BeginGlobalMcpServerAuthResult> {
-    const server = await this.globalMcpConfig.get(name);
-    const config = requireOAuthMcpServer(server);
+  override async beginMcpServerAuth(target: McpServerLocator): Promise<BeginMcpServerAuthResult> {
+    const server = await this.resolveMcpServerTarget(target);
+    const config = requireOAuthMcpServer({ name: server.runtimeName, ...server.config });
     try {
-      const oauth = await this.globalMcpOAuthService();
-      const flow = await oauth.beginAuthorization(server.name, config.url);
+      const oauth = await this.mcpOAuthService();
+      const flow = await oauth.beginAuthorization(server.runtimeName, config.url);
       const flowId = randomUUID();
-      this.globalMcpOAuthFlows.set(flowId, { flow });
+      this.mcpOAuthFlows.set(flowId, { flow });
       return {
         status: 'authorization-required',
         flowId,
@@ -2172,11 +2204,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
   }
 
-  override async completeGlobalMcpServerAuth(
+  override async beginGlobalMcpServerAuth(name: string): Promise<BeginMcpServerAuthResult> {
+    return this.beginMcpServerAuth({ source: 'global', name });
+  }
+
+  override async completeMcpServerAuth(
     input: { readonly flowId: string; readonly timeoutMs?: number },
     signal?: AbortSignal,
   ): Promise<void> {
-    const active = this.globalMcpOAuthFlows.get(input.flowId);
+    const active = this.mcpOAuthFlows.get(input.flowId);
     if (active === undefined) {
       throw new KimiError(ErrorCodes.REQUEST_INVALID, `Unknown MCP OAuth flow: ${input.flowId}`);
     }
@@ -2186,22 +2222,37 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         timeoutMs: input.timeoutMs ?? DEFAULT_GLOBAL_MCP_AUTH_TIMEOUT_MS,
       });
     } finally {
-      this.globalMcpOAuthFlows.delete(input.flowId);
+      this.mcpOAuthFlows.delete(input.flowId);
     }
   }
 
-  override async cancelGlobalMcpServerAuth(flowId: string): Promise<void> {
-    const active = this.globalMcpOAuthFlows.get(flowId);
+  override async completeGlobalMcpServerAuth(
+    input: { readonly flowId: string; readonly timeoutMs?: number },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return this.completeMcpServerAuth(input, signal);
+  }
+
+  override async cancelMcpServerAuth(flowId: string): Promise<void> {
+    const active = this.mcpOAuthFlows.get(flowId);
     if (active === undefined) return;
-    this.globalMcpOAuthFlows.delete(flowId);
+    this.mcpOAuthFlows.delete(flowId);
     await active.flow.cancel();
   }
 
+  override async cancelGlobalMcpServerAuth(flowId: string): Promise<void> {
+    return this.cancelMcpServerAuth(flowId);
+  }
+
+  override async resetMcpServerAuth(target: McpServerLocator): Promise<void> {
+    const server = await this.resolveMcpServerTarget(target);
+    const config = requireRemoteMcpServer({ name: server.runtimeName, ...server.config });
+    const oauth = await this.mcpOAuthService();
+    await oauth.invalidate(server.runtimeName, config.url);
+  }
+
   override async resetGlobalMcpServerAuth(name: string): Promise<void> {
-    const server = await this.globalMcpConfig.get(name);
-    const config = requireRemoteMcpServer(server);
-    const oauth = await this.globalMcpOAuthService();
-    await oauth.invalidate(server.name, config.url);
+    return this.resetMcpServerAuth({ source: 'global', name });
   }
 
   /**
@@ -2217,21 +2268,27 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     options: { readonly cwd?: string } = {},
   ): Promise<McpTestResult> {
     const server = await this.globalMcpConfig.get(name);
-    return this.withGlobalMcpServerProbe(server, options.cwd, (manager) =>
-      standaloneMcpTestResult(server.name, manager),
+    const resolved = {
+      runtimeName: server.name,
+      config: mcpConfigWithoutName(server),
+    };
+    const oauth = await this.createMcpOAuthService();
+    return this.withMcpServerProbe(resolved, options.cwd, oauth, (manager) =>
+      standaloneMcpTestResult(resolved.runtimeName, manager),
     );
   }
 
-  private async withGlobalMcpServerProbe<T>(
-    server: McpServerConfig,
+  private async withMcpServerProbe<T>(
+    server: ResolvedMcpServerTarget,
     cwd: string | undefined,
+    oauth: McpOAuthService,
     inspect: (manager: McpConnectionManager) => T,
   ): Promise<T> {
     await this.configReady;
     const section = this.engineAccessor.get(IConfigService).get<McpSection | undefined>(MCP_SECTION);
     const manager = new McpConnectionManager({
       stdioCwd: cwd,
-      oauthService: await this.globalMcpOAuthService(),
+      oauthService: oauth,
       resolveClientName: () => this.resolveMcpClientName(),
       resolveDefaultTimeouts: () => ({
         startupTimeoutMs: section?.startupTimeoutMs,
@@ -2239,29 +2296,64 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       }),
     });
     try {
-      await manager.connectAll({ [server.name]: mcpConfigWithoutName(server) });
+      await manager.connectAll({
+        [server.runtimeName]: { ...server.config, enabled: true },
+      });
       return inspect(manager);
     } finally {
       await manager.shutdown();
     }
   }
 
-  private async globalMcpServerAuthState(
-    server: McpServerConfig,
+  private async mcpServerAuthState(
+    server: ResolvedMcpServerTarget,
     oauth: McpOAuthService,
-  ): Promise<GlobalMcpServerAuthState> {
-    if (server.transport === 'stdio') return 'not-applicable';
-    if (server.bearerTokenEnvVar !== undefined) return 'bearer-token';
+  ): Promise<McpServerAuthState> {
+    const config = server.config;
+    if (config.transport === 'stdio') return 'not-applicable';
+    if (config.bearerTokenEnvVar !== undefined) return 'bearer-token';
     // Keep status classification aligned with the existing connection manager:
     // unmarked static headers are not treated as OAuth credentials.
-    if (server.headers !== undefined && server.auth !== 'oauth') return 'not-applicable';
-    if (server.transport !== 'http' && server.auth !== 'oauth') return 'not-applicable';
-    if (await oauth.hasTokens(server.name, server.url)) return 'oauth-authorized';
-    if (server.auth === 'oauth') return 'oauth-required';
+    if (config.headers !== undefined && config.auth !== 'oauth') return 'not-applicable';
 
-    return this.withGlobalMcpServerProbe(server, undefined, (manager) =>
-      manager.get(server.name)?.status === 'needs-auth' ? 'oauth-required' : 'not-applicable',
+    const connectionStatus = await this.withMcpServerProbe(server, undefined, oauth, (manager) =>
+      manager.get(server.runtimeName)?.status,
     );
+    if (connectionStatus === 'needs-auth') return 'oauth-required';
+    if (connectionStatus !== 'connected') return 'unavailable';
+    // `auth: 'oauth'` is only a configuration hint. A successful anonymous
+    // connection is not proof that an OAuth identity was accepted.
+    return (await oauth.hasTokens(server.runtimeName, config.url))
+      ? 'oauth-authorized'
+      : 'not-applicable';
+  }
+
+  private async resolveMcpServerTarget(
+    target: McpServerLocator,
+  ): Promise<ResolvedMcpServerTarget> {
+    if (target.source === 'global') {
+      const server = await this.globalMcpConfig.get(target.name);
+      return {
+        runtimeName: server.name,
+        config: mcpConfigWithoutName(server),
+      };
+    }
+
+    const plugin = await this.engineAccessor
+      .get(IPluginService)
+      .getPluginInfo({ id: target.pluginId });
+    const config = plugin.manifest?.mcpServers?.[target.serverName];
+    const runtimeName = plugin.mcpServers.find(
+      (server) => server.name === target.serverName,
+    )?.runtimeName;
+    if (config === undefined || runtimeName === undefined) {
+      throw new KimiError(
+        ErrorCodes.MCP_SERVER_NOT_FOUND,
+        `MCP server "${target.serverName}" was not found in plugin "${plugin.id}"`,
+        { details: { pluginId: plugin.id, serverName: target.serverName } },
+      );
+    }
+    return { runtimeName, config };
   }
 
   /**

@@ -24,7 +24,9 @@ import type {
   KimiConfigPatch,
   KimiHostIdentity,
   ListSessionsOptions,
+  McpServerAuthStatus,
   McpServerConfig,
+  McpServerLocator,
   McpServerInfo,
   McpTestResult,
   PluginCommandDef,
@@ -394,8 +396,16 @@ export class KimiHarness {
     return this.rpc.listGlobalMcpServers();
   }
 
-  async listMcpServerAuthStatuses(): Promise<readonly GlobalMcpServerAuthStatus[]> {
-    return this.rpc.listGlobalMcpServerAuthStatuses();
+  async listMcpServerAuthStatuses(): Promise<readonly GlobalMcpServerAuthStatus[]>;
+  async listMcpServerAuthStatuses(
+    targets: readonly McpServerLocator[],
+  ): Promise<readonly McpServerAuthStatus[]>;
+  async listMcpServerAuthStatuses(
+    targets?: readonly McpServerLocator[],
+  ): Promise<readonly GlobalMcpServerAuthStatus[] | readonly McpServerAuthStatus[]> {
+    return targets === undefined
+      ? this.rpc.listGlobalMcpServerAuthStatuses()
+      : this.rpc.listMcpServerAuthStatuses(targets);
   }
 
   async addMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
@@ -411,28 +421,38 @@ export class KimiHarness {
   }
 
   async authenticateMcpServer(
-    name: string,
+    target: string | McpServerLocator,
     options: AuthenticateMcpServerOptions,
   ): Promise<void> {
-    const started = await this.rpc.beginGlobalMcpServerAuth(name);
+    const isGlobalName = typeof target === 'string';
+    const started = isGlobalName
+      ? await this.rpc.beginGlobalMcpServerAuth(target)
+      : await this.rpc.beginMcpServerAuth(target);
     if (started.status === 'already-authorized') return;
     try {
       const opened = await options.onAuthorizationUrl(started.authorizationUrl);
       if (opened === false) {
         throw new KimiError(ErrorCodes.REQUEST_INVALID, 'MCP OAuth authorization was cancelled');
       }
-      await this.rpc.completeGlobalMcpServerAuth(
-        { flowId: started.flowId, timeoutMs: options.timeoutMs },
-        options.signal,
-      );
+      const input = { flowId: started.flowId, timeoutMs: options.timeoutMs };
+      if (isGlobalName) {
+        await this.rpc.completeGlobalMcpServerAuth(input, options.signal);
+      } else {
+        await this.rpc.completeMcpServerAuth(input, options.signal);
+      }
     } catch (error) {
-      await this.rpc.cancelGlobalMcpServerAuth(started.flowId).catch(() => undefined);
+      const cancellation = isGlobalName
+        ? this.rpc.cancelGlobalMcpServerAuth(started.flowId)
+        : this.rpc.cancelMcpServerAuth(started.flowId);
+      await cancellation.catch(() => undefined);
       throw error;
     }
   }
 
-  async resetMcpServerAuth(name: string): Promise<void> {
-    return this.rpc.resetGlobalMcpServerAuth(name);
+  async resetMcpServerAuth(target: string | McpServerLocator): Promise<void> {
+    return typeof target === 'string'
+      ? this.rpc.resetGlobalMcpServerAuth(target)
+      : this.rpc.resetMcpServerAuth(target);
   }
 
   async testMcpServer(

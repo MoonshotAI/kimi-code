@@ -352,18 +352,38 @@ export interface GlobalMcpServerNamePayload {
   readonly name: string;
 }
 
-export type GlobalMcpServerAuthState =
+export type McpServerLocator =
+  | { readonly source: 'global'; readonly name: string }
+  | { readonly source: 'plugin'; readonly pluginId: string; readonly serverName: string };
+
+export interface McpServerTargetPayload {
+  readonly target: McpServerLocator;
+}
+
+export interface ListMcpServerAuthStatusesPayload {
+  readonly targets: readonly McpServerLocator[];
+}
+
+export type McpServerAuthState =
   | 'not-applicable'
   | 'bearer-token'
   | 'oauth-required'
-  | 'oauth-authorized';
+  | 'oauth-authorized'
+  | 'unavailable';
+
+export interface McpServerAuthStatus {
+  readonly target: McpServerLocator;
+  readonly authStatus: McpServerAuthState;
+}
+
+export type GlobalMcpServerAuthState = McpServerAuthState;
 
 export interface GlobalMcpServerAuthStatus {
   readonly name: string;
   readonly authStatus: GlobalMcpServerAuthState;
 }
 
-export type BeginGlobalMcpServerAuthResult =
+export type BeginMcpServerAuthResult =
   | { readonly status: 'already-authorized' }
   | {
       readonly status: 'authorization-required';
@@ -371,14 +391,20 @@ export type BeginGlobalMcpServerAuthResult =
       readonly authorizationUrl: string;
     };
 
-export interface CompleteGlobalMcpServerAuthPayload {
+export type BeginGlobalMcpServerAuthResult = BeginMcpServerAuthResult;
+
+export interface CompleteMcpServerAuthPayload {
   readonly flowId: string;
   readonly timeoutMs?: number;
 }
 
-export interface CancelGlobalMcpServerAuthPayload {
+export interface CancelMcpServerAuthPayload {
   readonly flowId: string;
 }
+
+export type CompleteGlobalMcpServerAuthPayload = CompleteMcpServerAuthPayload;
+
+export type CancelGlobalMcpServerAuthPayload = CancelMcpServerAuthPayload;
 
 export interface TestGlobalMcpServerPayload {
   readonly name: string;
@@ -551,15 +577,22 @@ export interface CoreAPI extends SessionAPIWithId {
   listGlobalMcpServerAuthStatuses: (
     payload: EmptyPayload,
   ) => readonly GlobalMcpServerAuthStatus[];
+  listMcpServerAuthStatuses: (
+    payload: ListMcpServerAuthStatusesPayload,
+  ) => readonly McpServerAuthStatus[];
   addGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   updateGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   removeGlobalMcpServer: (payload: GlobalMcpServerNamePayload) => readonly GlobalMcpServerConfig[];
   beginGlobalMcpServerAuth: (
     payload: GlobalMcpServerNamePayload,
   ) => BeginGlobalMcpServerAuthResult;
+  beginMcpServerAuth: (payload: McpServerTargetPayload) => BeginMcpServerAuthResult;
   completeGlobalMcpServerAuth: (payload: CompleteGlobalMcpServerAuthPayload) => void;
+  completeMcpServerAuth: (payload: CompleteMcpServerAuthPayload) => void;
   cancelGlobalMcpServerAuth: (payload: CancelGlobalMcpServerAuthPayload) => void;
+  cancelMcpServerAuth: (payload: CancelMcpServerAuthPayload) => void;
   resetGlobalMcpServerAuth: (payload: GlobalMcpServerNamePayload) => void;
+  resetMcpServerAuth: (payload: McpServerTargetPayload) => void;
   testGlobalMcpServer: (payload: TestGlobalMcpServerPayload) => GlobalMcpServerTestResult;
   createSession: (payload: CreateSessionPayload) => SessionSummary;
   closeSession: (payload: CloseSessionPayload) => void;
