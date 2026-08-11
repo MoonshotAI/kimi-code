@@ -127,7 +127,7 @@
  *   matching v1's aggregate.
  */
 import { randomUUID } from 'node:crypto';
-import { readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -221,6 +221,8 @@ import {
   ProfileError,
   ProfileErrors,
   promptMetadataTextFromSkill,
+  parseAgentFileText,
+  resolveAgentPath,
   resolveAgentTaskConfig,
   resolveConfigPath,
   resolveKimiHome,
@@ -1081,12 +1083,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // Wired before the optional main-agent materialization so a profile-bind
     // warning (oversized AGENTS.md) reaches the listeners like v1's create.
     this.wireSession(handle);
+    // `--agent` / `--agent-file` select the startup session's main-agent
+    // profile. Resolve the explicit profile (an agentfile contributes the
+    // profile under its frontmatter `name`) and bind it when the main agent is
+    // materialized — the same binding print mode applies via `mainAgentBinding`
+    // — so a profile's `tools` / `disallowedTools` policy is enforced in
+    // interactive sessions too, not just `-p`.
+    const agentProfileName = await this.resolveStartupAgentProfile(input, workDir);
     if (
+      agentProfileName !== undefined ||
       input.model !== undefined ||
       input.thinking !== undefined ||
       input.permission !== undefined
     ) {
       const agent = await this.materializeMainAgent(handle, {
+        profile: agentProfileName,
         model: input.model,
         thinking: input.thinking,
       });
@@ -1324,21 +1335,25 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   private async materializeMainAgent(
     session: ISessionScopeHandle,
-    binding?: { readonly model?: string; readonly thinking?: string },
+    binding?: { readonly profile?: string; readonly model?: string; readonly thinking?: string },
   ): Promise<IAgentScopeHandle> {
     await this.modelReady;
     const agent = await ensureMainAgent(session);
     const profile = agent.accessor.get(IAgentProfileService);
-    if (binding !== undefined || profile.data().profileName === undefined) {
+    // A fresh agent binds the requested startup profile when one was selected,
+    // else the default profile + configured default model. An agent that is
+    // already bound (startup `--agent` binding, or a resumed profile restored
+    // from wire) is left alone so the explicit binding is never overwritten.
+    if (binding?.profile !== undefined || profile.data().profileName === undefined) {
       try {
         await profile.bind({
-          profile: DEFAULT_AGENT_PROFILE_NAME,
+          profile: binding?.profile ?? DEFAULT_AGENT_PROFILE_NAME,
           model: binding?.model,
           thinking: binding?.thinking,
         });
       } catch (error) {
         if (
-          binding === undefined &&
+          binding?.profile === undefined &&
           error instanceof ProfileError &&
           error.code === ProfileErrors.codes.MODEL_NOT_CONFIGURED
         ) {
@@ -1348,6 +1363,50 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       }
     }
     return agent;
+  }
+
+  /**
+   * Resolve the `--agent` / `--agent-file` main-agent profile for a new
+   * session: an explicit `--agent` name wins; otherwise the first `--agent-file`
+   * contributes the profile under its frontmatter `name` (parsed here, fatal on
+   * error, so a bad file fails before any session materializes — the same
+   * precedence print mode applies in `run-v2-print`).
+   */
+  private async resolveStartupAgentProfile(
+    input: CreateSessionOptions,
+    workDir: string,
+  ): Promise<string | undefined> {
+    if (input.agentProfile !== undefined) return input.agentProfile;
+    const agentFile = input.agentFiles?.[0];
+    if (agentFile === undefined) return undefined;
+    const agentFilePath = resolveAgentPath(
+      agentFile,
+      workDir,
+      this.engineAccessor.get(IBootstrapService).osHomeDir,
+    );
+    let text: string;
+    try {
+      text = await readFile(agentFilePath, 'utf8');
+    } catch (error) {
+      throw new KimiError(
+        ErrorCodes.AGENT_NOT_FOUND,
+        `Failed to read agent file "${agentFilePath}": ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    try {
+      return parseAgentFileText({
+        path: agentFilePath,
+        source: 'explicit',
+        text,
+      }).name;
+    } catch (error) {
+      throw new KimiError(
+        ErrorCodes.AGENT_NOT_FOUND,
+        `Invalid agent file "${agentFilePath}": ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
   }
 
   /** The target agent's live scope handle (see the section header). */
