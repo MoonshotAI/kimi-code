@@ -22,6 +22,7 @@ import type { Event } from '@moonshot-ai/kimi-code-sdk';
 
 import {
   MAX_SUBAGENT_ACTIVITY_STEPS,
+  SUBAGENT_ARG_STRING_MAX_CHARS,
   SUBAGENT_STEP_TEXT_TAIL_CHARS,
   SUBAGENT_TOOL_OUTPUT_MAX_CHARS,
 } from '#/tui/constant/rendering';
@@ -88,6 +89,22 @@ function tail(text: string, maxChars: number): string {
   return text.length <= maxChars ? text : text.slice(text.length - maxChars);
 }
 
+/** Truncate long string argument values before they are retained — Write and
+ *  Edit carry whole-file contents in args, which would otherwise dwarf every
+ *  other retention cap. Only header summaries (`extractKeyArgument`) and the
+ *  Edit/Write line chips read args, so truncation is display-safe; those
+ *  chips simply become approximate beyond the cap. Shallow on purpose: the
+ *  tools that matter have flat argument records. */
+function capArgStrings(args: Record<string, unknown>): Record<string, unknown> {
+  let capped: Record<string, unknown> | undefined;
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value !== 'string' || value.length <= SUBAGENT_ARG_STRING_MAX_CHARS) continue;
+    capped ??= { ...args };
+    capped[key] = `${value.slice(0, SUBAGENT_ARG_STRING_MAX_CHARS)}…`;
+  }
+  return capped ?? args;
+}
+
 export class SubagentActivityStore {
   private readonly records = new Map<string, SubagentActivityRecord>();
   /** Raw streaming-arguments buffer per in-flight tool call (from deltas). */
@@ -143,7 +160,7 @@ export class SubagentActivityStore {
       case 'tool.call.started': {
         const record = this.recordFor(event.agentId);
         const existing = this.findToolCall(record, event.toolCallId);
-        const args = argsRecord(event.args);
+        const args = capArgStrings(argsRecord(event.args));
         if (existing === undefined) {
           this.currentStep(record).toolCalls.push({
             id: event.toolCallId,
@@ -185,7 +202,7 @@ export class SubagentActivityStore {
           this.currentStep(record).toolCalls.push(call);
         }
         if (call.name.length === 0 && event.name !== undefined) call.name = event.name;
-        call.args = parseStreamingArgs(buffered);
+        call.args = capArgStrings(parseStreamingArgs(buffered));
         this.bump(record);
         return;
       }

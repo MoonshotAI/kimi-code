@@ -18,6 +18,11 @@ export const COMMAND_PREVIEW_LINES = 10;
 export const MAX_SUBAGENT_ACTIVITY_STEPS = 20;
 export const SUBAGENT_STEP_TEXT_TAIL_CHARS = 4000;
 export const SUBAGENT_TOOL_OUTPUT_MAX_CHARS = 8000;
+// Cap on individual string argument values kept in a record (Write/Edit
+// carry whole-file contents). Only header summaries and the Edit/Write line
+// chips read args, so long values are truncated; chips become approximate
+// beyond the cap.
+export const SUBAGENT_ARG_STRING_MAX_CHARS = 16 * 1024;
 
 // Animation frames are shared by the login/update loaders and live thinking.
 export const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];

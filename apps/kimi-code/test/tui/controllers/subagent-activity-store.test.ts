@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MAX_SUBAGENT_ACTIVITY_STEPS,
+  SUBAGENT_ARG_STRING_MAX_CHARS,
   SUBAGENT_STEP_TEXT_TAIL_CHARS,
   SUBAGENT_TOOL_OUTPUT_MAX_CHARS,
 } from '#/tui/constant/rendering';
@@ -236,5 +237,25 @@ describe('SubagentActivityStore', () => {
       store as unknown as { streamingArgs: Map<string, string> }
     ).streamingArgs;
     expect([...buffers.keys()].every((key) => !key.startsWith('agent-1:'))).toBe(true);
+  });
+
+  it('caps long string argument values retained in a record', () => {
+    const store = new SubagentActivityStore();
+    store.ensureRecord(spawn());
+    store.applyEvent(
+      ev({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 't1',
+        name: 'Write',
+        args: { path: 'a.ts', content: 'c'.repeat(SUBAGENT_ARG_STRING_MAX_CHARS + 500) },
+      }),
+    );
+    const call = store.get('agent-1')?.steps[0]?.toolCalls[0];
+    expect(typeof call?.args['content']).toBe('string');
+    expect((call?.args['content'] as string).length).toBeLessThanOrEqual(
+      SUBAGENT_ARG_STRING_MAX_CHARS + 1,
+    );
+    expect(call?.args['path']).toBe('a.ts');
   });
 });
