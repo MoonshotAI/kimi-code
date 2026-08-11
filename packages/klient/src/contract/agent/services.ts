@@ -1,7 +1,7 @@
 /**
  * Agent-scope domain service contracts. These mirror the positional-arg
  * signatures of the engine's domain Services (shellCommand / profile / usage /
- * plan / task) that the agent facade calls directly; payload and result
+ * permissionMode / plan / task) that the agent facade calls directly; payload and result
  * schemas are shared with `agent/rpc.ts` (they mirror the same wire shapes).
  */
 
@@ -11,6 +11,7 @@ import { maybe, noResult } from '../helpers.js';
 import type { ServiceContract } from '../types.js';
 import {
   agentTaskInfoSchema,
+  permissionModeSchema,
   planDataSchema,
   runShellCommandPayloadSchema,
   setModelResultSchema,
@@ -35,6 +36,10 @@ export const agentProfileContract = {
 
 export const agentUsageContract = {
   status: { input: z.tuple([]), output: usageStatusSchema },
+} satisfies ServiceContract;
+
+export const agentPermissionModeContract = {
+  mode: { input: z.tuple([]), output: permissionModeSchema },
 } satisfies ServiceContract;
 
 export const agentPlanContract = {

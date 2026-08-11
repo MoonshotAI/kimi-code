@@ -12,6 +12,7 @@ import { agentRpcContract } from './agent/rpc.js';
 import {
   agentFullCompactionContract,
   agentMcpContract,
+  agentPermissionModeContract,
   agentPlanContract,
   agentProfileContract,
   agentShellCommandContract,
@@ -72,6 +73,7 @@ export const globalContract: KlientContract = {
   agentShellCommandService: agentShellCommandContract,
   agentProfileService: agentProfileContract,
   agentUsageService: agentUsageContract,
+  agentPermissionModeService: agentPermissionModeContract,
   agentPlanService: agentPlanContract,
   agentTaskService: agentTaskContract,
   agentMcpService: agentMcpContract,

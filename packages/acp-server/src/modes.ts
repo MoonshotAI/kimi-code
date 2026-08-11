@@ -3,8 +3,8 @@
  *
  * The 4 modes (`default`, `plan`, `auto`, `yolo`) are the locked decision.
  * Every `session/new` and `session/load` response advertises {@link ACP_MODES}
- * as the mode picker plus {@link DEFAULT_MODE_ID} as `currentModeId`, so ACP
- * clients render the dropdown from a single canonical source.
+ * as the mode picker plus the mode derived from the engine's current plan and
+ * permission state, so ACP clients render an accurate dropdown.
  *
  * `session/set_mode` and the `mode` arm of `session/set_config_option` consume
  * the same source of truth: {@link isAcpModeId} narrows the wire string, and
@@ -42,7 +42,7 @@ export const ACP_MODES = [
   },
 ] as const satisfies readonly SessionMode[];
 
-/** Initial `currentModeId` for every freshly created ACP session. */
+/** Fallback mode until the engine state has been read. */
 export const DEFAULT_MODE_ID = 'default' as const;
 
 /** The four wire-level mode ids understood by this host. */
@@ -82,6 +82,26 @@ export function acpModeToToggles(id: AcpModeId): AcpModeToggles {
     default: {
       const _exhaustive: never = id;
       throw new Error(`Unhandled AcpModeId: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+/** Project the engine's plan and permission state into the ACP mode taxonomy. */
+export function acpModeFromEngineState(
+  permission: PermissionMode,
+  planActive: boolean,
+): AcpModeId {
+  if (planActive) return 'plan';
+  switch (permission) {
+    case 'manual':
+      return 'default';
+    case 'auto':
+      return 'auto';
+    case 'yolo':
+      return 'yolo';
+    default: {
+      const _exhaustive: never = permission;
+      throw new Error(`Unhandled PermissionMode: ${String(_exhaustive)}`);
     }
   }
 }

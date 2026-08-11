@@ -22,6 +22,7 @@ import type {
   TurnPhase,
 } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import type { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type {
@@ -167,6 +168,7 @@ import {
   getTaskOutputPayloadSchema,
   getTasksPayloadSchema,
   planDataSchema,
+  permissionModeSchema,
   promptLaunchResultSchema,
   promptPartSchema,
   promptPayloadSchema,
@@ -532,6 +534,7 @@ type PromptLaunchResult = NonNullable<ReturnType<AgentAPI['prompt']>>;
 type SteerPayload = Parameters<AgentAPI['steer']>[0];
 type CancelPayload = Parameters<AgentAPI['cancel']>[0];
 type SetPermissionPayload = Parameters<AgentAPI['setPermission']>[0];
+type PermissionMode = IAgentPermissionModeService['mode'];
 type AgentCommandInfo = Awaited<ReturnType<AgentAPI['listCommands']>>[number];
 type RunCommandPayload = Parameters<AgentAPI['runCommand']>[0];
 type TokenUsage = NonNullable<UsageStatus['total']>;
@@ -560,6 +563,7 @@ const _setModelPayload: AssertWire<typeof setModelPayloadSchema, SetModelPayload
 const _setModelResult: AssertWire<typeof setModelResultSchema, SetModelResult> = true;
 const _setPermissionPayload: AssertWire<typeof setPermissionPayloadSchema, SetPermissionPayload> =
   true;
+const _permissionMode: AssertWire<typeof permissionModeSchema, PermissionMode> = true;
 const _tokenUsage: AssertWire<typeof tokenUsageSchema, TokenUsage> = true;
 const _usageStatus: AssertWire<typeof usageStatusSchema, UsageStatus> = true;
 // One-directional: `history` entries are full `ContextMessage`s (deep

@@ -182,6 +182,23 @@ describe('agent profile routing', () => {
   });
 });
 
+describe('agent permission routing', () => {
+  it('getPermission routes through the permission mode service', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = 'auto';
+    await expect(agent.getPermission()).resolves.toBe('auto');
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentPermissionModeService',
+      method: 'mode',
+      args: [],
+    });
+  });
+});
+
 describe('session skills routing', () => {
   it('skills.list routes to sessionSkillCatalog.list with the session scope', async () => {
     const channel = new FakeChannel();

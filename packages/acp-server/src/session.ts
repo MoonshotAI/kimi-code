@@ -84,7 +84,13 @@ import {
 import { AcpInteractionBridge } from './interaction-bridge';
 import { log } from './log';
 import { projectModelCatalog } from './model-catalog';
-import { ACP_MODES, type AcpModeId, acpModeToToggles, DEFAULT_MODE_ID } from './modes';
+import {
+  ACP_MODES,
+  type AcpModeId,
+  acpModeFromEngineState,
+  acpModeToToggles,
+  DEFAULT_MODE_ID,
+} from './modes';
 import { projectHistoryToSessionUpdates } from './replay';
 import { buildAcpSkillSlashCommands, detectSlashIntent } from './slash';
 
@@ -354,6 +360,18 @@ export class AcpSession {
     } catch (error) {
       // Keep the unbound defaults — configOptions stays honest.
       log.warn('acp: could not seed model/thinking state', {
+        sessionId: this.sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    try {
+      const [permission, plan] = await Promise.all([
+        this.agent.getPermission(),
+        this.agent.getPlan(),
+      ]);
+      this.currentModeId = acpModeFromEngineState(permission, plan !== null);
+    } catch (error) {
+      log.warn('acp: could not seed permission/plan state', {
         sessionId: this.sessionId,
         error: error instanceof Error ? error.message : String(error),
       });

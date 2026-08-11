@@ -323,5 +323,20 @@ export function defineKlientConformance(
         await target.klient.session(created.id).close();
       }
     });
+
+    it('reads the current agent permission mode', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance permission mode',
+      });
+
+      try {
+        const agent = target.klient.session(created.id).agent('main');
+        await agent.setPermission('auto');
+        await expect(agent.getPermission()).resolves.toBe('auto');
+      } finally {
+        await target.klient.session(created.id).close();
+      }
+    });
   });
 }

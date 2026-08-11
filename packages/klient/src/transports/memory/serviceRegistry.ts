@@ -32,6 +32,7 @@ import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/ques
 import { ISessionSkillCatalog } from '@moonshot-ai/agent-core-v2/session/sessionSkillCatalog/skillCatalog';
 import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
+import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
@@ -68,6 +69,7 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   agentShellCommandService: IAgentShellCommandService,
   agentProfileService: IAgentProfileService,
   agentUsageService: IAgentUsageService,
+  agentPermissionModeService: IAgentPermissionModeService,
   agentPlanService: IAgentPlanService,
   agentTaskService: IAgentTaskService,
   agentMcpService: IAgentMcpService,

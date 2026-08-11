@@ -19,10 +19,13 @@ interface ModesState {
   readonly availableModes: ReadonlyArray<{ readonly id: string }>;
 }
 
-interface NewSessionResult {
-  readonly sessionId: string;
+interface SessionConfigSnapshot {
   readonly configOptions: readonly ConfigOption[];
   readonly modes?: ModesState;
+}
+
+interface NewSessionResult extends SessionConfigSnapshot {
+  readonly sessionId: string;
 }
 
 describe('acp-server config surface', () => {
@@ -99,6 +102,68 @@ describe('acp-server config surface', () => {
         'auto',
         'yolo',
       ]);
+    },
+    30_000,
+  );
+
+  it.each(['auto', 'yolo'] as const)(
+    'session/new reports the engine %s permission mode',
+    async (permission) => {
+      homeDir = await mkdtemp(join(tmpdir(), 'acp-config-'));
+      await writeFile(
+        join(homeDir, 'config.toml'),
+        `default_permission_mode = "${permission}"\n`,
+        'utf8',
+      );
+      client = await createTestClient({ homeDir });
+      await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+
+      const { sessionId, configOptions, modes } = await newSession();
+      await expect(
+        client.server.klient.session(sessionId).agent('main').getPermission(),
+      ).resolves.toBe(permission);
+      expect(modes?.currentModeId).toBe(permission);
+      expect(configOptions.find((option) => option.id === 'mode')?.currentValue).toBe(permission);
+    },
+    30_000,
+  );
+
+  it(
+    'session/resume restores the persisted permission mode',
+    async () => {
+      await boot();
+      const { sessionId } = await newSession();
+      await client!.send('session/set_mode', { sessionId, modeId: 'auto' });
+      await client!.send('session/close', { sessionId });
+
+      const resumed = (await client!.send('session/resume', {
+        sessionId,
+        cwd: homeDir,
+        mcpServers: [],
+      })) as SessionConfigSnapshot;
+      expect(resumed.modes?.currentModeId).toBe('auto');
+      expect(resumed.configOptions.find((option) => option.id === 'mode')?.currentValue).toBe(
+        'auto',
+      );
+    },
+    30_000,
+  );
+
+  it(
+    'session/new reports plan mode ahead of the permission mode',
+    async () => {
+      homeDir = await mkdtemp(join(tmpdir(), 'acp-config-'));
+      await writeFile(
+        join(homeDir, 'config.toml'),
+        'default_plan_mode = true\ndefault_permission_mode = "yolo"\n',
+        'utf8',
+      );
+      client = await createTestClient({ homeDir });
+      await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+
+      const { configOptions, modes } = await newSession();
+      expect(modes?.currentModeId).toBe('plan');
+      expect(configOptions.find((option) => option.id === 'mode')?.currentValue).toBe('plan');
     },
     30_000,
   );
