@@ -1,8 +1,9 @@
 // app-core api/daemon/projector — the AgentProjector contract.
 //
-// DaemonKimiWebApi drives raw agent-core frames through a projector supplied by
-// the consumer (its createAgentProjector, which carries i18n / tool labeling).
-// Holding only the interface here keeps the api client free of that coupling.
+// DaemonKimiWebApi drives raw agent-core frames through a projector supplied
+// via projectorFactory (createKimiWebApi wires the in-package implementation,
+// which receives its translator by injection). Holding only the interface here
+// keeps the api client free of that coupling.
 
 import type { AppEvent, AppInFlightTurn } from '../types';
 

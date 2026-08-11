@@ -1,4 +1,4 @@
-// apps/kimi-web/src/api/daemon/agentEventProjector.ts
+// packages/app-core/src/api/daemon/agentEventProjector.ts
 //
 // Client-side projector: raw agent-core WS events → AppEvent[]
 //
@@ -12,7 +12,7 @@
 //   apps/kimi-daemon/src/session/usage-tracker.ts
 //
 // Usage:
-//   const projector = createAgentProjector();
+//   const projector = createAgentProjector({ t });
 //   const appEvents = projector.project(rawType, payload, sessionId);
 //   // call reset() when re-subscribing / resyncing a session
 
@@ -25,11 +25,12 @@ import type {
   AppSessionUsage,
   AppTask,
 } from '../types';
-import { i18n } from '../../i18n';
-import { logError } from '@moonshot-ai/app-core/lib';
-import { toolLabel, toolSummary } from '../../lib/toolMeta';
-import { toAppMessageContent } from '@moonshot-ai/app-core/api';
-import type { AgentProjector, ProjectMeta, WireMessageContent } from '@moonshot-ai/app-core/api';
+import type { Translator } from '../../contracts';
+import { logError } from '../../lib/log';
+import { toolLabel, toolSummary } from '../../lib/toolText';
+import { toAppMessageContent } from './mappers';
+import type { AgentProjector, ProjectMeta } from './projector';
+import type { WireMessageContent } from './wire';
 
 // Subagent turns share the parent session id: their turn / step / delta / tool
 // frames stream over the SAME session channel, each tagged with the subagent's
@@ -125,6 +126,11 @@ interface SessionState {
   // In-memory message log (mirrors daemon message-log.ts)
   messages: AppMessage[];
 
+  /** True while the main turn's current step is in the retry backoff — the
+   *  last projected `agent.status.updated` carried phase 'retrying'. Gates the
+   *  clear emission so non-retrying phases don't each emit a redundant clear. */
+  retryActive: boolean;
+
   // Subagent lifecycle deltas after spawned only carry subagentId. Keep the
   // spawned metadata here so later updates can replace the full AppTask.
   subagentMeta: Map<string, AppTask>;
@@ -132,11 +138,6 @@ interface SessionState {
   // Bubble cleared by turn.step.retrying, to be reused by the retried
   // step.started (same turn) instead of stacking a new bubble.
   retryReuseMsgId: string | undefined;
-
-  /** True while the main turn's current step is in the retry backoff — the
-   *  last projected `agent.status.updated` carried phase 'retrying'. Gates the
-   *  clear emission so non-retrying phases don't each emit a redundant clear. */
-  retryActive: boolean;
 }
 
 function createSessionState(): SessionState {
@@ -208,6 +209,7 @@ function mapGoalSnapshot(snapshot: unknown): AppGoal | null {
 }
 
 function patchSubagent(
+  t: Translator,
   state: SessionState,
   sessionId: string,
   subagentId: unknown,
@@ -219,7 +221,7 @@ function patchSubagent(
     agentId: subagentId,
     sessionId,
     kind: 'subagent',
-    description: i18n.global.t('tasks.dockSubagent'),
+    description: t('tasks.dockSubagent'),
     status: 'running',
     createdAt: new Date().toISOString(),
     subagentPhase: 'queued',
@@ -229,14 +231,14 @@ function patchSubagent(
   return next;
 }
 
-export function subagentProgressText(rawType: string, payload: Record<string, unknown>): string | null {
+export function subagentProgressText(t: Translator, rawType: string, payload: Record<string, unknown>): string | null {
   // "Started a step" fires on every step and adds no information — the phase
   // badge already shows the subagent is working, so skip it to cut the noise.
   if (rawType === 'turn.step.started') return null;
   if (rawType === 'tool.use' || rawType === 'tool.call.started') {
     const name = stringField(payload, 'name') ?? stringField(payload, 'toolName') ?? 'tool';
-    const label = toolLabel(cleanToolName(name));
-    const summary = toolArgSummary(name, payload['args'] ?? payload['input']);
+    const label = toolLabel(t, cleanToolName(name));
+    const summary = toolArgSummary(t, name, payload['args'] ?? payload['input']);
     return summary ? `Calling ${label}: ${summary}` : `Calling ${label}`;
   }
   if (rawType === 'tool.progress') {
@@ -271,13 +273,14 @@ function capProgressText(text: string): string {
 
 /** A concise, human-readable summary of a tool call's arguments for progress
  *  lines (e.g. a file path or shell command), instead of the full JSON blob. */
-function toolArgSummary(name: string, args: unknown): string {
+function toolArgSummary(t: Translator, name: string, args: unknown): string {
   if (args === undefined || args === null) return '';
   const arg = typeof args === 'string' ? args : JSON.stringify(args);
-  return toolSummary(name, arg);
+  return toolSummary(t, name, arg);
 }
 
 function projectSubagentProgress(
+  t: Translator,
   state: SessionState,
   sessionId: string,
   subagentId: string,
@@ -303,7 +306,7 @@ function projectSubagentProgress(
     // taskProgress to existing tasks — without this, the deltas are dropped and
     // the live detail stays blank until a non-text frame recreates the task.
     const previous = state.subagentMeta.get(subagentId);
-    const task = patchSubagent(state, sessionId, subagentId, {
+    const task = patchSubagent(t, state, sessionId, subagentId, {
       status: 'running',
       subagentPhase: 'working',
       startedAt: previous?.startedAt ?? new Date().toISOString(),
@@ -321,10 +324,10 @@ function projectSubagentProgress(
     return out;
   }
 
-  const text = subagentProgressText(rawType, payload);
+  const text = subagentProgressText(t, rawType, payload);
   if (text === null || text.length === 0) return [];
   const previous = state.subagentMeta.get(subagentId);
-  const task = patchSubagent(state, sessionId, subagentId, {
+  const task = patchSubagent(t, state, sessionId, subagentId, {
     status: 'running',
     subagentPhase: 'working',
     startedAt: previous?.startedAt ?? new Date().toISOString(),
@@ -494,10 +497,11 @@ function buildUsageSnapshot(state: SessionState): AppSessionUsage {
 // AgentProjector
 // ---------------------------------------------------------------------------
 
-// ProjectMeta + AgentProjector contracts live in @moonshot-ai/app-core/api
-// (imported above); this is the apps/web implementation (i18n + toolMeta).
+// The translator is injected (`deps.t`) so projected text — task descriptions,
+// progress labels — is localized without importing the consumer's i18n runtime.
 
-export function createAgentProjector(): AgentProjector {
+export function createAgentProjector(deps: { t: Translator }): AgentProjector {
+  const { t } = deps;
   const sessions = new Map<string, SessionState>();
   const sideChannelAgents = new Set<string>();
 
@@ -649,7 +653,7 @@ export function createAgentProjector(): AgentProjector {
         ];
       }
       if (MAIN_AGENT_TRANSCRIPT_FRAMES.has(rawType)) {
-        return projectSubagentProgress(s, sessionId, frameAgentId, rawType, p ?? {}, sideChannelAgents);
+        return projectSubagentProgress(t, s, sessionId, frameAgentId, rawType, p ?? {}, sideChannelAgents);
       }
     }
 
@@ -1193,7 +1197,7 @@ export function createAgentProjector(): AgentProjector {
           agentId: taskId,
           sessionId,
           kind: 'subagent',
-          description: typeof p?.description === 'string' ? p.description : p?.subagentName ?? i18n.global.t('tasks.dockSubagent'),
+          description: typeof p?.description === 'string' ? p.description : p?.subagentName ?? t('tasks.dockSubagent'),
           status: 'running',
           createdAt: new Date().toISOString(),
           subagentPhase: 'queued',
@@ -1218,7 +1222,7 @@ export function createAgentProjector(): AgentProjector {
       }
 
       case 'subagent.started': {
-        const task = patchSubagent(s, sessionId, p?.subagentId, {
+        const task = patchSubagent(t, s, sessionId, p?.subagentId, {
           subagentPhase: 'working',
           status: 'running',
           startedAt: new Date().toISOString(),
@@ -1228,7 +1232,7 @@ export function createAgentProjector(): AgentProjector {
       }
 
       case 'subagent.suspended': {
-        const task = patchSubagent(s, sessionId, p?.subagentId, {
+        const task = patchSubagent(t, s, sessionId, p?.subagentId, {
           subagentPhase: 'suspended',
           status: 'running',
           suspendedReason: typeof p?.reason === 'string' ? p.reason : undefined,
@@ -1239,7 +1243,7 @@ export function createAgentProjector(): AgentProjector {
 
       case 'subagent.completed': {
         const outputPreview = typeof p?.resultSummary === 'string' ? p.resultSummary : undefined;
-        const task = patchSubagent(s, sessionId, p?.subagentId, {
+        const task = patchSubagent(t, s, sessionId, p?.subagentId, {
           subagentPhase: 'completed',
           status: 'completed',
           completedAt: new Date().toISOString(),
@@ -1258,7 +1262,7 @@ export function createAgentProjector(): AgentProjector {
 
       case 'subagent.failed': {
         const outputPreview = typeof p?.error === 'string' ? p.error : undefined;
-        const task = patchSubagent(s, sessionId, p?.subagentId, {
+        const task = patchSubagent(t, s, sessionId, p?.subagentId, {
           subagentPhase: 'failed',
           status: 'failed',
           completedAt: new Date().toISOString(),
@@ -1368,7 +1372,7 @@ export function createAgentProjector(): AgentProjector {
             ? info.description
             : typeof info.command === 'string'
               ? info.command
-              : i18n.global.t('tasks.defaultDescription');
+              : t('tasks.defaultDescription');
         // A background subagent registers into the background-task store under
         // a fresh task id that differs from its agent id. Record the task id on
         // the existing WS-owned row (keyed by agent id) instead of adding a
@@ -1384,7 +1388,7 @@ export function createAgentProjector(): AgentProjector {
             // client (subscribed late): later agent-scoped progress frames are
             // routed by agent id, and seeding subagentMeta here keeps them on
             // this one row instead of synthesizing a second one.
-            const task = patchSubagent(s, sessionId, agentId, {
+            const task = patchSubagent(t, s, sessionId, agentId, {
               description,
               backgroundTaskId: taskId,
               runInBackground: true,

@@ -2,7 +2,13 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": []
+    "types": [],
+    // Match the consumers: both apps compile package source with
+    // noPropertyAccessFromIndexSignature off (web's tsconfig is standalone and
+    // never enabled it; the desktop renderer explicitly disables it). Keeping
+    // the base's stricter setting here would only flag patterns that are
+    // idiomatic across the moved renderer modules (Record payload access).
+    "noPropertyAccessFromIndexSignature": false
   },
   "include": ["src"]
 }

@@ -59,6 +59,13 @@ export interface Tracer {
 
 export const noopTracer: Tracer = {};
 
+/**
+ * Translation function injected by the consumer (usually its vue-i18n global
+ * `t`, wrapped). Package modules never import a concrete i18n instance; text
+ * builders receive this as their first parameter.
+ */
+export type Translator = (key: string, params?: Record<string, unknown>) => string;
+
 export interface CredentialStore {
   getToken(): string | undefined;
   markAuthRequired?(): void;

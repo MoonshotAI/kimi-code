@@ -1,16 +1,20 @@
-// apps/kimi-web/test/daemon-client.test.ts
+// packages/app-core/test/daemon-client.test.ts
 // DaemonKimiWebApi public REST adapter: session export binary/error contracts,
 // getSessionGoal wire → app mapping, and raw stream-coordinate delivery.
-// Wiring: real client/projector; fetch or WebSocket is stubbed at the network boundary.
-// Run: pnpm --filter kimi-code-web exec vitest run test/daemon-client.test.ts
+// Wiring: real client/projector; fetch or WebSocket is stubbed at the network
+// boundary; the tracer is a recording fake.
+// Run: pnpm exec vitest run packages/app-core/test/daemon-client.test.ts
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DaemonKimiWebApi } from '@moonshot-ai/app-core/api';
+import { DaemonKimiWebApi } from '../src/api/daemon/client';
 import { createAgentProjector } from '../src/api/daemon/agentEventProjector';
 import { DaemonApiError, DaemonNetworkError } from '../src/api/errors';
-import { clearTrace, traceRestFailure, traceRestRequest, traceRestResponse, traceToJsonl } from '../src/debug/trace';
+import type { RestRequestInfo, Translator } from '../src/contracts';
 import type { AppEvent, KimiEventConnection, KimiEventMeta } from '../src/api/types';
+
+const t: Translator = (key) => key;
+const tracedRequests: RestRequestInfo[] = [];
 
 class FakeWebSocket {
   static readonly OPEN = 1;
@@ -77,11 +81,9 @@ function createApi(): DaemonKimiWebApi {
       clientUiMode: 'test',
     },
     tracer: {
-      restRequest: (info) => traceRestRequest(info),
-      restResponse: (info) => traceRestResponse(info),
-      restFailure: (info) => traceRestFailure(info),
+      restRequest: (info) => tracedRequests.push(info),
     },
-    projectorFactory: createAgentProjector,
+    projectorFactory: () => createAgentProjector({ t }),
   });
 }
 
@@ -89,11 +91,11 @@ describe('DaemonKimiWebApi.exportSession', () => {
   beforeEach(() => {
     vi.stubGlobal('location', { search: '?debug=1' });
     vi.stubGlobal('fetch', vi.fn());
-    clearTrace();
+    tracedRequests.length = 0;
   });
 
   afterEach(() => {
-    clearTrace();
+    tracedRequests.length = 0;
     vi.unstubAllGlobals();
   });
 
@@ -228,7 +230,9 @@ describe('DaemonKimiWebApi.exportSession', () => {
 
     await createApi().exportSession('sess_1', `${secret}\nsecond line`);
 
-    const trace = traceToJsonl();
+    // The client must hand the tracer only Web-log counts, never the content.
+    const trace = JSON.stringify(tracedRequests);
+    expect(tracedRequests).not.toHaveLength(0);
     expect(trace).not.toContain(secret);
     expect(trace).toContain('web_log_bytes');
     expect(trace).toContain('web_log_entries');

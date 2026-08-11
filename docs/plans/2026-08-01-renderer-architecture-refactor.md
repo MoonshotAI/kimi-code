@@ -452,7 +452,7 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - **包改名（2026-08-05，随本 PR 落地）**：共享包与 desktop 共用，"web-" 前缀名不副实——`@moonshot-ai/{web-core,web-ui,web-markdown,web-i18n}` → `app-{core,ui,markdown,i18n}`，目录 `packages/web-*` 同步改 `packages/app-*`；计划中的 `web-client` 以 `app-client` 落地；`vite-preset` 不动；app 包名 `kimi-code-web` / `kimi-code-app` 不动（AGENTS.md 硬约束）。历史 plan/spec 文档保留旧名不改。改名后复测全绿（test 2414 / typecheck / lint / build）。注意根 `vitest.config.ts` 的 packages include 是花括号写法，批量 sed 会漏，需手改。
 - 无 changeset（纯重构）。
 
-### P2 — 🚧 进行中（2026-08-11；代码在 PR #196，合并后本条转「已完成」）
+### P2 — 已完成（2026-08-11；PR #196 合入 main squash 61135322）
 
 - 完成：14 个模块下沉 `packages/app-core/src/client/`——`types.ts`（32 个渲染类型，两端仅头注释差异）+ `eventBatcher` / `turnsProjector` / `applyRecordDiff` / `messagesToTurns` / `latestTodos` / `swarmGroups` / `auxiliaryTranscriptToTurns` + P1 缓批 `parseDiff` / `diffLines` / `diffFullTexts` / `toolDiff` / `notificationXml` / `swarmCardRows`。两端 `src/types.ts` 改 re-export 壳（照 `api/types.ts` 先例，46 个 `./types` import 站点零改动）；app-core exports 新增 `./client` 与 `./client/types` 子路径；两端 50 个文件 import 改指包。
 - **P1 缓批 6 个 lib 模块落 `client/` 而非 `lib/`**：全部依赖 client/types（渲染层 helper），保持分层单向（client → lib，不倒挂）。
@@ -460,4 +460,16 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - **收编 P1 期间 main 新增双副本**（P1 台账登记「P2+ 待收编」）：`lib/modelDisplay.ts` / `lib/providerForm.ts` / `components/sessionRowStatus.ts` → `app-core/src/lib/`（均纯、仅依赖 api/types），desktop 侧 3 个测试随迁，web 重复的 `sessionRowStatus.test.ts` 删除。`lib/attachmentsToContent.ts` 依赖 `useKimiWebClient` 的 `PromptAttachment` 类型，P7+ 再收。
 - **测试随迁与去重**：desktop `applyRecordDiff` / `auxiliaryTranscriptToTurns` / `diffFullTexts` / `notificationXml` / `turnsProjector` + web `swarm-card-rows` / `swarm-groups` / `turn-logic` 随迁入 `packages/app-core/test/`；web `apply-record-diff.test.ts`（desktop 版复制品）与 `turns-projector.test.ts`（desktop 版子集，desktop 多 SessionPlan 历史重建用例）删除。`event-batcher.test.ts` 拆分：resync / snapshot recency 两个套件动态 import `useKimiWebClient`（P7+ god object）拆出留 `apps/web/test/`（`pendingDelta` helper 两端各留一份），3 个纯套件进包。
 - 验收：`pnpm test` 2409 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 无新增 findings（.vue 仅 import 行变动）✅；双端发消息冒烟待人工补。
+- 无 changeset（纯重构）。
+
+### P3 — 🚧 进行中（2026-08-11；代码在 PR #197，合并后本条转「已完成」）
+
+- 完成：`agentEventProjector.ts`（1559 行）下沉 `packages/app-core/src/api/daemon/`；api 壳合并——`createKimiWebApi(deps: { origin, identity, tracer, credentialStore, t, mainAgentOnly? })` 工厂落 `packages/app-core/src/api/createKimiWebApi.ts`，两端 `api/bootstrap.ts` 各瘦身为 ~75 行接线（tracer / credentialStore / runtime config / i18n t），`mainAgentOnly` desktop `true`、web 不传（spec 归属矩阵 §102/117 原已预登记，无需改）。两端 `src/api/` 剩 `bootstrap.ts`（接线）+ `config.ts`（runtime config，按计划留端）+ re-export 壳（index/types/errors）+ desktop 独有 `devBackend.ts`。
+- **t 注入口径**：`contracts.ts` 新增 `Translator` 类型；`createAgentProjector(deps: { t: Translator })`；模块级 helper（`patchSubagent` / `projectSubagentProgress` / `subagentProgressText` / `toolArgSummary`）逐线穿参。两端 bootstrap 传 `(k, p) => p === undefined ? i18n.global.t(k) : i18n.global.t(k, p)`（沿用 useKimiWebClient 的 CreateCoreDeps.t 先例）。**已知问题（计划内不修）**：已投影进 state 的文本不随切语言重算。
+- **toolMeta 拆解（P1 遗留 i18n 批）**：`toolLabel` / `toolSummary` / `toolChip` + `ToolChipInput` 下沉 `lib/toolText.ts`（t 首参）；`toolIconName` / `toolGlyph` 依赖 `./icons`（P5）滞留 app 侧；app `lib/toolMeta.ts` 改薄壳——绑定 app i18n 的柯里化 re-export，全部调用点零改动。
+- **activitySummary 拆解（同上批）**：下沉 `lib/activitySummary.ts`（`summarizeActivity` / `summarizeLive` t 首参）；其依赖的 `formatDuration` 从 `components/chatTurnRendering.ts` 抽至 `lib/formatDuration.ts`（chatTurnRendering 改 re-export，与 formatTokens 同模式）；app `lib/activitySummary.ts` 改薄壳。
+- **测试**：projector 两端测试本就互补（desktop 8 套件 retry/goal/subagent-model + web 13 套件 streaming/cron/BTW/lifecycle），合并为包侧单文件 52 用例，identity t 桩（断言本就不依赖本地化文案）；`ws-lifecycle` / `daemon-client`（tracer 换录制假桩，web_log 脱敏断言改对录制记录——脱敏发生在包内 client.ts:739）随迁；web 独有 `activitySummary.test.ts` 随迁并改用真 `createKimiI18n`（app-core devDeps +`@moonshot-ai/app-i18n`，无循环）；删除 P2 漏网的 web 重复 `src/lib/providerForm.test.ts`（17 条与包侧全同，总数 2409→2392 全部来自此删）。
+- **app-core tsconfig**：`noPropertyAccessFromIndexSignature` 显式设 `false` 与消费者对齐（web tsconfig 独立未开、desktop renderer 显式关）——否则迁入的 projector 在包自检下报 102 个 TS4111，而实际编译面（apps typecheck）一直是关的。注意：包级 `vue-tsc -p packages/app-core` 无任何门禁在跑，main 上本就有 79 个存量 error（desktopFlag 的 `__KIMI_WEB_DESKTOP__` 全局声明在 app 侧 env.d.ts 等），P3 未治理。
+- **openFileAttachment / mediaPreview 未收，改归 P4（app-client）**：两者除 api 单例外还拖 PhotoSwipe / CSS / `@moonshot-ai/app-ui` 等 UI 层依赖，不该进 app-core；P4 建 client 包时连同注入缝一起处理更顺（偏差登记）。
+- 验收：`pnpm test` 2392 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅；动了连接/事件层，外部 server 模式（`KIMI_SERVER_URL`）+ 双端冒烟待人工补。
 - 无 changeset（纯重构）。

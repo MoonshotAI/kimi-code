@@ -350,9 +350,8 @@ export interface DaemonKimiWebApiOptions {
   identity: ClientIdentity;
   tracer?: Tracer;
   credentialStore?: CredentialStore;
-  /** Factory for the raw-agent-core event projector (consumer-supplied; the
-   *  implementation carries i18n / tool-labeling that the api client must not
-   *  depend on). */
+  /** Factory for the raw-agent-core event projector (injected; createKimiWebApi
+   *  wires the in-package implementation with its translator). */
   projectorFactory: () => AgentProjector;
   /** Desktop can keep legacy raw events main-only while auxiliary views use Transcript. */
   mainAgentOnly?: boolean;

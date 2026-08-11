@@ -1,12 +1,16 @@
 // app-core api — daemon REST + WS client and its supporting types.
 //
 // The transport (DaemonHttpClient / DaemonEventSocket) and the high-level client
-// (DaemonKimiWebApi) are constructed with an injected Tracer + CredentialStore
-// (plus a consumer-supplied projector factory), so this package never imports a
-// consumer's tracer, credential store, i18n, or tool labeling.
+// (DaemonKimiWebApi) are constructed with an injected Tracer + CredentialStore;
+// createKimiWebApi is the composition root, wiring the in-package agent event
+// projector with an injected translator, so this package never imports a
+// consumer's tracer, credential store, or i18n runtime.
 
 export { DaemonKimiWebApi } from './daemon/client';
 export type { DaemonKimiWebApiOptions } from './daemon/client';
+export { createKimiWebApi } from './createKimiWebApi';
+export type { CreateKimiWebApiDeps } from './createKimiWebApi';
+export { createAgentProjector, subagentProgressText } from './daemon/agentEventProjector';
 export { DaemonHttpClient, SERVER_AUTH_UNAUTHORIZED_CODE } from './daemon/http';
 export type { DaemonHttpClientOptions } from './daemon/http';
 export { DaemonEventSocket } from './daemon/ws';

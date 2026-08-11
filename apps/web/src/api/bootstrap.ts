@@ -1,13 +1,13 @@
-// apps/web src/api/bootstrap.ts — composes the DaemonKimiWebApi (app-core) with
-// the apps/web tracer, credential store, and agent projector, and exposes the
-// shared singleton.
+// apps/web/src/api/bootstrap.ts — composes the app-core createKimiWebApi
+// factory with this app's tracer, credential store, identity, and i18n
+// translator, and exposes the shared singleton.
 //
-// This is the only module that knows both sides: app-core's api client and
-// apps/web's debug/trace + serverAuth + projector. Everything else consumes the
-// composed `api` (or the back-compat `getKimiWebApi()` accessor).
+// This is the only module that knows both sides: app-core's api composition and
+// the app's debug/trace + runtime config. Everything else consumes the composed
+// `api` (or the back-compat `getKimiWebApi()` accessor).
 
-import { DaemonKimiWebApi } from '@moonshot-ai/app-core/api';
-import type { CredentialStore, Tracer } from '@moonshot-ai/app-core/contracts';
+import { createKimiWebApi } from '@moonshot-ai/app-core/api';
+import type { CredentialStore, Tracer, Translator } from '@moonshot-ai/app-core/contracts';
 import {
   traceRestFailure,
   traceRestRequest,
@@ -18,11 +18,11 @@ import {
   traceKeyEvent as recordKeyEvent,
 } from '../debug/trace';
 import { getCredential, markAuthRequired } from '@moonshot-ai/app-core/lib';
+import { i18n } from '../i18n';
 import { readKimiApiConfig } from './config';
-import { createAgentProjector } from './daemon/agentEventProjector';
 import type { KimiWebApi } from './types';
 
-const webTracer: Tracer = {
+const appTracer: Tracer = {
   restRequest: (info) => traceRestRequest(info),
   restResponse: (info) => traceRestResponse(info),
   restFailure: (info) => traceRestFailure(info),
@@ -42,14 +42,16 @@ const webTracer: Tracer = {
   traceKeyEvent: (event, info) => recordKeyEvent(event as never, info),
 };
 
-const webCredentialStore: CredentialStore = {
+const appCredentialStore: CredentialStore = {
   getToken: getCredential,
   markAuthRequired,
 };
 
+const t: Translator = (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params));
+
 function createApi(): KimiWebApi {
   const config = readKimiApiConfig();
-  return new DaemonKimiWebApi({
+  return createKimiWebApi({
     origin: config.serverHttpUrl,
     identity: {
       clientId: config.clientId,
@@ -57,13 +59,13 @@ function createApi(): KimiWebApi {
       clientVersion: config.clientVersion,
       clientUiMode: config.clientUiMode,
     },
-    tracer: webTracer,
-    credentialStore: webCredentialStore,
-    projectorFactory: createAgentProjector,
+    tracer: appTracer,
+    credentialStore: appCredentialStore,
+    t,
   });
 }
 
-/** The shared DaemonKimiWebApi instance (composed with apps/web's bridges). */
+/** The shared DaemonKimiWebApi instance (composed with this app's bridges). */
 export const api: KimiWebApi = createApi();
 
 /**
