@@ -1,7 +1,7 @@
-import { APIEmptyResponseError, isRetryableGenerateError } from '#/errors';
-import { generate } from '#/generate';
+import { APIEmptyResponseError, APITimeoutError, isRetryableGenerateError } from '#/errors';
+import { generate, DEFAULT_STREAM_STALL_TIMEOUT_MS } from '#/generate';
 import type { Message, StreamedMessagePart, ToolCall } from '#/message';
-import type { ChatProvider, StreamedMessage, ThinkingEffort } from '#/provider';
+import type { ChatProvider, FinishReason, GenerateOptions, StreamedMessage, ThinkingEffort } from '#/provider';
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import { describe, expect, it, vi } from 'vitest';
@@ -1055,6 +1055,224 @@ describe('generate()', () => {
       expect(stats).toBeDefined();
       expect(stats!.serverDecodeMs).toBeGreaterThan(stats!.clientConsumeMs);
       expect(stats!.serverDecodeMs).toBeGreaterThanOrEqual(40);
+    });
+  });
+
+  describe('stream-stall watchdog', () => {
+  const USER_MSG: Message = {
+    role: 'user',
+    content: [{ type: 'text', text: 'hi' }],
+    toolCalls: [],
+  };
+
+  function textPart(text: string): StreamedMessagePart {
+    return { type: 'text', text };
+  }
+
+  /**
+   * A StreamedMessage whose iteration is fully scripted: each step either
+   * yields a part after `delayMs` or pends forever (simulating a dead
+   * connection that never delivers and never closes). Records `return()`
+   * calls so tests can assert the stream was torn down.
+   */
+  class ScriptedStream implements StreamedMessage {
+    readonly id = 'scripted';
+    readonly usage: TokenUsage | null = null;
+    readonly finishReason: FinishReason | null = null;
+    readonly rawFinishReason: string | null = null;
+
+    returned = false;
+
+    constructor(private readonly steps: Array<{ part: StreamedMessagePart; delayMs: number } | 'hang'>) {}
+
+    [Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
+      const steps = this.steps;
+      const onReturn = (): void => {
+        this.returned = true;
+      };
+      let index = 0;
+      return {
+        next(): Promise<IteratorResult<StreamedMessagePart>> {
+          const step = steps[index];
+          index += 1;
+          if (step === undefined) {
+            return Promise.resolve({ done: true, value: undefined });
+          }
+          if (step === 'hang') {
+            return new Promise<IteratorResult<StreamedMessagePart>>(() => {});
+          }
+          return new Promise((resolve) => {
+            setTimeout(() => resolve({ done: false, value: step.part }), step.delayMs);
+          });
+        },
+        return(): Promise<IteratorResult<StreamedMessagePart>> {
+          onReturn();
+          return Promise.resolve({ done: true, value: undefined });
+        },
+      };
+    }
+  }
+
+  class ScriptedProvider implements ChatProvider {
+    readonly name = 'scripted';
+    readonly modelName = 'scripted-model';
+    readonly thinkingEffort: ThinkingEffort | null = null;
+
+    constructor(readonly stream: ScriptedStream) {}
+
+    generate(
+      _systemPrompt: string,
+      _tools: Tool[],
+      _history: Message[],
+      _options?: GenerateOptions,
+    ): Promise<StreamedMessage> {
+      return Promise.resolve(this.stream);
+    }
+
+    withThinking(): ChatProvider {
+      return this;
+    }
+  }
+
+  /** A provider whose generate() never resolves — the response-headers stall. */
+  class HangingGenerateProvider implements ChatProvider {
+    readonly name = 'hanging-generate';
+    readonly modelName = 'hanging-model';
+    readonly thinkingEffort: ThinkingEffort | null = null;
+
+    generate(): Promise<StreamedMessage> {
+      return new Promise<StreamedMessage>(() => {});
+    }
+
+    withThinking(): ChatProvider {
+      return this;
+    }
+  }
+
+    it('fails with APITimeoutError when the stream stalls mid-generation', async () => {
+      const stream = new ScriptedStream([{ part: textPart('partial'), delayMs: 0 }, 'hang']);
+      const startedAt = Date.now();
+
+      await expect(
+        generate(new ScriptedProvider(stream), '', [], [USER_MSG], undefined, {
+          streamStallTimeoutMs: 50,
+        }),
+      ).rejects.toBeInstanceOf(APITimeoutError);
+
+      // The watchdog fired near the configured budget, not the 5min default.
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+      // The stalled stream was torn down, not left dangling.
+      expect(stream.returned).toBe(true);
+    });
+
+    it('resets the inactivity budget on every part', async () => {
+      const stream = new ScriptedStream([
+        { part: textPart('a'), delayMs: 30 },
+        { part: textPart('b'), delayMs: 30 },
+        { part: textPart('c'), delayMs: 30 },
+      ]);
+
+      const result = await generate(new ScriptedProvider(stream), '', [], [USER_MSG], undefined, {
+        streamStallTimeoutMs: 80,
+      });
+
+      // Total runtime (~90ms) exceeds the 80ms budget, but no single gap does.
+      expect(result.message.content).toEqual([{ type: 'text', text: 'abc' }]);
+    });
+
+    it('applies the watchdog to the wait for the first part', async () => {
+      const stream = new ScriptedStream(['hang']);
+
+      await expect(
+        generate(new ScriptedProvider(stream), '', [], [USER_MSG], undefined, {
+          streamStallTimeoutMs: 50,
+        }),
+      ).rejects.toBeInstanceOf(APITimeoutError);
+    });
+
+    it('covers the response-headers wait inside provider.generate()', async () => {
+      const startedAt = Date.now();
+
+      await expect(
+        generate(new HangingGenerateProvider(), '', [], [USER_MSG], undefined, {
+          streamStallTimeoutMs: 50,
+        }),
+      ).rejects.toBeInstanceOf(APITimeoutError);
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    });
+
+    it('does not hang when stream teardown never settles', async () => {
+      // A faulty provider whose cancel()/return() pend forever must not block
+      // the stall path — teardown is best-effort, the timeout still wins.
+      const stream = new ScriptedStream(['hang']);
+      const iterator = stream[Symbol.asyncIterator]();
+      const neverSettling: AsyncIterator<StreamedMessagePart> = {
+        next: () => iterator.next(),
+        return: () => new Promise<IteratorResult<StreamedMessagePart>>(() => {}),
+      };
+      stream[Symbol.asyncIterator] = () => neverSettling;
+
+      const startedAt = Date.now();
+      await expect(
+        generate(new ScriptedProvider(stream), '', [], [USER_MSG], undefined, {
+          streamStallTimeoutMs: 50,
+        }),
+      ).rejects.toBeInstanceOf(APITimeoutError);
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    });
+
+    it('aborting mid-stall rejects promptly with AbortError', async () => {
+      const stream = new ScriptedStream(['hang']);
+      const controller = new AbortController();
+      const startedAt = Date.now();
+
+      const pending = generate(new ScriptedProvider(stream), '', [], [USER_MSG], undefined, {
+        // Far larger than the abort delay: only the abort race can settle this.
+        streamStallTimeoutMs: 60_000,
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(), 30);
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+      expect(stream.returned).toBe(true);
+    });
+
+    it('streamStallTimeoutMs: 0 disables the watchdog', async () => {
+      const stream = new ScriptedStream([{ part: textPart('ok'), delayMs: 30 }]);
+
+      const result = await generate(new ScriptedProvider(stream), '', [], [USER_MSG], undefined, {
+        streamStallTimeoutMs: 0,
+      });
+
+      expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    });
+
+    it('exposes a generous default budget', () => {
+      expect(DEFAULT_STREAM_STALL_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+    });
+
+    it('closes the stream iterator when part processing throws', async () => {
+      // `for await` closed the iterator automatically on a throwing body
+      // (AsyncIteratorClose); the manual watchdog loop must preserve that, or a
+      // throwing callback leaks the provider connection.
+      const stream = new ScriptedStream([{ part: textPart('x'), delayMs: 0 }, 'hang']);
+
+      await expect(
+        generate(
+          new ScriptedProvider(stream),
+          '',
+          [],
+          [USER_MSG],
+          {
+            onMessagePart: () => {
+              throw new Error('boom');
+            },
+          },
+          { streamStallTimeoutMs: 0 },
+        ),
+      ).rejects.toThrow('boom');
+      expect(stream.returned).toBe(true);
     });
   });
 });
