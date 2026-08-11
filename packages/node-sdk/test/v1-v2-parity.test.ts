@@ -1016,11 +1016,6 @@ describe('v1↔v2 plugin parity', () => {
           .getProvider(runtimeName, statusServer.authorizedUrl)
           .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
       }
-      await Promise.all([
-        pair.v1.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false),
-        pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false),
-      ]);
-
       const [v1Statuses, v2Statuses] = await Promise.all([
         pair.v1.listMcpServerAuthStatuses([target]),
         pair.v2.listMcpServerAuthStatuses([target]),
@@ -3841,6 +3836,27 @@ describe('v1↔v2 global MCP parity', () => {
       restoreEnv();
     }
   }, 20_000);
+
+  it('testGlobalMcpServer does not connect disabled servers', async () => {
+    const pair = await makeGlobalMcpParityPair({
+      mcpServers: {
+        off: { command: process.execPath, args: [MCP_STDIO_FIXTURE], enabled: false },
+      },
+    });
+    try {
+      const [v1Off, v2Off] = await Promise.all([
+        pair.v1.testGlobalMcpServer('off'),
+        pair.v2.testGlobalMcpServer('off'),
+      ]);
+      expect(v2Off).toEqual(v1Off);
+      expect(v1Off).toEqual({
+        success: false,
+        output: 'MCP server "off" finished with status disabled',
+      });
+    } finally {
+      await closeGlobalMcpPair(pair);
+    }
+  });
 });
 
 type McpServerList = Awaited<ReturnType<SDKRpcClientBase['listMcpServers']>>;

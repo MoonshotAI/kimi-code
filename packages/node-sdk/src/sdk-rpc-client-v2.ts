@@ -2296,9 +2296,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       }),
     });
     try {
-      await manager.connectAll({
-        [server.runtimeName]: { ...server.config, enabled: true },
-      });
+      await manager.connectAll({ [server.runtimeName]: server.config });
       return inspect(manager);
     } finally {
       await manager.shutdown();
