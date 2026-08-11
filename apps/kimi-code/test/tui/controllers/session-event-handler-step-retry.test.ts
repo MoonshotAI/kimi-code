@@ -90,6 +90,15 @@ describe('SessionEventHandler step retry state', () => {
     });
   });
 
+  it('drives the pane back to waiting so mid-stream retries render', () => {
+    const { host } = makeHost();
+    host.state.appState.streamingPhase = 'composing';
+    const handler = new SessionEventHandler(host);
+    handler.handleEvent(retryingEvent as any, vi.fn());
+    expect(host.patchLivePane).toHaveBeenCalledWith({ mode: 'waiting' });
+    expect(host.state.appState.streamingPhase).toBe('waiting');
+  });
+
   it.each([
     [{ type: 'turn.step.completed', turnId: 1, step: 1 }, 'turn.step.completed'],
     [

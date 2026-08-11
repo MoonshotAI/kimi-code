@@ -450,7 +450,12 @@ export class SessionEventHandler {
   }
 
   private handleStepRetrying(event: TurnStepRetryingEvent): void {
+    // The failure may arrive mid-stream, after thinking/assistant deltas have
+    // parked the pane in `thinking`/`composing` — drive it back to waiting so
+    // the retry label and detail actually render during the backoff.
+    this.host.patchLivePane({ mode: 'waiting' });
     this.host.setAppState({
+      streamingPhase: 'waiting',
       stepRetry: {
         nextAttempt: event.nextAttempt,
         maxAttempts: event.maxAttempts,
