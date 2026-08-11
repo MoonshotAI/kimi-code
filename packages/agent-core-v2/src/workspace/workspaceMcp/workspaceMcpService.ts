@@ -21,8 +21,15 @@
  * overlays (`sessionOverlay`): a session-owned manager for a session's
  * ephemeral (caller-injected, never persisted) servers — baseline members
  * by construction — presented through a
- * `MergedMcpConnectionView` over the shared manager and shut down by the
- * session lifecycle when the session scope tears down. An overlay handle's
+ * `MergedMcpConnectionView` over the shared manager. Overlay activation is
+ * event-driven: this service subscribes to the session lifecycle's
+ * `onWillCreateSession`, and a session created with an
+ * `ISessionEphemeralMcpServers` seed gets its overlay created there — the
+ * merged handle contributed as the session's `ISessionMcpHandle` (replacing
+ * the seed adapter's workspace projection), the overlay's shutdown attached
+ * to the session's teardown, so the session lifecycle never depends on MCP.
+ * The overlay's stdio cwd is read from the session's own `ISessionContext`.
+ * An overlay handle's
  * baseline still freezes on the workspace manager's initial load — never on
  * the overlay's own connect — so a slow ephemeral connect cannot reopen the
  * window for mid-session workspace additions.
@@ -52,9 +59,12 @@ import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
-import type { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import {
   IWorkspaceMcpConfigService,
   type McpServersChange,
@@ -83,6 +93,7 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
+    @ISessionLifecycleService sessionLifecycle: ISessionLifecycleService,
   ) {
     super();
     this.stdioCwd = workspace.cwd;
@@ -101,6 +112,19 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
     this._register(
       this.mcpConfig.onDidChange((change) => {
         this.scheduleApply(change);
+      }),
+    );
+    this._register(
+      sessionLifecycle.onWillCreateSession((event) => {
+        const servers = event.readSeed(ISessionEphemeralMcpServers);
+        if (Object.keys(servers).length === 0) return;
+        const overlay = this.sessionOverlay(servers, {
+          stdioCwd: event.readSeed(ISessionContext).cwd,
+        });
+        event.contributeSeed(ISessionMcpHandle, overlay.handle);
+        event.onSessionDispose(() => {
+          void overlay.shutdown();
+        });
       }),
     );
     this.ready = this.initialize().catch((error: unknown) => {

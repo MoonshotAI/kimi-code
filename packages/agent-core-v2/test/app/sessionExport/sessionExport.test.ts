@@ -916,6 +916,7 @@ function registerSessionExportServices(
               ISessionLifecycleService,
               {
                 _serviceBrand: undefined,
+                onWillCreateSession: noopEvent,
                 onDidCreateSession: noopEvent,
                 onDidCloseSession: noopEvent,
                 onDidArchiveSession: noopEvent,

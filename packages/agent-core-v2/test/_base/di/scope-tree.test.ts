@@ -159,7 +159,7 @@ describe('Scope tree', () => {
     app.dispose();
   });
 
-  it('extra seed injects a context token resolvable from that scope', () => {
+  it('seeds inject a context token resolvable from that scope', () => {
     interface ISessionContext {
       sessionId: string;
     }
@@ -168,7 +168,7 @@ describe('Scope tree', () => {
 
     const app = createAppScope();
     const session = app.createChild(LifecycleScope.Session, 's1', {
-      extra: [[ISessionContext as ServiceIdentifier<unknown>, { sessionId: 's1' }]],
+      seeds: [[ISessionContext as ServiceIdentifier<unknown>, { sessionId: 's1' }]],
     });
     expect(session.accessor.get(ISessionContext).sessionId).toBe('s1');
     expect(() => app.accessor.get(ISessionContext)).toThrow();

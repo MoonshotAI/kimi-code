@@ -351,7 +351,7 @@ describe('AgentToolActivationService', () => {
     function createScopeTree(agentExtra: ScopeSeed = []) {
       const app = createAppScope();
       const session = app.createChild(LifecycleScope.Session, 'session', {
-        extra: [
+        seeds: [
           [
             ISessionToolPolicyGate,
             {
@@ -365,7 +365,7 @@ describe('AgentToolActivationService', () => {
         ],
       });
       const agent = session.createChild(LifecycleScope.Agent, 'agent', {
-        extra: agentSeeds(agentExtra),
+        seeds: agentSeeds(agentExtra),
       });
       return { app, session, agent };
     }
@@ -382,7 +382,7 @@ describe('AgentToolActivationService', () => {
       expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
 
       const agent2 = session.createChild(LifecycleScope.Agent, 'agent-2', {
-        extra: agentSeeds(),
+        seeds: agentSeeds(),
       });
       await agent2.accessor.get(IAgentToolActivationService).activate();
       expect(agent2.accessor.get(IAgentToolRegistryService).resolve('Alpha')).toBeInstanceOf(
