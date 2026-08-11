@@ -36,7 +36,7 @@ const { t } = useKimiI18n();
       <div v-if="message" class="ui-toast__msg">{{ message }}</div>
       <slot />
     </div>
-    <IconButton class="ui-toast__close" size="sm" :label="dismissLabel ?? t('common.dismiss')" @click="$emit('dismiss')">
+    <IconButton class="ui-toast__close" size="sm" :label="dismissLabel ?? t('common.dismiss')" :tooltip="dismissLabel ?? t('common.dismiss')" @click="$emit('dismiss')">
       <Icon name="close" size="sm" />
     </IconButton>
   </div>

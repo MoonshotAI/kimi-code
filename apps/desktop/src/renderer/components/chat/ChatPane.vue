@@ -18,7 +18,7 @@ import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';
 import AttachmentChip from './AttachmentChip.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
-import { Icon, Kbd, Spinner, Button } from '@moonshot-ai/web-ui';
+import { Icon, Kbd, Spinner, Button, Tooltip } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { openFileAttachment } from '../../lib/openFileAttachment';
@@ -905,8 +905,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           <div v-if="turn.createdAt || canEditTurn(turn) || (!readOnly && undoHintTurnId === turn.id)" class="u-meta">
             <div v-if="canEditTurn(turn) || (!readOnly && undoHintTurnId === turn.id)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
               <!-- Armed after an Esc abort: clicking undoes directly — armed is the confirm step. -->
+              <Tooltip v-if="undoHintTurnId === turn.id" :text="t('conversation.undoTooltip')">
               <button
-                v-if="undoHintTurnId === turn.id"
                 type="button"
                 class="u-edit u-edit-armed"
                 :aria-label="t('conversation.undoTooltip')"
@@ -917,8 +917,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
                   {{ t('conversation.escUndoHintPre') }}<Kbd :keys="['Esc']" />{{ t('conversation.escUndoHintPost') }}
                 </span>
               </button>
+              </Tooltip>
+              <Tooltip v-else :text="t('conversation.undoTooltip')">
               <button
-                v-else
                 type="button"
                 class="u-edit"
                 :aria-label="t('conversation.undoTooltip')"
@@ -926,7 +927,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               >
                 <Icon name="undo" size="sm" />
               </button>
+              </Tooltip>
             </div>
+            <Tooltip :text="t('filePreview.copy')">
             <button
               v-if="turn.text.trim().length > 0"
               type="button"
@@ -937,6 +940,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
               <Icon v-else name="check" size="sm" />
             </button>
+            </Tooltip>
             <MessageTime v-if="turn.createdAt" :time="turn.createdAt" />
           </div>
         </div>
@@ -1013,6 +1017,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
         />
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turnDurationLabel(turn))" class="a-msg-ft">
           <span v-if="turnDurationLabel(turn)" class="a-duration">{{ turnDurationLabel(turn) }}</span>
+          <Tooltip :text="t('filePreview.copy')">
           <button
             v-if="assistantRunFinalText(ti).trim().length > 0"
             class="a-cpbtn"
@@ -1022,6 +1027,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
             <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
             <Icon v-else name="check" size="sm" />
           </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -1145,6 +1151,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           </div>
           <span v-if="qi === 0" class="q-tag q-tag-next">{{ t('composer.queueNext') }}</span>
           <span v-else class="q-tag q-tag-idx">#{{ qi + 1 }}</span>
+          <Tooltip :text="t('composer.remove')">
           <button
             type="button"
             class="q-rm"
@@ -1153,6 +1160,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           >
             <Icon name="close" size="sm" />
           </button>
+          </Tooltip>
         </div>
       </div>
     </div>

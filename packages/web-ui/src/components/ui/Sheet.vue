@@ -25,7 +25,7 @@ function close() {
         <div class="ui-sheet__handle" aria-hidden="true" />
         <div v-if="title" class="ui-sheet__head">
           <span class="ui-sheet__title">{{ title }}</span>
-          <IconButton size="sm" :label="t('common.close')" @click="close">
+          <IconButton size="sm" :label="t('common.close')" :tooltip="t('common.close')" @click="close">
             <Icon name="close" size="md" />
           </IconButton>
         </div>

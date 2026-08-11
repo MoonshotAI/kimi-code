@@ -23,7 +23,7 @@ async function copy() {
     <span class="ui-cmdbar__action"><slot /></span>
     <span class="ui-cmdbar__cmd">
       <code class="ui-cmdbar__text">{{ command }}</code>
-      <IconButton size="sm" :label="t('common.copy')" @click="copy">
+      <IconButton size="sm" :label="t('common.copy')" :tooltip="t('common.copy')" @click="copy">
         <Icon name="copy" size="md" />
       </IconButton>
     </span>

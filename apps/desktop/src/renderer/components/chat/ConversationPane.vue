@@ -2182,6 +2182,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
       class="empty-terminal-btn"
       :class="{ open: terminalStore.open.value }"
       :label="t('terminal.toggle')"
+      :tooltip="t('terminal.toggle')"
       @click="toggleTerminalPanel"
     >
       <Icon name="terminal" size="sm" />

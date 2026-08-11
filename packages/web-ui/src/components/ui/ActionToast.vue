@@ -56,6 +56,7 @@ onUnmounted(() => {
         class="ui-action-toast__close"
         size="sm"
         :label="dismissLabel ?? t('common.dismiss')"
+        :tooltip="dismissLabel ?? t('common.dismiss')"
         @click="emit('dismiss')"
       >
         <Icon name="close" size="sm" />

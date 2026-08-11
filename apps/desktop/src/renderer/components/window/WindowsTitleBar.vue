@@ -156,6 +156,7 @@ onBeforeUnmount(() => {
         class="windows-sidebar-toggle"
         size="sm"
         :label="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
+        :tooltip="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
         @click="emit('toggleSidebar')"
       >
         <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />

@@ -264,6 +264,7 @@ const isDev = import.meta.env.DEV;
       class="ch-act-more"
       :class="{ open: menuOpen }"
       :label="t('header.options')"
+      :tooltip="t('header.options')"
       :aria-expanded="menuOpen"
       aria-haspopup="menu"
       @click.stop="toggleMenu($event)"

@@ -39,6 +39,7 @@ const { t } = useKimiI18n();
       class="ui-panel-header__close"
       size="sm"
       :label="closeLabel ?? t('common.close')"
+      :tooltip="closeLabel ?? t('common.close')"
       @click="$emit('close')"
     >
       <Icon :name="closeIcon" size="sm" />

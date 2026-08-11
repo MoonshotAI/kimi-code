@@ -2,11 +2,18 @@
 <!-- Design-system §03 IconButton: sm 26 / md 32 (use md on touch for ≥32px target). -->
 <script setup lang="ts">
 import { ref } from 'vue';
+import TooltipBubble from './TooltipBubble.vue';
 
 withDefaults(defineProps<{
   size?: 'sm' | 'md' | 'lg';
   disabled?: boolean;
   label?: string;
+  /** Visible hover/focus tooltip, self-anchored to the button. Rendered inside
+      the <button> so the component keeps its single-button root — parent
+      scoped styles and app-region rules keep working unchanged. `label` only
+      sets aria-label; pass both when the icon needs an on-screen hint (usually
+      the same text). Do not combine with an outer Tooltip. */
+  tooltip?: string;
   type?: 'button' | 'submit' | 'reset';
 }>(), {
   size: 'md',
@@ -21,7 +28,9 @@ defineExpose({ el });
 
 <template>
   <!-- Native click (and modifiers like .stop) fall through to the inner
-       <button> via inheritAttrs, matching native button semantics. -->
+       <button> via inheritAttrs, matching native button semantics.
+       TooltipBubble renders nothing in place (body teleport), so the button
+       stays the single root and contains only phrasing content. -->
   <button
     ref="el"
     class="ui-icon-button"
@@ -31,6 +40,7 @@ defineExpose({ el });
     :aria-label="label"
   >
     <slot />
+    <TooltipBubble v-if="tooltip" :target="el ?? null" :text="tooltip" />
   </button>
 </template>
 

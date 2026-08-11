@@ -364,7 +364,7 @@ onUnmounted(() => {
         <Spinner size="sm" :label="t('conversation.search.searching')" />
       </span>
       <span class="tsearch-sep" aria-hidden="true" />
-      <IconButton class="tsearch-close" size="sm" :label="t('conversation.search.close')" @click="emit('close')">
+      <IconButton class="tsearch-close" size="sm" :label="t('conversation.search.close')" :tooltip="t('conversation.search.close')" @click="emit('close')">
         <Icon name="close" />
       </IconButton>
     </div>
@@ -376,6 +376,7 @@ onUnmounted(() => {
         <IconButton
           size="sm"
           :label="t('conversation.search.previous')"
+          :tooltip="t('conversation.search.previous')"
           :disabled="total === 0"
           @click="step(-1)"
         >
@@ -384,6 +385,7 @@ onUnmounted(() => {
         <IconButton
           size="sm"
           :label="t('conversation.search.next')"
+          :tooltip="t('conversation.search.next')"
           :disabled="total === 0"
           @click="step(1)"
         >

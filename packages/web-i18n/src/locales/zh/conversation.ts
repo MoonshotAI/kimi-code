@@ -20,7 +20,7 @@ export default {
   summaryTitle: '压缩摘要',
   activatedSkill: '已激活技能: {name}',
   undo: '撤销',
-  undoTooltip: '撤销对话不会回滚代码',
+  undoTooltip: '撤回编辑',
   undoConfirm: '撤销上一条消息？',
   escUndoHintPre: '再按',
   escUndoHintPost: '撤销本条',

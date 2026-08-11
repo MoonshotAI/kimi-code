@@ -238,6 +238,7 @@ function onSessionDragStart(id: string, event: DragEvent): void {
             :class="{ open: wsMenuOpenId === group.workspace.id }"
             size="sm"
             :label="t('sidebar.options')"
+            :tooltip="t('sidebar.options')"
             aria-haspopup="menu"
             :aria-expanded="wsMenuOpenId === group.workspace.id"
             @click.stop="emit('toggleWsMenu', group.workspace, $event)"
@@ -249,6 +250,7 @@ function onSessionDragStart(id: string, event: DragEvent): void {
             class="gh-add"
             size="sm"
             :label="t('workspace.newInGroup')"
+            :tooltip="t('workspace.newInGroup')"
             @click.stop="emit('createInWorkspace', group.workspace.id)"
           >
             <Icon name="chat-new" />

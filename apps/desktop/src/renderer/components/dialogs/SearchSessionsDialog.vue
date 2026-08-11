@@ -7,7 +7,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../../types';
 import { highlightHtml, snippet } from '../../lib/searchHighlight';
-import { Dialog, EmptyState, Icon, Input, Kbd, useImeComposition } from '@moonshot-ai/web-ui';
+import { Dialog, EmptyState, Icon, Input, Kbd, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -163,16 +163,18 @@ onMounted(() => {
           @compositionstart="handleCompositionStart"
           @compositionend="handleCompositionEnd"
         />
-        <button
-          type="button"
-          class="search-clear"
-          :class="{ 'is-on': query.length > 0 }"
-          tabindex="-1"
-          :aria-label="t('sidebar.searchClear')"
-          @click="clearQuery"
-        >
-          <Icon name="close" size="sm" />
-        </button>
+        <Tooltip :text="t('sidebar.searchClear')">
+          <button
+            type="button"
+            class="search-clear"
+            :class="{ 'is-on': query.length > 0 }"
+            tabindex="-1"
+            :aria-label="t('sidebar.searchClear')"
+            @click="clearQuery"
+          >
+            <Icon name="close" size="sm" />
+          </button>
+        </Tooltip>
       </div>
 
       <div ref="listRef" class="sd-list" role="listbox">

@@ -46,7 +46,7 @@ const hasDiff = computed(() => props.change.diff !== null && props.change.diff.l
       <Tooltip :text="change.path">
         <span class="td-path">{{ displayPath }}</span>
       </Tooltip>
-      <IconButton size="sm" :label="t('conversation.turnFiles.openFile')" @click="emit('openFile', change.path)"><Icon name="external-link" size="md" /></IconButton>
+      <IconButton size="sm" :label="t('conversation.turnFiles.openFile')" :tooltip="t('conversation.turnFiles.openFile')" @click="emit('openFile', change.path)"><Icon name="external-link" size="md" /></IconButton>
     </PanelHeader>
 
     <div class="td-body">

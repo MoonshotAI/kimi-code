@@ -337,6 +337,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
         class="qmin"
         size="sm"
         :label="minimized ? t('question.expand') : t('question.minimize')"
+        :tooltip="minimized ? t('question.expand') : t('question.minimize')"
         @click.stop="minimized = !minimized"
       >
         <Icon v-if="minimized" name="chevron-up" size="md" />
@@ -346,6 +347,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
         class="qclose"
         size="sm"
         :label="t('question.dismiss')"
+        :tooltip="t('question.dismiss')"
         :disabled="busy"
         @click.stop="dismiss"
       >

@@ -20,7 +20,7 @@ export default {
   summaryTitle: 'Compaction summary',
   activatedSkill: 'Activated skill: {name}',
   undo: 'Undo',
-  undoTooltip: 'Undoing the conversation will not roll back code changes',
+  undoTooltip: 'Undo edit',
   undoConfirm: 'Undo last message?',
   escUndoHintPre: 'Press',
   escUndoHintPost: 'again to undo',

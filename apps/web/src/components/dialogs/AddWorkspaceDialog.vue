@@ -228,6 +228,7 @@ onUnmounted(() => {
             size="sm"
             :disabled="!parentPath"
             :label="t('workspace.up')"
+            :tooltip="t('workspace.up')"
             @click="goUp"
           >
             <Icon name="arrow-up" size="md" />
@@ -319,6 +320,7 @@ onUnmounted(() => {
             <IconButton
               :disabled="pathTrimmed.length === 0"
               :label="t('workspace.add')"
+              :tooltip="t('workspace.add')"
               @click="handlePasteAdd"
             >
               <Icon name="plus" size="md" />

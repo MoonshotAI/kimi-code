@@ -1197,6 +1197,7 @@ function selectModel(modelId: string): void {
             @compositionend="handleCompositionEnd"
             @input="handleInput"
           />
+          <Tooltip :text="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')">
           <button
             v-if="expanded || isGrown"
             class="expand-btn"
@@ -1207,6 +1208,7 @@ function selectModel(modelId: string): void {
             <Icon v-if="expanded" name="collapse" size="sm" />
             <Icon v-else name="expand" size="sm" />
           </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -1233,6 +1235,7 @@ function selectModel(modelId: string): void {
             class="composer-attach"
             size="md"
             :label="t('composer.attachFile')"
+            :tooltip="t('composer.attachFile')"
             @click="openFilePicker"
           >
             <Icon name="attachment" />
@@ -1436,6 +1439,7 @@ function selectModel(modelId: string): void {
               <Icon name="stop" size="sm" />
             </button>
           </Tooltip>
+          <Tooltip :text="sendLabel">
           <button
             class="send"
             :class="{ 'is-starting': starting }"
@@ -1446,6 +1450,7 @@ function selectModel(modelId: string): void {
             <Spinner v-if="starting" size="sm" />
             <Icon v-else name="send" size="sm" />
           </button>
+          </Tooltip>
         </div>
 
         <!-- Model dropdown — current provider models + controls + more -->

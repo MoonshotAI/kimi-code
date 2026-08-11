@@ -852,6 +852,7 @@ onBeforeUnmount(() => {
             class="ch-collapse"
             size="sm"
             :label="t('sidebar.collapseSidebar')"
+            :tooltip="t('sidebar.collapseSidebar')"
             @click.stop="emit('collapse')"
           >
             <Icon name="panel-collapse" />
@@ -930,6 +931,7 @@ onBeforeUnmount(() => {
               class="side-section-toggle"
               size="sm"
               :label="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
+              :tooltip="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
               @click.stop="allCollapsed ? expandAllWorkspaces() : collapseAllWorkspaces()"
             >
               <Icon v-if="allCollapsed" name="expand" />

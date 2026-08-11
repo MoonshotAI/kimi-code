@@ -318,6 +318,7 @@ async function submitRegistry(): Promise<void> {
               class="af-key-eye"
               size="sm"
               :label="t(showApiKey ? 'providers.hideApiKey' : 'providers.showApiKey')"
+              :tooltip="t(showApiKey ? 'providers.hideApiKey' : 'providers.showApiKey')"
               @click="showApiKey = !showApiKey"
             >
               <Icon :name="showApiKey ? 'eye-off' : 'eye'" size="sm" />
@@ -379,6 +380,7 @@ async function submitRegistry(): Promise<void> {
             class="af-key-eye"
             size="sm"
             :label="t(showRegistryKey ? 'providers.hideApiKey' : 'providers.showApiKey')"
+            :tooltip="t(showRegistryKey ? 'providers.hideApiKey' : 'providers.showApiKey')"
             @click="showRegistryKey = !showRegistryKey"
           >
             <Icon :name="showRegistryKey ? 'eye-off' : 'eye'" size="sm" />

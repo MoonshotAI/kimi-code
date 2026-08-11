@@ -4,7 +4,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@moonshot-ai/web-ui';
+import { Icon, Tooltip } from '@moonshot-ai/web-ui';
 import { useNativeTerminal, type NativeTerminalTab } from '../../composables/useNativeTerminal';
 import TerminalView from './TerminalView.vue';
 
@@ -128,14 +128,16 @@ function onTabKeydown(event: KeyboardEvent, index: number): void {
             <Icon name="terminal" size="sm" class="tp-tab-icon" />
             <span class="tp-tab-label">{{ tab.shell }}</span>
           </button>
-          <button
-            type="button"
-            class="tp-tab-close"
-            :aria-label="t('terminal.closeTab')"
-            @click="store.closeTab(tab.id)"
-          >
-            <Icon name="close" size="sm" />
-          </button>
+          <Tooltip :text="t('terminal.closeTab')">
+            <button
+              type="button"
+              class="tp-tab-close"
+              :aria-label="t('terminal.closeTab')"
+              @click="store.closeTab(tab.id)"
+            >
+              <Icon name="close" size="sm" />
+            </button>
+          </Tooltip>
         </div>
         <button
           type="button"

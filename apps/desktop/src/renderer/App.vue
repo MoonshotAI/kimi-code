@@ -1546,6 +1546,7 @@ function openPr(url: string): void {
       class="sidebar-toggle-btn"
       size="sm"
       :label="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
+      :tooltip="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
       @click="runShortcutAction('toggleSidebar', 'button')"
     >
       <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
@@ -1559,6 +1560,7 @@ function openPr(url: string): void {
       class="new-chat-btn"
       size="sm"
       :label="t('sidebar.newChat')"
+      :tooltip="t('sidebar.newChat')"
       @click="runShortcutAction('newSession', 'button')"
     >
       <Icon name="chat-new" />

@@ -309,6 +309,7 @@ function removeModelRow(index: number): void {
           class="pf-key-eye"
           size="sm"
           :label="t(showApiKey ? 'providers.hideApiKey' : 'providers.showApiKey')"
+          :tooltip="t(showApiKey ? 'providers.hideApiKey' : 'providers.showApiKey')"
           @click="showApiKey = !showApiKey"
         >
           <Icon :name="showApiKey ? 'eye-off' : 'eye'" size="sm" />
@@ -363,6 +364,7 @@ function removeModelRow(index: number): void {
             v-if="!managed"
             size="sm"
             :label="t('providers.removeModel')"
+            :tooltip="t('providers.removeModel')"
             :disabled="form.models.length <= 1"
             @click="removeModelRow(index)"
           >

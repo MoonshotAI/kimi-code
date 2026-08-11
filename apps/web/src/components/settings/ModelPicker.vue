@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n';
 import type { AppModel } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import { formatTokens } from '../../lib/formatTokens';
-import { Dialog, Icon, IconButton, Input, Kbd, Spinner, useImeComposition } from '@moonshot-ai/web-ui';
+import { Dialog, Icon, IconButton, Input, Kbd, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -182,16 +182,18 @@ function selectTab(tabId: string): void {
           @compositionstart="handleCompositionStart"
           @compositionend="handleCompositionEnd"
         />
-        <button
-          type="button"
-          class="search-clear"
-          :class="{ 'is-on': query.length > 0 }"
-          tabindex="-1"
-          :aria-label="t('model.clearSearch')"
-          @click="clearQuery"
-        >
-          <Icon name="close" size="sm" />
-        </button>
+        <Tooltip :text="t('model.clearSearch')">
+          <button
+            type="button"
+            class="search-clear"
+            :class="{ 'is-on': query.length > 0 }"
+            tabindex="-1"
+            :aria-label="t('model.clearSearch')"
+            @click="clearQuery"
+          >
+            <Icon name="close" size="sm" />
+          </button>
+        </Tooltip>
       </div>
 
       <!-- Provider filter chips -->
@@ -247,6 +249,7 @@ function selectTab(tabId: string): void {
               :class="{ 'is-starred': isStarred(m.id) }"
               size="sm"
               :label="isStarred(m.id) ? t('model.unstarTitle') : t('model.starTitle')"
+              :tooltip="isStarred(m.id) ? t('model.unstarTitle') : t('model.starTitle')"
               @click.stop="emit('toggle-star', m.id)"
             >
               <Icon v-if="isStarred(m.id)" name="star" size="md" />

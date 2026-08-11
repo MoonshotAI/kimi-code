@@ -447,11 +447,12 @@ onUnmounted(() => {
               <tbody>
                 <tr><td class="tk">--z-base</td><td class="val">0</td><td>normal flow</td></tr>
                 <tr><td class="tk">--z-sticky</td><td class="val">100</td><td>sticky header / sidebar</td></tr>
-                <tr><td class="tk">--z-dropdown</td><td class="val">200</td><td>dropdown menu / tooltip</td></tr>
+                <tr><td class="tk">--z-dropdown</td><td class="val">200</td><td>dropdown menu</td></tr>
                 <tr><td class="tk">--z-overlay</td><td class="val">300</td><td>overlay / bottom Sheet</td></tr>
                 <tr><td class="tk">--z-modal</td><td class="val">400</td><td>dialog — sibling overlays tie-break by DOM order, so the global confirm (ConfirmDialogHost) mounts on demand to always land last / on top</td></tr>
                 <tr><td class="tk">--z-modal-dropdown</td><td class="val">500</td><td>menus / popovers that open above a modal dialog (teleported to &lt;body&gt;, e.g. the settings SecondaryModelPicker cascade)</td></tr>
                 <tr><td class="tk">--z-toast</td><td class="val">600</td><td>toast</td></tr>
+                <tr><td class="tk">--z-tooltip</td><td class="val">650</td><td>tooltip bubble — transient and pointer-events none, so it sits above everything (dialogs, toasts) to stay visible anywhere</td></tr>
                 <tr><td class="tk">--z-max</td><td class="val">9999</td><td>reserved: only this tier for extreme fallback</td></tr>
               </tbody>
             </table>
@@ -605,7 +606,7 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="callout info"><span class="ico">i</span><div>
-              The desktop IconButton comes in <code>sm</code> 26 / <code>md</code> 32; on touch devices the tap target should be ≥ 44px, so use <code>lg</code> 44px, satisfying the §01 accessibility principle (the mobile three-piece set uses <code>lg</code>).
+              The desktop IconButton comes in <code>sm</code> 26 / <code>md</code> 32; on touch devices the tap target should be ≥ 44px, so use <code>lg</code> 44px, satisfying the §01 accessibility principle (the mobile three-piece set uses <code>lg</code>). Icon-only buttons must also name themselves on hover: pass <code>tooltip</code> (usually the same text as <code>label</code> — <code>label</code> alone only sets the aria-label); bare icon <code>&lt;button&gt;</code>/<code>&lt;a&gt;</code> triggers wrap the <code>Tooltip</code> component directly.
             </div></div>
 
             <!-- ===== Badge / Pill ===== -->

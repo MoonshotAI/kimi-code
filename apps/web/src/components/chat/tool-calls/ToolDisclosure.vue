@@ -42,7 +42,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon, StatusDot } from '@moonshot-ai/web-ui';
+import { Icon, StatusDot, Tooltip } from '@moonshot-ai/web-ui';
 
 const props = withDefaults(
   defineProps<{
@@ -78,16 +78,18 @@ const chevronLabel = computed(() =>
       <span class="tl-ic" aria-hidden="true"><slot name="leading" /></span>
       <span class="tl-main">
         <slot />
-        <button
-          v-if="expandable"
-          class="tl-car"
-          type="button"
-          :aria-expanded="open"
-          :aria-label="chevronLabel"
-          @click.stop="toggle"
-        >
-          <Icon class="tl-car-ic" name="chevron-right" size="sm" aria-hidden="true" />
-        </button>
+        <Tooltip :text="chevronLabel">
+          <button
+            v-if="expandable"
+            class="tl-car"
+            type="button"
+            :aria-expanded="open"
+            :aria-label="chevronLabel"
+            @click.stop="toggle"
+          >
+            <Icon class="tl-car-ic" name="chevron-right" size="sm" aria-hidden="true" />
+          </button>
+        </Tooltip>
       </span>
       <span class="tl-tail">
         <slot name="trailing" />

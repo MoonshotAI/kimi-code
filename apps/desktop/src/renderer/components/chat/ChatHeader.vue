@@ -316,6 +316,7 @@ function toggleTerminalPanel(): void {
       class="ch-act-more"
       :class="{ open: menuOpen }"
       :label="t('header.options')"
+      :tooltip="t('header.options')"
       :aria-expanded="menuOpen"
       aria-haspopup="menu"
       @click.stop="toggleMenu($event)"
@@ -382,6 +383,7 @@ function toggleTerminalPanel(): void {
       class="ch-terminal"
       :class="{ open: terminalStore.open.value }"
       :label="t('terminal.toggle')"
+      :tooltip="t('terminal.toggle')"
       @click="toggleTerminalPanel"
     >
       <Icon name="terminal" size="sm" />

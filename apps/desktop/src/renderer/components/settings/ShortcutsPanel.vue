@@ -346,13 +346,14 @@ onUnmounted(() => {
             <template v-else>
               <Kbd v-if="bindingKeys(action.id).length > 0" :keys="bindingKeys(action.id)" />
               <span v-else class="sc-unassigned">{{ t('shortcuts.unassigned') }}</span>
-              <IconButton size="sm" :label="t('shortcuts.edit')" @click="startRecording(action)">
+              <IconButton size="sm" :label="t('shortcuts.edit')" :tooltip="t('shortcuts.edit')" @click="startRecording(action)">
                 <Icon name="pencil" />
               </IconButton>
               <IconButton
                 v-if="isShortcutCustomized(action.id)"
                 size="sm"
                 :label="t('shortcuts.reset')"
+                :tooltip="t('shortcuts.reset')"
                 @click="onReset(action)"
               >
                 <Icon name="undo" />
@@ -361,6 +362,7 @@ onUnmounted(() => {
                 v-else-if="resolvedBinding(action.id) !== null"
                 size="sm"
                 :label="t('shortcuts.unassign')"
+                :tooltip="t('shortcuts.unassign')"
                 @click="onClear(action)"
               >
                 <Icon name="trash" />

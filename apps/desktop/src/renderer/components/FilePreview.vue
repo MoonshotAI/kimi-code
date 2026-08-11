@@ -457,41 +457,43 @@ function truncatePath(path: string, maxLen = 55): string {
           <span v-if="searchQuery.trim()" class="fp-search-count">
             {{ searchMatches.length }}
           </span>
-          <IconButton size="sm" :disabled="searchMatches.length === 0" :label="t('filePreview.prevMatch')" @click="nextMatch(-1)">
+          <IconButton size="sm" :disabled="searchMatches.length === 0" :label="t('filePreview.prevMatch')" :tooltip="t('filePreview.prevMatch')" @click="nextMatch(-1)">
             <Icon name="arrow-up" size="md" />
           </IconButton>
-          <IconButton size="sm" :disabled="searchMatches.length === 0" :label="t('filePreview.nextMatch')" @click="nextMatch(1)">
+          <IconButton size="sm" :disabled="searchMatches.length === 0" :label="t('filePreview.nextMatch')" :tooltip="t('filePreview.nextMatch')" @click="nextMatch(1)">
             <Icon name="arrow-down" size="md" />
           </IconButton>
         </div>
         <!-- Icon actions: text labels made the header wrap to two rows at the
              default panel width — icon-only buttons keep it single-line. -->
-        <IconButton size="sm" :class="{ copied: copiedPath }" :label="copiedPath ? t('filePreview.copied') : t('filePreview.copyPath')" @click="copyPath">
+        <IconButton size="sm" :class="{ copied: copiedPath }" :label="copiedPath ? t('filePreview.copied') : t('filePreview.copyPath')" :tooltip="copiedPath ? t('filePreview.copied') : t('filePreview.copyPath')" @click="copyPath">
           <Icon v-if="!copiedPath" name="link" size="md" />
           <Icon v-else class="fp-check" name="check" size="md" />
         </IconButton>
-        <IconButton v-if="externalActions" size="sm" :label="t('filePreview.openInEditor')" @click="emit('openExternal')">
+        <IconButton v-if="externalActions" size="sm" :label="t('filePreview.openInEditor')" :tooltip="t('filePreview.openInEditor')" @click="emit('openExternal')">
           <Icon name="external-link" size="md" />
         </IconButton>
-        <IconButton v-if="externalActions" size="sm" :label="t('filePreview.reveal')" @click="emit('reveal')">
+        <IconButton v-if="externalActions" size="sm" :label="t('filePreview.reveal')" :tooltip="t('filePreview.reveal')" @click="emit('reveal')">
           <Icon name="folder" size="md" />
         </IconButton>
-        <a
-          v-if="downloadUrl"
-          class="fp-download"
-          :href="downloadUrl"
-          target="_blank"
-          rel="noreferrer"
-          download
-          :aria-label="t('filePreview.download')"
-        >
-          <Icon name="download" size="md" />
-        </a>
+        <Tooltip v-if="downloadUrl" :text="t('filePreview.download')">
+          <a
+            class="fp-download"
+            :href="downloadUrl"
+            target="_blank"
+            rel="noreferrer"
+            download
+            :aria-label="t('filePreview.download')"
+          >
+            <Icon name="download" size="md" />
+          </a>
+        </Tooltip>
         <IconButton
           v-if="!file.isBinary && contentKind !== 'image'"
           size="sm"
           :class="{ copied }"
           :label="copied ? t('filePreview.copied') : t('filePreview.copy')"
+          :tooltip="copied ? t('filePreview.copied') : t('filePreview.copy')"
           @click="copyContent"
         >
           <Icon v-if="!copied" name="copy" size="md" />

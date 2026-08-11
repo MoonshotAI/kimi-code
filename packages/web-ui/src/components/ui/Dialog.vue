@@ -172,7 +172,7 @@ onBeforeUnmount(() => {
               <div v-if="description" class="ui-dialog__desc">{{ description }}</div>
             </div>
           </slot>
-          <IconButton v-if="!hideClose" class="ui-dialog__close" size="sm" :label="t('common.close')" @click="close">
+          <IconButton v-if="!hideClose" class="ui-dialog__close" size="sm" :label="t('common.close')" :tooltip="t('common.close')" @click="close">
             <Icon name="close" size="md" />
           </IconButton>
         </div>

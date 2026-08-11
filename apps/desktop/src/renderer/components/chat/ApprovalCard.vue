@@ -284,6 +284,7 @@ onUpdated(updatePlanScrollState);
         class="aexpand"
         size="sm"
         :label="expanded ? t('approval.collapsePlan') : t('approval.expandPlan')"
+        :tooltip="expanded ? t('approval.collapsePlan') : t('approval.expandPlan')"
         @click="expanded = !expanded"
       >
         <Icon :name="expanded ? 'collapse' : 'expand'" size="md" />
@@ -292,6 +293,7 @@ onUpdated(updatePlanScrollState);
         class="amin"
         size="sm"
         :label="minimized ? t('question.expand') : t('question.minimize')"
+        :tooltip="minimized ? t('question.expand') : t('question.minimize')"
         @click.stop="minimized = !minimized"
       >
         <Icon v-if="minimized" name="chevron-up" size="md" />

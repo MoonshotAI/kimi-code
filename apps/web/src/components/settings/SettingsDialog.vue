@@ -522,7 +522,7 @@ function archiveTime(iso: string): string {
 
       <section class="settings-region">
         <header class="settings-region-header">
-          <IconButton size="sm" :label="t('settings.close')" @click="emit('close')">
+          <IconButton size="sm" :label="t('settings.close')" :tooltip="t('settings.close')" @click="emit('close')">
             <Icon name="close" size="md" />
           </IconButton>
         </header>

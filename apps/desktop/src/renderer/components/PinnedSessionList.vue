@@ -186,6 +186,7 @@ function onContainerDragLeave(event: DragEvent): void {
         :class="{ 'pinned-toggle--on': collapsed }"
         size="sm"
         :label="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
+        :tooltip="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
         @click.stop="toggleCollapsed"
       >
         <Icon v-if="collapsed" name="chevron-right" />
