@@ -17,7 +17,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
-import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -99,6 +99,16 @@ function catalogStub() {
     delete: () => Promise.resolve(),
   };
   return { service, createOrTouch };
+}
+
+function sessionIndexMirrorStub(): ISessionIndexMirror {
+  return {
+    _serviceBrand: undefined,
+    record: () => {},
+    pending: () => [],
+    evict: () => Promise.resolve(),
+    drain: () => Promise.resolve(),
+  };
 }
 
 function sessionIndexStub(): ISessionIndex {
@@ -314,6 +324,7 @@ describe('WorkspaceLifecycleService', () => {
       stubPair(IHostEnvironment, hostEnvironmentStub()),
       stubPair(IWorkspaceService, catalog.service),
       stubPair(ISessionIndex, sessionIndexStub()),
+      stubPair(ISessionIndexMirror, sessionIndexMirrorStub()),
       stubPair(IConfigService, { get: () => undefined } as unknown as IConfigService),
       stubPair(IAppendLogStore, {
         _serviceBrand: undefined,

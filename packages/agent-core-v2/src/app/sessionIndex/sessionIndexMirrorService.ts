@@ -8,7 +8,10 @@
  * per session (only the newest summary is kept) and flush in chunks — on a
  * short timer or as soon as a batch fills — writing summaries (with the
  * recency column declared) and per-workspace counter deltas into the
- * currently published generation.
+ * currently published generation. `evict()` forgets a deleted session (the
+ * `ISessionIndex.remove` path): reads fold the queue in for
+ * read-your-writes, so a queued creation must be dropped — and an in-flight
+ * flush waited out — before the store delete, or the entry is resurrected.
  *
  * Everything here is best-effort: a flush failure keeps the entries queued,
  * backs off, and after repeated failures gives up until the next `record` —
@@ -108,6 +111,14 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
 
   pending(): readonly SessionSummary[] {
     return [...this.pendingMap.values()];
+  }
+
+  async evict(id: string): Promise<void> {
+    this.pendingMap.delete(id);
+    // A flush that already snapshotted this id may still be writing it;
+    // wait it out so the caller's store delete lands after that batch.
+    await this.flushing;
+    this.pendingMap.delete(id);
   }
 
   async drain(): Promise<void> {

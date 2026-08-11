@@ -542,4 +542,54 @@ export class IndexManager {
       throw new Error(`index "${image.name}" image payload missing`);
     }
   }
+
+  /** Sliced variant of loadImage (the open-time main-thread path): identical
+   *  resulting state, but the forward/reverse map construction yields to the
+   *  event loop every `sliceEvery` entries. The state swap itself (assigning
+   *  the freshly built containers) stays one synchronous segment, so a
+   *  mid-load yield can never expose a half-built index. Safe to yield while
+   *  building: the containers are detached until the swap, and the store is
+   *  not published until open() returns. */
+  async loadImageAsync(image: SecondaryImageIndex, opts: { sliceEvery?: number } = {}): Promise<void> {
+    const sliceEvery = opts.sliceEvery ?? 32768;
+    const idx = this.indexes.get(image.name);
+    if (!idx) throw new Error(`no such index: ${image.name}`);
+    if (idx.type !== image.type) throw new Error(`index "${image.name}" image type mismatch`);
+    let n = 0;
+    const tick = async (): Promise<void> => {
+      if (++n % sliceEvery === 0) await new Promise((r) => setImmediate(r));
+    };
+    if (idx.type === 'range' && image.range) {
+      const list = await SkipList.bulkLoadAsync<number, string>(
+        image.range.map((e) => ({ key: e.value, val: e.pk })),
+        { compareKey: cmpNumber, compareVal: cmpString },
+        { sliceEvery },
+      );
+      const byPk = new Map<string, number[]>();
+      for (const e of image.range) {
+        const arr = byPk.get(e.pk);
+        if (arr) arr.push(e.value);
+        else byPk.set(e.pk, [e.value]);
+        await tick();
+      }
+      idx.list = list;
+      idx.byPk = byPk;
+    } else if (idx.type === 'equality' && image.equality) {
+      const map = new Map<string, Set<string>>();
+      const byPk = new Map<string, string[]>();
+      for (const v of image.equality) {
+        map.set(v.scalarKey, new Set(v.pks));
+        for (const pk of v.pks) {
+          const arr = byPk.get(pk);
+          if (arr) arr.push(v.scalarKey);
+          else byPk.set(pk, [v.scalarKey]);
+          await tick();
+        }
+      }
+      idx.map = map;
+      idx.byPk = byPk;
+    } else {
+      throw new Error(`index "${image.name}" image payload missing`);
+    }
+  }
 }

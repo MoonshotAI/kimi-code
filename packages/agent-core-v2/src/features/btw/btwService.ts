@@ -5,17 +5,14 @@
  * `IAgentLifecycleService.fork`, then disables tool calls via an
  * `onBeforeExecuteTool` veto listener (blocks every tool call with the
  * `toolApproval.formatDenyMessage`-formatted TOOL_CALL_DISABLED_MESSAGE) and
- * appends the side-channel reminder through the child's `systemReminder`. Bound
- * at Session scope —
+ * appends the side-channel reminder through the child's `systemReminder`.
+ * Contributed at Session scope by `BtwFeature` (`features/btw/btwFeature`) —
  * `fork('main')` is a session-level operation, so the service injects the
  * session's `IAgentLifecycleService` directly rather than resolving it through
- * the main agent's accessor. Callers materialize the main agent first;
- * forking a missing source throws.
+ * the main agent's accessor. Callers materialize the main agent first; forking
+ * a missing source throws.
  */
 
-import { LifecycleScope } from '#/app/scopes';
-
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
@@ -51,11 +48,3 @@ export class SessionBtwService implements ISessionBtwService {
     return child.id;
   }
 }
-
-registerScopedService(
-  LifecycleScope.Session,
-  ISessionBtwService,
-  SessionBtwService,
-  ScopeActivation.OnScopeCreated,
-  'session-btw',
-);

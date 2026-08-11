@@ -693,6 +693,7 @@ export function mcpServices(options: {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     connectionManager: options.manager!,
+    isBaselineServer: () => true,
   } satisfies ISessionMcpHandle);
 }
 
@@ -1159,6 +1160,7 @@ export class AgentTestContext {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
               connectionManager: new McpConnectionManager(),
+              isBaselineServer: () => true,
             } satisfies ISessionMcpHandle);
             reg.defineInstance(ISessionWorkspaceInfo, {
               _serviceBrand: undefined,

@@ -9,9 +9,15 @@ import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createKimiHarness } from '#/index';
+import {
+  drainQueryStoreDisposals,
+  drainSessionIndexMirror,
+  ISessionIndex,
+} from '@moonshot-ai/agent-core-v2';
+
+import { createKimiHarness, SDKRpcClientV2 } from '#/index';
 import type { KimiError } from '#/index';
 
 import {
@@ -427,6 +433,77 @@ describe('KimiHarness.listSessions', () => {
       expect(sessions.map((item) => item.id)).toEqual([session.id]);
     } finally {
       await harness.close();
+    }
+  });
+});
+
+describe('SDKRpcClientV2 search-index separation', () => {
+  // The global full-text search database (`<homeDir>/search-index`) belongs
+  // to the kap-server search surface. The TUI-side chain (rpc client →
+  // klient → `ISessionIndex`) must list, resume and continue sessions without
+  // ever opening it — including while the session read model is still
+  // preparing.
+
+  it('listSessions / resumeSession never open the global search index (read model off)', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL', '0');
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const created = await client.createSession({ id: 'ses_search_sep_off', workDir });
+      await client.closeSession({ sessionId: created.id });
+
+      const sessions = await client.listSessions({ workDir });
+      expect(sessions.map((item) => item.id)).toEqual([created.id]);
+      const resumed = await client.resumeSession({ id: created.id });
+      expect(resumed.id).toBe(created.id);
+
+      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
+      // With the read model off, the session query-store is never opened either.
+      expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(false);
+    } finally {
+      await client.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('listSessions / resumeSession never open the global search index (read model on)', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL', '1');
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const created = await client.createSession({ id: 'ses_search_sep_on', workDir });
+      await client.closeSession({ sessionId: created.id });
+
+      // The read model is still preparing here: the first list kicks the
+      // background projection and answers from authoritative metadata, the
+      // resume reads the authoritative document — neither waits for, nor
+      // opens, any full-text index.
+      const sessions = await client.listSessions({ workDir });
+      expect(sessions.map((item) => item.id)).toEqual([created.id]);
+      const resumed = await client.resumeSession({ id: created.id });
+      expect(resumed.id).toBe(created.id);
+
+      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
+
+      // Settle the kicked projection before close so teardown never races it,
+      // and prove the read model really did engage (the flag took effect).
+      const status = await client.engineAccessor.get(ISessionIndex).prepare();
+      expect(status.state).toBe('ready');
+      expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(true);
+      expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
+    } finally {
+      await client.close();
+      // Dispose fired the mirror/query-store async closes; await them before
+      // the shared afterEach removes the temp home.
+      await drainSessionIndexMirror();
+      await drainQueryStoreDisposals();
+      vi.unstubAllEnvs();
     }
   });
 });

@@ -414,6 +414,19 @@ describe('server /api/v2/sessions', () => {
 });
 
 describe('mapActivityStatus', () => {
+  it('maps a cold persisted failure to failed, live outcomes still win', () => {
+    const coldIdle = { busy: false, mainTurnActive: false, pendingInteraction: 'none' as const, live: false as const };
+    expect(mapActivityStatus(coldIdle, 'failed')).toBe('failed');
+    expect(mapActivityStatus(coldIdle, 'completed')).toBe('idle');
+    expect(mapActivityStatus(coldIdle, 'cancelled')).toBe('idle');
+    expect(mapActivityStatus(coldIdle)).toBe('idle');
+    // A live session never reads the persisted value.
+    expect(mapActivityStatus({ ...coldIdle, live: true }, 'failed')).toBe('idle');
+    expect(
+      mapActivityStatus({ busy: true, mainTurnActive: true, pendingInteraction: 'none', live: true }, 'failed'),
+    ).toBe('running');
+  });
+
   it('maps pending interactions ahead of an active turn', () => {
     expect(
       mapActivityStatus({ busy: true, mainTurnActive: true, pendingInteraction: 'approval' }),

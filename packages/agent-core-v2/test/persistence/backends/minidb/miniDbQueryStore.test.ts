@@ -9,7 +9,7 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ClusterDb } from '@moonshot-ai/minidb/cluster';
-import { MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
 import { IQueryStore } from '#/persistence/interface/queryStore';
 import { stubBootstrap } from '../../../app/bootstrap/stubs';
 import { stubLog } from '../../../_base/log/stubs';
@@ -36,6 +36,9 @@ describe('MiniDbQueryStore', () => {
   afterEach(async () => {
     disposeHost?.();
     disposeHost = undefined;
+    // The host's synchronous dispose() fires the store's async close; await it
+    // so the rm below never races a late shard close (ENOTEMPTY flake).
+    await drainQueryStoreDisposals();
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
@@ -113,16 +116,30 @@ describe('MiniDbQueryStore', () => {
     expect(page2.nextCursor).toBeUndefined();
   });
 
-  it('ensureIndex is idempotent across value, compound and text kinds', async () => {
+  it('ensureIndex is idempotent across value and compound kinds', async () => {
     const store = build();
     await store.put(COLLECTION, 'a', { id: 'a', ws: 'x', n: 1, body: 'hello world' });
     await store.ensureIndex(COLLECTION, { kind: 'value', name: 'byWs', field: 'ws' });
     await store.ensureIndex(COLLECTION, { kind: 'value', name: 'byWs', field: 'ws' });
     await store.ensureIndex(COLLECTION, { kind: 'compound', name: 'byWsN', groupBy: 'ws', orderBy: 'n' });
-    await store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] });
-    await store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] });
+    await store.ensureIndex(COLLECTION, { kind: 'compound', name: 'byWsN', groupBy: 'ws', orderBy: 'n' });
     const page = await store.query(COLLECTION).where({ ws: 'x' }).execute();
     expect(page.items).toHaveLength(1);
+  });
+
+  it('rejects text indexes: the query-store is a structural read model', async () => {
+    const store = build();
+    await store.put(COLLECTION, 'a', { id: 'a', body: 'hello world' });
+    await expect(
+      store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] }),
+    ).rejects.toThrow(/structural read model/);
+    // The rejected definition must not lodge a partial registration.
+    await expect(
+      store.ensureIndex(COLLECTION, { kind: 'text', name: 'body', fields: ['body'] }),
+    ).rejects.toThrow(/structural read model/);
+    const storeDir = join(homeDir, 'cache', 'query-store');
+    const shardEntries = await fsp.readdir(join(storeDir, 'shard-00'));
+    expect(shardEntries.filter((name) => name.includes('text'))).toEqual([]);
   });
 
   it('stores checkpoints', async () => {
