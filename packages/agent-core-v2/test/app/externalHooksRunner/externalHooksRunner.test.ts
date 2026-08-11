@@ -1,6 +1,8 @@
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
+import { Emitter } from '#/_base/event';
+import type { HookDef } from '#/agent/externalHooks/types';
 import type { ContentPart } from '#/kosong/contract/message';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -340,5 +342,27 @@ describe('ExternalHooksRunnerService', () => {
     expect(runner.hasHooksFor('PreToolUse')).toBe(true);
     expect(runner.hasHooksFor('SessionHeartbeat')).toBe(true);
     expect(runner.hasHooksFor('Stop')).toBe(false);
+  });
+
+  it('rebuilds the hook index when hooks arrive through a config change', async () => {
+    const hooks: HookDef[] = [];
+    const emitter = new Emitter<void>();
+    const runner = makeHookRunner(hooks, { onDidChangeConfiguration: emitter.event });
+
+    await runner.ready;
+    expect(runner.hasHooksFor('SessionStart')).toBe(false);
+
+    // The config gains a [[hooks]] section after the runner was constructed
+    // (the interactive TUI can load config.toml after app-scope construction).
+    // The runner must re-read the config instead of keeping the empty index
+    // forever, or the hook would silently never fire.
+    hooks.push({ event: 'SessionStart', command: nodeCommand('process.exit(0);'), timeout: 5 });
+    emitter.fire();
+
+    await vi.waitFor(() => {
+      expect(runner.hasHooksFor('SessionStart')).toBe(true);
+    });
+    const results = await runner.trigger('SessionStart');
+    expect(results).toHaveLength(1);
   });
 });

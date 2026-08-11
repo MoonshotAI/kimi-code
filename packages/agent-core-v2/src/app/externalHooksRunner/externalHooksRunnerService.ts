@@ -56,6 +56,20 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
         void this.reloadSafe();
       }),
     );
+    // Rebuild the hook index when the config changes, not just on plugin
+    // reload. The user config file (`config.toml`) can be (re)loaded into the
+    // layered config service after this runner's initial `loadSafe()` — in the
+    // interactive TUI in particular, `[[hooks]]` may arrive late. Without this
+    // subscription the index would stay empty forever and every hook would
+    // silently never fire (#2779). The member check keeps the subscription a
+    // no-op against partial `IConfigService` stubs in unit tests.
+    if (this.config.onDidChangeConfiguration !== undefined) {
+      this._register(
+        this.config.onDidChangeConfiguration(() => {
+          void this.reloadSafe();
+        }),
+      );
+    }
   }
 
   get summary(): Record<string, number> {
