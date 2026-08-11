@@ -50,6 +50,17 @@ const ALREADY_GENERATING_MESSAGE = "A response is already being generated for th
 
 export interface PromptResult {
   readonly status: "finished" | "cancelled" | "failed";
+  /**
+   * Present when the call was rejected because the session was already busy —
+   * the message never started a turn and can safely be queued for later.
+   */
+  readonly reason?: "busy";
+  /**
+   * Present when a busy rejection raced a live turn: that turn's terminal
+   * event is guaranteed to arrive later, so the caller can queue the message
+   * instead of restoring it to the composer.
+   */
+  readonly activeTurn?: boolean;
 }
 
 interface SuppressedError {
@@ -193,7 +204,7 @@ export class SessionRuntime {
         "runtime",
         { terminal: this.hasActiveWork ? false : undefined },
       );
-      return { status: "failed" };
+      return { status: "failed", reason: "busy", activeTurn: this.hasActiveWork };
     }
 
     let resolveCompletion!: (result: PromptResult) => void;
