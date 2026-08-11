@@ -36,6 +36,7 @@ import { createMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import '#/agent/mcp/mcpService';
+import { IWireService } from '#/wire/wire';
 import '#/wire/wireService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -452,6 +453,37 @@ describe('AgentLifecycleService', () => {
 
     rejectCompaction(abortController.signal.reason);
     await removal;
+    expect(removed).toBe(true);
+  });
+
+  it('remove waits for the agent wire to flush before completing', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const handle = await svc.create({ agentId: 'main' });
+    let markFlushStarted!: () => void;
+    const flushStarted = new Promise<void>((resolve) => {
+      markFlushStarted = resolve;
+    });
+    let releaseFlush!: () => void;
+    const flushReleased = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
+    const flush = vi
+      .spyOn(handle.accessor.get(IWireService), 'flush')
+      .mockImplementation(async () => {
+        markFlushStarted();
+        await flushReleased;
+      });
+
+    let removed = false;
+    const removal = svc.remove('main').then(() => {
+      removed = true;
+    });
+    await flushStarted;
+    expect(removed).toBe(false);
+
+    releaseFlush();
+    await removal;
+    expect(flush).toHaveBeenCalledOnce();
     expect(removed).toBe(true);
   });
 
