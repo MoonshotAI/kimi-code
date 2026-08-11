@@ -10,7 +10,7 @@ import { clampPanelWidth, panelMaxWidth, useViewportWidth } from './useViewportW
 const SIDEBAR_WIDTH_KEY = STORAGE_KEYS.sidebarWidth;
 const SIDEBAR_COLLAPSED_KEY = STORAGE_KEYS.sidebarCollapsed;
 const SIDEBAR_DEFAULT = 270;
-const SIDEBAR_MIN = 170;
+const SIDEBAR_MIN = 220;
 // Hard cap on how wide the sidebar can be dragged, regardless of viewport.
 // Below this, the conversation-reserve rule still wins (narrow windows).
 const SIDEBAR_MAX = 480;
