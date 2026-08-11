@@ -1,8 +1,8 @@
 /**
- * `subagent` domain (L6) — caller-side mirroring of an agent run.
+ * `subagent` domain — caller-side mirroring of an agent run.
  *
- * When one agent drives another through `ISessionSubagentService.run` (the
- * `Agent` tool, the swarm scheduler), the *requesting* agent surfaces that run
+ * When one agent drives another through `ISessionSubagentService.run`, the
+ * *requesting* agent surfaces that run
  * on its own record stream so the UI can nest the child transcript under the
  * launching tool call, external hooks fire, and telemetry is tracked. That
  * requester ↔ target association is business data of this wrapper layer — the
@@ -10,20 +10,22 @@
  *
  * External hooks (`SubagentStart` / `SubagentStop`) fire by observation, like
  * every other external hook: this wrapper announces "a run is about to start"
- * / "...has stopped" through the `ISessionSubagentService` agent-run hook slot
- * and stop event, and the Session-scope `externalHooks` adapter registers its
- * own listeners there to translate them into the configured external hook
- * commands.
+ * / "...has stopped" through the `ISessionSubagentService` agent-run hook
+ * slot and stop event.
  *
  * Wire shape note: the signals are still named `subagent.spawned / started /
  * completed / failed` and telemetry still tracks `subagent_created` so existing
- * session recordings and dashboards stay valid. Rename lives on a separate
- * wire-cleanup PR.
+ * session recordings and dashboards stay valid. The spawned signal also
+ * reports the child's display-normalized model alias (the derived secondary
+ * entry resolves to its base alias) and its effective thinking effort, so
+ * clients can render both at spawn instead of waiting for the first
+ * `agent.status.updated` frame.
  */
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -44,6 +46,8 @@ export interface SubagentSpawnedEvent {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
+  readonly model?: string;
+  readonly thinkingEffort?: string;
 }
 
 export interface SubagentStartedEvent {
@@ -81,6 +85,7 @@ export interface AgentRunSpawnedMeta {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
+  readonly model?: string;
 }
 
 export interface MirrorAgentRunOptions {
@@ -96,6 +101,10 @@ export function emitAgentRunSpawned(
   targetAgentId: string,
   meta: AgentRunSpawnedMeta,
 ): void {
+  const childProfile = requester.accessor
+    .get(IAgentLifecycleService)
+    ?.get(targetAgentId)
+    ?.accessor.get(IAgentProfileService);
   requester.accessor.get(IEventBus)?.publish({
     type: 'subagent.spawned',
     subagentId: targetAgentId,
@@ -107,7 +116,10 @@ export function emitAgentRunSpawned(
     description: meta.description,
     swarmIndex: meta.swarmIndex,
     runInBackground: meta.runInBackground ?? false,
+    model: meta.model,
+    thinkingEffort: childProfile?.getEffectiveThinkingLevel(),
   });
+  childProfile?.republishStatus();
   requester.accessor.get(ITelemetryService)?.track2('subagent_created', {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,
@@ -187,5 +199,5 @@ function childContextTokens(
   agentId: string,
 ): number | undefined {
   const child = agentLifecycle.get(agentId);
-  return child?.accessor.get(IAgentContextSizeService)?.get().size;
+  return child?.accessor.get(IAgentTokenCountingService)?.statusSize();
 }

@@ -15,6 +15,7 @@ import type { Terminal } from '@moonshot-ai/agent-core-v2/os/interface/terminal'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 // --- Fake PTY service -------------------------------------------------------
@@ -120,6 +121,7 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
       ].join('\n'),
     );
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -235,7 +237,7 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
       cwd: '../outside',
     });
     expect(escaping.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
-    expect(escaping.msg).toBe('Path outside workspace');
+    expect(escaping.msg).toContain('Path outside workspace');
 
     const noSession = await get<unknown>(`/api/v1/sessions/sess_missing/terminals`);
     expect(noSession.code).toBe(ErrorCode.SESSION_NOT_FOUND);

@@ -14,11 +14,8 @@
  * `useSyncExternalStore`.
  */
 
-import {
-  GlobalEventsWs,
-  type SessionWorkFacts,
-} from './ws';
 import type { WsLikeCtor } from '../channel/wsLike';
+import { GlobalEventsWs, type SessionWorkFacts } from './ws';
 
 export type { SessionWorkFacts };
 
@@ -131,8 +128,7 @@ export class SessionActivityHub {
           {
             busy: item['busy'],
             mainTurnActive: item['main_turn_active'] === true,
-            pendingInteraction:
-              pending === 'approval' || pending === 'question' ? pending : 'none',
+            pendingInteraction: pending === 'approval' || pending === 'question' ? pending : 'none',
             lastTurnReason:
               reason === 'completed' || reason === 'cancelled' || reason === 'failed'
                 ? reason

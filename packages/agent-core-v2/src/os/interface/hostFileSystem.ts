@@ -1,8 +1,7 @@
 /**
- * `hostFs` domain (L1) — local real-filesystem primitives.
+ * `hostFs` domain — local real-filesystem primitives.
  *
- * Defines the `IHostFileSystem` used by the program side (persistence, skill
- * loading, workspace registry) and the os file tools to read and write files on
+ * Defines the `IHostFileSystem` used to read and write files on
  * the real local disk, plus the stat/entry models. `realpath` canonicalizes a
  * path by resolving every symlink component (Node `fs.realpath` semantics) and
  * rejects with `os.fs.not_found` for a missing path; consumers use it to make
@@ -44,9 +43,7 @@ export interface IHostFileSystem {
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): AsyncGenerator<string>;
   createExclusive(path: string, data: Uint8Array): Promise<boolean>;
-  /** Follows symlinks to the target (Node `stat` semantics). Use {@link lstat} when the link itself matters. */
   stat(path: string): Promise<HostFileStat>;
-  /** Stats the entry itself without following symlinks (Node `lstat` semantics). */
   lstat(path: string): Promise<HostFileStat>;
   readdir(path: string): Promise<readonly HostDirEntry[]>;
   mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void>;

@@ -20,6 +20,7 @@ A Service = a bundle of **state** + a set of **behaviors**, bound to a **lifetim
 | Scope | State identity (keyed by) | Lifetime |
 |---|---|---|
 | `App` | none (single global instance) | the process |
+| `Workspace` | `workspaceId` | one workspace handler (materialized once per workspace, never closed — dies with the process) |
 | `Session` | `sessionId` | one session |
 | `Agent` | `agentId` | one agent |
 
@@ -33,6 +34,7 @@ A Service = a bundle of **state** + a set of **behaviors**, bound to a **lifetim
 **Q2. What is the identity of that state?**
 
 - one global instance → **`App`**
+- one per workspace (shared by every session of that workspace) → **`Workspace`**
 - one per session → **`Session`**
 - one per agent → **`Agent`**
 - a mix (a global registry *and* per-instance state) → **split it** (see §3).
@@ -70,7 +72,7 @@ The standard split is "global registry / factory" + "per-instance":
 | Tier | Role | Naming tends to |
 |---|---|---|
 | `App` | global registry / catalog / factory — knows "all of them" and how to create one | `XxxStore` / `XxxRegistry` / `XxxCatalog` |
-| `Session` / `Agent` | one instance — only the state of "this one" | `XxxService` / `ISessionXxx` / `IAgentXxx` |
+| `Workspace` / `Session` / `Agent` | one instance — only the state of "this one" | `XxxService` / `IWorkspaceXxx` / `ISessionXxx` / `IAgentXxx` |
 
 Canonical splits in the codebase:
 
@@ -128,6 +130,8 @@ The three mechanisms above are also where a domain accepts new behavior without 
 | Step into an operation in order / veto | a **hook** (`onWill`/`onDid`, `OrderedHookSlot`) | the owning scope |
 | Swap a backend (File ↔ DB ↔ S3) | a **Store / Storage token** at the byte layer (see persistence.md) | `App` (composition root) |
 
+The standard shape of a "registry / catalog the domain queries" row is an L3 contribution point: the target domain owns a `collection<T>` token, contributors call `this.provide(token, record)` from a unit, and a fold service in the target domain injects the `CollectionView` (incremental `onDidChange`; provider death withdraws the record). The four in-repo seams are `ConfigSectionContribution` → `ConfigRegistry`, `AgentToolContribution` → `AgentToolActivationService`, `AgentProfileContribution` → `IAgentProfileRegistry`, and `WireModelContribution` → `WireService` (file-level pointers: `packages/agent-core-v2/AGENTS.md` §Units and contribution points).
+
 Closed-for-modification means: the domain's own file is not where new scenarios branch. If a new scenario forces an edit here, an extension point is missing or misplaced.
 
 ## 5. Dependency direction
@@ -145,25 +149,17 @@ Add one anti-rot heuristic to keep the graph from collapsing into a clique:
 
 Once a foundational component knows about an upstream scenario, it can no longer be reused by other scenarios and will almost always create a cycle.
 
-### The natural layers of this repo
+### The boundaries of this repo
 
-`agent-core-v2` is stratified into eight dependency layers, **L0–L7** (the `Ln` number in file headers — see orient.md for the full table and the representative domains). A domain at layer `L` may import only domains at layer `<= L`; lower layers never reach upward. `lint:domain` enforces this from the `DOMAIN_LAYER` map in `scripts/check-domain-layers.mjs`.
+`agent-core-v2` has no mechanical domain-layer numbering — dependency direction is the judgment rule above, applied per domain. What remains enforceable is a small set of specific boundaries (`lint:imports`, `scripts/check-import-boundaries.mjs`):
 
-The tiers, from lowest to highest:
+- v2 never imports v1 (`@moonshot-ai/agent-core`).
+- The kosong subtree keeps its strict internal order (`contract ← protocol ← provider/model`, purity bans, the `provider/bases` registration boundary).
 
-- **L0 — base infrastructure** (`_base`, errors, wire types).
-- **L1 — bridges & low-level capabilities** (logging, telemetry, event bus, environment, storage).
-- **L2 — data & cross-cutting capabilities** (records, config, providers, auth, workspace registry).
-- **L3 — registries & capabilities** (tools, permissions, flags, skills, plugins).
-- **L4 — agent behaviour** (turn, loop, prompt, profile, context, goal, plan, swarm).
-- **L5 — async lifecycle** (background, MCP, cron, sub-agent tools).
-- **L6 — coordination** (session, agent/session lifecycle, interactions, terminal).
-- **L7 — boundary / edge** (`gateway`, `rpc`, approval/question, the `*Legacy` v1 adapters).
+Two standing red lines on top of that:
 
-Red lines:
-
-- The **L0/L1 substrate** never imports a higher business layer.
-- Business logic never depends on the **L7 edge** layer — business code should not know REST / WebSocket exist.
+- The **base substrate** (`_base`, errors, wire types) never depends on any business domain.
+- Business logic never depends on the **edge** (`gateway`, `rpc`, the `*Legacy` v1 adapters) — business code should not know REST / WebSocket exist.
 - A cycle means knowledge was placed backwards: extract a third, more foundational Service, or invert the "notification" half into an event.
 
 > Capability → orchestrator (e.g. `prompt → turn`) is allowed and present in this repo; the real red line is *inverted reuse* — a foundational / lower Service depending on a specific / upper one.
@@ -189,8 +185,9 @@ domain: `<name>`   (owning scope: <Scope>)
 │   └─ (accessor) <ConsumerDomain>   @<Scope>   — <what they use me for>
 ├─ exposes (interfaces I provide, by scope)
 │   ├─ App       : <IXxxRegistry>   — <role>
-│   ├─ Session  : <ISessionXxx>    — <role>
-│   └─ Agent    : <IAgentXxx>      — <role>
+│   ├─ Workspace : <IWorkspaceXxx>  — <role>
+│   ├─ Session   : <ISessionXxx>    — <role>
+│   └─ Agent     : <IAgentXxx>      — <role>
 └─ depends (what I inject)           tag = calling style
     └─ <DepDomain>  @<Scope>   direct/event/hook  — <what for>
 ```
@@ -228,42 +225,49 @@ Read it as:
 Worked example — `sessionLifecycle`:
 
 ```text
-domain: `sessionLifecycle`   (owning scope: App)
+domain: `sessionLifecycle`   (owning scope: Workspace)
 ├─ serves (who uses me)
-│   ├─ (inject)   — (none yet)
+│   ├─ (inject)   — (none)
 │   └─ (accessor)
 │       ├─ sessionLegacy     @App(edge)  — v1-compatible create/fork/archive/…
 │       └─ gateway / rpc     @App(edge)  — native v2 session lifecycle actions
 ├─ exposes (interfaces I provide, by scope)
-│   ├─ App       : ISessionLifecycleService — owns the live session scope tree
+│   ├─ Workspace : ISessionLifecycleService — owns this workspace's live session scope tree
 │   ├─ Session   : —                    — (per-session state lives in sessionMetadata / agentLifecycle / …)
 │   └─ Agent     : —                    — (per-agent state lives in agentLifecycle)
 └─ depends (what I inject)
-    ├─ bootstrap         @App  direct  — addresses session storage
-    ├─ hostEnvironment   @App  direct  — gates scope creation on the probe
-    ├─ sessionIndex      @App  direct  — persisted read model for cold resumes
-    ├─ storage           @App  direct  — atomic docs + append logs
-    ├─ workspace        @App  direct  — resolves a session's workspace
-    └─ event             @App  direct  — broadcasts session-level facts (e.g. archived)
+    ├─ workspaceContext  @Workspace  seed    — handler identity + persistence scope
+    ├─ bootstrap         @App        direct  — addresses session storage
+    ├─ hostEnvironment   @App        direct  — gates scope creation on the probe
+    ├─ sessionIndex      @App        direct  — persisted read model for cold resumes
+    ├─ storage           @App        direct  — atomic docs + append logs
+    ├─ workspaceDirs / workspaceSkillCatalog / workspaceMcp / …
+    │                    @Workspace  direct  — the handler's shared resource services
+    └─ event             @App        direct  — broadcasts session-level facts (e.g. archived)
 ```
 
 Cross-scope borrow for `sessionLifecycle`:
 
 ```text
 App scope
-  SessionLifecycleService ──holds──┐
-  GatewayService ───────────holds──┼──► IScopeHandle(sessionId)
-                                        │
-                                        │  accessor.get(ISessionMetadata) …
-                                        │   └── resolve runs inside the Session scope
-                                        ▼
-                                  Session scope (sessionId)
-                                    sessionMetadata / agentLifecycle / …  ← per-session services live here
+  WorkspaceLifecycleService ──holds──► IScopeHandle(workspaceId)   (one per live handler)
+                                            │
+                                            │  accessor.get(ISessionLifecycleService)
+                                            │   └── resolve runs inside the Workspace scope
+                                            ▼
+                                      Workspace scope (workspaceId)
+                                        SessionLifecycleService ──holds──► IScopeHandle(sessionId)
+                                                                              │
+                                                                              │  accessor.get(ISessionMetadata) …
+                                                                              │   └── resolve runs inside the Session scope
+                                                                              ▼
+                                                                        Session scope (sessionId)
+                                                                          sessionMetadata / agentLifecycle / …  ← per-session services live here
 ```
 
 How the three lenses shaped it:
 
-- **Scope (§2)** → the live registry of session scopes is process-wide, so it is App-scoped; per-session data stays in Session-scoped services, reached through the handle's `accessor`.
+- **Scope (§2)** → the live registry of one workspace's session scopes is per-handler, so it is Workspace-scoped; the process-wide handler registry lives in the App-scoped `workspaceLifecycle`; per-session data stays in Session-scoped services, reached through the handle's `accessor`.
 - **Dependency direction (§5)** → `sessionLifecycle` is consumed by the edge via `accessor` borrows; it never imports the edge. Every downward arrow lands on a peer or a more foundational Service.
 - **Extension points (§4)** → new per-session behavior plugs into the Session-scoped services (`sessionMetadata`, `agentLifecycle`, `sessionActivity`); new transports stay at the edge. Neither edits `sessionLifecycle`.
 

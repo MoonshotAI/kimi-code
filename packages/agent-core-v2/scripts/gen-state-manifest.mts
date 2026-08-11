@@ -1,16 +1,21 @@
 /**
  * Generates `docs/state-manifest.d.ts` — the single place to see every state
- * key registered into the Session-scope `ISessionStateService` or the
- * Agent-scope `IAgentStateService`.
+ * key registered into the four scoped state services (App-scope
+ * `IAppStateService`, Workspace-scope `IWorkspaceStateService`, Session-scope
+ * `ISessionStateService`, Agent-scope `IAgentStateService`).
  *
  * Pure static pass (state keys are registered inside DI scope constructors, so
  * there is no process-level registry to drain the way `gen-wire-manifest`
  * does):
- *   1. A ts-morph scan of `src/{agent,session}/**` collects every top-level
- *      `defineState('name', ...)` key constant.
+ *   1. A ts-morph scan of `src/{app,workspace,session,agent,features}/**`
+ *      collects every top-level `defineState('name', ...)` key constant.
  *   2. Every `.register(key)` call site resolves its argument back to a key
  *      constant (following imports); the key joins the scope of the
- *      registering file (`src/session/**` → Session, `src/agent/**` → Agent).
+ *      registering file (`src/app/**` → App, `src/workspace/**` → Workspace,
+ *      `src/session/**` → Session, `src/agent/**` → Agent). Files under
+ *      `src/features/**` register into whichever scope their services are
+ *      materialized in, so the scope is resolved from the register-call
+ *      receiver's type (`IAgentStateService` → Agent, …).
  *      A key that is defined but never registered is excluded.
  *
  * The output is a self-contained `.d.ts`: each key's value type is the
@@ -39,9 +44,12 @@ import {
   SyntaxKind,
   ts,
   type Identifier,
+  type PropertyAccessExpression,
   type Signature,
+  type SourceFile,
   type Symbol as MorphSymbol,
   type Type as MorphType,
+  type TypeChecker,
   type VariableDeclaration,
 } from 'ts-morph';
 
@@ -52,6 +60,18 @@ export const MANIFEST_PATH = join(PKG, 'docs', 'state-manifest.d.ts');
 
 /** src first-level directory → manifest section. */
 const SCOPES = [
+  {
+    dir: 'app',
+    label: 'App',
+    interfaceName: 'AppStateSnapshot',
+    keyUnionName: 'AppStateKey',
+  },
+  {
+    dir: 'workspace',
+    label: 'Workspace',
+    interfaceName: 'WorkspaceStateSnapshot',
+    keyUnionName: 'WorkspaceStateKey',
+  },
   {
     dir: 'session',
     label: 'Session',
@@ -93,6 +113,35 @@ function scopeDirOf(file: string): ScopeDir | undefined {
   return SCOPES.some((scope) => scope.dir === first) ? (first as ScopeDir) : undefined;
 }
 
+function isFeaturesFile(file: string): boolean {
+  return relative(SRC, file).split(/[\\/]/)[0] === 'features';
+}
+
+/** Feature files register into the scope of their materialized services — resolve it from the register-call receiver's state-service type. */
+const FEATURES_RECEIVER_SCOPE: Readonly<Record<string, ScopeDir>> = {
+  IAppStateService: 'app',
+  IWorkspaceStateService: 'workspace',
+  ISessionStateService: 'session',
+  IAgentStateService: 'agent',
+};
+
+function featuresRegisterScope(
+  expression: PropertyAccessExpression,
+  checker: TypeChecker,
+  sf: SourceFile,
+): ScopeDir {
+  const typeName = checker.getTypeAtLocation(expression.getExpression()).getSymbol()?.getName();
+  const scope = typeName === undefined ? undefined : FEATURES_RECEIVER_SCOPE[typeName];
+  if (scope === undefined) {
+    throw new Error(
+      `[gen-state-manifest] cannot resolve the state-service scope of '${expression.getText()}' ` +
+        `in ${srcRelative(sf.getFilePath())} — register through an ` +
+        'I{App,Workspace,Session,Agent}StateService-typed member.',
+    );
+  }
+  return scope;
+}
+
 /** Package-root-relative posix path (used in index/comment columns). */
 function srcRelative(file: string): string {
   return relative(PKG, file).split('\\').join('/');
@@ -108,6 +157,16 @@ function tsFieldKey(key: string): string {
   return /^[$A-Z_a-z][$\w]*$/.test(key) ? key : JSON.stringify(key);
 }
 
+/**
+ * The checker names a `unique symbol` key `__@<declName>@<globalSymbolId>` —
+ * the numeric id is a compilation-global counter that shifts with unrelated
+ * edits, so the manifest renders the stable `__@<declName>` form instead.
+ */
+function stableSymbolKey(key: string): string {
+  const match = /^__@(.+)@\d+$/.exec(key);
+  return match === null ? key : `__@${match[1]}`;
+}
+
 // ---------------------------------------------------------------------------
 // Static pass — key constants and their register call sites
 // ---------------------------------------------------------------------------
@@ -116,7 +175,8 @@ function tsFieldKey(key: string): string {
 function collectKeyDefs(project: Project): Map<VariableDeclaration, KeyDef> {
   const defs = new Map<VariableDeclaration, KeyDef>();
   for (const sf of project.getSourceFiles()) {
-    if (scopeDirOf(sf.getFilePath()) === undefined) continue;
+    const filePath = sf.getFilePath();
+    if (scopeDirOf(filePath) === undefined && !isFeaturesFile(filePath)) continue;
     for (const statement of sf.getVariableStatements()) {
       for (const declaration of statement.getDeclarations()) {
         const initializer = declaration.getInitializer();
@@ -157,11 +217,13 @@ function collectRegistrations(
   project: Project,
   defs: ReadonlyMap<VariableDeclaration, KeyDef>,
 ): Registration[] {
+  const checker = project.getTypeChecker();
   const registrations: Registration[] = [];
   const seen = new Set<string>();
   for (const sf of project.getSourceFiles()) {
-    const scope = scopeDirOf(sf.getFilePath());
-    if (scope === undefined) continue;
+    const fileScope = scopeDirOf(sf.getFilePath());
+    const featuresFile = isFeaturesFile(sf.getFilePath());
+    if (fileScope === undefined && !featuresFile) continue;
     for (const call of sf.getDescendantsOfKind(SyntaxKind.CallExpression)) {
       const expression = call.getExpression();
       if (!Node.isPropertyAccessExpression(expression) || expression.getName() !== 'register') {
@@ -172,6 +234,7 @@ function collectRegistrations(
       if (args.length !== 1 || arg === undefined || !Node.isIdentifier(arg)) continue;
       const def = resolveKeyDef(arg, defs);
       if (def === undefined) continue;
+      const scope = fileScope ?? featuresRegisterScope(expression, checker, sf);
       if (!def.exported) {
         throw new Error(
           `[gen-state-manifest] state key '${def.keyName}' (${srcRelative(def.file)}) is ` +
@@ -621,7 +684,7 @@ class TypeRenderer {
       const propLines = rendered.split('\n');
       propLines[propLines.length - 1] += ';';
       lines.push(
-        `  ${readonly}${tsFieldKey(prop.getName())}${optional ? '?' : ''}: ${propLines[0]}`,
+        `  ${readonly}${tsFieldKey(stableSymbolKey(prop.getName()))}${optional ? '?' : ''}: ${propLines[0]}`,
         ...propLines.slice(1).map((line) => `  ${line}`),
       );
     }
@@ -738,14 +801,16 @@ function renderManifest(
     ' · ',
   );
   const out: string[] = [
-    '// Session & Agent State Manifest',
+    '// App, Workspace, Session & Agent State Manifest',
     '//',
     '// Generated by scripts/gen-state-manifest.mts — do not edit by hand.',
     '// Regenerate with: pnpm --filter @moonshot-ai/agent-core-v2 gen:state-manifest',
     '//',
-    '// Every state key registered into the Session-scope ISessionStateService or the',
-    '// Agent-scope IAgentStateService (see src/_base/state/stateRegistry.ts), collected',
-    '// statically from the `states.register(...)` call sites — a key defined via',
+    '// Every state key registered into the App-scope IAppStateService, the',
+    '// Workspace-scope IWorkspaceStateService, the Session-scope',
+    '// ISessionStateService, or the Agent-scope IAgentStateService (see',
+    '// src/_base/state/stateRegistry.ts), collected statically from the',
+    '// `states.register(...)` call sites — a key defined via',
     '// defineState but never registered does not appear here. Each entry shows the',
     '// compile-time StateKey<T> value type fully expanded inline, so the manifest is',
     '// self-contained (no imports, no helper declarations). A named type is marked',

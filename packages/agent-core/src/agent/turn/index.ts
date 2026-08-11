@@ -5,6 +5,7 @@ import {
   APIConnectionError,
   APIContextOverflowError,
   APIEmptyResponseError,
+  APIProviderQuotaExhaustedError,
   APIStatusError,
   APITimeoutError,
   inputTotal,
@@ -977,6 +978,16 @@ export class TurnFlow {
               return this.agent.permission.beforeToolCall(ctx);
             },
             finalizeToolResult: async (ctx) => {
+              // Calls rejected in preflight (e.g. invalid args) never reach
+              // prepareToolExecution, so register them here — otherwise the
+              // repeat breaker cannot count them and the model can re-issue
+              // the same invalid call indefinitely.
+              deduper.registerSkipped(
+                ctx.toolCall.id,
+                ctx.toolCall.name,
+                ctx.args,
+                ctx.toolCall.arguments,
+              );
               // Resolve dedup BEFORE firing the PostToolUse hook so same-step
               // dups (whose ctx.result is the dedup placeholder) report the
               // original's real outcome, not an empty success.
@@ -1533,6 +1544,11 @@ interface ApiErrorClassification {
 }
 
 function classifyApiError(error: unknown, summary: KimiErrorPayload): ApiErrorClassification {
+  // Quota/balance exhaustion shares status 429 with rate limits but fails
+  // fast instead of retrying — keep the two apart in telemetry.
+  if (error instanceof APIProviderQuotaExhaustedError) {
+    return { errorType: 'quota_exhausted', statusCode: error.statusCode };
+  }
   const statusCode = apiStatusCode(error) ?? summaryStatusCode(summary);
   if (statusCode !== undefined) {
     if (statusCode === 429) return { errorType: 'rate_limit', statusCode };

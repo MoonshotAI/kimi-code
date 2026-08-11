@@ -1,6 +1,6 @@
 /**
- * `agentProfileCatalog` domain (L3) — App-scope registry of named agent
- * profiles.
+ * `agentProfileCatalog` domain — the agent-profile domain types and the
+ * App-scope extension point (`IAgentProfileRegistry`).
  *
  * A profile is "how an Agent runs": the full system prompt it renders for a
  * given context, the tool set it may use, plus optional per-invocation and
@@ -8,9 +8,13 @@
  * the same profile can be bound to any Model. Together with a bound Model, a
  * profile uniquely determines an Agent's behavior (`Profile + Model ⇒ Agent`).
  *
- * Every profile is self-contained: `systemPrompt(context)` returns the complete
- * prompt (base + role overlay are merged at definition time, not at spawn
- * time). Profiles stay independent of concrete model aliases, but may declare
+ * Every profile is self-contained: `renderSystemPrompt(context)` returns the
+ * complete prompt (base + role overlay are merged at definition time, not at
+ * spawn time) together with the environment facts disclosed by that render.
+ * `systemPrompt(context)` is the same render's text only — it is derived from
+ * `renderSystemPrompt` at registration, so the two can never drift apart.
+ * Profiles stay
+ * independent of concrete model aliases, but may declare
  * a symbolic primary/secondary preference used as the default when spawned as
  * a subagent. The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the
  * default profile used when an Agent is bound to a Model without naming a
@@ -22,16 +26,17 @@
  * an allowlist of subagent profile names the agent may delegate to
  * (`undefined` = any type).
  *
- * Profiles are contributed at module load via `registerAgentProfile(...)`, the
- * same "import = register" pattern used by `registerAgentToolService` and
- * `registerConfigSection`. `AgentProfileCatalogService` consumes the accumulated
- * contributions on construction and exposes `get(name)` / `getDefault()` /
- * `list()` to callers (the `Agent` tool, the swarm scheduler, and the per-agent
- * profile binding). Contributions are keyed by `name`; a later-registered
- * profile with the same name overrides an earlier one.
+ * Profiles reach agents through the Contribution / Registry / Catalog
+ * extension point: loaders (builtin code contributions via
+ * `registerAgentProfile(...)`, plugin / user file scans at App scope,
+ * workspace / extra / explicit file scans at Workspace scope) contribute
+ * `AgentProfileContribution` records to the collection, keyed by source id;
+ * the App-scope `IAgentProfileRegistry` fold projects them into its read
+ * surface, and the Session-scope `ISessionAgentProfileCatalog` projects the
+ * registry into the merged, name-deduped read view that consumers (the
+ * `Agent` tool, the swarm scheduler, the per-agent profile binding) resolve
+ * profiles through.
  */
-
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { ILogger } from '#/_base/log/log';
 import type { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -61,11 +66,25 @@ export interface AgentProfileContext {
   readonly shellName?: string;
   readonly shellPath?: string;
   readonly now?: string;
+  readonly timeZone?: string;
   readonly skills?: string;
   readonly skillActive?: boolean;
+  readonly pluginSections?: string;
   readonly productName?: string;
   readonly replyStyleGuide?: string;
   readonly [key: string]: unknown;
+}
+
+export interface EnvironmentDisclosureSnapshot {
+  readonly cwd: string;
+  readonly date:
+    | { readonly disclosed: true; readonly value: { readonly localDate: string; readonly timeZone: string } }
+    | { readonly disclosed: false };
+}
+
+export interface SystemPromptRenderResult {
+  readonly text: string;
+  readonly environment: EnvironmentDisclosureSnapshot;
 }
 
 export interface AgentProfile {
@@ -77,18 +96,61 @@ export interface AgentProfile {
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
   readonly modelPreference?: AgentModelPreference;
-  systemPrompt(context: AgentProfileContext): string;
+  readonly systemPrompt: (context: AgentProfileContext) => string;
+  readonly renderSystemPrompt: (context: AgentProfileContext) => SystemPromptRenderResult;
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
   readonly summaryPolicy?: AgentProfileSummaryPolicy;
 }
 
-export interface IAgentProfileCatalogService {
-  readonly _serviceBrand: undefined;
+/**
+ * The profile shape accepted at registration ({@link registerAgentProfile},
+ * file-based profile factories): authors provide at least one render entry —
+ * the structured `renderSystemPrompt`, the legacy text-only `systemPrompt`,
+ * or both (the structured renderer is then authoritative). The union
+ * statically requires at least one entry; {@link normalizeAgentProfile} still
+ * throws on inputs that escaped the type check (plain JS, casts).
+ * {@link normalizeAgentProfile} derives the other method, so a registered
+ * {@link AgentProfile} always carries both and its `systemPrompt` text always
+ * comes from the same render as its disclosure metadata. A text-only input
+ * renders with no disclosed environment facts. Callbacks are bound to the
+ * input object at runtime, so method-style definitions relying on `this`
+ * keep working.
+ */
+export type AgentProfileInput = Omit<AgentProfile, 'systemPrompt' | 'renderSystemPrompt'> &
+  (
+    | {
+        readonly systemPrompt: (context: AgentProfileContext) => string;
+        readonly renderSystemPrompt?: (
+          context: AgentProfileContext,
+        ) => SystemPromptRenderResult;
+      }
+    | {
+        readonly systemPrompt?: (context: AgentProfileContext) => string;
+        readonly renderSystemPrompt: (context: AgentProfileContext) => SystemPromptRenderResult;
+      }
+  );
 
-  get(name: string): AgentProfile | undefined;
-  getDefault(): AgentProfile;
-  list(): readonly AgentProfile[];
+export function normalizeAgentProfile(input: AgentProfileInput): AgentProfile {
+  if (input.renderSystemPrompt !== undefined) {
+    const render = input.renderSystemPrompt.bind(input);
+    return {
+      ...input,
+      renderSystemPrompt: render,
+      systemPrompt: (context) => render(context).text,
+    };
+  }
+  if (input.systemPrompt !== undefined) {
+    const systemPrompt = input.systemPrompt.bind(input);
+    return {
+      ...input,
+      systemPrompt,
+      renderSystemPrompt: (context) => ({
+        text: systemPrompt(context),
+        environment: { cwd: context.cwd ?? '', date: { disclosed: false } },
+      }),
+    };
+  }
+  throw new Error(
+    `Agent profile "${input.name}" must define systemPrompt or renderSystemPrompt.`,
+  );
 }
-
-export const IAgentProfileCatalogService: ServiceIdentifier<IAgentProfileCatalogService> =
-  createDecorator<IAgentProfileCatalogService>('agentProfileCatalogService');

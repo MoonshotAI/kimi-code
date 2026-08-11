@@ -1,8 +1,21 @@
 /**
- * `di` domain (L0) — disposable lifecycle primitives (`Disposable`, `DisposableStore`, `IDisposable`).
+ * `di` domain — disposable lifecycle primitives (`Disposable`, `DisposableStore`, `IDisposable`).
  */
 
 import { onUnexpectedError } from '../errors/unexpectedError';
+import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
+
+export interface IDisposableDebugLabel {
+  readonly debugLabel?: string;
+}
+
+function disposableLabel(d: IDisposable): string {
+  const debugLabel = (d as IDisposableDebugLabel).debugLabel;
+  if (typeof debugLabel === 'string' && debugLabel.length > 0) {
+    return debugLabel;
+  }
+  return `disposable:${d.constructor?.name ?? 'anonymous'}`;
+}
 
 export interface IDisposableTracker {
   trackDisposable(disposable: IDisposable): void;
@@ -220,11 +233,16 @@ export function combinedDisposable(...disposables: IDisposable[]): IDisposable {
 }
 
 export class DisposableStore implements IDisposable {
-  private readonly _toDispose = new Set<IDisposable>();
+  private readonly _ledger = new Ledger('DisposableStore');
+  private readonly _entries = new Map<IDisposable, LedgerEntry>();
   private _isDisposed = false;
 
   constructor() {
     trackDisposable(this);
+  }
+
+  get ledger(): Ledger {
+    return this._ledger;
   }
 
   add<T extends IDisposable>(d: T): T {
@@ -236,7 +254,14 @@ export class DisposableStore implements IDisposable {
       d.dispose();
       return d;
     }
-    this._toDispose.add(d);
+    if (!this._entries.has(d)) {
+      this._entries.set(
+        d,
+        this._ledger.register(() => {
+          d.dispose();
+        }, disposableLabel(d)),
+      );
+    }
     return d;
   }
 
@@ -245,23 +270,30 @@ export class DisposableStore implements IDisposable {
     if ((d as unknown as DisposableStore) === this) {
       throw new Error('Cannot dispose a disposable on itself!');
     }
-    this._toDispose.delete(d);
+    const entry = this._entries.get(d);
+    if (entry) {
+      this._entries.delete(d);
+      entry.release();
+    }
     d.dispose();
   }
 
   deleteAndLeak<T extends IDisposable>(d: T): void {
     if (this._isDisposed) return;
-    if (this._toDispose.delete(d)) {
+    const entry = this._entries.get(d);
+    if (entry) {
+      this._entries.delete(d);
+      entry.release();
       setParentOfDisposable(d, null);
     }
   }
 
   clear(): void {
-    if (this._toDispose.size === 0) return;
+    if (this._entries.size === 0) return;
     try {
-      dispose(this._toDispose);
+      void this._ledger.clear('scope-close');
     } finally {
-      this._toDispose.clear();
+      this._entries.clear();
     }
   }
 
@@ -269,7 +301,11 @@ export class DisposableStore implements IDisposable {
     if (this._isDisposed) return;
     this._isDisposed = true;
     markAsDisposed(this);
-    this.clear();
+    try {
+      void this._ledger.teardown('scope-close');
+    } finally {
+      this._entries.clear();
+    }
   }
 
   get isDisposed(): boolean {
@@ -312,6 +348,8 @@ export namespace Disposable {
 }
 
 export class MutableDisposable<T extends IDisposable> implements IDisposable {
+  private readonly _ledger = new Ledger('MutableDisposable');
+  private _entry: LedgerEntry | undefined;
   private _value: T | undefined;
   private _isDisposed = false;
 
@@ -331,20 +369,31 @@ export class MutableDisposable<T extends IDisposable> implements IDisposable {
       return;
     }
     if (this._value === value) return;
+    this._entry?.release();
+    this._entry = undefined;
     this._value?.dispose();
     if (value) setParentOfDisposable(value, this);
     this._value = value;
+    if (value) {
+      this._entry = this._ledger.register(() => {
+        value.dispose();
+      }, disposableLabel(value));
+    }
   }
 
   dispose(): void {
     if (this._isDisposed) return;
     this._isDisposed = true;
     markAsDisposed(this);
+    const entry = this._entry;
     const prev = this._value;
+    this._entry = undefined;
+    this._value = undefined;
+    entry?.release();
+    void this._ledger.teardown('scope-close');
     if (prev !== undefined) {
       prev.dispose();
     }
-    this._value = undefined;
   }
 
   clear(): void {
@@ -356,6 +405,8 @@ export class MutableDisposable<T extends IDisposable> implements IDisposable {
     if (this._isDisposed) return undefined;
     const prev = this._value;
     this._value = undefined;
+    this._entry?.release();
+    this._entry = undefined;
     if (prev !== undefined) setParentOfDisposable(prev, null);
     return prev;
   }

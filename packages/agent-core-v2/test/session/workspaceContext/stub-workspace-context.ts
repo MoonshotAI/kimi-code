@@ -8,12 +8,8 @@ export function stubWorkspaceContext(
     _serviceBrand: undefined,
     workDir,
     additionalDirs,
-    setWorkDir: () => {},
-    setAdditionalDirs: () => {},
     resolve: (rel) => `${workDir}/${rel}`,
     isWithin: () => true,
     assertAllowed: (absPath) => absPath,
-    addAdditionalDir: () => {},
-    removeAdditionalDir: () => {},
   };
 }

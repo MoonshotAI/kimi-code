@@ -94,34 +94,103 @@ describe('loadPluginMarketplace', () => {
       'utf8',
     );
 
-    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
-
-    expect(marketplace).toEqual({
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
       source: file,
-      version: '1',
-      plugins: [
-        {
-          id: 'kimi-datasource',
-          displayName: 'Kimi Datasource',
-          tier: 'official',
-          version: '1.0.0',
-          description: 'Datasource tools',
-          source: join(dir, 'kimi-datasource'),
-          keywords: ['data'],
-          homepage: undefined,
-        },
-        {
-          id: 'superpowers',
-          displayName: 'Superpowers',
-          tier: 'curated',
-          version: '5.1.0',
-          description: 'Workflow skills',
-          source: join(dir, 'curated', 'superpowers'),
-          keywords: ['skills', 'workflow'],
-          homepage: 'https://github.com/obra/superpowers',
-        },
-      ],
     });
+
+    expect(marketplace.source).toBe(file);
+    expect(marketplace.version).toBe('1');
+    expect(marketplace.plugins.slice(0, 2)).toEqual([
+      {
+        id: 'kimi-datasource',
+        displayName: 'Kimi Datasource',
+        tier: 'official',
+        version: '1.0.0',
+        description: 'Datasource tools',
+        source: join(dir, 'kimi-datasource'),
+        keywords: ['data'],
+        homepage: undefined,
+      },
+      {
+        id: 'superpowers',
+        displayName: 'Superpowers',
+        tier: 'curated',
+        version: '5.1.0',
+        description: 'Workflow skills',
+        source: join(dir, 'curated', 'superpowers'),
+        keywords: ['skills', 'workflow'],
+        homepage: 'https://github.com/obra/superpowers',
+      },
+    ]);
+  });
+
+  const builtInEntries = [
+    {
+      id: 'kimi-cu',
+      displayName: 'Kimi Computer Use',
+      description: 'fake cu',
+      tier: 'official' as const,
+      source: 'capability:kimi-cu',
+    },
+    {
+      id: 'kimi-webbridge',
+      displayName: 'Kimi WebBridge',
+      description: 'fake wb',
+      tier: 'official' as const,
+      source: 'capability:kimi-webbridge',
+    },
+  ];
+
+  it('appends the caller-supplied built-in entries the catalog does not carry', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+    const file = join(dir, 'marketplace.json');
+    await writeFile(file, JSON.stringify({ version: '1', plugins: [] }), 'utf8');
+
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: file,
+      builtInEntries,
+    });
+
+    // The util owns no product knowledge: entries come from the caller (the
+    // engine's capability registry), and no version is invented.
+    expect(marketplace.plugins).toEqual(builtInEntries);
+    expect(marketplace.plugins.map((entry) => entry.version)).toEqual([undefined, undefined]);
+  });
+
+  it('masks same-id catalog rows with the built-in entries', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+    const file = join(dir, 'marketplace.json');
+    await writeFile(
+      file,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'kimi-webbridge',
+            tier: 'official',
+            displayName: 'Kimi WebBridge',
+            version: '1.12.0',
+            source: './kimi-webbridge',
+          },
+        ],
+      }),
+      'utf8',
+    );
+
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: file,
+      builtInEntries,
+    });
+
+    // What the built-in ids mean stays decided by the client release: the
+    // catalog's row contributes the version, but not its source or copy.
+    const webbridge = marketplace.plugins.filter((entry) => entry.id === 'kimi-webbridge');
+    expect(webbridge).toHaveLength(1);
+    expect(webbridge[0]?.source).toBe('capability:kimi-webbridge');
+    expect(webbridge[0]?.version).toBe('1.12.0');
+    expect(marketplace.plugins.some((entry) => entry.id === 'kimi-cu')).toBe(true);
   });
 
   it('includes Superpowers in the repository marketplace fixture', async () => {
@@ -233,6 +302,23 @@ describe('loadPluginMarketplace', () => {
       source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
       fetchImpl,
     })).rejects.toThrow(/fetch failed/);
+  });
+
+  it('keeps the built-in entries when the catalog is unreachable', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('fetch failed');
+    }) as unknown as typeof fetch;
+
+    // Explicit source (no checkout fallback) + unreachable: the built-ins do
+    // not come from the catalog, so they must survive the outage.
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: 'https://example.test/marketplace.json',
+      fetchImpl,
+      builtInEntries,
+    });
+
+    expect(marketplace.plugins.map((entry) => entry.id)).toEqual(['kimi-cu', 'kimi-webbridge']);
   });
 
   describe('version derivation from a GitHub source', () => {

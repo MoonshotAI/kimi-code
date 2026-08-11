@@ -1,21 +1,16 @@
 /**
- * `agentLifecycle` domain (L6) — builtin agent profile contributions.
+ * `agentLifecycle` domain — builtin agent profile contributions.
  *
  * Registers the default `agent` profile plus the `coder` / `explore` task-agent
- * profiles. The `plan` task-agent profile lives in the `plan` domain. Each
- * profile is self-contained: its `systemPrompt` renderer merges the shared base
- * template with its own role text at call time, so a child agent no longer
- * inherits the parent's prompt through a runtime overlay.
- *
- * Import-triggered registration: this module is side-effect-imported by
- * `./profile` so loading the `agentLifecycle` barrel populates the contribution
- * list before `AgentProfileCatalogService` constructs.
+ * profiles. Each profile is self-contained: its structured `renderSystemPrompt`
+ * merges the shared base template with its own role text at call time, so a
+ * child agent no longer inherits the parent's prompt through a runtime overlay.
  */
 
-import { collectGitContext } from '#/session/sessionFs/gitContext';
+import { collectGitContext } from './gitContext';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import {
-  renderSystemPrompt,
+  renderSystemPromptResult,
   skillActiveFor,
   TASK_AGENT_ROLE_PREFIX,
 } from '#/app/agentProfileCatalog/profile-shared';
@@ -104,10 +99,10 @@ const DEFAULT_SUMMARY_POLICY = {
 
 registerAgentProfile({
   name: 'agent',
-  description: 'Default Kimi Code agent',
+  description: 'Default agent',
   tools: AGENT_TOOLS,
-  systemPrompt: (context) =>
-    renderSystemPrompt('', context, { skillActive: skillActiveFor(AGENT_TOOLS) }),
+  renderSystemPrompt: (context) =>
+    renderSystemPromptResult('', context, { skillActive: skillActiveFor(AGENT_TOOLS) }),
 });
 
 registerAgentProfile({
@@ -117,8 +112,8 @@ registerAgentProfile({
   whenToUse:
     'Use this agent for non-trivial software engineering work that may require reading files, editing code, running commands, and returning a compact but technically complete summary to the parent agent.',
   tools: CODER_TOOLS,
-  systemPrompt: (context) =>
-    renderSystemPrompt(CODER_ROLE, context, { skillActive: skillActiveFor(CODER_TOOLS) }),
+  renderSystemPrompt: (context) =>
+    renderSystemPromptResult(CODER_ROLE, context, { skillActive: skillActiveFor(CODER_TOOLS) }),
   summaryPolicy: DEFAULT_SUMMARY_POLICY,
 });
 
@@ -128,8 +123,8 @@ registerAgentProfile({
   whenToUse:
     'Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (e.g. "src/**/*.yaml"), search code for keywords (e.g. "database connection"), or answer questions about the codebase (e.g. "how does the auth module work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "thorough" for comprehensive analysis across multiple locations and naming conventions. Use this agent for any read-only exploration that will clearly require more than 3 search queries. Prefer launching multiple explore agents concurrently when investigating independent questions.',
   tools: EXPLORE_TOOLS,
-  systemPrompt: (context) =>
-    renderSystemPrompt(EXPLORE_ROLE, context, { skillActive: skillActiveFor(EXPLORE_TOOLS) }),
+  renderSystemPrompt: (context) =>
+    renderSystemPromptResult(EXPLORE_ROLE, context, { skillActive: skillActiveFor(EXPLORE_TOOLS) }),
   promptPrefix: async ({ cwd, runner, log }) => {
     try {
       return await collectGitContext(runner, cwd, log);

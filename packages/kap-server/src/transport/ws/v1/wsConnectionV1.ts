@@ -239,6 +239,12 @@ export class WsConnectionV1 implements BroadcastTarget {
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
     const agentFilter = parseAgentFilter(payload['agent_filter']);
 
+    // Temporary opt-in for the `event.di.*` debug feed: only kimi-inspect
+    // consumes it, so the broadcaster gates that fan-out to connections whose
+    // hello declares this client id (see `addDiEventTarget`). Both kimi-inspect
+    // sockets (activity + transcript) send `client_id: 'kimi-inspect'`.
+    if (payload['client_id'] === 'kimi-inspect') this.broadcaster.addDiEventTarget(this);
+
     const accepted: string[] = [];
     const resyncRequired: string[] = [];
     const serverCursors: Record<string, { seq: number; epoch?: string }> = {};

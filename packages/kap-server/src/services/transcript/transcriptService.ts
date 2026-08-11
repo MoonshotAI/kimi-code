@@ -22,12 +22,11 @@
  * reset target.
  *
  * Cold path: rebuilds one agent's transcript from the persisted wire records
- * (`<sessionDir>/agents/<agentId>/wire.jsonl`), exactly the
- * `SnapshotReader` read (`readWireRecords` + `reduceContextTranscript`), then
- * groups the flat messages into a base snapshot via
- * `groupMessagesIntoSnapshot` and folds the non-`context.*` records
- * (tasks / interactions / todos / goal / plan / swarm) on top via
- * `foldWireRecordFacts` — best-effort fidelity.
+ * (`<sessionDir>/agents/<agentId>/wire.jsonl`, parsed by `readWireRecords` and
+ * folded by `reduceContextTranscript`), then groups the flat messages into a
+ * base snapshot via `groupMessagesIntoSnapshot` and folds the
+ * non-`context.*` records (tasks / interactions / todos / goal / plan /
+ * swarm) on top via `foldWireRecordFacts` — best-effort fidelity.
  *
  * Lifecycle: entries are dropped when the session closes or archives
  * (`onDidCloseSession` / `onDidArchiveSession`, plus a lifecycle re-check on
@@ -47,9 +46,10 @@ import { readFile } from 'node:fs/promises';
 import {
   IAgentLifecycleService,
   ISessionIndex,
-  ISessionLifecycleService,
   ISessionMetadata,
   IAgentLoopService,
+  followWorkspaceHandlers,
+  getLiveSessionById,
   reduceContextTranscript,
   type IDisposable,
   type Scope,
@@ -70,7 +70,7 @@ import {
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 
-import { readWireRecords } from '../snapshot/snapshotReader';
+import { readWireRecords } from './wireRecords';
 import {
   bindSessionTranscript,
   descriptorFromMeta,
@@ -134,10 +134,19 @@ export class TranscriptService {
 
   constructor(private readonly deps: TranscriptServiceDeps) {
     // Live entries must not outlive their session: once it closes or archives,
-    // reads should fall through to the cold rebuild from disk.
-    const lifecycle = deps.core.accessor.get(ISessionLifecycleService);
-    lifecycle.onDidCloseSession(({ sessionId }) => this.dropSession(sessionId));
-    lifecycle.onDidArchiveSession(({ sessionId }) => this.dropSession(sessionId));
+    // reads should fall through to the cold rebuild from disk. Close/archive
+    // events are per-handler (Workspace scope), so follow every handler —
+    // present and future — through the App-scope registry.
+    followWorkspaceHandlers(deps.core.accessor, (service) => {
+      const d1 = service.onDidCloseSession(({ sessionId }) => this.dropSession(sessionId));
+      const d2 = service.onDidArchiveSession(({ sessionId }) => this.dropSession(sessionId));
+      return {
+        dispose: () => {
+          d1.dispose();
+          d2.dispose();
+        },
+      };
+    });
   }
 
   /**
@@ -147,7 +156,7 @@ export class TranscriptService {
   forSessionLive(sessionId: string): TranscriptStore | undefined {
     const existing = this.live.get(sessionId);
     if (existing !== undefined) {
-      if (this.deps.core.accessor.get(ISessionLifecycleService).get(sessionId) !== undefined) {
+      if (getLiveSessionById(this.deps.core.accessor, sessionId) !== undefined) {
         return existing.store;
       }
       // Stale entry for a session already closed/archived (the drop event may
@@ -155,7 +164,7 @@ export class TranscriptService {
       this.dropSession(sessionId);
       return undefined;
     }
-    const session = this.deps.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(this.deps.core.accessor, sessionId);
     if (session === undefined) return undefined;
     const store = new TranscriptStore(sessionId);
     let binding: TranscriptBinding;
@@ -234,7 +243,7 @@ export class TranscriptService {
     // reads (and agent pickers) see the complete historical roster —
     // including subagents not materialized in this process.
     try {
-      const session = this.deps.core.accessor.get(ISessionLifecycleService).get(sessionId);
+      const session = getLiveSessionById(this.deps.core.accessor, sessionId);
       const meta = await session?.accessor.get(ISessionMetadata).read();
       for (const [agentId, agentMeta] of Object.entries(meta?.agents ?? {})) {
         store.describeAgent(descriptorFromMeta(agentId, agentMeta));
@@ -444,7 +453,7 @@ export class TranscriptService {
     transcript: AgentTranscript,
     snapshot: AgentTranscriptSnapshot,
   ): TranscriptOperation | undefined {
-    const session = this.deps.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(this.deps.core.accessor, sessionId);
     const agent = session?.accessor.get(IAgentLifecycleService).get(agentId);
     const status = agent?.accessor.get(IAgentLoopService).status();
     if (status?.state !== 'running' || status.activeTurnId === undefined) return undefined;

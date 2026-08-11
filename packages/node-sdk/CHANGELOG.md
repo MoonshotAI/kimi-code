@@ -1,5 +1,31 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.15.3
+
+### Patch Changes
+
+- [#2666](https://github.com/MoonshotAI/kimi-code/pull/2666) [`335588e`](https://github.com/MoonshotAI/kimi-code/commit/335588e2594a61a767ce258b34b4049a32b18fe5) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Session listings keep how the last turn ended (completed, cancelled, or failed) across server restarts, so clients can mark previously failed sessions before they are opened.
+
+- [#2679](https://github.com/MoonshotAI/kimi-code/pull/2679) [`7b2784b`](https://github.com/MoonshotAI/kimi-code/commit/7b2784b9b7bf4749058da48923ecbbc8019eb7af) Thanks [@liruifengv](https://github.com/liruifengv)! - Subagent lifecycle events and background task info now carry the subagent's bound model and thinking effort.
+
+## 0.15.2
+
+### Patch Changes
+
+- [#2601](https://github.com/MoonshotAI/kimi-code/pull/2601) [`75fe068`](https://github.com/MoonshotAI/kimi-code/commit/75fe068a01261ff6b34f176530b338ec6a24918e) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix built-in capability availability and installed status in `/plugins`, preserve legacy WebBridge skills as backups during updates, and prevent Computer Use updates from duplicating or disconnecting MCP servers.
+
+## 0.15.1
+
+### Patch Changes
+
+- [#2567](https://github.com/MoonshotAI/kimi-code/pull/2567) [`98ef0f0`](https://github.com/MoonshotAI/kimi-code/commit/98ef0f0b2ffaef84903b9c116ada0eeb4c8e9a6c) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix v1 replay ignoring v2 `profile.bind` records, which made sessions resumed from CLI-created wires lose their tool allowlist and send requests without `tools`.
+
+## 0.15.0
+
+### Minor Changes
+
+- [#2382](https://github.com/MoonshotAI/kimi-code/pull/2382) [`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa) Thanks [@liruifengv](https://github.com/liruifengv)! - Rename `userAgentProduct` to `productName` and require `platform` in the host identity options exposed by the SDK.
+
 ## 0.14.0
 
 ### Minor Changes

@@ -1,5 +1,5 @@
 /**
- * `userTool` domain (L4) — `IAgentUserToolService` implementation.
+ * `userTool` domain — `IAgentUserToolService` implementation.
  *
  * Holds the set of host-registered user tools in the `wire` `UserToolModel`
  * (`Map<string, UserToolRegistration>`), mutating it only through the
@@ -17,8 +17,10 @@
  * Bound at Agent scope.
  */
 
-import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { type IDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type {
@@ -40,7 +42,7 @@ interface UserToolExecutionRequest {
   readonly args: unknown;
 }
 
-export class AgentUserToolService extends Disposable implements IAgentUserToolService {
+export class AgentUserToolService extends Service implements IAgentUserToolService {
   declare readonly _serviceBrand: undefined;
 
   private readonly registrations = new Map<string, IDisposable>();

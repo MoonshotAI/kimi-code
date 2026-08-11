@@ -1,15 +1,15 @@
 /**
- * `kosongConfig` domain (L3) — `IModelsDevImportService` implementation.
+ * `kosongConfig` domain — `IModelsDevImportService` implementation.
  *
  * Owns the models.dev directory import and the custom-registry (api.json)
  * import. Both are multi-step config writes (inspect → build → replace × N),
  * serialized through an internal chain so two interleaved imports cannot
  * lose each other's section rebuilds. Custom registries reuse the shared
- * `@moonshot-ai/kimi-code-oauth` primitives — the exact remove-then-apply
- * sequence of `applyCustomRegistryEntries`, split into TWO persisted passes
- * so deletions really reach the disk (the TOML transform is a raw overlay
- * that only honors entry-level deletes; applying in the same pass would let
- * stale fields of kept ids survive on disk). The in-memory shapes
+ * OAuth primitives' exact remove-then-apply sequence, split into TWO
+ * persisted passes so deletions really reach the disk (the TOML transform is
+ * a raw overlay that only honors entry-level deletes; applying in the same
+ * pass would let stale fields of kept ids survive on disk). The in-memory
+ * shapes
  * deliberately omit the default pointers so the removal logic can never
  * clamp them: imports never move default_provider/default_model — aside
  * from seeding a default_model from the first imported model when none is
@@ -25,6 +25,11 @@
  * passes (drop, then re-add onto clean slots). The kosong persistence
  * bridge then pushes the change into the registries, which is also what
  * invalidates the runtime model catalog.
+ *
+ * Both third-party fetches — the models.dev directory and the custom-registry
+ * import — send the identity snapshot's `outboundUserAgent`, matching what
+ * the scheduled refresh of the same registry sends: these are directories
+ * this service chooses to call, so a header is always sent.
  */
 
 import {
@@ -35,9 +40,10 @@ import {
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { type ModelsSection } from '#/kosong/model/model';
@@ -76,15 +82,20 @@ export class ModelsDevImportService implements IModelsDevImportService {
     @IConfigService private readonly config: IConfigService,
     @IKosongConfigService private readonly kosongConfig: IKosongConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {}
 
+  private async outboundUserAgent(): Promise<string> {
+    return (await this.identity.resolved()).outboundUserAgent;
+  }
+
   async listModelsDevProviders(): Promise<ModelsDevProviderItem[]> {
-    const catalog = await getModelsDevCatalog();
+    const catalog = await getModelsDevCatalog(await this.outboundUserAgent());
     return Object.entries(catalog).map(([id, entry]) => toModelsDevProviderItem(id, entry));
   }
 
   async getModelsDevProvider(catalogId: string): Promise<ModelsDevProviderItem> {
-    const catalog = await getModelsDevCatalog();
+    const catalog = await getModelsDevCatalog(await this.outboundUserAgent());
     const entry = modelsDevEntry(catalog, catalogId);
     if (entry === undefined) {
       throw new Error2(
@@ -107,11 +118,6 @@ export class ModelsDevImportService implements IModelsDevImportService {
     return this.enqueueWrite(() => this.doImportCustomRegistry(options));
   }
 
-  /**
-   * Serializes the multi-step import sequences (inspect → build → replace ×
-   * N). The config service only serializes individual writes, so two
-   * interleaved imports could otherwise lose each other's section rebuilds.
-   */
   private enqueueWrite<T>(task: () => Promise<T>): Promise<T> {
     const run = this.writeChain.then(task, task);
     this.writeChain = run.then(
@@ -121,13 +127,6 @@ export class ModelsDevImportService implements IModelsDevImportService {
     return run;
   }
 
-  /**
-   * Await the config layer AND the kosong persistence bridge. The bridge
-   * subscribes to section changes after the initial hydration; awaiting it
-   * guarantees a write below reaches the kosong registries (and the
-   * catalog-cache invalidation riding them) before the method reads back or
-   * returns.
-   */
   private async readyConfig(): Promise<IConfigService> {
     await this.config.ready;
     await this.kosongConfig.ready;
@@ -138,7 +137,7 @@ export class ModelsDevImportService implements IModelsDevImportService {
     options: ImportModelsDevProviderOptions,
   ): Promise<ImportModelsDevProviderResult> {
     const { catalogId } = options;
-    const catalog = await getModelsDevCatalog();
+    const catalog = await getModelsDevCatalog(await this.outboundUserAgent());
     const entry = modelsDevEntry(catalog, catalogId);
     if (entry === undefined) {
       throw new Error2(
@@ -187,21 +186,11 @@ export class ModelsDevImportService implements IModelsDevImportService {
       );
     }
 
-    // api_key is tri-state: absent keeps the stored key on a re-import (a
-    // refresh must not silently drop the credential), "" clears it, anything
-    // else replaces it. base_url follows the directory resolution — explicit
-    // `undefined` when the wire needs none, so a stale on-disk value is
-    // really cleared. The global default pointers are deliberately left
-    // alone.
     const provider: ProviderConfig = { type: resolution.wire };
     provider.baseUrl = resolution.baseUrl;
     provider.apiKey = options.apiKey ?? existing?.apiKey;
     await config.replace(PROVIDERS_SECTION, { ...providers, [targetId]: provider });
 
-    // Two-pass alias swap: pass 1 drops the provider's aliases for real
-    // (entry-level deletes ARE honored by the TOML overlay), pass 2 writes
-    // the fresh records onto clean slots — a kept alias id would otherwise
-    // keep stale on-disk fields the upstream no longer lists.
     const records = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
     const withoutTarget = Object.fromEntries(
       Object.entries(records).filter(([, record]) => record.provider !== targetId),
@@ -213,10 +202,6 @@ export class ModelsDevImportService implements IModelsDevImportService {
     }
     await config.replace(MODELS_SECTION, nextModels);
 
-    // A fresh setup has no default model at all: seed it from the first
-    // imported model so the first provider added leaves the daemon usable
-    // (auth readiness requires a default model). An existing pointer is
-    // never moved here, not even a dangling one.
     const firstModel = models[0];
     if (firstModel !== undefined) {
       await seedDefaultModelWhenUnset(config, `${targetId}/${firstModel.id}`);
@@ -232,9 +217,6 @@ export class ModelsDevImportService implements IModelsDevImportService {
     const { url } = options;
     const config = await this.readyConfig();
     const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
-    // An omitted api_key inherits the key from the previous import of the
-    // same URL (the `source` blob), mirroring the directory import's
-    // keep-on-absent semantics; "" clears it.
     const source: CustomRegistrySource = {
       kind: 'apiJson',
       url,
@@ -245,14 +227,12 @@ export class ModelsDevImportService implements IModelsDevImportService {
     try {
       entries = await fetchCustomRegistry(source, {
         fetchImpl: upstreamFetch(),
-        userAgent: 'kimi-code-kap-server',
+        userAgent: await this.outboundUserAgent(),
         signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
       });
     } catch (err) {
       throw new Error2(
         codes.REGISTRY_IMPORT_INVALID,
-        // Truncate the upstream's error text: a hostile registry could echo
-        // the Bearer token it received back inside its error payload.
         `custom registry at ${url} cannot be imported: ${truncateUpstreamMessage(err)}`,
       );
     }
@@ -263,7 +243,6 @@ export class ModelsDevImportService implements IModelsDevImportService {
       );
     }
 
-    // A registry entry must never rewrite (or delete) an OAuth-managed provider.
     for (const entry of Object.values(entries)) {
       if (providers[entry.id]?.oauth !== undefined) {
         throw new Error2(
@@ -273,9 +252,6 @@ export class ModelsDevImportService implements IModelsDevImportService {
       }
     }
 
-    // Pass 1 (delete): same-URL providers that vanished upstream, plus every
-    // listed provider's current records. OAuth-managed entries are
-    // defensive-skipped even on the removal path.
     const removed = {
       providers: { ...providers },
       models: {
@@ -304,7 +280,6 @@ export class ModelsDevImportService implements IModelsDevImportService {
     await config.replace(PROVIDERS_SECTION, removed.providers as ProvidersSection);
     await config.replace(MODELS_SECTION, (removed.models ?? {}) as ModelsSection);
 
-    // Pass 2 (apply): fresh provider + alias records onto the cleaned slots.
     const applied = {
       providers: removed.providers,
       models: removed.models,
@@ -315,9 +290,6 @@ export class ModelsDevImportService implements IModelsDevImportService {
     await config.replace(PROVIDERS_SECTION, applied.providers as ProvidersSection);
     await config.replace(MODELS_SECTION, (applied.models ?? {}) as ModelsSection);
 
-    // Same fresh-setup seeding as the directory import: never moves an
-    // existing global default, seeds one from the first imported model when
-    // the setup has none.
     const firstEntry = Object.values(entries)[0];
     const firstModelKey = firstEntry === undefined ? undefined : Object.keys(firstEntry.models)[0];
     if (firstEntry !== undefined && firstModelKey !== undefined) {
@@ -336,21 +308,12 @@ export class ModelsDevImportService implements IModelsDevImportService {
   }
 }
 
-/**
- * Seed the global default model when — and only when — none is configured.
- * Imports otherwise never move the default pointers, but a fresh setup has
- * no pointer at all: the first provider added must leave the daemon usable
- * (auth readiness requires a default model). An existing pointer is never
- * rewritten here, not even a dangling one — it is the user's setting, not
- * this service's to second-guess.
- */
 async function seedDefaultModelWhenUnset(config: IConfigService, alias: string): Promise<void> {
   const current = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
   if (current !== undefined && current.trim() !== '') return;
   await config.replace(DEFAULT_MODEL_SECTION, alias);
 }
 
-/** The api_key stored by the previous import of the same registry URL, if any. */
 function registryKeyFromExisting(
   providers: ProvidersSection,
   url: string,
@@ -366,12 +329,10 @@ function registryKeyFromExisting(
   return undefined;
 }
 
-/** Local mirror of the core's `isRecord` (not exported by the oauth package). */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Cap an upstream error text before it lands in banners/logs. */
 function truncateUpstreamMessage(err: unknown, limit = 300): string {
   const text = err instanceof Error ? err.message : String(err);
   return text.length > limit ? `${text.slice(0, limit)}…` : text;

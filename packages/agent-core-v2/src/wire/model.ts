@@ -1,5 +1,5 @@
 /**
- * `wire` domain (L2) — Model definition primitive (`ModelDef` / `defineModel`),
+ * `wire` domain — Model definition primitive (`ModelDef` / `defineModel`),
  * `DeepReadonly<T>` (the compile-time half of immutability), and the
  * `ModelBlobCodec` / `PartsTransformer` types that let a model declare how to
  * dehydrate large inline media before persistence and rehydrate blob references
@@ -7,10 +7,8 @@
  *
  * A `ModelDef` is a stateless descriptor: it names a model, manufactures its
  * initial state via `initial`, and declares the model's Ops through
- * `defineOp` (the model-bound form of the primitive in `op.ts`). It never
- * holds state itself — per-scope state
- * instances are owned by `IWireService`, and domain services read them through
- * `wire.getModel(model)`. The optional `blobs` codec declares both directions
+ * `defineOp`. It never holds state itself — per-scope state instances are
+ * owned by the wire service. The optional `blobs` codec declares both directions
  * of the blob offload pipeline:
  * - `dehydrate(record, transform)`: called per-record at dispatch time; the
  *   model traverses its record structure, passes each `ContentPart[]` through
@@ -23,20 +21,27 @@
  *   skipping data that was later removed by compaction.
  *
  * Both directions receive a `PartsTransformer` — the same function shape — so
- * the model owns the traversal logic and `WireService` owns the storage I/O.
- * `PartsTransformer` uses `readonly unknown[]` rather than `ContentPart[]` so
- * this file stays free of `kosong/contract` imports (L2 → L3 boundary); the
- * cast happens once inside `WireService`.
+ * the model owns the traversal logic and the wire service owns the storage
+ * I/O. `PartsTransformer` uses `readonly unknown[]` rather than
+ * `ContentPart[]` so this file stays free of L3 contract imports (the
+ * L2 → L3 boundary).
  *
  * A primary Model may register cross-model reducers keyed by foreign op types:
- * `WireService` runs them on both dispatch and restore, so v1-derived
+ * the wire service runs them on both dispatch and restore, so v1-derived
  * restore effects can stay replayable without persisting extra records.
+ *
+ * `defineModel` also records every defined Model into `MODEL_REGISTRY`;
+ * together with `OP_REGISTRY`, `MODEL_CROSS_REDUCERS`, and
+ * `CHECKPOINTED_MODELS` these module tables are the static built-in channel
+ * ("import = register") that the `WireModelContribution` fold drains into the
+ * built-in layer whenever a `WireService` (re)folds its runtime lookups —
+ * registrations are append-only and never removed.
  * `DeepReadonly<T>` recursively maps a state type to its deeply-readonly view
  * for the references returned by `getModel`: functions pass
  * through, `Map` / `Set` widen to `ReadonlyMap` / `ReadonlySet`, arrays and
  * tuples widen to `ReadonlyArray`, plain objects become a readonly mapped type,
  * and primitives are unchanged. It pairs with the runtime `Object.freeze`
- * applied by `WireService` after every `apply`. Scope-agnostic.
+ * applied by the wire service after every `apply`. Scope-agnostic.
  */
 
 import { bindDefineOp, type DefineOpFn } from '#/wire/op';
@@ -66,6 +71,9 @@ export interface ModelCrossReducerEntry {
 
 export const MODEL_CROSS_REDUCERS = new Map<string, ModelCrossReducerEntry[]>();
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const MODEL_REGISTRY: ModelDef<any>[] = [];
+
 export function defineModel<S>(
   name: string,
   initial: () => S,
@@ -91,6 +99,8 @@ export function defineModel<S>(
       list.push({ model: def, reducer });
     }
   }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  MODEL_REGISTRY.push(def as ModelDef<any>);
   return def;
 }
 

@@ -31,16 +31,8 @@ import {
   type ReactNode,
 } from 'react';
 
-import {
-  createInspectClient,
-  probeDebugSurface,
-  type InspectClient,
-} from './channel';
-import {
-  fetchServerDiscovery,
-  pickDefaultServer,
-  useServerDiscovery,
-} from './servers';
+import { createInspectClient, probeDebugSurface, type InspectClient } from './channel';
+import { fetchServerDiscovery, pickDefaultServer, useServerDiscovery } from './servers';
 
 export interface ConnectionConfig {
   /** Server base URL; empty string means same-origin (the Vite dev proxy). */
@@ -135,8 +127,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     readonly error: string | null;
   } | null>(null);
   const [probeNonce, setProbeNonce] = useState(0);
-  const configKey =
-    config === null ? null : `${resolveBaseUrl(config.url)}|${config.token.trim()}`;
+  const configKey = config === null ? null : `${resolveBaseUrl(config.url)}|${config.token.trim()}`;
 
   useEffect(() => {
     if (config === null || configKey === null) {

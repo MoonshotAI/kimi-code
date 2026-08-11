@@ -1,5 +1,5 @@
 /**
- * `workspace` domain (L2) — `FileWorkspacePersistence` implementation.
+ * `workspace` domain — `FileWorkspacePersistence` implementation.
  *
  * File backend of `IWorkspacePersistence`. Persists the catalog as a single
  * v1-compatible `workspaces.json` document at the storage root
@@ -10,7 +10,9 @@
  * scope.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 import type { Workspace } from './workspace';

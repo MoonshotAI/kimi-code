@@ -57,7 +57,7 @@ export function recordAgentEvents() {
 
     for (let index = eventWaiters.length - 1; index >= 0; index -= 1) {
       const waiter = eventWaiters[index]!;
-      if (waiter.event !== entry.event) continue;
+      if (entry.type !== '[rpc]' || waiter.event !== entry.event) continue;
       eventWaiters.splice(index, 1);
       cursor = Math.max(cursor, entries.length);
       waiter.resolve(snapshotFrom(waiter.start));
@@ -79,7 +79,7 @@ export function recordAgentEvents() {
 
     for (let index = takeWaiters.length - 1; index >= 0; index -= 1) {
       const waiter = takeWaiters[index]!;
-      if (waiter.event !== entry.event) continue;
+      if (entry.type !== '[rpc]' || waiter.event !== entry.event) continue;
       takeWaiters.splice(index, 1);
       cursor = Math.max(cursor, entries.length);
       waiter.resolve({

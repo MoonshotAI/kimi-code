@@ -1163,7 +1163,7 @@ describe('BashTool', () => {
     expect(persisted.has(taskId!)).toBe(true);
     expect(output).toContain(`output_path: /fake/tasks/${taskId}/output.log`);
     expect(output).toContain('Use Read with output_path');
-    expect(output).toContain(`TaskOutput(task_id="${taskId}", block=false)`);
+    expect(output).toContain(`TaskOutput(task_id="${taskId}")`);
   });
 
   it('omits the TaskOutput hint from the saved-output reference when background tools are disabled', async () => {

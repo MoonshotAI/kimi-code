@@ -63,6 +63,10 @@ export interface CreateSessionPayload {
   readonly additionalDirs?: readonly string[];
   readonly client?: ClientTelemetryInfo | undefined;
   readonly drainAgentTasksOnStop?: boolean;
+  /** Main-agent profile name (`--agent`): a builtin or agentfile-defined profile. */
+  readonly agentProfile?: string;
+  /** Explicit agentfiles (`--agent-file`); an invalid file fails session creation. */
+  readonly agentFiles?: readonly string[];
 }
 
 export interface CloseSessionPayload {
@@ -81,6 +85,8 @@ export interface ResumeSessionPayload {
   readonly sessionId: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
+  /** Re-select the session's already-bound main profile; a different name fails. */
+  readonly agentProfile?: string;
   /** Include persisted subagent states in the returned replay snapshot. */
   readonly includeSubagents?: boolean;
   /**
@@ -321,7 +327,9 @@ export interface ActivatePluginCommandPayload {
 export interface McpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
-  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+  // 'removed' is only produced by the v2 engine (config-driven tombstone);
+  // v1 never emits it, but SDK consumers share this type across engines.
+  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
   readonly toolCount: number;
   readonly error?: string;
 }
@@ -342,6 +350,17 @@ export interface PutGlobalMcpServerPayload {
 
 export interface GlobalMcpServerNamePayload {
   readonly name: string;
+}
+
+export type GlobalMcpServerAuthState =
+  | 'not-applicable'
+  | 'bearer-token'
+  | 'oauth-required'
+  | 'oauth-authorized';
+
+export interface GlobalMcpServerAuthStatus {
+  readonly name: string;
+  readonly authStatus: GlobalMcpServerAuthState;
 }
 
 export type BeginGlobalMcpServerAuthResult =
@@ -521,6 +540,7 @@ export interface SessionAPI extends AgentAPIWithId {
 type SessionAPIWithId = WithSessionId<SessionAPI>;
 
 export interface CoreAPI extends SessionAPIWithId {
+  applyPersistedSecondaryModel: (payload: EmptyPayload & { readonly sessionId: string }) => void;
   getCoreInfo: (payload: EmptyPayload) => CoreInfo;
   getExperimentalFeatures: (payload: EmptyPayload) => readonly ExperimentalFeatureState[];
   getKimiConfig: (payload: GetKimiConfigPayload) => KimiConfig;
@@ -528,6 +548,9 @@ export interface CoreAPI extends SessionAPIWithId {
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
   listGlobalMcpServers: (payload: EmptyPayload) => readonly GlobalMcpServerConfig[];
+  listGlobalMcpServerAuthStatuses: (
+    payload: EmptyPayload,
+  ) => readonly GlobalMcpServerAuthStatus[];
   addGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   updateGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   removeGlobalMcpServer: (payload: GlobalMcpServerNamePayload) => readonly GlobalMcpServerConfig[];

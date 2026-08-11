@@ -1,5 +1,5 @@
 /**
- * `llmRequester` domain (L3) — `IAgentLLMRequesterService` implementation.
+ * `llmRequester` domain — `IAgentLLMRequesterService` implementation.
  *
  * Assembles per-turn `ModelRequestInput` from `profile` (system prompt),
  * `contextMemory` + `contextProjector` (history), `toolRegistry` (tools), and
@@ -8,8 +8,7 @@
  * params, then drives a bounded request chain through the `ModelRequester`
  * resolved from `IModelCatalog`: one primary `requester.request(input, signal,
  * params)` attempt plus projection rebuilds for request structure or media
- * compatibility; general retry policy remains in the loop's `stepRetry`
- * plugin. Before each request the projected messages pass through `media`'s
+ * compatibility. Before each request the projected messages pass through `media`'s
  * video resolver, which rewrites every `kimi-file://` prompt-video reference
  * to a provider-acceptable part (uploaded `ms://`, inline base64, or a
  * `<video path>` tag) so the internal reference never reaches the wire. When a
@@ -31,18 +30,15 @@
  */
 
 import { createHash } from 'node:crypto';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
   IAgentContextProjectorService,
   type MediaStripSnapshot,
 } from '#/agent/contextProjector/contextProjector';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
-import {
-  IFaultInjectionService,
-  type FaultKind,
-} from '#/agent/faultInjection/faultInjection';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -101,7 +97,7 @@ import {
   type LlmRequestToolSchema,
 } from './llmRequestOps';
 import { isAbortError } from '#/_base/utils/abort';
-import { unwrapErrorCause } from '#/errors';
+import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { retryErrorFields } from '#/_base/utils/retry';
 
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
@@ -172,7 +168,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentContextProjectorService private readonly projector: IAgentContextProjectorService,
-    @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
+    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
     @IAgentToolRegistryService private readonly tools: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
     @IAgentVideoResolverService private readonly videoResolver: IAgentVideoResolverService,
@@ -184,7 +180,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWireService private readonly wire: IWireService,
-    @IFaultInjectionService private readonly faultInjection: IFaultInjectionService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
@@ -387,13 +382,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.logRequest(logInput);
       this.recordRequest(logInput);
 
-      const fault = this.faultInjection.take();
-      if (fault !== undefined) {
-        throw faultToError(fault);
-      }
-
       let message: Message | undefined;
-      let usage = emptyUsage();
+      let usage: TokenUsage | undefined;
       let timing: ModelRequestTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
 
@@ -427,16 +417,24 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       }
 
       if (message === undefined || finish === undefined) {
-        throw new Error('LLM request stream ended without a finish event.');
+        throw new Error2(
+          ErrorCodes.PROVIDER_API_ERROR,
+          'LLM request stream ended without a finish event.',
+        );
       }
 
-      this.usage.record(request.modelAlias, usage, request.source);
-      this.contextSize.measured(request.messages, [message], usage);
-      this.logResponse(request.logFields, usage, timing);
+      this.usage.record(request.modelAlias, usage ?? emptyUsage(), request.source);
+      // Only a stream that actually reported usage may write a measured
+      // anchor — recording emptyUsage() zeros would zero the context size and
+      // silence compaction for providers without usage reporting.
+      if (usage !== undefined) {
+        this.tokenCounting.measured(request.messages, [message], usage);
+      }
+      this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
 
       return {
         message,
-        usage,
+        usage: usage ?? emptyUsage(),
         model: request.modelAlias,
         providerFinishReason: finish.providerFinishReason,
         rawFinishReason: finish.rawFinishReason,
@@ -593,7 +591,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       capability: resolved.modelCapabilities,
       usedContextTokens:
         overrides.messages === undefined
-          ? this.contextSize.get().measured
+          ? this.tokenCounting.get().measured
           : undefined,
     });
     const requester = this.modelCatalog.getRequester(resolved.modelAlias);
@@ -804,12 +802,6 @@ function projectionField(
   return value === 'strict' || value === 'media-degraded' || value === 'media-stripped'
     ? value
     : undefined;
-}
-
-function faultToError(kind: FaultKind): Error {
-  return kind === 'request-too-large'
-    ? new APIRequestTooLargeError(413, 'Request Entity Too Large (fault injection)')
-    : new APIStatusError(400, 'unsupported image format: image/avif (fault injection)');
 }
 
 function fingerprint(content: string): string {

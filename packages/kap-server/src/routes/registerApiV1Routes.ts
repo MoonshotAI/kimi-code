@@ -9,7 +9,9 @@
  * folder picker, the session filesystem, terminals, connections, shutdown).
  */
 
-import type { Scope } from '@moonshot-ai/agent-core-v2';
+import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
+import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 import { ulid } from 'ulid';
 
 import { okEnvelope } from '../envelope';
@@ -25,13 +27,13 @@ import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
 import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
-import type { ISnapshotReader } from '../services/snapshot';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
 import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
 import { registerPromptsRoutes } from './prompts';
 import { registerQuestionsRoutes } from './questions';
+import { registerSearchRoutes } from './search';
 import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
@@ -61,6 +63,11 @@ interface ApiV1RouteHost {
 
 export interface RegisterApiV1RoutesOptions {
   readonly serverVersion: string;
+  /**
+   * Host product identity from `startServer` — the session export route stamps
+   * its manifest from `hostIdentity.version`.
+   */
+  readonly hostIdentity: KimiHostIdentity;
   readonly debugEndpoints?: boolean;
   readonly enableShutdown?: boolean;
   readonly enableTerminals?: boolean;
@@ -68,7 +75,6 @@ export interface RegisterApiV1RoutesOptions {
   readonly onShutdown: () => void;
   readonly connectionRegistry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
-  readonly snapshotReader: ISnapshotReader;
   readonly transcriptService: TranscriptService;
   /**
    * Surface `dangerous_bypass_auth` in the `/meta` payload. Set by `start.ts`
@@ -98,6 +104,15 @@ export async function registerApiV1Routes(
         serverId: ulid(),
         startedAt: new Date().toISOString(),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
+        getExperimentalFlags: async () => {
+          // Same edge-facade contract as the config route: never project
+          // config-derived state before the initial load settles — an early
+          // /meta hit would otherwise advertise default/env-only flags and
+          // hide config-enabled features until the FlagService's change
+          // watcher catches up.
+          await core.accessor.get(IConfigService).ready;
+          return core.accessor.get(IFlagService).snapshot();
+        },
       });
 
       registerAuthRoute(apiV1 as unknown as Parameters<typeof registerAuthRoute>[0], core);
@@ -114,13 +129,14 @@ export async function registerApiV1Routes(
       registerSessionExportRoute(
         apiV1 as unknown as Parameters<typeof registerSessionExportRoute>[0],
         core,
-        { serverVersion: opts.serverVersion },
+        { hostIdentity: opts.hostIdentity },
       );
       registerSkillsRoutes(apiV1 as unknown as Parameters<typeof registerSkillsRoutes>[0], core);
       registerMessagesRoutes(
         apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
         core,
       );
+      registerSearchRoutes(apiV1 as unknown as Parameters<typeof registerSearchRoutes>[0], core);
       registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], core);
       registerApprovalsRoutes(
         apiV1 as unknown as Parameters<typeof registerApprovalsRoutes>[0],
@@ -159,7 +175,6 @@ export async function registerApiV1Routes(
       registerSnapshotRoutes(apiV1 as unknown as Parameters<typeof registerSnapshotRoutes>[0], {
         core,
         broadcaster: opts.broadcaster,
-        reader: opts.snapshotReader,
       });
       registerTranscriptRoutes(apiV1 as unknown as Parameters<typeof registerTranscriptRoutes>[0], {
         core,

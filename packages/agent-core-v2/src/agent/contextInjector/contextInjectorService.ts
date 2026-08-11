@@ -1,16 +1,21 @@
 /**
- * `contextInjector` domain (L4) — `IAgentContextInjectorService` implementation.
+ * `contextInjector` domain — `IAgentContextInjectorService` implementation.
  *
  * Injects registered context providers through `loop` and `systemReminder`,
  * tracks their positions in `contextMemory` through `eventBus`, and reconciles
- * those positions after `wire` restoration. The plain-data `isNewTurn` flag is
- * registered into `agentState` (`IAgentStateService`) and read/written through
- * it; `entries` stays a plain instance field (its values hold provider
+ * those positions after `wire` restoration. Each provider call receives the
+ * newest surviving injection of its own variant (`lastInjection`) and the
+ * typed disclosure recorded on it (`lastDisclosure`), so providers never read
+ * context layout or position indexes themselves. The plain-data `isNewTurn`
+ * flag is registered into `agentState` (`IAgentStateService`) and read/written
+ * through it; `entries` stays a plain instance field (its values hold provider
  * functions, not plain data). Bound at Agent scope.
  */
 
-import { Disposable, toDisposable } from "#/_base/di/lifecycle";
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { toDisposable } from "#/_base/di/lifecycle";
+import { Service } from "#/_base/di/service";
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -22,7 +27,9 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IWireService } from '#/wire/wire';
 import {
   IAgentContextInjectorService,
+  type ContextInjectionContent,
   type ContextInjectionProvider,
+  type ContextInjectionResult,
 } from './contextInjector';
 
 interface ContextInjectionEntry {
@@ -36,7 +43,7 @@ export const contextInjectorIsNewTurnKey = defineState<boolean>(
   () => true,
 );
 
-export class AgentContextInjectorService extends Disposable implements IAgentContextInjectorService {
+export class AgentContextInjectorService extends Service implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
 
@@ -106,25 +113,41 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   private async inject(): Promise<void> {
     const isNewTurn = this.isNewTurn;
     this.isNewTurn = false;
+    const history = this.context.get();
     for (const entry of this.entries) {
       const injectedPositions: readonly number[] = [...entry.positions];
+      const lastInjectedAt = injectedPositions.at(-1) ?? null;
+      const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
       const content = await entry.provider({
         injectedPositions,
-        lastInjectedAt: injectedPositions.at(-1) ?? null,
+        lastInjectedAt,
+        lastInjection,
+        lastDisclosure:
+          lastInjection?.origin?.kind === 'injection'
+            ? lastInjection.origin.disclosure
+            : undefined,
         isNewTurn,
       });
       if (!this.entries.has(entry)) continue;
       if (content === undefined) continue;
-      const origin = { kind: 'injection' as const, variant: entry.name };
-      if (typeof content === 'string') {
-        if (content.trim().length === 0) continue;
-        this.reminders.appendSystemReminder(content, origin);
+      const result: ContextInjectionResult =
+        typeof content === 'object' && content !== null && !Array.isArray(content)
+          ? (content as ContextInjectionResult)
+          : { content: content as ContextInjectionContent };
+      const origin = {
+        kind: 'injection' as const,
+        variant: entry.name,
+        disclosure: result.disclosure,
+      };
+      if (typeof result.content === 'string') {
+        if (result.content.trim().length === 0) continue;
+        this.reminders.appendSystemReminder(result.content, origin);
         continue;
       }
-      if (content.length === 0) continue;
+      if (result.content.length === 0) continue;
       this.context.append({
         role: 'user',
-        content: [...content],
+        content: [...result.content],
         toolCalls: [],
         origin,
       });

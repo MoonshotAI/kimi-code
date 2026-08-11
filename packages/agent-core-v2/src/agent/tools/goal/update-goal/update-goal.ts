@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `IUpdateGoalTool` contract.
+ * `tools` domain — `IUpdateGoalTool` contract.
  *
  * Public contract of the UpdateGoal tool — the model's single lever over the
  * goal lifecycle: the input schema and the Agent-scope identifier used to

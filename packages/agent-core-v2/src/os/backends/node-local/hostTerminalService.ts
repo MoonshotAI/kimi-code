@@ -1,10 +1,9 @@
 /**
- * `terminal` domain (L6) — `IHostTerminalService` implementation.
+ * `terminal` domain — `IHostTerminalService` implementation.
  *
  * App-scoped OS terminal process factory backed by `node-pty`. It spawns and
  * tracks every `TerminalProcess` so the whole process-wide PTY layer can be
- * torn down on disposal. It has no session, workspace, or buffering concerns;
- * those live in the Session-scoped `ISessionTerminalService`.
+ * torn down on disposal. It has no session, workspace, or buffering concerns.
  *
  * `node-pty` is loaded lazily so merely importing this module (for example in
  * tests that override the service with a fake) does not require the native
@@ -13,12 +12,13 @@
 
 import type { IPty } from 'node-pty';
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IHostTerminalService, type TerminalProcess, type TerminalSpawnOptions } from '#/os/interface/terminal';
 
-export class HostTerminalService extends Disposable implements IHostTerminalService {
+export class HostTerminalService extends Service implements IHostTerminalService {
   declare readonly _serviceBrand: undefined;
 
   private readonly processes = new Set<TerminalProcess>();

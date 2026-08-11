@@ -116,6 +116,8 @@ export const ErrorCode = {
   GOAL_UNSUPPORTED_AGENT: 40920,
   /** 创建时 provider_id 已存在 */
   PROVIDER_ALREADY_EXISTS: 40921,
+  /** page_token 损坏 / 版本不符 / 与当前查询条件不匹配，需从首页重新拉取 */
+  PAGE_TOKEN_MISMATCH: 40922,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,
@@ -124,7 +126,7 @@ export const ErrorCode = {
   /** 临时文件已过期 */
   FILE_EXPIRED: 41003,
 
-  /** 上传超 50MB */
+  /** 文件过大（如 session 导出超限；/files 上传不设上限） */
   FILE_TOO_LARGE: 41301,
   /** fs.read 超 10MB */
   FS_TOO_LARGE: 41302,

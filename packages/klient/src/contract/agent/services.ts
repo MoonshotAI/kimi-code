@@ -29,6 +29,8 @@ export const agentShellCommandContract = {
 export const agentProfileContract = {
   getModel: { input: z.tuple([]), output: z.string() },
   setModel: { input: z.tuple([z.string()]), output: setModelResultSchema },
+  setThinking: { input: z.tuple([z.string()]), output: noResult },
+  getEffectiveThinkingLevel: { input: z.tuple([]), output: z.string() },
 } satisfies ServiceContract;
 
 export const agentUsageContract = {
@@ -40,6 +42,29 @@ export const agentPlanContract = {
   enter: { input: z.tuple([]), output: noResult },
   clear: { input: z.tuple([]), output: noResult },
   cancel: { input: z.tuple([z.string().optional()]), output: noResult },
+} satisfies ServiceContract;
+
+/** `McpServerEntry` from the engine's `mcpCore/connection-manager`. */
+export const mcpServerEntrySchema = z.object({
+  name: z.string(),
+  transport: z.enum(['stdio', 'http', 'sse']),
+  status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth', 'removed']),
+  toolCount: z.number(),
+  error: z.string().optional(),
+});
+
+export const agentMcpContract = {
+  list: { input: z.tuple([]), output: z.array(mcpServerEntrySchema) },
+} satisfies ServiceContract;
+
+/** `FullCompactionInput` from the engine's `agent/fullCompaction`. */
+export const fullCompactionInputSchema = z.object({
+  source: z.enum(['manual', 'auto']),
+  instruction: z.string().optional(),
+});
+
+export const agentFullCompactionContract = {
+  begin: { input: z.tuple([fullCompactionInputSchema]), output: z.boolean() },
 } satisfies ServiceContract;
 
 export const agentTaskContract = {

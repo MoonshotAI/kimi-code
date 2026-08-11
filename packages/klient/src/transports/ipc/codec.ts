@@ -13,6 +13,7 @@ export interface IpcFrame {
   readonly service?: string;
   readonly method?: string;
   readonly arg?: unknown;
+  readonly workspaceId?: string;
   readonly sessionId?: string;
   readonly agentId?: string;
   readonly event?: string;

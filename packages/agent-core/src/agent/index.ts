@@ -8,7 +8,7 @@ import type { Logger } from '#/logging/types';
 import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
 import { generate, type ChatProvider } from '@moonshot-ai/kosong';
 
-import type { EnabledPluginSessionStart, PluginCommandDef } from '#/plugin';
+import type { EnabledPluginSessionStart, EnabledPluginSystemPrompt, PluginCommandDef } from '#/plugin';
 import { expandCommandArguments } from '../plugin/commands';
 import type { PluginCommandOrigin } from './context';
 
@@ -20,6 +20,7 @@ import {
   type PreparedSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
+import { composePluginSections, PLUGIN_SECTIONS_MAX_BYTES } from '../profile/plugin-sections';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -102,6 +103,7 @@ export interface AgentOptions {
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly pluginCommands?: readonly PluginCommandDef[];
+  readonly pluginSystemPrompts?: readonly EnabledPluginSystemPrompt[];
   readonly experimentalFlags?: ExperimentalFlagResolver;
   /** Owner-scoped [image] limits; a standalone Agent gets env/built-in defaults. */
   readonly imageLimits?: ImageLimits;
@@ -118,7 +120,13 @@ export class Agent {
     return this._kaos;
   }
 
-  readonly kimiConfig?: KimiConfig;
+  /**
+   * The session config snapshot this agent reads (loop control, subagent
+   * binding descriptions, ...). Mutable via {@link updateKimiConfig} so the
+   * session can push live config updates (e.g. a `/secondary_model` switch)
+   * to already-instantiated agents.
+   */
+  kimiConfig?: KimiConfig;
   readonly homedir?: string;
   readonly mediaOriginalsDir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
@@ -169,6 +177,8 @@ export class Agent {
   private activeProfile?: ResolvedAgentProfile;
   private brandHome?: string;
   private readonly emittedThinkingEffortWarnings = new Set<string>();
+  private pluginSystemPrompts: readonly EnabledPluginSystemPrompt[];
+  private readonly emittedPluginBudgetWarnings = new Set<string>();
   private readonly pendingThinkingEffortWarnings: Array<{
     readonly code: string;
     readonly message: string;
@@ -189,6 +199,7 @@ export class Agent {
     this.toolServices = options.toolServices;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];
     this.pluginCommands = options.pluginCommands ?? [];
+    this.pluginSystemPrompts = options.pluginSystemPrompts ?? [];
     this.rawGenerate = options.generate ?? generate;
     this.modelProvider = options.modelProvider;
     this.subagentHost = options.subagentHost;
@@ -435,10 +446,19 @@ export class Agent {
     profile: ResolvedAgentProfile,
     context?: PreparedSystemPromptContext,
     brandHome?: string,
+    subagentNames?: readonly string[],
   ): void {
     this.setActiveProfile(profile, brandHome);
-    this.updateSystemPromptFromProfile(profile, context);
-    this.tools.setActiveTools(profile.tools);
+    this.updateSystemPromptFromProfile(profile, context, subagentNames);
+    this.tools.setActiveTools(profile.tools, profile.disallowedTools);
+  }
+
+  /** Push a refreshed session config snapshot and rebuild config-dependent builtin tools. */
+  updateKimiConfig(config: KimiConfig | undefined): void {
+    this.kimiConfig = config;
+    if (this.config.hasProvider) {
+      this.tools.refreshBuiltinTools();
+    }
   }
 
   setActiveProfile(profile: ResolvedAgentProfile, brandHome?: string): void {
@@ -465,16 +485,49 @@ export class Agent {
   private updateSystemPromptFromProfile(
     profile: ResolvedAgentProfile,
     context?: PreparedSystemPromptContext,
+    subagentNames?: readonly string[],
   ): void {
+    const pluginSections = composePluginSections(this.pluginSystemPrompts);
+    this.warnAboutSkippedPluginSections(pluginSections.skipped);
     const systemPrompt = profile.systemPrompt({
       osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
       skills: this.skills?.registry,
+      pluginSections: pluginSections.content,
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,
       additionalDirsInfo: context?.additionalDirsInfo,
     });
-    this.config.update({ profileName: profile.name, systemPrompt });
+    this.config.update({ profileName: profile.name, systemPrompt, subagentNames });
+  }
+
+  /**
+   * Replace the enabled plugins' system-prompt contributions. Does not
+   * re-render on its own — pair with `refreshSystemPrompt()` so callers decide
+   * when the prompt-cache prefix is invalidated.
+   */
+  setPluginSystemPrompts(sections: readonly EnabledPluginSystemPrompt[]): void {
+    this.pluginSystemPrompts = sections;
+  }
+
+  /**
+   * Warn once per plugin when its system-prompt contribution is skipped
+   * because the aggregate budget is exhausted; a skipped contribution keeps
+   * being skipped on every re-render, so the warning is deduped by plugin id.
+   */
+  private warnAboutSkippedPluginSections(skipped: readonly string[]): void {
+    const newlySkipped = skipped.filter((id) => !this.emittedPluginBudgetWarnings.has(id));
+    if (newlySkipped.length === 0) return;
+    for (const id of newlySkipped) this.emittedPluginBudgetWarnings.add(id);
+    const message =
+      `Plugin system-prompt contributions from ${newlySkipped.map((id) => `"${id}"`).join(', ')} ` +
+      `were skipped: the aggregate ${PLUGIN_SECTIONS_MAX_BYTES / 1024} KB budget is exhausted.`;
+    this.log.warn(message);
+    this.emitEvent({
+      type: 'warning',
+      code: 'plugin-sections-oversized',
+      message,
+    });
   }
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {

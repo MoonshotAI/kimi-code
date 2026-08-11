@@ -1,5 +1,5 @@
 /**
- * `hostFs` domain (L1) — error codes, `HostFsError`, and the `toHostFsError`
+ * `hostFs` domain — error codes, `HostFsError`, and the `toHostFsError`
  * boundary translator.
  *
  * Every `IHostFileSystem` backend translates raw OS failures (Node

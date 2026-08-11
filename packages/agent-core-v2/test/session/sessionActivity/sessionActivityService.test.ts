@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
 import {
   _clearScopedRegistryForTests,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
   type IAgentScopeHandle,
@@ -23,6 +23,8 @@ import {
 import { SessionActivityView } from '#/session/sessionActivity/sessionActivityService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
 class FakeBus implements IEventBus {
   declare readonly _serviceBrand: undefined;
@@ -151,7 +153,9 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
 
     disposables = new DisposableStore();
     host = createScopedTestHost();
-    session = host.child(LifecycleScope.Session, 'session-a');
+    session = host.child(LifecycleScope.Session, 'session-a', [
+      stubPair(IWorkspaceStateService, new WorkspaceStateService()),
+    ]);
     lifecycle = session.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
   });
 
@@ -187,6 +191,7 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     main.activity = turnActive(1);
     const seededSession = host.child(LifecycleScope.Session, 'session-seeded', [
       stubPair(IAgentLifecycleService, seededLifecycle),
+      stubPair(IWorkspaceStateService, new WorkspaceStateService()),
     ]);
     const view = seededSession.accessor.get(ISessionActivityView);
     expect(view.state().busy).toBe(true);
@@ -295,7 +300,6 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
       cause: 'interaction',
     });
 
-    // A question joining an already-pending approval does not change the slice.
     interactions.enqueue({ id: 'q1', kind: 'question', payload: {}, origin: { agentId: MAIN_AGENT_ID } });
     expect(changes).toHaveLength(1);
 

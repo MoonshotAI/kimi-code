@@ -23,8 +23,8 @@
 
 import {
   ErrorCodes,
-  ISessionLifecycleService,
   ISessionTerminalService,
+  resumeSessionById,
   isError2,
   Error2,
   type Scope,
@@ -85,7 +85,7 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
  * unknown or its workspace is gone.
  */
 async function resolveTerminal(core: Scope, sessionId: string): Promise<ISessionTerminalService> {
-  const session = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
+  const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
@@ -241,7 +241,7 @@ function sendMappedError(
       case ErrorCodes.TERMINAL_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.TERMINAL_NOT_FOUND, err.message, requestId, err.stack));
         return;
-      case ErrorCodes.WORKSPACE_CONTEXT_PATH_ESCAPES:
+      case ErrorCodes.FS_PATH_ESCAPES:
         reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
         return;
     }

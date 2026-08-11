@@ -1,5 +1,5 @@
 /**
- * `sessionExport` domain (L6) — session diagnostic export contract.
+ * `sessionExport` domain — session diagnostic export contract.
  *
  * Defines the App-scope `ISessionExportService`, which packages a persisted
  * session directory plus optional global diagnostics into a zip archive. The
@@ -23,6 +23,7 @@ export interface ExportSessionPayload {
   readonly includeGlobalLog?: boolean | undefined;
   readonly includeDesktopLog?: boolean;
   readonly version: string;
+  readonly desktopVersion?: string;
   readonly installSource?: string | undefined;
   readonly shellEnv?: ShellEnvironment | undefined;
 }
@@ -42,6 +43,7 @@ export interface ExportSessionManifest {
   readonly globalLogPath?: string | undefined;
   readonly desktopLogPath?: string;
   readonly webLogPath?: string;
+  readonly desktopVersion?: string;
   readonly installSource?: string | undefined;
   readonly shellEnv?: ShellEnvironment | undefined;
 }

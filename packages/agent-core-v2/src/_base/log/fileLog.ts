@@ -1,5 +1,5 @@
 /**
- * `_base/log` (L0) — plain (non-DI) log sinks.
+ * `_base/log` — plain (non-DI) log sinks.
  *
  * Owns the `RotatingFileWriter` (size-rotated, async-serial, sync-flush on
  * exit) and the `ILogWriter` implementations built on top of it (`FileLogWriter`),

@@ -1,5 +1,5 @@
 /**
- * `sessionExport` domain (L6) — persisted wire activity scanner.
+ * `sessionExport` domain — persisted wire activity scanner.
  *
  * Reads both legacy root `wire.jsonl` logs and v2 per-agent
  * `agents/<agentId>/wire.jsonl` logs to derive activity timestamps for the
