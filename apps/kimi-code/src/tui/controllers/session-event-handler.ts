@@ -1144,6 +1144,21 @@ export class SessionEventHandler {
           description: info.description,
           status: info.status,
         });
+        // Stopped / timed-out agents terminate without a `subagent.failed`
+        // event — mark the activity record here so the detail view does not
+        // stay "running" forever. `subagent.completed` carries the result
+        // summary and may land after this, so only fill still-running records.
+        const agentId = info.agentId;
+        if (agentId !== undefined) {
+          const record = this.subAgentEventHandler.activityStore.get(agentId);
+          if (record !== undefined && record.status === 'running') {
+            if (info.status === 'completed') {
+              this.subAgentEventHandler.activityStore.markCompleted(agentId);
+            } else {
+              this.subAgentEventHandler.activityStore.markFailed(agentId);
+            }
+          }
+        }
       }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
         if (info.kind === 'process' || info.kind === 'question') {

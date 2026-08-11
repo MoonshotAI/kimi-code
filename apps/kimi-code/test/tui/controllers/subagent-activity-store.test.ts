@@ -258,4 +258,22 @@ describe('SubagentActivityStore', () => {
     );
     expect(call?.args['path']).toBe('a.ts');
   });
+
+  it('drops delta-only arg buffers when their step is evicted', () => {
+    const store = new SubagentActivityStore();
+    store.ensureRecord(spawn());
+    // A call truncated before started/result only ever produced deltas.
+    store.applyEvent(
+      ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 't-trunc', name: 'Write', argumentsPart: '{"path":"a"' }),
+    );
+    const buffers = (
+      store as unknown as { streamingArgs: Map<string, string> }
+    ).streamingArgs;
+    expect(buffers.has('agent-1:t-trunc')).toBe(true);
+
+    for (let i = 0; i < MAX_SUBAGENT_ACTIVITY_STEPS; i++) {
+      store.applyEvent(ev({ type: 'turn.step.started', turnId: 1, step: i }));
+    }
+    expect(buffers.has('agent-1:t-trunc')).toBe(false);
+  });
 });

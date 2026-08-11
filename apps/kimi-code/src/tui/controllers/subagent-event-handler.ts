@@ -384,6 +384,9 @@ export class SubAgentEventHandler {
    *  never appear in /tasks, so its activity record is dropped at terminal
    *  state — otherwise records would pile up for the rest of the session. */
   private pruneForegroundOnlyRecord(subagentId: string): void {
+    // A spawn-time background agent keeps its record even when the
+    // background.task.started sync has not landed yet (short-lived agents).
+    if (this.backgroundAgentMetadata.has(subagentId)) return;
     for (const info of this.deps.backgroundTasks.values()) {
       if (info.kind === 'agent' && info.agentId === subagentId) return;
     }

@@ -146,7 +146,16 @@ export class SubagentActivityStore {
         const record = this.recordFor(event.agentId);
         record.steps.push({ step: event.step, textTail: '', toolCalls: [] });
         record.totalSteps += 1;
-        while (record.steps.length > MAX_SUBAGENT_ACTIVITY_STEPS) record.steps.shift();
+        while (record.steps.length > MAX_SUBAGENT_ACTIVITY_STEPS) {
+          const evicted = record.steps.shift();
+          if (evicted === undefined) break;
+          // A call truncated before started/result only ever produced deltas;
+          // its arg buffer is keyed by id, so evicting the only step that
+          // referenced it must drop the buffer entry too.
+          for (const call of evicted.toolCalls) {
+            this.streamingArgs.delete(this.streamKey(record.agentId, call.id));
+          }
+        }
         this.bump(record);
         return;
       }
