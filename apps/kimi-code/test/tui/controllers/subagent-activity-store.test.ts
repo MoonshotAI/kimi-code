@@ -6,6 +6,7 @@ import {
   SUBAGENT_STEP_TEXT_TAIL_CHARS,
   SUBAGENT_TOOL_OUTPUT_MAX_CHARS,
 } from '#/tui/constant/rendering';
+import { STREAMING_ARGS_PREVIEW_MAX_CHARS } from '#/tui/constant/streaming';
 import {
   SubagentActivityStore,
   type SubagentActivitySpawn,
@@ -172,6 +173,24 @@ describe('SubagentActivityStore', () => {
     const store = new SubagentActivityStore();
     store.applyEvent(ev({ type: 'tool.result', turnId: 1, toolCallId: 't1', output: 'x' }));
     expect(store.get('agent-1')).toBeUndefined();
+  });
+
+  it('caps the raw streaming-args buffer at the preview window', () => {
+    const store = new SubagentActivityStore();
+    store.ensureRecord(spawn());
+    store.applyEvent(
+      ev({
+        type: 'tool.call.delta',
+        turnId: 1,
+        toolCallId: 't1',
+        name: 'Write',
+        argumentsPart: 'x'.repeat(STREAMING_ARGS_PREVIEW_MAX_CHARS + 1000),
+      }),
+    );
+    const buffers = (
+      store as unknown as { streamingArgs: Map<string, string> }
+    ).streamingArgs;
+    expect(buffers.get('agent-1:t1')?.length).toBeLessThanOrEqual(STREAMING_ARGS_PREVIEW_MAX_CHARS);
   });
 
   it('tracks terminal state and resets it on respawn', () => {

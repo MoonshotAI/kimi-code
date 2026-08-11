@@ -28,6 +28,7 @@ import {
 import type { ToolResultBlockData } from '../types';
 import {
   argsRecord,
+  appendStreamingArgsPreview,
   parseStreamingArgs,
   serializeToolResultOutput,
 } from '../utils/event-payload';
@@ -164,7 +165,13 @@ export class SubagentActivityStore {
       case 'tool.call.delta': {
         const record = this.recordFor(event.agentId);
         const key = this.streamKey(event.agentId, event.toolCallId);
-        const buffered = (this.streamingArgs.get(key) ?? '') + (event.argumentsPart ?? '');
+        // parseStreamingArgs only reads the preview window, so keep the raw
+        // buffer capped at the same size — an uncapped buffer would outgrow
+        // the store's retention caps on large Write/Edit argument streams.
+        const buffered = appendStreamingArgsPreview(
+          this.streamingArgs.get(key),
+          event.argumentsPart,
+        );
         this.streamingArgs.set(key, buffered);
         let call = this.findToolCall(record, event.toolCallId);
         if (call === undefined) {
