@@ -24,13 +24,17 @@ import {
   type ModelCapability,
   type ToolCall,
 } from '@moonshot-ai/kosong';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, afterEach, vi } from 'vitest';
 
 import { HookEngine } from '../../src/session/hooks';
 import { abortError } from '../../src/utils/abort';
 import type { AgentOptions, AgentRecord, AgentRecordPersistence } from '../../src/agent';
 import { ProcessBackgroundTask } from '../../src/agent/background';
 import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
+import {
+  resolveMaxRetriesPerStep,
+  resolveMaxStepsPerTurn,
+} from '../../src/agent/turn';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import type { Logger, LogPayload } from '../../src/logging';
 import type {
@@ -787,6 +791,61 @@ describe('Agent turn flow', () => {
         duration_ms: expect.any(Number),
       }),
     });
+  });
+
+  it('force-stops a turn that keeps re-issuing the same validation-rejected call', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({
+      kaos: createCommandKaos('bad'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    records.length = 0;
+
+    // 12 identical calls missing the required "command": each is rejected in
+    // preflight. If the breaker did not count them, the turn would keep going
+    // and consume the 13th scripted response.
+    for (let i = 0; i < 12; i += 1) {
+      ctx.mockNextResponse(invalidBashCallWithId(`call_bad_${String(i)}`));
+    }
+    ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(12);
+    const actions = records
+      .filter((entry) => entry.event === 'tool_call_repeat')
+      .map((entry) => entry.properties?.['action']);
+    expect(actions).toEqual([
+      'none', 'r1', 'r1', 'r2', 'r2', 'r2', 'r3', 'r3', 'r3', 'r3', 'stop',
+    ]);
+  });
+
+  it('does not force-stop when the malformed argument text keeps changing', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({
+      kaos: createCommandKaos('bad'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    records.length = 0;
+
+    // 12 rejected calls, each with DIFFERENT malformed raw JSON: all normalize
+    // to {} on parse failure, but they are not repeats of the same call, so
+    // the turn must not be force-stopped.
+    for (let i = 0; i < 12; i += 1) {
+      ctx.mockNextResponse(malformedBashCallWithId(`call_mal_${String(i)}`, i));
+    }
+    ctx.mockNextResponse({ type: 'text', text: 'recovered' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(13);
+    expect(records.filter((entry) => entry.event === 'tool_call_repeat')).toHaveLength(0);
   });
 
   it('fires PostToolUse for same-step dups with the original real output, not the dedup placeholder', async () => {
@@ -1873,6 +1932,90 @@ describe('Agent turn flow', () => {
     );
   });
 
+  describe('loop control env overrides', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('honors KIMI_LOOP_MAX_STEPS_PER_TURN over config in agent turns', async () => {
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', '1');
+      const ctx = testAgent({
+        initialConfig: {
+          providers: {},
+          loopControl: { maxStepsPerTurn: 100 },
+        },
+        kaos: createCommandKaos('loop-output'),
+      });
+      ctx.configure({ tools: ['Bash'] });
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+      ctx.newEvents();
+
+      const bashCall: ToolCall = {
+        id: 'call_bash',
+        type: 'function',
+        name: 'Bash',
+        arguments: '{"command":"printf loop-output","timeout":60}',
+      };
+      ctx.mockNextResponse(bashCall);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command once' }] });
+      const events = await ctx.untilTurnEnd();
+
+      expect(ctx.llmCalls).toHaveLength(1);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({
+            reason: 'failed',
+            error: expect.objectContaining({
+              code: 'loop.max_steps_exceeded',
+              details: expect.objectContaining({
+                maxSteps: 1,
+              }),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('prefers KIMI_LOOP_MAX_STEPS_PER_TURN over config and ignores invalid values', () => {
+      expect(resolveMaxStepsPerTurn(100)).toBe(100);
+      expect(resolveMaxStepsPerTurn()).toBeUndefined();
+
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', '5');
+      expect(resolveMaxStepsPerTurn(100)).toBe(5);
+      expect(resolveMaxStepsPerTurn()).toBe(5);
+
+      // `0` is a valid override: it means "no cap", same as the config field.
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', '0');
+      expect(resolveMaxStepsPerTurn(100)).toBe(0);
+
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', 'abc');
+      expect(resolveMaxStepsPerTurn(100)).toBe(100);
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', '-3');
+      expect(resolveMaxStepsPerTurn(100)).toBe(100);
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', '1.5');
+      expect(resolveMaxStepsPerTurn()).toBeUndefined();
+    });
+
+    it('prefers KIMI_LOOP_MAX_RETRIES_PER_STEP over config and ignores invalid values', () => {
+      expect(resolveMaxRetriesPerStep(10)).toBe(10);
+      expect(resolveMaxRetriesPerStep()).toBeUndefined();
+
+      vi.stubEnv('KIMI_LOOP_MAX_RETRIES_PER_STEP', '3');
+      expect(resolveMaxRetriesPerStep(10)).toBe(3);
+      expect(resolveMaxRetriesPerStep()).toBe(3);
+
+      vi.stubEnv('KIMI_LOOP_MAX_RETRIES_PER_STEP', '0');
+      expect(resolveMaxRetriesPerStep(10)).toBe(0);
+
+      vi.stubEnv('KIMI_LOOP_MAX_RETRIES_PER_STEP', 'not-a-number');
+      expect(resolveMaxRetriesPerStep(10)).toBe(10);
+      vi.stubEnv('KIMI_LOOP_MAX_RETRIES_PER_STEP', '-1');
+      expect(resolveMaxRetriesPerStep(10)).toBe(10);
+    });
+  });
+
   it('force-refreshes OAuth credentials and replays the request on 401', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
@@ -2711,6 +2854,25 @@ function bashCallWithId(id: string, command: string): ToolCall {
   };
 }
 
+function invalidBashCallWithId(id: string): ToolCall {
+  return {
+    type: 'function',
+    id,
+    name: 'Bash',
+    arguments: JSON.stringify({ timeout: 60 }),
+  };
+}
+
+function malformedBashCallWithId(id: string, variant: number): ToolCall {
+  // Invalid JSON (unquoted key), unique per variant.
+  return {
+    type: 'function',
+    id,
+    name: 'Bash',
+    arguments: `{"command_${String(variant)}: "ls"`,
+  };
+}
+
 function agentSwarmCall(): ToolCall {
   return {
     type: 'function',
@@ -2727,8 +2889,13 @@ function agentSwarmCall(): ToolCall {
 function mockSubagentHost<T extends Partial<SessionSubagentHost>>(
   host: T,
 ): T & SessionSubagentHost {
-  return { spawn: vi.fn(), resume: vi.fn(), runQueued: vi.fn(), ...host } as unknown as T &
-    SessionSubagentHost;
+  return {
+    spawn: vi.fn(),
+    resume: vi.fn(),
+    runQueued: vi.fn(),
+    delegatableSubagents: vi.fn(() => ({})),
+    ...host,
+  } as unknown as T & SessionSubagentHost;
 }
 
 interface ApiErrorTelemetryCase {

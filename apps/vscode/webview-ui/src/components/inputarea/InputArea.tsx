@@ -43,6 +43,9 @@ interface InputAreaProps {
   onAuthAction?: () => void;
 }
 
+const SWITCH_CACHE_NOTE =
+  "Note: Switching models or thinking effort invalidates the existing prompt cache. Start a new conversation to avoid extra token costs.";
+
 export function InputArea({ onAuthAction }: InputAreaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -50,11 +53,14 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   const [cursorPos, setCursorPos] = useState(0);
   const [previewMedia, setPreviewMedia] = useState<string | null>(null);
 
-  const { isStreaming, sendMessage, abort, draftMedia, removeDraftMedia, hasProcessingMedia, getMediaInConversation, pendingInput, planMode } = useChatStore();
+  const { isStreaming, sendMessage, abort, draftMedia, removeDraftMedia, hasProcessingMedia, getMediaInConversation, pendingInput, planMode, messages } = useChatStore();
   const { currentModel, thinkingEffort, updateModel, toggleThinking, selectThinkingEffort, models, extensionConfig, getCurrentThinkingMode } = useSettingsStore();
 
   const isProcessing = hasProcessingMedia();
   const thinkingMode = getCurrentThinkingMode();
+  // A switch from a non-empty conversation resends the accumulated context,
+  // losing the prompt cache — surface the cost note in the switcher dropdowns.
+  const hasConversationHistory = messages.some((message) => message.role === "user");
 
   const [showPlanModeConfirm, setShowPlanModeConfirm] = useState(false);
 
@@ -447,6 +453,14 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
                       {showProviderGroups && groupIndex < modelGroups.length - 1 && <DropdownMenuSeparator />}
                     </Fragment>
                   ))}
+                  {hasConversationHistory && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <div className="px-3 py-1.5 text-[10px] leading-snug whitespace-normal text-muted-foreground">
+                        {SWITCH_CACHE_NOTE}
+                      </div>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
 
@@ -456,6 +470,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
                 efforts={currentModelConfig?.support_efforts}
                 alwaysOn={currentModelConfig?.capabilities.includes("always_thinking")}
                 disabled={isStreaming}
+                cacheNote={hasConversationHistory ? SWITCH_CACHE_NOTE : undefined}
                 onToggle={toggleThinking}
                 onSelectEffort={selectThinkingEffort}
               />

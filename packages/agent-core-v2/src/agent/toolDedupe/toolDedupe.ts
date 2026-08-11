@@ -1,5 +1,5 @@
 /**
- * `toolDedupe` domain (L4) — per-turn tool-call deduplication.
+ * `toolDedupe` domain — per-turn tool-call deduplication.
  *
  * A self-wiring plugin: it participates in `turn` step boundaries and
  * `IAgentToolExecutorService`'s will/did hooks to suppress same-step duplicates and inject
@@ -8,7 +8,7 @@
  * Agent-scoped — one instance per agent.
  */
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 

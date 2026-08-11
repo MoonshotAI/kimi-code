@@ -1,39 +1,43 @@
 /**
- * `sessionInit` domain (L6) — `ISessionInitService` implementation.
+ * `sessionInit` domain — `ISessionInitService` implementation.
  *
  * Runs `/init` against the session's main agent: resolves `main` through
  * `agentLifecycle`, spawns a `coder` subagent bound to the main agent's own
- * model / thinking level / cwd (inheriting the main agent's permission mode),
+ * model / thinking level (inheriting the main agent's permission mode),
  * drives one init-brief turn via `subagents.run`, and mirrors the run onto the
- * main agent's record stream (`emitAgentRunSpawned` + `mirrorAgentRun`) so the
- * UI shows the nested transcript and the `subagent.*` records fire. Once the
+ * main agent's record stream so the UI shows the nested transcript and the
+ * `subagent.*` records fire. Once the
  * subagent finishes, reloads `AGENTS.md` through the `profile` context helper
- * (over the os `hostFs` + host home dir, with the `bootstrap` brand dir) and
- * appends an `init`-variant system reminder to the main agent via
+ * (over the os `hostFs` + host home dir, with the `bootstrap` brand dir),
+ * re-seeds the main agent's `agentsMdReminder` known-set with the reloaded
+ * paths, and appends an `init`-variant system reminder to the main agent via
  * `systemReminder`, then flushes the main agent's wire journal. Bound at
  * Session scope.
  *
- * Port of v1 `Session.generateAgentsMd()`. The main-agent lookup is a hard
- * precondition (`AGENT_NOT_FOUND`, like v1's `requireMainAgent`); only the
+ * The main-agent lookup is a hard
+ * precondition (`AGENT_NOT_FOUND`); only the
  * spawn / reload / reminder path is wrapped into `SESSION_INIT_FAILED`.
  * `cancelInit` aborts the in-flight run through the same `AbortSignal` the
  * run was launched with; user cancellations propagate unwrapped (never as
  * `SESSION_INIT_FAILED`) so callers can tell "aborted" from "failed".
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { loadAgentsMd } from '#/agent/profile/context';
+import { loadAgentsMdDetailed } from '#/agent/profile/context';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 
@@ -47,7 +51,6 @@ const INIT_DESCRIPTION = 'Initialize AGENTS.md';
 export class SessionInitService implements ISessionInitService {
   declare readonly _serviceBrand: undefined;
 
-  /** Abort handle of the in-flight `/init` run; `undefined` while idle. */
   private initRun: AbortController | undefined;
 
   constructor(
@@ -56,6 +59,7 @@ export class SessionInitService implements ISessionInitService {
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
   ) {}
 
   cancelInit(): void {
@@ -82,7 +86,6 @@ export class SessionInitService implements ISessionInitService {
           profile: INIT_PROFILE_NAME,
           model: own.modelAlias,
           thinking: own.thinkingLevel,
-          cwd: own.cwd,
         },
       });
       child.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
@@ -92,6 +95,7 @@ export class SessionInitService implements ISessionInitService {
         parentToolCallId: INIT_PARENT_TOOL_CALL_ID,
         description: INIT_DESCRIPTION,
         runInBackground: false,
+        model: own.modelAlias,
       });
 
       const run = await this.subagents.run(
@@ -106,11 +110,14 @@ export class SessionInitService implements ISessionInitService {
         cancel: (reason) => controller.abort(reason),
       });
 
-      const agentsMd = await loadAgentsMd(
+      const { content: agentsMd, paths: agentsMdPaths } = await loadAgentsMdDetailed(
         { fs: this.fs, homeDir: this.env.homeDir },
-        own.cwd,
+        this.sessionContext.cwd,
         this.bootstrap.homeDir,
       );
+      main.accessor
+        .get(IAgentAgentsMdReminderService)
+        .seedInjected(agentsMdPaths, this.sessionContext.cwd);
       main.accessor
         .get(IAgentSystemReminderService)
         .appendSystemReminder(initCompletionReminder(agentsMd), {
@@ -119,8 +126,6 @@ export class SessionInitService implements ISessionInitService {
         });
       await main.accessor.get(IWireService).flush();
     } catch (error) {
-      // User cancellations (Ctrl+C → cancelInit) must surface as aborts, not
-      // as init failures — the TUI resets quietly on `isAbortError`.
       if (isUserCancellation(error) || isAbortError(error)) {
         throw error;
       }
@@ -144,6 +149,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionInitService,
   SessionInitService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'session-init',
 );

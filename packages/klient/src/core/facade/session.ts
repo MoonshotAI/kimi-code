@@ -2,38 +2,54 @@
  * The session facade — one `klient.session(id)` handle aggregating the
  * session-scope services (metadata, activity, approvals, questions,
  * interactions) plus the app-scope lifecycle service for close/archive/
- * restore/fork/createChild. `agents()` reads the metadata registry (agent
+ * restore/delete/fork/createChild. `agents()` reads the metadata registry (agent
  * handles are not serializable, so no agent-lifecycle channel exists on the
  * wire).
  */
 
 import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type {
-  AgentMeta,
-  SessionMeta,
-  SessionMetaPatch,
-} from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import type {
   ApprovalRequest,
   ApprovalResponse,
 } from '@moonshot-ai/agent-core-v2/session/approval/approval';
+import type {
+  Interaction,
+  InteractionKind,
+} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import type {
   QuestionRequest,
   QuestionResult,
 } from '@moonshot-ai/agent-core-v2/session/question/question';
 import type {
-  Interaction,
-  InteractionKind,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+  AgentMeta,
+  SessionMeta,
+  SessionMetaPatch,
+} from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
+import type { SkillSummary } from '@moonshot-ai/agent-core-v2/app/skillCatalog/types';
 
 import type { ScopeRef } from '../channel.js';
+import type { McpServerConfig } from '../../contract/mcp.js';
+import { RPCError } from '../errors.js';
 import type { ScopedCaller } from './global.js';
+
+const NOT_FOUND = 40404;
 
 export type { ScopedCaller } from './global.js';
 
 /** What `sessionLifecycleService.create/fork/createChild` leaves on the wire. */
 interface HandleWire {
   readonly id: string;
+}
+
+/**
+ * Options for `SessionFacade.restore` — mirrors the engine's
+ * `ResumeSessionOptions`. `mcpServers` injects ephemeral per-session MCP
+ * servers when restore re-materializes a cold session (ignored when the
+ * session is already live).
+ */
+export interface SessionRestoreOptions {
+  readonly additionalDirs?: readonly string[];
+  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
 }
 
 export interface SessionApprovalsFacade {
@@ -50,6 +66,15 @@ export interface SessionQuestionsFacade {
 export interface SessionInteractionsFacade {
   list(kind?: InteractionKind): Promise<readonly Interaction[]>;
   respond(id: string, response: unknown): Promise<void>;
+}
+
+export interface SessionSkillsFacade {
+  /**
+   * Every skill in the session-merged catalog as a plain summary (the
+   * catalog's readiness is resolved engine-side). Subscribe to
+   * `session.events` `'skills.changed'` for updates.
+   */
+  list(): Promise<readonly SkillSummary[]>;
 }
 
 /**
@@ -69,15 +94,15 @@ export interface SessionFacade {
   close(): Promise<void>;
   archive(): Promise<void>;
   /** Re-materialize a closed session; `false` when it no longer exists. */
-  restore(): Promise<boolean>;
+  restore(opts?: SessionRestoreOptions): Promise<boolean>;
+  /** Permanently delete the session and its persisted data; throws when missing. */
+  delete(): Promise<void>;
   fork(input?: { title?: string; metadata?: Record<string, unknown> }): Promise<SessionMeta>;
-  createChild(input?: {
-    title?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<SessionMeta>;
+  createChild(input?: { title?: string; metadata?: Record<string, unknown> }): Promise<SessionMeta>;
   readonly approvals: SessionApprovalsFacade;
   readonly questions: SessionQuestionsFacade;
   readonly interactions: SessionInteractionsFacade;
+  readonly skills: SessionSkillsFacade;
   /** Agent id → metadata for every agent registered in this session. */
   agents(): Promise<Readonly<Record<string, AgentMeta>>>;
 }
@@ -86,11 +111,23 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
   const scope: ScopeRef = { sessionId };
   const read = (): Promise<SessionMeta> =>
     call(scope, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
+  // Session lifecycle methods live on the session's workspace handler
+  // (Workspace scope) — the index supplies the handler's workspaceId.
+  const resolveWorkspaceId = async (): Promise<string | undefined> => {
+    const summary = (await call({}, 'sessionIndex', 'get', [sessionId])) as
+      | { workspaceId: string }
+      | undefined;
+    return summary?.workspaceId;
+  };
   const spawn = async (
     method: 'fork' | 'createChild',
     input: { title?: string; metadata?: Record<string, unknown> } = {},
   ): Promise<SessionMeta> => {
-    const handle = (await call({}, 'sessionLifecycleService', method, [
+    const workspaceId = await resolveWorkspaceId();
+    if (workspaceId === undefined) {
+      throw new RPCError(NOT_FOUND, `session not found: ${sessionId}`);
+    }
+    const handle = (await call({ workspaceId }, 'sessionLifecycleService', method, [
       { sourceSessionId: sessionId, title: input.title, metadata: input.metadata },
     ])) as HandleWire;
     return call({ sessionId: handle.id }, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
@@ -127,13 +164,33 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
       }
       return 'idle';
     },
-    close: () => call({}, 'sessionLifecycleService', 'close', [sessionId]) as Promise<void>,
-    archive: () => call({}, 'sessionLifecycleService', 'archive', [sessionId]) as Promise<void>,
-    restore: async () => {
-      const handle = (await call({}, 'sessionLifecycleService', 'restore', [
+    close: async () => {
+      const workspaceId = await resolveWorkspaceId();
+      if (workspaceId === undefined) return;
+      await call({ workspaceId }, 'sessionLifecycleService', 'close', [sessionId]);
+    },
+    archive: async () => {
+      const workspaceId = await resolveWorkspaceId();
+      if (workspaceId === undefined) return;
+      await call({ workspaceId }, 'sessionLifecycleService', 'archive', [sessionId]);
+    },
+    restore: async (opts) => {
+      const workspaceId = await resolveWorkspaceId();
+      if (workspaceId === undefined) return false;
+      const handle = (await call({ workspaceId }, 'sessionLifecycleService', 'restore', [
         sessionId,
+        opts,
       ])) as HandleWire | null;
-      return handle !== null;
+      // The engine reports "not found" with `undefined`, which JSON transports
+      // may surface as `null` — reject both.
+      return handle !== null && handle !== undefined;
+    },
+    delete: async () => {
+      const workspaceId = await resolveWorkspaceId();
+      if (workspaceId === undefined) {
+        throw new RPCError(NOT_FOUND, `session not found: ${sessionId}`);
+      }
+      await call({ workspaceId }, 'sessionLifecycleService', 'delete', [sessionId]);
     },
     fork: (input) => spawn('fork', input),
     createChild: (input) => spawn('createChild', input),
@@ -164,6 +221,11 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
         >,
       respond: (id, response) =>
         call(scope, 'sessionInteractionService', 'respond', [id, response]) as Promise<void>,
+    },
+
+    skills: {
+      list: () =>
+        call(scope, 'sessionSkillCatalog', 'list', []) as Promise<readonly SkillSummary[]>,
     },
 
     agents: async () => {

@@ -10,6 +10,10 @@ export const CLI_UI_MODE = 'shell';
 // Telemetry ui_mode for the `kimi web` host. Same product
 // as the CLI (CLI_USER_AGENT_PRODUCT); the surface is distinguished by ui_mode.
 export const WEB_UI_MODE = 'web';
+// User-Agent suffix for the `kimi web` host: its requests go out as
+// `kimi-code-cli/<version> (web)` so upstream can tell web-UI traffic
+// apart from direct CLI runs without changing the product token or platform.
+export const WEB_USER_AGENT_SUFFIX = 'web';
 
 // Give telemetry a short flush window without making CLI exit feel stuck.
 export const CLI_SHUTDOWN_TIMEOUT_MS = 3000;
@@ -48,6 +52,7 @@ export const KIMI_CODE_UPDATE_STATE_FILE_NAME = 'latest.json';
 export const KIMI_CODE_UPDATE_INSTALL_STATE_FILE_NAME = 'install.json';
 export const KIMI_CODE_UPDATE_INSTALL_LOCK_FILE_NAME = 'install.lock';
 export const KIMI_CODE_UPDATE_ROLLOUT_LOG_FILE_NAME = 'rollout.log';
+export const KIMI_CODE_PLUGIN_UPDATE_NOTICE_STATE_FILE_NAME = 'plugin-notices.json';
 export const KIMI_CODE_INPUT_HISTORY_DIR_NAME = 'user-history';
 export const KIMI_CODE_BANNER_DIR_NAME = 'banner';
 export const KIMI_CODE_BANNER_STATE_FILE_NAME = 'state.json';
@@ -61,6 +66,9 @@ export const DEFAULT_OAUTH_PROVIDER_NAME = 'managed:kimi-code';
 export const OAUTH_LOGIN_REQUIRED_CODE = ErrorCodes.AUTH_LOGIN_REQUIRED;
 
 export const FEEDBACK_ISSUE_URL = 'https://github.com/MoonshotAI/kimi-code/issues';
+// Sign-up / sign-in page offered to signed-out users so they can create an
+// account and submit feedback through the authenticated channel next time.
+export const KIMI_CODE_SIGNUP_URL = 'https://www.kimi.com/code';
 
 // Sent in the feedback `version` field so the backend can distinguish this
 // TypeScript client from clients that send a bare version.
@@ -79,8 +87,14 @@ export const KIMI_CODE_CDN_LATEST_JSON_URL = `${KIMI_CODE_CDN_BASE}/latest.json`
 export const KIMI_CODE_TIPS_BANNER_URL = 'https://cdn.kimi.com/kimi-code-tips/tips.json';
 export const KIMI_CODE_PLUGIN_MARKETPLACE_URL = `${KIMI_CODE_CDN_BASE}/plugins/marketplace.json`;
 export const KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV = 'KIMI_CODE_PLUGIN_MARKETPLACE_URL';
+// Official plugins whose usage bills against the user's plan quota. Installing
+// one of these shows a quota note after the install result.
+export const QUOTA_CONSUMING_PLUGIN_IDS: readonly string[] = ['kimi-datasource'];
 export const KIMI_CODE_INSTALL_SH_URL = `${KIMI_CODE_CDN_BASE}/install.sh`;
 export const KIMI_CODE_INSTALL_PS1_URL = `${KIMI_CODE_CDN_BASE}/install.ps1`;
+// Official download page, referenced by prompt copy that steers users away
+// from third-party install sources.
+export const KIMI_CODE_OFFICIAL_INSTALL_URL = 'https://www.kimi.com/code';
 
 // Native install commands, split by platform. Use these for prompt copy and spawn calls only; do not assemble the strings elsewhere.
 export const NATIVE_INSTALL_COMMAND_UNIX = `curl -fsSL ${KIMI_CODE_INSTALL_SH_URL} | bash`;

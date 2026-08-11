@@ -24,6 +24,8 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--auto` | | Start with auto permission mode; tool approvals are handled automatically and the Agent will not ask the user questions |
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
+| `--agent <name>` | | Start a new session with the specified agent as the main Agent. Cannot be combined with `--session`/`--continue` |
+| `--agent-file <path>` | | Load a custom agent from a Markdown file for the new session and select it. Cannot be repeated or combined with `--agent`, `--session`, or `--continue` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
 `-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
@@ -93,6 +95,17 @@ There are two ways to specify Skills directories, with different semantics:
   ```
 
 - **`extra_skill_dirs`** (`config.toml`): **Adds** directories on top of the automatically discovered ones, taking effect permanently. Suitable for configuring team-shared Skills. See [Agent Skills](../customization/skills.md).
+
+### Custom Agents
+
+`--agent` and `--agent-file` select which agent drives a new session, in both print mode (`kimi -p`) and the interactive TUI:
+
+```sh
+kimi --agent reviewer
+kimi -p --agent reviewer "Review the changes on this branch"
+```
+
+`--agent-file` registers a single agent file at the highest priority for this launch only and selects it; the flag cannot be repeated, and `--agent` and `--agent-file` are mutually exclusive. Both flags only apply when starting a new session — neither can be combined with `--session`/`--continue`, because the agent is bound at session creation and resuming restores the bound agent automatically. The selection is fixed at the session's first bind and cannot be switched later; in the TUI the flags bind only the startup session, and a session created later in the same process (for example via `/new`) starts with the default agent. See [Agents and Sub-Agents](../customization/agents.md#custom-agents) for the agent file format and discovery directories.
 
 ## Non-Interactive Execution
 
@@ -167,20 +180,16 @@ Multiple instances can share one home directory: each registers itself under `~/
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
 
 ::: info
-The `kimi server` command tree is deprecated: any `kimi server …` invocation (including all legacy subcommands) only prints a deprecation notice and exits with code 1 — use `kimi web` instead. The notice will be removed in the next major version of Kimi Code.
+The `kimi server` command tree is deprecated: any `kimi server …` invocation (including all legacy subcommands) only prints a deprecation notice and exits with code 1 — use `kimi web` instead. The one exception is `kimi server kill`, which stays functional for stopping servers started by a version before 0.28.0. The notice will be removed in the next major version of Kimi Code.
 :::
 
 ::: danger
-`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and run `kimi web kill` to stop the server when you are done.
+`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and stop the server with `Ctrl+C` when you are done.
 :::
 
-#### `kimi web kill [server-id|all]`
+#### `kimi server kill`
 
-Stop a running server instance: first tries `POST /api/v1/shutdown` for a graceful exit, then signals the instance pid with SIGTERM, escalating to SIGKILL when needed. With multiple instances sharing the home directory, `[server-id]` picks the target; without it the longest-running instance is stopped; the special keyword `all` stops every live instance; an unknown id errors with the live instance ids listed.
-
-#### `kimi web ps`
-
-List the clients currently connected to each instance (from `GET /api/v1/connections`), grouped by server id; `--json` prints the raw data nested per instance.
+Deprecated — only stops a server started by a version before 0.28.0. Those versions could leave a background server behind, recorded in the legacy single-instance lock at `~/.kimi-code/server/lock`; the command first tries `POST /api/v1/shutdown` for a graceful exit, then signals the recorded pid with SIGTERM, escalating to SIGKILL when needed, and removes the lock file once the process is confirmed dead. Servers started by `kimi web` run in the foreground — stop them with `Ctrl+C` instead.
 
 #### `kimi web rotate-token`
 
@@ -334,7 +343,7 @@ kimi provider list --json | jq '.providers | keys'
 
 #### `kimi provider catalog list [providerId]`
 
-Browse the public [models.dev](https://models.dev/) model catalog without modifying any configuration. Without an argument, lists all providers along with their protocol type and model count; with a `providerId`, lists all models under that provider along with their context window and capabilities.
+Browse the public [models.dev](https://models.dev/) model catalog without modifying any configuration. Without an argument, lists all providers along with their protocol type and model count; with a `providerId`, lists all models under that provider along with their context window and capabilities. If the catalog URL cannot be reached, a built-in snapshot of the catalog is used instead.
 
 | Parameter / Option | Description |
 | --- | --- |
@@ -351,13 +360,14 @@ kimi provider catalog list anthropic
 
 #### `kimi provider catalog add <providerId>`
 
-Import a known provider directly from the catalog by ID. The protocol type, base URL, and model information are all supplied by the catalog — only an API key is required.
+Import a known provider directly from the catalog by ID. The protocol type, base URL, and model information are all supplied by the catalog — only an API key is required. Vendors whose protocol the catalog does not declare (e.g. xai, openrouter, and other vendor-specific SDKs) are imported as OpenAI-compatible and the output notes the guess; when the catalog provides no usable endpoint, `--base-url` is required. Proprietary protocols (e.g. Amazon Bedrock) cannot be imported. When the public catalog is unreachable, the import uses the built-in snapshot, so it still works offline or in blocked networks.
 
 | Parameter / Option | Description |
 | --- | --- |
 | `<providerId>` | Provider ID in the catalog, e.g., `anthropic`, `openai` |
 | `--api-key <key>` | Provider API key. Falls back to `KIMI_REGISTRY_API_KEY` if not provided; required |
 | `--default-model <modelId>` | Optional — set `default_model` to `<providerId>/<modelId>` after import |
+| `--base-url <url>` | Override the catalog endpoint; required when the catalog declares none (or only an env placeholder) |
 | `--url <url>` | Override the catalog URL; defaults to `https://models.dev/api.json` |
 
 ```sh
@@ -370,3 +380,4 @@ kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-
 - [Slash Commands](./slash-commands.md) — Quick reference for control commands in the interactive TUI
 - [Configuration Files](../configuration/config-files.md) — Persistent configuration for `default_model`, permission mode, and other startup parameters
 - [Agent Skills](../customization/skills.md) — Skill file format for directories loaded via `--skills-dir`
+- [Agents and Sub-Agents](../customization/agents.md) — Built-in sub-agents, custom agent files, and main Agent selection via `--agent`

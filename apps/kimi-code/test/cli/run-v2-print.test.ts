@@ -1,3 +1,4 @@
+import { PRINT_WAIT_CEILING_S_DEFAULT } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -256,6 +257,203 @@ describe('applyPrintBackgroundPolicy', () => {
     });
     expect(warn).not.toHaveBeenCalled();
   });
+
+  it('keeps an exit-mode run alive until a pending cron fire steered a turn', async () => {
+    let nextFire: number | null = 60_000;
+    let fireTurnEnded = false;
+    const cronNextFireAt = vi.fn(() => nextFire);
+    const countPending = vi.fn(() => 0);
+    await applyPrintBackgroundPolicy({
+      mode: 'exit',
+      ceilingS: 3600,
+      maxTurns: 50,
+      countPending,
+      drain: async () => {},
+      turnEndings: scriptedTurnEndings([
+        {
+          // The cron fire steered this turn; once it ends the one-shot task
+          // is gone.
+          event: ending(2),
+          apply: () => {
+            fireTurnEnded = true;
+            nextFire = null;
+          },
+        },
+      ]),
+      skipTurnId: 1,
+      warn: () => {},
+      now: () => 0,
+      cronNextFireAt,
+    });
+    // The policy waited for the fire turn's ending instead of returning
+    // immediately, then re-read the (now empty) cron schedule.
+    expect(fireTurnEnded).toBe(true);
+    expect(cronNextFireAt).toHaveBeenCalledTimes(2);
+    // 'exit' never consults background tasks.
+    expect(countPending).not.toHaveBeenCalled();
+  });
+
+  it('throws when a cron-fire steered turn does not complete', async () => {
+    await expect(
+      applyPrintBackgroundPolicy({
+        mode: 'exit',
+        ceilingS: 3600,
+        maxTurns: 50,
+        countPending: () => 0,
+        drain: async () => {},
+        turnEndings: scriptedTurnEndings([
+          {
+            event: {
+              type: 'turn.ended',
+              turnId: 2,
+              reason: 'failed',
+              error: { code: 'provider.overloaded', message: 'try later' },
+            } as PrintTurnEnding,
+          },
+        ]),
+        skipTurnId: 1,
+        warn: () => {},
+        now: () => 0,
+        cronNextFireAt: () => 60_000,
+      }),
+    ).rejects.toThrow(PrintSteeredTurnFailedError);
+  });
+
+  it('keeps waiting while a recurring cron advances its next fire time', async () => {
+    let nextFire: number | null = 10_000;
+    const cronNextFireAt = vi.fn(() => nextFire);
+    await applyPrintBackgroundPolicy({
+      mode: 'exit',
+      ceilingS: 3600,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      turnEndings: scriptedTurnEndings([
+        // First fire: the recurring task advances to its next slot.
+        { event: ending(2), apply: () => { nextFire = 20_000; } },
+        // Second fire: the task is deleted, no future fire remains.
+        { event: ending(3), apply: () => { nextFire = null; } },
+      ]),
+      skipTurnId: 1,
+      warn: () => {},
+      now: () => 0,
+      cronNextFireAt,
+    });
+    expect(cronNextFireAt).toHaveBeenCalledTimes(3);
+  });
+
+  it('re-reads the cron schedule when the fire wait times out without a turn', async () => {
+    let nextFire: number | null = 10_000;
+    const cronNextFireAt = vi.fn(() => {
+      const value = nextFire;
+      // The task was removed between the first query and the re-check.
+      nextFire = null;
+      return value;
+    });
+    const warn = vi.fn();
+    await applyPrintBackgroundPolicy({
+      mode: 'exit',
+      ceilingS: 3600,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      // Empty script: the fire produced no turn before the grace elapsed.
+      turnEndings: scriptedTurnEndings([]),
+      skipTurnId: 1,
+      warn,
+      now: () => 0,
+      cronNextFireAt,
+    });
+    expect(cronNextFireAt).toHaveBeenCalledTimes(2);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('warns and stops cron waiting when the next fire time is stuck in the past', async () => {
+    const warn = vi.fn();
+    await applyPrintBackgroundPolicy({
+      mode: 'exit',
+      ceilingS: 3600,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      // No turn ever ends: the tick is wedged and never fires the overdue task.
+      turnEndings: scriptedTurnEndings([]),
+      skipTurnId: 1,
+      warn,
+      now: () => 1_000,
+      cronNextFireAt: () => 500,
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('cron');
+  });
+
+  it('finishes goal waiting before consulting the cron schedule', async () => {
+    let active = true;
+    let consumed = 0;
+    let nextFire: number | null = 60_000;
+    let cronFirstCallAtConsumed = -1;
+    const cronNextFireAt = vi.fn(() => {
+      if (cronFirstCallAtConsumed === -1) cronFirstCallAtConsumed = consumed;
+      return nextFire;
+    });
+    await applyPrintBackgroundPolicy({
+      mode: 'exit',
+      ceilingS: 3600,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      turnEndings: scriptedTurnEndings([
+        { event: ending(2), apply: () => { consumed += 1; } },
+        {
+          event: ending(3),
+          apply: () => {
+            consumed += 1;
+            active = false;
+          },
+        },
+        // The pending cron fire steered this turn.
+        { event: ending(4), apply: () => { nextFire = null; } },
+      ]),
+      skipTurnId: 1,
+      warn: () => {},
+      now: () => 0,
+      goalActive: () => active,
+      cronNextFireAt,
+    });
+    // Both goal continuation turns ended before the cron schedule was read.
+    expect(cronFirstCallAtConsumed).toBe(2);
+    expect(cronNextFireAt).toHaveBeenCalled();
+  });
+
+  it('steer keeps waiting under the default ceiling with tasks pending', async () => {
+    let pending = 1;
+    const turnEndings = createPrintTurnEndings();
+    const policy = applyPrintBackgroundPolicy({
+      mode: 'steer',
+      ceilingS: PRINT_WAIT_CEILING_S_DEFAULT,
+      maxTurns: 50,
+      countPending: () => pending,
+      drain: async () => {},
+      turnEndings,
+      skipTurnId: 1,
+      warn: () => {},
+      now: () => Date.now(),
+    });
+    // The default ceiling is ~24.8 days: with tasks still pending the wait
+    // must not return null early and end the run here.
+    const early = await Promise.race([
+      policy.then(() => 'returned' as const),
+      new Promise<'waiting'>((resolve) => setTimeout(() => {
+        resolve('waiting');
+      }, 50)),
+    ]);
+    expect(early).toBe('waiting');
+    // A background task completion steered a new turn; once it ends and no
+    // tasks remain, the policy returns.
+    pending = 0;
+    turnEndings.push(ending(2));
+    await policy;
+  });
 });
 
 describe('createPrintTurnEndings', () => {
@@ -284,5 +482,23 @@ describe('createPrintTurnEndings', () => {
     endings.push(ending(1));
     endings.push(ending(4));
     await expect(pending).resolves.toMatchObject({ turnId: 4 });
+  });
+
+  it('does not resolve null early when the budget exceeds the timer ceiling', async () => {
+    const endings = createPrintTurnEndings();
+    // 10 years in ms — beyond Node's 2^31-1 ms setTimeout ceiling, which an
+    // explicit `print_wait_ceiling_s` can still reach.
+    const pending = endings.next(10 * 365 * 24 * 3600 * 1000, 1);
+    // Node clamps a >2^31-1 ms setTimeout to 1ms; the wait must ride out the
+    // overflow in chunks instead of resolving null at once.
+    const early = await Promise.race([
+      pending,
+      new Promise<'waiting'>((resolve) => setTimeout(() => {
+        resolve('waiting');
+      }, 50)),
+    ]);
+    expect(early).toBe('waiting');
+    endings.push(ending(7));
+    await expect(pending).resolves.toMatchObject({ turnId: 7 });
   });
 });

@@ -1,5 +1,5 @@
 /**
- * `contextProjector` domain (L4) — Agent-scope context projection contract.
+ * `contextProjector` domain — Agent-scope context projection contract.
  *
  * Defines wire-safe history projections and an opaque snapshot of the media
  * identities that a provider rejected, allowing later steps to strip only
@@ -7,7 +7,7 @@
  */
 
 import { createDecorator } from '#/_base/di/instantiation';
-import type { Message } from '#/app/llmProtocol/message';
+import type { Message } from '#/kosong/contract/message';
 
 import type { ContextMessage } from '#/agent/contextMemory/types';
 

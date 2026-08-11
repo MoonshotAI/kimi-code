@@ -1,17 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
-import { type ToolCall } from '#/app/llmProtocol/message';
-import { emptyUsage } from '#/app/llmProtocol/usage';
+import { type ToolCall } from '#/kosong/contract/message';
+import { emptyUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { ISessionProcessRunner } from '#/session/process/processRunner';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService, __testing as toolDedupeTesting } from '#/agent/toolDedupe/toolDedupeService';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
@@ -21,8 +25,11 @@ import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryServi
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
+import { stubToolExecutorEvents } from '../toolExecutor/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
+import { createTestAgent, execEnvServices, telemetryServices } from '../../harness';
+import { createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
 
 const { REMINDER_TEXT_1, REMINDER_TEXT_3, makeReminderText2 } = toolDedupeTesting;
 const ZERO_USAGE = emptyUsage();
@@ -48,10 +55,17 @@ interface Harness {
   readonly loop: IAgentLoopService;
   readonly executor: IAgentToolExecutorService;
   readonly registry: IAgentToolRegistryService;
+  readonly fireBefore: (
+    ctx: ResolvedToolExecutionHookContext,
+  ) => Promise<BeforeExecuteDecision | undefined>;
 }
 
-function createHarness(telemetry: ITelemetryService = recordingTelemetry(telemetryEvents)): Harness {
+function createHarness(
+  telemetry: ITelemetryService = recordingTelemetry(telemetryEvents),
+  options: { readonly executorEvents?: boolean } = {},
+): Harness {
   const loop = stubLoopWithHooks();
+  const events = options.executorEvents === true ? stubToolExecutorEvents() : undefined;
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
       registerTestAgentWireServices(reg, 'wire/tool-dedupe');
@@ -77,8 +91,13 @@ function createHarness(telemetry: ITelemetryService = recordingTelemetry(telemet
         homeDir: homedir,
       } as unknown as IBootstrapService);
       reg.defineInstance(IAgentLoopService, loop);
+      reg.defineInstance(IAgentStateService, new AgentStateService());
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
-      reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+      if (events === undefined) {
+        reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+      } else {
+        reg.defineInstance(IAgentToolExecutorService, events.executor);
+      }
       registerToolResultTruncationServices(reg);
       reg.define(IAgentToolDedupeService, AgentToolDedupeService);
       registerLogServices(reg);
@@ -88,7 +107,18 @@ function createHarness(telemetry: ITelemetryService = recordingTelemetry(telemet
   ix.get(IAgentToolDedupeService);
   const executor = ix.get(IAgentToolExecutorService);
   const registry = ix.get(IAgentToolRegistryService);
-  return { ix, loop, executor, registry };
+  return {
+    ix,
+    loop,
+    executor,
+    registry,
+    fireBefore: (ctx) => {
+      if (events === undefined) {
+        throw new Error('createHarness was not built with executorEvents');
+      }
+      return events.fireBeforeExecute(ctx);
+    },
+  };
 }
 
 function okResult(text: string): ToolDedupeResult {
@@ -184,7 +214,7 @@ async function runStep(
   return results;
 }
 
-function dummyExecution(): ToolBeforeExecuteContext['execution'] {
+function dummyExecution(): ResolvedToolExecutionHookContext['execution'] {
   return { approvalRule: 'x', execute: async () => ({ output: '' }) };
 }
 
@@ -194,7 +224,7 @@ function willCtx(
   args: unknown,
   turnId = 1,
   signal = new AbortController().signal,
-): ToolBeforeExecuteContext {
+): ResolvedToolExecutionHookContext {
   const tc = toolCall(id, name, args);
   return {
     turnId,
@@ -221,6 +251,7 @@ function didCtx(
     toolCall: tc,
     toolCalls: [tc],
     args,
+    outcome: 'executed',
     result,
   };
 }
@@ -228,39 +259,35 @@ function didCtx(
 describe('AgentToolDedupeService', () => {
   describe('same-step dedupe', () => {
     it('returns a placeholder synchronously and resolves to the real result on finalize', async () => {
-      const h = createHarness();
+      const h = createHarness(undefined, { executorEvents: true });
       await beforeStep(h, 1, 1);
 
-      const w1 = willCtx('c1', 'Read', { path: '/a' });
-      await h.executor.hooks.onBeforeExecuteTool.run(w1);
-      expect(w1.decision).toBeUndefined();
+      const b1 = await h.fireBefore(willCtx('c1', 'Read', { path: '/a' }));
+      expect(b1).toBeUndefined();
 
-      const w2 = willCtx('c2', 'Read', { path: '/a' });
-      await h.executor.hooks.onBeforeExecuteTool.run(w2);
-      expect(w2.decision?.syntheticResult).toEqual({ output: '' });
+      const b2 = await h.fireBefore(willCtx('c2', 'Read', { path: '/a' }));
+      expect(b2?.veto).toEqual({ output: '' });
 
       const d1 = didCtx('c1', 'Read', { path: '/a' }, okResult('FILE_A'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
       expect(d1.result).toEqual(okResult('FILE_A'));
 
-      const d2 = didCtx('c2', 'Read', { path: '/a' }, w2.decision!.syntheticResult!);
+      const d2 = didCtx('c2', 'Read', { path: '/a' }, b2!.veto!);
       await h.executor.hooks.onDidExecuteTool.run(d2);
       expect(d2.result).toEqual(okResult('FILE_A'));
     });
 
     it('propagates error results to same-step dups', async () => {
-      const h = createHarness();
+      const h = createHarness(undefined, { executorEvents: true });
       await beforeStep(h, 1, 1);
 
-      const w1 = willCtx('c1', 'Bash', { cmd: 'x' });
-      await h.executor.hooks.onBeforeExecuteTool.run(w1);
-      const w2 = willCtx('c2', 'Bash', { cmd: 'x' });
-      await h.executor.hooks.onBeforeExecuteTool.run(w2);
-      expect(w2.decision?.syntheticResult).toEqual({ output: '' });
+      await h.fireBefore(willCtx('c1', 'Bash', { cmd: 'x' }));
+      const b2 = await h.fireBefore(willCtx('c2', 'Bash', { cmd: 'x' }));
+      expect(b2?.veto).toEqual({ output: '' });
 
       const d1 = didCtx('c1', 'Bash', { cmd: 'x' }, errResult('boom'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
-      const d2 = didCtx('c2', 'Bash', { cmd: 'x' }, w2.decision!.syntheticResult!);
+      const d2 = didCtx('c2', 'Bash', { cmd: 'x' }, b2!.veto!);
       await h.executor.hooks.onDidExecuteTool.run(d2);
       expect(d2.result).toEqual(errResult('boom'));
     });
@@ -475,20 +502,18 @@ describe('AgentToolDedupeService', () => {
 
   describe('key canonicalization', () => {
     it('treats argument objects with different key order as the same call', async () => {
-      const h = createHarness();
+      const h = createHarness(undefined, { executorEvents: true });
       await beforeStep(h, 1, 1);
 
-      const w1 = willCtx('c1', 'Read', { a: 1, b: 2 });
-      await h.executor.hooks.onBeforeExecuteTool.run(w1);
-      expect(w1.decision).toBeUndefined();
+      const b1 = await h.fireBefore(willCtx('c1', 'Read', { a: 1, b: 2 }));
+      expect(b1).toBeUndefined();
 
-      const w2 = willCtx('c2', 'Read', { b: 2, a: 1 });
-      await h.executor.hooks.onBeforeExecuteTool.run(w2);
-      expect(w2.decision?.syntheticResult).toEqual({ output: '' });
+      const b2 = await h.fireBefore(willCtx('c2', 'Read', { b: 2, a: 1 }));
+      expect(b2?.veto).toEqual({ output: '' });
 
       const d1 = didCtx('c1', 'Read', { a: 1, b: 2 }, okResult('SAME'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
-      const d2 = didCtx('c2', 'Read', { b: 2, a: 1 }, w2.decision!.syntheticResult!);
+      const d2 = didCtx('c2', 'Read', { b: 2, a: 1 }, b2!.veto!);
       await h.executor.hooks.onDidExecuteTool.run(d2);
       expect(d2.result).toEqual(okResult('SAME'));
     });
@@ -496,20 +521,18 @@ describe('AgentToolDedupeService', () => {
 
   describe('arg rewrite between checkSameStep and finalize', () => {
     it('resolves the dup deferred even when the original call args are rewritten before finalize', async () => {
-      const h = createHarness();
+      const h = createHarness(undefined, { executorEvents: true });
       await beforeStep(h, 1, 1);
 
-      const w1 = willCtx('c1', 'Read', { path: '/a' });
-      await h.executor.hooks.onBeforeExecuteTool.run(w1);
-      expect(w1.decision).toBeUndefined();
-      const w2 = willCtx('c2', 'Read', { path: '/a' });
-      await h.executor.hooks.onBeforeExecuteTool.run(w2);
-      expect(w2.decision?.syntheticResult).toEqual({ output: '' });
+      const b1 = await h.fireBefore(willCtx('c1', 'Read', { path: '/a' }));
+      expect(b1).toBeUndefined();
+      const b2 = await h.fireBefore(willCtx('c2', 'Read', { path: '/a' }));
+      expect(b2?.veto).toEqual({ output: '' });
 
       const d1 = didCtx('c1', 'Read', { path: '/REWRITTEN' }, okResult('A'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
 
-      const d2 = didCtx('c2', 'Read', { path: '/a' }, w2.decision!.syntheticResult!);
+      const d2 = didCtx('c2', 'Read', { path: '/a' }, b2!.veto!);
       await Promise.race([
         h.executor.hooks.onDidExecuteTool.run(d2),
         new Promise<never>((_, reject) => {
@@ -525,14 +548,12 @@ describe('AgentToolDedupeService', () => {
 
   describe('beginStep cleanup', () => {
     it('resolves leaked deferreds from a prior aborted step with an error result', async () => {
-      const h = createHarness();
+      const h = createHarness(undefined, { executorEvents: true });
       await beforeStep(h, 1, 1);
-      const w1 = willCtx('leaked', 'Read', { p: 1 });
-      await h.executor.hooks.onBeforeExecuteTool.run(w1);
-      expect(w1.decision).toBeUndefined();
-      const w2 = willCtx('dup', 'Read', { p: 1 });
-      await h.executor.hooks.onBeforeExecuteTool.run(w2);
-      const placeholder = w2.decision!.syntheticResult!;
+      const b1 = await h.fireBefore(willCtx('leaked', 'Read', { p: 1 }));
+      expect(b1).toBeUndefined();
+      const b2 = await h.fireBefore(willCtx('dup', 'Read', { p: 1 }));
+      const placeholder = b2!.veto!;
       expect(placeholder).toEqual({ output: '' });
 
       await beforeStep(h, 1, 2);
@@ -729,6 +750,7 @@ describe('AgentToolDedupeService', () => {
       const repeats = telemetryEvents.filter((e) => e.event === 'tool_call_repeat');
       expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2, 3]);
       expect(repeats.every((e) => e.properties?.['tool_name'] === 'Read')).toBe(true);
+      expect(repeats.every((e) => e.properties?.['turn_id'] === 1)).toBe(true);
     });
 
     it('does not emit telemetry on the first call', async () => {
@@ -813,6 +835,152 @@ describe('AgentToolDedupeService', () => {
         await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
       }
       expect(telemetryEvents.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
+    });
+  });
+
+  describe('preflight-rejected calls (bypass onBeforeExecuteTool)', () => {
+    class StrictTool implements ExecutableTool<Record<string, unknown>> {
+      readonly name = 'Strict';
+      readonly description = 'Requires a command string.';
+      readonly parameters = {
+        type: 'object',
+        properties: { command: { type: 'string' } },
+        required: ['command'],
+        additionalProperties: true,
+      };
+      readonly calls: Array<Record<string, unknown>> = [];
+
+      resolveExecution(args: Record<string, unknown>): ToolExecution {
+        return {
+          approvalRule: this.name,
+          execute: async () => {
+            this.calls.push(args);
+            return { output: 'ran' };
+          },
+        };
+      }
+    }
+
+    function invalidCall(id: string): ToolCall {
+      return { type: 'function', id, name: 'Strict', arguments: JSON.stringify({ timeout: 60 }) };
+    }
+
+    function malformedCall(id: string, rawArguments: string): ToolCall {
+      return { type: 'function', id, name: 'Strict', arguments: rawArguments };
+    }
+
+    it('counts rejected calls toward the streak and force-stops at 12, keeping the error flag', async () => {
+      const h = createHarness();
+      const tool = new StrictTool();
+      h.registry.register(tool);
+      let last: ToolResult | undefined;
+      for (let i = 0; i < 12; i += 1) {
+        const [result] = await runStep(h, 1, i + 1, [invalidCall(`c${String(i)}`)]);
+        last = result!.result;
+      }
+      expect(tool.calls).toHaveLength(0);
+      expect(last!.isError).toBe(true);
+      expect(last!.stopTurn).toBe(true);
+      expect(last!.output as string).toContain(REMINDER_TEXT_3.trim());
+      const actions = telemetryEvents
+        .filter((e) => e.event === 'tool_call_repeat')
+        .map((e) => e.properties?.['action']);
+      expect(actions).toEqual(['none', 'r1', 'r1', 'r2', 'r2', 'r2', 'r3', 'r3', 'r3', 'r3', 'stop']);
+    });
+
+    it('does not double-register a call that already went through onBeforeExecuteTool', async () => {
+      const h = createHarness(undefined, { executorEvents: true });
+      for (let i = 0; i < 2; i += 1) {
+        await beforeStep(h, 1, i + 1);
+        const callId = `c${String(i)}`;
+        expect(await h.fireBefore(willCtx(callId, 'Read', { p: 1 }))).toBeUndefined();
+        const d = didCtx(callId, 'Read', { p: 1 }, okResult('R'));
+        await h.executor.hooks.onDidExecuteTool.run(d);
+        await afterStep(h, 1, i + 1);
+      }
+      const repeats = telemetryEvents.filter((e) => e.event === 'tool_call_repeat');
+      expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2]);
+    });
+
+    it('counts identical malformed argument texts as repeats', async () => {
+      const h = createHarness();
+      h.registry.register(new StrictTool());
+      for (let i = 0; i < 2; i += 1) {
+        await runStep(h, 1, i + 1, [malformedCall(`c${String(i)}`, '{"command":')]);
+      }
+      const repeats = telemetryEvents.filter((e) => e.event === 'tool_call_repeat');
+      expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2]);
+    });
+
+    it('does not treat different malformed argument texts as the same call', async () => {
+      const h = createHarness();
+      h.registry.register(new StrictTool());
+      const raws = ['{"command":', '{"comand":', '{"command": "ls"'];
+      for (let i = 0; i < 3; i += 1) {
+        await runStep(h, 1, i + 1, [malformedCall(`c${String(i)}`, raws[i]!)]);
+      }
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
+    });
+  });
+
+  describe('turn-level repeat breaker for rejected calls', () => {
+    function invalidBashCallWithId(id: string): ToolCall {
+      return { type: 'function', id, name: 'Bash', arguments: JSON.stringify({ timeout: 60 }) };
+    }
+
+    function malformedBashCallWithId(id: string, variant: number): ToolCall {
+      return { type: 'function', id, name: 'Bash', arguments: `{"command_${String(variant)}: "ls"` };
+    }
+
+    function rejectedBashAgent(records: TelemetryRecord[]): {
+      readonly ctx: ReturnType<typeof createTestAgent>;
+      readonly exec: ReturnType<typeof vi.fn>;
+    } {
+      const exec = vi.fn<ISessionProcessRunner['exec']>().mockRejectedValue(new Error('Bash should not execute'));
+      const ctx = createTestAgent(
+        telemetryServices(recordingTelemetry(records)),
+        execEnvServices({ processRunner: createFakeProcessRunner({ exec: exec as unknown as ISessionProcessRunner['exec'] }) }),
+      );
+      ctx.get(IAgentProfileService).update({ activeToolNames: ['Bash'] });
+      records.length = 0;
+      return { ctx, exec };
+    }
+
+    it('force-stops a turn that keeps re-issuing the same validation-rejected call', async () => {
+      const records: TelemetryRecord[] = [];
+      const { ctx, exec } = rejectedBashAgent(records);
+
+      for (let i = 0; i < 12; i += 1) {
+        ctx.mockNextResponse(invalidBashCallWithId(`call_bad_${String(i)}`));
+      }
+      ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
+      await ctx.untilTurnEnd();
+
+      expect(exec).not.toHaveBeenCalled();
+      expect(ctx.llmCalls).toHaveLength(12);
+      const actions = records
+        .filter((entry) => entry.event === 'tool_call_repeat')
+        .map((entry) => entry.properties?.['action']);
+      expect(actions).toEqual(['none', 'r1', 'r1', 'r2', 'r2', 'r2', 'r3', 'r3', 'r3', 'r3', 'stop']);
+    });
+
+    it('does not force-stop when the malformed argument text keeps changing', async () => {
+      const records: TelemetryRecord[] = [];
+      const { ctx, exec } = rejectedBashAgent(records);
+
+      for (let i = 0; i < 12; i += 1) {
+        ctx.mockNextResponse(malformedBashCallWithId(`call_mal_${String(i)}`, i));
+      }
+      ctx.mockNextResponse({ type: 'text', text: 'recovered' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
+      await ctx.untilTurnEnd();
+
+      expect(exec).not.toHaveBeenCalled();
+      expect(ctx.llmCalls).toHaveLength(13);
+      expect(records.filter((entry) => entry.event === 'tool_call_repeat')).toHaveLength(0);
     });
   });
 });

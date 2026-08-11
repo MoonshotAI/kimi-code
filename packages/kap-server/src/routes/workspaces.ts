@@ -2,14 +2,22 @@
  * `/workspaces` route handlers — server-v2 port.
  *
  * Implements the v1 `/api/v1/workspaces` wire contract on top of
- * `agent-core-v2` services. Backed by `IWorkspaceRegistry` (Core scope) for the
+ * `agent-core-v2` services. Backed by `IWorkspaceService` (App scope) for the
  * catalog, `IHostFileSystem` to validate roots, and
- * `ISessionIndex` to derive `session_count`.
+ * `IWorkspaceSessions` to derive `session_count`.
  *
  *   GET    /workspaces                    list
  *   POST   /workspaces                    register (idempotent on root)
  *   PATCH  /workspaces/{workspace_id}     rename (display name only)
  *   DELETE /workspaces/{workspace_id}     unregister
+ *   GET    /workspaces/{workspace_id}/trust    read the trust state
+ *   POST   /workspaces/{workspace_id}/trust    mark the workspace trusted
+ *   POST   /workspaces/{workspace_id}/untrust  revoke trust
+ *
+ * The trust routes resolve the workspace's live handler
+ * (`IWorkspaceLifecycleService.handlerFor`, materializing it on demand) and
+ * read/flip the Workspace-scope `IWorkspaceTrust`; while untrusted, the
+ * handler's project-level MCP config files are not loaded.
  *
  * **Wire fidelity**: the v1 `workspaceSchema` carries more fields than v2's
  * `Workspace` (`{ id, root, name, createdAt, lastOpenedAt }`). The handler
@@ -17,14 +25,17 @@
  *   - `created_at` / `last_opened_at` — from the registry's in-memory
  *     timestamps (reset on restart; the registry is still a skeleton).
  *   - `session_count` — count of persisted sessions for the workspace, summed
- *     across every id spelling of the same root (`resolveAliasIds`) so legacy
- *     split buckets count once for the workspace, not per bucket.
+ *     across every id spelling of the same root (`IWorkspaceSessions.count`
+ *     folds the alias set) so legacy split buckets count once for the
+ *     workspace, not per bucket.
  */
 
 import {
   IHostFileSystem,
-  ISessionIndex,
-  IWorkspaceRegistry,
+  IWorkspaceLifecycleService,
+  IWorkspaceService,
+  IWorkspaceSessions,
+  IWorkspaceTrust,
   type Scope,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2';
@@ -44,6 +55,7 @@ import {
   updateWorkspaceRequestSchema,
   updateWorkspaceResponseSchema,
   workspaceIdParamSchema,
+  workspaceTrustResponseSchema,
 } from '../protocol/rest-workspace';
 import type { Workspace as WorkspaceWire } from '../protocol/workspace';
 
@@ -94,7 +106,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
       tags: ['workspaces'],
     },
     async (req, reply) => {
-      const items = await core.accessor.get(IWorkspaceRegistry).list();
+      const items = await core.accessor.get(IWorkspaceService).list();
       const projected = await Promise.all(items.map((ws) => toWireWorkspace(core, ws)));
       reply.send(okEnvelope({ items: projected }, req.id));
     },
@@ -138,7 +150,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `root ${root} does not exist`, req.id));
         return;
       }
-      const ws = await core.accessor.get(IWorkspaceRegistry).createOrTouch(root, req.body.name);
+      const ws = await core.accessor.get(IWorkspaceService).createOrTouch(root, req.body.name);
       reply.send(okEnvelope(await toWireWorkspace(core, ws), req.id));
     },
   );
@@ -165,7 +177,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
     async (req, reply) => {
       const { workspace_id } = req.params;
       const ws = await core.accessor
-        .get(IWorkspaceRegistry)
+        .get(IWorkspaceService)
         .update(workspace_id, { name: req.body.name });
       if (ws === undefined) {
         reply.send(
@@ -197,7 +209,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
     },
     async (req, reply) => {
       const { workspace_id } = req.params;
-      const registry = core.accessor.get(IWorkspaceRegistry);
+      const registry = core.accessor.get(IWorkspaceService);
       const existing = await registry.get(workspace_id);
       if (existing === undefined) {
         reply.send(
@@ -215,6 +227,101 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
     deleteRoute.options,
     deleteRoute.handler as Parameters<WorkspaceRouteHost['delete']>[2],
   );
+
+  const getTrustRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/workspaces/{workspace_id}/trust',
+      params: workspaceIdParamSchema,
+      success: { data: workspaceTrustResponseSchema },
+      errors: {
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+      },
+      description: 'Read the workspace trust state',
+      tags: ['workspaces'],
+    },
+    async (req, reply) => {
+      const trust = await resolveTrust(core, req.params.workspace_id, req.id, reply);
+      if (trust === undefined) return;
+      reply.send(okEnvelope({ trusted: await trust.get() }, req.id));
+    },
+  );
+  app.get(
+    getTrustRoute.path,
+    getTrustRoute.options,
+    getTrustRoute.handler as Parameters<WorkspaceRouteHost['get']>[2],
+  );
+
+  const trustRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/workspaces/{workspace_id}/trust',
+      params: workspaceIdParamSchema,
+      success: { data: workspaceTrustResponseSchema },
+      errors: {
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+      },
+      description: 'Mark the workspace trusted (project-level MCP config loads)',
+      tags: ['workspaces'],
+    },
+    async (req, reply) => {
+      const trust = await resolveTrust(core, req.params.workspace_id, req.id, reply);
+      if (trust === undefined) return;
+      await trust.trust();
+      reply.send(okEnvelope({ trusted: true }, req.id));
+    },
+  );
+  app.post(
+    trustRoute.path,
+    trustRoute.options,
+    trustRoute.handler as Parameters<WorkspaceRouteHost['post']>[2],
+  );
+
+  const untrustRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/workspaces/{workspace_id}/untrust',
+      params: workspaceIdParamSchema,
+      success: { data: workspaceTrustResponseSchema },
+      errors: {
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+      },
+      description: 'Revoke workspace trust (project-level MCP config unloads)',
+      tags: ['workspaces'],
+    },
+    async (req, reply) => {
+      const trust = await resolveTrust(core, req.params.workspace_id, req.id, reply);
+      if (trust === undefined) return;
+      await trust.untrust();
+      reply.send(okEnvelope({ trusted: false }, req.id));
+    },
+  );
+  app.post(
+    untrustRoute.path,
+    untrustRoute.options,
+    untrustRoute.handler as Parameters<WorkspaceRouteHost['post']>[2],
+  );
+}
+
+type TrustReply = { send(payload: unknown): unknown };
+
+async function resolveTrust(
+  core: Scope,
+  workspaceId: string,
+  requestId: string,
+  reply: TrustReply,
+): Promise<IWorkspaceTrust | undefined> {
+  const ws = await core.accessor.get(IWorkspaceService).get(workspaceId);
+  if (ws === undefined) {
+    reply.send(
+      errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspaceId} does not exist`, requestId),
+    );
+    return undefined;
+  }
+  const handle = await core
+    .accessor.get(IWorkspaceLifecycleService)
+    .handlerFor({ workspaceId, root: ws.root });
+  return handle.accessor.get(IWorkspaceTrust);
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +329,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
 // ---------------------------------------------------------------------------
 
 async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
-  const sessionCount = await countSessions(core, ws.id);
+  const sessionCount = await core.accessor.get(IWorkspaceSessions).count(ws.id);
   return {
     id: ws.id,
     root: ws.root,
@@ -231,16 +338,6 @@ async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWir
     last_opened_at: new Date(ws.lastOpenedAt).toISOString(),
     session_count: sessionCount,
   };
-}
-
-async function countSessions(core: Scope, workspaceId: string): Promise<number> {
-  // One set-query over the alias set (legacy split buckets): a single merged
-  // listing cannot double-count, and a singleton set behaves exactly as before.
-  const workspaceIds = await core.accessor.get(IWorkspaceRegistry).resolveAliasIds(workspaceId);
-  const page = await core.accessor
-    .get(ISessionIndex)
-    .list({ workspaceIds, includeArchived: true });
-  return page.items.length;
 }
 
 function buildValidationEnvelope(

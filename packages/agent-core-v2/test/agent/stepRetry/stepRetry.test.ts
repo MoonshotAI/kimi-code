@@ -4,14 +4,16 @@ import {
   APIConnectionError,
   APIProviderRateLimitError,
   APIStatusError,
-} from '#/app/llmProtocol/errors';
-import { emptyUsage } from '#/app/llmProtocol/usage';
+} from '#/kosong/contract/errors';
+import { emptyUsage } from '#/kosong/contract/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import { retryBackoffDelays } from '#/_base/utils/retry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
 
 import { createTestAgent, llmGenerateServices, type TestAgentContext } from '../../harness';
+
+const realSetTimeout = globalThis.setTimeout;
 
 describe('stepRetry plugin', () => {
   let ctx: TestAgentContext;
@@ -34,7 +36,22 @@ describe('stepRetry plugin', () => {
     const loop = ctx.get(IAgentLoopService);
     loop.enqueue(new ContinuationStepRequest());
     const resultPromise = loop.run({ turnId, signal });
-    await vi.runAllTimersAsync();
+    let settled = false;
+    void resultPromise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    for (let i = 0; i < 100; i += 1) {
+      if (settled) break;
+      await vi.runAllTimersAsync();
+      if (!settled) {
+        await new Promise((resolve) => realSetTimeout(resolve, 1));
+      }
+    }
     return resultPromise;
   }
 
@@ -178,14 +195,14 @@ describe('stepRetry plugin', () => {
     expect(result.type).toBe('cancelled');
   });
 
-  it('honors loop_control.max_retries_per_step', async () => {
+  it('honors loop_control.max_attempts_per_step', async () => {
     vi.useFakeTimers();
     let calls = 0;
     ctx = createTestAgent(llmGenerateServices(async () => {
       calls += 1;
       throw new APIConnectionError('terminated');
     }), {
-      initialConfig: { loopControl: { maxRetriesPerStep: 1 } },
+      initialConfig: { loopControl: { maxAttemptsPerStep: 1 } },
     });
 
     const result = await runTurn(1);

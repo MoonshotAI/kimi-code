@@ -1,9 +1,10 @@
-import { emptyUsage } from '#/app/llmProtocol/usage';
+import { emptyUsage } from '#/kosong/contract/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import type { ModelConfig } from '#/app/model/model';
+import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
+import type { ModelRecord } from '#/kosong/model/model';
 import {
   configServices,
   createTestAgent,
@@ -16,7 +17,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 
 type TestKimiConfig = ReturnType<Parameters<typeof configServices>[0]>;
 type TestProtocolModelConfig = NonNullable<TestKimiConfig['models']>[string] &
-  Pick<ModelConfig, 'protocol'>;
+  Pick<ModelRecord, 'protocol'>;
 type GenerateFn = Parameters<typeof llmGenerateServices>[0];
 
 function defaultGenerate(): ReturnType<GenerateFn> {
@@ -77,7 +78,7 @@ describe('ConfigState model capabilities', () => {
     profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
 
     expect(profile.getModel()).toBe('kimi-code/kimi-for-coding');
-    expect(profile.resolveModel()?.name).toBe('kimi-for-coding');
+    expect(ctx.modelResolver.get('kimi-code/kimi-for-coding').name).toBe('kimi-for-coding');
     expect(profile.getModelCapabilities()).toMatchObject({
       image_in: true,
       video_in: true,
@@ -86,6 +87,64 @@ describe('ConfigState model capabilities', () => {
       tool_use: true,
       max_context_tokens: 1_000_000,
     });
+  });
+
+  it('republishes the model status slice on demand', () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+          supportEfforts: ['low', 'high'],
+        },
+      },
+    };
+    profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
+    const before = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated').length;
+
+    profile.republishStatus();
+
+    const statuses = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated');
+    expect(statuses).toHaveLength(before + 1);
+    expect(statuses.at(-1)?.args).toMatchObject({
+      model: 'kimi-code/kimi-for-coding',
+      maxContextTokens: 1_000_000,
+    });
+  });
+
+  it('reports the recipe base alias when bound to the derived secondary entry', () => {
+    kimiConfig = {
+      providers: {},
+      secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
+    } as TestKimiConfig;
+
+    profile.update({ modelAlias: SECONDARY_DERIVED_MODEL_ID });
+
+    const statuses = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated');
+    const last = statuses.at(-1)?.args as { model?: string };
+    expect(last.model).toBe('provider/secondary');
+  });
+
+  it('omits maxContextTokens when the bound model no longer resolves', () => {
+    // `update` accepts an alias without validating resolvability; a model entry
+    // removed from config afterwards lands in the same state. The capabilities
+    // then fall back to UNKNOWN_CAPABILITY, whose 0 means "unknown" — the
+    // status event must drop the field rather than publish 0.
+    profile.update({ modelAlias: 'ghost/model' });
+
+    const statuses = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated');
+    expect(statuses.length).toBeGreaterThan(0);
+    const last = statuses.at(-1)?.args as { model?: string; maxContextTokens?: number };
+    expect(last.model).toBe('ghost/model');
+    expect(last.maxContextTokens).toBeUndefined();
   });
 
   it('tracks thinking_toggle with the effort payload when effort changes', () => {
@@ -115,7 +174,7 @@ describe('ConfigState model capabilities', () => {
 
     expect(records).toContainEqual({
       event: 'thinking_toggle',
-      properties: { enabled: true, effort: 'low', from: 'off' },
+      properties: { agent_id: 'main', enabled: true, effort: 'low', from: 'off' },
     });
   });
 
@@ -166,10 +225,8 @@ describe('ConfigState model capabilities', () => {
         },
       },
     };
-    generate = async (provider) => {
-      requestMaxTokens = (
-        provider as unknown as { readonly modelParameters: Record<string, unknown> }
-      ).modelParameters['max_tokens'];
+    generate = async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+      requestMaxTokens = options?.maxCompletionTokens;
       return {
         id: 'response-1',
         message: { role: 'assistant', content: [], toolCalls: [] },
@@ -230,7 +287,9 @@ describe('ConfigState prompt cache hint', () => {
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     profile.update({ modelAlias: 'kimi-code' });
 
-    expect(profile.resolveModel()?.protocol).toBe('kimi');
+    const model = ctx.modelResolver.get('kimi-code');
+    expect(model.protocol).toBe('openai');
+    expect(model.providerType).toBe('kimi');
     expect('sessionId' in ctx).toBe(false);
   });
 });
@@ -240,7 +299,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
   let profile: IAgentProfileService;
   let requester: IAgentLLMRequesterService;
   let kimiConfig: TestKimiConfig;
-  let capturedProvider: unknown;
+  let capturedThinking: unknown;
 
   beforeEach(() => {
     kimiConfig = {
@@ -286,11 +345,11 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
         } as TestProtocolModelConfig,
       },
     };
-    capturedProvider = undefined;
+    capturedThinking = undefined;
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices(async (provider) => {
-        capturedProvider = provider;
+      llmGenerateServices(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+        capturedThinking = options?.thinking;
         return {
           id: 'response-1',
           message: { role: 'assistant', content: [], toolCalls: [] },
@@ -318,15 +377,12 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(profile.data().thinkingLevel).toBe('high');
   });
 
-  it('builds the provider with thinking enabled even after thinking was set off', async () => {
+  it('sends the clamped thinking effort in the per-turn intent after thinking was set off', async () => {
     profile.update({ modelAlias: 'kimi-code/deep', thinkingLevel: 'off' });
 
     await requester.request({}, undefined, new AbortController().signal);
 
-    const gen = Reflect.get(capturedProvider as object, '_generationKwargs') as {
-      extra_body?: { thinking?: { type?: unknown } };
-    };
-    expect(gen.extra_body?.thinking?.type).toBe('enabled');
+    expect(capturedThinking).toMatchObject({ effort: 'high' });
   });
 
   it('keeps thinking off working for toggleable models', () => {
@@ -394,7 +450,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(profile.data().thinkingLevel).toBe('max');
   });
 
-  it('preserves unlisted and off efforts for Kimi-managed Anthropic models', () => {
+  it('preserves unlisted efforts with a warning for Kimi-managed Anthropic models', () => {
     profile.update({ modelAlias: 'kimi-code/compatible', thinkingLevel: 'max' });
 
     expect(() => {
@@ -410,20 +466,15 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
           'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
       },
     });
+  });
+
+  it('clamps off to the model default for always-on models, on any transport', () => {
+    profile.update({ modelAlias: 'kimi-code/compatible', thinkingLevel: 'max' });
 
     expect(() => {
       profile.setThinking('off');
     }).not.toThrow();
-    expect(profile.data().thinkingLevel).toBe('off');
-    expect(ctx.allEvents).toContainEqual({
-      type: '[rpc]',
-      event: 'warning',
-      args: {
-        code: 'anthropic-thinking-cannot-disable',
-        message:
-          'Model "compatible-model" declares always-on thinking. The configured effort "off" will be sent unchanged to the Anthropic-compatible backend.',
-      },
-    });
+    expect(profile.data().thinkingLevel).toBe('max');
   });
 });
 
@@ -433,6 +484,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   let requester: IAgentLLMRequesterService;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
+  let capturedOptions: Parameters<GenerateFn>[5];
 
   beforeEach(() => {
     kimiConfig = {
@@ -470,8 +522,9 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   function createAgentWithEnv(): void {
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices(async (provider) => {
+      llmGenerateServices(async (provider, _systemPrompt, _tools, _history, _callbacks, options) => {
         capturedProvider = provider;
+        capturedOptions = options;
         return {
           id: 'response-1',
           message: { role: 'assistant', content: [], toolCalls: [] },
@@ -485,46 +538,37 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     requester = ctx.get(IAgentLLMRequesterService);
   }
 
-  function generationKwargs(): Record<string, unknown> {
-    return Reflect.get(capturedProvider as object, '_generationKwargs') as Record<string, unknown>;
-  }
-
-  it('injects KIMI_MODEL_TEMPERATURE into config.provider (the provider compaction also uses)', async () => {
+  it('injects KIMI_MODEL_TEMPERATURE into the per-turn sampling intent (the compaction request also uses)', async () => {
     vi.stubEnv('KIMI_MODEL_TEMPERATURE', '0.3');
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code' });
     await requester.request({}, undefined, new AbortController().signal);
 
-    expect(generationKwargs()).toMatchObject({
+    expect(capturedOptions?.sampling).toMatchObject({
       temperature: 0.3,
     });
   });
 
-  it('injects KIMI_MODEL_THINKING_KEEP into config.provider when thinking is on (so compaction keeps it)', async () => {
+  it('injects KIMI_MODEL_THINKING_KEEP into the per-turn thinking intent when thinking is on (so compaction keeps it)', async () => {
     vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
     await requester.request({}, undefined, new AbortController().signal);
 
-    const gen = generationKwargs() as {
-      extra_body?: { thinking?: { keep?: unknown } };
-    };
-    expect(gen.extra_body?.thinking?.keep).toBe('all');
+    expect(capturedOptions?.thinking).toMatchObject({ effort: 'on', keep: 'all' });
   });
 
-  it('does NOT inject thinking.keep into config.provider when thinking is off', async () => {
+  it('does NOT inject thinking.keep into the per-turn intent when thinking is off', async () => {
     vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'off' });
     await requester.request({}, undefined, new AbortController().signal);
 
-    const gen = generationKwargs() as {
-      extra_body?: { thinking?: { keep?: unknown } };
-    };
-    expect(gen.extra_body?.thinking?.keep).toBeUndefined();
+    expect(capturedOptions?.thinking?.effort).toBe('off');
+    expect(capturedOptions?.thinking?.keep).toBeUndefined();
   });
 
   it('injects forced effort through the Anthropic protocol for a Kimi provider', async () => {
@@ -546,9 +590,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
 
     await requester.request({}, undefined, new AbortController().signal);
 
-    expect(capturedProvider).toMatchObject({
-      name: 'anthropic',
-      thinkingEffort: 'max',
-    });
+    expect(capturedProvider).toMatchObject({ name: 'anthropic' });
+    expect(capturedOptions?.thinking?.effort).toBe('max');
   });
 });

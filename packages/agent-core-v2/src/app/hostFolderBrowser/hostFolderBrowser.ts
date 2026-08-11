@@ -1,20 +1,21 @@
 /**
- * `hostFolderBrowser` domain (L2) — host-side folder picker.
+ * `hostFolderBrowser` domain — host-side folder picker.
  *
  * Defines the `IHostFolderBrowser` used by the program side (TUI / server) to
  * let the user browse the real local filesystem when choosing a workspace
- * folder. Distinct from the Session-side `sessionFs`, which is sandboxed and may
- * be remote. App-scoped.
+ * folder. App-scoped.
  *
  * The wire shapes (`FsBrowseResponse` / `FsHomeResponse`) are defined here as
- * zod schemas so the `/api/v1` and `/api/v2` transports share one contract.
- * Domain errors (`HostFolder*Error`) carry the failing path and are
- * translated to wire error codes at the transport boundary.
+ * zod schemas. Domain errors (`HostFolder*Error`) carry the failing path and
+ * are translated to wire error codes at the transport boundary.
  */
 
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { CoreErrors } from '#/_base/errors/codes';
+import { Error2 } from '#/_base/errors/errors';
+import { FsErrors } from '#/workspace/workspaceFs/internal/errors';
 
 export const fsBrowseQuerySchema = z.object({
   path: z.string().min(1).optional(),
@@ -41,28 +42,30 @@ export const fsHomeResponseSchema = z.object({
 });
 export type FsHomeResponse = z.infer<typeof fsHomeResponseSchema>;
 
-export class HostFolderNotAbsoluteError extends Error {
+export class HostFolderNotAbsoluteError extends Error2 {
   readonly path: string;
   constructor(path: string) {
-    super(`path must be absolute: ${path}`);
+    super(CoreErrors.codes.VALIDATION_FAILED, `path must be absolute: ${path}`, {
+      details: { path },
+    });
     this.name = 'HostFolderNotAbsoluteError';
     this.path = path;
   }
 }
 
-export class HostFolderNotFoundError extends Error {
+export class HostFolderNotFoundError extends Error2 {
   readonly path: string;
   constructor(path: string) {
-    super(`path not found: ${path}`);
+    super(FsErrors.codes.FS_PATH_NOT_FOUND, `path not found: ${path}`, { details: { path } });
     this.name = 'HostFolderNotFoundError';
     this.path = path;
   }
 }
 
-export class HostFolderPermissionError extends Error {
+export class HostFolderPermissionError extends Error2 {
   readonly path: string;
   constructor(path: string) {
-    super(`permission denied: ${path}`);
+    super(FsErrors.codes.FS_PERMISSION_DENIED, `permission denied: ${path}`, { details: { path } });
     this.name = 'HostFolderPermissionError';
     this.path = path;
   }

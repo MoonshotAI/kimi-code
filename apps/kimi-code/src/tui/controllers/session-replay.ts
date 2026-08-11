@@ -3,13 +3,13 @@ import type {
   ContextMessage,
   GoalChange,
   PermissionMode,
-  PromptOrigin,
   ResumedAgentState,
   Session,
   ToolCall,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { ToolCallComponent } from '../components/messages/tool-call';
+import { ReplayTurnBoundaryComponent } from '../components/messages/user-message';
 import { currentTheme } from '../theme';
 import type { TodoItem } from '../components/chrome/todo-panel';
 import type {
@@ -21,8 +21,10 @@ import type {
 import { formatErrorMessage, isTodoItemShape } from '../utils/event-payload';
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
+import { modelDisplayName } from '../components/dialogs/model-selector';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
 import { formatBashOutputForDisplay } from '../utils/shell-output';
+import { markTranscriptComponent } from '../utils/transcript-component-metadata';
 import {
   appStateFromResumeAgent,
   backgroundOrigin,
@@ -40,6 +42,7 @@ import {
   pluginCommandFromOrigin,
   toolCallFromReplayMessage,
   toolResultOutput,
+  type BackgroundTaskNotificationOrigin,
   type ReplayRenderContext,
   type SkillActivationProjection,
   type PluginCommandProjection,
@@ -165,7 +168,7 @@ export class SessionReplayRenderer {
 
   private hydrateBackgroundState(agent: ResumedAgentState): void {
     const { state, sessionEventHandler } = this.host;
-    const projection = replayBackgroundProjection(agent.background);
+    const projection = replayBackgroundProjection(agent.background, state.appState.availableModels);
     sessionEventHandler.subAgentEventHandler.backgroundAgentMetadata = new Map(
       projection.backgroundAgentMetadata,
     );
@@ -301,16 +304,19 @@ export class SessionReplayRenderer {
       this.renderCronMissed(context, message);
       return;
     }
-    if (isGoalForkClearedSystemReminder(message)) {
-      return;
-    }
-    const goalReminder = goalOutcomeReminderFromSystemMessage(message);
-    if (goalReminder !== null) {
-      if (goalReminder !== undefined) {
-        this.flushAssistant(context);
-        this.host.appendTranscriptEntry(
-          replayEntry(context, 'assistant', goalReminder, 'markdown'),
-        );
+    // System-trigger messages (goal continuation prompts, goal outcome
+    // reminders, stop-hook reasons, …) are model-facing only: the live event
+    // stream never renders them, so replay must not leak them either.
+    if (message.origin?.kind === 'system_trigger') {
+      if (message.origin.name === 'goal_continuation') {
+        // The goal driver's synthetic "continue" prompt starts a new replay
+        // turn even though nothing visible is mounted: advance the turn and
+        // mark an invisible boundary so each goal round groups under its own
+        // turn and step/assistant folding can find the turn edges.
+        this.advanceTurn(context);
+        const boundary = new ReplayTurnBoundaryComponent();
+        markTranscriptComponent(boundary, replayEntry(context, 'user', '', 'plain'));
+        this.host.state.transcriptContainer.addChild(boundary);
       }
       return;
     }
@@ -654,14 +660,15 @@ export class SessionReplayRenderer {
       (child) => child instanceof ToolCallComponent && child.toolCallView.id === toolCallId,
     );
     if (childIndex >= 0) {
+      // Structural removal only: the container's ref-checked render cache
+      // detects the child-list change; no tree-wide invalidate needed.
       children.splice(childIndex, 1);
-      state.transcriptContainer.invalidate();
     }
   }
 
   private renderBackgroundTaskNotification(
     context: ReplayRenderContext,
-    origin: Extract<PromptOrigin, { kind: 'background_task' }>,
+    origin: BackgroundTaskNotificationOrigin,
   ): void {
     const { sessionEventHandler } = this.host;
     const task = sessionEventHandler.backgroundTasks.get(origin.taskId);
@@ -680,6 +687,19 @@ export class SessionReplayRenderer {
       agentId: origin.taskId,
       parentToolCallId: origin.taskId,
       description: task?.description,
+      model:
+        task?.model === undefined
+          ? undefined
+          : modelDisplayName(
+              task.model,
+              this.host.state.appState.availableModels[task.model],
+            ),
+      effort:
+        task?.thinkingEffort === undefined ||
+        task.thinkingEffort === 'off' ||
+        task.thinkingEffort === 'on'
+          ? undefined
+          : task.thinkingEffort,
     };
     let status = formatBackgroundAgentTranscript(
       origin.status === 'completed' ? 'completed' : 'failed',
@@ -739,18 +759,6 @@ function goalLifecycleReplayContent(change: GoalReplayLifecycleChange): string {
 
 function isModelBlockedGoalLifecycle(change: GoalReplayLifecycleChange): boolean {
   return change.status === 'blocked' && change.actor === 'model';
-}
-
-function goalOutcomeReminderFromSystemMessage(message: ContextMessage): string | undefined | null {
-  if (message.origin?.kind !== 'system_trigger') return null;
-  if (message.origin.name !== 'goal_completion' && message.origin.name !== 'goal_blocked') {
-    return null;
-  }
-  return undefined;
-}
-
-function isGoalForkClearedSystemReminder(message: ContextMessage): boolean {
-  return message.origin?.kind === 'system_trigger' && message.origin.name === 'goal_fork_cleared';
 }
 
 function extractCronPrompt(text: string): string {

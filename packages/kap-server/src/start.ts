@@ -9,18 +9,27 @@
 
 import {
   bootstrap,
-  hostRequestHeadersSeed,
+  drainQueryStoreDisposals,
+  drainSessionMetadataWrites,
+  drainSessionIndexMirror,
   IConfigService,
-  IModelCatalogService,
-  IWorkspaceRegistry,
+  IEventService,
+  IProviderDiscoveryService,
+  ISessionIndex,
+  ISessionIndexMirror,
+  IWorkspaceService,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
-  skillCatalogRuntimeOptionsSeed,
+  type ConfigDiagnostic,
   type Scope,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import {
+  createKimiDefaultHeaders,
+  type KimiHostIdentity,
+} from '@moonshot-ai/kimi-code-oauth';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
@@ -30,6 +39,7 @@ import { transformOpenApiDocument } from './openapi/transforms';
 import { registerRequestLogging } from './requestLogging';
 import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
+import { registerApiV2Routes } from './routes/registerApiV2Routes';
 import { registerWebAssetRoutes } from './routes/webAssets';
 import {
   createServerLogger,
@@ -41,14 +51,13 @@ import type { Socket } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 
-import { registerRpcRoutes } from './transport/registerRpcRoutes';
 import {
   ConnectionRegistry,
   type IConnectionRegistry,
 } from './transport/ws/connectionRegistry';
-import { registerWs, WS_PATH as WS_PATH_V2 } from './transport/ws/registerWs';
 import { extractWsBearerToken } from './transport/ws/bearerProtocol';
 import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
+import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { FsWatchBridge } from './transport/ws/v1/fsWatchBridge';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { getServerVersion } from './version';
@@ -62,7 +71,12 @@ import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middlewar
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
-import { loadSnapshotConfig, SnapshotReader } from './services/snapshot';
+import {
+  initializeServerTelemetry,
+  type ServerTelemetry,
+  shutdownServerTelemetry,
+} from './services/telemetry';
+import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
 import {
@@ -72,6 +86,19 @@ import {
 import { createCredentialValidator } from './services/auth/credentials';
 import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
+
+// Temporary feature: global message search. Importing this module registers
+// `IGlobalSearchService` (App scope) into the DI registry as a side effect, so
+// it MUST stay above any `bootstrap()` call — registration happens at module
+// evaluation time.
+import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
+
+export interface ServerHostIdentity extends KimiHostIdentity {
+  /** Fills the `${product_name}` slot in the base system prompt. Defaults render the CLI text. */
+  readonly displayName?: string;
+  /** Replaces the `${reply_style_guide}` block in the base system prompt. */
+  readonly replyStyleGuide?: string;
+}
 
 export interface ServerStartOptions {
   readonly host?: string;
@@ -97,14 +124,23 @@ export interface ServerStartOptions {
   readonly authTokenService?: IAuthTokenService;
   readonly disableAuth?: boolean;
   /**
-   * Optional *additional* credential accepted on the `/api/v2` surface (REST +
+   * Optional *additional* credential accepted on the RPC surface (debug REST +
    * WebSocket) alongside the persistent bearer token. Never required and never
-   * the only gate: the persistent token always protects `/api/v2`. Leave unset
-   * unless a second, distinct RPC credential is genuinely needed.
+   * the only gate: the persistent token always protects the RPC surface. Leave
+   * unset unless a second, distinct RPC credential is genuinely needed.
    */
   readonly rpcToken?: string;
   /** Extra scope seeds applied at bootstrap (e.g. a host-provided `ISessionModelResolver`). */
   readonly seeds?: ScopeSeed;
+  /**
+   * Identity of the host product embedding the server: feeds the engine's
+   * `bootstrap()` client identity, the default outbound request headers
+   * (User-Agent + `X-Msh-*` via `createKimiDefaultHeaders`), and the session
+   * export manifest. Applied to every agent and request the server hosts —
+   * required, so every host states its own product name, version, and
+   * platform explicitly.
+   */
+  readonly hostIdentity: ServerHostIdentity;
   /**
    * Explicit skill directories for this process (v1's SDK `skillDirs`): when
    * non-empty, default user / project skill discovery is skipped and these
@@ -119,12 +155,20 @@ export interface ServerStartOptions {
    */
   readonly webAssetsDir?: string;
   /**
-   * Host product version, reported as `server_version` (GET /api/v1/meta), in
-   * the OpenAPI document, session exports, the lock / instance registry, and
-   * the default User-Agent. Defaults to kap-server's own package version;
-   * embedding hosts (the CLI) should pass their own version.
+   * Engine version, reported as `server_version` (GET /api/v1/meta), in the
+   * OpenAPI document, and in the lock / instance registry. Defaults to
+   * kap-server's own package version; the host product version travels in
+   * `hostIdentity.version` instead.
    */
-  readonly version?: string;
+  readonly serverVersion?: string;
+  /**
+   * Opt-in cloud telemetry for the engine's `ITelemetryService` events: when
+   * true, a `CloudAppender` is attached at startup (still gated by the config
+   * `telemetry` toggle) and flushed on close. Defaults to false so tests and
+   * embedding hosts that wire their own telemetry never post to the real
+   * endpoint unintentionally; the CLI's `kimi web` host passes true.
+   */
+  readonly telemetry?: boolean;
 }
 
 export interface RunningServer {
@@ -140,7 +184,7 @@ export interface RunningServer {
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
 
-export async function startServer(opts: ServerStartOptions = {}): Promise<RunningServer> {
+export async function startServer(opts: ServerStartOptions): Promise<RunningServer> {
   const host = opts.host ?? DEFAULT_HOST;
   const port = opts.port ?? DEFAULT_PORT;
   const homeDir = resolveKimiHome(opts.homeDir);
@@ -150,7 +194,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // tooling) can discover the live instances. Port conflicts between siblings
   // are resolved by the `port + 1` retry below. The registration is released
   // on close and on any boot refusal below.
-  const hostVersion = opts.version ?? getServerVersion();
+  const serverVersion = opts.serverVersion ?? getServerVersion();
   const registry = createInstanceRegistry({
     instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
   });
@@ -159,7 +203,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     host,
     port,
     startedAt: Date.now(),
-    hostVersion,
+    serverVersion,
   });
   const exposureClass = classify(host, { bindClass: opts.bindClass });
   if (exposureClass !== 'loopback' && opts.insecureNoTls !== true) {
@@ -191,7 +235,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   }
   // Unified credential: the persistent token (or password) protects every
   // route; the optional `rpcToken` is accepted as an additional credential
-  // for the `/api/v2` surface. The same validator backs the HTTP auth hook,
+  // for the RPC surface. The same validator backs the HTTP auth hook,
   // the WS upgrade handler, and the post-connect handshakes so one credential
   // gates all surfaces and upgrade / handshake can never disagree.
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
@@ -203,16 +247,40 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // rooted at `homeDir`, so the Store facades above it (append-log, atomic
   // document, blob) — and in turn session metadata, wire records, blobs, and
   // the session index — all persist to disk.
-  const { app: core } = bootstrap({ homeDir, configPath }, [
-    ...logSeed(logging),
-    // Default host identity so outbound requests (model, WebSearch, registry
-    // refresh) carry a product User-Agent even when the embedding host did not
-    // seed its own headers. Hosts like the CLI pass full Kimi identity headers
-    // through `opts.seeds`, which override this entry (last seed wins).
-    ...hostRequestHeadersSeed({ 'User-Agent': `kimi-code-cli/${hostVersion}` }),
-    ...skillCatalogRuntimeOptionsSeed(opts.skillDirs),
-    ...(opts.seeds ?? []),
-  ]);
+  const { app: core } = bootstrap(
+    {
+      homeDir,
+      configPath,
+      clientIdentity: opts.hostIdentity,
+      args: {
+        // Default host identity headers derived from `hostIdentity`: outbound
+        // requests (model, WebSearch, registry refresh) carry the host
+        // product's User-Agent + X-Msh-* set.
+        requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),
+        skillDirs: opts.skillDirs,
+        displayName: opts.hostIdentity.displayName,
+        replyStyleGuide: opts.hostIdentity.replyStyleGuide,
+      },
+    },
+    [...logSeed(logging), ...(opts.seeds ?? [])],
+  );
+
+  // Attach the cloud telemetry appender BEFORE any session is created:
+  // `session_started` / `session_load_failed` fire inside create()/resume(), so
+  // an appender wired later would drop them to the null appender. Opt-in via
+  // `opts.telemetry` (off by default so tests never post to the real endpoint);
+  // best-effort — telemetry must never block server boot.
+  let telemetry: ServerTelemetry = {};
+  if (opts.telemetry === true) {
+    try {
+      telemetry = await initializeServerTelemetry(core, homeDir);
+    } catch (error) {
+      logger.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        'telemetry initialization failed; continuing without telemetry',
+      );
+    }
+  }
 
   if (exposureClass !== 'loopback') {
     logger.warn(
@@ -227,7 +295,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     }
   }
   const modelCatalogRefreshScheduler = new ModelCatalogRefreshScheduler(
-    core.accessor.get(IModelCatalogService),
+    core.accessor.get(IProviderDiscoveryService),
     core.accessor.get(IConfigService),
     logger,
   );
@@ -238,11 +306,25 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // starts accepting traffic (and before embedding hosts tear the homeDir
   // down); best-effort: a failure re-surfaces on first access.
   try {
-    await core.accessor.get(IWorkspaceRegistry).list();
+    await core.accessor.get(IWorkspaceService).list();
   } catch (error) {
     logger.warn(
       { err: error instanceof Error ? error.message : String(error) },
-      'workspace registry startup sync failed',
+      'workspace catalog startup sync failed',
+    );
+  }
+
+  // Prepare the session read model before serving traffic (flag-gated; a
+  // no-op when `persistence_minidb_readmodel` is off): opens the query store,
+  // restores the published generation — running the initial projection when
+  // none exists — and starts background reconciliation, so the first request
+  // never pays the open/rebuild cost.
+  try {
+    await core.accessor.get(ISessionIndex).prepare();
+  } catch (error) {
+    logger.warn(
+      { err: error instanceof Error ? error.message : String(error) },
+      'session index prepare failed; falling back to on-demand reads',
     );
   }
 
@@ -291,29 +373,85 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
 
   const close = async (): Promise<void> => {
     await app.close();
+    configWarningSubscription.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
-    core.dispose();
-    await registration.release();
+    // Telemetry is best-effort and must never prevent core or instance cleanup.
+    try {
+      await shutdownServerTelemetry(telemetry);
+    } catch (error) {
+      logger.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        'telemetry shutdown failed; continuing server cleanup',
+      );
+    }
+    try {
+      // Settle session metadata writes first: requests have stopped, and a
+      // queued write must land before the mirror flushes its summary and the
+      // scope disposal marks the service disposed.
+      await drainSessionMetadataWrites();
+      // Drain the session-index mirror while the query store is still open:
+      // requests have stopped, so no new summaries arrive and the queue just
+      // needs its final flush to land in the read model.
+      await core.accessor.get(ISessionIndexMirror).drain();
+      core.dispose();
+      // `core.dispose()` runs the mirror's, the search service's and the query
+      // store's synchronous `dispose()`, whose drains/closes are asynchronous —
+      // await them before releasing the instance registration (and before
+      // embedding hosts tear down homeDir).
+      await drainSessionIndexMirror();
+      await drainGlobalSearchDisposals();
+      await drainQueryStoreDisposals();
+      await drainSessionMetadataWrites();
+    } finally {
+      await registration.release();
+    }
   };
 
   const connectionRegistry = new ConnectionRegistry();
+  const transcriptService = new TranscriptService({ homeDir, core, logger });
+  // The global search service is DI-managed (App scope) while the transcript
+  // service is constructed here by hand — wire the former to the latter so
+  // container-scoped searches on live sessions scan the in-memory transcript.
+  core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,
     logger,
+    transcriptService,
   });
   const fsWatchBridge = new FsWatchBridge({ core, logger });
 
-  const snapshotReader = new SnapshotReader({
-    homeDir,
-    core,
-    broadcaster,
-    logger,
-    config: loadSnapshotConfig(),
-  });
-
-  const serverVersion = hostVersion;
+  // Push config warnings (deprecated keys / env vars in use, invalid sections)
+  // to every WS connection as `event.config.warning` whenever the config
+  // service's warning set changes. The broadcaster fans the DomainEvent out
+  // globally (see `onCoreEvent`); delivery is live-only, so the current set is
+  // also published once config is ready for already-connected clients (an
+  // empty initial set publishes nothing — silence already means no warnings).
+  const configService = core.accessor.get(IConfigService);
+  const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
+    const warnings: ConfigWarningItem[] = diagnostics
+      .filter((diagnostic) => diagnostic.severity === 'warning')
+      .map((diagnostic) =>
+        diagnostic.domain === undefined
+          ? { message: diagnostic.message }
+          : { domain: diagnostic.domain, message: diagnostic.message },
+      );
+    core.accessor.get(IEventService).publish({
+      type: 'event.config.warning',
+      payload: { warnings },
+    });
+  };
+  const configWarningSubscription = configService.onDidChangeDiagnostics(publishConfigWarnings);
+  void configService.ready
+    .then(() => {
+      if (configService.diagnostics().some((diagnostic) => diagnostic.severity === 'warning')) {
+        publishConfigWarnings(configService.diagnostics());
+      }
+    })
+    .catch(() => {
+      /* config readiness is best-effort; warnings are advisory */
+    });
 
   async function registerOpenApi(): Promise<void> {
     const { default: swagger } = await import('@fastify/swagger');
@@ -331,8 +469,11 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
           { name: 'models', description: 'Configured model aliases' },
           { name: 'providers', description: 'Configured providers' },
           { name: 'sessions', description: 'Session lifecycle' },
+          { name: 'v2-sessions', description: 'Domain-grouped session list query (API v2)' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
+          { name: 'search', description: 'Global message search' },
+          { name: 'transcript', description: 'Turn-granular session transcript' },
           { name: 'prompts', description: 'Prompt submission & abort' },
           { name: 'approvals', description: 'Approval resolution' },
           { name: 'questions', description: 'Question resolution & dismiss' },
@@ -358,6 +499,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
 
   await registerApiV1Routes(app, core, {
     serverVersion,
+    hostIdentity: opts.hostIdentity,
     debugEndpoints,
     enableShutdown,
     enableTerminals,
@@ -367,12 +509,14 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     },
     connectionRegistry,
     broadcaster,
-    snapshotReader,
+    transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
   });
 
-  registerRpcRoutes(app, core, { token: opts.rpcToken });
-  const wssV2 = registerWs(core, { validateCredential, registry: connectionRegistry, logger });
+  // `/api/v2` — same envelope conventions as v1, domain-grouped payloads.
+  // Mounted after v1; the root auth/host/origin hooks cover it identically.
+  await registerApiV2Routes(app, core);
+
   const wssV1 = registerWsV1(core, {
     validateCredential,
     registry: connectionRegistry,
@@ -388,8 +532,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   ): Promise<void> => {
     const url = req.url ?? '';
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
-    const isV2 = url === WS_PATH_V2 || url.startsWith(`${WS_PATH_V2}?`);
-    if (!isV1 && !isV2) {
+    if (!isV1) {
       socket.destroy();
       return;
     }
@@ -424,7 +567,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
       const protocolToken = extractWsBearerToken(req.headers['sec-websocket-protocol']);
       const candidate = bearerToken !== null && bearerToken.length > 0 ? bearerToken : protocolToken;
       // Require a valid credential at the upgrade: a token-less (or invalid)
-      // upgrade is rejected with 401 for both `/api/v1/ws` and `/api/v2/ws`.
+      // upgrade is rejected with 401 for `/api/v1/ws`.
       let ok = false;
       if (candidate !== null) {
         try {
@@ -458,11 +601,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     }
 
     (socket as Socket).setNoDelay(true);
-    if (isV1) {
-      wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
-    } else {
-      wssV2.handleUpgrade(req, socket, head, (ws) => wssV2.emit('connection', ws, req));
-    }
+    wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {
     void handleUpgrade(req, socket, head).catch((error: unknown) =>
@@ -473,7 +612,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   app.addHook('onClose', async () => {
     connectionRegistry.closeAll('server shutting down');
     wssV1.close();
-    wssV2.close();
     await broadcaster.close();
   });
 

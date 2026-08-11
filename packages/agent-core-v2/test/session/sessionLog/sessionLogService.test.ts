@@ -3,10 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
-import { InstantiationType } from '#/_base/di/extensions';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -20,6 +19,10 @@ import {
 import { AppLogService } from '#/_base/log/logService';
 import { SessionLogService } from '#/session/sessionLog/sessionLogService';
 import { makeSessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
 let homeDir: string;
 let sessionDir: string;
@@ -28,9 +31,16 @@ beforeEach(async () => {
   _clearScopedRegistryForTests();
   registerScopedService(
     LifecycleScope.Session,
+    ISessionStateService,
+    SessionStateService,
+    ScopeActivation.OnScopeCreated,
+    'state',
+  );
+  registerScopedService(
+    LifecycleScope.Session,
     ILogService,
     SessionLogService,
-    InstantiationType.Delayed,
+    ScopeActivation.OnDemand,
     'log',
   );
   homeDir = await mkdtemp(join(tmpdir(), 'session-log-'));
@@ -50,14 +60,17 @@ function buildHost() {
 }
 
 function testSessionSeed() {
-  return sessionContextSeed(makeSessionContext({
-    sessionId: 's1',
-    workspaceId: 'test-workspace',
-    sessionDir,
-    sessionScope: 'sessions/test-workspace/s1',
-    metaScope: 'sessions/test-workspace/s1/session-meta',
-    cwd: sessionDir,
-  }));
+  return [
+    ...sessionContextSeed(makeSessionContext({
+      sessionId: 's1',
+      workspaceId: 'test-workspace',
+      sessionDir,
+      sessionScope: 'sessions/test-workspace/s1',
+      metaScope: 'sessions/test-workspace/s1/session-meta',
+      cwd: sessionDir,
+    })),
+    [IWorkspaceStateService, new WorkspaceStateService()] as const,
+  ];
 }
 
 async function readSessionLog(): Promise<string> {
@@ -132,8 +145,9 @@ describe('SessionLogService', () => {
 describe('ILogService cross-scope resolution', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
-    registerScopedService(LifecycleScope.App, ILogService, AppLogService, InstantiationType.Delayed, 'log');
-    registerScopedService(LifecycleScope.Session, ILogService, SessionLogService, InstantiationType.Delayed, 'log');
+    registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
+    registerScopedService(LifecycleScope.App, ILogService, AppLogService, ScopeActivation.OnDemand, 'log');
+    registerScopedService(LifecycleScope.Session, ILogService, SessionLogService, ScopeActivation.OnDemand, 'log');
   });
 
   it('resolves the single token to the nearest scope binding', () => {

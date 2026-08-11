@@ -1,6 +1,6 @@
 import {
   catalogModelToAlias,
-  inferWireType,
+  resolveCatalogImport,
   type Catalog,
   type CatalogModel,
   type ModelAlias,
@@ -128,10 +128,35 @@ export function promptApiKey(
   });
 }
 
+/**
+ * Asks for the provider endpoint the catalog did not declare (or declared
+ * only as an env placeholder) — required for catalog imports whose protocol
+ * was guessed, where the built-in default endpoint would point at the wrong
+ * host. Esc cancels the import.
+ */
+export function promptBaseUrl(host: SlashCommandHost, platformName: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const dialog = new ApiKeyInputDialogComponent(
+      platformName,
+      ['The catalog declares no endpoint for this provider — enter its base URL.'],
+      (result: ApiKeyInputResult) => {
+        host.restoreEditor();
+        resolve(result.kind === 'ok' ? result.value : undefined);
+      },
+      {
+        title: `Enter base URL for ${platformName}`,
+        mask: false,
+        emptyHint: 'Base URL cannot be empty.',
+      },
+    );
+    host.mountEditorReplacement(dialog);
+  });
+}
+
 export function promptCatalogProviderSelection(host: SlashCommandHost, catalog: Catalog): Promise<string | undefined> {
   return new Promise((resolve) => {
     const options: ChoiceOption[] = Object.entries(catalog)
-      .filter(([, entry]) => inferWireType(entry) !== undefined)
+      .filter(([, entry]) => resolveCatalogImport(entry).kind !== 'invalid')
       .map(([id, entry]) => ({
         value: id,
         label: entry.name ?? id,

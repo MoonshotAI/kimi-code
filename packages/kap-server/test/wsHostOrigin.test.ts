@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { fixedTokenAuth } from './helpers/fixedAuth';
 
 const TOKEN = 'test-token';
@@ -60,12 +61,12 @@ describe('WS upgrade Host/Origin checks', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let v1Url: string;
-  let v2Url: string;
   const sockets: WebSocket[] = [];
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ws-host-origin-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -73,7 +74,6 @@ describe('WS upgrade Host/Origin checks', () => {
       authTokenService: fixedTokenAuth(TOKEN),
     });
     v1Url = `ws://127.0.0.1:${server.port}/api/v1/ws`;
-    v2Url = `ws://127.0.0.1:${server.port}/api/v2/ws`;
   });
 
   afterEach(async () => {
@@ -94,11 +94,8 @@ describe('WS upgrade Host/Origin checks', () => {
     }
   });
 
-  describe.each([
-    ['/api/v1/ws', 'v1Url'],
-    ['/api/v2/ws', 'v2Url'],
-  ] as const)('%s', (_path, urlKey) => {
-    const url = (): string => (urlKey === 'v1Url' ? v1Url : v2Url);
+  describe('/api/v1/ws', () => {
+    const url = (): string => v1Url;
 
     it('rejects a spoofed Host before token validation', async () => {
       await expectRejected(url(), { headers: { Host: 'evil.com' } });
@@ -118,6 +115,7 @@ describe('WS upgrade Host/Origin checks', () => {
   it('allows an explicitly allowed Origin', async () => {
     await server?.close();
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,

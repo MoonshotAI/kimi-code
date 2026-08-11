@@ -1,9 +1,9 @@
 /**
- * `telemetry` domain (L1) — `CloudAppender`, an `ITelemetryAppender` that
+ * `telemetry` domain — `CloudAppender`, an `ITelemetryAppender` that
  * batches events, drops non-primitive properties, redacts PII from string
  * values, enriches events with common context, and posts them to the
  * telemetry endpoint through `CloudTransport`, which persists failed events
- * through the `storage` byte layer. Reads host facts (`clientVersion`, env,
+ * through the `storage` byte layer. Reads host facts (`clientIdentity`, env,
  * platform/arch) from `IBootstrapService`; `createCloudAppender` assembles
  * one from a `ServicesAccessor` so hosts only supply identity facts.
  * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
@@ -105,10 +105,11 @@ export class CloudAppender implements ITelemetryAppender {
   }
 
   track(event: string, properties?: TelemetryProperties): void {
+    const eventSessionId = properties?.['sessionId'];
     const enriched: EnrichedCloudEvent = {
       event_id: randomUUID().replaceAll('-', ''),
       device_id: this.deviceId,
-      session_id: this.sessionId,
+      session_id: typeof eventSessionId === 'string' ? eventSessionId : this.sessionId,
       event,
       timestamp: Date.now() / 1000,
       properties: cleanTelemetryProperties(sanitizeProperties(properties)),
@@ -185,8 +186,8 @@ function buildContext(options: CloudAppenderOptions): CloudContext {
   const { bootstrap } = options;
   const context: CloudContext = {
     app_name: options.appName,
-    client_version: bootstrap.clientVersion,
-    version: bootstrap.clientVersion,
+    client_version: bootstrap.clientIdentity.version,
+    version: bootstrap.clientIdentity.version,
     core_version: resolveCoreVersion(),
     runtime: 'node',
     platform: bootstrap.platform,

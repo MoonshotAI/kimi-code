@@ -1,5 +1,5 @@
 /**
- * `/api/v2` transport error handling — map internal errors onto the project
+ * `/api/v1/debug` transport error handling — map internal errors onto the project
  * envelope, guard serialization, time-box calls, and gate access.
  */
 

@@ -30,11 +30,23 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "DELETE",
+      "/api/v1/providers/{provider_id}",
+    ],
+    [
+      "DELETE",
       "/api/v1/workspaces/{workspace_id}",
     ],
     [
       "GET",
       "/api/v1/auth",
+    ],
+    [
+      "GET",
+      "/api/v1/catalog/providers",
+    ],
+    [
+      "GET",
+      "/api/v1/catalog/providers/{catalog_id}",
     ],
     [
       "GET",
@@ -46,11 +58,35 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/debug/{service}/{method}",
+    ],
+    [
+      "GET",
+      "/api/v1/debug/channels",
+    ],
+    [
+      "GET",
+      "/api/v1/debug/session/{session_id}/{service}/{method}",
+    ],
+    [
+      "GET",
+      "/api/v1/debug/session/{session_id}/agent/{agent_id}/{service}/{method}",
+    ],
+    [
+      "GET",
+      "/api/v1/debug/workspace/{workspace_id}/{service}/{method}",
+    ],
+    [
+      "GET",
       "/api/v1/files/{file_id}",
     ],
     [
       "GET",
       "/api/v1/fs:browse",
+    ],
+    [
+      "GET",
+      "/api/v1/fs:content",
     ],
     [
       "GET",
@@ -83,6 +119,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/oauth/login",
+    ],
+    [
+      "GET",
+      "/api/v1/oauth/usage",
+    ],
+    [
+      "GET",
+      "/api/v1/oauth/userinfo",
     ],
     [
       "GET",
@@ -166,6 +210,22 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/sessions/{session_id}/transcript",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/transcript/ops",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/transcript/plan",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/transcript/user-messages",
+    ],
+    [
+      "GET",
       "/api/v1/sessions/{session_id}/warnings",
     ],
     [
@@ -182,19 +242,11 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v2/{service}/{method}",
+      "/api/v1/workspaces/{workspace_id}/trust",
     ],
     [
       "GET",
-      "/api/v2/channels",
-    ],
-    [
-      "GET",
-      "/api/v2/session/{session_id}/{service}/{method}",
-    ],
-    [
-      "GET",
-      "/api/v2/session/{session_id}/agent/{agent_id}/{service}/{method}",
+      "/api/v2/sessions",
     ],
     [
       "GET",
@@ -214,7 +266,27 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/debug/{service}/{method}",
+    ],
+    [
+      "POST",
+      "/api/v1/debug/session/{session_id}/{service}/{method}",
+    ],
+    [
+      "POST",
+      "/api/v1/debug/session/{session_id}/agent/{agent_id}/{service}/{method}",
+    ],
+    [
+      "POST",
+      "/api/v1/debug/workspace/{workspace_id}/{service}/{method}",
+    ],
+    [
+      "POST",
       "/api/v1/files",
+    ],
+    [
+      "POST",
+      "/api/v1/fs:mkdir",
     ],
     [
       "POST",
@@ -246,11 +318,19 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/providers",
+    ],
+    [
+      "POST",
       "/api/v1/providers{action}",
     ],
     [
       "POST",
       "/api/v1/providers/{tail}",
+    ],
+    [
+      "POST",
+      "/api/v1/search",
     ],
     [
       "POST",
@@ -318,19 +398,23 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/workspace/fs:search",
+    ],
+    [
+      "POST",
       "/api/v1/workspaces",
     ],
     [
       "POST",
-      "/api/v2/{service}/{method}",
+      "/api/v1/workspaces/{workspace_id}/trust",
     ],
     [
       "POST",
-      "/api/v2/session/{session_id}/{service}/{method}",
+      "/api/v1/workspaces/{workspace_id}/untrust",
     ],
     [
-      "POST",
-      "/api/v2/session/{session_id}/agent/{agent_id}/{service}/{method}",
+      "PUT",
+      "/api/v1/providers/{provider_id}",
     ],
   ],
 }

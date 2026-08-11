@@ -1,8 +1,8 @@
 /**
- * `goal` domain (L4) — wall-clock deadline scheduling contract.
+ * `goal` domain — wall-clock deadline scheduling contract.
  *
- * Defines the App-scoped `IGoalDeadlineScheduler` used by per-agent goal
- * services to measure active time and arm hard wall-clock budget deadlines.
+ * Defines the App-scoped `IGoalDeadlineScheduler` for measuring active time
+ * and arming hard wall-clock budget deadlines.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

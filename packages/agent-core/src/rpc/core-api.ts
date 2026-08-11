@@ -14,7 +14,7 @@ import type {
 import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { SwarmModeTrigger } from '#/agent/swarm';
-import type { ToolInfo } from '#/agent/tool';
+import type { ToolDisclosure, ToolInfo } from '#/agent/tool';
 import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
 import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
@@ -63,6 +63,10 @@ export interface CreateSessionPayload {
   readonly additionalDirs?: readonly string[];
   readonly client?: ClientTelemetryInfo | undefined;
   readonly drainAgentTasksOnStop?: boolean;
+  /** Main-agent profile name (`--agent`): a builtin or agentfile-defined profile. */
+  readonly agentProfile?: string;
+  /** Explicit agentfiles (`--agent-file`); an invalid file fails session creation. */
+  readonly agentFiles?: readonly string[];
 }
 
 export interface CloseSessionPayload {
@@ -81,8 +85,16 @@ export interface ResumeSessionPayload {
   readonly sessionId: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
+  /** Re-select the session's already-bound main profile; a different name fails. */
+  readonly agentProfile?: string;
   /** Include persisted subagent states in the returned replay snapshot. */
   readonly includeSubagents?: boolean;
+  /**
+   * Limit each returned agent replay to the most recent N user turns. Omit to
+   * return the full replay. Lets UI callers that only render the tail avoid
+   * serializing the entire history over the RPC boundary.
+   */
+  readonly replayTurnLimit?: number;
 }
 
 export interface ReloadSessionPayload {
@@ -184,6 +196,14 @@ export interface SessionSummary {
 
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
+  /**
+   * Client-managed session denylist, applied via
+   * `IAgentProfileService.setSessionDisabledTools` before the prompt is
+   * enqueued: full-replace semantics, the profile's own `disallowedTools`
+   * always survive. Omit to keep the persisted value; `[]` clears the client
+   * portion. Ignored by engines without profile support.
+   */
+  readonly disabledTools?: readonly string[];
 }
 export interface RunShellCommandPayload {
   readonly command: string;
@@ -249,6 +269,7 @@ export interface RegisterToolPayload {
   readonly name: string;
   readonly description: string;
   readonly parameters: Record<string, unknown>;
+  readonly disclosure?: ToolDisclosure;
 }
 export interface UnregisterToolPayload {
   readonly name: string;
@@ -306,7 +327,9 @@ export interface ActivatePluginCommandPayload {
 export interface McpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
-  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+  // 'removed' is only produced by the v2 engine (config-driven tombstone);
+  // v1 never emits it, but SDK consumers share this type across engines.
+  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
   readonly toolCount: number;
   readonly error?: string;
 }
@@ -327,6 +350,17 @@ export interface PutGlobalMcpServerPayload {
 
 export interface GlobalMcpServerNamePayload {
   readonly name: string;
+}
+
+export type GlobalMcpServerAuthState =
+  | 'not-applicable'
+  | 'bearer-token'
+  | 'oauth-required'
+  | 'oauth-authorized';
+
+export interface GlobalMcpServerAuthStatus {
+  readonly name: string;
+  readonly authStatus: GlobalMcpServerAuthState;
 }
 
 export type BeginGlobalMcpServerAuthResult =
@@ -506,6 +540,7 @@ export interface SessionAPI extends AgentAPIWithId {
 type SessionAPIWithId = WithSessionId<SessionAPI>;
 
 export interface CoreAPI extends SessionAPIWithId {
+  applyPersistedSecondaryModel: (payload: EmptyPayload & { readonly sessionId: string }) => void;
   getCoreInfo: (payload: EmptyPayload) => CoreInfo;
   getExperimentalFeatures: (payload: EmptyPayload) => readonly ExperimentalFeatureState[];
   getKimiConfig: (payload: GetKimiConfigPayload) => KimiConfig;
@@ -513,6 +548,9 @@ export interface CoreAPI extends SessionAPIWithId {
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
   listGlobalMcpServers: (payload: EmptyPayload) => readonly GlobalMcpServerConfig[];
+  listGlobalMcpServerAuthStatuses: (
+    payload: EmptyPayload,
+  ) => readonly GlobalMcpServerAuthStatus[];
   addGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   updateGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   removeGlobalMcpServer: (payload: GlobalMcpServerNamePayload) => readonly GlobalMcpServerConfig[];

@@ -1,26 +1,25 @@
 /**
- * `file` domain (L2) — `IFileService` implementation.
+ * `file` domain — `IFileService` implementation.
  *
  * Streams uploads into the `IBlobStore` under the `files` scope and keeps a
- * JSON `FileMeta` index in the same store under the `file` scope.
- * Enforces the 50 MiB upload cap while collecting the stream, prunes the
- * index when a referenced blob is missing, and hands downloads back as a lazy
- * `Readable` over `getStream`. Bound at App scope.
+ * JSON `FileMeta` index in the same store under the `file` scope. Uploads are
+ * written incrementally (`putStream`), so their size is bounded by disk, not
+ * memory; the service counts bytes as they flow through to record
+ * `FileMeta.size`. Prunes the index when a referenced blob is missing, and
+ * hands downloads back as a lazy `Readable` over `getStream`. Bound at App
+ * scope.
  */
 
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
 import type { FileMeta } from './fileService';
-
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import {
-  DEFAULT_MAX_UPLOAD_BYTES,
   IFileService,
   fileNotFoundError,
-  fileTooLargeError,
   type FileReadRange,
   type GetResult,
   type SaveOptions,
@@ -71,26 +70,27 @@ export class FileServiceImpl implements IFileService {
     await this.ensureIndex();
 
     const id = `f_${randomUUID()}`;
-    const chunks: Buffer[] = [];
-    let bytes = 0;
-    for await (const chunk of source) {
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
-      bytes += buf.length;
-      if (bytes > DEFAULT_MAX_UPLOAD_BYTES) {
-        throw fileTooLargeError(bytes, DEFAULT_MAX_UPLOAD_BYTES);
+    let size = 0;
+    const counting = async function* (): AsyncIterable<Uint8Array> {
+      for await (const chunk of source) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+        size += buf.length;
+        yield buf;
       }
-      chunks.push(buf);
+    };
+    try {
+      await this.blobs.putStream(BLOB_SCOPE, id, counting());
+    } catch (error) {
+      await this.blobs.delete(BLOB_SCOPE, id).catch(() => undefined);
+      throw error;
     }
-    const data = Buffer.concat(chunks);
-
-    await this.blobs.put(BLOB_SCOPE, id, data);
 
     const now = Date.now();
     const meta: FileMeta = {
       id,
       name: options.name ?? filename,
       media_type: options.mimeType ?? 'application/octet-stream',
-      size: data.length,
+      size,
       created_at: new Date(now).toISOString(),
       ...(options.expiresInSec !== undefined
         ? { expires_at: new Date(now + options.expiresInSec * 1000).toISOString() }
@@ -182,6 +182,6 @@ registerScopedService(
   LifecycleScope.App,
   IFileService,
   FileServiceImpl,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'file',
 );

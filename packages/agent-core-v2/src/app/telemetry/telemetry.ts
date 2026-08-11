@@ -1,5 +1,5 @@
 /**
- * `telemetry` domain (L1) — `ITelemetryService` contract and appender types.
+ * `telemetry` domain — `ITelemetryService` contract and appender types.
  *
  * Layer-1 root service: merges bound context into tracked events and fans
  * them out to one or more `ITelemetryAppender` destinations. App-scoped —
@@ -15,7 +15,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import type {
   StrictPropertyCheck,
   TelemetryEventName,
-  TelemetryEventProperties,
+  TelemetryEventPayload,
 } from './events';
 
 export type TelemetryPrimitive = string | number | boolean | null | undefined;
@@ -45,9 +45,9 @@ export interface ITelemetryService {
   readonly _serviceBrand: undefined;
 
   track(event: string, properties?: TelemetryProperties): void;
-  track2<K extends TelemetryEventName, E extends TelemetryEventProperties<K> = never>(
+  track2<K extends TelemetryEventName, E extends TelemetryEventPayload<K> = never>(
     event: K,
-    properties?: StrictPropertyCheck<TelemetryEventProperties<K>, E>,
+    properties?: StrictPropertyCheck<TelemetryEventPayload<K>, E>,
   ): void;
   withContext(patch: TelemetryContextPatch): ITelemetryService;
   setContext(patch: TelemetryContextPatch): void;

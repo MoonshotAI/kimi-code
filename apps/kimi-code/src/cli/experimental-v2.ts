@@ -1,17 +1,17 @@
 /**
- * Experimental agent-core-v2 engine gate for `kimi -p` (print mode).
+ * Agent engine routing gates for the CLI surfaces.
  *
- * When the master switch `KIMI_CODE_EXPERIMENTAL_FLAG` is truthy, print mode
- * routes to the native agent-core-v2 runner instead of the default v1
- * harness (see `run-prompt.ts`). Read directly from the env (matching
- * `cli/update/rollout.ts`) because the CLI must not depend on the core flag
- * registry. Unset / any non-truthy value keeps the v1 harness.
+ * `kimi -p`, the interactive TUI, and `kimi doctor` use the native
+ * agent-core-v2 path by default. A truthy `KIMI_CODE_LEGACY_FLAG` selects the
+ * legacy agent-core-backed path instead. `KIMI_CODE_EXPERIMENTAL_FLAG` remains
+ * the master switch for experimental features within either engine; it does
+ * not select the engine.
  *
  * Note: `kimi web` always boots kap-server (the agent-core-v2 engine
- * server) — it no longer consults this switch.
+ * server) — it does not consult this switch.
  */
 
-export const KIMI_V2_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
+export const KIMI_LEGACY_ENV = 'KIMI_CODE_LEGACY_FLAG';
 
 const TRUTHY_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -22,8 +22,14 @@ function isTruthyEnv(
   return TRUTHY_VALUES.has((env[key] ?? '').trim().toLowerCase());
 }
 
+export function isLegacyEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return isTruthyEnv(KIMI_LEGACY_ENV, env);
+}
+
 export function isKimiV2Enabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
-  return isTruthyEnv(KIMI_V2_ENV, env);
+  return !isLegacyEnabled(env);
 }

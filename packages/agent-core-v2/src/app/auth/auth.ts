@@ -11,6 +11,8 @@
  */
 
 import type {
+  AuthManagedUserInfoResult,
+  AuthManagedUsageResult,
   BearerTokenProvider,
   KimiOAuthLoginOptions,
   KimiOAuthLoginResult,
@@ -20,7 +22,7 @@ import type {
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
 
-import type { OAuthRef } from '#/app/provider/provider';
+import type { OAuthRef } from '#/kosong/provider/provider';
 
 import { AuthErrors } from './errors';
 import type {
@@ -45,6 +47,8 @@ export interface IOAuthService {
   logout(provider?: string): Promise<OAuthLogoutResponse>;
   status(provider?: string): Promise<AuthStatus>;
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse>;
+  getManagedUsage(provider?: string): Promise<AuthManagedUsageResult>;
+  getManagedUserInfo(provider?: string): Promise<AuthManagedUserInfoResult>;
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined;
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined>;
 }
@@ -62,6 +66,14 @@ export interface IOAuthToolkit {
     oauthRef?: KimiOAuthTokenRef,
   ): Promise<string | undefined>;
   tokenProvider(providerName?: string, oauthRef?: KimiOAuthTokenRef): BearerTokenProvider;
+  getManagedUsage(
+    providerName?: string,
+    options?: { readonly oauthRef?: KimiOAuthTokenRef; readonly baseUrl?: string },
+  ): Promise<AuthManagedUsageResult>;
+  getManagedUserInfo(
+    providerName?: string,
+    options?: { readonly oauthRef?: KimiOAuthTokenRef; readonly baseUrl?: string },
+  ): Promise<AuthManagedUserInfoResult>;
 }
 
 export const IOAuthToolkit: ServiceIdentifier<IOAuthToolkit> =

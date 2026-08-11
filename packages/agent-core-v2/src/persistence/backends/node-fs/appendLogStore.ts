@@ -1,5 +1,5 @@
 /**
- * `storage` domain (L1) — node-fs backend for `IAppendLogStore`.
+ * `storage` domain — node-fs backend for `IAppendLogStore`.
  *
  * Sits on top of `IFileSystemStorageService` and turns a byte stream into an ordered
  * sequence of typed JSON records. Owns the concerns the storage service
@@ -14,9 +14,9 @@
  * retire and hand off to replacement owners. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import {
@@ -278,6 +278,6 @@ registerScopedService(
   LifecycleScope.App,
   IAppendLogStore,
   AppendLogStore,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'storage',
 );

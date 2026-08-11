@@ -5,7 +5,7 @@
  * loads them back on read. Bound at Agent scope.
  */
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 
 import { createDecorator } from "#/_base/di/instantiation";
 

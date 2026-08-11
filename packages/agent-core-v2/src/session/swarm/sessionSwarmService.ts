@@ -1,5 +1,5 @@
 /**
- * `sessionSwarm` domain (L4) — `ISessionSwarmService` implementation.
+ * `sessionSwarm` domain — `ISessionSwarmService` implementation.
  *
  * Runs a batch of agents on behalf of a caller agent: builds an
  * `AgentRunBatchLauncher` on top of the `agentLifecycle` primitives
@@ -8,15 +8,21 @@
  * every in-flight run. The caller ↔ child association is this domain's own
  * business data: requester-side display facts (`subagent.spawned` wire signals
  * carrying the swarm's tool-call context, `subagent.suspended` when a task is
- * requeued after a provider rate limit) are emitted here / via the
- * `agentLifecycle` wrapper helper `mirrorAgentRun`; the lifecycle registry
- * itself stays flat. Bound at Session scope.
+ * requeued after a provider rate limit) are emitted from this layer; the
+ * lifecycle registry itself stays flat. Spawn tasks may carry a concrete
+ * `binding` resolved by the caller; without
+ * one, spawns inherit the caller agent's model and thinking level. Spawn
+ * bindings are resolved through the model catalog before lifecycle allocation.
+ * Resumed agents keep the model recorded in their own wire journal — with
+ * per-subagent models there is no "child follows the parent's current model"
+ * invariant to enforce. Bound at Session scope.
  */
 
-import type { TokenUsage } from '#/app/llmProtocol/usage';
-
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import type { TokenUsage } from '#/kosong/contract/usage';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Error2, ErrorCodes } from '#/errors';
 import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -24,7 +30,8 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IConfigService } from '#/app/config/config';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
@@ -35,6 +42,10 @@ import {
 } from '#/session/agentLifecycle/subagentMetadata';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
+import {
+  subagentDisplayModel,
+  wrapSubagentModelError,
+} from '#/session/subagent/configSection';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -77,11 +88,13 @@ export class SessionSwarmService implements ISessionSwarmService {
   constructor(
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
-    @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
+    @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ILogService private readonly log: ILogService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IConfigService private readonly config: IConfigService,
   ) {}
 
   async getSwarmItem(args: {
@@ -135,23 +148,37 @@ export class SessionSwarmService implements ISessionSwarmService {
   ): Promise<AgentRunAttemptHandle> {
     options.signal.throwIfAborted();
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
+    await this.catalog.ready;
     const profile = this.catalog.get(options.profileName);
     if (profile === undefined) {
-      throw new Error(`Unknown agent type: "${options.profileName}"`);
+      throw new Error2(ErrorCodes.PROFILE_UNKNOWN, `Unknown agent type: "${options.profileName}"`, {
+        details: { profileName: options.profileName },
+      });
     }
     const callerData = caller.accessor.get(IAgentProfileService).data();
     if (callerData.modelAlias === undefined) {
-      throw new Error('Caller agent has no model bound');
+      throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Caller agent has no model bound', {
+        details: { agentId: callerAgentId },
+      });
     }
-    const child = await this.lifecycle.create({
-      binding: {
-        profile: profile.name,
-        model: callerData.modelAlias,
-        thinking: callerData.thinkingLevel,
-        cwd: callerData.cwd,
-      },
-      labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
-    });
+    const binding = options.binding ?? {
+      model: callerData.modelAlias,
+      thinking: callerData.thinkingLevel,
+    };
+    let child: IAgentScopeHandle;
+    try {
+      this.modelCatalog.get(binding.model);
+      child = await this.lifecycle.create({
+        binding: {
+          profile: profile.name,
+          model: binding.model,
+          thinking: binding.thinking,
+        },
+        labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
+      });
+    } catch (error) {
+      throw wrapSubagentModelError(error, binding.model, callerData.modelAlias);
+    }
     child.accessor
       .get(IAgentPermissionModeService)
       .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
@@ -165,6 +192,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       description: options.description,
       swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
+      model: subagentDisplayModel(this.config, binding.model),
     });
     const promptText = await applyProfilePromptPrefix(profile, options.prompt, {
       cwd: this.sessionContext.cwd,
@@ -188,10 +216,10 @@ export class SessionSwarmService implements ISessionSwarmService {
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
     const child = this.requireHandle(agentId, 'Agent instance');
     this.requireIdleSubagent(agentId, child);
-    this.realignChildModel(caller, child);
     const profileName =
       child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
     if (!retryTurn) {
+      const resumedModel = child.accessor.get(IAgentProfileService).data().modelAlias;
       emitAgentRunSpawned(caller, agentId, {
         profileName,
         parentToolCallId: options.parentToolCallId,
@@ -199,6 +227,10 @@ export class SessionSwarmService implements ISessionSwarmService {
         description: options.description,
         swarmIndex: options.swarmIndex,
         runInBackground: options.runInBackground,
+        model:
+          resumedModel === undefined
+            ? undefined
+            : subagentDisplayModel(this.config, resumedModel),
       });
     }
     const request = retryTurn
@@ -233,31 +265,37 @@ export class SessionSwarmService implements ISessionSwarmService {
 
   private requireHandle(agentId: string, label: string): IAgentScopeHandle {
     const handle = this.lifecycle.get(agentId);
-    if (handle === undefined) throw new Error(`${label} "${agentId}" does not exist`);
-    return handle;
-  }
-
-  private realignChildModel(caller: IAgentScopeHandle, child: IAgentScopeHandle): void {
-    const modelAlias = caller.accessor.get(IAgentProfileService).data().modelAlias;
-    if (modelAlias === undefined) {
-      throw new Error('Caller agent has no model bound');
+    if (handle === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `${label} "${agentId}" does not exist`, {
+        details: { agentId },
+      });
     }
-    child.accessor.get(IAgentProfileService).update({ modelAlias });
+    return handle;
   }
 
   private requireIdleSubagent(agentId: string, child: IAgentScopeHandle): void {
     if (child.accessor.get(IAgentLoopService).status().state === 'running') {
-      throw new Error(`Agent instance "${agentId}" is already running and cannot run concurrently`);
+      throw new Error2(
+        ErrorCodes.AGENT_ALREADY_RUNNING,
+        `Agent instance "${agentId}" is already running and cannot run concurrently`,
+        { details: { agentId } },
+      );
     }
   }
 
   private async requireOwnedSubagent(callerAgentId: string, agentId: string): Promise<void> {
     const meta = await this.agentMeta(agentId);
     if (!isSubagentMeta(meta)) {
-      throw new Error(`Agent instance "${agentId}" is not a subagent`);
+      throw new Error2(ErrorCodes.AGENT_NOT_A_SUBAGENT, `Agent instance "${agentId}" is not a subagent`, {
+        details: { agentId },
+      });
     }
     if (subagentParentAgentId(meta) !== callerAgentId) {
-      throw new Error(`Agent instance "${agentId}" does not belong to this parent agent`);
+      throw new Error2(
+        ErrorCodes.AGENT_NOT_OWNED,
+        `Agent instance "${agentId}" does not belong to this parent agent`,
+        { details: { agentId, callerAgentId } },
+      );
     }
   }
 
@@ -273,6 +311,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionSwarmService,
   SessionSwarmService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'sessionSwarm',
 );

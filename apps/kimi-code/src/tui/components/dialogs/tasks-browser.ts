@@ -516,9 +516,14 @@ export class TasksBrowserApp extends Container implements Focusable {
   // ── right: detail + preview stack ────────────────────────────────────
 
   private renderRightStack(width: number, height: number): string[] {
-    // Detail gets ~8 rows (or 40% of body, whichever is larger). Preview
-    // takes the rest. Both rendered as separate frames stacked vertically.
-    const detailHeight = Math.max(8, Math.min(Math.floor(height * 0.4), height - 5));
+    // Detail wants ~10 rows (or 40% of body, whichever is larger) — agent tasks
+    // carry Task ID / Status / Description / Agent ID / Agent type / Model /
+    // Effort / Time. Clamp it so the preview frame keeps its borders plus one
+    // content row even near the minimum terminal height.
+    const detailHeight = Math.min(
+      Math.max(10, Math.min(Math.floor(height * 0.4), height - 5)),
+      Math.max(3, height - 3),
+    );
     const previewHeight = height - detailHeight;
     return [
       ...this.renderDetailFrame(width, detailHeight),
@@ -552,6 +557,12 @@ export class TasksBrowserApp extends Container implements Focusable {
     }
     if (task.kind === 'agent' && task.subagentType !== undefined) {
       lines.push(`${label('Agent type:')}${value(task.subagentType)}`);
+    }
+    if (task.kind === 'agent' && task.model !== undefined) {
+      lines.push(`${label('Model:')}${value(task.model)}`);
+    }
+    if (task.kind === 'agent' && task.thinkingEffort !== undefined) {
+      lines.push(`${label('Effort:')}${value(task.thinkingEffort)}`);
     }
     if (task.kind === 'question') {
       lines.push(`${label('Questions:')}${currentTheme.fg('textMuted', String(task.questionCount))}`);

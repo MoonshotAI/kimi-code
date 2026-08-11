@@ -27,7 +27,8 @@ import {
   type ServiceRegistration,
   type TestInstantiationService,
 } from '#/_base/di/test';
-import { LifecycleScope, type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { ILogService, type ILogService as LogService } from '#/_base/log/log';
 import { IWireService } from '#/wire/wire';
@@ -43,13 +44,10 @@ import {
 } from '#/app/sessionExport/sessionExportService';
 import { writeExportZip } from '#/app/sessionExport/zip';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
-import {
-  ISessionLifecycleService,
-  type SessionLifecycleHooks,
-} from '#/app/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
+import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { Error2 } from '#/errors';
-import { createHooks } from '#/hooks';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
@@ -175,7 +173,6 @@ describe('sessionExport', () => {
       request: { sessionId: 'ses_repeated_export', version: '1.0.0-test' },
       summary,
     });
-    // Cross the next second boundary so the second export gets a distinct timestamp.
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 1100 - (Date.now() % 1000)));
     const second = await exportSessionDirectory({
       request: { sessionId: 'ses_repeated_export', version: '1.0.0-test' },
@@ -517,6 +514,60 @@ describe('sessionExport', () => {
     );
   });
 
+  it('includes the desktop app log when given', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_demo', 'ses_desktop_log');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+    const desktopLogPath = join(tmp, 'logs', 'kimi-code-desktop.log');
+    await mkdir(join(tmp, 'logs'), { recursive: true });
+    const desktopLog = '2026-07-27T00:00:00.000Z INFO  [renderer] hello\n';
+    await writeFile(desktopLogPath, desktopLog, 'utf-8');
+    const outputPath = join(tmp, 'desktop-log.zip');
+
+    const result = await exportSessionDirectory({
+      request: {
+        sessionId: 'ses_desktop_log',
+        outputPath,
+        version: '1.0.0-test',
+      },
+      summary: {
+        id: 'ses_desktop_log',
+        sessionDir,
+      },
+      desktopLogPath,
+    });
+
+    expect(result.entries).toContain('logs/kimi-desktop.log');
+    expect(result.manifest.desktopLogPath).toBe('logs/kimi-desktop.log');
+    await expect(readZipEntry(outputPath, 'logs/kimi-desktop.log')).resolves.toEqual(
+      Buffer.from(desktopLog, 'utf8'),
+    );
+  });
+
+  it('skips a missing desktop app log silently', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_demo', 'ses_desktop_log_missing');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+
+    const result = await exportSessionDirectory({
+      request: {
+        sessionId: 'ses_desktop_log_missing',
+        outputPath: join(tmp, 'desktop-log-missing.zip'),
+        version: '1.0.0-test',
+      },
+      summary: {
+        id: 'ses_desktop_log_missing',
+        sessionDir,
+      },
+      desktopLogPath: join(tmp, 'logs', 'does-not-exist.log'),
+    });
+
+    expect(result.entries).not.toContain('logs/kimi-desktop.log');
+    expect(result.manifest.desktopLogPath).toBeUndefined();
+  });
+
   it('rejects when a collected file disappears before it can be archived', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
     const removedPath = join(tmp, 'removed-state.json');
@@ -842,37 +893,62 @@ function registerSessionExportServices(
   reg.defineInstance(ILogService, options.appLog ?? stubLog());
   reg.defineInstance(ISessionIndex, {
     _serviceBrand: undefined,
-    list: async () => ({ items: options.summary === undefined ? [] : [options.summary] }),
+    prepare: async () => ({ state: 'uninitialized' as const, degradedCount: 0 }),
+    status: () => ({ state: 'uninitialized' as const, degradedCount: 0 }),
+    listRecent: async () => ({ items: options.summary === undefined ? [] : [options.summary] }),
     get: async () => options.summary,
-    countActive: async () => (options.summary === undefined || options.summary.archived ? 0 : 1),
+    count: async () => (options.summary === undefined || options.summary.archived ? 0 : 1),
+    remove: async () => {},
   });
-  reg.defineInstance(ISessionLifecycleService, {
+  reg.defineInstance(IWorkspaceLifecycleService, {
     _serviceBrand: undefined,
-    onDidCreateSession: noopEvent,
-    onDidCloseSession: noopEvent,
-    onDidArchiveSession: noopEvent,
-    onDidForkSession: noopEvent,
-    hooks: createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
-      'onDidCreateSession',
-      'onWillCloseSession',
-    ]),
-    create: async () => {
-      throw new Error('create should not be called by session export');
+    onDidMaterializeHandler: noopEvent,
+    handlerFor: async () => {
+      throw new Error('handlerFor should not be called by session export');
     },
-    get: () => options.lifecycleHandle,
-    list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
-    resume: async () => options.lifecycleHandle,
-    close: async () => {},
-    archive: async () => {},
-    restore: async () => options.lifecycleHandle,
-    fork: async () => {
-      throw new Error('fork should not be called by session export');
+    handlers: {
+      list: () => [
+        {
+          id: 'ws_live',
+          kind: LifecycleScope.Workspace,
+          accessor: accessorFrom([
+            [
+              ISessionLifecycleService,
+              {
+                _serviceBrand: undefined,
+                onWillCreateSession: noopEvent,
+                onDidCreateSession: noopEvent,
+                onDidCloseSession: noopEvent,
+                onDidArchiveSession: noopEvent,
+                onDidForkSession: noopEvent,
+                create: async () => {
+                  throw new Error('create should not be called by session export');
+                },
+                get: () => options.lifecycleHandle,
+                list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
+                resume: async () => options.lifecycleHandle,
+                close: async () => {},
+                archive: async () => {},
+                restore: async () => options.lifecycleHandle,
+                delete: async () => {},
+                fork: async () => {
+                  throw new Error('fork should not be called by session export');
+                },
+                createChild: async () => {
+                  throw new Error('createChild should not be called by session export');
+                },
+              } satisfies ISessionLifecycleService,
+            ],
+          ]),
+          dispose: () => {},
+        },
+      ],
     },
-    createChild: async () => {
-      throw new Error('createChild should not be called by session export');
+    sessions: {
+      list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle.id]),
     },
   });
-  reg.defineInstance(IWorkspaceRegistry, {
+  reg.defineInstance(IWorkspaceService, {
     _serviceBrand: undefined,
     list: async () => [],
     get: async (id) => ({
@@ -882,7 +958,6 @@ function registerSessionExportServices(
       createdAt: 1,
       lastOpenedAt: 2,
     }),
-    resolveAliasIds: async (id) => [id],
     createOrTouch: async (root) => ({
       id: 'ws_created',
       root,
@@ -961,6 +1036,7 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
     get: (agentId) => agents.find((agent) => agent.id === agentId),
     list: () => agents,
     remove: async () => {},
+    broadcastPermissionMode: () => {},
   };
 }
 function testManifest(sessionId: string): ExportSessionManifest {

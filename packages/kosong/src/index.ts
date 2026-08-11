@@ -32,6 +32,7 @@ export type { ProviderConfig, ProviderType } from './providers';
 // kwargs, `thinking.keep` extra body).
 export { KimiChatProvider } from './providers/kimi';
 export type { ExtraBody, GenerationKwargs, KimiOptions, ThinkingConfig } from './providers/kimi';
+export { classifyKimiQuotaError } from './providers/kimi-errors';
 
 // Model capability matrix
 export { isUnknownCapability, UNKNOWN_CAPABILITY } from './capability';
@@ -43,8 +44,16 @@ export {
   catalogModelToCapability,
   catalogProviderModels,
   inferWireType,
+  resolveCatalogImport,
 } from './catalog';
-export type { Catalog, CatalogModel, CatalogModelEntry, CatalogProviderEntry } from './catalog';
+export type {
+  Catalog,
+  CatalogModel,
+  CatalogModelEntry,
+  CatalogProviderEntry,
+  CatalogImportInvalidReason,
+  CatalogImportResolution,
+} from './catalog';
 
 // Core functions
 export { generate } from './generate';
@@ -62,11 +71,14 @@ export {
   APIConnectionError,
   APIContextOverflowError,
   APIEmptyResponseError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   APIRequestTooLargeError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
+  createAbortError,
+  isAbortError,
   isContextOverflowStatusError,
   isImageFormatError,
   isProviderRateLimitError,
@@ -74,6 +86,7 @@ export {
   isRequestTooLargeStatusError,
   isRetryableGenerateError,
   isToolExchangeAdjacencyError,
+  throwIfAbortError,
 } from './errors';
 
 /**

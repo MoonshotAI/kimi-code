@@ -3,10 +3,8 @@
  *
  * These zod schemas define the request/response shapes of the v1 session
  * endpoints this adapter backs (`POST /sessions/{id}/profile`,
- * `GET /sessions/{id}/status`, session warnings); the transports validate
- * against them and the adapter's contract consumes the inferred types.
- * Field-level changes here are wire breaks — see the schema-fidelity rule in
- * `server-align.md`.
+ * `GET /sessions/{id}/status`, session warnings). Field-level changes here
+ * are wire breaks.
  */
 
 import { z } from 'zod';
@@ -87,7 +85,7 @@ export const sessionStatusResponseSchema = z.object({
   plan_mode: z.boolean(),
   swarm_mode: z.boolean(),
   context_tokens: z.number().int().nonnegative(),
-  max_context_tokens: z.number().int().nonnegative(),
+  max_context_tokens: z.number().int().nonnegative().optional(),
   context_usage: z.number().min(0).max(1),
 });
 export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;

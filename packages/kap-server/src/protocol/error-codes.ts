@@ -22,6 +22,12 @@ export const ErrorCode = {
   VALIDATION_FAILED: 40001,
   /** JSON 解析失败、字段类型错 */
   REQUEST_MALFORMED: 40002,
+  /** provider 由 OAuth 托管登录管理，禁止经 REST 删除（走 /oauth/logout） */
+  PROVIDER_OAUTH_MANAGED: 40003,
+  /** 目录条目不可导入（rejected 协议 / 缺 base_url / base_url 非法） */
+  CATALOG_IMPORT_INVALID: 40004,
+  /** 注册表（api.json）不可导入（URL 不可达 / 文档校验失败 / 无有效条目） */
+  REGISTRY_IMPORT_INVALID: 40005,
 
   /** daemon 没有任何 provider 配置 */
   AUTH_PROVISIONING_REQUIRED: 40110,
@@ -62,6 +68,10 @@ export const ErrorCode = {
   TERMINAL_NOT_FOUND: 40414,
   /** skill_name 不存在 */
   SKILL_NOT_FOUND: 40415,
+  /** tool_call_id 不存在，或该调用没有对应的 plan（非 ExitPlanMode） */
+  TOOL_CALL_NOT_FOUND: 40416,
+  /** 目录（models.dev catalog）中不存在该条目 */
+  CATALOG_ENTRY_NOT_FOUND: 40417,
 
   /** session 有正在进行的 prompt，拒绝新请求 */
   SESSION_BUSY: 40901,
@@ -104,6 +114,10 @@ export const ErrorCode = {
   FS_ALREADY_EXISTS: 40919,
   /** goal 只允许主 agent 使用 */
   GOAL_UNSUPPORTED_AGENT: 40920,
+  /** 创建时 provider_id 已存在 */
+  PROVIDER_ALREADY_EXISTS: 40921,
+  /** page_token 损坏 / 版本不符 / 与当前查询条件不匹配，需从首页重新拉取 */
+  PAGE_TOKEN_MISMATCH: 40922,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,
@@ -112,7 +126,7 @@ export const ErrorCode = {
   /** 临时文件已过期 */
   FILE_EXPIRED: 41003,
 
-  /** 上传超 50MB */
+  /** 文件过大（如 session 导出超限；/files 上传不设上限） */
   FILE_TOO_LARGE: 41301,
   /** fs.read 超 10MB */
   FS_TOO_LARGE: 41302,
@@ -130,6 +144,8 @@ export const ErrorCode = {
   INTERNAL_ERROR: 50001,
   /** 写入 session 持久化失败 */
   PERSISTENCE_FAILURE: 50003,
+  /** models.dev 目录拉取失败且无内置快照可兜底 */
+  CATALOG_UNAVAILABLE: 50004,
 
   /** tool 执行抛错 */
   TOOL_EXECUTION_FAILED: 60001,

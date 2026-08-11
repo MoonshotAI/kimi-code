@@ -25,7 +25,7 @@ import type {
   TaskOrigin,
   UserPromptOrigin,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
-import { messageContentSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import { messageContentSchema } from './message';
 import type { HookResultEvent } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
 import type {
   CompactionBlockedEvent,
@@ -64,9 +64,11 @@ import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permission
 import type { WarningEvent } from '@moonshot-ai/agent-core-v2/agent/profile/profileService';
 import type { PluginCommandActivatedEvent } from '@moonshot-ai/agent-core-v2/agent/rpc/rpcService';
 import type {
+  ShellCompletedEvent,
   ShellOutputEvent,
   ShellStartedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
+
 import type { TurnStepRetryingEvent } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
 import type { AgentTaskStatus } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import type {
@@ -75,8 +77,8 @@ import type {
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type { FinishReason } from '@moonshot-ai/agent-core-v2/app/llmProtocol/finishReason';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/app/llmProtocol/usage';
+import type { FinishReason } from '@moonshot-ai/agent-core-v2/kosong/contract/provider';
+import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
 import type {
   SubagentCompletedEvent,
   SubagentFailedEvent,
@@ -305,6 +307,12 @@ export const kimiErrorCodeSchema = z.enum([
   'session.question_handler_error',
   'session.init_failed',
   'agent.not_found',
+  'agent.already_exists',
+  'agent.already_running',
+  'agent.not_a_subagent',
+  'agent.not_owned',
+  'agent.type_not_allowed',
+  'agent.max_tokens_exceeded',
   'activity.agent_busy',
   'activity.cancelling',
   'activity.disposing',
@@ -341,15 +349,19 @@ export const kimiErrorCodeSchema = z.enum([
   'skill.not_found',
   'skill.type_unsupported',
   'skill.name_empty',
+  'skill.parse_failed',
+  'skill.nested_too_deep',
   'records.write_failed',
   'compaction.failed',
   'compaction.unable',
   'task.task_id_empty',
+  'task.limit_exceeded',
   'usage.turn_id_conflict',
   'mcp.server_not_found',
   'mcp.server_disabled',
   'mcp.startup_failed',
   'mcp.tool_name_collision',
+  'mcp.oauth_failed',
   'message.not_found',
   'plugin.not_found',
   'plugin.load_failed',
@@ -374,6 +386,13 @@ export const kimiErrorCodeSchema = z.enum([
   'fs.too_many_results',
   'fs.grep_timeout',
   'fs.git_unavailable',
+  'wire.migration_missing',
+  'storage.permission_denied',
+  'storage.disk_full',
+  'cron.expression_invalid',
+  'web.invalid_url',
+  'web.private_address',
+  'web.fetch_failed',
   'validation.failed',
   'not_implemented',
   'internal',
@@ -415,6 +434,8 @@ export const agentTaskInfoSchema = taskInfoBaseSchema.extend({
   kind: z.literal('agent'),
   agentId: z.string().optional(),
   subagentType: z.string().optional(),
+  model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 });
 
 export const questionTaskInfoSchema = taskInfoBaseSchema.extend({
@@ -450,6 +471,7 @@ export const toolUpdateSchema = z.object({
 export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
   serverName: z.string(),
   authorizationUrl: z.string(),
+  expiresAt: z.number().optional(),
 }) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
 
 export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked']) satisfies z.ZodType<TurnEndReason>;
@@ -538,6 +560,14 @@ export const sessionMetaUpdatedEventSchema = z.object({
   patch: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const agentCreatedEventSchema = z.object({
+  type: z.literal('agent.created'),
+});
+
+export const agentDisposedEventSchema = z.object({
+  type: z.literal('agent.disposed'),
+});
+
 export const sessionCreatedEventSchema = z.object({
   type: z.literal('event.session.created'),
   session: sessionSchema,
@@ -588,6 +618,24 @@ export const configChangedEventSchema = z.object({
   config: configResponseSchema,
 });
 
+export const configWarningEventSchema = z.object({
+  type: z.literal('event.config.warning'),
+  warnings: z.array(
+    z.object({
+      domain: z.string().optional(),
+      message: z.string(),
+    }),
+  ),
+});
+
+export const diUnitChangedEventSchema = z.object({
+  type: z.literal('event.di.unit_changed'),
+  scope: z.string().min(1),
+  token: z.string().min(1),
+  state: z.enum(['Pending', 'Activating', 'Active', 'Unloading', 'Failed']),
+  error: z.string().optional(),
+});
+
 export const goalUpdatedEventSchema = z.object({
   type: z.literal('goal.updated'),
   snapshot: goalSnapshotSchema.nullable(),
@@ -627,6 +675,7 @@ export const turnStartedEventSchema = z.object({
   type: z.literal('turn.started'),
   turnId: z.number(),
   origin: promptOriginSchema,
+  prompt: z.string().optional(),
 });
 
 export const turnEndedEventSchema = z.object({
@@ -635,6 +684,9 @@ export const turnEndedEventSchema = z.object({
   reason: turnEndReasonSchema,
   error: kimiErrorPayloadSchema.optional(),
   durationMs: z.number().optional(),
+  interruptReason: z
+    .enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked'])
+    .optional(),
 });
 
 export const turnStepStartedEventSchema = z.object({
@@ -733,6 +785,7 @@ export const shellOutputEventSchema = z.object({
   type: z.literal('shell.output'),
   commandId: z.string(),
   update: toolUpdateSchema,
+  taskId: z.string().optional(),
 }) satisfies z.ZodType<ShellOutputEvent>;
 
 export const shellStartedEventSchema = z.object({
@@ -740,6 +793,13 @@ export const shellStartedEventSchema = z.object({
   commandId: z.string(),
   taskId: z.string(),
 }) satisfies z.ZodType<ShellStartedEvent>;
+
+export const shellCompletedEventSchema = z.object({
+  type: z.literal('shell.completed'),
+  commandId: z.string(),
+  isError: z.boolean(),
+  taskId: z.string().optional(),
+}) satisfies z.ZodType<ShellCompletedEvent>;
 
 export const toolResultEventSchema = z.object({
   type: z.literal('tool.result'),
@@ -761,6 +821,8 @@ export const subagentSpawnedEventSchema = z.object({
   description: z.string().optional(),
   swarmIndex: z.number().optional(),
   runInBackground: z.boolean(),
+  model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 }) satisfies z.ZodType<SubagentSpawnedEvent>;
 
 export const subagentStartedEventSchema = z.object({
@@ -879,7 +941,7 @@ export const toolListUpdatedEventSchema = z.object({
 export const mcpServerStatusPayloadSchema = z.object({
   name: z.string(),
   transport: z.enum(['stdio', 'http']),
-  status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth']),
+  status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth', 'removed']),
   toolCount: z.number(),
   error: z.string().optional(),
 }) satisfies z.ZodType<McpServerStatusPayload>;
@@ -893,6 +955,8 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   errorEventSchema,
   warningEventSchema,
   agentStatusUpdatedEventSchema,
+  agentCreatedEventSchema,
+  agentDisposedEventSchema,
   sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
   workspaceCreatedEventSchema,
@@ -900,6 +964,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceDeletedEventSchema,
   sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
+  diUnitChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
   pluginCommandActivatedEventSchema,
@@ -917,6 +982,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   toolProgressEventSchema,
   shellOutputEventSchema,
   shellStartedEventSchema,
+  shellCompletedEventSchema,
   toolResultEventSchema,
   toolListUpdatedEventSchema,
   mcpServerStatusEventSchema,

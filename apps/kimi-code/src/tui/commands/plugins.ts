@@ -1,8 +1,16 @@
 import { homedir as osHomedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
-import type { PluginInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
+import {
+  log,
+  type CapabilityStatus,
+  type PluginInfo,
+  type PluginSummary,
+  type Session,
+} from '@moonshot-ai/kimi-code-sdk';
+import { Markdown, Spacer } from '@moonshot-ai/pi-tui';
 
+import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import {
   PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
@@ -19,9 +27,15 @@ import {
   buildPluginsListLines,
 } from '../components/messages/plugins-status-panel';
 import { UsagePanelComponent } from '../components/messages/usage-panel';
+import { createMarkdownTheme } from '../theme/pi-tui-theme';
 import { formatErrorMessage } from '../utils/event-payload';
-import { formatPluginSourceLabel, isOfficialPluginSource } from '../utils/plugin-source-label';
-import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
+import {
+  formatPluginSourceLabel,
+  isOfficialPluginInstall,
+  isOfficialPluginSource,
+} from '../utils/plugin-source-label';
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV, QUOTA_CONSUMING_PLUGIN_IDS } from '#/constant/app';
+import { loadPluginMarketplace, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 import { openUrl } from '#/utils/open-url';
 import type { SlashCommandHost } from './dispatch';
 
@@ -45,11 +59,46 @@ interface ShowPluginMcpPickerOptions {
   readonly serverHint?: PluginMcpServerHint;
 }
 
+/** The plugin-management surface `/plugins` operates on. */
+type PluginApi = Pick<
+  Session,
+  | 'listPlugins'
+  | 'installPlugin'
+  | 'setPluginEnabled'
+  | 'setPluginMcpServerEnabled'
+  | 'removePlugin'
+  | 'reloadPlugins'
+  | 'getPluginInfo'
+>;
+
+/**
+ * Resolve the plugin-management API. On the v2 engine plugin state is
+ * app-global, so a session-less startup still gets a working `/plugins`
+ * through the harness's global facade; on v1 (and once a session exists) the
+ * session's own API is used.
+ */
+async function resolvePluginApi(host: SlashCommandHost): Promise<PluginApi> {
+  if (host.session !== undefined) return host.session;
+  if (!host.engineV2) {
+    throw new Error(NO_ACTIVE_SESSION_MESSAGE);
+  }
+  return {
+    listPlugins: () => host.harness.listPlugins(),
+    installPlugin: (source) => host.harness.installPlugin(source),
+    setPluginEnabled: (id, enabled) => host.harness.setPluginEnabled(id, enabled),
+    setPluginMcpServerEnabled: (id, server, enabled) =>
+      host.harness.setPluginMcpServerEnabled(id, server, enabled),
+    removePlugin: (id) => host.harness.removePlugin(id),
+    reloadPlugins: () => host.harness.reloadPlugins(),
+    getPluginInfo: (id) => host.harness.getPluginInfo(id),
+  };
+}
+
 export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: string): Promise<void> {
   const args = rawArgs.trim().split(/\s+/).filter((part) => part.length > 0);
   const sub = args[0];
   const rest = args.slice(1);
-  const session = host.requireSession();
+  const session = await resolvePluginApi(host);
 
   try {
     if (sub === undefined) {
@@ -84,7 +133,7 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       const marketplaceSource = rest.join(' ').trim() || undefined;
       await showPluginsPicker(host, {
         // Custom marketplaces often omit `tier`, so their entries land on the
-        // Third-party tab (entry.tier !== 'official'). Open there when a custom
+        // Curated tab (entry.tier !== 'official'). Open there when a custom
         // source is supplied; otherwise the default catalog's official entries
         // make Official the right landing tab.
         initialTab: marketplaceSource === undefined ? 'official' : 'third-party',
@@ -152,21 +201,76 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
   }
 }
 
+/**
+ * Resolve the capability API. Like plugin state, capability state is
+ * app-global on the v2 engine, so a session-less startup still gets
+ * readiness and installs through the harness's global facade; with a live
+ * session the session's own API is used (v1 included, where the capability
+ * surface then reports itself unavailable).
+ */
+type CapabilityApi = Pick<Session, 'listCapabilities' | 'getCapability' | 'installCapability'>;
+
+async function resolveCapabilityApi(host: SlashCommandHost): Promise<CapabilityApi> {
+  if (host.session !== undefined) return host.session;
+  if (!host.engineV2) {
+    throw new Error(NO_ACTIVE_SESSION_MESSAGE);
+  }
+  return host.harness;
+}
+
+function logCapabilityStatus(capability: CapabilityStatus, installed?: boolean): void {
+  const payload = {
+    capabilityId: capability.id,
+    pluginId: capability.pluginId,
+    installed,
+    supported: capability.supported,
+    state: capability.state,
+    version: capability.version,
+    install: capability.install,
+    steps: capability.steps,
+  };
+  const hasStepIssues = capability.steps.some((step) => step.state !== 'ok');
+  if (
+    capability.install.error !== undefined ||
+    (installed !== false && hasStepIssues)
+  ) {
+    log.warn('capability needs attention', payload);
+  } else {
+    log.info('capability status', payload);
+  }
+}
+
 async function showPluginsPicker(
   host: SlashCommandHost,
   options?: ShowPluginsPickerOptions,
 ): Promise<void> {
   let plugins: readonly PluginSummary[];
   try {
-    plugins = await host.requireSession().listPlugins();
+    plugins = await (await resolvePluginApi(host)).listPlugins();
   } catch (error) {
     host.showError(`Failed to load plugins: ${formatErrorMessage(error)}`);
     return;
   }
 
+  let capabilities: readonly CapabilityStatus[] = [];
+  if (host.engineV2) {
+    try {
+      capabilities = await (await resolveCapabilityApi(host)).listCapabilities();
+    } catch (error) {
+      log.warn('capability status unavailable', { error });
+    }
+  }
+
+  const installedIds = new Set(plugins.map((plugin) => plugin.id));
+  for (const capability of capabilities) {
+    logCapabilityStatus(capability, installedIds.has(capability.pluginId ?? capability.id));
+  }
+
   const panel = new PluginsPanelComponent({
     installed: plugins,
-    installedIds: new Set(plugins.map((plugin) => plugin.id)),
+    installedIds,
+    capabilities,
+    catalogIsDefault: isDefaultMarketplaceCatalog(options?.marketplaceSource),
     initialTab: options?.initialTab,
     selectedId: options?.selectedId,
     pluginHint: options?.pluginHint,
@@ -181,35 +285,73 @@ async function showPluginsPicker(
     onCancel: () => {
       host.restoreEditor();
     },
-    // Every tab except Custom needs the catalog: Official/Third-party list it,
+    // Every tab except Custom needs the catalog: Official/Curated list it,
     // and Installed uses it to show update badges. The Installed/Custom tabs
     // keep working even when the marketplace is unreachable (badges simply stay
     // hidden until data arrives).
     onRequestMarketplace: () => {
-      void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
+      void loadMarketplaceCatalog(host, panel, options?.marketplaceSource, capabilities);
     },
   });
   host.mountEditorReplacement(panel);
   // Kick off the catalog fetch for any tab that needs it: Installed uses it for
-  // update badges, Official/Third-party list it. Custom never reads the catalog,
+  // update badges, Official/Curated list it. Custom never reads the catalog,
   // so skip the fetch there. Done here (after `panel` is initialized) rather
   // than inside the component constructor, because the callback above closes
   // over `panel`.
   if (options?.initialTab !== 'custom') {
     panel.setMarketplaceLoading();
-    void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
+    void loadMarketplaceCatalog(host, panel, options?.marketplaceSource, capabilities);
   }
+}
+
+/**
+ * Adapt a capability from the engine's registry into a catalog row. The
+ * engine is the single source of truth for what the built-in capabilities
+ * are — the CLI only renders them. The `capability:<id>` source marker
+ * routes installs through the capability flow (never a plain plugin
+ * install), so the row needs no real URL.
+ */
+function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketplaceEntry {
+  return {
+    id: capability.id,
+    displayName: capability.displayName,
+    description: capability.description,
+    tier: 'official',
+    source: `capability:${capability.id}`,
+    builtIn: true,
+  };
+}
+
+/**
+ * Injection is part of the DEFAULT catalog experience only: any explicit
+ * replacement (the slash-command source or a user-set env override) opts out
+ * wholesale. The dev marketplace server started by scripts/dev.mjs serves
+ * this repo's own catalog and marks itself, so it still counts as default.
+ */
+function isDefaultMarketplaceCatalog(
+  source: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (source !== undefined) return false;
+  if (env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] === undefined) return true;
+  return env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1';
 }
 
 async function loadMarketplaceCatalog(
   host: SlashCommandHost,
   panel: PluginsPanelComponent,
-  source?: string,
+  source: string | undefined,
+  capabilities: readonly CapabilityStatus[],
 ): Promise<void> {
   try {
     const marketplace = await loadPluginMarketplace({
       workDir: host.state.appState.workDir,
       source,
+      builtInEntries:
+        host.engineV2 && isDefaultMarketplaceCatalog(source)
+          ? capabilities.map(capabilityMarketplaceEntry)
+          : undefined,
     });
     panel.setMarketplace(marketplace.plugins, marketplace.source);
   } catch (error) {
@@ -225,7 +367,7 @@ async function showPluginMcpPicker(
 ): Promise<void> {
   let info: PluginInfo;
   try {
-    info = await host.requireSession().getPluginInfo(id);
+    info = await (await resolvePluginApi(host)).getPluginInfo(id);
   } catch (error) {
     host.showError(`Failed to load plugin MCP servers: ${formatErrorMessage(error)}`);
     return;
@@ -254,7 +396,7 @@ async function showPluginMcpPicker(
 async function confirmRemovePlugin(host: SlashCommandHost, id: string): Promise<boolean> {
   let displayName = id;
   try {
-    displayName = (await host.requireSession().getPluginInfo(id)).displayName;
+    displayName = (await (await resolvePluginApi(host)).getPluginInfo(id)).displayName;
   } catch {
     // Keep the confirmation available even when plugin details cannot be loaded.
   }
@@ -292,6 +434,145 @@ async function confirmInstallTrust(
       }),
     );
   });
+}
+
+const CAPABILITY_POLL_INTERVAL_MS = 700;
+const CAPABILITY_POLL_ATTEMPTS = 260; // ~3 minutes of runtime setup budget
+
+/** Client-injected v2 entries install their runtime and plugin together.
+ * Trust keys on the parser-proof `builtIn` flag — the `capability:<id>`
+ * source string stays purely diagnostic. */
+function isCapabilityEntry(host: SlashCommandHost, entry: PluginMarketplaceEntry): boolean {
+  return host.engineV2 && entry.builtIn === true;
+}
+
+/**
+ * Closed-set plugin id check for the post-remove note. What must not happen
+ * is answering membership by running `listCapabilities()`, which fires every
+ * entry's detector (seconds of probes) just to print one hint line.
+ */
+function isCapabilityPluginId(host: SlashCommandHost, id: string): boolean {
+  return (
+    host.engineV2 &&
+    (id === 'kimi-cu' || id === 'kimi-cu-win' || id === 'kimi-webbridge')
+  );
+}
+
+/** Poll a background capability install until it settles (or we run out of budget). */
+async function pollCapabilityInstall(
+  host: SlashCommandHost,
+  id: string,
+): Promise<CapabilityStatus | undefined> {
+  const api = await resolveCapabilityApi(host);
+  let previousProgress = '';
+  for (let attempt = 0; attempt < CAPABILITY_POLL_ATTEMPTS; attempt += 1) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, CAPABILITY_POLL_INTERVAL_MS);
+    });
+    const status = await api.getCapability(id);
+    if (!status.install.running) return status;
+    const progress = `${status.install.step ?? ''}:${status.install.percent ?? ''}`;
+    if (progress !== previousProgress) {
+      previousProgress = progress;
+      log.info('capability install progress', {
+        capabilityId: id,
+        step: status.install.step,
+        percent: status.install.percent,
+      });
+    }
+  }
+  return undefined;
+}
+
+export const __pluginsCommandInternals = {
+  isCapabilityEntry,
+  installCapabilityFromPanel,
+  isDefaultMarketplaceCatalog,
+  pollCapabilityInstall,
+  removePlugin,
+};
+
+async function installCapabilityFromPanel(
+  host: SlashCommandHost,
+  panel: PluginsPanelComponent,
+  entry: PluginMarketplaceEntry,
+): Promise<void> {
+  const label = entry.displayName;
+  // Capability entries are official by construction; the trust prompt is
+  // reserved for unreviewed third-party plugins.
+  panel.setInstalling(truncateForStatus(label));
+  host.state.ui.requestRender();
+  const api = await resolveCapabilityApi(host);
+  log.info('capability install requested', { capabilityId: entry.id });
+  try {
+    // An install already running (started from another panel or client) is
+    // followed, not restarted — the service rejects duplicate starts even
+    // though the original is healthy.
+    const alreadyRunning = await api
+      .getCapability(entry.id)
+      .then((status) => status.install.running, () => false);
+    if (!alreadyRunning) {
+      await api.installCapability(entry.id);
+    } else {
+      log.info('following running capability install', { capabilityId: entry.id });
+    }
+  } catch (error) {
+    log.warn('capability install failed to start', { capabilityId: entry.id, error });
+    panel.clearInstalling();
+    host.state.ui.requestRender();
+    host.showError(`Failed to install ${label}: ${formatErrorMessage(error)}`);
+    host.restoreEditor();
+    return;
+  }
+  let result: CapabilityStatus | undefined;
+  try {
+    result = await pollCapabilityInstall(host, entry.id);
+  } catch (error) {
+    log.warn('capability install polling failed', { capabilityId: entry.id, error });
+    result = undefined;
+  }
+  panel.clearInstalling();
+  // Close the panel so the result lines land in the transcript, matching the
+  // plain plugin install flow.
+  host.restoreEditor();
+  if (result === undefined) {
+    host.showStatus(`${label} installation is still running in the background.`);
+    return;
+  }
+  logCapabilityStatus(result);
+  if (result.install.error !== undefined) {
+    host.showError(`${label} installation failed: ${result.install.error}`);
+    host.showStatus('Fix the reported error, then install again from /plugins.', 'warning');
+    return;
+  }
+  if (result.state !== 'ready') {
+    const permissionsRequired =
+      entry.id === 'kimi-cu' &&
+      result.steps.some((step) => step.id === 'permissions' && step.state !== 'ok');
+    if (permissionsRequired) {
+      host.showStatus(
+        'Grant Accessibility and Screen Recording in System Settings → Privacy & Security.',
+        'warning',
+      );
+    } else {
+      host.showError(
+        `${label} installation did not complete. Check the logs and install again from /plugins.`,
+      );
+    }
+    host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+    return;
+  }
+  if (entry.id === 'kimi-webbridge') {
+    host.showNotice(`${label} is installed.`);
+    host.state.transcriptContainer.addChild(new Spacer(1));
+    host.state.transcriptContainer.addChild(
+      new Markdown(WEBBRIDGE_POST_INSTALL_MARKDOWN, 2, 0, createMarkdownTheme()),
+    );
+    host.state.ui.requestRender();
+    return;
+  }
+  host.showStatus(`${label} is installed.`);
+  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 
 async function installFromPanel(
@@ -340,7 +621,7 @@ async function applyPluginEnabled(
   enabled: boolean,
   showStatus = true,
 ): Promise<string> {
-  const session = host.requireSession();
+  const session = await resolvePluginApi(host);
   await session.setPluginEnabled(id, enabled);
   let info: PluginInfo | undefined;
   try {
@@ -395,6 +676,10 @@ async function handlePluginsPanelSelection(
       await showPluginsPicker(host, { initialTab: 'installed' });
       return;
     case 'install':
+      if (isCapabilityEntry(host, selection.entry)) {
+        await installCapabilityFromPanel(host, panel, selection.entry);
+        return;
+      }
       await installFromPanel(
         host,
         panel,
@@ -427,11 +712,9 @@ async function handlePluginMcpSelection(
 ): Promise<void> {
   switch (selection.kind) {
     case 'toggle':
-      await host.requireSession().setPluginMcpServerEnabled(
-        selection.pluginId,
-        selection.server,
-        selection.enabled,
-      );
+      await (
+        await resolvePluginApi(host)
+      ).setPluginMcpServerEnabled(selection.pluginId, selection.server, selection.enabled);
       await showPluginMcpPicker(host, selection.pluginId, {
         selectedServer: selection.server,
         serverHint: {
@@ -447,8 +730,14 @@ async function handlePluginMcpSelection(
 }
 
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
-  await host.requireSession().removePlugin(id);
+  await (await resolvePluginApi(host)).removePlugin(id);
   host.showStatus(`Removed ${id}.`);
+  if (isCapabilityPluginId(host, id)) {
+    host.showStatus(
+      'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Restart Kimi Code before reinstalling from the Official tab.',
+    );
+    return;
+  }
   host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 
@@ -456,7 +745,7 @@ async function renderPluginsList(
   host: SlashCommandHost,
   plugins?: readonly PluginSummary[],
 ): Promise<void> {
-  const currentPlugins = plugins ?? (await host.requireSession().listPlugins());
+  const currentPlugins = plugins ?? (await (await resolvePluginApi(host)).listPlugins());
   const title = ` Plugins (${currentPlugins.length}) `;
   const panel = new UsagePanelComponent(
     () => buildPluginsListLines({ plugins: currentPlugins }),
@@ -468,7 +757,7 @@ async function renderPluginsList(
 }
 
 async function renderPluginInfo(host: SlashCommandHost, id: string): Promise<void> {
-  const info = await host.requireSession().getPluginInfo(id);
+  const info = await (await resolvePluginApi(host)).getPluginInfo(id);
   const panel = new UsagePanelComponent(
     () => buildPluginsInfoLines({ info }),
     'primary',
@@ -482,7 +771,7 @@ async function installPluginFromSource(
   host: SlashCommandHost,
   source: string,
 ): Promise<void> {
-  const session = host.requireSession();
+  const session = await resolvePluginApi(host);
   const beforeList = await session.listPlugins();
   const summary = await session.installPlugin(
     resolvePluginInstallSource(source, host.state.appState.workDir),
@@ -491,6 +780,19 @@ async function installPluginFromSource(
 }
 
 const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
+
+const WEBBRIDGE_POST_INSTALL_MARKDOWN = [
+  '*Two steps left to use Kimi WebBridge:*',
+  '1. Install the browser extension',
+  '',
+  '   - [Chrome Web Store](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc)',
+  '   - [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg)',
+  '   - [Manual installation guide](https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension)',
+  '',
+  '2. Run `/reload` or `/new` to apply it.',
+].join('\n');
+
+const PLUGIN_QUOTA_NOTE = 'Note: This plugin consumes your quota.';
 
 function showPluginInstallResult(
   host: SlashCommandHost,
@@ -506,6 +808,11 @@ function showPluginInstallResult(
   const action = describeInstallAction(previous, summary);
   host.showStatus(`${action} (${summary.id}).${mcpHint}`);
   host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+  // Gate on provenance, not just the id: a local/GitHub fork whose manifest
+  // reuses a billed plugin's id is not the official quota-consuming build.
+  if (QUOTA_CONSUMING_PLUGIN_IDS.includes(summary.id) && isOfficialPluginInstall(summary)) {
+    host.showStatus(PLUGIN_QUOTA_NOTE, 'warning');
+  }
 }
 
 function describeInstallAction(
@@ -546,10 +853,13 @@ function truncateForStatus(input: string): string {
 }
 
 async function reloadPlugins(host: SlashCommandHost): Promise<void> {
-  const summary = await host.requireSession().reloadPlugins();
+  const summary = await (await resolvePluginApi(host)).reloadPlugins();
   const line = `Reload: +${summary.added.length} -${summary.removed.length}` +
     (summary.errors.length > 0 ? ` (${summary.errors.length} errors)` : '');
   host.showStatus(line);
+  // Rebuild the TUI's plugin slash-command list from the reloaded service so
+  // newly added/enabled commands resolve in this session-less UI right away.
+  await host.refreshPluginCommands(host.session);
 }
 
 function resolvePluginInstallSource(source: string, workDir: string): string {

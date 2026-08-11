@@ -28,7 +28,6 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import type {
   ContentPart,
   ModelCapability,
-  VideoURLPart,
   VideoUploadInput as ProviderVideoUploadInput,
 } from '@moonshot-ai/kosong';
 import { z } from 'zod';
@@ -40,6 +39,7 @@ import type { TelemetryClient } from '../../../telemetry';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../../support/file-type';
+import { deliverVideoContent, type VideoUploader } from '../../support/video-delivery';
 import {
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_DECODE_BYTES,
@@ -62,7 +62,7 @@ import readMediaDescriptionHead from './read-media.md?raw';
 // ── Constants ────────────────────────────────────────────────────────
 
 const MAX_MEDIA_MEGABYTES = 100;
-const MAX_MEDIA_BYTES = MAX_MEDIA_MEGABYTES * 1024 * 1024;
+export const MAX_MEDIA_BYTES = MAX_MEDIA_MEGABYTES * 1024 * 1024;
 
 function buildImageDeliveryLimitError(input: {
   readonly finalBytes: number;
@@ -99,7 +99,7 @@ function buildFullResolutionLimitError(path: string, finalBytes: number): string
 
 export type VideoUploadInput = ProviderVideoUploadInput;
 
-export type VideoUploader = (input: VideoUploadInput) => Promise<VideoURLPart>;
+export type { VideoUploader };
 
 // ── Input schema ─────────────────────────────────────────────────────
 
@@ -275,6 +275,26 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
     this.compressTelemetry =
       telemetry === undefined ? undefined : { client: telemetry, source: 'read_media' };
     this.imageLimits = imageLimits ?? new ImageLimits();
+  }
+
+  /**
+   * Deliver a video through the provider's upload channel when available,
+   * falling back to an inline base64 part when the channel is missing or
+   * broken (e.g. the provider has no files endpoint) — a failed upload must
+   * not turn the whole read into an error. Auth rejections (401/403) are
+   * the exception: they must surface, because they drive credential
+   * refresh and a clear auth error instead of masking a bad token behind
+   * an inline payload the next request will also reject.
+   */
+  private videoContentPart(
+    data: Buffer,
+    mimeType: string,
+    safePath: string,
+  ): Promise<ContentPart> {
+    return deliverVideoContent(
+      { data, mimeType, filename: safePath.split(/[\\/]/).at(-1) },
+      this.videoUploader,
+    );
   }
 
   resolveExecution(args: ReadMediaFileInput): ToolExecution {
@@ -534,18 +554,8 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             dimensions = { width: compressed.originalWidth, height: compressed.originalHeight };
           }
         }
-      } else if (this.videoUploader !== undefined) {
-        mediaPart = await this.videoUploader({
-          data,
-          mimeType: fileType.mimeType,
-          filename: safePath.split(/[\\/]/).at(-1),
-        });
       } else {
-        const base64 = data.toString('base64');
-        mediaPart = {
-          type: 'video_url',
-          videoUrl: { url: `data:${fileType.mimeType};base64,${base64}` },
-        };
+        mediaPart = await this.videoContentPart(data, fileType.mimeType, safePath);
       }
 
       const tag = fileType.kind === 'image' ? 'image' : 'video';

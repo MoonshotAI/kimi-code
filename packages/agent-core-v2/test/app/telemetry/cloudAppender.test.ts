@@ -11,7 +11,7 @@ import {
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { CloudAppender, type CloudAppenderOptions } from '#/app/telemetry/cloudAppender';
 
-import { stubBootstrap } from '../bootstrap/stubs';
+import { stubBootstrap, stubClientIdentity } from '../bootstrap/stubs';
 
 interface CapturedRequest {
   readonly url: string;
@@ -50,7 +50,7 @@ function baseOptions(
   const { homeDir: dir = '', storage, ...rest } = overrides;
   return {
     storage: storage ?? new FileStorageService(dir),
-    bootstrap: { ...stubBootstrap(), clientVersion: '1.0.0' },
+    bootstrap: { ...stubBootstrap(), clientIdentity: { ...stubClientIdentity, version: '1.0.0' } },
     deviceId: 'dev',
     appName: 'test-app',
     sleep: async () => {},
@@ -124,6 +124,25 @@ describe('CloudAppender', () => {
     const event = requests[0]?.body.events[0];
     expect(event?.['session_id']).toBe('sess42');
     expect(event?.['context_model']).toBe('switched-model');
+  });
+
+  it('uses the event sessionId for top-level session_id when it differs from appender context', async () => {
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        sessionId: 'default-session',
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track('evt', { sessionId: 'event-session' });
+    await appender.flush();
+
+    expect(requests[0]?.body.events[0]?.['session_id']).toBe('event-session');
   });
 
   it('sends Authorization header when a token is provided', async () => {

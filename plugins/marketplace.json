@@ -5,10 +5,19 @@
       "id": "kimi-datasource",
       "tier": "official",
       "displayName": "Kimi Datasource",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "description": "Official datasource workflows.",
       "keywords": ["data", "mcp"],
       "source": "./official/kimi-datasource"
+    },
+    {
+      "id": "kimi-webbridge",
+      "tier": "official",
+      "displayName": "Kimi WebBridge",
+      "version": "1.11.3",
+      "description": "Control your real browser from Kimi Code.",
+      "keywords": ["browser", "automation", "webbridge"],
+      "source": "./official/kimi-webbridge"
     },
     {
       "id": "superpowers",

@@ -47,6 +47,11 @@ describe('toolDescriptorSchema', () => {
     expect(toolDescriptorSchema.parse(tool).input_schema).toBeNull();
   });
 
+  it('round-trips the optional v2 active flag', () => {
+    const tool: ToolDescriptor = { ...sample, active: false };
+    expect(toolDescriptorSchema.parse(tool).active).toBe(false);
+  });
+
   it('rejects missing name', () => {
     expect(toolDescriptorSchema.safeParse({ ...sample, name: '' }).success).toBe(false);
   });

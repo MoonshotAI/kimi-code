@@ -1,53 +1,55 @@
 /**
  * Service panel descriptors — the handwritten *override* layer of the right
  * sidebar. The sidebar's baseline is the dynamic channel list served by
- * `GET /api/v2/channels` (every wire-exposed Service with its methods); a
- * descriptor here replaces the generic card for its Service with a curated
- * one: a `fetch` that reads its inspectable state, optional `actions` that
- * trigger its methods, and live-event `refreshOn` prefixes. The generic
- * `ServiceCard` renders them; adding a curated panel is one entry here, no
- * component code.
+ * `GET /api/v1/debug/channels` (every wire-exposed Service with its methods);
+ * a descriptor here replaces the generic card for its Service with a curated
+ * one: a `fetch` that reads its inspectable state and optional `actions`
+ * that trigger its methods. The generic `ServiceCard` renders them; adding a
+ * curated panel is one entry here, no component code.
+ *
+ * Panels refresh manually (Load / Refresh buttons): the live event streams
+ * that used to drive `refreshOn` refetches went away with the v2 socket
+ * (`/api/v2/ws`).
  *
  * The proxies are typed by the real `agent-core-v2` contracts at the call
  * site, but panels treat them as `AnyService` so one descriptor shape covers
  * every Service.
  */
 
-import { IAuthSummaryService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
-import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
-import { IProviderService } from '@moonshot-ai/agent-core-v2/app/provider/provider';
-
-import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import { ISessionInitService } from '@moonshot-ai/agent-core-v2/session/sessionInit/sessionInit';
-import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
-import { ISessionWorkspaceContext } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceContext';
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import { IAgentContextSizeService } from '@moonshot-ai/agent-core-v2/agent/contextSize/contextSize';
 import { IAgentGoalService } from '@moonshot-ai/agent-core-v2/agent/goal/goal';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
-import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
+import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/agent/swarm/swarm';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
+import { IAgentTokenCountingService } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
 import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
 import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
+import { IAuthSummaryService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
+import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
+import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
+import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
+import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
+import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
+import { ISessionInitService } from '@moonshot-ai/agent-core-v2/session/sessionInit/sessionInit';
+import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
+import { ISessionWorkspaceContext } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceContext';
 
 /** Loosely-typed view of a scoped service proxy (every member is a remote call). */
-export type AnyService = Record<string, (arg?: unknown) => Promise<unknown>>;
+export type AnyService = Record<string, (...args: unknown[]) => Promise<unknown>>;
 
 /** Invoke a method on a loose proxy; the proxy materializes every member. */
-export function call(svc: AnyService, method: string, arg?: unknown): Promise<unknown> {
+export function call(svc: AnyService, method: string, ...args: unknown[]): Promise<unknown> {
   const fn = svc[method];
   if (fn === undefined) {
     return Promise.reject(new Error(`no such method on proxy: ${method}`));
   }
-  return fn(arg);
+  return fn(...args);
 }
 
 export interface PanelAction {
@@ -63,11 +65,9 @@ export interface ServicePanelDef {
   readonly id: string;
   readonly label: string;
   /** Wire scope the Service is called on (`app` maps to the `core` route). */
-  readonly scope: 'app' | 'session' | 'agent';
+  readonly scope: 'app' | 'workspace' | 'session' | 'agent';
   readonly fetch?: (svc: AnyService) => Promise<unknown>;
   readonly actions?: readonly PanelAction[];
-  /** Live-event `type` prefixes that refetch this panel. */
-  readonly refreshOn?: readonly string[];
 }
 
 const setModeModes = ['manual', 'auto', 'yolo'];
@@ -156,7 +156,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     label: 'AgentActivityView',
     scope: 'agent',
     fetch: (svc) => call(svc, 'state'),
-    refreshOn: ['agent.activity.'],
   },
   {
     id: String(IAgentProfileService),
@@ -172,21 +171,18 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
       { label: 'Set model', input: 'Model id', run: (svc, model) => call(svc, 'setModel', model) },
       { label: 'Refresh system prompt', run: (svc) => call(svc, 'refreshSystemPrompt') },
     ],
-    refreshOn: ['agent.status.updated'],
   },
   {
     id: String(IAgentUsageService),
     label: 'AgentUsageService',
     scope: 'agent',
     fetch: (svc) => call(svc, 'status'),
-    refreshOn: ['turn.step.completed', 'agent.status.updated', 'turn.ended'],
   },
   {
-    id: String(IAgentContextSizeService),
-    label: 'AgentContextSizeService',
+    id: String(IAgentTokenCountingService),
+    label: 'AgentTokenCountingService',
     scope: 'agent',
     fetch: (svc) => call(svc, 'get'),
-    refreshOn: ['turn.', 'context.', 'compaction.'],
   },
   {
     id: String(IAgentPermissionModeService),
@@ -214,7 +210,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
       { label: 'cancel', run: (svc) => call(svc, 'cancel') },
       { label: 'clear', run: (svc) => call(svc, 'clear') },
     ],
-    refreshOn: ['turn.ended'],
   },
   {
     id: String(IAgentGoalService),
@@ -226,7 +221,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
       { label: 'resume', run: (svc) => call(svc, 'resumeGoal', {}) },
       { label: 'cancel', danger: true, run: (svc) => call(svc, 'cancelGoal', {}) },
     ],
-    refreshOn: ['goal.updated'],
   },
   {
     id: String(IAgentTaskService),
@@ -234,10 +228,14 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     scope: 'agent',
     fetch: (svc) => call(svc, 'list'),
     actions: [
-      { label: 'Stop task', input: 'Task id', danger: true, run: (svc, id) => call(svc, 'stop', id) },
+      {
+        label: 'Stop task',
+        input: 'Task id',
+        danger: true,
+        run: (svc, id) => call(svc, 'stop', id),
+      },
       { label: 'stopAll', danger: true, run: (svc) => call(svc, 'stopAll') },
     ],
-    refreshOn: ['task.', 'subagent.'],
   },
   {
     id: String(IAgentToolRegistryService),
@@ -247,7 +245,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
       const tools = (await call(svc, 'list')) as readonly { name?: string }[];
       return { count: tools.length, names: tools.map((t) => t.name) };
     },
-    refreshOn: ['tool.list.updated'],
   },
   {
     id: String(IAgentMcpService),
@@ -255,9 +252,12 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     scope: 'agent',
     fetch: (svc) => call(svc, 'list'),
     actions: [
-      { label: 'Reconnect server', input: 'Server name', run: (svc, name) => call(svc, 'reconnect', name) },
+      {
+        label: 'Reconnect server',
+        input: 'Server name',
+        run: (svc, name) => call(svc, 'reconnect', name),
+      },
     ],
-    refreshOn: ['mcp.server.status'],
   },
   {
     id: String(IAgentSwarmService),
@@ -280,8 +280,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
         input: 'Steps',
         run: (svc, n) => call(svc, 'undoHistory', { count: Number(n) }),
       },
-      { label: 'beginCompaction', run: (svc) => call(svc, 'beginCompaction', {}) },
-      { label: 'clearContext', danger: true, run: (svc) => call(svc, 'clearContext', {}) },
     ],
   },
 ];

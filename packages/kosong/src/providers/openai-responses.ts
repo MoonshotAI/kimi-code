@@ -1,5 +1,6 @@
 import {
   APIContextOverflowError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   ChatProviderError,
   isContextOverflowErrorCode,
@@ -23,6 +24,7 @@ import { usesOpenAIResponsesDeveloperRole } from './capability-registry';
 import {
   convertOpenAIError,
   isMediaPart,
+  isOpenAIInsufficientQuotaCode,
   TOOL_RESULT_MEDIA_PLACEHOLDER,
   TOOL_RESULT_MEDIA_PROMPT,
   type ToolMessageConversion,
@@ -251,6 +253,14 @@ function errorFromOpenAIResponsesEvent(
   if (isContextOverflowErrorCode(code)) {
     return new APIContextOverflowError(400, fullMessage);
   }
+  // Quota/balance exhaustion first — otherwise an `insufficient_quota` event
+  // falls through to the base ChatProviderError (whose unclassified fallback
+  // is retryable), and a quota message with an embedded status_code=429 would
+  // classify as a retryable rate limit. Only OpenAI's own documented code is
+  // recognized here; vendor-specific quota signals live with their vendor.
+  if (isOpenAIInsufficientQuotaCode(code)) {
+    return new APIProviderQuotaExhaustedError(fullMessage);
+  }
   if (code === 'rate_limit_exceeded' || readEmbeddedStatusCode(message) === 429) {
     return new APIProviderRateLimitError(fullMessage);
   }
@@ -344,10 +354,24 @@ export interface OpenAIResponsesOptions {
   baseUrl?: string | undefined;
   model: string;
   maxOutputTokens?: number | undefined;
+  /**
+   * The effort value that encodes "thinking off" on this wire (e.g. `'none'`
+   * for xai grok). When set, `withThinking('off')` sends it as
+   * `reasoning_effort` instead of omitting the field — required by models
+   * whose default is to reason.
+   */
+  offEffort?: string | undefined;
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
   toolMessageConversion?: ToolMessageConversion | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => OpenAI;
+  /**
+   * Construction-time free-form request kwargs (e.g. `prompt_cache_key` for
+   * session affinity), merged into every request at generate time. Explicit
+   * first-class options (`maxOutputTokens`) win on conflict; the
+   * `withGenerationKwargs` morph layers on top of both.
+   */
+  generationKwargs?: OpenAIResponsesGenerationKwargs | undefined;
 }
 
 export interface OpenAIResponsesGenerationKwargs {
@@ -1025,6 +1049,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   private _baseUrl: string | undefined;
   private _defaultHeaders: Record<string, string> | undefined;
   private _generationKwargs: OpenAIResponsesGenerationKwargs;
+  private _offEffort: string | undefined;
   private _toolMessageConversion: ToolMessageConversion;
   private _client: OpenAI | undefined;
   private _httpClient: unknown;
@@ -1037,7 +1062,8 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     this._defaultHeaders = options.defaultHeaders;
     this._model = options.model;
     this._stream = true; // Responses API always supports streaming
-    this._generationKwargs = {};
+    this._generationKwargs = { ...options.generationKwargs };
+    this._offEffort = options.offEffort;
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
     this._clientFactory = options.clientFactory;
@@ -1145,7 +1171,10 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): OpenAIResponsesChatProvider {
-    const reasoningEffort = effort === 'off' || effort === 'on' ? undefined : effort;
+    // 'on' sends no effort field; 'off' sends the model's declared off value
+    // (e.g. 'none') when one is configured, and omits the field otherwise.
+    const reasoningEffort =
+      effort === 'off' ? this._offEffort : effort === 'on' ? undefined : effort;
     const clone = this._clone();
     clone._generationKwargs = {
       ...clone._generationKwargs,

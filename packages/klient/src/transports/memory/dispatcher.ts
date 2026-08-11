@@ -3,7 +3,7 @@
  * against a live engine scope and mirrors kap-server's dispatcher semantics
  * (reflection call, non-function members are property reads, `main` agent
  * auto-materialized via `ensureMainAgent`). Scope routing walks
- * `ISessionLifecycleService` / `IAgentLifecycleService` exactly like the
+ * `IWorkspaceLifecycleService` / `IAgentLifecycleService` exactly like the
  * server's `resolveScope`. Every argument, result, and event payload passes
  * through `wireClone` (a JSON round-trip), so consumers observe
  * byte-identical data no matter whether the call crossed a socket or stayed
@@ -14,7 +14,8 @@
  */
 
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
+import { IWorkspaceLifecycleService } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/workspaceLifecycle';
+import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/sessionLookup';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
@@ -39,6 +40,7 @@ export function wireClone<T>(value: T): T {
 
 export interface MemoryDispatcher {
   call(scope: ScopeRef, service: string, method: string, args: unknown[]): Promise<unknown>;
+  stream(scope: ScopeRef, service: string, method: string, args: unknown[]): AsyncIterable<unknown>;
   listen(
     scope: ScopeRef,
     source: EventSourceRef,
@@ -50,7 +52,7 @@ export interface MemoryDispatcher {
 const REQUEST_INVALID = 40001;
 const NOT_FOUND = 40404;
 
-type ScopeKind = 'core' | 'session' | 'agent';
+type ScopeKind = 'core' | 'workspace' | 'session' | 'agent';
 
 interface ResolvedScope {
   readonly kind: ScopeKind;
@@ -60,8 +62,14 @@ interface ResolvedScope {
 export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   /** Mirrors kap-server's `resolveScope`, incl. main-agent materialization. */
   async function resolveScope(scope: ScopeRef): Promise<ResolvedScope> {
+    if (scope.workspaceId !== undefined) {
+      const handler = await root.accessor
+        .get(IWorkspaceLifecycleService)
+        .handlerFor({ workspaceId: scope.workspaceId });
+      return { kind: 'workspace', like: handler };
+    }
     if (scope.sessionId === undefined) return { kind: 'core', like: root };
-    const session = root.accessor.get(ISessionLifecycleService).get(scope.sessionId);
+    const session = getLiveSessionById(root.accessor, scope.sessionId);
     if (session === undefined) {
       throw new RPCError(NOT_FOUND, `session not found: ${scope.sessionId}`);
     }
@@ -155,6 +163,96 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       const clonedArgs = args.map(wireClone);
       const result = await (member as (...a: unknown[]) => unknown).apply(instance, clonedArgs);
       return wireClone(result);
+    },
+
+    stream(scope, service, method, args): AsyncIterable<unknown> {
+      // Special case: modelResolver.generate routes to
+      // getRequester(modelId).request(input, signal, params) because the
+      // catalog has no `generate` method — the facade synthesises the call.
+      if (service === 'modelResolver' && method === 'generate') {
+        return {
+          [Symbol.asyncIterator]() {
+            let source: AsyncIterator<unknown> | undefined;
+            let started: Promise<void> | undefined;
+            const controller = new AbortController();
+
+            const ensureStarted = (): Promise<void> => {
+              started ??= (async () => {
+                const resolved = await resolveScope(scope);
+                const catalog = resolveService(resolved, 'modelResolver');
+                const [modelId, input, params] = args;
+                const requester = (catalog as { getRequester(id: string): { request(...a: unknown[]): AsyncIterable<unknown> } })
+                  .getRequester(modelId as string);
+                const iterable = requester.request(
+                  wireClone(input),
+                  controller.signal,
+                  wireClone(params),
+                );
+                source = iterable[Symbol.asyncIterator]();
+              })();
+              return started;
+            };
+
+            return {
+              async next() {
+                await ensureStarted();
+                const result = await source!.next();
+                if (result.done) return { done: true, value: undefined };
+                return { done: false, value: wireClone(result.value) };
+              },
+              async return(value?: unknown) {
+                controller.abort();
+                await source?.return?.(value);
+                return { done: true as const, value: undefined };
+              },
+            };
+          },
+        };
+      }
+
+      // The underlying service method returns an AsyncIterable; we wire-clone
+      // each yielded chunk so in-process consumers observe the same data as
+      // networked ones.
+      return {
+        [Symbol.asyncIterator]() {
+          let source: AsyncIterator<unknown> | undefined;
+          let started: Promise<void> | undefined;
+
+          const ensureStarted = (): Promise<void> => {
+            started ??= (async () => {
+              const resolved = await resolveScope(scope);
+              const instance = resolveService(resolved, service);
+              const member = instance[method];
+              if (member === undefined) {
+                throw new RPCError(REQUEST_INVALID, `method not found: ${service}.${method}`);
+              }
+              if (typeof member !== 'function') {
+                throw new RPCError(REQUEST_INVALID, `not a streaming method: ${service}.${method}`);
+              }
+              const clonedArgs = args.map(wireClone);
+              const iterable = (member as (...a: unknown[]) => unknown).apply(
+                instance,
+                clonedArgs,
+              ) as AsyncIterable<unknown>;
+              source = iterable[Symbol.asyncIterator]();
+            })();
+            return started;
+          };
+
+          return {
+            async next() {
+              await ensureStarted();
+              const result = await source!.next();
+              if (result.done) return { done: true, value: undefined };
+              return { done: false, value: wireClone(result.value) };
+            },
+            async return(value?: unknown) {
+              await source?.return?.(value);
+              return { done: true as const, value: undefined };
+            },
+          };
+        },
+      };
     },
 
     listen(scope, source, handler, onError) {

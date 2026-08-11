@@ -120,6 +120,33 @@ export class APIProviderRateLimitError extends APIStatusError {
 }
 
 /**
+ * HTTP 429 that specifically means the account's quota or balance is
+ * exhausted, as opposed to a transient rate limit. Deliberately NOT a
+ * subclass of `APIProviderRateLimitError`: a rate limit clears on its own
+ * (retry/requeue helps), while quota exhaustion is deterministic until the
+ * account is recharged — so this class is excluded from retry and from the
+ * rate-limit requeue/suspend paths.
+ *
+ * Observed shapes: Moonshot returns `error.type =
+ * "exceeded_current_quota_error"` with wording that varies by account state
+ * ("You exceeded your current token quota: ... please check your account
+ * balance" vs "Your account ... is suspended due to insufficient balance,
+ * please recharge your account ..."); OpenAI uses `insufficient_quota` as
+ * both `error.type` and `error.code`.
+ */
+export class APIProviderQuotaExhaustedError extends APIStatusError {
+  constructor(
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+    traceId?: string | null,
+  ) {
+    super(429, message, requestId, retryAfterMs, traceId);
+    this.name = 'APIProviderQuotaExhaustedError';
+  }
+}
+
+/**
  * The API returned an empty response (no content, no tool calls).
  */
 export class APIEmptyResponseError extends ChatProviderError {
@@ -140,6 +167,49 @@ export class APIEmptyResponseError extends ChatProviderError {
   }
 }
 
+/**
+ * The single standard abort shape for the wire layer: a DOMException named
+ * `'AbortError'`, matching the platform's own `AbortSignal.reason`
+ * convention. Every user-cancellation path — the `generate()` driver,
+ * provider error converters, stream wrappers — throws exactly this shape so
+ * upstream code can recognize cancellation without SDK knowledge.
+ */
+export function createAbortError(): DOMException {
+  return new DOMException('The operation was aborted.', 'AbortError');
+}
+
+/**
+ * Whether `error` is any abort shape that can surface from a provider call:
+ *
+ *  - the standard abort DOMException (`createAbortError`, `signal.reason`),
+ *  - a bare `Error` named `'AbortError'` (generic abort helpers), or
+ *  - an SDK user-abort (`APIUserAbortError` in both the OpenAI and Anthropic
+ *    SDKs) — recognized structurally by constructor name so this module
+ *    stays SDK-free.
+ */
+export function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') return true;
+  if (error instanceof Error && error.name === 'AbortError') return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    error.constructor?.name === 'APIUserAbortError'
+  );
+}
+
+/**
+ * The abort guard for provider error converters. Must run at the very front
+ * of every error classification chain: when `error` is abort-shaped this
+ * THROWS the standard abort DOMException — it never returns a converted
+ * error — so a user cancellation can never be misclassified as a retryable
+ * provider failure. Does nothing for non-abort errors.
+ */
+export function throwIfAbortError(error: unknown): void {
+  if (isAbortError(error)) {
+    throw createAbortError();
+  }
+}
+
 export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
     return true;
@@ -148,6 +218,12 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIStatusError) {
+    // Quota/balance exhaustion is a 429 but deterministic until the account
+    // is recharged — retrying can never succeed, so it fails fast instead of
+    // burning the whole retry budget (~2-3 minutes of backoff).
+    if (error instanceof APIProviderQuotaExhaustedError) {
+      return false;
+    }
     // Transient statuses worth retrying: 408 (request timeout), 409
     // (lock/conflict timeout), 429 (rate limit), 5xx (server errors) and 529
     // (provider overloaded — the "engine is currently overloaded" case).
@@ -490,6 +566,12 @@ const STRUCTURAL_REQUEST_MESSAGE_PATTERNS = [
   // when a provider reused a call id (e.g. per-response counter ids) earlier
   // in the session; the strict resend dedupes the ids.
   /tool_use[\s\S]*ids must be unique/,
+  // Moonshot / Kimi rejects a message whose serialized form carries nothing —
+  // no content, no tool_calls, an empty reasoning_content: "the message at
+  // position N with role 'assistant' must not be empty". Seen when a filtered
+  // response left an assistant message holding only an empty thinking part in
+  // the history; the strict resend's projection drops such vacuous messages.
+  /message at position \d+ with role ['"`]?[a-z]+['"`]? must not be empty/,
 ] as const;
 
 export function isRecoverableRequestStructureError(error: unknown): boolean {
@@ -502,6 +584,9 @@ export function isRecoverableRequestStructureError(error: unknown): boolean {
 }
 
 export function isProviderRateLimitError(error: unknown): boolean {
+  // Quota exhaustion is a 429 but not a rate limit: the rate-limit reactions
+  // (retry, requeue, suspend) cannot help until the account is recharged.
+  if (error instanceof APIProviderQuotaExhaustedError) return false;
   if (error instanceof APIProviderRateLimitError) return true;
 
   const statusCode = getStatusCode(error);

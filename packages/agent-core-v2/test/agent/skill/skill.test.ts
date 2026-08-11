@@ -6,16 +6,18 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentSkillService } from '#/agent/skill/skill';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { summarizeSkill } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { AgentSkillService } from '#/agent/skill/skillService';
 import {
   MAX_SKILL_QUERY_DEPTH,
   NestedSkillTooDeepError,
-  SkillTool,
   SkillToolInputSchema,
-} from '#/agent/skill/tools/skill';
+} from '#/agent/tools/skill/skill';
+import { SkillTool } from '#/agent/tools/skill/skillTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { Turn } from '#/agent/loop/loop';
@@ -68,7 +70,6 @@ describe('AgentSkillService', () => {
         reg.definePartialInstance(IAgentPromptService, {
           enqueue: ({ message }: { message: ContextMessage }) => { prompted.push(message); return Promise.resolve({ launched: Promise.resolve(fakeTurn()) } as never); },
           retry: () => Promise.resolve(undefined),
-          undo: () => 0,
           clear: () => {},
         });
         registerTestAgentWireServices(reg, 'wire/skill-test');
@@ -77,6 +78,7 @@ describe('AgentSkillService', () => {
           register: () => ({ dispose: () => {} }),
         });
         reg.defineInstance(ISessionContext, stubSessionContext());
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
     });
     skills = new InMemorySkillCatalog();
@@ -88,6 +90,7 @@ describe('AgentSkillService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      list: async () => skills.listSkills().map(summarizeSkill),
     };
     ix.set(ISessionSkillCatalog, skillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
@@ -126,6 +129,7 @@ describe('AgentSkillService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      list: async () => skills.listSkills().map(summarizeSkill),
     } satisfies ISessionSkillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
 
@@ -160,7 +164,6 @@ describe('SkillTool', () => {
         reg.definePartialInstance(IAgentPromptService, {
           enqueue: ({ message }: { message: ContextMessage }) => { prompted.push(message); return Promise.resolve({ launched: Promise.resolve(fakeTurn()) } as never); },
           retry: () => Promise.resolve(undefined),
-          undo: () => 0,
           clear: () => {},
         });
         registerTestAgentWireServices(reg, 'wire/skill-test');
@@ -169,6 +172,7 @@ describe('SkillTool', () => {
           register: () => ({ dispose: () => {} }),
         });
         reg.defineInstance(ISessionContext, stubSessionContext());
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
     });
     skills = new InMemorySkillCatalog();
@@ -180,6 +184,7 @@ describe('SkillTool', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      list: async () => skills.listSkills().map(summarizeSkill),
     } satisfies ISessionSkillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
   });
@@ -216,7 +221,7 @@ describe('SkillTool', () => {
 
     expect(tool.name).toBe('Skill');
     expect(tool.description).toContain('Invoke a registered skill');
-    expect(tool.description).toContain('kimi-skill-loaded');
+    expect(tool.description).toContain('skill-loaded');
     expect(tool.description).toContain('with the same `args`');
     expect(tool.parameters).toMatchObject({
       type: 'object',
@@ -298,7 +303,7 @@ describe('SkillTool', () => {
     expect(result.delivery?.message.content[0]).toMatchObject({
       type: 'text',
       text: expect.stringContaining(
-        '<kimi-skill-loaded name="commit" trigger="model-tool" source="user" dir="/skills/commit" args="src/app.ts">',
+        '<skill-loaded name="commit" trigger="model-tool" source="user" dir="/skills/commit" args="src/app.ts">',
       ),
     });
     expect(result.delivery?.message.content[0]).toMatchObject({

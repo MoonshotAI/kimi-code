@@ -34,6 +34,7 @@ describe('built-in slash command registry', () => {
     expect(findBuiltInSlashCommand('quit')?.name).toBe('exit');
     expect(findBuiltInSlashCommand('q')?.name).toBe('exit');
     expect(findBuiltInSlashCommand('clear')?.name).toBe('new');
+    expect(findBuiltInSlashCommand('bug')?.name).toBe('feedback');
     expect(findBuiltInSlashCommand('btw')?.name).toBe('btw');
     expect(findBuiltInSlashCommand('mcp')?.name).toBe('mcp');
     expect(findBuiltInSlashCommand('status')?.name).toBe('status');
@@ -166,6 +167,7 @@ describe('built-in slash command registry', () => {
         'plan',
         'reload',
         'reload-tui',
+        'secondary_model',
         'sessions',
         'settings',
         'status',
@@ -187,5 +189,12 @@ describe('built-in slash command registry', () => {
     expect(reloadTui).toBeDefined();
     expect(resolveSlashCommandAvailability(reload!, '')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(reloadTui!, '')).toBe('always');
+  });
+
+  it('gates secondary_model behind the secondary-model experiment, always available', () => {
+    const command = findBuiltInSlashCommand('secondary_model');
+    expect(command).toBeDefined();
+    expect((command as KimiSlashCommand).experimentalFlag).toBe('secondary-model');
+    expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 });

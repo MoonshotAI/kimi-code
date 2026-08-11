@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   WIRE_PROTOCOL_VERSION,
+  CHECKPOINTED_MODELS,
   IAgentContextMemoryService,
-  IAgentContextSizeService,
+  IAgentTokenCountingService,
   IAgentGoalService,
   type ContextMessage,
   type WireRecord,
@@ -23,6 +24,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { todoSet, TodoModel } from '#/session/todo/todoOps';
 import { OP_REGISTRY } from '#/wire/op';
+import { MODEL_CROSS_REDUCERS } from '#/wire/model';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
 import { registerTestAgentWire, restoreTestAgentWire } from './wire/stubs';
@@ -62,6 +64,20 @@ const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
   'llm.request',
   'mcp.tools_discovered',
 ]);
+const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'tools.reset_active_tools',
+  'profile.bind',
+]);
+
+const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'task.started',
+  'task.terminated',
+  'interaction.request',
+  'interaction.resolved',
+  'plan.revision',
+  'interruptionReminder.recorded',
+  'turn.ended',
+]);
 
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';
@@ -90,10 +106,15 @@ describe('v1 wire vocabulary', () => {
     return out;
   }
 
-  it('every persisted op type is a v1 record type', () => {
+  it('every persisted op type is a known (v1 or v2) record type', () => {
     for (const [type, descriptor] of OP_REGISTRY) {
       if (descriptor.persist === false) continue;
-      expect(V1_RECORD_TYPES.has(type), `op "${type}" persists a non-v1 record type`).toBe(true);
+      expect(
+        V1_RECORD_TYPES.has(type) ||
+          V2_ONLY_RECORD_TYPES.has(type) ||
+          V2_RECORD_TYPES.has(type),
+        `op "${type}" persists an unregistered record type`,
+      ).toBe(true);
     }
   });
 
@@ -133,13 +154,42 @@ describe('v1 wire vocabulary', () => {
 
     await restoreTestAgentWire(fresh, log2, SCOPE, records);
 
-    expect(fresh.getModel(TodoModel)).toEqual([{ title: 'restore me', status: 'in_progress' }]);
+    expect(fresh.getModel(TodoModel).current).toEqual([
+      { title: 'restore me', status: 'in_progress' },
+    ]);
+  });
+});
+
+describe('conversation-time checkpoint registration', () => {
+  const CHECKPOINT_EXEMPT_MODELS: ReadonlySet<string> = new Set([
+    'goalForkNotice',
+  ]);
+  const CONTEXT_OPS = [
+    'context.append_message',
+    'context.apply_compaction',
+    'context.clear',
+    'context.undo',
+  ];
+
+  it('registers every context-reacting model as checkpointed or explicitly exempt', () => {
+    const violations: string[] = [];
+    let entries = 0;
+    for (const opType of CONTEXT_OPS) {
+      for (const entry of MODEL_CROSS_REDUCERS.get(opType) ?? []) {
+        entries += 1;
+        if (CHECKPOINTED_MODELS.includes(entry.model)) continue;
+        if (CHECKPOINT_EXEMPT_MODELS.has(entry.model.name)) continue;
+        violations.push(`${entry.model.name} (on ${opType})`);
+      }
+    }
+    expect(entries).toBeGreaterThan(0);
+    expect(violations).toEqual([]);
   });
 });
 
 describe('AgentRecords persistence metadata', () => {
   let context: IAgentContextMemoryService;
-  let contextSize: IAgentContextSizeService;
+  let tokenCounting: IAgentTokenCountingService;
   let ctx: TestAgentContext;
   let expectResumeMatches: boolean;
   let persistence: RecordingInMemoryWireRecordPersistence;
@@ -149,7 +199,7 @@ describe('AgentRecords persistence metadata', () => {
     persistence = new RecordingInMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence, autoConfigure: false });
     context = ctx.get(IAgentContextMemoryService);
-    contextSize = ctx.get(IAgentContextSizeService);
+    tokenCounting = ctx.get(IAgentTokenCountingService);
   });
 
   afterEach(async () => {
@@ -178,7 +228,6 @@ describe('AgentRecords persistence metadata', () => {
     expectResumeMatches = false;
     await ctx.restorePersisted();
 
-    // The envelope was synthesized and rewritten ahead of the records.
     expect(persistence.records.map((record) => record.type)).toEqual([
       'metadata',
       'context.append_message',
@@ -187,7 +236,6 @@ describe('AgentRecords persistence metadata', () => {
       type: 'metadata',
       protocol_version: WIRE_PROTOCOL_VERSION,
     });
-    // And the orphaned message landed in the restored context.
     expect(ctx.context.get()).toHaveLength(1);
   });
 
@@ -390,7 +438,7 @@ describe('AgentRecords persistence metadata', () => {
         },
       },
       {
-        type: 'context_size.measured',
+        type: 'token_counting.measured',
         length: 1,
         tokens: 42,
       },
@@ -408,7 +456,7 @@ describe('AgentRecords persistence metadata', () => {
     ]);
 
     expect(context.get()).toHaveLength(1);
-    expect(contextSize.get()).toEqual({
+    expect(tokenCounting.get()).toEqual({
       size: 42,
       measured: 42,
       estimated: 0,

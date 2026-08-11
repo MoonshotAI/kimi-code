@@ -128,6 +128,12 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   }
 
   async steer({ agentId, ...payload }: AgentScopedPayload<SteerPayload>) {
+    if (agentId === 'main') {
+      // A steer is user input like a prompt — and can even launch the
+      // session's first turn (e.g. goal mode) — so keep title/lastPrompt in
+      // sync the same way.
+      await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
+    }
     return (await this.getAgent(agentId)).steer(payload);
   }
 

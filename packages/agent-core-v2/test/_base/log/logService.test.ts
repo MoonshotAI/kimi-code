@@ -3,10 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import { InstantiationType } from '#/_base/di/extensions';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -155,7 +154,7 @@ describe('AppLogService (scoped)', () => {
       LifecycleScope.App,
       ILogService,
       AppLogService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'log',
     );
     homeDir = await mkdtemp(join(tmpdir(), 'global-log-'));

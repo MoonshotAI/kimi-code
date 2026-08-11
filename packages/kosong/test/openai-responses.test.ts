@@ -1,8 +1,10 @@
 import {
   APIContextOverflowError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   APIStatusError,
   ChatProviderError,
+  isRetryableGenerateError,
 } from '#/errors';
 import { generate } from '#/generate';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
@@ -919,6 +921,22 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(body['max_output_tokens']).toBe(2048);
     });
 
+    it('passes constructor generationKwargs into the request body', async () => {
+      // The construction-time channel (session affinity): kwargs seeded via
+      // the options land on every request, no morph required.
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        generationKwargs: { prompt_cache_key: 'session-test' },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['prompt_cache_key']).toBe('session-test');
+    });
+
     it('withMaxCompletionTokens sets max_output_tokens on the cloned provider', async () => {
       const original = createProvider();
       const provider = original.withMaxCompletionTokens(1024);
@@ -1023,6 +1041,22 @@ describe('OpenAIResponsesChatProvider', () => {
 
       expect(body['reasoning']).toBeUndefined();
       expect(body['include']).toBeUndefined();
+    });
+
+    it('with_thinking("off") sends the configured offEffort for models that reason by default', async () => {
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'grok-4',
+        apiKey: 'test-key',
+        offEffort: 'none',
+      }).withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning']).toEqual({ effort: 'none', summary: 'auto' });
+      expect(body['include']).toEqual(['reasoning.encrypted_content']);
+      expect(provider.thinkingEffort).toBe('off');
     });
 
     it('with_thinking("low") sends reasoning with effort=low', async () => {
@@ -2006,6 +2040,65 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(caughtError).toBeInstanceOf(APIProviderRateLimitError);
       expect((caughtError as APIProviderRateLimitError).statusCode).toBe(429);
       expect((caughtError as Error).message).toContain('status_code=429');
+    });
+
+    it('fails fast on response.failed with an insufficient_quota code', async () => {
+      // Quota exhaustion arriving as a Responses stream event carries no HTTP
+      // status; without the structured-code check it would fall through to the
+      // base ChatProviderError, whose unclassified fallback is retryable — and
+      // burn the whole retry budget on an error that cannot succeed.
+      const events = [
+        {
+          type: 'response.failed',
+          response: {
+            id: 'resp_quota',
+            status: 'failed',
+            error: {
+              code: 'insufficient_quota',
+              message: 'You exceeded your current quota, please check your plan and billing details.',
+            },
+          },
+        },
+      ];
+      const stream = new OpenAIResponsesStreamedMessage(makeAsyncIterable(events), true);
+
+      let caughtError: unknown;
+      try {
+        await collectStreamParts(stream);
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(APIProviderQuotaExhaustedError);
+      expect((caughtError as APIProviderQuotaExhaustedError).statusCode).toBe(429);
+      expect(isRetryableGenerateError(caughtError)).toBe(false);
+    });
+
+    it('keeps an embedded status_code=429 with vendor billing wording a rate limit', async () => {
+      // Vendor billing wordings are no longer recognized by the base — quota
+      // classification for a vendor's own errors lives on that vendor's
+      // convertError hook, and no vendor rides this transport here.
+      const events = [
+        {
+          type: 'error',
+          code: 'upstream_error',
+          message:
+            'llmproxy/openai/responses/resp_q.json status_code=429 Your account is suspended due to insufficient balance, please recharge your account',
+          param: null,
+        },
+      ];
+      const stream = new OpenAIResponsesStreamedMessage(makeAsyncIterable(events), true);
+
+      let caughtError: unknown;
+      try {
+        await collectStreamParts(stream);
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(APIProviderRateLimitError);
+      expect(caughtError).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
+      expect(isRetryableGenerateError(caughtError)).toBe(true);
     });
 
     it('rejects malformed stream events with a non-string type even when message is present', async () => {

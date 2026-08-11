@@ -74,6 +74,10 @@ export const exportSessionRequestSchema = z
         message: `web_log must not exceed ${MAX_SESSION_EXPORT_WEB_LOG_BYTES} UTF-8 bytes`,
       })
       .optional(),
+    // Desktop hosts set this to bundle the on-disk desktop app log
+    // (`<home>/logs/kimi-code-desktop.log`) into the archive; the server reads
+    // the file itself, so no log content crosses the request.
+    desktop: z.boolean().optional(),
   })
   .strict();
 export type ExportSessionRequest = z.infer<typeof exportSessionRequestSchema>;
@@ -136,7 +140,9 @@ export const sessionStatusResponseSchema = z.object({
   plan_mode: z.boolean(),
   swarm_mode: z.boolean(),
   context_tokens: z.number().int().nonnegative(),
-  max_context_tokens: z.number().int().nonnegative(),
+  /** Omitted when the context limit is unknown — 0 is the engine's "unknown"
+   *  marker, never a real limit. */
+  max_context_tokens: z.number().int().nonnegative().optional(),
   context_usage: z.number().min(0).max(1),
 });
 export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;

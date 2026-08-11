@@ -209,12 +209,12 @@ describe('ModelCatalogService', () => {
     expect(getCalls).toEqual([{ reload: true }, { reload: true }]);
   });
 
-  it('projects latest Opus efforts for unknown Anthropic-compatible models', async () => {
+  it('projects latest Opus efforts for unknown Claude-marked Anthropic-compatible models', async () => {
     const configRef = { current: catalogConfig() };
     configRef.current.providers['custom'] = { type: 'anthropic' };
     configRef.current.models!['compatible'] = {
       provider: 'custom',
-      model: 'compatible-model',
+      model: 'custom-claude-model',
       maxContextSize: 128000,
     };
     const { core } = makeCore(configRef);
@@ -226,6 +226,23 @@ describe('ModelCatalogService', () => {
       support_efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       default_effort: 'high',
     });
+  });
+
+  it('does not project fallback efforts for clearly non-Claude Anthropic-compatible models', async () => {
+    const configRef = { current: catalogConfig() };
+    configRef.current.providers['custom'] = { type: 'anthropic' };
+    configRef.current.models!['compatible'] = {
+      provider: 'custom',
+      model: 'compatible-model',
+      maxContextSize: 128000,
+    };
+    const { core } = makeCore(configRef);
+    const svc = new ModelCatalogService(makeEnv(), core, makeEventService().svc);
+
+    const compatible = (await svc.listModels()).find((model) => model.model === 'compatible');
+    expect(compatible?.capabilities).toBeUndefined();
+    expect(compatible?.support_efforts).toBeUndefined();
+    expect(compatible?.default_effort).toBeUndefined();
   });
 
   it('does not project fallback efforts for a Kimi provider routed through the Anthropic protocol', async () => {

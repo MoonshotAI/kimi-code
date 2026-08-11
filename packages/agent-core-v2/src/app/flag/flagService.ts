@@ -1,15 +1,14 @@
 /**
- * `flag` domain (L3) — `IFlagService` implementation.
+ * `flag` domain — `IFlagService` implementation.
  *
- * Resolves experimental flags from the environment (read through `bootstrap`),
- * the `[experimental]` config section, and defaults; reads flag definitions
- * from `flagRegistry`, and reads/watches config through `config`. Bound at App
- * scope.
+ * Resolves experimental flags from the environment, the `[experimental]`
+ * config section, and defaults; reads flag definitions from the registry, and
+ * reads/watches config. Bound at App scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -26,6 +25,7 @@ import { type FlagDefinitionInput, type FlagId, IFlagRegistry } from './flagRegi
 
 export const MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
 
+// NOTE: stays Disposable — its own 'state' and 'config' collide with the Fiber
 export class FlagService extends Disposable implements IFlagService {
   declare readonly _serviceBrand: undefined;
   readonly registry: IFlagRegistry;
@@ -117,6 +117,6 @@ registerScopedService(
   LifecycleScope.App,
   IFlagService,
   FlagService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'flag',
 );

@@ -4,10 +4,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-
-import { InstantiationType } from '#/_base/di/extensions';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
+  ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -35,14 +34,14 @@ describe('SessionProcessRunner', () => {
       LifecycleScope.App,
       IHostProcessService,
       HostProcessService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'hostProcess',
     );
     registerScopedService(
       LifecycleScope.Session,
       ISessionProcessRunner,
       SessionProcessRunner,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'process',
     );
     dir = await mkdtemp(join(tmpdir(), 'procrunner-'));

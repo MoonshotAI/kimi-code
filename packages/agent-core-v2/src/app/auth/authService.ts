@@ -6,7 +6,7 @@
  * writes provider configuration through `provider`, refreshes the managed
  * OAuth provider's server-side model configuration through `config`, publishes
  * model-catalog changes through `event`, reports through `telemetry`,
- * logs through `log`, resolves shared auth through `platform`, and delegates
+ * logs through `log`, and delegates
  * the device-code protocol, token storage, and token refresh to `IOAuthToolkit`
  * (provided by `OAuthToolkitService` over `@moonshot-ai/kimi-code-oauth`,
  * which locates token storage through `bootstrap`). Bound at App scope.
@@ -27,6 +27,8 @@ import {
   resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  type AuthManagedUserInfoResult,
+  type AuthManagedUsageResult,
   type BearerTokenProvider,
   type DeviceAuthorization,
   type ManagedKimiConfigShape,
@@ -41,9 +43,10 @@ import type {
   RefreshOAuthProviderModelsResponse,
 } from './oauthProtocol';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Error2, ErrorCodes } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
@@ -53,16 +56,21 @@ import {
   effectiveModelConfig,
   nonEmpty,
   resolveModelAuthMaterial,
-} from '#/app/model/modelAuth';
-import { type ModelAlias, MODELS_SECTION } from '#/app/model/model';
-import { IPlatformService } from '#/app/platform/platform';
+} from '#/kosong/model/modelAuth';
+import { IModelService, type ModelRecord } from '#/kosong/model/model';
+import {
+  DEFAULT_MODEL_SECTION,
+  MODELS_SECTION,
+  PROVIDERS_SECTION,
+  THINKING_SECTION,
+} from '#/app/kosongConfig/configSection';
 import {
   IProviderService,
   type OAuthRef,
   type ProviderConfig,
   type ProvidersChangedEvent,
-  PROVIDERS_SECTION,
-} from '#/app/provider/provider';
+} from '#/kosong/provider/provider';
+import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import {
@@ -77,8 +85,6 @@ import {
 
 const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_EXPIRES_IN_SEC = 15 * 60;
-const DEFAULT_MODEL_SECTION = 'defaultModel';
-const THINKING_SECTION = 'thinking';
 const SERVICES_SECTION = 'services';
 
 interface FlowState {
@@ -95,6 +101,7 @@ interface FlowState {
   resolvedAt: string | undefined;
 }
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class OAuthService extends Disposable implements IOAuthService {
   declare readonly _serviceBrand: undefined;
   private readonly flows = new Map<string, FlowState>();
@@ -261,6 +268,30 @@ export class OAuthService extends Disposable implements IOAuthService {
     return this.toolkit.getCachedAccessToken(provider, this.resolveRuntimeOAuthRef(provider, oauthRef));
   }
 
+  getManagedUsage(provider = KIMI_CODE_PROVIDER_NAME): Promise<AuthManagedUsageResult> {
+    const configured = this.providerService.get(provider);
+    const auth = resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: configured?.baseUrl,
+      configuredOAuthRef: configured?.oauth,
+    });
+    return this.toolkit.getManagedUsage(provider, {
+      oauthRef: auth.oauthRef,
+      baseUrl: auth.baseUrl,
+    });
+  }
+
+  getManagedUserInfo(provider = KIMI_CODE_PROVIDER_NAME): Promise<AuthManagedUserInfoResult> {
+    const configured = this.providerService.get(provider);
+    const auth = resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: configured?.baseUrl,
+      configuredOAuthRef: configured?.oauth,
+    });
+    return this.toolkit.getManagedUserInfo(provider, {
+      oauthRef: auth.oauthRef,
+      baseUrl: auth.baseUrl,
+    });
+  }
+
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse> {
     const run = this.refreshChain.then(() => this.doRefreshOAuthProviderModels());
     this.refreshChain = run.then(
@@ -278,7 +309,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     await this.config.reload();
     const current = this.readUserConfigShape();
     const provider = current.providers[KIMI_CODE_PROVIDER_NAME];
-    if (!isKimiOAuthProvider(provider)) {
+    if (!isOAuthCatalogProvider(provider)) {
       return { changed, unchanged, failed };
     }
 
@@ -289,7 +320,9 @@ export class OAuthService extends Disposable implements IOAuthService {
       });
       const tokenProvider = this.resolveTokenProvider(KIMI_CODE_PROVIDER_NAME, auth.oauthRef);
       if (tokenProvider === undefined) {
-        throw new Error('OAuth token provider is not configured.');
+        throw new Error2(ErrorCodes.AUTH_TOKEN_MISSING, 'OAuth token provider is not configured.', {
+          details: { provider_id: KIMI_CODE_PROVIDER_NAME },
+        });
       }
       const token = await tokenProvider.getAccessToken();
       const models = await fetchManagedKimiCodeModels({
@@ -330,8 +363,8 @@ export class OAuthService extends Disposable implements IOAuthService {
         );
         await this.config.replace(PROVIDERS_SECTION, next.providers);
         await this.config.replace(MODELS_SECTION, next.models ?? {});
-        await this.config.set(DEFAULT_MODEL_SECTION, next.defaultModel);
-        await this.config.set(THINKING_SECTION, next.thinking);
+        await this.config.replace(DEFAULT_MODEL_SECTION, next.defaultModel);
+        await this.config.replace(THINKING_SECTION, next.thinking);
         changed.push({
           provider_id: KIMI_CODE_PROVIDER_NAME,
           provider_name: 'Kimi Code',
@@ -356,7 +389,7 @@ export class OAuthService extends Disposable implements IOAuthService {
   private readUserConfigShape(): ManagedKimiConfigShape {
     const providers =
       this.config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
-    const models = this.config.inspect<Record<string, ModelAlias>>(MODELS_SECTION).userValue ?? {};
+    const models = this.config.inspect<Record<string, ModelRecord>>(MODELS_SECTION).userValue ?? {};
     const services =
       this.config.inspect<ManagedKimiConfigShape['services']>(SERVICES_SECTION).userValue;
     const defaultModel = this.config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
@@ -510,8 +543,8 @@ export class OAuthService extends Disposable implements IOAuthService {
       await this.config.replace(SERVICES_SECTION, next.services);
     }
     if (cleanup.defaultModelCleared) {
-      await this.config.set(DEFAULT_MODEL_SECTION, undefined);
-      await this.config.set(THINKING_SECTION, undefined);
+      await this.config.replace(DEFAULT_MODEL_SECTION, undefined);
+      await this.config.replace(THINKING_SECTION, undefined);
     }
   }
 
@@ -563,8 +596,8 @@ export class AuthSummaryService implements IAuthSummaryService {
 
   constructor(
     @IProviderService private readonly providerService: IProviderService,
+    @IModelService private readonly modelService: IModelService,
     @IConfigService private readonly config: IConfigService,
-    @IPlatformService private readonly platforms: IPlatformService,
     @IOAuthService private readonly oauth: IOAuthService,
     @ILogService private readonly log: ILogService,
   ) {}
@@ -595,8 +628,8 @@ export class AuthSummaryService implements IAuthSummaryService {
   async ensureReady(modelOverride?: string): Promise<void> {
     await this.config.reload();
     const providers = this.providerService.list();
-    const models = this.config.get<Record<string, ModelAlias> | undefined>(MODELS_SECTION) ?? {};
-    const modelId = modelOverride ?? this.config.get<string | undefined>(DEFAULT_MODEL_SECTION);
+    const models = this.modelService.list();
+    const modelId = modelOverride ?? this.modelService.getDefaultModel();
     const configured = modelId === undefined || modelId === '' ? undefined : models[modelId];
     if (Object.keys(providers).length === 0 && !isProviderlessModel(configured)) {
       throw new AuthProvisioningRequiredError();
@@ -625,7 +658,6 @@ export class AuthSummaryService implements IAuthSummaryService {
       model,
       provider,
       providerName,
-      getPlatform: (platformId) => this.platforms.get(platformId),
     });
     if (auth.apiKey !== undefined) return;
     if (auth.oauth !== undefined) {
@@ -646,7 +678,7 @@ function classifyFailure(err: unknown): OAuthFlowStatus {
   return 'denied';
 }
 
-function isProviderlessModel(model: ModelAlias | undefined): boolean {
+function isProviderlessModel(model: ModelRecord | undefined): boolean {
   if (model === undefined) return false;
   const effective = effectiveModelConfig(model);
   return (
@@ -656,7 +688,7 @@ function isProviderlessModel(model: ModelAlias | undefined): boolean {
   );
 }
 
-function providerNameFromFlatModel(model: ModelAlias): string | undefined {
+function providerNameFromFlatModel(model: ModelRecord): string | undefined {
   const baseUrl = nonEmpty(model.baseUrl);
   return baseUrl === undefined ? undefined : deriveProviderId(baseUrl);
 }
@@ -669,12 +701,13 @@ interface ManagedModel {
   readonly displayName?: string;
 }
 
-function isKimiOAuthProvider(
+function isOAuthCatalogProvider(
   provider: ProviderConfig | Record<string, unknown> | undefined,
 ): provider is ProviderConfig & { oauth: OAuthRef } {
+  const type = (provider as ProviderConfig | undefined)?.type;
   return (
     provider !== undefined &&
-    (provider as ProviderConfig).type === 'kimi' &&
+    isOAuthCatalogVendor(type) &&
     (provider as ProviderConfig).oauth !== undefined
   );
 }
@@ -829,10 +862,10 @@ function managedModel(
 class OAuthToolkitService extends KimiOAuthToolkit implements IOAuthToolkit {
   declare readonly _serviceBrand: undefined;
   constructor(@IBootstrapService bootstrap: IBootstrapService) {
-    super({ homeDir: bootstrap.homeDir });
+    super({ homeDir: bootstrap.homeDir, identity: bootstrap.clientIdentity });
   }
 }
 
-registerScopedService(LifecycleScope.App, IOAuthService, OAuthService, InstantiationType.Eager, 'auth');
-registerScopedService(LifecycleScope.App, IOAuthToolkit, OAuthToolkitService, InstantiationType.Eager, 'auth');
-registerScopedService(LifecycleScope.App, IAuthSummaryService, AuthSummaryService, InstantiationType.Eager, 'auth');
+registerScopedService(LifecycleScope.App, IOAuthService, OAuthService, ScopeActivation.OnScopeCreated, 'auth');
+registerScopedService(LifecycleScope.App, IOAuthToolkit, OAuthToolkitService, ScopeActivation.OnScopeCreated, 'auth');
+registerScopedService(LifecycleScope.App, IAuthSummaryService, AuthSummaryService, ScopeActivation.OnScopeCreated, 'auth');

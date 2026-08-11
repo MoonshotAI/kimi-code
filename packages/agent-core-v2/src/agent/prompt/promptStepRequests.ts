@@ -1,5 +1,6 @@
 /**
- * `prompt` domain (L4) — the `StepRequest` types `AgentPromptService` sends.
+ * `prompt` domain — the `StepRequest` types for prompt, steer, and retry
+ * steps.
  *
  * `PromptStepRequest` / `SteerStepRequest` carry an already-built user
  * `ContextMessage` (image-compression captions pre-split), apply the image
@@ -11,17 +12,19 @@
  * the `turn.steer` wire op on materialization and unregisters itself from the
  * service's pending-steer set once settled. `RetryStepRequest` uses `newTurn`:
  * it contributes no message and simply drives one more step over the
- * existing context. Constructed by the prompt service with its collaborators
- * captured — these are plain runtime objects, not DI services.
+ * existing context. Each is constructed with its collaborators captured —
+ * these are plain runtime objects, not DI services.
  */
 
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
+import { newMessageId } from '#/agent/contextMemory/messageId';
 import { StepRequest, type StepRequestOptions, type TurnSeed } from '#/agent/loop/stepRequest';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
 import type { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 
 abstract class UserMessageStepRequest extends StepRequest {
   protected readonly message: ContextMessage;
+  private readonly ownerPromptId: string;
 
   constructor(
     message: ContextMessage,
@@ -30,7 +33,12 @@ abstract class UserMessageStepRequest extends StepRequest {
     options?: StepRequestOptions,
   ) {
     super(options);
-    this.message = { ...message, content: gateImageFormatParts(message.content) };
+    this.ownerPromptId = message.id ?? newMessageId();
+    this.message = {
+      ...message,
+      id: this.ownerPromptId,
+      content: gateImageFormatParts(message.content),
+    };
   }
 
   override get turnSeed(): TurnSeed {
@@ -42,6 +50,7 @@ abstract class UserMessageStepRequest extends StepRequest {
       this.reminders.appendSystemReminder(caption, {
         kind: 'injection',
         variant: 'image_compression',
+        ownerPromptId: this.ownerPromptId,
       });
     }
   }

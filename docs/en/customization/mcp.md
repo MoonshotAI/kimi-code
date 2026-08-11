@@ -21,6 +21,8 @@ Entries with the same name: the project-level entry takes precedence and overrid
 
 Run `/mcp-config` in the TUI to interactively add, edit, or delete servers without manually editing the JSON file. Run `/mcp` to view the connection status of all current servers.
 
+Deleting a server from the configuration does not interrupt open sessions: the server stays listed in `/mcp` as `removed`, its tools remain visible there, and calls to them fail with a removal notice, while new sessions do not register the tools at all. Conversely, a server added mid-session — by editing `mcp.json` or installing a plugin — is not registered in already-open sessions; it only joins sessions created later.
+
 Structure of `mcp.json`:
 
 ```json
@@ -52,14 +54,16 @@ Optional fields:
 | `headers` | `Record<string, string>` | HTTP, SSE | Static request headers appended to every request |
 | `bearerTokenEnvVar` | `string` | HTTP, SSE | Name of an environment variable that contains a bearer token |
 | `enabled` | `boolean` | All | Set to `false` to disable this server |
-| `startupTimeoutMs` | `number` | All | Connection timeout; default `30000` milliseconds |
-| `toolTimeoutMs` | `number` | All | Timeout for a single tool call |
+| `startupTimeoutMs` | `number` | All | Connection timeout from `1` to `2147483647` milliseconds; default `30000` |
+| `toolTimeoutMs` | `number` | All | Timeout from `1` to `2147483647` milliseconds for a single tool call |
 | `enabledTools` | `string[]` | All | Tool allowlist |
 | `disabledTools` | `string[]` | All | Tool blocklist |
 
+You do not have to set the connection timeout or the single tool-call timeout per server: `[mcp] startup_timeout_ms` / `[mcp] tool_timeout_ms` in `config.toml` or the `KIMI_MCP_STARTUP_TIMEOUT_MS` / `KIMI_MCP_TOOL_TIMEOUT_MS` environment variables change the global defaults. Precedence is: per-server field > environment variable > `config.toml` > built-in default. See [Configuration files](../configuration/config-files.md#mcp).
+
 HTTP and SSE servers support providing static credentials via `headers` or `bearerTokenEnvVar`. When OAuth is needed, run `/mcp-config login <server-name>` to complete browser-based authorization.
 
-Plugins can also declare MCP servers in their manifest. Servers declared by a plugin are enabled by default and can be disabled or re-enabled in `/plugins`, then a new session must be started. See [Plugins](./plugins.md) for details.
+Plugins can also declare MCP servers in their manifest. Servers declared by a plugin are enabled by default and can be disabled or re-enabled in `/plugins`: disabling or removing stops the tools in open sessions — calls fail with a removal notice — while adding or enabling a server takes effect in new sessions or after `/reload`. See [Plugins](./plugins.md#mcp-servers-in-plugins) for details.
 
 ::: warning Note
 stdio entries in a project-level `.kimi-code/mcp.json` execute local commands when a session starts. Only enable these in repositories you trust.

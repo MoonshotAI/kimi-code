@@ -1,5 +1,5 @@
 /**
- * `wire` domain (L2) — `IWireService` implementation.
+ * `wire` domain — `IWireService` implementation.
  *
  * `WireService` is the sole runtime owner of an Agent wire aggregate. It
  * combines the model reducer engine with the `wire.jsonl` journal protocol,
@@ -7,19 +7,30 @@
  * rewrites, blob dehydration and rehydration plus an ordered post-restore hook.
  * It is bound at Agent scope because the aggregate identity is the Agent
  * identity.
+ *
+ * The runtime lookups — the op table behind `restore`, the cross-reducer
+ * table behind `execute`, and the model / checkpointed-model lists — are the
+ * fold of the `WireModelContribution` collection (see `wireContribution.ts`):
+ * the built-in layer drained from the module tables plus every live
+ * contribution record, refolded on each view change; the collection edge
+ * never rebuilds the service. Replay tolerance is the fold's unload
+ * counterpart: a record whose op type is absent from the fold is skipped and
+ * counted, so a journal stays readable after the unit that contributed its
+ * vocabulary is withdrawn.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { type CollectionView } from '#/_base/di/collection';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { OrderedHookSlot } from '#/hooks';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { StorageError, StorageErrors } from '#/persistence/interface/storage';
@@ -35,9 +46,7 @@ import {
   type WireMigration,
 } from './migration/migration';
 import type { DeepReadonly, ModelDef, PartsTransformer } from './model';
-import { MODEL_CROSS_REDUCERS } from './model';
 import type { Op } from './op';
-import { OP_REGISTRY } from './op';
 import {
   AGENT_WIRE_RECORD_KEY,
   createWireMetadataRecord,
@@ -47,6 +56,13 @@ import {
   wireRecordToPayload,
   type WireRecord,
 } from './record';
+import {
+  builtinWireContribution,
+  foldWireContributions,
+  WireModelContribution,
+  type FoldedWireRegistry,
+  type WireModelContributionRecord,
+} from './wireContribution';
 
 const MAX_DRAIN = 100;
 
@@ -72,7 +88,7 @@ interface OpGroup {
 
 type RestorePhase = 'new' | 'restoring' | 'ready' | 'failed';
 
-export class WireService extends Disposable implements IWireService {
+export class WireService extends Service implements IWireService {
   declare readonly _serviceBrand: undefined;
 
   readonly hooks: IWireService['hooks'] = {
@@ -81,6 +97,7 @@ export class WireService extends Disposable implements IWireService {
 
   private readonly models = new Map<ModelDef<any>, ModelInstance>();
   private readonly wireScope: string;
+  private folded: FoldedWireRegistry;
 
   private restorePhase: RestorePhase = 'new';
   private dispatching = false;
@@ -93,10 +110,23 @@ export class WireService extends Disposable implements IWireService {
     @IAppendLogStore private readonly log: IAppendLogStore,
     @IAgentBlobService private readonly blobService: IAgentBlobService,
     @IEventBus private readonly eventBus: IEventBus,
+    @WireModelContribution view: CollectionView<WireModelContributionRecord>,
   ) {
     super();
     this.wireScope = scopeContext.scope();
     this._register(this.log.acquire(this.wireScope, AGENT_WIRE_RECORD_KEY));
+    this.folded = this.foldContributions(view);
+    this._register(
+      view.onDidChange(() => {
+        this.folded = this.foldContributions(view);
+      }),
+    );
+  }
+
+  private foldContributions(
+    view: CollectionView<WireModelContributionRecord>,
+  ): FoldedWireRegistry {
+    return foldWireContributions([builtinWireContribution(), ...view.items]);
   }
 
   getModel<S>(model: ModelDef<S>): DeepReadonly<S> {
@@ -212,7 +242,7 @@ export class WireService extends Disposable implements IWireService {
   }
 
   private replayRecord(record: WireRecord, index: number): void {
-    const descriptor = OP_REGISTRY.get(record.type);
+    const descriptor = this.folded.ops.get(record.type);
     if (descriptor === undefined) {
       this.reportSkippedRecord(record.type, index);
       return;
@@ -257,7 +287,7 @@ export class WireService extends Disposable implements IWireService {
           this.eventBus.publish(event as DomainEvent);
         }
       }
-      const crossReducers = MODEL_CROSS_REDUCERS.get(op.type);
+      const crossReducers = this.folded.crossReducers.get(op.type);
       if (crossReducers !== undefined) {
         for (const entry of crossReducers) {
           if (entry.model === op.descriptor.model) continue;
@@ -330,6 +360,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IWireService,
   WireService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'wire',
 );

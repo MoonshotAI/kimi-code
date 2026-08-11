@@ -17,7 +17,7 @@ One folder per domain, **camelCase**: `session/`, `sessionActivity/`, `contextMe
 ```
 
 - **Strictly one service per file.** An interface file holds exactly one injectable interface and exactly one `createDecorator(...)`; an impl file holds exactly one service implementation class and exactly one `registerScopedService(...)`. No exceptions for "tightly-coupled" groups: even same-scope collaborators each get their own `<name>.ts` + `<name>Service.ts` pair.
-- **Scope is in the filename.** `session*.ts` = Session, `agent*.ts` = Agent, no scope prefix = App (see [Naming](#naming)). The header comment restates the same scope.
+- **Scope is in the filename.** `workspace*.ts` = Workspace, `session*.ts` = Session, `agent*.ts` = Agent, no scope prefix = App (see [Naming](#naming)). The header comment restates the same scope.
 - A domain therefore has as many impl files as it has services (e.g. `logService.ts` for the App `ILogService`, `sessionLogService.ts` for the Session `ISessionLogService`). See [Multi-Service domains](#multi-service-domains).
 
 The package entry `src/index.ts` imports and `export *`s every domain's leaf files precisely (one line per leaf), so importing the package still runs every `registerScopedService(...)` side effect — exactly as the old per-domain barrels did.
@@ -28,12 +28,12 @@ The package entry `src/index.ts` imports and `export *`s every domain's leaf fil
 
 | Artifact | Rule | Example |
 |---|---|---|
-| Interface | `I` + scope prefix + PascalCase domain + role suffix. Scope prefix: `Session` / `Agent` / none (= App). Role suffix is usually `Service`. | `ISessionLogService`, `IAgentLoopService`, `ILogService` (App) |
+| Interface | `I` + scope prefix + PascalCase domain + role suffix. Scope prefix: `Workspace` / `Session` / `Agent` / none (= App). Role suffix is usually `Service`. | `IWorkspaceDirs`, `ISessionLogService`, `IAgentLoopService`, `ILogService` (App) |
 | Class | the interface name minus the leading `I`, plus `Service` if it does not already end in `Service`; `implements` the interface | `SessionLogService implements ISessionLogService`, `AppendLogStoreService implements IAppendLogStore` |
 | Decorator string | lowerCamelCase of the interface name minus the leading `I`; **globally unique and stable** (it surfaces in `CyclicDependencyError.path` and "no service registered" errors) | `createDecorator<ISessionLogService>('sessionLogService')` |
 | Model / non-service types | PascalCase, no `I` prefix | `SessionMeta`, `LogEntry`, `ConfigSection` |
 
-The scope prefix makes a service's lifetime readable from its name. App services carry **no** prefix (App is the default, longest-lived tier); Session and Agent services always carry `Session` / `Agent`. The prefix applies to the interface, the class, and therefore the file names.
+The scope prefix makes a service's lifetime readable from its name. App services carry **no** prefix (App is the default, longest-lived tier); Workspace, Session and Agent services always carry `Workspace` / `Session` / `Agent`. The prefix applies to the interface, the class, and therefore the file names.
 
 > Do **not** use the scope prefix to re-merge domains by lifetime. `IAgentEntityService`, `IAgentDataService`, and `ISessionEntityService` are still banned — the prefix marks lifetime, the rest of the name must still be the real owning domain (`IBackgroundTaskEntityService`, `ISessionMetadata`, `IPermissionRulesService`). See [domain-boundaries.md](domain-boundaries.md).
 
@@ -137,8 +137,8 @@ Holds the concrete class(es) and the top-level registration. A typical impl:
  * … collaborators as roles ("logs through `log`") … Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/log';
 
 import { type Greeting, IGreeter } from './greet';
@@ -154,15 +154,17 @@ export class Greeter implements IGreeter {
   }
 }
 
-registerScopedService(LifecycleScope.App, IGreeter, Greeter, InstantiationType.Eager, 'greet');
+registerScopedService(LifecycleScope.App, IGreeter, Greeter, ScopeActivation.OnScopeCreated, 'greet');
 ```
 
 What belongs here:
 
-- **Imports** — `InstantiationType` from `'#/_base/di/extensions'`; `LifecycleScope` + `registerScopedService` from `'#/_base/di/scope'`; collaborators via the `#/<domain>` alias; the contract's types + decorator via a relative `./<domain>` import.
+- **Imports** — `LifecycleScope` + `ScopeActivation` + `registerScopedService` from `'#/_base/di/scope'`; collaborators via the `#/<domain>` alias; the contract's types + decorator via a relative `./<domain>` import.
 - **Class** — `XxxService implements IXxxService`, with `declare readonly _serviceBrand: undefined`.
 - **Helper classes / functions** used only by this impl (e.g. a built-in writer, an `extractError` helper) — co-located in the same file.
 - **Top-level `registerScopedService(...)`** — one per Service the file owns; importing the impl file runs the registration.
+
+Base class: extend `Service` (from `#/_base/di/service`) when the unit needs capability calls on `this` — `provide` / `effect` / `on` / `get` / `ref` (e.g. contributing a record to a `collection` token). `Service` extends `Disposable`, so `_register` keeps working; constructor-time `provide` / `on` / `effect` calls are buffered and flushed by the kernel after construction, while `get` / `ref` throw inside the constructor (dependencies stay constructor parameters). Otherwise extend `Disposable` — both are full DI units; a service whose own members collide with the `Service` vocabulary (`name` / `state` / `config` / `get`) must stay on `Disposable` (leave a NOTE comment saying so).
 
 ## Constructor conventions
 
@@ -203,6 +205,17 @@ A scoped Service may expose a factory method that returns a **new** instance of 
 - `readonly` public fields only for immutable exposed state; prefer a getter (`get level()`) when the value can change.
 - Keep state minimal — a Service owns only the state that matches its scope's identity (design.md §2). Anything else belongs in a different Service.
 
+### Runtime state goes into the per-scope state container
+
+Workspace/Session/Agent-scope Services register their runtime state into the scope's state container (`IWorkspaceStateService` / `ISessionStateService` / `IAgentStateService`, all over `_base`'s `StateRegistry`) instead of holding it in bare instance fields, so per-scope state lives in one observable place (`snapshot()` / `onDidChange`) and dies with the scope. Reference: `session/interaction/interactionService.ts`.
+
+- Declare keys in the domain file and export them: `export const interactionPendingKey = defineState<Map<string, Pending>>('interaction.pending', () => new Map())` — `<domain>.<field>` naming, factory initializers.
+- Inject `@ISessionStateService private readonly states` (or the Agent token) and `this.states.register(key)` per key at the top of the constructor.
+- Replace the field with accessors: a getter for collections only mutated in place (`this.foo.add(...)` keeps working — the container stores references, never clones); add a setter routed through `states.set` for reassigned scalars. Call sites stay unchanged.
+- Values must be plain data: scalars, arrays, and literal objects/Maps/Sets built from them. Never register class instances, resource handles (disposables, abort controllers, Promise locks), or objects holding service references — the regression precedent: one registry key whose class instances reached the whole DI graph deep-copied to hundreds of MB on `snapshot()` and OOM-killed the server. This means registries whose entries carry resources (the tool registry, the task map, prompt queues) stay as instance fields alongside Emitters, hook slots, disposable slots, waiter arrays, caches, and queue instances.
+- `snapshot()` additionally recurses plain data only: values with a custom prototype collapse to a `'(ClassName)'` marker — a `_base`-level backstop, not a license to register resource-bearing values.
+- Durable, replayable state does NOT belong here — it stays on wire Models. The container is memory-only.
+
 ## Events
 
 v2 has two distinct event mechanisms. Pick by audience:
@@ -234,7 +247,7 @@ Conventions:
 
 - Back the public `Event<T>` with a private `Emitter<T>`, registered with `this._register(...)` so it disposes with the Service.
 - Naming: `onDid…` for "happened" (past tense, after the fact); `onWill…` for "about to happen" (may allow `waitUntil` participation / veto — see `AsyncEmitter` / `IWaitUntil` in `'#/_base/event'`).
-- The Delayed-instantiation Proxy preserves early `onDid…` / `onWill…` subscriptions (implement.md §5).
+- A service must be constructed before consumers can subscribe to its events. Use the default `OnScopeCreated` activation when subscriptions must be available as soon as the scope is ready.
 
 ### `IEventService` — global pub-sub bus
 
@@ -307,8 +320,8 @@ export const IGreeter: ServiceIdentifier<IGreeter> = createDecorator<IGreeter>('
 
 ```ts
 // greet/greetService.ts
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { type Greeting, IGreeter } from './greet';
 
 export class Greeter implements IGreeter {
@@ -316,7 +329,7 @@ export class Greeter implements IGreeter {
   hello(): Greeting { return { message: 'hi' }; }
 }
 
-registerScopedService(LifecycleScope.App, IGreeter, Greeter, InstantiationType.Eager, 'greet');
+registerScopedService(LifecycleScope.App, IGreeter, Greeter, ScopeActivation.OnScopeCreated, 'greet');
 ```
 
 ```ts

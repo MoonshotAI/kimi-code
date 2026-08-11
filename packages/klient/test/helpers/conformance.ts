@@ -1,16 +1,31 @@
 /**
- * Shared conformance suite — the guarantee that the http, ipc, and memory
+ * Shared conformance suite — the guarantee that the ipc and memory
  * transports are interchangeable. Every transport test file runs the exact
- * same assertions against a real backend (in-process engine for memory/ipc,
- * a booted kap-server for http); only the `before` setup differs per file.
+ * same assertions against a real in-process engine; only the `before` setup
+ * differs per file.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
+import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
+import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
+
 import type { Klient } from '../../src/index.js';
+import type { TestEngine } from './engine.js';
 
 export interface KlientConformanceTarget {
   readonly klient: Klient;
+  /**
+   * The in-process engine's App scope. Both transports boot the engine
+   * in-process, so the suite can assemble dynamic units (e.g. contributed
+   * commands) through the production `IFeatureManager` path.
+   */
+  readonly app: TestEngine['app'];
   cleanup(): Promise<void>;
 }
 
@@ -72,7 +87,53 @@ export function defineKlientConformance(
       expect(typeof count).toBe('number');
     });
 
-    it('providers.set/get/delete works and emits providers.changed', async () => {
+    it('creates a titled session through implicit workspace materialization', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance session',
+      });
+
+      try {
+        expect(created).toMatchObject({
+          title: 'conformance session',
+          cwd: process.cwd(),
+          archived: false,
+        });
+        expect(created.id.length).toBeGreaterThan(0);
+        expect(await target.klient.global.sessions.get(created.id)).toMatchObject({
+          id: created.id,
+          title: 'conformance session',
+        });
+      } finally {
+        await target.klient.session(created.id).close();
+      }
+    });
+
+    it('session skills.list returns the workspace skills as summaries', async () => {
+      const workDir = await mkdtemp(join(tmpdir(), 'klient-conf-skills-'));
+      try {
+        await mkdir(join(workDir, '.kimi-code', 'skills', 'conf-skill'), { recursive: true });
+        await writeFile(
+          join(workDir, '.kimi-code', 'skills', 'conf-skill', 'SKILL.md'),
+          '---\nname: conf-skill\ndescription: conformance fixture skill\n---\n\n# Conf\n',
+        );
+        const created = await target.klient.global.sessions.create({ workDir });
+        try {
+          const skills = await target.klient.session(created.id).skills.list();
+          expect(skills.find((skill) => skill.name === 'conf-skill')).toMatchObject({
+            name: 'conf-skill',
+            description: 'conformance fixture skill',
+            source: 'project',
+          });
+        } finally {
+          await target.klient.session(created.id).close();
+        }
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    });
+
+    it('providers.set/get/delete works and emits kosong.providers.changed', async () => {
       const events: Array<{
         added: readonly string[];
         removed: readonly string[];
@@ -82,7 +143,7 @@ export function defineKlientConformance(
       target.klient.events.onError((error) => {
         errors.push(error);
       });
-      const sub = target.klient.events.on('providers.changed', (event) => {
+      const sub = target.klient.events.on('kosong.providers.changed', (event) => {
         events.push(event);
       });
       // Give the subscription a wire round-trip (memory is synchronous; ipc
@@ -93,16 +154,19 @@ export function defineKlientConformance(
 
       const name = '__klient_conformance__';
       try {
-        await target.klient.global.providers.set({ name, config: { apiKey: 'conf-key' } });
-        const got = await target.klient.global.providers.get(name);
-        expect(got?.apiKey).toBe('conf-key');
+        await target.klient.global.kosong.addProvider(name, {
+          type: 'openai',
+          auth: { method: 'api-key', apiKey: 'conf-key' },
+        });
+        const got = await target.klient.global.kosong.getProvider(name);
+        expect(got.has_api_key).toBe(true);
 
         await waitFor(
           () => events.some((event) => [...event.added, ...event.changed].includes(name)),
           5_000,
         );
       } finally {
-        await target.klient.global.providers.delete(name);
+        await target.klient.global.kosong.removeProvider(name);
         sub.dispose();
       }
       expect(errors).toEqual([]);
@@ -112,6 +176,39 @@ export function defineKlientConformance(
       const all = await target.klient.global.config.getAll();
       expect(typeof all).toBe('object');
       expect(Array.isArray(await target.klient.global.config.diagnostics())).toBe(true);
+    });
+
+    it('config replaceSections writes several domains and clears undefined ones', async () => {
+      const config = target.klient.global.config;
+      const beforeProviders = await config.inspect<Record<string, unknown>>('providers');
+      const beforeModels = await config.inspect<Record<string, unknown>>('models');
+      try {
+        await config.replaceSections({
+          sections: {
+            providers: {
+              ...beforeProviders.userValue,
+              'conf-provider': { type: 'openai', baseUrl: 'http://127.0.0.1:1', apiKey: 'k' },
+            },
+            models: {
+              ...beforeModels.userValue,
+              'conf-provider/m1': { provider: 'conf-provider', model: 'm1', maxContextSize: 100 },
+            },
+            defaultModel: 'conf-provider/m1',
+          },
+        });
+        expect((await config.inspect<string>('defaultModel')).userValue).toBe('conf-provider/m1');
+
+        // A domain mapped to `undefined` is cleared; domains absent from the
+        // sections record are left untouched.
+        await config.replaceSections({ sections: { defaultModel: undefined } });
+        expect((await config.inspect<string>('defaultModel')).userValue).toBeUndefined();
+        const providers = await config.inspect<Record<string, unknown>>('providers');
+        expect(providers.userValue?.['conf-provider']).toBeDefined();
+      } finally {
+        await config.replaceSections({
+          sections: { providers: beforeProviders.userValue, models: beforeModels.userValue },
+        });
+      }
     });
 
     it('hostFs.home() returns the host home and recent roots', async () => {
@@ -124,37 +221,40 @@ export function defineKlientConformance(
       expect(Array.isArray(browse.entries)).toBe(true);
     });
 
-    it('catalog lists models/providers and models registry round-trips', async () => {
-      const catalog = target.klient.global.catalog;
-      expect(Array.isArray(await catalog.listModels())).toBe(true);
-      expect(Array.isArray(await catalog.listProviders())).toBe(true);
+    it('kosong lists models/providers and anonymous provider round-trips', async () => {
+      const kosong = target.klient.global.kosong;
+      expect(Array.isArray(await kosong.listModels())).toBe(true);
+      expect(Array.isArray(await kosong.listProviders())).toBe(true);
 
-      const models = target.klient.global.models;
       const events: Array<{
         added: readonly string[];
         removed: readonly string[];
         changed: readonly string[];
       }> = [];
-      const sub = target.klient.events.on('models.changed', (event) => {
+      const sub = target.klient.events.on('kosong.models.changed', (event) => {
         events.push(event);
       });
-      // See providers.changed above — give the subscription a wire round-trip.
+      // See kosong.providers.changed above — give the subscription a wire round-trip.
       await new Promise((resolve) => {
         setTimeout(resolve, 300);
       });
 
       const id = '__klient_conformance__';
       try {
-        await models.set({ id, config: { name: 'conf-model', model: 'conf-model' } });
-        const got = await models.get(id);
-        expect(got?.name).toBe('conf-model');
+        await kosong.addProvider({
+          id,
+          model: 'conf-model',
+          protocol: 'openai',
+          baseUrl: 'http://127.0.0.1:1',
+          auth: { method: 'api-key', apiKey: 'conf-key' },
+        });
 
         await waitFor(
           () => events.some((event) => [...event.added, ...event.changed].includes(id)),
           5_000,
         );
       } finally {
-        await models.delete(id);
+        await kosong.removeProvider(id);
         sub.dispose();
       }
     });
@@ -166,6 +266,62 @@ export function defineKlientConformance(
       expect(Array.isArray(await target.klient.global.plugins.list())).toBe(true);
       const status = await target.klient.global.auth.status();
       expect(typeof status.loggedIn).toBe('boolean');
+    });
+
+    it('agent commands list and run a contributed command', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance commands',
+      });
+      const calls: string[] = [];
+
+      // A dynamic App-scope unit contributing one command into the
+      // `CommandContribution` collection — the same path a Feature takes.
+      class ConformanceCommands extends Service {
+        static override readonly name = 'klient-conformance-commands';
+        constructor() {
+          super();
+          this.provide(CommandContribution, {
+            name: 'conformance-echo',
+            description: 'records its args',
+            run: (ctx) => {
+              calls.push(ctx.args);
+            },
+          });
+        }
+      }
+
+      const featureManager = target.app.accessor.get(IFeatureManager);
+      const handle = featureManager.provideUnit(ConformanceCommands);
+      try {
+        const agent = target.klient.session(created.id).agent('main');
+
+        // Dynamic assembly goes through the cascade — poll until visible.
+        let infos = await agent.listCommands();
+        const deadline = Date.now() + 5_000;
+        while (!infos.some((command) => command.name === 'conformance-echo')) {
+          if (Date.now() > deadline) break;
+          await new Promise((resolve) => {
+            setTimeout(resolve, 25);
+          });
+          infos = await agent.listCommands();
+        }
+        expect(infos.map((command) => command.name)).toContain('conformance-echo');
+        const echo = infos.find((command) => command.name === 'conformance-echo');
+        expect(echo).toMatchObject({ name: 'conformance-echo', description: 'records its args' });
+        expect(typeof echo?.source).toBe('string');
+
+        await agent.runCommand({ name: 'conformance-echo', args: 'hello commands' });
+        expect(calls).toEqual(['hello commands']);
+
+        // Unknown names fail with a coded engine error.
+        await expect(agent.runCommand({ name: 'conformance-missing' })).rejects.toThrow(
+          /Unknown command/,
+        );
+      } finally {
+        await handle.dispose();
+        await target.klient.session(created.id).close();
+      }
     });
   });
 }

@@ -5,13 +5,17 @@ import { join } from 'pathe';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  resetUnexpectedErrorHandler,
+  setUnexpectedErrorHandler,
+} from '#/_base/errors/unexpectedError';
+import {
   WIRE_PROTOCOL_VERSION,
   IAgentGoalService,
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
 import { IAgentTaskService } from '#/agent/task/task';
-import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { TurnModel } from '#/agent/loop/turnOps';
 import { IWireService } from '#/wire/wire';
@@ -59,6 +63,69 @@ describe('Agent resume', () => {
 
     expect(persistence.appended).toEqual([]);
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
+  });
+
+  it('reconciles a pending user interruption after restore when the reminder is missing', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Hello' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'Hello' }],
+        origin: { kind: 'user' },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'step-0', turnId: '0', step: 1 },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'part-0',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'step-0',
+          part: { type: 'text', text: 'partial answer' },
+        },
+      },
+      { type: 'turn.cancel', turnId: 0, target: 'active', reason: 'user_cancelled' },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+
+      expect(ctx.context.get()).toContainEqual(
+        expect.objectContaining({
+          role: 'user',
+          origin: { kind: 'injection', variant: 'interruption' },
+        }),
+      );
+      expect(persistence.appended).toContainEqual(
+        expect.objectContaining({
+          type: 'context.append_message',
+          message: expect.objectContaining({
+            origin: { kind: 'injection', variant: 'interruption' },
+          }),
+        }),
+      );
+      expect(persistence.appended).toContainEqual(
+        expect.objectContaining({ type: 'interruptionReminder.recorded', turnId: 0 }),
+      );
+
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
   });
 
   it('replays persisted records without restarting turns, compactions, plan turns, or tools', async () => {
@@ -168,6 +235,43 @@ describe('Agent resume', () => {
       turnId: 3,
       reason: 'completed',
     });
+  });
+
+  it('restores a cancelled queued-turn gap before allocating the next turn', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'Historical prompt' }],
+        origin: { kind: 'user' },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Historical prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'historical-step', turnId: '0' },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: 'historical-step', turnId: '0' },
+      },
+      { type: 'turn.cancel', turnId: 1, target: 'queued' },
+    ] as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    await ctx.restorePersisted();
+    ctx.mockNextResponse({ type: 'text', text: 'Fresh response.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
+    await ctx.untilTurnEnd();
+
+    expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 2 });
   });
 
   it('projects restored pending tool results before later user messages', async () => {
@@ -771,6 +875,47 @@ describe('Agent resume', () => {
     expect(ctx.context.get()).toHaveLength(2);
     expect(ctx.context.get()[0]?.role).toBe('user');
     expect(ctx.context.get()[1]?.role).toBe('assistant');
+  });
+
+  it('skips a fractional undo record on resume without corrupting checkpointed state', async () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'metadata',
+        protocol_version: '1.4',
+        created_at: 1,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'keep me' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      { type: 'context.undo', count: 0.5 },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+
+      expect(ctx.context.get()).toHaveLength(1);
+      await expect(ctx.get(IAgentPlanService).status()).resolves.toBeNull();
+      expect(unexpected).toHaveLength(1);
+      expect(unexpected[0]).toMatchObject({
+        code: 'wire.unknown_record',
+        details: { type: 'context.undo', index: 1 },
+      });
+    } finally {
+      try {
+        await ctx.dispose();
+      } finally {
+        resetUnexpectedErrorHandler();
+      }
+    }
   });
 });
 

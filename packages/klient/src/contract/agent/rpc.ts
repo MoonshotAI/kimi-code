@@ -1,10 +1,13 @@
 /**
  * `agentRPCService` — the per-agent RPC surface. Mirrors the `AgentAPI`
  * subset of `agent-core-v2/agent/rpc/core-api.ts`; every method takes one
- * payload object. `PromptPayload.input` mirrors the `PromptPart` subset of
- * `ContentPart` (text / image_url / video_url) from
- * `agent-core-v2/app/llmProtocol/message.ts`. Task wire shapes mirror the
- * `TaskInfo` union in `protocol/src/events.ts`.
+ * payload object. Only the methods still implemented by the engine's RPC
+ * facade live here — the domain services the facade calls directly
+ * (shellCommand / profile / usage / plan / task) have their own contracts in
+ * `agent/services.ts`, reusing the payload/result schemas below.
+ * `PromptPayload.input` mirrors the `PromptPart` subset of `ContentPart`
+ * (text / image_url / video_url) from `agent-core-v2/kosong/contract/message.ts`.
+ * Task wire shapes mirror the `TaskInfo` union in `protocol/src/events.ts`.
  */
 
 import { z } from 'zod';
@@ -42,10 +45,21 @@ export const emptyPayloadSchema = z.object({});
 
 export const promptPayloadSchema = z.object({
   input: z.array(promptPartSchema),
+  // Mirrors `PromptPayload.disabledTools` in the engine (client-managed
+  // session denylist, full-replace).
+  disabledTools: z.array(z.string()).optional(),
 });
 
-/** Same shape as `PromptPayload` in the engine. */
-export const steerPayloadSchema = promptPayloadSchema;
+/** Same shape as `SteerPayload` in the engine. */
+export const steerPayloadSchema = z.object({
+  input: z.array(promptPartSchema),
+});
+
+/** Same shape as `ActivateSkillPayload` in the engine. */
+export const activateSkillPayloadSchema = z.object({
+  name: z.string(),
+  args: z.string().optional(),
+});
 
 export const promptLaunchResultSchema = z.object({
   turn_id: z.number(),
@@ -108,6 +122,19 @@ export const agentContextDataSchema = z.object({
   tokenCount: z.number(),
 });
 
+/** `AgentCommandInfo` (`agent-core-v2/agent/command/agentCommand.ts`). */
+export const agentCommandInfoSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  source: z.string(),
+});
+
+/** Same shape as `RunCommandPayload` in the engine. */
+export const runCommandPayloadSchema = z.object({
+  name: z.string(),
+  args: z.string().optional(),
+});
+
 /** `PlanData = null | { id, content, path }` — null is JSON-representable. */
 export const planDataSchema = z.union([
   z.null(),
@@ -161,6 +188,8 @@ export const agentTaskInfoSchema = z.discriminatedUnion('kind', [
     kind: z.literal('agent'),
     agentId: z.string().optional(),
     subagentType: z.string().optional(),
+    model: z.string().optional(),
+    thinkingEffort: z.string().optional(),
     ...taskInfoBaseFields,
   }),
   z.object({
@@ -186,28 +215,16 @@ export const getTaskOutputPayloadSchema = z.object({
 export const agentRpcContract = {
   prompt: { input: z.tuple([promptPayloadSchema]), output: maybe(promptLaunchResultSchema) },
   steer: { input: z.tuple([steerPayloadSchema]), output: maybe(promptLaunchResultSchema) },
+  activateSkill: {
+    input: z.tuple([activateSkillPayloadSchema]),
+    output: maybe(promptLaunchResultSchema),
+  },
   cancel: { input: z.tuple([cancelPayloadSchema]), output: noResult },
-  runShellCommand: {
-    input: z.tuple([runShellCommandPayloadSchema]),
-    output: shellCommandResultSchema,
-  },
-  cancelShellCommand: {
-    input: z.tuple([cancelShellCommandPayloadSchema]),
-    output: noResult,
-  },
-  getModel: { input: z.tuple([emptyPayloadSchema]), output: z.string() },
-  setModel: { input: z.tuple([setModelPayloadSchema]), output: setModelResultSchema },
   setPermission: { input: z.tuple([setPermissionPayloadSchema]), output: noResult },
-  getUsage: { input: z.tuple([emptyPayloadSchema]), output: usageStatusSchema },
   getContext: { input: z.tuple([emptyPayloadSchema]), output: agentContextDataSchema },
-  getPlan: { input: z.tuple([emptyPayloadSchema]), output: planDataSchema },
-  enterPlan: { input: z.tuple([emptyPayloadSchema]), output: noResult },
-  clearPlan: { input: z.tuple([emptyPayloadSchema]), output: noResult },
-  cancelPlan: { input: z.tuple([cancelPlanPayloadSchema]), output: noResult },
-  getTasks: {
-    input: z.tuple([getTasksPayloadSchema]),
-    output: z.array(agentTaskInfoSchema),
+  listCommands: {
+    input: z.tuple([emptyPayloadSchema]),
+    output: z.array(agentCommandInfoSchema),
   },
-  stopTask: { input: z.tuple([stopTaskPayloadSchema]), output: noResult },
-  getTaskOutput: { input: z.tuple([getTaskOutputPayloadSchema]), output: z.string() },
+  runCommand: { input: z.tuple([runCommandPayloadSchema]), output: noResult },
 } satisfies ServiceContract;

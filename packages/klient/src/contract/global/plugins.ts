@@ -1,15 +1,17 @@
 /**
  * `pluginService` — plugin management and consumption. Mirrors
  * `agent-core-v2/app/plugin/plugin.ts` and `agent-core-v2/app/plugin/types.ts`;
- * nested `McpServerConfig` mirrors `agent-core-v2/agent/mcp/config-schema.ts`,
+ * nested `McpServerConfig` mirrors `agent-core-v2/mcpCore/config-schema.ts`,
  * `HookDefConfig` mirrors `agent-core-v2/agent/externalHooks/configSection.ts`.
- * `pluginSkillRoots`, `enabledSessionStarts`, `enabledMcpServers`, and
- * `enabledHooks` are excluded (not part of the klient wire surface).
+ * `pluginSkillRoots`, `enabledSessionStarts`, `enabledSystemPrompts`,
+ * `enabledMcpServers`, and `enabledHooks` are excluded (not part of the
+ * klient wire surface).
  */
 
 import { z } from 'zod';
 
 import { noResult } from '../helpers.js';
+import { mcpServerConfigSchema } from '../mcp.js';
 import type { ServiceContract } from '../types.js';
 
 export const pluginDiagnosticSchema = z.object({
@@ -34,42 +36,6 @@ const pluginInterfaceSchema = z.object({
   websiteURL: z.string().optional(),
 });
 
-const stringRecordSchema = z.record(z.string(), z.string());
-
-const mcpServerCommonFields = {
-  enabled: z.boolean().optional(),
-  startupTimeoutMs: z.number().int().min(1).optional(),
-  toolTimeoutMs: z.number().int().min(1).optional(),
-  enabledTools: z.array(z.string()).optional(),
-  disabledTools: z.array(z.string()).optional(),
-} as const;
-
-const mcpServerConfigSchema = z.discriminatedUnion('transport', [
-  z.object({
-    transport: z.literal('stdio'),
-    command: z.string().min(1),
-    args: z.array(z.string()).optional(),
-    env: stringRecordSchema.optional(),
-    cwd: z.string().optional(),
-    executor: z.enum(['local', 'kaos']).optional(),
-    ...mcpServerCommonFields,
-  }),
-  z.object({
-    transport: z.literal('http'),
-    url: z.string().url(),
-    headers: stringRecordSchema.optional(),
-    bearerTokenEnvVar: z.string().min(1).optional(),
-    ...mcpServerCommonFields,
-  }),
-  z.object({
-    transport: z.literal('sse'),
-    url: z.string().url(),
-    headers: stringRecordSchema.optional(),
-    bearerTokenEnvVar: z.string().min(1).optional(),
-    ...mcpServerCommonFields,
-  }),
-]);
-
 const hookDefSchema = z.object({
   event: z.enum([
     'PreToolUse',
@@ -78,13 +44,17 @@ const hookDefSchema = z.object({
     'PermissionRequest',
     'PermissionResult',
     'UserPromptSubmit',
+    'UserPromptQueued',
+    'TurnStarted',
     'Stop',
     'StopFailure',
     'Interrupt',
     'SessionStart',
     'SessionEnd',
+    'SessionHeartbeat',
     'SubagentStart',
     'SubagentStop',
+    'TaskStarted',
     'PreCompact',
     'PostCompact',
     'Notification',
@@ -119,12 +89,14 @@ export const pluginManifestSchema = z.object({
   homepage: z.string().optional(),
   license: z.string().optional(),
   skills: z.array(z.string()).optional(),
+  agents: z.array(z.string()).optional(),
   sessionStart: pluginSessionStartSchema.optional(),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
   hooks: z.array(hookDefSchema).optional(),
   commands: z.array(pluginCommandEntrySchema).optional(),
   interface: pluginInterfaceSchema.optional(),
   skillInstructions: z.string().optional(),
+  systemPrompt: z.string().optional(),
 });
 
 export const pluginMcpServerInfoSchema = z.object({

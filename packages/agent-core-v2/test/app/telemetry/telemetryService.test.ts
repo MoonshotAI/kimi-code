@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
 import {
   resetUnexpectedErrorHandler,
@@ -123,13 +122,29 @@ describe('TelemetryService (unit)', () => {
     expect(appender.events).toEqual([{ event: 'sent', properties: {} }]);
   });
 
-  it('withContext child inherits enabled state at creation', () => {
+  it('withContext view follows root enablement changes', () => {
     const appender = new CapturingAppender();
     const root = telemetryWithAppenders(appender);
-    root.setEnabled(false);
     const child = root.withContext({ turnId: 't1' });
+
+    root.setEnabled(false);
     child.track('dropped');
     expect(appender.events).toHaveLength(0);
+
+    root.setEnabled(true);
+    child.track('sent');
+    expect(appender.events).toEqual([{ event: 'sent', properties: { turnId: 't1' } }]);
+  });
+
+  it('withContext view follows root appender changes', () => {
+    const root = new TelemetryService();
+    const child = root.withContext({ agent_id: 'main' });
+    const appender = new CapturingAppender();
+
+    root.setAppender(appender);
+    child.track('sent');
+
+    expect(appender.events).toEqual([{ event: 'sent', properties: { agent_id: 'main' } }]);
   });
 
   it('flush fans out to every appender', async () => {
@@ -208,7 +223,7 @@ describe('ITelemetryService (scoped)', () => {
       LifecycleScope.App,
       ITelemetryService,
       TelemetryService,
-      InstantiationType.Eager,
+      ScopeActivation.OnScopeCreated,
       'telemetry',
     );
   });

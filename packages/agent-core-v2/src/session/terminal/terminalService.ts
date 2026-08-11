@@ -1,5 +1,5 @@
 /**
- * `terminal` domain (L6) — Session-scoped terminal facade.
+ * `terminal` domain — Session-scoped terminal facade.
  *
  * Owns this session's terminal set and its per-terminal output buffers and
  * attached sinks; spawns PTYs through the App-scoped `IHostTerminalService`,
@@ -9,10 +9,10 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type {
   CreateTerminalRequest,
   Terminal,
@@ -63,6 +63,7 @@ export interface ISessionTerminalService {
 export const ISessionTerminalService: ServiceIdentifier<ISessionTerminalService> =
   createDecorator<ISessionTerminalService>('sessionTerminalService');
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class SessionTerminalService extends Disposable implements ISessionTerminalService {
   declare readonly _serviceBrand: undefined;
 
@@ -257,6 +258,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionTerminalService,
   SessionTerminalService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'terminal',
 );

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -33,7 +33,7 @@ function recordContainsSkillLoaded(record: unknown, skillName: string): boolean 
       return (
         part.type === 'text' &&
         typeof part.text === 'string' &&
-        part.text.includes(`<kimi-skill-loaded name="${skillName}"`)
+        part.text.includes(`<skill-loaded name="${skillName}"`)
       );
     }) ?? false
   );
@@ -246,9 +246,9 @@ describe('ToolManager SkillTool wire behavior', () => {
             text: [
               'Skill tool loaded instructions for this request. Follow them.',
               '',
-              '<kimi-skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
+              '<skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
               'body of review',
-              '</kimi-skill-loaded>',
+              '</skill-loaded>',
             ].join('\n'),
           },
         ],

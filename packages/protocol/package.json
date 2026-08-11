@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/protocol",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Shared REST + WS protocol schemas (envelope, error codes, pagination, ws-control) for the kimi-code daemon.",
   "license": "MIT",

@@ -28,6 +28,7 @@ import { IWireService } from '#/wire/wire';
 
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire } from '../loop/stubs';
+import { registerStateServices } from '../../state/stubs';
 
 function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
@@ -47,6 +48,7 @@ function harness() {
   } as unknown as IAgentFullCompactionService;
   const ix = createServices(disposables, {
     strict: true, additionalServices: (reg) => {
+      registerStateServices(reg);
       reg.defineInstance(IAgentContextMemoryService, context);
       reg.defineInstance(IAgentLoopService, loop);
       reg.defineInstance(IWireService, stubWire());
@@ -57,7 +59,7 @@ function harness() {
       reg.define(IAgentPromptService, AgentPromptService);
     }
   });
-  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction };
+  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, eventBus: ix.get(IEventBus) };
 }
 
 describe('AgentPromptService', () => {
@@ -75,6 +77,20 @@ describe('AgentPromptService', () => {
     const first = await prompt.enqueue({ message: message('one') });
     const second = await prompt.enqueue({ message: message('two') });
     expect(prompt.list().pending.map((item) => item.id)).toEqual([first.id, second.id]);
+  });
+
+  it('publishes prompt.queued only for prompts that cannot launch immediately', async () => {
+    const { prompt, eventBus } = harness();
+    const queued: Array<{ promptId: string; queueLength: number }> = [];
+    eventBus.subscribe('prompt.queued', (e) => {
+      queued.push({ promptId: e.promptId, queueLength: e.queueLength });
+    });
+
+    await prompt.enqueue({ id: 'active', message: message('active') });
+    expect(queued).toEqual([]);
+
+    await prompt.enqueue({ id: 'waiting', message: message('waiting') });
+    expect(queued).toEqual([{ promptId: 'waiting', queueLength: 1 }]);
   });
 
   it('atomically rejects steer when any id is not pending', async () => {

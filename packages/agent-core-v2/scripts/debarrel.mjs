@@ -365,7 +365,7 @@ function regenerateEntry() {
 // ---------------------------------------------------------------------------
 const REGISTER_NAMES = new Set([
   'registerScopedService',
-  'registerTool',
+  'registerAgentToolService',
   'registerErrorDomain',
   'registerConfigSection',
   'registerAgentProfile',

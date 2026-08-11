@@ -1,15 +1,15 @@
 /**
- * `edit` domain (L4) — `IFileEditService` implementation.
+ * `edit` domain — `IFileEditService` implementation.
  *
  * Reads the file through the os `hostFs` domain (`IHostFileSystem`), runs the
  * pure edit logic (`TextModel` + `EditService`), and writes the re-materialized
  * content back. Maps host-level failures (e.g. `EISDIR`) to the domain-neutral
- * `FileEditResult`; it owns no tool-facing message, which the Agent `EditTool`
- * adapter supplies. Bound at App scope.
+ * `FileEditResult`; it owns no tool-facing message. Bound at App scope.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
@@ -58,6 +58,6 @@ registerScopedService(
   LifecycleScope.App,
   IFileEditService,
   FileEditService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'edit',
 );

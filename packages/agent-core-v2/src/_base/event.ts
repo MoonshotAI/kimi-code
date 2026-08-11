@@ -1,10 +1,12 @@
 /**
- * `event` domain (L0) — `Event` / `Emitter` primitives, the async
+ * `event` domain — `Event` / `Emitter` primitives, the async
  * `AsyncEmitter` / `IWaitUntil` participation primitive (for interceptable
  * `onWill` events whose listeners register work via `waitUntil`), the
  * `handleVetos` helper (for `onBefore*` veto events whose listeners answer
  * with `veto(value, id)`), and event combinators (`once` / `map` / `filter`
- * / `any`).
+ * / `any`). `Emitter` accepts an optional debug name that its
+ * `EventSubscription` carries as an `on:<name>` ledger label, so event
+ * subscriptions stay identifiable in unit-book introspection.
  */
 
 import { onUnexpectedError, safelyCallListener } from './errors/unexpectedError';
@@ -13,6 +15,7 @@ import {
   DisposableStore,
   combinedDisposable,
   type IDisposable,
+  type IDisposableDebugLabel,
 } from './di/lifecycle';
 import { LinkedList } from './di/util/linkedList';
 
@@ -29,10 +32,30 @@ interface ListenerEntry<T> {
   thisArg: unknown;
 }
 
+export class EventSubscription implements IDisposable, IDisposableDebugLabel {
+  readonly debugLabel: string | undefined;
+  private _removed = false;
+
+  constructor(
+    debugName: string | undefined,
+    private readonly _remove: () => void,
+  ) {
+    this.debugLabel = debugName === undefined ? undefined : `on:${debugName}`;
+  }
+
+  dispose(): void {
+    if (this._removed) return;
+    this._removed = true;
+    this._remove();
+  }
+}
+
 export class Emitter<T> {
   protected _listeners: Set<ListenerEntry<T>> | undefined;
   private _disposed = false;
   private _event: Event<T> | undefined;
+
+  constructor(public readonly debugName?: string) {}
 
   get event(): Event<T> {
     this._event ??= (listener, thisArg, disposables) => {
@@ -43,17 +66,12 @@ export class Emitter<T> {
       const entry: ListenerEntry<T> = { listener, thisArg };
       this._listeners.add(entry);
 
-      let removed = false;
-      const subscription: IDisposable = {
-        dispose: () => {
-          if (removed) return;
-          removed = true;
-          if (this._disposed) {
-            return;
-          }
-          this._listeners?.delete(entry);
-        },
-      };
+      const subscription = new EventSubscription(this.debugName, () => {
+        if (this._disposed) {
+          return;
+        }
+        this._listeners?.delete(entry);
+      });
 
       if (disposables !== undefined) {
         if (disposables instanceof DisposableStore) {
@@ -65,6 +83,10 @@ export class Emitter<T> {
       return subscription;
     };
     return this._event;
+  }
+
+  get listenerCount(): number {
+    return this._listeners?.size ?? 0;
   }
 
   fire(value: T): void {

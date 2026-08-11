@@ -257,48 +257,4 @@ describe('Sync/Async dependency loop', () => {
     expect((captured as Error).message).toContain('RECURSIVELY');
   });
 
-  it('delayed A breaks the synchronous recursion but the cycle is still tracked in the global graph', () => {
-    const IA = createDecorator<IA>('loop-async-A');
-    const IB = createDecorator<IB>('loop-async-B');
-
-    class BConsumer {
-      constructor(@IB private readonly b: IB) {}
-      doIt(): boolean {
-        return this.b.b();
-      }
-    }
-    class AService implements IA {
-      readonly _serviceBrand: undefined;
-      private readonly prop: BConsumer;
-      constructor(@IInstantiationService insta: IInstantiationServiceType) {
-        this.prop = insta.createInstance(BConsumer);
-      }
-      doIt(): boolean {
-        return this.prop.doIt();
-      }
-    }
-    class BService implements IB {
-      readonly _serviceBrand: undefined;
-      constructor(@IA _a: IA) {}
-      b(): boolean {
-        return true;
-      }
-    }
-
-    const insta = new InstantiationService(
-      new ServiceCollection(
-        [IA, new SyncDescriptor(AService, [], true)],
-        [IB, new SyncDescriptor(BService, [])],
-      ),
-      true,
-      undefined,
-      true,
-    );
-
-    const a = insta.invokeFunction((accessor) => accessor.get(IA));
-    expect(a.doIt()).toBe(true);
-
-    const cycle = insta._globalGraph?.findCycleSlow();
-    expect(cycle).toBe('loop-async-A -> loop-async-B -> loop-async-A');
-  });
 });

@@ -1,5 +1,5 @@
 /**
- * `_base/execEnv` (L0) — OS / shell probe.
+ * `_base/execEnv` — OS / shell probe.
  *
  * Detects the host operating system, architecture, kernel release, and a
  * usable POSIX shell path. The result is a pure function of injected probes
@@ -7,13 +7,14 @@
  * same suite runs identically on any host OS. `probeHostEnvironmentFromNode()`
  * bundles the Node defaults for production callers and memoises the promise.
  *
- * On Windows the probe expects bash from Git for Windows or MSYS2. If it
- * cannot be located the function throws a plain `Error` with the checked paths
- * in the message; the App-scope host-environment service catches that at first
- * resolution. Set `KIMI_SHELL_PATH` to override.
+ * On Windows the probe expects bash from Git for Windows or MSYS2. If no
+ * shell can be located the function throws `ProbeShellNotFoundError`, a
+ * distinct type carrying the checked paths (`checked`) with an install hint
+ * in its message, so the DI boundary can tell a missing shell apart from
+ * other probe errors and translate it into a coded error. Set
+ * `KIMI_SHELL_PATH` to override.
  *
- * Vendored from `@moonshot-ai/kaos` `environment.ts` — kept as a pure helper
- * with no DI dependencies.
+ * Kept as a pure helper with no DI dependencies.
  */
 
 import { execFile as nodeExecFile } from 'node:child_process';
@@ -25,6 +26,16 @@ import * as nodePath from 'node:path';
 export type OsKind = string;
 export type ShellName = 'bash' | 'sh';
 export type PathClass = 'posix' | 'win32';
+
+export class ProbeShellNotFoundError extends Error {
+  readonly checked: readonly string[];
+
+  constructor(message: string, checked: readonly string[]) {
+    super(message);
+    this.name = 'ProbeShellNotFoundError';
+    this.checked = checked;
+  }
+}
 
 export interface HostEnvironmentInfo {
   readonly osKind: OsKind;
@@ -183,8 +194,9 @@ async function locateWindowsGitBash(deps: HostEnvironmentProbeDeps): Promise<str
     }
   }
 
-  throw new Error(
-    `Git Bash was not found on this Windows host. Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe. Checked: ${checked.join(', ')}.`,
+  throw new ProbeShellNotFoundError(
+    'Git Bash was not found on this Windows host. Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe.',
+    checked,
   );
 }
 

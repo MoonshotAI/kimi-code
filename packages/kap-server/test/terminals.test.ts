@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import {
   IHostTerminalService,
-  InstantiationType,
+  ScopeActivation,
   LifecycleScope,
   registerScopedService,
   type TerminalProcess,
@@ -15,6 +15,7 @@ import type { Terminal } from '@moonshot-ai/agent-core-v2/os/interface/terminal'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 // --- Fake PTY service -------------------------------------------------------
@@ -79,7 +80,7 @@ registerScopedService(
   LifecycleScope.App,
   IHostTerminalService,
   FakeHostTerminalService,
-  InstantiationType.Delayed,
+  ScopeActivation.OnDemand,
   'terminal-test',
 );
 
@@ -120,6 +121,7 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
       ].join('\n'),
     );
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,

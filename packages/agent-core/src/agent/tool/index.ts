@@ -6,6 +6,7 @@ import type { Agent } from '..';
 import {
   collectLoadedDynamicToolNames,
 } from '../context/dynamic-tools';
+import type { ContextMessage } from '../context/types';
 import { makeErrorPayload } from '../../errors';
 import type { ExecutableTool, ToolUpdate } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
@@ -13,8 +14,8 @@ import type { McpConnectionManager, McpServerEntry } from '../../mcp';
 import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
 import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
-import { DEFAULT_AGENT_PROFILES } from '../../profile';
 import { resolveSubagentTimeoutMs } from '../../session/subagent-host';
+import { buildSubagentModelDescriptions } from '../../session/subagent-binding';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
 import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
@@ -47,6 +48,7 @@ interface PendingMcpDiscovery {
 export class ToolManager {
   protected builtinTools: Map<string, BuiltinTool> = new Map();
   protected readonly userTools: Map<string, ExecutableTool> = new Map();
+  private readonly deferredUserTools = new Set<string>();
   protected readonly mcpTools: Map<string, McpToolEntry> = new Map();
   private loopToolsOverride: readonly ExecutableTool[] | undefined;
   /** server name → list of qualified tool names registered for that server. */
@@ -54,6 +56,13 @@ export class ToolManager {
   protected enabledTools: Set<string> = new Set();
   /** Glob patterns (e.g. `mcp__*`, `mcp__github__*`) gating which MCP tools the profile exposes. */
   private mcpAccessPatterns: string[] = [];
+  /**
+   * Exact builtin/user tool names the profile denies, evaluated on top of the
+   * allowlist result (`enabledTools`).
+   */
+  private disabledTools: Set<string> = new Set();
+  /** Glob patterns (`mcp__…`) the profile denies, evaluated on top of `mcpAccessPatterns`. */
+  private mcpDenyPatterns: string[] = [];
   /**
    * Defer-window lead for the loaded-tools ledger: names marked loaded whose
    * schema message may still sit in the context's deferred queue (an open tool
@@ -244,6 +253,11 @@ export class ToolManager {
       },
     };
     this.userTools.set(name, tool);
+    if (input.disclosure === 'deferred') {
+      this.deferredUserTools.add(name);
+    } else {
+      this.deferredUserTools.delete(name);
+    }
     this.enabledTools.add(name);
   }
 
@@ -253,6 +267,8 @@ export class ToolManager {
       name,
     });
     this.userTools.delete(name);
+    this.deferredUserTools.delete(name);
+    this.pendingLoadedDynamicTools.delete(name);
     this.enabledTools.delete(name);
   }
 
@@ -263,6 +279,7 @@ export class ToolManager {
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters,
+        disclosure: parent.deferredUserTools.has(tool.name) ? 'deferred' : undefined,
       });
     }
   }
@@ -512,15 +529,18 @@ export class ToolManager {
     });
   }
 
-  setActiveTools(names: readonly string[]): void {
+  setActiveTools(names: readonly string[], disallowedNames?: readonly string[]): void {
     this.agent.records.logRecord({
       type: 'tools.set_active_tools',
       names,
+      disallowedNames,
     });
     // MCP entries are glob patterns gated separately; the rest are exact
     // builtin/user tool names. The split keeps every caller on one string[].
     this.enabledTools = new Set(names.filter((name) => !isMcpToolName(name)));
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
+    this.disabledTools = new Set((disallowedNames ?? []).filter((name) => !isMcpToolName(name)));
+    this.mcpDenyPatterns = (disallowedNames ?? []).filter((name) => isMcpToolName(name));
     // Builtin construction reads the enabled set (Bash/Agent bake
     // `allowBackground` from the Task* trio), and the constructor may already
     // have built the map while the enabled set was still empty. The lazy
@@ -537,11 +557,19 @@ export class ToolManager {
   }
 
   private isMcpToolEnabled(name: string): boolean {
-    return this.mcpAccessPatterns.some((pattern) => picomatch.isMatch(name, pattern));
+    return (
+      this.mcpAccessPatterns.some((pattern) => picomatch.isMatch(name, pattern)) &&
+      !this.mcpDenyPatterns.some((pattern) => picomatch.isMatch(name, pattern))
+    );
+  }
+
+  /** An exact builtin/user tool name survives when allowed and not denied. */
+  private isExactToolEnabled(name: string): boolean {
+    return this.enabledTools.has(name) && !this.disabledTools.has(name);
   }
 
   /**
-   * Whether MCP tools are disclosed progressively: kept out of the top-level
+   * Whether tools are disclosed progressively: kept out of the top-level
    * `tools[]` and loaded on demand via select_tools. Reads the agent's single
    * three-gate decision point.
    */
@@ -551,19 +579,24 @@ export class ToolManager {
 
   /**
    * Names the model may select right now: registered MCP tools that pass the
-   * profile's `mcp__*` access patterns, sorted for byte-stable announcements.
+   * profile's `mcp__*` access patterns, plus active user tools that explicitly
+   * opt into deferred disclosure, sorted for byte-stable announcements.
    * In disclosure mode the patterns keep their permission-filter role but stop
    * feeding the top-level `tools[]`.
    */
   loadableDynamicToolNames(): string[] {
-    return [...this.mcpTools.keys()]
-      .filter((name) => this.isMcpToolEnabled(name))
-      .toSorted((a, b) => a.localeCompare(b));
+    const names = new Set(
+      [...this.mcpTools.keys()].filter((name) => this.isMcpToolEnabled(name)),
+    );
+    for (const name of this.deferredUserTools) {
+      if (this.userTools.has(name) && this.isExactToolEnabled(name)) names.add(name);
+    }
+    return [...names].toSorted((a, b) => a.localeCompare(b));
   }
 
   /**
-   * The loaded-tools ledger: every name whose full definition has been
-   * delivered to the conversation via a `tools`-carrying message, plus the
+   * The active loaded-tools ledger: every still-loadable name whose full
+   * definition has been delivered via a `tools`-carrying message, plus the
    * defer-window pending set. History is the single source of truth, so the
    * ledger survives resume (records replay rebuilds the history), keeps its
    * state across undo (schema messages have `injection` origin and are not
@@ -571,9 +604,54 @@ export class ToolManager {
    * the folded history — the model re-selects what it still needs).
    */
   loadedDynamicToolNames(): ReadonlySet<string> {
+    const names = this.allLoadedDynamicToolNames();
+    for (const name of names) {
+      if (!this.isLoadedDynamicToolActive(name)) names.delete(name);
+    }
+    return names;
+  }
+
+  shapeDynamicToolHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
+    let shaped: ContextMessage[] | undefined;
+    for (let i = 0; i < messages.length; i += 1) {
+      const message = messages[i]!;
+      const tools = message.tools;
+      if (tools === undefined || tools.length === 0) {
+        if (shaped !== undefined) shaped.push(message);
+        continue;
+      }
+
+      const kept = tools.filter((tool) => this.isLoadedDynamicToolActive(tool.name));
+      if (kept.length === tools.length) {
+        if (shaped !== undefined) shaped.push(message);
+        continue;
+      }
+      shaped ??= messages.slice(0, i);
+      if (kept.length > 0) {
+        shaped.push({ ...message, tools: kept });
+        continue;
+      }
+
+      const { tools: _tools, ...rest } = message;
+      void _tools;
+      if (rest.content.length > 0 || rest.toolCalls.length > 0) shaped.push(rest);
+    }
+    return shaped ?? messages;
+  }
+
+  private allLoadedDynamicToolNames(): Set<string> {
     const names = collectLoadedDynamicToolNames(this.agent.context.history);
     for (const name of this.pendingLoadedDynamicTools) names.add(name);
     return names;
+  }
+
+  private isLoadedDynamicToolActive(name: string): boolean {
+    if (isMcpToolName(name)) return true;
+    return (
+      this.deferredUserTools.has(name) &&
+      this.userTools.has(name) &&
+      this.isExactToolEnabled(name)
+    );
   }
 
   /** Mark names loaded ahead of their schema message landing in history. */
@@ -603,16 +681,21 @@ export class ToolManager {
   }
 
   /**
-   * Plain schema snapshot of a registered MCP tool, read from the live
+   * Plain schema snapshot of a loadable dynamic tool, read from the live
    * registry (never from history) at injection time.
    */
-  getMcpToolSchema(name: string): Tool | undefined {
-    const entry = this.mcpTools.get(name);
-    if (entry === undefined) return undefined;
+  getDynamicToolSchema(name: string): Tool | undefined {
+    const userTool =
+      this.deferredUserTools.has(name) && this.isExactToolEnabled(name)
+        ? this.userTools.get(name)
+        : undefined;
+    const mcpTool = this.isMcpToolEnabled(name) ? this.mcpTools.get(name)?.tool : undefined;
+    const tool = userTool ?? mcpTool;
+    if (tool === undefined) return undefined;
     return {
-      name: entry.tool.name,
-      description: entry.tool.description,
-      parameters: entry.tool.parameters,
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
     };
   }
 
@@ -624,19 +707,24 @@ export class ToolManager {
    */
   missingToolMessage(name: string): string | undefined {
     if (!this.progressiveDisclosure) return undefined;
-    if (!isMcpToolName(name)) return undefined;
-    const registered = this.mcpTools.has(name) && this.isMcpToolEnabled(name);
-    const loaded = this.loadedDynamicToolNames().has(name);
+    const registered = this.loadableDynamicToolNames().includes(name);
+    const loaded = this.allLoadedDynamicToolNames().has(name);
     if (registered && !loaded) {
       return (
         `Tool "${name}" is available but not loaded. ` +
         `Call select_tools with ["${name}"] first, then call the tool.`
       );
     }
-    if (!registered && loaded) {
+    if (!registered && loaded && isMcpToolName(name)) {
       return (
         `Tool "${name}" was loaded but its MCP server is currently disconnected. ` +
         'It may become available again when the server reconnects; do not retry immediately.'
+      );
+    }
+    if (!registered && loaded) {
+      return (
+        `Tool "${name}" was loaded but is no longer registered or active. ` +
+        'Do not retry it unless it becomes available again.'
       );
     }
     return undefined;
@@ -648,10 +736,13 @@ export class ToolManager {
         name: tool.name,
         description: tool.description,
         // select_tools is always registered but only offered while the
-        // disclosure gate is open (see loopTools); report that live state.
+        // disclosure gate is open and the denylist does not name it (see
+        // loopTools); report that live state.
         active:
-          this.enabledTools.has(tool.name) ||
-          (tool.name === b.SELECT_TOOLS_TOOL_NAME && this.agent.toolSelectEnabled),
+          this.isExactToolEnabled(tool.name) ||
+          (tool.name === b.SELECT_TOOLS_TOOL_NAME &&
+            this.agent.toolSelectEnabled &&
+            !this.disabledTools.has(tool.name)),
         source: 'builtin',
       };
     }
@@ -659,7 +750,7 @@ export class ToolManager {
       yield {
         name: tool.name,
         description: tool.description,
-        active: this.enabledTools.has(tool.name),
+        active: this.isExactToolEnabled(tool.name),
         source: 'user',
       };
     }
@@ -697,9 +788,9 @@ export class ToolManager {
       this.agent.skills?.registry.getSkillRoots() ?? [],
     );
     const allowBackground =
-      this.enabledTools.has('TaskList') &&
-      this.enabledTools.has('TaskOutput') &&
-      this.enabledTools.has('TaskStop');
+      this.isExactToolEnabled('TaskList') &&
+      this.isExactToolEnabled('TaskOutput') &&
+      this.isExactToolEnabled('TaskStop');
     const goalToolsEnabled = this.agent.type === 'main';
     this.builtinTools = new Map(
       [
@@ -751,11 +842,18 @@ export class ToolManager {
           new b.AgentTool(
             this.agent.subagentHost,
             background,
-            DEFAULT_AGENT_PROFILES['agent']?.subagents,
+            this.agent.subagentHost.delegatableSubagents(this.agent.config.profileName),
             {
               allowBackground,
               log: this.agent.log,
               subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+              showModelPreferences: this.agent.experimentalFlags.enabled('secondary-model'),
+              modelChoiceEnabled: this.agent.experimentalFlags.enabled('secondary-model'),
+              subagentModelDescription: buildSubagentModelDescriptions(
+                this.agent.kimiConfig,
+                this.agent.experimentalFlags,
+                this.agent.config.modelAlias,
+              ),
             },
           ),
         this.agent.subagentHost &&
@@ -763,6 +861,12 @@ export class ToolManager {
             this.agent.subagentHost,
             this.agent.swarmMode,
             resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+            buildSubagentModelDescriptions(
+              this.agent.kimiConfig,
+              this.agent.experimentalFlags,
+              this.agent.config.modelAlias,
+            ),
+            this.agent.experimentalFlags.enabled('secondary-model'),
           ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
@@ -776,6 +880,16 @@ export class ToolManager {
     this.initializeBuiltinTools();
   }
 
+  /**
+   * Uploader bound to the agent's current provider, for media that arrives
+   * outside a tool call (e.g. a video attached to a prompt). `undefined`
+   * when no model is bound or the provider has no video upload channel.
+   */
+  videoUploader(): b.VideoUploader | undefined {
+    if (!this.agent.config.hasProvider) return undefined;
+    return this.createVideoUploader(this.agent.config.provider);
+  }
+
   private createVideoUploader(provider: ChatProvider): b.VideoUploader | undefined {
     const uploadVideo = provider.uploadVideo?.bind(provider);
     if (uploadVideo === undefined) return undefined;
@@ -787,10 +901,11 @@ export class ToolManager {
     const baseProps = this.videoUploadTelemetryProps(modelAlias);
     const upload =
       withAuth === undefined
-        ? (input: b.VideoUploadInput) => uploadVideo(input)
-        : (input: b.VideoUploadInput) => withAuth((auth) => uploadVideo(input, { auth }));
+        ? (input: b.VideoUploadInput, signal?: AbortSignal) => uploadVideo(input, { signal })
+        : (input: b.VideoUploadInput, signal?: AbortSignal) =>
+            withAuth((auth) => uploadVideo(input, { auth, signal }));
 
-    return async (input) => {
+    return async (input, options) => {
       const startedAt = Date.now();
       const base = {
         ...baseProps,
@@ -805,7 +920,7 @@ export class ToolManager {
         }
       };
       try {
-        const part = await upload(input);
+        const part = await upload(input, options?.signal);
         track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
         return part;
       } catch (error) {
@@ -863,17 +978,32 @@ export class ToolManager {
     );
     // Progressive disclosure splits "the model can see this tool" from "the
     // core can execute it": the top-level request view stays the immutable
-    // core set + select_tools, while loaded MCP tools join the executable
+    // core set + select_tools, while loaded dynamic tools join the executable
     // table as deferred extras — dispatchable, but stripped from the outbound
     // top-level tools[] by kosong generate(). With disclosure off this is the
     // inline behavior, byte for byte.
     const loadedSet = disclosure ? this.loadedDynamicToolNames() : undefined;
+    const enabledNames =
+      loadedSet === undefined
+        ? [...this.enabledTools].filter((name) => !this.disabledTools.has(name))
+        : [...this.enabledTools].filter(
+            (name) =>
+              !this.disabledTools.has(name) &&
+              (!this.deferredUserTools.has(name) || loadedSet.has(name)),
+          );
     const mcpNames =
       loadedSet === undefined
         ? enabledMcpNames
         : enabledMcpNames.filter((name) => loadedSet.has(name));
-    const selectToolsName = disclosure ? [b.SELECT_TOOLS_TOOL_NAME] : [];
-    return uniq([...this.enabledTools, ...selectToolsName, ...mcpNames])
+    // The disclosure gate decides exposure, but the denylist still wins: a
+    // profile disallowedTools entry naming select_tools keeps it out of the
+    // table (mirrors agent-core-v2 isToolActiveForDisclosure, which applies
+    // the deny layers but not the allowlist to select_tools).
+    const selectToolsName =
+      disclosure && !this.disabledTools.has(b.SELECT_TOOLS_TOOL_NAME)
+        ? [b.SELECT_TOOLS_TOOL_NAME]
+        : [];
+    return uniq([...enabledNames, ...selectToolsName, ...mcpNames])
       .toSorted((a, b) => a.localeCompare(b))
       // select_tools is exposed exclusively through the disclosure gate — a
       // profile or setActiveTools listing the name explicitly must not
@@ -886,9 +1016,11 @@ export class ToolManager {
           this.mcpTools.get(name)?.tool ??
           this.builtinTools.get(name);
         if (tool === undefined) return undefined;
-        // MCP entries are plain object literals, so the spread keeps the
+        const deferred =
+          disclosure && (this.mcpTools.has(name) || this.deferredUserTools.has(name));
+        // Dynamic entries are plain object literals, so the spread keeps the
         // execution closure intact while adding the wire-strip marker.
-        return disclosure && this.mcpTools.has(name) ? { ...tool, deferred: true as const } : tool;
+        return deferred ? { ...tool, deferred: true as const } : tool;
       })
       .filter((tool) => !!tool);
   }

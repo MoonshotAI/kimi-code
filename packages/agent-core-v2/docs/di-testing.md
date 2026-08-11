@@ -34,7 +34,7 @@ const svc = new MessageService(stubContext);
 Resolving by interface is what makes `registerScopedService(ISut, Sut, …)` part
 of the test. Constructing the class directly (or via
 `ix.createInstance(Sut)`) tests the class in isolation but leaves the binding,
-the scope layer, and the delayed/eager flag unverified.
+the scope layer, and its `ScopeActivation` mode unverified.
 
 Pure functions, value objects, and services with **no** `@IService`
 dependencies may be constructed directly.
@@ -123,11 +123,11 @@ Reference:
 
 ```ts
 import { beforeEach, describe, expect, it } from 'vitest';
-import { InstantiationType } from '#/_base/di/extensions';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   _clearScopedRegistryForTests,
   registerScopedService,
+  ScopeActivation,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 
@@ -138,7 +138,7 @@ describe('XxxService (scoped)', () => {
       LifecycleScope.Agent,
       IXxxService,
       XxxService,
-      InstantiationType.Delayed,
+      ScopeActivation.OnDemand,
       'xxx',
     );
   });
@@ -157,6 +157,13 @@ Always `_clearScopedRegistryForTests()` and re-register explicitly in
 `beforeEach`. Do not rely on a production module's top-level
 `registerScopedService(...)` side-effect: import order then becomes part of the
 test, and another suite's `_clearScopedRegistryForTests()` can wipe it.
+
+The scoped registration signature is
+`registerScopedService(scope, id, ctor, activation = ScopeActivation.OnScopeCreated, domain?)`.
+The fourth argument is activation and the fifth is domain.
+`ScopeActivation.OnScopeCreated` is `0` and constructs the real instance during
+scope creation; it is the default. `ScopeActivation.OnDemand` is `1` and
+constructs the real instance on the first `get()`.
 
 ## Register the SUT by interface
 
@@ -241,8 +248,8 @@ ix = createServices(disposables, {
 
 `ServiceRegistration` offers three verbs:
 
-- `define(id, Ctor)` — lazy `SyncDescriptor`; the service is instantiated on
-  first resolve. Use for real collaborators and the system under test.
+- `define(id, Ctor)` — descriptor-backed registration; the real service is
+  instantiated on first resolve. Use for real collaborators and the system under test.
 - `defineInstance(id, instance)` — a fully-built instance (a fake such as
   `stubLog()`, or `new ConfigRegistry()`).
 - `definePartialInstance(id, { ... })` — a partial mock; only the supplied

@@ -1,3 +1,12 @@
+/**
+ * Scenario: MCP connection lifecycle, timeout defaults, and Session wiring.
+ *
+ * Exercises the real connection manager and Session while stdio/HTTP MCP
+ * processes provide the external boundary; timeout forwarding tests stub only
+ * the MCP SDK client boundary. Run with `pnpm --filter
+ * @moonshot-ai/agent-core exec vitest run test/mcp/connection-manager.test.ts`.
+ */
+
 import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,12 +16,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { testKaos } from '../fixtures/test-kaos';
 import type { ProviderConfig } from '@moonshot-ai/kosong';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { randomUUID } from 'node:crypto';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import type { AddressInfo as HttpAddress } from 'node:net';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type {
@@ -23,7 +33,14 @@ import { z } from 'zod';
 
 import { KimiError } from '../../src/errors';
 import { ProviderManager } from '../../src/session/provider-manager';
-import { McpConnectionManager, type McpServerEntry } from '../../src/mcp/connection-manager';
+import {
+  MCP_STARTUP_TIMEOUT_ENV,
+  MCP_TOOL_TIMEOUT_ENV,
+  McpConnectionManager,
+  resolveMcpStartupTimeoutMs,
+  resolveMcpToolTimeoutMs,
+  type McpServerEntry,
+} from '../../src/mcp/connection-manager';
 import { JsonFileStore, McpOAuthService } from '../../src/mcp/oauth';
 import type { AgentEvent, SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -34,6 +51,7 @@ import { createScriptedGenerate } from '../agent/harness';
 const here = import.meta.dirname;
 const stdioFixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
 const cwdStdioFixture = join(here, 'fixtures', 'cwd-stdio-server.mjs');
+const slowToolStdioFixture = join(here, 'fixtures', 'slow-tool-stdio-server.mjs');
 const crashAfterConnectFixture = join(here, 'fixtures', 'crash-after-connect-stdio-server.mjs');
 const stderrThenExitFixture = join(here, 'fixtures', 'stderr-then-exit-stdio-server.mjs');
 const MOCK_PROVIDER: ProviderConfig = {
@@ -366,6 +384,123 @@ describe('McpConnectionManager', () => {
       await Promise.race([connectPromise.catch(() => {}), sleep(1_000)]);
     }
   }, 7000);
+
+  it('applies defaultStartupTimeoutMs when the server entry omits startupTimeoutMs', async () => {
+    const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 100 });
+    try {
+      const slowFixture = join(here, 'fixtures', 'slow-stdio-server.mjs');
+      await cm.connectAll({
+        slow: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [slowFixture],
+        },
+      });
+      const entry = cm.get('slow');
+      expect(entry?.status).toBe('failed');
+      expect(entry?.error?.toLowerCase()).toContain('timed out');
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
+  it.each([
+    ['stdio', stdioConfig()],
+    ['http', { transport: 'http' as const, url: 'https://example.test/mcp' }],
+    ['sse', { transport: 'sse' as const, url: 'https://example.test/sse' }],
+  ])(
+    'forwards defaultStartupTimeoutMs above the SDK default over %s',
+    async (_transport, config) => {
+      const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+      const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
+      const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 120_000 });
+      try {
+        await cm.connectAll({ server: config });
+        expect(connect).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ timeout: 120_000 }),
+        );
+        expect(listTools).toHaveBeenCalledWith(
+          undefined,
+          expect.objectContaining({ timeout: 120_000 }),
+        );
+      } finally {
+        await cm.shutdown();
+        connect.mockRestore();
+        listTools.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    ['stdio', stdioConfig()],
+    ['http', { transport: 'http' as const, url: 'https://example.test/mcp' }],
+    ['sse', { transport: 'sse' as const, url: 'https://example.test/sse' }],
+  ])(
+    'forwards per-server startupTimeoutMs above the SDK default over %s',
+    async (_transport, config) => {
+      const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+      const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
+      const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 120_000 });
+      try {
+        await cm.connectAll({
+          server: { ...config, startupTimeoutMs: 180_000 },
+        });
+        expect(connect).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ timeout: 180_000 }),
+        );
+        expect(listTools).toHaveBeenCalledWith(
+          undefined,
+          expect.objectContaining({ timeout: 180_000 }),
+        );
+      } finally {
+        await cm.shutdown();
+        connect.mockRestore();
+        listTools.mockRestore();
+      }
+    },
+  );
+
+  it('applies defaultToolTimeoutMs when the server entry omits toolTimeoutMs', async () => {
+    const cm = new McpConnectionManager({ defaultToolTimeoutMs: 100 });
+    try {
+      const slowToolFixture = join(here, 'fixtures', 'slow-tool-stdio-server.mjs');
+      await cm.connectAll({
+        slowTool: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [slowToolFixture],
+        },
+      });
+      const client = cm.resolved('slowTool')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      await expect(client.callTool('slow_echo', { text: 'hi' })).rejects.toThrow(/timed out/i);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
+  it('lets a per-server toolTimeoutMs override defaultToolTimeoutMs', async () => {
+    const cm = new McpConnectionManager({ defaultToolTimeoutMs: 100 });
+    try {
+      const slowToolFixture = join(here, 'fixtures', 'slow-tool-stdio-server.mjs');
+      await cm.connectAll({
+        slowTool: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [slowToolFixture],
+          toolTimeoutMs: 10_000,
+        },
+      });
+      const client = cm.resolved('slowTool')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const result = await client.callTool('slow_echo', { text: 'hi' });
+      expect(result.content).toEqual([{ type: 'text', text: 'hi' }]);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
 
   it('marks an explicitly OAuth HTTP server as needs-auth when non-auth headers accompany a 401', async () => {
     const server: HttpServer = createHttpServer((_req, res) => {
@@ -846,6 +981,37 @@ describe('Session MCP startup', () => {
     }
   }, 7000);
 
+  it("times out tool calls using the Session's global MCP config", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-global-timeout-'));
+    const session = new Session({
+      id: 'test-mcp-global-timeout',
+      kaos: testKaos.withCwd(tmp),
+      homedir: join(tmp, 'session'),
+      rpc: sessionRpc(),
+      config: { providers: {}, mcp: { toolTimeoutMs: 1 } },
+      mcpConfig: {
+        servers: {
+          slowTool: {
+            transport: 'stdio',
+            command: process.execPath,
+            args: [slowToolStdioFixture],
+            env: { KIMI_TEST_MCP_TOOL_DELAY_MS: '300' },
+          },
+        },
+      },
+    });
+
+    try {
+      await session.mcp.waitForInitialLoad();
+      const client = session.mcp.resolved('slowTool')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      await expect(client.callTool('slow_echo', { text: 'hi' })).rejects.toThrow(/timed out/i);
+    } finally {
+      await session.close();
+      await rm(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    }
+  }, 15000);
+
   it('waits for initial MCP startup before the first prompt reaches the model', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-prompt-'));
     const events: SessionRpcEvent[] = [];
@@ -993,3 +1159,38 @@ function testProviderManager(): ProviderManager {
     },
   });
 }
+
+describe('MCP timeout env resolution', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('resolves the startup timeout as env > config > undefined', () => {
+    expect(resolveMcpStartupTimeoutMs()).toBeUndefined();
+    expect(resolveMcpStartupTimeoutMs(5_000)).toBe(5_000);
+
+    vi.stubEnv(MCP_STARTUP_TIMEOUT_ENV, 'abc');
+    expect(resolveMcpStartupTimeoutMs(5_000)).toBe(5_000);
+
+    vi.stubEnv(MCP_STARTUP_TIMEOUT_ENV, '7000');
+    expect(resolveMcpStartupTimeoutMs(5_000)).toBe(7_000);
+    expect(resolveMcpStartupTimeoutMs()).toBe(7_000);
+
+    vi.stubEnv(MCP_STARTUP_TIMEOUT_ENV, '2147483648');
+    expect(resolveMcpStartupTimeoutMs(5_000)).toBe(5_000);
+  });
+
+  it('resolves the tool timeout as env > config > undefined', () => {
+    expect(resolveMcpToolTimeoutMs()).toBeUndefined();
+    expect(resolveMcpToolTimeoutMs(60_000)).toBe(60_000);
+
+    vi.stubEnv(MCP_TOOL_TIMEOUT_ENV, '0');
+    expect(resolveMcpToolTimeoutMs(60_000)).toBe(60_000);
+
+    vi.stubEnv(MCP_TOOL_TIMEOUT_ENV, '90000');
+    expect(resolveMcpToolTimeoutMs(60_000)).toBe(90_000);
+
+    vi.stubEnv(MCP_TOOL_TIMEOUT_ENV, '2147483648');
+    expect(resolveMcpToolTimeoutMs(60_000)).toBe(60_000);
+  });
+});

@@ -37,11 +37,12 @@ Every principle below derives from two root questions:
 
 **First principle: Scope = the identity + lifetime of the owned state.**
 
-`App` / `Session` / `Agent` are three tiers of identity + lifetime:
+`App` / `Workspace` / `Session` / `Agent` are four tiers of identity + lifetime:
 
 | Scope | State identity (keyed by) | Lifetime |
 |---|---|---|
 | `App` | none (single global instance) | the process |
+| `Workspace` | `workspaceId` | one workspace handler (materialized once per workspace, never closed — dies with the process) |
 | `Session` | `sessionId` | one session |
 | `Agent` | `agentId` | one agent |
 
@@ -55,6 +56,7 @@ Every principle below derives from two root questions:
 **Q2. What is the identity of that state?**
 
 - one global instance → **`App`**
+- one per workspace (shared by every session of that workspace) → **`Workspace`**
 - one per session → **`Session`**
 - one per agent → **`Agent`**
 - a mix (a global registry *and* per-instance state) → **do not put it in one Service;
@@ -108,7 +110,7 @@ job well.
 | Tier | Role | Naming tends to |
 |---|---|---|
 | `App` | **global registry / catalog / factory** — knows "all of them" and how to create one | `XxxStore` / `XxxRegistry` / `XxxCatalog` |
-| `Session` / `Agent` | **one instance** — only the state of "this one" | `XxxService` / `ISessionXxx` / `IAgentXxx` |
+| `Workspace` / `Session` / `Agent` | **one instance** — only the state of "this one" | `XxxService` / `IWorkspaceXxx` / `ISessionXxx` / `IAgentXxx` |
 
 This pattern recurs throughout the codebase and confirms the rule:
 
@@ -155,7 +157,10 @@ an **event**, or a **hook**. From first principles, they answer three different 
 |---|---|---|---|---|
 | **Direct call** | command: A tells B to do | A → B | yes | one (known) |
 | **Event** | fact: A announces "X happened" | both depend only on the bus | no | zero / one / many (unknown) |
+| **Veto event** (`onBefore*`) | interception: listeners adjudicate through the event object (`veto` / `allow` / `pass` / `waitUntil`), no ids and no ordering contract | both depend only on the bus | veto result (first wins) | many, unordered |
 | **Hook** (`onWill` / `onDid`, `OrderedHookSlot`) | participation: observers step into an operation, in order | both depend only on the bus | can observe / veto | many, but ordered |
+
+Use a veto event when many domains may intercept an operation and the only outcomes are "deny / short-circuit / let through" (e.g. `toolExecutor.onBeforeExecuteTool`): the fire side collects immediate statements first, then fulfills deferred (`waitUntil`) adjudications, so a hard deny always suppresses approval round-trips. Use an ordered hook when the *sequence* between participants is itself meaningful (result pipelines like `onDidExecuteTool`, step lifecycle like `onWillBeginStep` / `onDidFinishStep`).
 
 ### Decision tree
 
@@ -201,6 +206,7 @@ an **event**, or a **hook**. From first principles, they answer three different 
 
 > **"I am telling you to do this, and I may need the result" → direct call.**
 > **"I am announcing that something happened; react if you care" → event.**
+> **"I am about to do something; you may veto it, in no particular order" → veto event.**
 > **"I am announcing something, and you may step in, in order, possibly to veto" → hook.**
 
 ---

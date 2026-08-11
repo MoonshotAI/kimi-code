@@ -20,6 +20,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   probeHostEnvironment,
+  ProbeShellNotFoundError,
   type HostEnvironmentProbeDeps,
 } from '#/_base/execEnv/environmentProbe';
 
@@ -95,5 +96,21 @@ describe('probeHostEnvironment', () => {
     );
     expect(env.shellName).toBe('bash');
     expect(env.shellPath).toBe('C:\\msys64\\usr\\bin\\bash.exe');
+  });
+
+  it('throws ProbeShellNotFoundError when Git Bash is missing on Windows', async () => {
+    const rejected: unknown = await probeHostEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'C:\\Windows\\System32' },
+        existingPaths: [],
+      }),
+    ).catch((error: unknown) => error);
+
+    expect(rejected).toBeInstanceOf(ProbeShellNotFoundError);
+    const probeError = rejected as ProbeShellNotFoundError;
+    expect(probeError.message).toContain('https://gitforwindows.org/');
+    expect(probeError.message).not.toContain('Checked:');
+    expect(probeError.checked.length).toBeGreaterThan(0);
   });
 });

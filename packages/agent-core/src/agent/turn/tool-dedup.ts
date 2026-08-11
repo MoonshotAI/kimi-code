@@ -2,6 +2,7 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { TelemetryClient } from '../../telemetry';
 import type { LLMRequestTrace } from '../../loop/llm';
+import { parseToolCallArguments } from '../../loop/tool-args-parse';
 import type { ExecutableToolResult } from '../../loop/types';
 
 import { canonicalTelemetryArgs } from './canonical-args';
@@ -188,6 +189,35 @@ export class ToolCallDeduplicator {
     this.stepDeferreds.set(key, makeDeferred<ExecutableToolResult>());
     this.originalCallIndex.set(toolCallId, index);
     return null;
+  }
+
+  /**
+   * Register a call that bypassed `prepareToolExecution` — e.g. args
+   * validation rejected it in preflight, so the prepare hook never ran. Must
+   * be called before `finalizeResult` for such calls, otherwise the repeat
+   * circuit breaker never counts rejected calls and the model can re-issue
+   * the same invalid call without ever tripping the streak. No-op when the
+   * call was already registered through the normal prepare path.
+   *
+   * `rawArguments` is the provider's raw arguments string. Args that failed
+   * JSON parsing were normalized to `{}` by the loop, which would key every
+   * malformed-but-different attempt identically; those are keyed on the raw
+   * text so only true re-issues count as repeats.
+   */
+  registerSkipped(
+    toolCallId: string,
+    toolName: string,
+    args: unknown,
+    rawArguments?: string | null,
+  ): void {
+    if (this.callKeyByCallId.has(toolCallId)) return;
+    const keyArgs =
+      rawArguments !== undefined &&
+      rawArguments !== null &&
+      parseToolCallArguments(rawArguments).parseFailed
+        ? rawArguments
+        : args;
+    this.checkSameStep(toolCallId, toolName, keyArgs);
   }
 
   /**

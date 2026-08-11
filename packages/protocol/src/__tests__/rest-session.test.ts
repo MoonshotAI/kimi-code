@@ -32,6 +32,10 @@ describe('exportSessionRequestSchema', () => {
     });
   });
 
+  it('accepts the desktop log flag', () => {
+    expect(exportSessionRequestSchema.parse({ desktop: true })).toEqual({ desktop: true });
+  });
+
   it('accepts a Web log at the 256 KiB UTF-8 boundary', () => {
     expect(exportSessionRequestSchema.safeParse({ web_log: 'a'.repeat(256 * 1024) }).success).toBe(
       true,
@@ -404,6 +408,19 @@ describe('sessionStatusResponseSchema', () => {
     });
     expect(parsed.busy).toBe(false);
     expect(parsed.model).toBeUndefined();
+  });
+
+  it('accepts an omitted max_context_tokens (unknown context limit)', () => {
+    const parsed = sessionStatusResponseSchema.parse({
+      busy: false,
+      thinking_level: 'off',
+      permission: 'auto',
+      plan_mode: false,
+      swarm_mode: false,
+      context_tokens: 0,
+      context_usage: 0,
+    });
+    expect(parsed.max_context_tokens).toBeUndefined();
   });
 
   it('rejects missing busy', () => {

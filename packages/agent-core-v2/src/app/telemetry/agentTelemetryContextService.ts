@@ -1,13 +1,14 @@
 /**
- * `telemetry` domain (L1) — `IAgentTelemetryContextService` implementation.
+ * `telemetry` domain — `IAgentTelemetryContextService` implementation.
  *
- * Holds the agent's ambient telemetry context (defaults to `mode: 'agent'`);
- * merged into turn telemetry through `ITelemetryService.withContext` at turn
- * launch. Owns no cross-domain collaborators. Bound at Agent scope.
+ * Holds mutable request context (defaulting to `mode: 'agent'`) that turn
+ * telemetry snapshots at launch. Bound at Agent scope; has no cross-domain
+ * collaborators.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import {
   IAgentTelemetryContextService,
   type AgentTelemetryContext,
@@ -15,7 +16,11 @@ import {
 
 export class AgentTelemetryContextService implements IAgentTelemetryContextService {
   declare readonly _serviceBrand: undefined;
-  private context: AgentTelemetryContext = { mode: 'agent' };
+  private context: AgentTelemetryContext;
+
+  constructor() {
+    this.context = { mode: 'agent' };
+  }
 
   get(): AgentTelemetryContext {
     return this.context;
@@ -30,6 +35,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentTelemetryContextService,
   AgentTelemetryContextService,
-  InstantiationType.Eager,
+  ScopeActivation.OnScopeCreated,
   'telemetry',
 );

@@ -14,14 +14,16 @@
  *   POST   /sessions/{session_id}/children     create child session (fork+tag)
  *   GET    /sessions/{session_id}/status       best-effort
  *   GET    /sessions/{session_id}/goal         current goal (null when none)
- *   GET    /sessions/{session_id}/warnings     agents-md-oversized notice
+ *   GET    /sessions/{session_id}/warnings     session-level notices
  *
  * The `POST /sessions/{tail}` actions split into two groups. The thin
  * pass-throughs — `fork` / `compact` / `abort` / `archive` / `restore` — call
- * the native v2 services directly (`ISessionLifecycleService.fork` / `archive` / `restore`,
+ * the native v2 services directly (the workspace handler's
+ * `ISessionLifecycleService.fork` / `archive` / `restore`, reached through the
+ * `sessionIndex` → `IWorkspaceLifecycleService.handlerFor` composition,
  * `IAgentFullCompactionService.begin`, `IAgentRPCService.cancel`); there is no
  * v1-only projection to centralize, so no adapter is involved. `undo` likewise
- * calls `IAgentPromptService.undo` directly (it now throws
+ * calls `IAgentConversationUndoService.undo` directly (it throws
  * `session.undo_unavailable` with a structured reason) and only borrows
  * `ISessionLegacyService.status` for the cross-domain status rollup. The
  * `/sessions/{id}/children` endpoints call `ISessionLifecycleService.createChild`
@@ -35,12 +37,14 @@
  * `create`, `fork`, and child creation publish `event.session.created` on the
  * core event bus, matching v1.
  *
- * `GET /sessions/{id}/warnings` surfaces the only v1 warning
- * (`agents-md-oversized`) by projecting the main agent's
- * `IAgentProfileService.getAgentsMdWarning()` — computed and cached when the
- * agent binds a profile (via `prepareSystemPromptContext`) — into the v1
- * `{ code, message, severity }` wire shape. An unbound main agent yields an
- * empty list, matching v1's "no warning" case.
+ * `GET /sessions/{id}/warnings` surfaces session-level notices in the v1
+ * `{ code, message, severity }` wire shape: the `agents-md-oversized` warning
+ * (projected from the main agent's `IAgentProfileService.getAgentsMdWarning()`
+ * — computed and cached when the agent binds a profile) and the
+ * secondary-model early-validation warning (projected from the Session-scope
+ * `ISessionSecondaryModelWarningService` — computed and cached when the main
+ * agent is created). An unbound main agent or a valid/unset secondary model
+ * yields an empty list, matching v1's "no warning" case.
  *
  * **Wire fidelity**: mirrors v1's `toProtocolSession`
  * (`packages/agent-core/src/services/session/session.ts`), which populates
@@ -65,9 +69,9 @@
  * **cwd resolution (gap G3 closed)**: the session's frozen work dir is
  * persisted on its metadata document (`ISessionMetadata`) and surfaced on the
  * `ISessionIndex` summary, so `metadata.cwd` comes from the session itself —
- * not from `IWorkspaceRegistry`. Sessions whose workspace was unregistered keep
+ * not from `IWorkspaceService`. Sessions whose workspace was unregistered keep
  * their original cwd and stay listed / gettable (matching v1, which stores
- * `workDir` on the session). `IWorkspaceRegistry` is consulted only as a
+ * `workDir` on the session). `IWorkspaceService` is consulted only as a
  * back-compat fallback for sessions written before `cwd` was persisted.
  */
 
@@ -75,30 +79,35 @@ import {
   ErrorCodes,
   IAgentContextMemoryService,
   IAgentProfileService,
-  IAgentPromptService,
+  IAgentConversationUndoService,
   IAgentFullCompactionService,
-  IAgentLifecycleService,
   IAgentRPCService,
-  IAgentActivityView,
   IAuthSummaryService,
+  ISessionActivityView,
   ISessionBtwService,
   ISessionContext,
   ISessionIndex,
-  ISessionInteractionService,
-  ISessionLifecycleService,
   ISessionMetadata,
   ISessionLegacyService,
+  ISessionSecondaryModelWarningService,
   IEventService,
-  IWorkspaceRegistry,
+  IWorkspaceAliases,
+  ISessionLifecycleService,
+  IWorkspaceLifecycleService,
+  IWorkspaceService,
+  getLiveSessionById,
+  handlerForSession,
+  resumeSessionById,
   isError2,
   Error2,
-  toProtocolMessage,
   type ContextMessage,
   type IAgentScopeHandle,
   type Scope,
+  type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
+import { toProtocolMessage } from '../services/messages/messageProjection';
 import {
   archiveSessionResponseSchema,
   compactSessionRequestSchema,
@@ -128,7 +137,7 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
+import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
 
 interface SessionRouteHost {
@@ -159,14 +168,14 @@ const booleanQueryParam = z.preprocess((value) => {
 const DEFAULT_SESSION_LIST_PAGE_SIZE = 20;
 
 // NOTE: mirrors v1's `GET /sessions` query. `before_id`/`after_id` id-cursors
-// and `page_size` ARE applied in the route handler (the `FileSessionIndex` does
-// not implement `cursor`, so we page over its recency-sorted result); `status`
-// filters the projected page (post-page, matching v1). `include_archive` →
-// `includeArchived`; `archived_only` forces `includeArchived` and then keeps
-// only archived sessions; `workspace_id` → `workspaceIds` after
-// `resolveAliasIds` expands the alias set of the directory (legacy split
-// buckets list as one workspace); `exclude_empty` drops sessions with no
-// prompt.
+// and `page_size` are pushed down to `ISessionIndex.listRecent` as keyset
+// cursor + limit (the route drains bounded pages until the wire page fills);
+// `status` filters the projected page (post-page, matching v1).
+// `include_archive` → `includeArchived`; `archived_only` forces
+// `includeArchived` and then keeps only archived sessions; `workspace_id` →
+// `workspaceIds` after `resolveAliasIds` expands the alias set of the
+// directory (legacy split buckets list as one workspace); `exclude_empty`
+// drops sessions with no prompt.
 const sessionsListQueryCoercion = z
   .object({
     before_id: z.string().min(1).optional(),
@@ -274,7 +283,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
 
-      const registry = core.accessor.get(IWorkspaceRegistry);
+      const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
@@ -308,11 +317,17 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       }
 
       // Ensure the workspace is registered so `metadata.cwd` is resolvable on
-      // read (gap G3 — v2 does not store workDir on the session).
+      // read (gap G3 — v2 does not store workDir on the session). The session
+      // is created through the workspace's handler (`handlerFor` → the
+      // handler's `ISessionLifecycleService`) — there is no App-scope session
+      // lifecycle entry point.
       try {
         const touched = await registry.createOrTouch(workDir);
 
-        const handle = await core.accessor.get(ISessionLifecycleService).create({
+        const handler = await core.accessor.get(IWorkspaceLifecycleService).handlerFor({
+          root: workDir,
+        });
+        const handle = await handler.accessor.get(ISessionLifecycleService).create({
           workDir,
         });
         if (typeof body.title === 'string') {
@@ -355,10 +370,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     },
     async (req, reply) => {
       const raw = req.query;
-      const pageSize = raw.page_size;
       const archivedOnly = raw.archived_only === true;
 
-      const workspaces = await core.accessor.get(IWorkspaceRegistry).list();
+      const workspaces = await core.accessor.get(IWorkspaceService).list();
       const roots = new Map(workspaces.map((w) => [w.id, w.root]));
 
       // v1 resolves `workspace_id` to its root and 40410s when it is unknown;
@@ -377,78 +391,108 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
 
-      // `FileSessionIndex` does not implement `cursor` (gap G5 closed here), so
-      // we fetch the full recency-sorted set (no `limit`) and apply the id
-      // cursor in this handler. `list()` already orders by `updatedAt` desc and
-      // filters across the workspace-id set / archived. `archived_only` forces
-      // archived rows into the set, then the filter below keeps only them.
       const workspaceIds =
         raw.workspace_id === undefined
           ? undefined
-          : await core.accessor.get(IWorkspaceRegistry).resolveAliasIds(raw.workspace_id);
-      const page = await core.accessor.get(ISessionIndex).list({
-        workspaceIds,
-        includeArchived: archivedOnly ? true : raw.include_archive,
-      });
+          : await core.accessor.get(IWorkspaceAliases).resolveAliasIds(raw.workspace_id);
+      const index = core.accessor.get(ISessionIndex);
+      const includeArchived = archivedOnly ? true : raw.include_archive;
 
-      // Filter down to the sequence the client can page over BEFORE computing
-      // the cursor position. `cwd` is read from the session's own summary first
-      // (gap G3 closed — an unregistered workspace no longer drops the session);
-      // the registry `roots` map is only a back-compat fallback for sessions
-      // written before `cwd` was persisted. A session with no recoverable cwd is
-      // still skipped.
-      const eligible: {
-        readonly summary: (typeof page.items)[number];
+      interface Eligible {
+        readonly summary: SessionSummary;
         readonly cwd: string;
         readonly facts?: SessionFacts;
-      }[] = [];
-      for (const summary of page.items) {
-        const cwd = summary.cwd ?? roots.get(summary.workspaceId);
-        if (cwd === undefined) continue;
-        if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-        eligible.push({ summary, cwd });
       }
 
-      // `before_id` = strictly older than this id (forward / default paging);
-      // `after_id` = strictly newer. An unknown cursor resolves to an empty,
-      // terminal page (`has_more: false`) so a client cannot spin on a cursor
-      // the server cannot advance (this was the boot-time request storm).
-      let start = 0;
-      let end = eligible.length;
-      const cursorId = raw.before_id ?? raw.after_id;
-      if (cursorId !== undefined) {
-        const idx = eligible.findIndex((e) => e.summary.id === cursorId);
-        if (idx === -1) {
-          reply.send(okEnvelope({ items: [], has_more: false }, req.id));
-          return;
+      // Keyset pages are pulled from the index and filtered at the edge
+      // (`cwd` recoverability, `exclude_empty`; `archived_only` also applies
+      // its busy filter here so it can drain to a full page, matching v1) —
+      // a bounded `page_size` request never materializes the full session
+      // set. An unknown cursor resolves to an empty, terminal page (this was
+      // the boot-time request storm). The index pages with ONE cursor per
+      // call (`before` wins when both are set), so the drain can only advance
+      // `before`; the `after` lower bound is re-applied at the edge instead —
+      // the first candidate no longer strictly newer than the cursor ends
+      // the window, so a heavily filtered stretch can never pull in sessions
+      // at/older than the original `after_id`.
+      const collect = async (pageSize: number): Promise<{ visible: Eligible[]; hasMore: boolean }> => {
+        const wanted = pageSize + 1;
+        const collected: Eligible[] = [];
+        let before = raw.before_id;
+        const after = raw.after_id;
+        const afterCursor = after !== undefined ? await index.get(after) : undefined;
+        const newerThanCursor = (summary: SessionSummary): boolean =>
+          afterCursor === undefined ||
+          summary.updatedAt > afterCursor.updatedAt ||
+          (summary.updatedAt === afterCursor.updatedAt && summary.id > afterCursor.id);
+        while (collected.length < wanted) {
+          const page = await index.listRecent({
+            workspaceIds,
+            includeArchived,
+            limit: wanted - collected.length,
+            before,
+            after: before === undefined ? after : undefined,
+          });
+          if (page.items.length === 0) break;
+          let exhausted = false;
+          for (const summary of page.items) {
+            if (!newerThanCursor(summary)) {
+              exhausted = true;
+              break;
+            }
+            const cwd = summary.cwd ?? roots.get(summary.workspaceId);
+            if (cwd === undefined) continue;
+            if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
+            if (archivedOnly) {
+              if (!summary.archived) continue;
+              const facts = resolveSessionFacts(core, summary.id);
+              if (raw.busy !== undefined && facts.busy !== raw.busy) continue;
+              collected.push({ summary, cwd, facts });
+            } else {
+              collected.push({ summary, cwd });
+            }
+          }
+          if (exhausted || page.nextCursor === undefined) break;
+          before = page.nextCursor;
         }
-        if (raw.before_id !== undefined) start = idx + 1;
-        else end = idx;
+        return { visible: collected.slice(0, pageSize), hasMore: collected.length > pageSize };
+      };
+
+      if (!archivedOnly && raw.page_size === undefined) {
+        // v1 wire default: an unpaged list returns the whole (cursor-bounded)
+        // set with has_more=false.
+        const page = await index.listRecent({
+          workspaceIds,
+          includeArchived,
+          before: raw.before_id,
+          after: raw.after_id,
+        });
+        const eligible: Eligible[] = [];
+        for (const summary of page.items) {
+          const cwd = summary.cwd ?? roots.get(summary.workspaceId);
+          if (cwd === undefined) continue;
+          if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
+          eligible.push({ summary, cwd });
+        }
+        const projected = eligible.map(({ summary, cwd }) =>
+          toWireSession(summary, cwd, resolveSessionFacts(core, summary.id)),
+        );
+        // v1 filters ordinary lists by the busy fact post-page.
+        const items =
+          raw.busy !== undefined
+            ? projected.filter((session) => session.busy === raw.busy)
+            : projected;
+        reply.send(okEnvelope({ items, has_more: false }, req.id));
+        return;
       }
 
-      const window = eligible.slice(start, end);
-      let visible = window;
-      if (archivedOnly) {
-        visible =
-          raw.busy === undefined
-            ? window.filter((entry) => entry.summary.archived === true)
-            : window.flatMap((entry) => {
-                if (entry.summary.archived !== true) return [];
-                const facts = resolveSessionFacts(core, entry.summary.id);
-                return facts.busy === raw.busy ? [{ ...entry, facts }] : [];
-              });
-      }
-      const limit = archivedOnly
-        ? (pageSize ?? DEFAULT_SESSION_LIST_PAGE_SIZE)
-        : (pageSize ?? visible.length);
-      const hasMore = visible.length > limit;
-      const projected: Session[] = visible
-        .slice(0, limit)
-        .map(({ summary, cwd, facts }) =>
-          toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
-        );
+      const pageSize = raw.page_size ?? DEFAULT_SESSION_LIST_PAGE_SIZE;
+      const { visible, hasMore } = await collect(pageSize);
+      const projected = visible.map(({ summary, cwd, facts }) =>
+        toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
+      );
       // v1 filters ordinary lists by the busy fact post-page; `archived_only`
-      // already applied it before pagination above so it can drain to a full page.
+      // already applied it during the drain above.
       const items =
         raw.busy !== undefined && !archivedOnly
           ? projected.filter((session) => session.busy === raw.busy)
@@ -485,7 +529,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       const cwd =
-        summary.cwd ?? (await core.accessor.get(IWorkspaceRegistry).get(summary.workspaceId))?.root;
+        summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) {
         // Persisted session with no `cwd` on disk and no registered workspace
         // to fall back to (predates gap-G3 persistence) — cannot project cwd.
@@ -532,7 +576,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       const cwd =
-        summary.cwd ?? (await core.accessor.get(IWorkspaceRegistry).get(summary.workspaceId))?.root;
+        summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) {
         reply.send(
           errEnvelope(
@@ -646,9 +690,17 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
 
         if (parsed.action === 'fork') {
           const body = forkSessionRequestSchema.parse(req.body);
-          // `lifecycle.fork` throws `session.not_found` for an unknown source,
-          // so no explicit existence check is needed here.
-          const handle = await core.accessor.get(ISessionLifecycleService).fork({
+          // Fork lives on the source session's handler; the index routes us
+          // there (`session.not_found` for an unknown source, same as the
+          // lifecycle's own guard).
+          const forkHandler = await handlerForSession(core.accessor, parsed.id);
+          if (forkHandler === undefined) {
+            throw new Error2(
+              ErrorCodes.SESSION_NOT_FOUND,
+              `session ${parsed.id} does not exist`,
+            );
+          }
+          const handle = await forkHandler.accessor.get(ISessionLifecycleService).fork({
             sourceSessionId: parsed.id,
             title: body.title,
             metadata: body.metadata,
@@ -689,12 +741,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (parsed.action === 'undo') {
           const body = undoSessionRequestSchema.parse(req.body);
           const agent = await resolveMainAgent(core, parsed.id);
-          // `prompt.undo` throws `session.undo_unavailable` (with a structured
-          // `reason`) when the history cannot satisfy `count`; it is a no-op
-          // until the precheck passes, so the post-undo read below always sees
-          // the cut applied. The status rollup stays in the legacy adapter
-          // (cross-domain) and is reused here verbatim.
-          agent.accessor.get(IAgentPromptService).undo(body.count);
+          // The conversation undo service throws `session.undo_unavailable` (with a
+          // structured `reason`) when fewer than `count` turns may be cut;
+          // it quiesces the loop/compaction first, so the post-undo read
+          // below always sees the cut applied.
+          await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
           const history = agent.accessor.get(IAgentContextMemoryService).get();
           requestLog(req)?.info({ session_id: parsed.id, action: 'undo' }, 'session action completed');
           const [summary, status] = await Promise.all([
@@ -731,7 +782,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (parsed.action === 'btw') {
           // `resume` (not `get`) so a freshly-opened cold session can start a
           // side-channel agent; matches v1's `startBtw` which resumes first.
-          const session = await core.accessor.get(ISessionLifecycleService).resume(parsed.id);
+          const session = await resumeSessionById(core.accessor, parsed.id);
           if (session === undefined) {
             throw new Error2(
               ErrorCodes.SESSION_NOT_FOUND,
@@ -745,7 +796,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         }
 
         if (parsed.action === 'restore') {
-          const restored = await core.accessor.get(ISessionLifecycleService).restore(parsed.id);
+          const restoreHandler = await handlerForSession(core.accessor, parsed.id);
+          const restored =
+            restoreHandler === undefined
+              ? undefined
+              : await restoreHandler.accessor.get(ISessionLifecycleService).restore(parsed.id);
           if (restored === undefined) {
             throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
           }
@@ -764,11 +819,15 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // archive — `resume` (not `get`) so archiving a freshly-opened cold
         // session still works; `resume` returns undefined only when the session
         // is unknown or its workspace is gone, reported as `session.not_found`.
-        const archived = await core.accessor.get(ISessionLifecycleService).resume(parsed.id);
-        if (archived === undefined) {
+        const archiveHandler = await handlerForSession(core.accessor, parsed.id);
+        const archived =
+          archiveHandler === undefined
+            ? undefined
+            : await archiveHandler.accessor.get(ISessionLifecycleService).resume(parsed.id);
+        if (archived === undefined || archiveHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
         }
-        await core.accessor.get(ISessionLifecycleService).archive(parsed.id);
+        await archiveHandler.accessor.get(ISessionLifecycleService).archive(parsed.id);
         requestLog(req)?.info({ session_id: parsed.id, action: 'archive' }, 'session action completed');
         reply.send(okEnvelope({ archived: true }, req.id));
       } catch (error) {
@@ -802,43 +861,31 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // 404 when the parent is unknown — the live handle wins, otherwise the
         // persisted index (a closed parent can still list children, like v1).
         const exists =
-          core.accessor.get(ISessionLifecycleService).get(session_id) !== undefined ||
+          getLiveSessionById(core.accessor, session_id) !== undefined ||
           (await core.accessor.get(ISessionIndex).get(session_id)) !== undefined;
         if (!exists) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
         }
 
         // The index filters by the child markers (`parent_session_id` +
-        // `child_session_kind`) and returns the recency-sorted children. The
-        // id-cursor, page-size, and status projection/filter stay at the edge
-        // (v1 wire concerns; status needs live handles).
-        const children = (await core.accessor.get(ISessionIndex).list({ childOf: session_id }))
-          .items;
-
-        let pivotIndex = -1;
-        if (req.query.before_id !== undefined) {
-          pivotIndex = children.findIndex((s) => s.id === req.query.before_id);
-        } else if (req.query.after_id !== undefined) {
-          pivotIndex = children.findIndex((s) => s.id === req.query.after_id);
-        }
-        let slice: typeof children;
-        if (req.query.before_id !== undefined && pivotIndex >= 0) {
-          slice = children.slice(pivotIndex + 1);
-        } else if (req.query.after_id !== undefined && pivotIndex >= 0) {
-          slice = children.slice(0, pivotIndex);
-        } else {
-          slice = children;
-        }
-        // `page_size` is already clamped to [1, 100] by the query coercion; 100
-        // is the v1 default when omitted.
+        // `child_session_kind`) and returns keyset pages in recency order —
+        // the id-cursor and page-size go down to the index, the busy
+        // projection/filter stays at the edge (v1 wire concerns; status needs
+        // live handles).
         const pageSize = req.query.page_size ?? 100;
-        const window = slice.slice(0, pageSize);
+        const page = await core.accessor.get(ISessionIndex).listRecent({
+          childOf: session_id,
+          before: req.query.before_id,
+          after: req.query.after_id,
+          limit: pageSize + 1,
+        });
+        const window = page.items.slice(0, pageSize);
 
         // `cwd` is read from the child's own summary first (gap G3 closed); the
         // registry is only a back-compat fallback for sessions written before
         // `cwd` was persisted, defaulting to '' (matches the prior adapter).
         const roots = new Map(
-          (await core.accessor.get(IWorkspaceRegistry).list()).map((w) => [w.id, w.root]),
+          (await core.accessor.get(IWorkspaceService).list()).map((w) => [w.id, w.root]),
         );
         const projected = window.map((summary) =>
           toWireSession(
@@ -853,7 +900,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           req.query.busy !== undefined
             ? projected.filter((session) => session.busy === req.query.busy)
             : projected;
-        reply.send(okEnvelope({ items, has_more: slice.length > pageSize }, req.id));
+        reply.send(okEnvelope({ items, has_more: page.nextCursor !== undefined }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
       }
@@ -886,8 +933,12 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // `createChild` throws `session.not_found` for an unknown source (via
         // `fork`), so no explicit existence check is needed here. The child
         // markers (`parent_session_id` / `child_session_kind`) and the default
-        // `Child: <parent>` title are applied by the lifecycle.
-        const handle = await core.accessor.get(ISessionLifecycleService).createChild({
+        // `Child: <parent>` title are applied by the handler's lifecycle.
+        const childHandler = await handlerForSession(core.accessor, session_id);
+        if (childHandler === undefined) {
+          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
+        }
+        const handle = await childHandler.accessor.get(ISessionLifecycleService).createChild({
           sourceSessionId: session_id,
           title: req.body.title,
           metadata: req.body.metadata,
@@ -990,7 +1041,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const { session_id } = req.params;
       // `resume` (not `get`) so a freshly-opened cold session still computes its
       // warnings; matches v1's best-effort `resumeSession` before reading them.
-      const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
+      const session = await resumeSessionById(core.accessor, session_id);
       if (session === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
@@ -998,14 +1049,20 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       try {
-        // Surface the v2 `agents-md-oversized` notice in the v1 wire shape. The
-        // warning is computed (and cached) by `IAgentProfileService` when the main
-        // agent binds a profile; an unbound main agent yields `undefined` → `[]`,
-        // matching v1's "no warning" case.
+        // Surface v2 notices in the v1 wire shape. The agents-md warning is
+        // computed (and cached) by `IAgentProfileService` when the main agent
+        // binds a profile; the secondary-model warning is computed (and
+        // cached) by `ISessionSecondaryModelWarningService` when the main
+        // agent is created. An unbound main agent / unset secondary model
+        // yields `undefined` → that entry drops out, matching v1's "no
+        // warning" case.
         const agent = await ensureMainAgent(session);
         const agentsMdWarning = agent.accessor.get(IAgentProfileService).getAgentsMdWarning();
-        const warnings =
-          agentsMdWarning === undefined
+        const secondaryModelWarning = session.accessor
+          .get(ISessionSecondaryModelWarningService)
+          .getSecondaryModelWarning();
+        const warnings = [
+          ...(agentsMdWarning === undefined
             ? []
             : [
                 {
@@ -1013,7 +1070,17 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
                   message: agentsMdWarning,
                   severity: 'warning' as const,
                 },
-              ];
+              ]),
+          ...(secondaryModelWarning === undefined
+            ? []
+            : [
+                {
+                  code: secondaryModelWarning.code,
+                  message: secondaryModelWarning.message,
+                  severity: 'warning' as const,
+                },
+              ]),
+        ];
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -1042,6 +1109,7 @@ export interface SessionWireFields {
   readonly updatedAt: number;
   readonly archived: boolean;
   readonly custom?: Record<string, unknown>;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export function toWireSession(
@@ -1058,7 +1126,11 @@ export function toWireSession(
     busy: facts.busy,
     main_turn_active: facts.mainTurnActive,
     pending_interaction: facts.pendingInteraction,
-    last_turn_reason: facts.lastTurnReason,
+    // Live facts win for warm sessions; only a cold session (no live handle)
+    // falls back to the persisted outcome — a warm session mid-turn must not
+    // report a stale earlier outcome.
+    last_turn_reason:
+      facts.lastTurnReason ?? (facts.live === false ? fields.lastTurnReason : undefined),
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
     metadata: buildWireMetadata(fields.custom, cwd),
@@ -1076,51 +1148,29 @@ export interface SessionFacts {
   readonly mainTurnActive: boolean;
   readonly pendingInteraction: SessionPendingInteraction;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+  /** False when no live handle exists (cold session); live warm sessions
+   *  always report their own outcome, never the persisted fallback. */
+  readonly live?: boolean;
 }
 
 /**
- * Resolve a session's live wire facts, derived on demand from the agents'
- * activity views: `busy` = any agent with an active turn or background task;
- * the reason is the main agent's latest turn outcome (`blocked` folds into
- * `failed`). Nothing is booked at session level — a cold session (no live
- * handle) is not busy and carries no outcome.
+ * Resolve a session's live wire facts from the core `ISessionActivityView`
+ * aggregate (`busy` = any agent with an active turn or background task; the
+ * reason is the main agent's latest turn outcome, `blocked` folds into
+ * `failed`). A cold session (no live handle) is not busy and carries no
+ * outcome.
  */
 export function resolveSessionFacts(core: Scope, sessionId: string): SessionFacts {
-  const handle = core.accessor.get(ISessionLifecycleService).get(sessionId);
+  const handle = getLiveSessionById(core.accessor, sessionId);
   if (handle === undefined) {
     return {
       busy: false,
       mainTurnActive: false,
       pendingInteraction: 'none',
+      live: false,
     };
   }
-  const agents = handle.accessor.get(IAgentLifecycleService);
-  const mainActivity = agents.get(MAIN_AGENT_ID)?.accessor.get(IAgentActivityView).state();
-  const interactions = handle.accessor.get(ISessionInteractionService);
-  let busy = false;
-  for (const agent of agents.list()) {
-    const state = agent.accessor.get(IAgentActivityView).state();
-    if (state.turn !== undefined || state.background.length > 0) {
-      busy = true;
-      break;
-    }
-  }
-  const reason = mainActivity?.lastTurn?.reason;
-  const pendingInteraction = resolvePendingInteraction(interactions);
-  return {
-    busy,
-    mainTurnActive: mainActivity?.turn !== undefined,
-    pendingInteraction,
-    lastTurnReason: reason === 'blocked' ? 'failed' : reason,
-  };
-}
-
-function resolvePendingInteraction(
-  interactions: ISessionInteractionService,
-): SessionPendingInteraction {
-  if (interactions.listPending('approval').length > 0) return 'approval';
-  if (interactions.listPending('question').length > 0) return 'question';
-  return 'none';
+  return { ...handle.accessor.get(ISessionActivityView).state(), live: true };
 }
 
 /**
@@ -1131,7 +1181,7 @@ function resolvePendingInteraction(
  * `ISessionLegacyService`.
  */
 async function resolveMainAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {
-  const session = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
+  const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
@@ -1227,6 +1277,7 @@ function sendMappedError(
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
         return;
       case 'session.fork_active_turn':
+      case ErrorCodes.SESSION_BUSY:
         reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
         return;
       case 'compaction.unable':

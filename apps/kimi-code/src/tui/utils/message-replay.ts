@@ -1,12 +1,14 @@
 import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
+  BackgroundTaskStatus,
   ContentPart,
   ContextMessage,
   PromptOrigin,
   ResumedAgentState,
   ToolCall,
 } from '@moonshot-ai/kimi-code-sdk';
+import { limitAgentReplayByTurns } from '@moonshot-ai/kimi-code-sdk';
 
 import type {
   AppState,
@@ -16,6 +18,7 @@ import type {
   TranscriptEntry,
 } from '#/tui/types';
 
+import { modelDisplayName } from '../components/dialogs/model-selector';
 import { mediaUrlPartToText } from './media-url';
 import { nextTranscriptId } from './transcript-id';
 
@@ -99,6 +102,7 @@ export function countActiveBackgroundTasks(tasks: ReadonlyMap<string, Background
 
 export function replayBackgroundProjection(
   background: readonly BackgroundTaskInfo[],
+  availableModels?: AppState['availableModels'],
 ): ReplayBackgroundProjection {
   const backgroundAgentMetadata = new Map<string, BackgroundAgentMetadata>();
   for (const info of background) {
@@ -109,6 +113,20 @@ export function replayBackgroundProjection(
       agentId,
       parentToolCallId: info.taskId,
       description: info.description,
+      // The persisted task record carries the spawn-time model/effort (v2);
+      // keep them across a resume so the terminal transcript entry can show
+      // them. Model maps through the catalog like the live path; boolean
+      // effort states carry no level and are dropped.
+      model:
+        info.model === undefined
+          ? undefined
+          : modelDisplayName(info.model, availableModels?.[info.model]),
+      effort:
+        info.thinkingEffort === undefined ||
+        info.thinkingEffort === 'off' ||
+        info.thinkingEffort === 'on'
+          ? undefined
+          : info.thinkingEffort,
     });
   }
   return { backgroundAgentMetadata };
@@ -132,12 +150,10 @@ export function limitReplayRecordsByTurn(
   records: readonly AgentReplayRecord[],
   maxTurns: number,
 ): readonly AgentReplayRecord[] {
-  if (maxTurns <= 0) return [];
-  const turnStarts = records.flatMap((record, index) =>
-    isReplayUserTurnRecord(record) ? [index] : [],
-  );
-  if (turnStarts.length <= maxTurns) return records;
-  return records.slice(turnStarts[turnStarts.length - maxTurns]);
+  // Defensive slice — the core already trims the replay when the caller passes
+  // `replayTurnLimit` on resume; the boundary predicate lives in agent-core
+  // (`limitAgentReplayByTurns`) and is re-exported through the SDK.
+  return limitAgentReplayByTurns(records, maxTurns);
 }
 
 export function replayEntry(
@@ -205,10 +221,26 @@ export function contentPartsToText(content: readonly ContentPart[]): string {
   return content.map(contentPartToText).join('');
 }
 
+/**
+ * agent-core-v2's task domain persists the terminal notification under the
+ * 'task' spelling (v1 used 'background_task'); both reach replay verbatim.
+ */
+export interface TaskNotificationOrigin {
+  readonly kind: 'task';
+  readonly taskId: string;
+  readonly status: BackgroundTaskStatus;
+  readonly notificationId: string;
+}
+
+export type BackgroundTaskNotificationOrigin =
+  | Extract<PromptOrigin, { kind: 'background_task' }>
+  | TaskNotificationOrigin;
+
 export function backgroundOrigin(
   message: ContextMessage,
-): Extract<PromptOrigin, { kind: 'background_task' }> | undefined {
-  return message.origin?.kind === 'background_task' ? message.origin : undefined;
+): BackgroundTaskNotificationOrigin | undefined {
+  const origin = message.origin as BackgroundTaskNotificationOrigin | undefined;
+  return origin?.kind === 'background_task' || origin?.kind === 'task' ? origin : undefined;
 }
 
 export function skillActivationFromOrigin(
@@ -262,33 +294,6 @@ export function formatHookResultMessageForTranscript(
   }
 
   return results.map(({ event, body }) => formatHookResultBlock(event, body, blocked)).join('\n\n');
-}
-
-function isReplayUserTurnRecord(record: AgentReplayRecord): boolean {
-  if (record.type !== 'message') return false;
-  const { message } = record;
-  if (message.role !== 'user') return false;
-  switch (message.origin?.kind) {
-    case undefined:
-    case 'user':
-      return true;
-    case 'skill_activation':
-      return message.origin.trigger === 'user-slash';
-    case 'plugin_command':
-      return message.origin.trigger === 'user-slash';
-    case 'shell_command':
-      // A `!` command's input is a user-turn anchor; its output is not.
-      return message.origin.phase === 'input';
-    case 'background_task':
-    case 'compaction_summary':
-    case 'cron_job':
-    case 'cron_missed':
-    case 'hook_result':
-    case 'injection':
-    case 'retry':
-    case 'system_trigger':
-      return false;
-  }
 }
 
 function parseReplayToolArguments(value: string | null): Record<string, unknown> {

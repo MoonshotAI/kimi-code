@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
+  ScopeActivation,
   Scope,
   _clearScopedRegistryForTests,
   createAppScope,
@@ -127,9 +127,9 @@ describe('Scope tree', () => {
       tag = 'C';
       dispose(): void { events.push('C'); }
     }
-    registerScopedService(LifecycleScope.App, IA, A, InstantiationType.Eager);
-    registerScopedService(LifecycleScope.Session, IB, B, InstantiationType.Eager);
-    registerScopedService(LifecycleScope.Agent, IC, C, InstantiationType.Eager);
+    registerScopedService(LifecycleScope.App, IA, A);
+    registerScopedService(LifecycleScope.Session, IB, B);
+    registerScopedService(LifecycleScope.Agent, IC, C);
 
     const app = createAppScope();
     const session = app.createChild(LifecycleScope.Session, 's1');
@@ -159,7 +159,7 @@ describe('Scope tree', () => {
     app.dispose();
   });
 
-  it('extra seed injects a context token resolvable from that scope', () => {
+  it('seeds inject a context token resolvable from that scope', () => {
     interface ISessionContext {
       sessionId: string;
     }
@@ -168,7 +168,7 @@ describe('Scope tree', () => {
 
     const app = createAppScope();
     const session = app.createChild(LifecycleScope.Session, 's1', {
-      extra: [[ISessionContext as ServiceIdentifier<unknown>, { sessionId: 's1' }]],
+      seeds: [[ISessionContext as ServiceIdentifier<unknown>, { sessionId: 's1' }]],
     });
     expect(session.accessor.get(ISessionContext).sessionId).toBe('s1');
     expect(() => app.accessor.get(ISessionContext)).toThrow();
@@ -181,5 +181,98 @@ describe('Scope tree', () => {
     session.dispose();
     expect(() => session.createChild(LifecycleScope.Agent, 'a1')).toThrow(/disposed/);
     app.dispose();
+  });
+
+  it('does not construct OnDemand services until they are resolved', () => {
+    let constructions = 0;
+    interface ITagged {
+      tag: string;
+    }
+    const ITagged = createDecorator<ITagged>('tree-on-demand');
+    _clearScopedRegistryForTests();
+    class Tagged implements ITagged {
+      tag = 'tagged';
+      constructor() {
+        constructions += 1;
+      }
+    }
+    registerScopedService(
+      LifecycleScope.Session,
+      ITagged,
+      Tagged,
+      ScopeActivation.OnDemand,
+    );
+
+    const app = createAppScope();
+    const session = app.createChild(LifecycleScope.Session, 's1');
+    expect(constructions).toBe(0);
+    expect(session.accessor.get(ITagged)).toBeInstanceOf(Tagged);
+    expect(constructions).toBe(1);
+    app.dispose();
+  });
+
+  it('constructs OnScopeCreated services and their dependencies in dependency order', () => {
+    const events: string[] = [];
+    interface ITagged {
+      tag: string;
+    }
+    const IDep = createDecorator<ITagged>('tree-scope-create-dep');
+    const ITop = createDecorator<ITagged>('tree-scope-create-top');
+    _clearScopedRegistryForTests();
+    class Dep implements ITagged {
+      tag = 'dep';
+      constructor() {
+        events.push('dep');
+      }
+    }
+    class Top implements ITagged {
+      tag = 'top';
+      constructor(@IDep public readonly dep: ITagged) {
+        events.push('top');
+      }
+    }
+    registerScopedService(LifecycleScope.Session, ITop, Top);
+    registerScopedService(
+      LifecycleScope.Session,
+      IDep,
+      Dep,
+      ScopeActivation.OnDemand,
+    );
+
+    const app = createAppScope();
+    app.createChild(LifecycleScope.Session, 's1');
+    expect(events).toEqual(['dep', 'top']);
+    app.dispose();
+  });
+
+  it('an OnScopeCreated construction failure is sticky Failed (D5), not a scope-creation error', () => {
+    interface IBoom {
+      tag: 'boom';
+    }
+    const IBoom = createDecorator<IBoom>('tree-scope-create-boom');
+    _clearScopedRegistryForTests();
+    class Boom implements IBoom {
+      tag = 'boom' as const;
+      constructor() {
+        throw new Error('boom');
+      }
+    }
+    registerScopedService(LifecycleScope.Session, IBoom, Boom);
+
+    const app = createAppScope();
+    const session = app.createChild(LifecycleScope.Session, 's1');
+    expect(session.instantiation.cascade.stateOf(IBoom)).toBe('Failed');
+    expect(() => session.accessor.get(IBoom)).toThrow(/boom/);
+    app.dispose();
+  });
+
+  it('exposes the scope ledger for debug introspection', () => {
+    const { app } = buildTree();
+    expect(app.ledger.state).toBe('active');
+    const labels = app.ledger.entries().map((entry) => entry.label);
+    expect(labels).toContain('instantiation');
+    expect(labels).toContain('scope:s1');
+    app.dispose();
+    expect(app.ledger.state).toBe('disposed');
   });
 });

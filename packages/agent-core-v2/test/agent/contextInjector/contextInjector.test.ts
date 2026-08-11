@@ -20,19 +20,22 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 import { registerContextMemoryServices, type StubContextMemory } from '../contextMemory/stubs';
-import { stubLoopWithHooks, stubWire } from '../loop/stubs';
+import {
+  runWillBeginStepHooks,
+  type StubLoop,
+  stubLoopWithHooks,
+  stubWire,
+} from '../loop/stubs';
 
-type InjectableContextInjector = IAgentContextInjectorService & {
-  inject(): Promise<void>;
-};
-
-function injector(ix: TestInstantiationService): InjectableContextInjector {
-  return ix.get(IAgentContextInjectorService) as InjectableContextInjector;
+function injector(ix: TestInstantiationService): IAgentContextInjectorService {
+  return ix.get(IAgentContextInjectorService);
 }
 
 function userMessage(text: string): ContextMessage {
@@ -63,15 +66,18 @@ describe('AgentContextInjectorService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let context: IAgentContextMemoryService;
+  let loop: StubLoop;
 
   beforeEach(() => {
     disposables = new DisposableStore();
+    loop = stubLoopWithHooks();
     ix = createServices(disposables, {
       base: [registerContextMemoryServices],
       strict: true,
       additionalServices: (reg) => {
-        reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
+        reg.defineInstance(IAgentLoopService, loop);
         reg.defineInstance(IWireService, stubWire());
+        reg.defineInstance(IAgentStateService, new AgentStateService());
         reg.define(IAgentSystemReminderService, AgentSystemReminderService);
         reg.define(IAgentContextInjectorService, AgentContextInjectorService);
       },
@@ -82,6 +88,10 @@ describe('AgentContextInjectorService', () => {
   afterEach(() => {
     disposables.dispose();
   });
+
+  async function runInjectionStep(): Promise<void> {
+    await runWillBeginStepHooks(loop);
+  }
 
   function spliceContext(
     start: number,
@@ -106,7 +116,7 @@ describe('AgentContextInjectorService', () => {
       return 'recorded reminder';
     });
 
-    await injector(ix).inject();
+    await runInjectionStep();
 
     expect(seen).toEqual([null]);
     expect(lastText(context)).toContain('<system-reminder>');
@@ -117,13 +127,38 @@ describe('AgentContextInjectorService', () => {
     });
   });
 
+  it('persists provider disclosure metadata on the injected message origin', async () => {
+    injector(ix).register('date_test', () => ({
+      content: 'date reminder',
+      disclosure: {
+        kind: 'date',
+        renderGeneration: 4,
+        localDate: '2026-07-29',
+        timeZone: 'Asia/Shanghai',
+      },
+    }));
+
+    await runInjectionStep();
+
+    expect(context.get().at(-1)?.origin).toEqual({
+      kind: 'injection',
+      variant: 'date_test',
+      disclosure: {
+        kind: 'date',
+        renderGeneration: 4,
+        localDate: '2026-07-29',
+        timeZone: 'Asia/Shanghai',
+      },
+    });
+  });
+
   it('appends provider content parts verbatim without system-reminder wrapping', async () => {
     injector(ix).register('media_test', () => [
       { type: 'text', text: 'caption' },
       { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } },
     ]);
 
-    await injector(ix).inject();
+    await runInjectionStep();
 
     const message = context.get().at(-1);
     expect(message?.content).toEqual([
@@ -136,7 +171,7 @@ describe('AgentContextInjectorService', () => {
   it('skips injection when the provider returns an empty content array', async () => {
     injector(ix).register('empty_test', () => []);
 
-    await injector(ix).inject();
+    await runInjectionStep();
 
     expect(context.get()).toHaveLength(0);
   });
@@ -149,8 +184,8 @@ describe('AgentContextInjectorService', () => {
       return lastInjectedAt === null ? 'recorded reminder' : undefined;
     });
 
-    await injector(ix).inject();
-    await injector(ix).inject();
+    await runInjectionStep();
+    await runInjectionStep();
 
     expect(seen).toEqual([null, 0]);
     expect(context.get()).toHaveLength(1);
@@ -165,10 +200,10 @@ describe('AgentContextInjectorService', () => {
       return seen.length <= 2 ? 'recorded reminder' : undefined;
     });
 
-    await injector(ix).inject();
+    await runInjectionStep();
     spliceContext(1, 0, [userMessage('between reminders')]);
-    await injector(ix).inject();
-    await injector(ix).inject();
+    await runInjectionStep();
+    await runInjectionStep();
 
     expect(seen).toEqual([[], [0], [0, 2]]);
   });
@@ -181,37 +216,17 @@ describe('AgentContextInjectorService', () => {
       return seen.length <= 2 ? 'recorded reminder' : undefined;
     });
 
-    await injector(ix).inject();
+    await runInjectionStep();
     spliceContext(1, 0, [userMessage('between reminders')]);
-    await injector(ix).inject();
+    await runInjectionStep();
     spliceContext(2, 1, []);
-    await injector(ix).inject();
+    await runInjectionStep();
 
     expect(seen).toEqual([null, 0, 0]);
     expect(context.get().map((message) => message.origin?.kind)).toEqual([
       'injection',
       'user',
     ]);
-  });
-
-  it('resets the stored injection index after context clear', async () => {
-    const seen: Array<number | null> = [];
-
-    injector(ix).register('recording_test', ({ lastInjectedAt }) => {
-      seen.push(lastInjectedAt);
-      return lastInjectedAt === null ? 'recorded reminder' : undefined;
-    });
-
-    await injector(ix).inject();
-    spliceContext(0, context.get().length, []);
-    await injector(ix).inject();
-
-    expect(seen).toEqual([null, null]);
-    expect(context.get()).toHaveLength(1);
-    expect(context.get()[0]?.origin).toEqual({
-      kind: 'injection',
-      variant: 'recording_test',
-    });
   });
 
   it('resets every stored injection index after context clear', async () => {
@@ -227,9 +242,9 @@ describe('AgentContextInjectorService', () => {
       return lastInjectedAt === null ? 'recorded reminder B' : undefined;
     });
 
-    await injector(ix).inject();
+    await runInjectionStep();
     spliceContext(0, context.get().length, []);
-    await injector(ix).inject();
+    await runInjectionStep();
 
     expect(seenA).toEqual([null, null]);
     expect(seenB).toEqual([null, null]);
@@ -248,13 +263,13 @@ describe('AgentContextInjectorService', () => {
       return lastInjectedAt === null ? 'recorded reminder' : undefined;
     });
 
-    await injector(ix).inject();
+    await runInjectionStep();
     spliceContext(
       0,
       2,
       [compactionSummary('Compacted summary.')],
     );
-    await injector(ix).inject();
+    await runInjectionStep();
 
     expect(seen).toEqual([null, null]);
     expect(context.get().map((message) => message.origin)).toEqual([
@@ -280,9 +295,9 @@ describe('AgentContextInjectorService', () => {
       return lastInjectedAt === null ? 'recorded reminder B' : undefined;
     });
 
-    await injector(ix).inject();
+    await runInjectionStep();
     spliceContext(0, 2, [compactionSummary('Compacted summary.')]);
-    await injector(ix).inject();
+    await runInjectionStep();
 
     expect(seenA).toEqual([null, 1]);
     expect(seenB).toEqual([null, 2]);
@@ -300,8 +315,8 @@ describe('AgentContextInjectorService', () => {
       return isNewTurn ? 'per-turn reminder' : undefined;
     });
 
-    await injector(ix).inject();
-    await injector(ix).inject();
+    await runInjectionStep();
+    await runInjectionStep();
     spliceContext(0, 1, [compactionSummary('Compacted summary.')]);
     await injector(ix).injectAfterCompaction();
 

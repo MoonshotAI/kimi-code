@@ -1,5 +1,5 @@
 /**
- * `contextMemory` domain (L4) — wire Model (`ContextModel`) and the wire-protocol
+ * `contextMemory` domain — wire Model (`ContextModel`) and the wire-protocol
  * 1.4 Ops `context.append_message` (`contextAppendMessage`) / `context.clear`
  * (`contextClear`) / `context.apply_compaction` (`contextApplyCompaction`) /
  * `context.undo` (`contextUndo`) / `context.append_loop_event`
@@ -15,12 +15,17 @@
  * without local ids — the on-disk record matches v1's field set), while the
  * agent loop streams each turn as `context.append_loop_event` records — the
  * same on-disk shape the v1 loop writes — and `contextAppendLoopEvent` folds
- * them into assistant / tool messages (see `loopEventFold.ts`) both at live
- * dispatch time and on replay, so v1- and v2-written sessions reduce
+ * them into assistant / tool messages both at live dispatch time and on
+ * replay, so v1- and v2-written sessions reduce
  * identically. The swarm-mode exit reminder removal is a cross-model fold:
  * `ContextModel` registers a reducer on `swarm_mode.exit` (see
  * `popSwarmModeReminder`) so the pop replays from the `swarm_mode.exit` record
- * itself, exactly like v1's restore-time `popMatchedMessage`.
+ * itself.
+ *
+ * `context.undo` counts conversation ticks with the single `isUndoAnchor`
+ * predicate — the same definition the checkpoint
+ * protocol pushes with, so anchor counting and checkpoint pushing can never
+ * drift apart.
  *
  * Blob handling is declared as a `ModelBlobCodec` on `ContextModel.blobs`:
  * - `dehydrate(record, transform)`: at dispatch time, traverses message content
@@ -34,7 +39,8 @@
 
 import { z } from 'zod';
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import { ErrorCodes, Error2 } from '#/errors';
+import type { ContentPart } from '#/kosong/contract/message';
 import { defineModel, type PartsTransformer } from '#/wire/model';
 import type { WireRecord } from '#/wire/record';
 
@@ -43,6 +49,11 @@ import {
   createCompactionSummaryMessage,
   type ContextCompactionShapeInput,
 } from './compactionHandoff';
+import {
+  isPromptOwnedInjection,
+  isUndoAnchor,
+  isValidUndoCount,
+} from './conversationTime';
 import {
   foldAppendMessage,
   foldLoopEvent,
@@ -152,6 +163,7 @@ export const contextClear = ContextModel.defineOp('context.clear', {
 const contextCompactionBaseShape = {
   tokensBefore: z.number().optional(),
   tokensAfter: z.number().optional(),
+  summaryOutputTokens: z.number().optional(),
   keptUserMessageCount: z.number().optional(),
   keptHeadUserMessageCount: z.number().optional(),
   droppedCount: z.number().optional(),
@@ -215,6 +227,7 @@ export function readContextCompactionShapeInput(
     compactedCount: readContextCompactedCount(fields),
     tokensBefore: readOptionalNumber(fields, 'tokensBefore') ?? 0,
     tokensAfter: readOptionalNumber(fields, 'tokensAfter'),
+    summaryOutputTokens: readOptionalNumber(fields, 'summaryOutputTokens'),
     keptUserMessageCount,
     keptHeadUserMessageCount: readOptionalNumber(fields, 'keptHeadUserMessageCount'),
     droppedCount: readOptionalNumber(fields, 'droppedCount'),
@@ -228,7 +241,17 @@ export function readContextCompactedCount(record: ContextCompactionRecord): numb
   if (typeof compactedCount === 'number') return compactedCount;
   const legacyCount = fields['count'];
   if (typeof legacyCount === 'number') return legacyCount;
-  throw new Error('Invalid context.apply_compaction record: missing compactedCount');
+  throw new Error2(
+    ErrorCodes.STORAGE_DECODE_FAILED,
+    'Invalid context.apply_compaction record: missing compactedCount',
+    {
+      details: {
+        recordKeys: Object.keys(record),
+        compactedCountType: typeof compactedCount,
+        countType: typeof legacyCount,
+      },
+    },
+  );
 }
 
 export function readContextCompactionSummary(record: ContextCompactionRecord): ContextMessage {
@@ -238,7 +261,17 @@ export function readContextCompactionSummary(record: ContextCompactionRecord): C
   const summary = fields['summary'];
   if (typeof summary === 'string') return createCompactionSummaryMessage(summary);
   if (isContextMessage(summary)) return summary;
-  throw new Error('Invalid context.apply_compaction record: missing summary');
+  throw new Error2(
+    ErrorCodes.STORAGE_DECODE_FAILED,
+    'Invalid context.apply_compaction record: missing summary',
+    {
+      details: {
+        recordKeys: Object.keys(record),
+        summaryType: typeof summary,
+        contextSummaryType: typeof contextSummary,
+      },
+    },
+  );
 }
 
 function readContextCompactionRawSummary(record: UnknownRecord): string {
@@ -249,7 +282,17 @@ function readContextCompactionRawSummary(record: UnknownRecord): string {
   if (isContextMessage(summary)) {
     return textOf(summary);
   }
-  throw new Error('Invalid context.apply_compaction record: missing summary');
+  throw new Error2(
+    ErrorCodes.STORAGE_DECODE_FAILED,
+    'Invalid context.apply_compaction record: missing summary',
+    {
+      details: {
+        recordKeys: Object.keys(record),
+        summaryType: typeof summary,
+        contextSummaryType: typeof contextSummary,
+      },
+    },
+  );
 }
 
 function readLegacySummaryMessage(record: UnknownRecord): ContextMessage | undefined {
@@ -304,10 +347,16 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
       stoppedAtCompaction = true;
       break;
     }
-    if (isRealUserPrompt(message)) {
+    if (isUndoAnchor(message)) {
       remaining--;
       removedCount++;
       cutIndex = i;
+      while (
+        cutIndex > 0 &&
+        isPromptOwnedInjection(state[cutIndex - 1]!, message)
+      ) {
+        cutIndex--;
+      }
     }
   }
   return { cutIndex, removedCount, stoppedAtCompaction };
@@ -317,7 +366,11 @@ export function isFullyUndoable(cut: UndoCut, count: number): boolean {
   return cut.cutIndex >= 0 && cut.removedCount >= count;
 }
 
-export type UndoUnavailableReason = 'empty' | 'compaction_boundary' | 'insufficient';
+export type UndoUnavailableReason =
+  | 'empty'
+  | 'compaction_boundary'
+  | 'insufficient'
+  | 'checkpoint_lost';
 
 export type UndoPrecheck =
   | { readonly ok: true }
@@ -349,25 +402,19 @@ export function formatUndoUnavailableMessage(
       return 'Nothing to undo: would cross a compaction boundary';
     case 'insufficient':
       return `Nothing to undo: only ${precheck.undoable} of ${precheck.requested} requested turn(s) available`;
+    case 'checkpoint_lost':
+      return 'Nothing to undo: conversation state checkpoints are incomplete';
   }
 }
 
 export const contextUndo = ContextModel.defineOp('context.undo', {
-  schema: z.object({ count: z.number() }),
+  schema: z.object({
+    count: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  }),
   apply: (state, p) => {
-    if (p.count <= 0 || state.length === 0) return state;
+    if (!isValidUndoCount(p.count) || state.length === 0) return state;
     const cut = computeUndoCut(state, p.count);
     if (!isFullyUndoable(cut, p.count)) return state;
     return resetFold(state.slice(0, cut.cutIndex)) as ContextMessage[];
   },
 });
-
-function isRealUserPrompt(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  return (
-    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
-    origin.trigger === 'user-slash'
-  );
-}

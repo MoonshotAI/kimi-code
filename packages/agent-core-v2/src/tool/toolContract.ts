@@ -1,23 +1,23 @@
 /**
- * `tool` domain (L3) — foundational tool model contract.
+ * `tool` domain — foundational tool model contract.
  *
  * Owns the tool model shared by every tool domain: the static metadata
  * (`ToolSource` / `ToolDefinition` / `ToolInfo`), the `ExecutableTool`
  * contract every tool implements (`resolveExecution` → `ToolExecution` →
  * `execute(ctx)`), the `ExecutableToolContext` it runs against, the raw and
  * finalized results (`ExecutableToolResult` / `ToolResult`), the streaming
- * `ToolUpdate`, and the `BuiltinTool` alias. Also owns the `ToolAccesses`
+ * `ToolUpdate`, and the `AgentTool` service interface every DI-registered
+ * agent tool implements. Also owns the `ToolAccesses`
  * resource-access declarations an execution emits so the host scheduler can
  * run non-conflicting calls concurrently (together with their conflict
  * semantics), and the `isMcpToolName` name predicate. The `stopTurn` /
  * `stopBatchAfterThis` fields are internal loop-control hints stripped
- * before persistence. Execution hook contexts live in `toolExecutor`. No
- * scoped service.
+ * before persistence. No scoped service.
  */
 
-import type { ContentPart, ToolCall } from '#/app/llmProtocol/message';
-import type { Tool } from '#/app/llmProtocol/tool';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { ContentPart, ToolCall } from '#/kosong/contract/message';
+import type { Tool } from '#/kosong/contract/tool';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 export type ExecutableToolOutput = string | ContentPart[];
@@ -92,12 +92,14 @@ export interface ExecutableTool<Input = unknown> extends Tool {
 }
 
 export type ToolSource = 'builtin' | 'user' | 'mcp';
+export type ToolDisclosure = 'inline' | 'deferred';
 
 export interface ToolDefinition {
   readonly name: string;
   readonly description: string;
   readonly parameters?: Record<string, unknown>;
   readonly source?: ToolSource;
+  readonly disclosure?: ToolDisclosure;
   readonly info?: Record<string, unknown>;
 }
 
@@ -105,7 +107,9 @@ export interface ToolInfo extends ToolDefinition {
   readonly source: ToolSource;
 }
 
-export type BuiltinTool<Input = unknown> = ExecutableTool<Input>;
+export interface AgentTool<Input = unknown> extends ExecutableTool<Input> {
+  readonly _serviceBrand: undefined;
+}
 
 export type ToolResult = ExecutableToolResult & {
   readonly description?: string;

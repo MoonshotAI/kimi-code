@@ -1,6 +1,16 @@
-import type { AgentConfigData } from '#/agent/profile/profile';
+/**
+ * `rpc` domain — v2 native RPC contract.
+ *
+ * Request/response payloads and event types for the engine's native RPC
+ * surface. `PromptPayload.disabledTools` is the client-managed session
+ * denylist, applied before the prompt is enqueued: full-replace semantics, the profile's own
+ * `disallowedTools` always survive, omitting the field keeps the persisted
+ * value, and `[]` clears the client portion. It is ignored by engines without
+ * profile support.
+ */
+
 import type { AgentContextData } from '#/agent/contextMemory/types';
-import type { AgentTaskInfo } from '#/agent/task/task';
+import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import type {
   GoalBudgetLimits,
   GoalBudgetReport,
@@ -10,18 +20,15 @@ import type {
   GoalStatus,
   GoalToolResult,
 } from '#/agent/goal/types';
-import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
-import type { PlanData } from '#/agent/plan/plan';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { SwarmModeTrigger } from '#/agent/swarm/swarm';
-import type { ToolInfo } from '#/tool/toolContract';
+import type { ToolDisclosure, ToolInfo } from '#/tool/toolContract';
 import type { ResolvedConfig } from '#/app/config/config';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import type { ExperimentalFeatureState } from '#/app/flag/flag';
 import type { ResumeSessionResult } from '#/agent/replayBuilder/types';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import type { SessionWarning } from '#/app/sessionLegacy/sessionProtocol';
-import type { UsageStatus } from '#/agent/usage/usage';
 
 import type { ExportSessionPayload, ExportSessionResult } from '#/app/sessionExport/sessionExport';
 import type { PluginCommandDef, PluginInfo, PluginSummary, ReloadSummary } from '#/app/plugin/types';
@@ -57,7 +64,6 @@ export interface CreateSessionPayload {
   readonly thinking?: string | undefined;
   readonly permission?: PermissionMode | undefined;
   readonly metadata?: JsonObject | undefined;
-  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
   readonly client?: ClientTelemetryInfo | undefined;
 }
@@ -72,7 +78,6 @@ export interface ArchiveSessionPayload {
 
 export interface ResumeSessionPayload {
   readonly sessionId: string;
-  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
 }
 
@@ -113,6 +118,7 @@ export interface SessionSummary {
 
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
+  readonly disabledTools?: readonly string[];
 }
 export interface RunShellCommandPayload {
   readonly command: string;
@@ -162,6 +168,7 @@ export interface RegisterToolPayload {
   readonly name: string;
   readonly description: string;
   readonly parameters: Record<string, unknown>;
+  readonly disclosure?: ToolDisclosure;
 }
 export interface UnregisterToolPayload {
   readonly name: string;
@@ -205,10 +212,15 @@ export interface ActivatePluginCommandPayload {
   readonly args?: string | undefined;
 }
 
+export interface RunCommandPayload {
+  readonly name: string;
+  readonly args?: string | undefined;
+}
+
 export interface McpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
-  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
   readonly toolCount: number;
   readonly error?: string;
 }
@@ -246,18 +258,6 @@ export interface GetPluginInfoPayload {
 
 export type ReloadPluginsResult = ReloadSummary;
 export type { PluginSummary, PluginInfo };
-
-export interface AddAdditionalDirPayload {
-  readonly path: string;
-  readonly persist: boolean;
-}
-
-export interface AddAdditionalDirResult {
-  readonly additionalDirs: readonly string[];
-  readonly projectRoot: string;
-  readonly configPath: string;
-  readonly persisted: boolean;
-}
 
 export interface RenameSessionPayload {
   readonly title: string;
@@ -302,45 +302,17 @@ export interface PromptLaunchResult {
 
 export interface AgentAPI {
   prompt: (payload: PromptPayload) => PromptLaunchResult | undefined;
-  runShellCommand: (payload: RunShellCommandPayload) => ShellCommandResult;
-  cancelShellCommand: (payload: CancelShellCommandPayload) => void;
   steer: (payload: SteerPayload) => PromptLaunchResult | undefined;
   cancel: (payload: CancelPayload) => void;
-  undoHistory: (payload: UndoHistoryPayload) => number;
-  setThinking: (payload: SetThinkingPayload) => void;
+  undoHistory: (payload: UndoHistoryPayload) => Promise<number>;
   setPermission: (payload: SetPermissionPayload) => void;
-  setModel: (payload: SetModelPayload) => SetModelResult;
-  getModel: (payload: EmptyPayload) => string;
-  enterPlan: (payload: EmptyPayload) => void;
-  cancelPlan: (payload: CancelPlanPayload) => void;
-  clearPlan: (payload: EmptyPayload) => void;
-  enterSwarm: (payload: EnterSwarmPayload) => void;
-  exitSwarm: (payload: EmptyPayload) => void;
-  getSwarmMode: (payload: EmptyPayload) => boolean;
-  startBtw: (payload: EmptyPayload) => string;
-  beginCompaction: (payload: BeginCompactionPayload) => void;
   cancelCompaction: (payload: EmptyPayload) => void;
-  registerTool: (payload: RegisterToolPayload) => void;
-  unregisterTool: (payload: UnregisterToolPayload) => void;
-  setActiveTools: (payload: SetActiveToolsPayload) => void;
-  stopTask: (payload: StopTaskPayload) => void;
-  detachTask: (payload: DetachTaskPayload) => AgentTaskInfo | undefined;
-  clearContext: (payload: EmptyPayload) => void;
-  activateSkill: (payload: ActivateSkillPayload) => void;
+  activateSkill: (payload: ActivateSkillPayload) => PromptLaunchResult | undefined;
   activatePluginCommand: (payload: ActivatePluginCommandPayload) => void;
-  createGoal: (payload: CreateGoalPayload) => GoalSnapshot;
-  getGoal: (payload: EmptyPayload) => GoalToolResult;
-  pauseGoal: (payload: EmptyPayload) => GoalSnapshot;
-  resumeGoal: (payload: EmptyPayload) => GoalSnapshot;
-  cancelGoal: (payload: EmptyPayload) => GoalSnapshot;
-  getTaskOutput: (payload: GetTaskOutputPayload) => string;
+  listCommands: (payload: EmptyPayload) => readonly AgentCommandInfo[];
+  runCommand: (payload: RunCommandPayload) => Promise<void>;
   getContext: (payload: EmptyPayload) => AgentContextData;
-  getConfig: (payload: EmptyPayload) => AgentConfigData;
-  getPermission: (payload: EmptyPayload) => PermissionData;
-  getPlan: (payload: EmptyPayload) => PlanData;
-  getUsage: (payload: EmptyPayload) => UsageStatus;
   getTools: (payload: EmptyPayload) => readonly ToolInfo[];
-  getTasks: (payload: GetTasksPayload) => readonly AgentTaskInfo[];
 }
 
 type AgentAPIWithId = WithAgentId<AgentAPI>;
@@ -356,7 +328,6 @@ export interface SessionAPI extends AgentAPIWithId {
   reconnectMcpServer: (payload: ReconnectMcpServerPayload) => void;
   generateAgentsMd: (payload: EmptyPayload) => void;
   getSessionWarnings: (payload: EmptyPayload) => readonly SessionWarning[];
-  addAdditionalDir: (payload: AddAdditionalDirPayload) => AddAdditionalDirResult;
 }
 
 type SessionAPIWithId = WithSessionId<SessionAPI>;

@@ -21,6 +21,8 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 
 在 TUI 中运行 `/mcp-config` 可以交互式地新增、编辑或删除 server，无需手动编辑 JSON 文件。运行 `/mcp` 可查看当前所有 server 的连接状态。
 
+从配置中删除某个 server 不会打断进行中的会话：该 server 在 `/mcp` 中仍显示为 `removed`，其工具在这些会话中保持可见，但调用会失败并返回移除提示；新会话则完全不会注册这些工具。反过来，会话进行中新增的 server——无论是编辑 `mcp.json` 还是安装 plugin——都不会注册到已打开的会话中，只会加入之后创建的会话。
+
 `mcp.json` 的结构：
 
 ```json
@@ -52,14 +54,16 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 | `headers` | `Record<string, string>` | HTTP、SSE | 附加到每次请求的静态请求头 |
 | `bearerTokenEnvVar` | `string` | HTTP、SSE | 存放 bearer token 的环境变量名 |
 | `enabled` | `boolean` | 全部 | 设为 `false` 可禁用该 server |
-| `startupTimeoutMs` | `number` | 全部 | 连接超时，默认 `30000` 毫秒 |
-| `toolTimeoutMs` | `number` | 全部 | 单次工具调用超时 |
+| `startupTimeoutMs` | `number` | 全部 | 连接超时，取值范围为 `1` 到 `2147483647` 毫秒，默认 `30000` |
+| `toolTimeoutMs` | `number` | 全部 | 单次工具调用超时，取值范围为 `1` 到 `2147483647` 毫秒 |
 | `enabledTools` | `string[]` | 全部 | 工具白名单 |
 | `disabledTools` | `string[]` | 全部 | 工具黑名单 |
 
+连接超时和单次工具调用超时的默认值都不必逐个 server 设置：`config.toml` 的 `[mcp] startup_timeout_ms` / `[mcp] tool_timeout_ms` 或环境变量 `KIMI_MCP_STARTUP_TIMEOUT_MS` / `KIMI_MCP_TOOL_TIMEOUT_MS` 可以调整全局默认值，优先级为 server 字段 > 环境变量 > `config.toml` > 内置默认。详见 [配置文件](../configuration/config-files.md#mcp)。
+
 HTTP 与 SSE server 支持通过 `headers` 或 `bearerTokenEnvVar` 提供静态凭证。需要 OAuth 时，运行 `/mcp-config login <server-name>` 完成浏览器授权。
 
-Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers 默认启用，可以在 `/plugins` 中禁用或重新启用，然后开启新会话。详见 [Plugins](./plugins.md)。
+Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers 默认启用，可以在 `/plugins` 中禁用或重新启用：禁用或移除后，已打开会话中的工具调用会失败并返回移除提示；新增或启用 server 则在新会话或 `/reload` 后生效。详见 [Plugins](./plugins.md#plugin-中的-mcp-servers)。
 
 ::: warning 注意
 项目级 `.kimi-code/mcp.json` 中的 stdio 条目会在会话启动时执行本地命令，只在你信任的仓库里启用。
