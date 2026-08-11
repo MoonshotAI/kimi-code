@@ -68,8 +68,18 @@ function sanitizeAndTruncatePromptText(text: string, maxLength: number): string 
       /\b(api[_-]?key|token|secret|password|passwd|pwd)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|\S+)/gi,
       '$1=[redacted]',
     )
-    .replaceAll(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[redacted]')
-    .replaceAll(/\b[A-Za-z0-9][A-Za-z0-9+/=_-]{39,}\b/g, '[redacted]')
+    // The negative lookaheads keep stems of dotted filenames (e.g.
+    // `refact-000-08-12-external-hooks-feature-scopes.ts`) out of the token
+    // patterns; a dot followed by >8 alphanumerics (e.g. a JWT segment
+    // boundary) does not count as an extension and stays redacted.
+    .replaceAll(
+      /\bsk-[A-Za-z0-9_-]{12,}\b(?![A-Za-z0-9_-]*\.[A-Za-z0-9]{1,8}(?![A-Za-z0-9_]))/g,
+      '[redacted]',
+    )
+    .replaceAll(
+      /\b[A-Za-z0-9][A-Za-z0-9+/=_-]{39,}\b(?![A-Za-z0-9+/=_-]*\.[A-Za-z0-9]{1,8}(?![A-Za-z0-9_]))/g,
+      '[redacted]',
+    )
     .replaceAll(/\p{Cc}+/gu, ' ')
     .replaceAll(/\s+/g, ' ')
     .trim();

@@ -7,6 +7,9 @@
  *   - an inline image-compression caption (harness metadata placed next to
  *     the image by prompt ingestion) never leaks into titles/lastPrompt,
  *     whether it is a standalone text part or merged into the user's text
+ *   - sanitization keeps dotted filenames (even long kebab-case or `sk-`
+ *     prefixed ones) readable while bare tokens, `sk-` keys, git SHAs, and
+ *     JWT segments stay redacted
  *   - SessionAPIImpl.steer updates title/lastPrompt exactly like prompt —
  *     a steer can launch the session's first turn (e.g. goal mode)
  */
@@ -65,6 +68,29 @@ describe('promptMetadataTextFromPayload', () => {
     expect(text).toBe('能展示但是没有快捷键提示 [image]');
     expect(text).not.toContain('<system>');
     expect(text).not.toContain('Image compressed');
+  });
+});
+
+describe('prompt metadata sanitization', () => {
+  const sanitize = (text: string) =>
+    promptMetadataTextFromPayload({ input: [{ type: 'text', text }] });
+
+  it('keeps dotted filenames, even long kebab-case or sk- prefixed ones', () => {
+    expect(sanitize('帮我看看 refact-000-08-12-external-hooks-feature-scopes.ts 这个文件')).toBe(
+      '帮我看看 refact-000-08-12-external-hooks-feature-scopes.ts 这个文件',
+    );
+    expect(sanitize('检查 sk-project-notes-2024.md')).toBe('检查 sk-project-notes-2024.md');
+  });
+
+  it('still redacts bare long tokens, sk- keys, and git SHAs', () => {
+    expect(sanitize(`token ${'A1b2'.repeat(13)}`)).toBe('token [redacted]');
+    expect(sanitize('key sk-abcdefghijklmnop1234')).toBe('key [redacted]');
+    expect(sanitize(`看下 commit ${'9f8e7d6c5b'.repeat(4)}`)).toBe('看下 commit [redacted]');
+  });
+
+  it('still redacts JWT segments joined by dots', () => {
+    const jwt = `eyJhbGciOiJIUzI1NiJ9.${'a'.repeat(45)}.${'b'.repeat(43)}`;
+    expect(sanitize(`jwt ${jwt}`)).toBe('jwt eyJhbGciOiJIUzI1NiJ9.[redacted].[redacted]');
   });
 });
 
