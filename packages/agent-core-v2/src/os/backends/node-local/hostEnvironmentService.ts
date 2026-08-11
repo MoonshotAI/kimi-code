@@ -36,7 +36,7 @@ export class HostEnvironmentService implements IHostEnvironment {
   declare readonly _serviceBrand: undefined;
 
   private _info?: HostEnvironmentInfo;
-  private _probeError?: unknown;
+  private _probeError?: Error;
   readonly ready: Promise<void>;
 
   constructor() {
@@ -67,14 +67,14 @@ export class HostEnvironmentService implements IHostEnvironment {
     return this._info[field];
   }
 
-  private toHostProcessError(error: unknown): unknown {
+  private toHostProcessError(error: unknown): Error {
     if (error instanceof ProbeShellNotFoundError) {
       return new HostProcessError(
         OsProcessErrors.codes.SHELL_GIT_BASH_NOT_FOUND,
         error.message,
       );
     }
-    return error;
+    return error instanceof Error ? error : new Error(String(error));
   }
 
   get osKind(): OsKind {
