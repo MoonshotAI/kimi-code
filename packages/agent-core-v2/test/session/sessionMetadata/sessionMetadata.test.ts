@@ -126,6 +126,19 @@ describe('SessionMetadata', () => {
     expect(restored.updatedAt).toBe(before);
   });
 
+  it('registerAgent never bumps updatedAt — the agents map is structural', async () => {
+    const meta = ix.get(ISessionMetadata);
+    const before = (await meta.read()).updatedAt;
+    await new Promise((r) => setTimeout(r, 2));
+    // A genuinely NEW agent (resume materializing a cold session's main
+    // agent, or a runtime subagent) is not content activity.
+    await meta.registerAgent('main', { homedir: '/tmp/h', type: 'main' });
+
+    const next = await meta.read();
+    expect(next.agents?.['main']?.homedir).toBe('/tmp/h');
+    expect(next.updatedAt).toBe(before);
+  });
+
   it('an explicit patch.updatedAt always wins (fork inherits the source recency)', async () => {
     const meta = ix.get(ISessionMetadata);
     await meta.update({ title: 'fork', updatedAt: 1234 });
@@ -334,7 +347,7 @@ describe('SessionMetadata', () => {
     expect((await meta.read()).updatedAt).toBe(1700000000000);
   });
 
-  it('updates when re-registering with changed fields', async () => {
+  it('updates changed fields on re-registration without bumping updatedAt', async () => {
     const meta = ix.get(ISessionMetadata);
     await meta.registerAgent('main', {
       homedir: '/tmp/sessions/wd_test/s1/agents/main',
@@ -351,7 +364,8 @@ describe('SessionMetadata', () => {
 
     const next = await meta.read();
     expect(next.agents?.['main']?.labels).toEqual({ swarmItem: 'src/a.ts' });
-    expect(next.updatedAt).toBeGreaterThan(before);
+    // Agent registration is structural, not content activity — listings stay.
+    expect(next.updatedAt).toBe(before);
   });
 
   it('records the fresh summary into the session index mirror on update', async () => {

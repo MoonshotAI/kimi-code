@@ -428,18 +428,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     sessionId: string,
     opts?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
-    // Capture the persisted recency BEFORE resume: a cold session without a
-    // persisted main agent gets one created during resume, and that
-    // registration is an ordinary metadata write that bumps updatedAt —
-    // without restoring it here, unarchiving an empty session floats it to
-    // the top of recency-sorted listings.
-    const summary = await this.index.get(sessionId);
+    // agent registration during resume is non-touching (see
+    // SessionMetadata.registerAgent), so the persisted recency survives
+    // materializing a cold session's main agent.
     const handle = await this.resume(sessionId, opts);
     if (handle === undefined) return undefined;
-    await handle.accessor.get(ISessionMetadata).update(
-      { archived: false, archivedAt: undefined, updatedAt: summary?.updatedAt },
-      { touchUpdatedAt: false },
-    );
+    await handle.accessor.get(ISessionMetadata).setArchived(false);
     return handle;
   }
 
@@ -546,9 +540,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         });
       }
 
-      // Write the fork metadata AFTER the agent recreation loop: registering
-      // each copied agent performs an ordinary metadata update that bumps
-      // updatedAt, so the recency restore must come last to survive.
+      // Write the fork metadata AFTER the agent recreation loop so the
+      // fork's meta settles once, after all structural writes (agent
+      // registration is non-touching, but keeping the recency restore last
+      // makes the ordering robust against future structural writes).
       await targetMeta.update({
         title,
         isCustomTitle: opts.title !== undefined ? true : sourceMeta?.isCustomTitle === true,

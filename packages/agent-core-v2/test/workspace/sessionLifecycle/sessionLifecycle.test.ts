@@ -905,14 +905,14 @@ describe('SessionLifecycleService', () => {
   });
 
   it('restore clears the archived flag when the session exists on disk', async () => {
-    let patch: Record<string, unknown> | undefined;
+    let archived: boolean | undefined;
     const svc = await build([
       stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj', 'wd_stub')),
       stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
       stubPair(ISessionMetadata, {
         ...metadataStub(),
-        update: (p: Record<string, unknown>) => {
-          patch = p;
+        setArchived: (value: boolean) => {
+          archived = value;
           return Promise.resolve();
         },
       }),
@@ -921,21 +921,13 @@ describe('SessionLifecycleService', () => {
     const restored = await svc.restore('s1');
 
     expect(restored?.id).toBe('s1');
-    expect(patch).toMatchObject({ archived: false, archivedAt: undefined });
+    expect(archived).toBe(false);
   });
 
-  it('restore preserves the persisted recency when resume (re)creates the main agent', async () => {
-    // A cold empty session has no persisted agents.main: resume creates it,
-    // and that registration is an ordinary metadata write that bumps
-    // updatedAt. The restore's final write must re-apply the persisted value.
-    const updates: Record<string, unknown>[] = [];
-    const metaStub: ISessionMetadata = {
-      ...metadataStub(),
-      update: (p) => {
-        updates.push(p as Record<string, unknown>);
-        return Promise.resolve();
-      },
-    };
+  it('restore re-creates the main agent for a cold empty session, then unarchives', async () => {
+    // The registration itself is non-touching (pinned at the SessionMetadata
+    // level), so restore only needs the plain unarchive write.
+    const calls: string[] = [];
     const agentHandle = {
       id: 'main',
       kind: LifecycleScope.Agent,
@@ -948,13 +940,17 @@ describe('SessionLifecycleService', () => {
     } as unknown as IAgentScopeHandle;
     const svc = await build([
       stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj', 'wd_stub')),
-      stubPair(ISessionMetadata, metaStub),
+      stubPair(ISessionMetadata, {
+        ...metadataStub(),
+        setArchived: (value: boolean) => {
+          calls.push(`setArchived:${value}`);
+          return Promise.resolve();
+        },
+      }),
       stubPair(IAgentLifecycleService, {
         ...agentLifecycleStub(),
         create: async () => {
-          // Mirror the real doCreate: registering the created agent writes
-          // metadata (which bumps updatedAt to now).
-          await metaStub.registerAgent('main', {});
+          calls.push('create');
           return agentHandle;
         },
       }),
@@ -963,13 +959,7 @@ describe('SessionLifecycleService', () => {
     const restored = await svc.restore('s1');
 
     expect(restored?.id).toBe('s1');
-    // The summary stub persists updatedAt = 1; the restore's final write
-    // re-applies it over the registration's bump.
-    expect(updates.at(-1)).toMatchObject({
-      archived: false,
-      archivedAt: undefined,
-      updatedAt: 1,
-    });
+    expect(calls).toEqual(['create', 'setArchived:false']);
   });
 
   describe('delete', () => {

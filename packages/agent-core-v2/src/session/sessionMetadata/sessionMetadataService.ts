@@ -10,10 +10,10 @@
  * document always carries the `agents` / `custom` maps — seeded at creation,
  * backfilled and persisted on load for documents written before the seeding
  * existed (without touching `updatedAt`, so a format heal never reorders
- * session listings). Re-registering an agent whose metadata is unchanged is
- * a no-op (no write, no mirror, no event), so resuming a session — which
- * re-registers its agents as they materialize — never bumps `updatedAt` and
- * never reorders session listings. Bound at Session scope.
+ * session listings). Agent registration is a structural write, not content
+ * activity: it never bumps `updatedAt` — neither when resume materializes a
+ * cold session's agents, nor when a runtime subagent registers mid-turn (the
+ * turn's own submit/end moments carry recency). Bound at Session scope.
  *
  * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
  * update is persisted, the fresh summary is recorded into the App-scoped
@@ -154,8 +154,11 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       await this.ready;
       const existing = this.data.agents?.[agentId];
       if (existing !== undefined && agentMetaEquals(existing, meta)) return;
+      // The agents map is structural metadata, not content activity: resume
+      // materializing a cold session's main agent (and runtime subagent
+      // registration) must never reorder recency-sorted listings.
       const agents = { ...this.data.agents, [agentId]: meta };
-      await this.applyUpdate({ agents });
+      await this.applyUpdate({ agents }, { touchUpdatedAt: false });
     });
   }
 
