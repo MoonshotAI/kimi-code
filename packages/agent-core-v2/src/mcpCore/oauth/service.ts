@@ -82,6 +82,12 @@ export class McpOAuthService {
     return (await this.getProvider(serverName, serverUrl).tokens()) !== undefined;
   }
 
+  async reloadCachedTokens(serverName: string, serverUrl: string | URL): Promise<void> {
+    const provider = this.providers.get(mcpOAuthStoreKey(serverName, serverUrl));
+    if (provider === undefined) return;
+    await provider.reloadTokens();
+  }
+
   async beginAuthorization(
     serverName: string,
     serverUrl: string | URL,

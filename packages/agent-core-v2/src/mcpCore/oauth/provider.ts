@@ -148,6 +148,11 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     return this.tokensCache;
   }
 
+  async reloadTokens(): Promise<void> {
+    await this.ready;
+    this.tokensCache = await this.store.read<OAuthTokens>(`${this.storeKey}${TOKENS_SUFFIX}`);
+  }
+
   async saveTokens(tokens: OAuthTokens): Promise<void> {
     this.tokensCache = tokens;
     await this.store.write(`${this.storeKey}${TOKENS_SUFFIX}`, tokens);

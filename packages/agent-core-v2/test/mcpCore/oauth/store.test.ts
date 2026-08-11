@@ -81,6 +81,26 @@ describe('MCP OAuth credential identity', () => {
     await expect(service.hasTokens('linear', 'https://second.example.com/mcp')).resolves.toBe(false);
   });
 
+  it('reloads tokens cached by another service instance', async () => {
+    const store = createMemoryMcpOAuthStore();
+    const writer = new McpOAuthService({ store });
+    const reader = new McpOAuthService({ store });
+    const writerProvider = writer.getProvider('linear', 'https://example.com/mcp');
+    const readerProvider = reader.getProvider('linear', 'https://example.com/mcp');
+    await Promise.all([writerProvider.ready, readerProvider.ready]);
+
+    await writerProvider.saveTokens(token('old-token'));
+    await reader.reloadCachedTokens('linear', 'https://example.com/mcp');
+    await writerProvider.saveTokens(token('new-token'));
+    await expect(readerProvider.tokens()).resolves.toMatchObject({ access_token: 'old-token' });
+
+    await reader.reloadCachedTokens('linear', 'https://example.com/mcp');
+    await expect(readerProvider.tokens()).resolves.toMatchObject({ access_token: 'new-token' });
+    await expect(
+      reader.reloadCachedTokens('missing', 'https://example.com/mcp'),
+    ).resolves.toBeUndefined();
+  });
+
   it('uses stored client redirect URI when no active OAuth callback is running', async () => {
     const provider = new McpOAuthClientProvider({
       serverName: 'notion',

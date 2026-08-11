@@ -144,7 +144,10 @@ import {
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { MCP_SECTION, type McpSection } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configSection';
 import { IAgentIdentity } from '@moonshot-ai/agent-core-v2/app/agentIdentity/agentIdentity';
-import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
+import {
+  McpConnectionManager,
+  type McpServerStatus,
+} from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import type { McpServerConfig as RuntimeMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
   AlreadyAuthorizedError,
@@ -2272,7 +2275,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       runtimeName: server.name,
       config: mcpConfigWithoutName(server),
     };
-    const oauth = await this.createMcpOAuthService();
+    const oauth = await this.mcpOAuthService();
     return this.withMcpServerProbe(resolved, options.cwd, oauth, (manager) =>
       standaloneMcpTestResult(resolved.runtimeName, manager),
     );
@@ -2314,9 +2317,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // unmarked static headers are not treated as OAuth credentials.
     if (config.headers !== undefined && config.auth !== 'oauth') return 'not-applicable';
 
-    const connectionStatus = await this.withMcpServerProbe(server, undefined, oauth, (manager) =>
-      manager.get(server.runtimeName)?.status,
-    );
+    let connectionStatus: McpServerStatus | undefined;
+    try {
+      connectionStatus = await this.withMcpServerProbe(server, undefined, oauth, (manager) =>
+        manager.get(server.runtimeName)?.status,
+      );
+    } finally {
+      await this.reloadCachedMcpOAuthTokens(server);
+    }
     if (connectionStatus === 'needs-auth') return 'oauth-required';
     if (connectionStatus !== 'connected') return 'unavailable';
     // `auth: 'oauth'` is only a configuration hint. A successful anonymous
@@ -2324,6 +2332,24 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return (await oauth.hasTokens(server.runtimeName, config.url))
       ? 'oauth-authorized'
       : 'not-applicable';
+  }
+
+  private async reloadCachedMcpOAuthTokens(server: ResolvedMcpServerTarget): Promise<void> {
+    const config = server.config;
+    if (config.transport === 'stdio') return;
+    const services = new Set<McpOAuthService>();
+    if (this.mcpOAuth !== undefined) services.add(this.mcpOAuth);
+    for (const handler of this.engineAccessor.get(IWorkspaceLifecycleService).handlers.list()) {
+      const service = handler.accessor
+        .get(IWorkspaceMcpService)
+        .connectionManager().oauthService;
+      if (service !== undefined) services.add(service);
+    }
+    await Promise.all(
+      [...services].map((service) =>
+        service.reloadCachedTokens(server.runtimeName, config.url),
+      ),
+    );
   }
 
   private async resolveMcpServerTarget(
