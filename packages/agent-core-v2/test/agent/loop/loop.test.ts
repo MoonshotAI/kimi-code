@@ -1196,6 +1196,46 @@ describe('interruption reminder', () => {
     expect(interruptionReminders()).toHaveLength(1);
   });
 
+  it('drops the interrupted thinking-only message before the next request', async () => {
+    ctx.mockNextResponse({ type: 'think', think: 'pondering' }, { type: 'text', text: 'answer' });
+    const subscription = ctx.get(IEventBus).subscribe('thinking.delta', () => {
+      loop.cancel();
+    });
+    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+    subscription.dispose();
+    // The interrupted thinking fragment stays in history right after the
+    // cancel, still marked partial.
+    expect(ctx.contextData().history).toContainEqual({
+      role: 'assistant',
+      content: [{ type: 'think', think: 'pondering' }],
+      toolCalls: [],
+      partial: true,
+    });
+    ctx.llmInputs();
+
+    ctx.mockNextResponse({ type: 'text', text: 'second answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });
+    await ctx.untilTurnEnd();
+
+    // The next step settles it away: sealed into history it would serialize
+    // to neither content nor tool calls, which strict OpenAI-compatible
+    // providers reject with a 400 (#1404).
+    expect(
+      ctx
+        .contextData()
+        .history.some((message) =>
+          message.content.some((part) => part.type === 'think' && part.think === 'pondering'),
+        ),
+    ).toBe(false);
+    expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
+      messages:
+        <last>
+        user: text "<system-reminder>\\nThe previous turn was interrupted by the user before completion; any partial output shown above is incomplete. The user's next message continues the conversation.\\n</system-reminder>"
+        user: text "Next"
+    `);
+  });
+
   it('records no partial content when the stream only produced whitespace', async () => {
     ctx.mockNextResponse({ type: 'text', text: '  ' }, { type: 'text', text: 'answer' });
     const subscription = cancelOnFirstDelta();

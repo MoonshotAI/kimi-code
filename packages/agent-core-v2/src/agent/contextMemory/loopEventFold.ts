@@ -21,9 +21,11 @@
  *   - `step.end`    → settle the assistant
  * "Settle" closes any tool exchange left open (interrupted result messages),
  * then drops the partial assistant when nothing sendable was recorded (no
- * tool calls; every content part vacuous — an output-free assistant only
- * trips provider message validation) and seals it (`partial: undefined`)
- * when it carries output. v1 never produced
+ * tool calls; every content part vacuous or unsigned thinking — an
+ * output-free assistant only trips provider message validation, and an
+ * unsigned-thinking-only one serializes to no content and no tool calls,
+ * which strict providers reject with a 400) and seals it
+ * (`partial: undefined`) when it carries output. v1 never produced
  * `step.begin` without `step.end` (its retries stayed inside one request), so
  * the drop/seal rule is the v2 extension that makes loop-level retries — a
  * retried attempt is its own `step.begin` — replay to the same history the
@@ -204,6 +206,20 @@ function appendToOpenAssistant(
   return next;
 }
 
+/**
+ * Settle-time counterpart of `isVacuousContentPart`. An interrupted turn can
+ * leave the open assistant holding only partial thinking whose provider
+ * signature never arrived; sealed into history, that message serializes to
+ * neither `content` nor `tool_calls` on OpenAI-compatible providers (the
+ * thinking becomes `reasoning_content`), and strict gateways reject every
+ * later request with a 400 (#1404). Anthropic drops unsigned thinking blocks
+ * on its wire too, so only signed thinking (`encrypted`) counts as sendable
+ * output here.
+ */
+function isUnsendableContentPart(part: ContentPart): boolean {
+  return isVacuousContentPart(part) || (part.type === 'think' && part.encrypted === undefined);
+}
+
 function settleOpenStep(
   state: readonly ContextMessage[],
   ctx: FoldCtx,
@@ -212,7 +228,7 @@ function settleOpenStep(
   const index = findOpenAssistantIndex(closed);
   if (index === -1) return closed;
   const open = closed[index]!;
-  if (open.toolCalls.length === 0 && open.content.every(isVacuousContentPart)) {
+  if (open.toolCalls.length === 0 && open.content.every(isUnsendableContentPart)) {
     return [...closed.slice(0, index), ...closed.slice(index + 1)];
   }
   const next = closed.slice();
