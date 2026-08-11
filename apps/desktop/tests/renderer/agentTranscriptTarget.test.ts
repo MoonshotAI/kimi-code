@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppMessage } from '../../src/renderer/api/types';
 
-import { messagesToTurns } from '../../src/renderer/composables/messagesToTurns';
+import { messagesToTurns } from '@moonshot-ai/app-core/client';
 
 describe('Agent transcript targets', () => {
   it('keeps the stable agent id carried by a Transcript tool frame', () => {

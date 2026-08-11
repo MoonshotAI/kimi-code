@@ -4,9 +4,9 @@ import {
   findFilePathLinks,
   parseFilePathLinkCandidate,
 } from '@moonshot-ai/app-markdown/lib/filePathLinks';
-import { parseDiff } from '../src/lib/parseDiff';
-import { buildDiffLines, buildVerbatimDiffLines } from '../src/lib/diffLines';
-import { buildEditDiffLines, buildWriteContent, toolFilePath } from '../src/lib/toolDiff';
+import { parseDiff } from '@moonshot-ai/app-core/client';
+import { buildDiffLines, buildVerbatimDiffLines } from '@moonshot-ai/app-core/client';
+import { buildEditDiffLines, buildWriteContent, toolFilePath } from '@moonshot-ai/app-core/client';
 import { parseReadOutput } from '@moonshot-ai/app-core/lib';
 import { codeLanguageFromPath } from '@moonshot-ai/app-core/lib';
 import { createCoalescedAsyncRunner } from '@moonshot-ai/app-core/lib';

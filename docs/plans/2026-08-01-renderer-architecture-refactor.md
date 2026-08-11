@@ -432,7 +432,7 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - 2026-08-05 按 Codex review（#184，7 条 P2）修订总计划与规范：① AGENTS.md / apps/web 约定的更新从 P18 拆到约束实际变化的阶段（P4 放行 app-client 依赖、P8 解除 no-Pinia），P18 降为一致性核对；② P3 删除"t 注入顺带修复切语言不更新"的过度承诺（注入只影响新事件，正经修法是存 key/params 或重投影，列为已知问题）；③ P4 补"注入缝先行"（`useTerminal`/`useFilePreview` 等依赖 app api 单例或 vue-i18n，非纯移动）与两端 package.json 必须声明 app-client/pinia；④ P5 修正 iconsDir 推导建议（exports map 下 `import.meta.resolve('…/package.json')` 会抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`，需显式 export）；⑤ spec 归属矩阵澄清 config 只下沉纯 builder，runtime config 留两端接线层；⑥ 台账 P1 条目在代码 PR 合并前标「进行中」，避免后续执行者误判基线。
 - 无 changeset（纯文档）。
 
-### P1 — 🚧 进行中（2026-08-05；代码在 stacked PR #185，#185 合并后本条转「已完成」）
+### P1 — 已完成（2026-08-05 开 PR；2026-08-11 #185 合入 main squash 20964142）
 
 - 完成：32 个 lib 纯函数模块下沉 `packages/app-core/src/lib/`（git mv 自 desktop 副本，头注释统一为新路径）；9 个测试迁入 `packages/app-core/test/`；两端 135 个文件 import 改指 `@moonshot-ai/app-core/lib`；web 侧副本删除。
 - **与计划的偏差（实测驱动，§1.1 的分类未考虑依赖方向）**：
@@ -446,6 +446,18 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - `nativeWorkspaceDrop` 实测桥门控、无桥惰性，按 P1 允许口径同批下沉。
 - **坑**：desktop 主进程有自己的 `src/main/log.ts`，与 renderer `lib/log.ts` 同名——批量改写 import 时勿误扫 `src/main/`（本次误改已全部还原并验证）。
 - **合入 main（2026-08-05，#178/#182/#183）的冲突处置**：冲突均为 import 块——保留 main 的新 import、路径改指包。main 对已下沉 lib 模块的修改经 rename-merge 自动落进 app-core 副本（mergeWorkspaces / modelThinking / storage / nativeWorkspaceDrop 已逐一 diff 核实零丢失）。main 新增的 `lib/rootKey.ts`（mergeWorkspaces 的依赖）与 `mergeWorkspaces.test.ts` 一并下沉 app-core；`apps/web/test/log.test.ts` 与 app-core 侧重复已删除。main 还新增了双份 `lib/rootKey.ts`（已收编）、`components/sessionRowStatus.ts` 与 `lib/providerForm.ts`（web 侧新增）——后者两个是 P2+ 待收编的新共享副本。
+- **第 2/3 轮合 main（2026-08-08，#189 CI PR 等）的冲突处置**：14 个 UU 文件均为 import 块，同口径处理；`taskMerge` 遇 DU（modify/delete）——main 侧修改经 rename-merge 落进包内副本，diff 核实零丢失后 `git rm` 旧路径，`taskMerge.test.ts` 随迁并修正 import。坑：submodule 指针 bump 后必须重新 `pnpm install` 再生 lockfile，否则 CI `--frozen-lockfile` 必挂；`git add` 含不存在路径会整批静默失败，stage 后必跑 `git status` 核对。
+- **main 新增双副本的最终登记**（P1 期间 #191/#192/#194 等合入）：`lib/modelDisplay.ts`、`components/sessionRowStatus.ts`、`lib/providerForm.ts` 三个已随 P2 收编；`lib/attachmentsToContent.ts` 依赖 `useKimiWebClient` 的 `PromptAttachment` 类型，P7+ 再收。
 - 验收：`pnpm test` 2414 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅（合入 main 后复测全绿）；双端发消息冒烟未跑（需人工补）。
 - **包改名（2026-08-05，随本 PR 落地）**：共享包与 desktop 共用，"web-" 前缀名不副实——`@moonshot-ai/{web-core,web-ui,web-markdown,web-i18n}` → `app-{core,ui,markdown,i18n}`，目录 `packages/web-*` 同步改 `packages/app-*`；计划中的 `web-client` 以 `app-client` 落地；`vite-preset` 不动；app 包名 `kimi-code-web` / `kimi-code-app` 不动（AGENTS.md 硬约束）。历史 plan/spec 文档保留旧名不改。改名后复测全绿（test 2414 / typecheck / lint / build）。注意根 `vitest.config.ts` 的 packages include 是花括号写法，批量 sed 会漏，需手改。
+- 无 changeset（纯重构）。
+
+### P2 — 🚧 进行中（2026-08-11；代码在 PR #196，合并后本条转「已完成」）
+
+- 完成：14 个模块下沉 `packages/app-core/src/client/`——`types.ts`（32 个渲染类型，两端仅头注释差异）+ `eventBatcher` / `turnsProjector` / `applyRecordDiff` / `messagesToTurns` / `latestTodos` / `swarmGroups` / `auxiliaryTranscriptToTurns` + P1 缓批 `parseDiff` / `diffLines` / `diffFullTexts` / `toolDiff` / `notificationXml` / `swarmCardRows`。两端 `src/types.ts` 改 re-export 壳（照 `api/types.ts` 先例，46 个 `./types` import 站点零改动）；app-core exports 新增 `./client` 与 `./client/types` 子路径；两端 50 个文件 import 改指包。
+- **P1 缓批 6 个 lib 模块落 `client/` 而非 `lib/`**：全部依赖 client/types（渲染层 helper），保持分层单向（client → lib，不倒挂）。
+- **`normalizeToolName` 抽取**：`messagesToTurns` / `latestTodos` / `toolDiff` 引它，但它住的 `toolMeta.ts` 顶层 import `../i18n`（P3 批）——纯函数部分（NAME_ALIASES + normalizeToolName）抽到 `app-core/src/lib/normalizeToolName.ts`，app 侧 `toolMeta` import 并 re-export，全部调用点不动。
+- **收编 P1 期间 main 新增双副本**（P1 台账登记「P2+ 待收编」）：`lib/modelDisplay.ts` / `lib/providerForm.ts` / `components/sessionRowStatus.ts` → `app-core/src/lib/`（均纯、仅依赖 api/types），desktop 侧 3 个测试随迁，web 重复的 `sessionRowStatus.test.ts` 删除。`lib/attachmentsToContent.ts` 依赖 `useKimiWebClient` 的 `PromptAttachment` 类型，P7+ 再收。
+- **测试随迁与去重**：desktop `applyRecordDiff` / `auxiliaryTranscriptToTurns` / `diffFullTexts` / `notificationXml` / `turnsProjector` + web `swarm-card-rows` / `swarm-groups` / `turn-logic` 随迁入 `packages/app-core/test/`；web `apply-record-diff.test.ts`（desktop 版复制品）与 `turns-projector.test.ts`（desktop 版子集，desktop 多 SessionPlan 历史重建用例）删除。`event-batcher.test.ts` 拆分：resync / snapshot recency 两个套件动态 import `useKimiWebClient`（P7+ god object）拆出留 `apps/web/test/`（`pendingDelta` helper 两端各留一份），3 个纯套件进包。
+- 验收：`pnpm test` 2409 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 无新增 findings（.vue 仅 import 行变动）✅；双端发消息冒烟待人工补。
 - 无 changeset（纯重构）。

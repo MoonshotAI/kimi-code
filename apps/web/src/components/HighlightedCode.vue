@@ -9,8 +9,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { ThemedToken } from 'shiki';
 import { useIsDark } from '@moonshot-ai/app-core';
 import { codeLanguageFromPath } from '@moonshot-ai/app-core/lib';
-import { splitLines } from '../lib/diffLines';
-import type { DiffFullTexts } from '../lib/diffFullTexts';
+import { splitLines } from '@moonshot-ai/app-core/client';
+import type { DiffFullTexts } from '@moonshot-ai/app-core/client';
 import type { DiffViewLine } from '../types';
 
 const props = withDefaults(

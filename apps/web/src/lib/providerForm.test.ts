@@ -9,7 +9,7 @@ import {
   validateProviderForm,
   type ModelRow,
   type ProviderFormState,
-} from './providerForm';
+} from '@moonshot-ai/app-core/lib';
 
 function modelRow(overrides: Partial<ModelRow> = {}): ModelRow {
   return {

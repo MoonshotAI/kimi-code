@@ -19,7 +19,7 @@ import {
   providerModelRows,
   validateProviderForm,
   type ProviderFormState,
-} from '../../lib/providerForm';
+} from '@moonshot-ai/app-core/lib';
 import { Banner, Button, Icon, IconButton, Input, Select } from '@moonshot-ai/app-ui';
 
 const props = defineProps<{

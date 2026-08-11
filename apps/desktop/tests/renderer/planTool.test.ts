@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AppMessage, SessionPlan } from '../../src/renderer/api/types';
-import { messagesToTurns } from '../../src/renderer/composables/messagesToTurns';
+import { messagesToTurns } from '@moonshot-ai/app-core/client';
 
 function exitPlanMessages(output = 'Plan saved to: /tmp/fallback.md'): AppMessage[] {
   return [

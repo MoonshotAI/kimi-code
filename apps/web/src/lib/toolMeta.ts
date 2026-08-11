@@ -1,8 +1,13 @@
 // apps/kimi-web/src/lib/toolMeta.ts
 // Helpers for tool display. Labels/chips are localized via the shared i18n instance.
 
+import { normalizeToolName } from '@moonshot-ai/app-core/lib';
 import { i18n } from '../i18n';
 import { iconSvg, type IconName } from './icons';
+
+// normalizeToolName lives in @moonshot-ai/app-core/lib (pure); re-exported so
+// existing `lib/toolMeta` import sites keep working.
+export { normalizeToolName };
 
 const t = i18n.global.t;
 
@@ -31,50 +36,6 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   setgoalbudget: 'tools.label.goal_budget',
   updategoal: 'tools.label.goal_update',
 };
-
-// ---------------------------------------------------------------------------
-// normalizeToolName: fold the many real-world spellings of a tool name into the
-// canonical lowercase kind used by the maps below. Daemon tool names arrive
-// verbatim and may be CamelCase (`Read`, `MultiEdit`, `WebFetch`, `TodoWrite`)
-// or aliased (`shell`, `fetch`). Without this, those names silently fall through
-// to the default glyph / raw-arg summary.
-// ---------------------------------------------------------------------------
-
-const NAME_ALIASES: Record<string, string> = {
-  multiedit: 'multi_edit',
-  multiedits: 'multi_edit',
-  shell: 'bash',
-  run: 'bash',
-  exec: 'bash',
-  ripgrep: 'grep',
-  rg: 'grep',
-  find: 'glob',
-  fetch: 'web_fetch',
-  webfetch: 'web_fetch',
-  url_fetch: 'web_fetch',
-  urlfetch: 'web_fetch',
-  list: 'ls',
-  listdir: 'ls',
-  list_dir: 'ls',
-  todowrite: 'todo',
-  todo_write: 'todo',
-  todoread: 'todo',
-  todolist: 'todo',
-  todo_list: 'todo',
-  agent: 'task',
-  subagent: 'task',
-  websearch: 'search',
-  web_search: 'search',
-  create_goal: 'creategoal',
-  get_goal: 'getgoal',
-  set_goal_budget: 'setgoalbudget',
-  update_goal: 'updategoal',
-};
-
-export function normalizeToolName(name: string): string {
-  const lower = (name ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-  return NAME_ALIASES[lower] ?? lower;
-}
 
 export function toolLabel(name: string): string {
   const key = TOOL_LABEL_KEYS[normalizeToolName(name)];

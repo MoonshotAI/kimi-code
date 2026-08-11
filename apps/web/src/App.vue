@@ -36,12 +36,12 @@ import { useFilePreview, type DetailTarget } from './composables/useFilePreview'
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
 import { openDialogCount } from '@moonshot-ai/app-ui';
-import type { SwarmMember } from './composables/swarmGroups';
+import type { SwarmMember } from '@moonshot-ai/app-core/client';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from '@moonshot-ai/app-core/lib';
 import type { AppConfig, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from '@moonshot-ai/app-core/lib';
-import { modelDisplayName, subagentEffortSuffix } from './lib/modelDisplay';
+import { modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
 import { stripSkillPrefix } from '@moonshot-ai/app-core/lib';
 import { ActionToast, Icon, IconButton } from '@moonshot-ai/app-ui';
 import InternalBuildBanner from './components/InternalBuildBanner.vue';

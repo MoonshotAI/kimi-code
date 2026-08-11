@@ -14,7 +14,7 @@ import {
   notificationVariant,
   type NotificationStatus,
   type NotificationVariant,
-} from '../../lib/notificationXml';
+} from '@moonshot-ai/app-core/client';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import MessageTime from './MessageTime.vue';
 

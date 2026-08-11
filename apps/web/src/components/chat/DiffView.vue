@@ -6,7 +6,7 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { DiffViewLine } from '../../types';
-import type { DiffFullTexts } from '../../lib/diffFullTexts';
+import type { DiffFullTexts } from '@moonshot-ai/app-core/client';
 import HighlightedCode from '../HighlightedCode.vue';
 import { Button, Icon, PanelHeader, ScrollArea, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 

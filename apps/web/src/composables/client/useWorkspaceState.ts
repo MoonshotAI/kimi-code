@@ -35,10 +35,10 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { isDesktop } from '@moonshot-ai/app-core/lib';
 import { logWarn } from '@moonshot-ai/app-core/lib';
-import { parseDiff } from '../../lib/parseDiff';
+import { parseDiff } from '@moonshot-ai/app-core/client';
 import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
-import { buildFullDiffTexts, type DiffFullTexts } from '../../lib/diffFullTexts';
+import { buildFullDiffTexts, type DiffFullTexts } from '@moonshot-ai/app-core/client';
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '@moonshot-ai/app-core/lib';
 import { ackThinkingPending, markThinkingPending } from '@moonshot-ai/app-core/lib';

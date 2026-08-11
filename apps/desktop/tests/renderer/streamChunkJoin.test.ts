@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AppMessage, AppMessageContent } from '../../src/renderer/api/types';
-import { messagesToTurns } from '../../src/renderer/composables/messagesToTurns';
+import { messagesToTurns } from '@moonshot-ai/app-core/client';
 
 function message(
   id: string,

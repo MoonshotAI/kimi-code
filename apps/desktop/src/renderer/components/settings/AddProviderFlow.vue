@@ -13,7 +13,7 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppCatalogProvider } from '../../api/types';
 import { useKimiWebClient } from '../../composables/useKimiWebClient';
-import { PROVIDER_ID_PATTERN } from '../../lib/providerForm';
+import { PROVIDER_ID_PATTERN } from '@moonshot-ai/app-core/lib';
 import ProviderForm from './ProviderForm.vue';
 import {
   Badge,

@@ -12,7 +12,7 @@ import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/app-core/lib';
 import SessionEmojiPicker from './SessionEmojiPicker.vue';
-import { sessionRowStatus } from './sessionRowStatus';
+import { sessionRowStatus } from '@moonshot-ai/app-core/lib';
 
 const { t } = useI18n();
 

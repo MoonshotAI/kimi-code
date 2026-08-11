@@ -6,8 +6,8 @@ import type { AgentMember } from '../types';
 import type { TurnFileChange } from '../components/chatTurnRendering';
 import type { DetailTarget } from './useFilePreview';
 import type { useKimiWebClient } from './useKimiWebClient';
-import { toAgentMember } from './messagesToTurns';
-import { auxiliaryTranscriptToTurns } from '../lib/auxiliaryTranscriptToTurns';
+import { toAgentMember } from '@moonshot-ai/app-core/client';
+import { auxiliaryTranscriptToTurns } from '@moonshot-ai/app-core/client';
 import { clampPanelWidth, panelMaxWidth, useViewportWidth } from './useViewportWidth';
 
 type KimiWebClient = ReturnType<typeof useKimiWebClient>;

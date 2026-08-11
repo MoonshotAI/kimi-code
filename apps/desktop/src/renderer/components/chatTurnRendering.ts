@@ -3,8 +3,8 @@
 // reactivity, no component state). Shared by ChatPane.vue's template and its
 // stateful copy/edit helpers.
 import type { ChatTurn, DiffViewLine, TaskNotification, TurnBlock } from '../types';
-import { diffStats } from '../lib/diffLines';
-import { buildEditDiffLines, toolFilePath } from '../lib/toolDiff';
+import { diffStats } from '@moonshot-ai/app-core/client';
+import { buildEditDiffLines, toolFilePath } from '@moonshot-ai/app-core/client';
 import { normalizeToolName } from '../lib/toolMeta';
 
 // Shared 1024-based token formatter (lib/formatTokens); re-exported so the

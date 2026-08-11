@@ -14,14 +14,14 @@ import {
 import { logError, logWarn } from '@moonshot-ai/app-core/lib';
 import { mergeWorkspaces } from '@moonshot-ai/app-core/lib';
 import { basename } from '@moonshot-ai/app-core/lib';
-import { sessionRowStatus } from '../components/sessionRowStatus';
+import { sessionRowStatus } from '@moonshot-ai/app-core/lib';
 import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { mergeSnapshotMessages } from '@moonshot-ai/app-core/lib';
 import { mergeSnapshotSubagents } from '@moonshot-ai/app-core/lib';
 import { createCoalescedAsyncRunner } from '@moonshot-ai/app-core/lib';
 import { detectShellDanger } from '@moonshot-ai/app-core/lib';
-import { buildDiffLines, buildVerbatimDiffLines } from '../lib/diffLines';
-import type { DiffFullTexts } from '../lib/diffFullTexts';
+import { buildDiffLines, buildVerbatimDiffLines } from '@moonshot-ai/app-core/client';
+import type { DiffFullTexts } from '@moonshot-ai/app-core/client';
 import { ackThinkingPending, foldDaemonThinkingLevel } from '@moonshot-ai/app-core/lib';
 import {
   loadPinnedSessions,
@@ -48,8 +48,8 @@ import {
   isRenderEvent,
   splitOversizedAppRenderEvent,
   type PendingAppEvent,
-} from './client/eventBatcher';
-import { applyRecordDiff } from './client/applyRecordDiff';
+} from '@moonshot-ai/app-core/client';
+import { applyRecordDiff } from '@moonshot-ai/app-core/client';
 import { useAppearance } from '@moonshot-ai/app-core';
 import { useNotification, shouldNotifyCompletion } from './client/useNotification';
 import { useTaskPoller } from './client/useTaskPoller';
@@ -101,10 +101,10 @@ import {
   type KimiClientState,
 } from '@moonshot-ai/app-core/api';
 
-import { createTurnsProjector } from './client/turnsProjector';
-import { latestTodos } from './latestTodos';
-import { buildSwarmGroups, countSwarmMembers, swarmMembersByToolCall } from './swarmGroups';
-import type { SwarmGroup, SwarmMember } from './swarmGroups';
+import { createTurnsProjector } from '@moonshot-ai/app-core/client';
+import { latestTodos } from '@moonshot-ai/app-core/client';
+import { buildSwarmGroups, countSwarmMembers, swarmMembersByToolCall } from '@moonshot-ai/app-core/client';
+import type { SwarmGroup, SwarmMember } from '@moonshot-ai/app-core/client';
 import type {
   ActivityState,
   ActivationBadges,

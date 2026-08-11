@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import type { FileData, FilePreviewRequest } from '../types';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
-import { MAX_HIGHLIGHT_CHARS } from '../lib/diffFullTexts';
+import { MAX_HIGHLIGHT_CHARS } from '@moonshot-ai/app-core/client';
 import { Button, Icon, IconButton, PanelHeader, SegmentedControl, Tooltip } from '@moonshot-ai/app-ui';
 import HighlightedCode from './HighlightedCode.vue';
 

@@ -10,7 +10,7 @@
 import { computed, ref } from 'vue';
 import { getKimiWebApi } from '../../api';
 import type { AppApprovalRequest, AppMessage, KimiEventConnection, ThinkingLevel } from '../../api/types';
-import { createTurnsProjector } from './turnsProjector';
+import { createTurnsProjector } from '@moonshot-ai/app-core/client';
 import { ackThinkingPending } from '@moonshot-ai/app-core/lib';
 import type { ChatTurn } from '../../types';
 import type { ExtendedState } from '../useKimiWebClient';
