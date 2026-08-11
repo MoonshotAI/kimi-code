@@ -194,12 +194,12 @@ display_name = "Kimi for Coding (custom)"
 
 次主力模型是主模型之外的第二个模型配置——通常是一个更便宜的模型，供不需要主模型能力的功能绑定使用。它目前的消费者是子 Agent 派生。两个引擎都会读取本节，但各取不同的键：
 
-- `agent-core-v2` 引擎（`kimi web` 及开启 `KIMI_CODE_EXPERIMENTAL_FLAG` 的路径）读取[子 Agent 模型池](#子-agent-模型池)：`default_model` 与 `[secondary_model.models]` 表。
-- 默认的 `kimi` / `kimi -p` 引擎在次主力模型实验功能启用后读取[配方键](#次主力模型配方)（`model`、`default_effort` 及补丁字段）。
+- 默认的 `agent-core-v2` 引擎（`kimi`、`kimi -p` 和 `kimi web`）读取[子 Agent 模型池](#子-agent-模型池)：`default_model` 与 `[secondary_model.models]` 表。
+- 使用 `KIMI_CODE_LEGACY_FLAG=1` 为 `kimi` / `kimi -p` 选择旧版 `agent-core` 引擎后，该引擎在次主力模型实验功能启用时读取[配方键](#次主力模型配方)（`model`、`default_effort` 及补丁字段）。
 
 ### 子 Agent 模型池
 
-模型池仅由 `agent-core-v2` 引擎读取；默认的 `kimi` / `kimi -p` 引擎会忽略 `default_model` 和 `[secondary_model.models]`，子 Agent 模型按[配方键](#次主力模型配方)解析。
+模型池仅由 `agent-core-v2` 引擎读取；使用 `KIMI_CODE_LEGACY_FLAG=1` 选择的旧版 `agent-core` 引擎会忽略 `default_model` 和 `[secondary_model.models]`，子 Agent 模型按[配方键](#次主力模型配方)解析。
 
 只想让所有子 Agent 默认换用一个模型时不需要 models 表——一行 `default_model` 就是只含一个条目的模型池：
 
@@ -258,11 +258,11 @@ model = "kimi-hs"
 default_model = "kimi-hs"
 ```
 
-旧的补丁字段（`default_effort`、`max_output_size` 等）在模型池中没有对应物——请把这些设置写到别名指向的 `[models]` 条目上，例如通过 [`[models."<alias>".overrides]`](#模型覆盖项)。配方键可以继续留在本节中：默认引擎会照常读取它们。
+旧的补丁字段（`default_effort`、`max_output_size` 等）在模型池中没有对应物——请把这些设置写到别名指向的 `[models]` 条目上，例如通过 [`[models."<alias>".overrides]`](#模型覆盖项)。配方键可以继续留在本节中：旧版引擎会照常读取它们。
 
 ### 次主力模型配方
 
-该读法由默认的 `kimi` / `kimi -p` 引擎使用；v2 引擎会忽略配方键。设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；未设置时，子 Agent 继承主 Agent 的模型。
+该读法由使用 `KIMI_CODE_LEGACY_FLAG=1` 选择的旧版 `agent-core` 引擎使用；默认的 v2 引擎会忽略配方键。设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；未设置时，子 Agent 继承主 Agent 的模型。
 
 这是默认绑定而非强制。实验功能启用后，`Agent` / `AgentSwarm` 工具会获得 `model` 参数（仅接受 `"secondary"` / `"primary"` 两个符号值），工具描述中也会列出可选模型并标注默认值。派生时按以下顺序解析子 Agent 的模型：工具调用显式传入的 `model` → 子 Agent profile 的 [`model_preference`](../customization/agents.md#agent-文件格式) → 已配置的次主力模型（默认）。其中 `"primary"` 指主 Agent 当前正在运行的模型，不一定是 `default_model`——例如会话中途用 `/model` 切换过模型。
 

@@ -194,12 +194,12 @@ You can also switch models temporarily without touching the config file — by s
 
 The secondary model is a second model configuration alongside the main model — typically a cheaper one, for features that do not need the main model's capability. Its consumer today is subagent spawning. Both engines read this section, but different keys from it:
 
-- The `agent-core-v2` engine (`kimi web` and the `KIMI_CODE_EXPERIMENTAL_FLAG` paths) reads the [subagent model pool](#subagent-model-pool): `default_model` and the `[secondary_model.models]` table.
-- The default `kimi` / `kimi -p` engine reads the [recipe keys](#secondary-model-recipe) (`model`, `default_effort`, and the patch fields) behind the secondary-model experiment.
+- The default `agent-core-v2` engine (`kimi`, `kimi -p`, and `kimi web`) reads the [subagent model pool](#subagent-model-pool): `default_model` and the `[secondary_model.models]` table.
+- The legacy `agent-core` engine, selected for `kimi` / `kimi -p` with `KIMI_CODE_LEGACY_FLAG=1`, reads the [recipe keys](#secondary-model-recipe) (`model`, `default_effort`, and the patch fields) behind the secondary-model experiment.
 
 ### Subagent model pool
 
-The pool is read by the `agent-core-v2` engine only; the default `kimi` / `kimi -p` engine ignores `default_model` and `[secondary_model.models]`, and resolves subagent models through the [recipe keys](#secondary-model-recipe) instead.
+The pool is read by the `agent-core-v2` engine only; the legacy `agent-core` engine selected with `KIMI_CODE_LEGACY_FLAG=1` ignores `default_model` and `[secondary_model.models]`, and resolves subagent models through the [recipe keys](#secondary-model-recipe) instead.
 
 To simply point every subagent at one model by default, no models table is needed — a single `default_model` line is a pool with a single entry:
 
@@ -258,11 +258,11 @@ model = "kimi-hs"
 default_model = "kimi-hs"
 ```
 
-The recipe patch fields (`default_effort`, `max_output_size`, …) have no pool equivalent — write those settings onto the `[models]` entry the alias points to, for example via [`[models."<alias>".overrides]`](#model-overrides). The recipe keys can stay in the section: the default engine keeps reading them.
+The recipe patch fields (`default_effort`, `max_output_size`, …) have no pool equivalent — write those settings onto the `[models]` entry the alias points to, for example via [`[models."<alias>".overrides]`](#model-overrides). The recipe keys can stay in the section: the legacy engine keeps reading them.
 
 ### Secondary-model recipe
 
-This reading is used by the default `kimi` / `kimi -p` engine; the v2 engine ignores the recipe keys. When set, newly spawned subagents (`Agent` / `AgentSwarm`) bind to it by default instead of inheriting the main agent's model; when unset, subagents inherit the main agent's model.
+This reading is used by the legacy `agent-core` engine selected with `KIMI_CODE_LEGACY_FLAG=1`; the default v2 engine ignores the recipe keys. When set, newly spawned subagents (`Agent` / `AgentSwarm`) bind to it by default instead of inheriting the main agent's model; when unset, subagents inherit the main agent's model.
 
 This is a default binding, not a forced one. With the experiment enabled, the `Agent` / `AgentSwarm` tools gain a `model` parameter (accepting only the symbolic values `"secondary"` / `"primary"`), and the tool description lists the available models with the default marked. A spawn resolves the subagent's model in this order: an explicit tool-call `model` → the profile's [`model_preference`](../customization/agents.md#agent-file-format) → the configured secondary model (the default). Here `"primary"` means the model the main agent is currently running, not necessarily `default_model` — for example after a mid-session `/model` switch.
 
