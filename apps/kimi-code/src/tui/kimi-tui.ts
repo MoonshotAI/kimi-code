@@ -1096,7 +1096,9 @@ export class KimiTUI {
     footerWrap.addChild(this.state.footer);
     const dock = this.state.dockContainer;
     if (dock !== undefined) {
-      dock.addChild(footerWrap);
+      // Dock sizing contract: the footer may shrink to 1 row under extreme
+      // height pressure, but never disappears (see createTUIState).
+      dock.addChild(footerWrap, { shrink: 1, minSize: 1 });
       return;
     }
     this.state.ui.addChild(footerWrap);

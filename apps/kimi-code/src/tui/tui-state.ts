@@ -99,6 +99,10 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     // Fullscreen (alternate screen): the transcript scrolls inside the primary
     // ScrollView while the rest of the chrome stays docked at the bottom. The
     // footer joins the dock later via mountFooter().
+    // Sizing contract (mirrors pi's interactive layout): the transcript starts
+    // from basis 0 and grows; the dock keeps its intrinsic height, with the
+    // editor never squeezed below its 3 rows (top border / input / bottom
+    // border) and the footer below 1 — otherwise the box outline gets clipped.
     const scrollView = new ScrollView(transcriptContainer, {
       follow: 'end',
       primary: true,
@@ -106,14 +110,14 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
       scrollbar: 'auto',
     });
     dockContainer = new VStack();
-    dockContainer.addChild(activityContainer);
-    dockContainer.addChild(todoPanelContainer);
-    dockContainer.addChild(queueContainer);
-    dockContainer.addChild(btwPanelContainer);
-    dockContainer.addChild(editorContainer);
+    dockContainer.addChild(activityContainer, { shrink: 1, minSize: 0 });
+    dockContainer.addChild(todoPanelContainer, { shrink: 1, minSize: 0 });
+    dockContainer.addChild(queueContainer, { shrink: 1, minSize: 0 });
+    dockContainer.addChild(btwPanelContainer, { shrink: 1, minSize: 0 });
+    dockContainer.addChild(editorContainer, { shrink: 1, minSize: 3 });
     const root = new VStack();
-    root.addChild(scrollView, { grow: 1, shrink: 1 });
-    root.addChild(dockContainer, { basis: 'auto' });
+    root.addChild(scrollView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+    root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
     ui.setLayoutRoot(root);
   }
 
