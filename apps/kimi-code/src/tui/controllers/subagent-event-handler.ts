@@ -22,6 +22,7 @@ import { argsRecord, serializeToolResultOutput } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { SessionEventHost } from './session-event-handler';
+import { SubagentActivityStore } from './subagent-activity-store';
 
 export interface SubagentInfo {
   readonly parentToolCallId: string;
@@ -56,6 +57,8 @@ export class SubAgentEventHandler {
   readonly subagentInfo: Map<string, SubagentInfo> = new Map();
   private readonly agentSwarmProgress: Map<string, AgentSwarmProgressComponent> = new Map();
   backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
+  /** Bounded per-agent activity fold feeding the background-agent detail view. */
+  readonly activityStore = new SubagentActivityStore();
 
   constructor(
     private readonly host: SessionEventHost,
@@ -65,6 +68,7 @@ export class SubAgentEventHandler {
   resetRuntimeState(): void {
     this.subagentInfo.clear();
     this.backgroundAgentMetadata.clear();
+    this.activityStore.clear();
     this.clearAgentSwarmProgress();
   }
 
@@ -74,6 +78,11 @@ export class SubAgentEventHandler {
     const childAgentId = event.agentId;
     if (childAgentId === MAIN_AGENT_ID) return false;
     if (this.host.btwPanelController.routeEvent(event)) return true;
+
+    // Tee every child-agent event into the activity store before the routing
+    // below swallows events whose parent card is gone (Ctrl+B) or never
+    // existed (run_in_background) — that data is the background detail view.
+    this.activityStore.applyEvent(event);
 
     const info = this.subagentInfo.get(childAgentId);
     if (info === undefined || info.parentToolCallId.length === 0) return true;
@@ -283,6 +292,7 @@ export class SubAgentEventHandler {
   private handleSubagentCompleted(
     event: SubagentLifecycleEventOf<'subagent.completed'>,
   ): void {
+    this.activityStore.markCompleted(event.subagentId, event.resultSummary);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
       const taskId = this.findAgentTaskId(
@@ -312,6 +322,7 @@ export class SubAgentEventHandler {
   private handleSubagentFailed(
     event: SubagentLifecycleEventOf<'subagent.failed'>,
   ): void {
+    this.activityStore.markFailed(event.subagentId, event.error);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
       const taskId = this.findAgentTaskId(
@@ -408,6 +419,14 @@ export class SubAgentEventHandler {
       name: event.subagentName,
       runInBackground: event.runInBackground,
       swarmIndex: event.swarmIndex,
+    });
+    this.activityStore.ensureRecord({
+      agentId: event.subagentId,
+      agentName: event.subagentName,
+      description: event.description,
+      parentToolCallId: event.parentToolCallId,
+      model: this.spawnedModelDisplay(event),
+      effort: this.subagentEffortDisplay(event.thinkingEffort),
     });
   }
 
