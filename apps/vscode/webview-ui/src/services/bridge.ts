@@ -184,7 +184,7 @@ class Bridge {
   }
 
   streamChat(content: string | ContentPart[], model: string, effort: string, planMode: boolean, sessionId?: string) {
-    return this.call<{ done: boolean }>(Methods.StreamChat, { content, model, effort, planMode, sessionId });
+    return this.call<{ done: boolean; bounced?: boolean }>(Methods.StreamChat, { content, model, effort, planMode, sessionId });
   }
 
   abortChat() {
