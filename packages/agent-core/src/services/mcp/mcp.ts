@@ -27,6 +27,7 @@
  *   agent-core 'failed'     → wire 'error'
  *   agent-core 'disabled'   → wire 'disconnected'
  *   agent-core 'needs-auth' → wire 'error'   (last_error carries the hint)
+ *   agent-core 'removed'    → wire 'disconnected' (v2-only tombstone status)
  *
  * **MCP id**: agent-core's `McpServerInfo` has only `name`. We adopt
  * name-as-id at the wire boundary. Both are 1:1 within a daemon process.
@@ -57,6 +58,9 @@ function mapMcpStatus(s: McpServerInfo['status']): McpServerStatus {
     case 'needs-auth':
       // Closest wire literal; `last_error` carries the explanatory message.
       return 'error';
+    case 'removed':
+      // v2-only tombstone status; v1 never produces it.
+      return 'disconnected';
   }
 }
 

@@ -92,6 +92,7 @@ describe('Workspace MCP initialization', () => {
         });
         reg.definePartialInstance(IHostFsWatchService, {
           watch: (): IHostFsWatchHandle => ({
+            ready: Promise.resolve(),
             onDidChange: Event.None as Event<HostFsChange>,
             dispose: () => {},
           }),
@@ -123,11 +124,9 @@ describe('Workspace MCP initialization', () => {
       },
     });
     const service = createWorkspaceMcpService(ready);
-    // The manager is available synchronously, independent of config readiness.
     manager = service.connectionManager();
     expect(manager.list()).toEqual([]);
 
-    // The initial connect is gated on config.ready: no entry exists yet.
     await sleep(50);
     expect(manager.list()).toEqual([]);
 

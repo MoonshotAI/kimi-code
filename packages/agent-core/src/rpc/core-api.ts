@@ -327,7 +327,9 @@ export interface ActivatePluginCommandPayload {
 export interface McpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
-  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+  // 'removed' is only produced by the v2 engine (config-driven tombstone);
+  // v1 never emits it, but SDK consumers share this type across engines.
+  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
   readonly toolCount: number;
   readonly error?: string;
 }
@@ -348,6 +350,17 @@ export interface PutGlobalMcpServerPayload {
 
 export interface GlobalMcpServerNamePayload {
   readonly name: string;
+}
+
+export type GlobalMcpServerAuthState =
+  | 'not-applicable'
+  | 'bearer-token'
+  | 'oauth-required'
+  | 'oauth-authorized';
+
+export interface GlobalMcpServerAuthStatus {
+  readonly name: string;
+  readonly authStatus: GlobalMcpServerAuthState;
 }
 
 export type BeginGlobalMcpServerAuthResult =
@@ -535,6 +548,9 @@ export interface CoreAPI extends SessionAPIWithId {
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
   listGlobalMcpServers: (payload: EmptyPayload) => readonly GlobalMcpServerConfig[];
+  listGlobalMcpServerAuthStatuses: (
+    payload: EmptyPayload,
+  ) => readonly GlobalMcpServerAuthStatus[];
   addGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   updateGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   removeGlobalMcpServer: (payload: GlobalMcpServerNamePayload) => readonly GlobalMcpServerConfig[];

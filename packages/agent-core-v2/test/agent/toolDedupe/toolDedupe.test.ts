@@ -839,9 +839,6 @@ describe('AgentToolDedupeService', () => {
   });
 
   describe('preflight-rejected calls (bypass onBeforeExecuteTool)', () => {
-    // Calls rejected by args validation in preflight never fire
-    // onBeforeExecuteTool; the dedupe hook registers them late at
-    // onDidExecuteTool time so the repeat breaker still counts them.
     class StrictTool implements ExecutableTool<Record<string, unknown>> {
       readonly name = 'Strict';
       readonly description = 'Requires a command string.';
@@ -865,7 +862,6 @@ describe('AgentToolDedupeService', () => {
     }
 
     function invalidCall(id: string): ToolCall {
-      // Missing the required "command".
       return { type: 'function', id, name: 'Strict', arguments: JSON.stringify({ timeout: 60 }) };
     }
 
@@ -902,8 +898,6 @@ describe('AgentToolDedupeService', () => {
         await h.executor.hooks.onDidExecuteTool.run(d);
         await afterStep(h, 1, i + 1);
       }
-      // Exactly one repeat at count 2 — a double registration would inflate
-      // the streak and fire the reminder one occurrence early.
       const repeats = telemetryEvents.filter((e) => e.event === 'tool_call_repeat');
       expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2]);
     });
@@ -925,20 +919,16 @@ describe('AgentToolDedupeService', () => {
       for (let i = 0; i < 3; i += 1) {
         await runStep(h, 1, i + 1, [malformedCall(`c${String(i)}`, raws[i]!)]);
       }
-      // All three normalize to {} on parse failure, but the raw texts
-      // differ, so no repeat streak may form.
       expect(telemetryEvents.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
     });
   });
 
   describe('turn-level repeat breaker for rejected calls', () => {
     function invalidBashCallWithId(id: string): ToolCall {
-      // Missing the required "command".
       return { type: 'function', id, name: 'Bash', arguments: JSON.stringify({ timeout: 60 }) };
     }
 
     function malformedBashCallWithId(id: string, variant: number): ToolCall {
-      // Invalid JSON (unquoted key), unique per variant.
       return { type: 'function', id, name: 'Bash', arguments: `{"command_${String(variant)}: "ls"` };
     }
 
@@ -960,9 +950,6 @@ describe('AgentToolDedupeService', () => {
       const records: TelemetryRecord[] = [];
       const { ctx, exec } = rejectedBashAgent(records);
 
-      // 12 identical calls missing the required "command": each is rejected
-      // in preflight. If the breaker did not count them, the turn would keep
-      // going and consume the 13th scripted response.
       for (let i = 0; i < 12; i += 1) {
         ctx.mockNextResponse(invalidBashCallWithId(`call_bad_${String(i)}`));
       }
@@ -983,9 +970,6 @@ describe('AgentToolDedupeService', () => {
       const records: TelemetryRecord[] = [];
       const { ctx, exec } = rejectedBashAgent(records);
 
-      // 12 rejected calls, each with DIFFERENT malformed raw JSON: all
-      // normalize to {} on parse failure, but they are not repeats of the
-      // same call, so the turn must not be force-stopped.
       for (let i = 0; i < 12; i += 1) {
         ctx.mockNextResponse(malformedBashCallWithId(`call_mal_${String(i)}`, i));
       }

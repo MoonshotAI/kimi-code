@@ -8,8 +8,8 @@
  */
 
 import { join, resolve } from 'pathe';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { resolveGlobalLogPath } from '#/_base/log/logConfig';

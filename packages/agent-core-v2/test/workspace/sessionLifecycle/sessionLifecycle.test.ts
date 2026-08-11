@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
 import {
   type IAgentScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -38,7 +38,7 @@ import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService, type ISessionMcpOverlay } from '#/workspace/workspaceMcp/workspaceMcp';
-import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentPlanService } from '#/features/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidation';
 import { IModelCatalog } from '#/kosong/model/catalog';
@@ -57,6 +57,7 @@ import {
   ISessionLifecycleHooks,
   type SessionLifecycleHookSlots,
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
+import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -285,6 +286,16 @@ function persistentWorkspaceStub(): IWorkspaceService {
   };
 }
 
+function sessionIndexMirrorStub(): ISessionIndexMirror {
+  return {
+    _serviceBrand: undefined,
+    record: () => {},
+    pending: () => [],
+    evict: () => Promise.resolve(),
+    drain: () => Promise.resolve(),
+  };
+}
+
 function sessionIndexStub(): ISessionIndex {
   return {
     _serviceBrand: undefined,
@@ -382,6 +393,7 @@ function workspaceMcpServiceStub(ready: Promise<void> = Promise.resolve()): IWor
       get connectionManager(): McpConnectionManager {
         throw new Error('not implemented');
       },
+      isBaselineServer: () => true,
     }),
     sessionOverlay: () => {
       throw new Error('not implemented');
@@ -578,11 +590,6 @@ describe('SessionLifecycleService', () => {
     await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  /**
-   * Build the App host and materialize the default handler (`/tmp/proj`,
-   * `wd_stub` with the default workspace stub), returning its session
-   * lifecycle service.
-   */
   async function build(
     extra: ReturnType<typeof stubPair>[] = [],
   ): Promise<ISessionLifecycleService> {
@@ -600,6 +607,7 @@ describe('SessionLifecycleService', () => {
       stubPair(IWorkspaceInstructionsService, workspaceInstructionsStub()),
       stubPair(IWorkspaceService, workspaceStub()),
       stubPair(ISessionIndex, sessionIndexStub()),
+      stubPair(ISessionIndexMirror, sessionIndexMirrorStub()),
       stubPair(IAppendLogStore, appendLogStoreStub()),
       stubPair(IAtomicDocumentStore, atomicDocumentStoreStub()),
       stubPair(IEventService, eventStub()),
@@ -754,10 +762,6 @@ describe('SessionLifecycleService', () => {
 
     const handle = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
 
-    // The index entry addresses the session under the handler's workspace id
-    // — the same id seeding the session's storage scope — not a recomputed
-    // encodeWorkDirKey, so the v1 reader finds it in the bucket it was
-    // materialized into.
     const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
     expect(appended).toEqual([
       {
@@ -812,8 +816,6 @@ describe('SessionLifecycleService', () => {
       }),
       stubPair(IWorkspaceService, {
         ...workspaceStub(),
-        // As the real registry does after folding: the id minted for the
-        // first-seen spelling is reused for the alias.
         createOrTouch: (root: string, name?: string) =>
           Promise.resolve({
             id: 'wd_first_spelling',
@@ -1125,8 +1127,6 @@ describe('SessionLifecycleService', () => {
 
     await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
 
-    // Fork never gates on activity: a mid-work copy is crash-equivalent, and
-    // replay already normalizes that on restore.
     const target = await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
     expect(target.id).toBe('dst');
   });
@@ -1261,6 +1261,7 @@ describe('SessionLifecycleService', () => {
       _serviceBrand: undefined,
       ready,
       connectionManager: {} as unknown as McpConnectionManager,
+      isBaselineServer: () => true,
     };
     const shutdown = vi.fn(() => Promise.resolve());
     const sessionOverlay = vi.fn(
@@ -1586,6 +1587,26 @@ describe('SessionLifecycleService', () => {
   });
 
   describe('fork session state', () => {
+    it('fork inherits the source session\'s last turn outcome', async () => {
+      const updates: { readonly lastTurnReason?: unknown }[] = [];
+      const metaStub: ISessionMetadata = {
+        ...metadataStub(),
+        read: () =>
+          Promise.resolve({ lastTurnReason: 'failed', agents: {} } as never),
+        update: (patch) => {
+          updates.push(patch);
+          return Promise.resolve();
+        },
+      };
+      const svc = await build([stubPair(ISessionMetadata, metaStub)]);
+
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      const forkUpdate = updates.find((u) => 'forkedFrom' in u);
+      expect(forkUpdate?.lastTurnReason).toBe('failed');
+    });
+
     it('copies blobs, plans, background tasks, and media originals into the fork', async () => {
       const root = await makeTmpRoot();
       const svc = await build([

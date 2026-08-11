@@ -63,6 +63,7 @@ export async function applyReloadedTuiConfig(
   host.setAppState({
     editorCommand: config.editorCommand,
     disablePasteBurst: config.disablePasteBurst,
+    cacheExpiryHint: config.cacheExpiryHint,
     notifications: config.notifications,
     upgrade: config.upgrade,
     statusLine: config.statusLine,

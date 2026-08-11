@@ -7,17 +7,19 @@ import {
   type ExperimentalFeatureState,
 } from '@moonshot-ai/agent-core';
 
-import { Session } from '#/session';
+import { capabilityRpc, Session } from '#/session';
 import type { KimiAuthFacade } from '#/auth';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AuthenticateMcpServerOptions,
+  CapabilityStatus,
   ConfigDiagnostics,
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
   ForkSessionInput,
   GetConfigOptions,
+  GlobalMcpServerAuthStatus,
   KimiConfig,
   KimiConfigPatch,
   KimiHostIdentity,
@@ -313,6 +315,24 @@ export class KimiHarness {
   }
 
   /**
+   * App-global capability readiness and setup (the built-in product
+   * capabilities kimi-cu / kimi-webbridge), no session required. Routed
+   * through the same global channel as session capability calls; requires
+   * the v2 engine and throws on v1, which has no capability surface.
+   */
+  async listCapabilities(): Promise<readonly CapabilityStatus[]> {
+    return capabilityRpc(this.rpc).listCapabilities();
+  }
+
+  async getCapability(id: string): Promise<CapabilityStatus> {
+    return capabilityRpc(this.rpc).getCapability(id);
+  }
+
+  async installCapability(id: string): Promise<CapabilityStatus> {
+    return capabilityRpc(this.rpc).installCapability(id);
+  }
+
+  /**
    * Trust state of `workDir` (agent-core-v2 only; the v1 engine reports an
    * always-trusted workspace). Querying may register the workDir as a
    * workspace, which session creation would do anyway.
@@ -372,6 +392,10 @@ export class KimiHarness {
   /** User-global MCP entries from `<KIMI_CODE_HOME>/mcp.json` only. */
   async listMcpServers(): Promise<readonly McpServerConfig[]> {
     return this.rpc.listGlobalMcpServers();
+  }
+
+  async listMcpServerAuthStatuses(): Promise<readonly GlobalMcpServerAuthStatus[]> {
+    return this.rpc.listGlobalMcpServerAuthStatuses();
   }
 
   async addMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {

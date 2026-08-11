@@ -57,7 +57,8 @@
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ProviderRequestAuth } from '#/kosong/contract/provider';
@@ -132,6 +133,7 @@ interface CatalogEntry {
   readonly trace: ResolutionTraceCollector;
 }
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class ModelCatalog extends Disposable implements IModelCatalog {
   declare readonly _serviceBrand: undefined;
 

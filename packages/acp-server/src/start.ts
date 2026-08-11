@@ -16,9 +16,13 @@ import { Readable, Writable } from 'node:stream';
 import { ndJsonStream, type AgentConnection, type Stream } from '@agentclientprotocol/sdk';
 import {
   bootstrap,
+  drainQueryStoreDisposals,
+  drainSessionIndexMirror,
+  drainSessionMetadataWrites,
   getLiveSessionById,
   IAppendLogStore,
   ISessionContext,
+  ISessionIndexMirror,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
@@ -166,7 +170,19 @@ export async function runAcpServerWithStream(
       } catch {
         // ignore — disposal proceeds regardless
       }
+      // Same shutdown order as kap-server: settle queued session-metadata
+      // writes, then drain the session-index mirror while the query store is
+      // still open, so a queued summary lands in the read model.
+      await drainSessionMetadataWrites();
+      await core.accessor.get(ISessionIndexMirror).drain();
       core.dispose();
+      // `core.dispose()` runs the mirror's and the query store's synchronous
+      // `dispose()`, whose drains/closes are asynchronous — await them so an
+      // embedding host that removes homeDir right after close() never races
+      // an in-flight shard close (ENOTEMPTY on teardown).
+      await drainSessionIndexMirror();
+      await drainQueryStoreDisposals();
+      await drainSessionMetadataWrites();
     })();
     return closePromise;
   };

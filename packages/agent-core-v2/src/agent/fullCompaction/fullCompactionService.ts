@@ -17,9 +17,10 @@
  * runs.
  */
 
-import { Disposable } from "#/_base/di/lifecycle";
+import { Service } from "#/_base/di/service";
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
 import { renderPrompt } from "#/_base/utils/render-prompt";
@@ -134,7 +135,7 @@ export const fullCompactionActiveTurnIdKey = defineState<number | undefined>(
   () => undefined as number | undefined,
 );
 
-export class AgentFullCompactionService extends Disposable implements IAgentFullCompactionService {
+export class AgentFullCompactionService extends Service implements IAgentFullCompactionService {
   declare readonly _serviceBrand: undefined;
   readonly hooks: IAgentFullCompactionService['hooks'] = {
     onWillCompact: new OrderedHookSlot<FullCompactionTask>(),
@@ -366,7 +367,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',
       );
     }
-    return this.tokenCounting.estimateMessages(history);
+    return this.requestTokens(history);
   }
 
   private createActiveCompaction(
@@ -594,7 +595,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   ): Promise<CompactionResult> {
     const startedAt = Date.now();
     const originalHistory = [...this.context.get()];
-    const tokensBefore = this.tokenCounting.estimateMessages(originalHistory);
+    const tokensBefore = this.requestTokens(originalHistory);
     let retryCount = 0;
     let thinkingEffort = this.profile.data().thinkingLevel;
 
@@ -718,6 +719,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         compactedCount: originalHistory.length,
         tokensBefore,
         summaryOutputTokens: attempt.usage?.output,
+        requestOverheadTokens: this.requestTokens([]),
         droppedCount: droppedCount === 0 ? undefined : droppedCount,
       });
 

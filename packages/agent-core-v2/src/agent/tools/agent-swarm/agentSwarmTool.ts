@@ -179,11 +179,12 @@ export class AgentSwarmTool implements IAgentSwarmTool {
         });
       }
       if (own.modelAlias !== undefined) {
-        binding = resolveSubagentBinding(
+        const resolved = resolveSubagentBinding(
           this.config,
           { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
           args.model,
         );
+        binding = { model: resolved.model, thinking: resolved.thinking };
       }
     }
     const timeoutMs = resolveSubagentTimeoutMs(this.config);

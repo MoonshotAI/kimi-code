@@ -97,3 +97,84 @@ test('bench --quick emits a JSON report with a stable schema', async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
 }, 300_000);
+
+test('open-lifecycle bench --quick emits the phase-1 baseline report', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'minidb-open-bench-json-'));
+  try {
+    const reportPath = path.join(dir, 'report.json');
+    await promisify(execFile)(
+      process.execPath,
+      ['--import', 'tsx', path.join(pkgDir, 'bench', 'open-lifecycle.ts'), '--quick', '--json', reportPath],
+      { cwd: pkgDir, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
+    );
+    const report = JSON.parse(await fs.readFile(reportPath, 'utf8'));
+
+    // Top-level envelope.
+    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.tool, 'minidb/bench/open-lifecycle');
+    assert.ok(Array.isArray(report.scenarios));
+
+    const byName = (re) => report.scenarios.find((s) => re.test(s.name));
+
+    // Every row carries the event-loop-delay + input-latency baselines.
+    for (const s of report.scenarios) {
+      assert.equal(typeof s.durationMs, 'number', `${s.name}.durationMs`);
+      for (const k of ['mean', 'p50', 'p95', 'p99', 'max']) {
+        assert.equal(typeof s.eventLoopDelayMs[k], 'number', `${s.name}.eventLoopDelayMs.${k}`);
+      }
+      assert.ok(s.inputLatencyMs, `${s.name}.inputLatencyMs`);
+      for (const k of ['count', 'p50', 'p95', 'p99', 'max']) {
+        assert.equal(typeof s.inputLatencyMs[k], 'number', `${s.name}.inputLatencyMs.${k}`);
+      }
+    }
+
+    // The four scenario families exist with their lifecycle phase breakdown.
+    const PHASES = [
+      'openMs',
+      'generationCandidateLoadMs',
+      'storeImageLoadMs',
+      'nonTextImageLoadMs',
+      'textImageLoadMs',
+      'postingsIntegrityCheckMs',
+      'walScanMs',
+      'walApplyMs',
+      'fullRecoveryMs',
+      'textRebuildMs',
+    ];
+    const small = byName(/small corpus, healthy generation/);
+    const wal = byName(/large WAL delta/);
+    const large = byName(/large full-text generation/);
+    const corrupt = byName(/corrupt generation \(full-recovery fallback\)/);
+    const deferred = byName(/deferred text rebuild \(degraded -> ready\)/);
+    for (const [name, s] of Object.entries({ small, wal, large, corrupt, deferred })) {
+      assert.ok(s, `${name} scenario exists`);
+      for (const k of PHASES) assert.equal(typeof s.extra.phases[k], 'number', `${name}.extra.phases.${k}`);
+    }
+
+    // Healthy generation opens: no full recovery, no corpus tokenization.
+    for (const [name, s] of Object.entries({ small, wal, large })) {
+      assert.equal(s.extra.state, 'ready', name);
+      assert.deepEqual(s.extra.path, ['no-generation', 'generation-load', 'wal-catch-up', 'ready'], name);
+      assert.equal(s.extra.phases.fullRecoveryMs, 0, name);
+      assert.equal(s.extra.phases.textRebuildMs, 0, name);
+      assert.equal(s.extra.generationLoads, 1, name);
+      assert.equal(s.extra.indexRebuildDecoded, 0, name);
+    }
+    // The WAL-delta open really replayed the delta (and close did NOT
+    // republish it into a fresh generation — the scenario would be void).
+    assert.ok(wal.extra.walDeltaAppliedOps > 0, 'wal delta replayed');
+    assert.equal(wal.extra.closePublishedGeneration, false, 'close left the generation untouched');
+    assert.ok(wal.extra.phases.walApplyMs > 0, 'wal apply measured');
+
+    // The corrupt generation fell back to a full recovery and returned
+    // degraded; the background deferred build then brought it to ready.
+    assert.equal(corrupt.extra.state, 'degraded');
+    assert.deepEqual(corrupt.extra.path, ['no-generation', 'generation-load', 'full-rebuild', 'degraded']);
+    assert.ok(corrupt.extra.phases.fullRecoveryMs > 0, 'full recovery measured');
+    assert.equal(corrupt.extra.generationLoadFallbacks, 1);
+    assert.equal(deferred.extra.state, 'ready');
+    assert.ok(deferred.extra.textDeferredBuilds >= 1, 'deferred build committed');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}, 300_000);

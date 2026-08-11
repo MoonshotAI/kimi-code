@@ -6,7 +6,9 @@
  * scope strings to namespace their data.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IBlobStore, type BlobReadRange } from '#/persistence/interface/blobStore';
 

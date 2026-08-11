@@ -20,8 +20,8 @@
 
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { IModelCatalog } from '#/kosong/model/catalog';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2, ErrorCodes } from '#/errors';
 import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
@@ -187,6 +187,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       description: options.description,
       swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
+      model: binding.model,
     });
     const promptText = await applyProfilePromptPrefix(profile, options.prompt, {
       cwd: this.sessionContext.cwd,
@@ -213,6 +214,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     const profileName =
       child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
     if (!retryTurn) {
+      const resumedModel = child.accessor.get(IAgentProfileService).data().modelAlias;
       emitAgentRunSpawned(caller, agentId, {
         profileName,
         parentToolCallId: options.parentToolCallId,
@@ -220,6 +222,7 @@ export class SessionSwarmService implements ISessionSwarmService {
         description: options.description,
         swarmIndex: options.swarmIndex,
         runInBackground: options.runInBackground,
+        model: resumedModel,
       });
     }
     const request = retryTurn

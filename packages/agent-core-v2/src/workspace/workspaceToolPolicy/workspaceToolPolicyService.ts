@@ -10,9 +10,10 @@
  * the capability set here and fires `onDidChange`. Bound at Workspace scope.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import {
   IWorkspaceContext,
@@ -26,7 +27,7 @@ export function computeCapabilityDisabledTools(osBackendId: string): readonly st
   return [];
 }
 
-export class WorkspaceToolPolicyService extends Disposable implements IWorkspaceToolPolicy {
+export class WorkspaceToolPolicyService extends Service implements IWorkspaceToolPolicy {
   declare readonly _serviceBrand: undefined;
 
   private readonly disabled: readonly string[];

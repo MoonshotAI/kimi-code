@@ -19,6 +19,7 @@ import { encodeFrame, encodeBatchOps, scanBatchOpRefs, HEADER_SIZE, TYPE_SET, TY
 import type { BatchOp as EncodedBatchOp, FrameRef } from './codec.js';
 import { frameToOps } from './recovery.js';
 import type { ValueMode, RecoveredOp } from './recovery.js';
+import { yieldToLoop } from './text-index/tokenize.js';
 import { toBuf, toKStr, normDt, MAX_KEY_LEN } from './value-codec.js';
 import type { Store, StoreRecord, ValueLoc } from './store.js';
 import type { WAL } from './wal.js';
@@ -643,9 +644,15 @@ export class WritePath<V> {
    *  open-time recovery derives from it (frameToOps), plus the incremental
    *  derived-index maintenance applyOp performs on the write path — minus
    *  unique checks: the writer already validated, and intermediate frame
-   *  states must apply literally (LWW). */
-  applyRecoveredFrame(f: FrameRef, fd: number): void {
-    for (const op of frameToOps(f, 'wal', fd, this.deps.valueMode())) this.applyRecoveredOp(op);
+   *  states must apply literally (LWW). Cooperative: yields between primitive
+   *  ops when the caller's slicer (walApplySlicer budgets) fires — a BATCH
+   *  frame unrolls into thousands of ops, so per-op yielding is what bounds a
+   *  catch-up slice on the host's event loop. */
+  async applyRecoveredFrameAsync(f: FrameRef, fd: number, slice: () => boolean): Promise<void> {
+    for (const op of frameToOps(f, 'wal', fd, this.deps.valueMode())) {
+      this.applyRecoveredOp(op);
+      if (slice()) await yieldToLoop();
+    }
   }
 
   applyRecoveredOp(op: RecoveredOp): void {

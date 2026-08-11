@@ -38,6 +38,14 @@
  * cluster-wide registry, and value indexes are created `sparse` so documents
  * from other collections (which lack the indexed field) are skipped.
  *
+ * This store is a STRUCTURAL read model: stores, datetime/order columns, and
+ * secondary/compound indexes only. `ensureIndex` rejects text-index
+ * definitions — a text index would pull tokenizers, postings files, and
+ * full-text generation builds into the session-list critical path, which is
+ * exactly what the search-index separation forbids here; full-text search
+ * lives in the kap-server search-index database (`IGlobalSearchService`),
+ * never in this cluster.
+ *
  * Ordered columns map to the engine's `dt` channels: `put`/`batch` forward
  * `columns` as `SetOptions.dt`, and `pageByColumn` issues a dt-bounded,
  * dt-sorted, limited query — which the engine serves by walking its ordered
@@ -59,7 +67,8 @@ import { type QueryOptions } from '@moonshot-ai/minidb';
 import { ClusterDb } from '@moonshot-ai/minidb/cluster';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
@@ -107,6 +116,7 @@ export async function drainQueryStoreDisposals(): Promise<void> {
   await Promise.all(pendingDisposals);
 }
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class MiniDbQueryStore extends Disposable implements IQueryStore {
   declare readonly _serviceBrand: undefined;
 
@@ -144,6 +154,9 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   }
 
   private openFresh(): Promise<ClusterDb> {
+    // Answers "which database does a session-list read touch" from logs alone:
+    // the read model lives in this cluster, one MiniDb per shard directory.
+    this.log.info('minidb query-store opening', { dir: this.dir, shardCount: SHARD_COUNT });
     return ClusterDb.open({
       dir: this.dir,
       shardCount: SHARD_COUNT,
@@ -270,6 +283,11 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   }
 
   async ensureIndex(collection: string, def: IndexDef): Promise<void> {
+    if (def.kind === 'text') {
+      throw new Error(
+        `minidb query-store is a structural read model: text index "${def.name}" on collection "${collection}" is rejected; full-text search lives in the kap-server search-index database`,
+      );
+    }
     const guard = `${collection}:${def.kind}:${def.name}`;
     if (this.ensuredIndexes.has(guard)) return;
     const name = indexName(collection, def.name);
@@ -277,10 +295,8 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
       try {
         if (def.kind === 'value') {
           await db.createIndex(name, { field: def.field, sparse: true, unique: def.unique });
-        } else if (def.kind === 'compound') {
-          await db.createCompoundIndex(name, { groupBy: def.groupBy, orderBy: def.orderBy });
         } else {
-          await db.createTextIndex(name, { fields: def.fields });
+          await db.createCompoundIndex(name, { groupBy: def.groupBy, orderBy: def.orderBy });
         }
       } catch (error) {
         if (!(error instanceof Error) || !error.message.includes('already exists')) throw error;

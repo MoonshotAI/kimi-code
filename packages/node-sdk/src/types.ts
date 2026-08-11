@@ -39,6 +39,8 @@ export type {
   GoalSnapshot,
   GoalStatus,
   GoalToolResult,
+  GlobalMcpServerAuthState,
+  GlobalMcpServerAuthStatus,
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
@@ -73,6 +75,9 @@ export type {
 export type { KimiHostIdentity, OAuthRefreshOutcome };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
 export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
+// Contributed commands are an agent-core-v2 seam; the type is re-exported
+// from the v2 engine (v1 sessions report an empty command set).
+export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 
 export type PermissionMode = 'yolo' | 'manual' | 'auto';
 
@@ -283,6 +288,8 @@ export interface SessionSummary {
   readonly archived?: boolean | undefined;
   readonly metadata?: JsonObject | undefined;
   readonly additionalDirs?: readonly string[];
+  /** Terminal outcome of the session's latest main turn, when one ended. */
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export interface AddAdditionalDirResult {

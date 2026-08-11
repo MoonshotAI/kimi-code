@@ -21,6 +21,7 @@ export function stubSessionIndexMirror(): ISessionIndexMirror & {
       recorded.push(summary);
     },
     pending: () => recorded,
+    evict: async () => {},
     drain: async () => {},
   };
 }

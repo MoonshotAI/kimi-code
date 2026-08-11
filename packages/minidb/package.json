@@ -49,6 +49,7 @@
     "test": "vitest run",
     "bench": "node --import tsx bench/bench.ts",
     "bench:cluster": "node --import tsx bench/cluster.ts",
+    "bench:open": "node --import tsx bench/open-lifecycle.ts",
     "clean": "rm -rf dist"
   }
 }
