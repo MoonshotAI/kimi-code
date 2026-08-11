@@ -6,7 +6,10 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IConfigService } from '#/app/config/config';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { SUBAGENT_SECTION } from '#/session/subagent/configSection';
+import {
+  SECONDARY_MODEL_SECTION,
+  SUBAGENT_SECTION,
+} from '#/session/subagent/configSection';
 import { ISessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidation';
 import { SessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidationService';
 
@@ -56,36 +59,36 @@ describe('SessionSubagentModelsValidationService', () => {
     }
   }
 
-  it('is a no-op when no subagent section is configured', () => {
+  it('is a no-op when no secondary_model section is configured', () => {
     setup({});
     expect(resolve()).toBeUndefined();
   });
 
-  it('is a no-op when only the timeout half of the section is configured', () => {
+  it('is a no-op when only the [subagent] timeout is configured', () => {
     setup({ [SUBAGENT_SECTION]: { timeoutMs: 5000 } });
     expect(resolve()).toBeUndefined();
   });
 
   it('constructs fine when default_model alone forms an implicit single-entry pool', () => {
     modelIds.add('provider/fast');
-    setup({ [SUBAGENT_SECTION]: { defaultModel: 'provider/fast' } });
+    setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/fast' } });
     expect(resolve()).toBeUndefined();
   });
 
   it('fails session creation when a pool-less default_model does not resolve', () => {
-    setup({ [SUBAGENT_SECTION]: { defaultModel: 'provider/typo' } });
+    setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/typo' } });
     const error = resolve();
     expect(isError2(error)).toBe(true);
     expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
     expect((error as Error2).message).toContain(
-      '[subagent.models] entry "provider/typo" could not be resolved',
+      '[secondary_model.models] entry "provider/typo" could not be resolved',
     );
   });
 
   it('constructs fine for a valid pool', () => {
     modelIds.add('provider/fast').add('provider/smart');
     setup({
-      [SUBAGENT_SECTION]: {
+      [SECONDARY_MODEL_SECTION]: {
         defaultModel: 'provider/fast',
         models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
       },
@@ -95,19 +98,19 @@ describe('SessionSubagentModelsValidationService', () => {
 
   it('fails session creation when the pool has no default_model', () => {
     modelIds.add('provider/fast');
-    setup({ [SUBAGENT_SECTION]: { models: { 'provider/fast': 'fast and cheap' } } });
+    setup({ [SECONDARY_MODEL_SECTION]: { models: { 'provider/fast': 'fast and cheap' } } });
     const error = resolve();
     expect(isError2(error)).toBe(true);
     expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
     expect((error as Error2).message).toContain(
-      '[subagent].default_model is required when [subagent.models] is configured',
+      '[secondary_model].default_model is required when [secondary_model.models] is configured',
     );
   });
 
   it('fails session creation when default_model is not a pool key, listing the pool', () => {
     modelIds.add('provider/fast').add('provider/smart');
     setup({
-      [SUBAGENT_SECTION]: {
+      [SECONDARY_MODEL_SECTION]: {
         defaultModel: 'provider/typo',
         models: { 'provider/fast': 'fast and cheap', 'provider/smart': 'hard tasks' },
       },
@@ -124,7 +127,7 @@ describe('SessionSubagentModelsValidationService', () => {
   it('fails session creation when a pool key uses the reserved "primary" alias', () => {
     modelIds.add('primary').add('provider/fast');
     setup({
-      [SUBAGENT_SECTION]: {
+      [SECONDARY_MODEL_SECTION]: {
         defaultModel: 'provider/fast',
         models: { primary: 'looks like a model', 'provider/fast': 'fast and cheap' },
       },
@@ -133,14 +136,14 @@ describe('SessionSubagentModelsValidationService', () => {
     expect(isError2(error)).toBe(true);
     expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
     expect((error as Error2).message).toContain(
-      '[subagent.models] key "primary" is reserved',
+      '[secondary_model.models] key "primary" is reserved',
     );
   });
 
   it('fails session creation when a pool key does not resolve, naming the key', () => {
     modelIds.add('provider/fast');
     setup({
-      [SUBAGENT_SECTION]: {
+      [SECONDARY_MODEL_SECTION]: {
         defaultModel: 'provider/fast',
         models: { 'provider/fast': 'fast and cheap', 'provider/typo': 'hard tasks' },
       },
@@ -149,7 +152,7 @@ describe('SessionSubagentModelsValidationService', () => {
     expect(isError2(error)).toBe(true);
     expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
     expect((error as Error2).message).toContain(
-      '[subagent.models] entry "provider/typo" could not be resolved',
+      '[secondary_model.models] entry "provider/typo" could not be resolved',
     );
     expect((error as Error2).message).toContain('"provider/typo" is not configured');
     expect(isError2((error as Error2).cause)).toBe(true);

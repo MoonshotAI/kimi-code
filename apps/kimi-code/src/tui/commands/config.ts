@@ -287,7 +287,7 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
     host.showError(`Unknown model alias: ${alias}`);
     return;
   }
-  const current = (await host.harness.getConfig()).subagent?.defaultModel ?? '';
+  const current = (await host.harness.getConfig()).secondaryModel?.defaultModel ?? '';
   showSecondaryModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
 }
 
@@ -611,7 +611,7 @@ async function persistModelSelection(
 }
 
 // ---------------------------------------------------------------------------
-// Secondary model (`/secondary-model`) — persists `[subagent] default_model`
+// Secondary model (`/secondary-model`) — persists `[secondary_model] default_model`
 // ---------------------------------------------------------------------------
 
 function showSecondaryModelPicker(
@@ -642,25 +642,26 @@ function showSecondaryModelPicker(
 }
 
 /**
- * Persists `[subagent] default_model`. When a `[subagent.models]` pool exists
- * and does not list the alias yet, the alias is added with an empty
- * description — the engine requires the default to be a pool key. Without a
- * pool the default alone forms an implicit single-entry pool, so nothing
- * else is written. No live-apply step: the engine resolves the pool per
- * spawn, so the next subagent dispatch picks the new value up on its own.
+ * Persists `[secondary_model] default_model`. When a
+ * `[secondary_model.models]` pool exists and does not list the alias yet, the
+ * alias is added with an empty description — the engine requires the default
+ * to be a pool key. Without a pool the default alone forms an implicit
+ * single-entry pool, so nothing else is written. No live-apply step: the
+ * engine resolves the pool per spawn, so the next subagent dispatch picks the
+ * new value up on its own.
  */
 async function performSecondaryModelSave(host: SlashCommandHost, alias: string): Promise<void> {
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
   try {
     const config = await host.harness.getConfig({ reload: true });
-    const existing = config.subagent?.models;
+    const existing = config.secondaryModel?.models;
     const patch: { defaultModel: string; models?: Record<string, string> } = {
       defaultModel: alias,
     };
     if (existing !== undefined) {
       patch.models = { ...existing, [alias]: existing[alias] ?? '' };
     }
-    await host.harness.setConfig({ subagent: patch });
+    await host.harness.setConfig({ secondaryModel: patch });
   } catch (error) {
     host.showError(`Failed to save secondary model: ${formatErrorMessage(error)}`);
     return;

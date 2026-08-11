@@ -99,9 +99,16 @@ export type ModelAlias = z.infer<typeof ModelAliasSchema>;
  * materialized into a synthesized derived model entry at runtime (see
  * `config/secondary-model.ts`). `default_effort` doubles as the subagent
  * thinking effort.
+ *
+ * The section is shared with the v2 engine's subagent model pool, whose keys
+ * (`default_model`, `[secondary_model.models]`) are declared here so the
+ * config write path round-trips them; the default engine never consumes
+ * them, and `secondaryModelPatch` excludes them from the recipe patch.
  */
 export const SecondaryModelConfigSchema = ModelAliasOverrideSchema.extend({
   model: z.string().min(1).optional(),
+  defaultModel: z.string().min(1).optional(),
+  models: z.record(z.string(), z.string()).optional(),
 });
 
 export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
@@ -181,15 +188,6 @@ export const SubagentConfigSchema = z.object({
    * in milliseconds. `0` means no timeout. Defaults to 2 hours when unset.
    */
   timeoutMs: z.number().int().min(0).optional(),
-  /**
-   * Subagent model pool: `defaultModel` names the `[models]` alias newly
-   * spawned subagents bind to unless the caller passes another pool alias (or
-   * `primary`); `models` maps pool aliases to the selection hints rendered in
-   * the Agent/AgentSwarm tool descriptions. Consumed by the v2 engine only —
-   * the default engine ignores both fields.
-   */
-  defaultModel: z.string().min(1).optional(),
-  models: z.record(z.string(), z.string()).optional(),
 });
 
 export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;

@@ -100,33 +100,36 @@ describe('server-v2 /api/v1/config', () => {
     expect(after.yolo).toBe(false);
   });
 
-  it('POST { subagent } persists the subagent model pool and GET echoes it', async () => {
+  it('POST { secondary_model } persists the subagent model pool and GET echoes it', async () => {
     await boot();
     const cfg = await patchConfig({
-      subagent: { default_model: 'provider/fast', models: { 'provider/fast': 'fast and cheap' } },
+      secondary_model: {
+        default_model: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap' },
+      },
     });
-    expect(cfg.subagent).toMatchObject({ defaultModel: 'provider/fast' });
+    expect(cfg.secondary_model).toMatchObject({ defaultModel: 'provider/fast' });
 
     const after = await getConfig();
-    expect(after.subagent).toMatchObject({
+    expect(after.secondary_model).toMatchObject({
       defaultModel: 'provider/fast',
       models: { 'provider/fast': 'fast and cheap' },
     });
   });
 
-  it('POST { subagent } preserves pool alias keys containing underscores', async () => {
+  it('POST { secondary_model } preserves pool alias keys containing underscores', async () => {
     await boot();
     await patchConfig({
-      subagent: { default_model: 'provider/fast_model', models: { 'provider/fast_model': '' } },
+      secondary_model: { default_model: 'provider/fast_model', models: { 'provider/fast_model': '' } },
     });
 
     const after = await getConfig();
-    expect(after.subagent).toMatchObject({
+    expect(after.secondary_model).toMatchObject({
       defaultModel: 'provider/fast_model',
       models: { 'provider/fast_model': '' },
     });
     expect(
-      Object.keys((after.subagent as { models: Record<string, string> }).models),
+      Object.keys((after.secondary_model as { models: Record<string, string> }).models),
     ).not.toContain('provider/fastModel');
   });
 
@@ -147,7 +150,7 @@ describe('server-v2 /api/v1/config', () => {
   });
 
   it('session create with a broken subagent model pool fails with VALIDATION_FAILED', async () => {
-    await boot('[subagent.models]\n"provider/fast" = "fast and cheap"\n');
+    await boot('[secondary_model.models]\n"provider/fast" = "fast and cheap"\n');
     const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -155,6 +158,6 @@ describe('server-v2 /api/v1/config', () => {
     });
     const body = (await res.json()) as Envelope<null>;
     expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
-    expect(body.msg).toContain('[subagent].default_model is required');
+    expect(body.msg).toContain('[secondary_model].default_model is required');
   });
 });

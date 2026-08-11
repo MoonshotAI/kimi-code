@@ -686,7 +686,7 @@ describe('SessionLifecycleService', () => {
     const svc = await build([
       stubPair(
         IConfigService,
-        configStub({ subagent: { models: { 'provider/fast': 'fast and cheap' } } }),
+        configStub({ secondaryModel: { models: { 'provider/fast': 'fast and cheap' } } }),
       ),
       stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
     ]);
@@ -694,7 +694,7 @@ describe('SessionLifecycleService', () => {
     await expect(svc.create({ sessionId: 's-broken', workDir: '/tmp/proj' })).rejects.toMatchObject(
       {
         code: ErrorCodes.CONFIG_INVALID,
-        message: expect.stringContaining('[subagent].default_model is required'),
+        message: expect.stringContaining('[secondary_model].default_model is required'),
       },
     );
     expect(svc.get('s-broken')).toBeUndefined();
@@ -705,7 +705,7 @@ describe('SessionLifecycleService', () => {
       stubPair(
         IConfigService,
         configStub({
-          subagent: {
+          secondaryModel: {
             defaultModel: 'provider/fast',
             models: { 'provider/fast': 'fast and cheap' },
           },
@@ -721,7 +721,7 @@ describe('SessionLifecycleService', () => {
   it('rejects fork with CONFIG_INVALID for a broken pool before copying any files', async () => {
     const root = await makeTmpRoot();
     const sections: Record<string, unknown> = {
-      subagent: {
+      secondaryModel: {
         defaultModel: 'provider/fast',
         models: { 'provider/fast': 'fast and cheap' },
       },
@@ -740,7 +740,7 @@ describe('SessionLifecycleService', () => {
     const srcDir = join(root, 'sessions', 'wd_stub', 'src');
     await mkdir(srcDir, { recursive: true });
     await writeFile(join(srcDir, 'marker'), 'src');
-    sections['subagent'] = { models: { 'provider/fast': 'fast and cheap' } };
+    sections['secondaryModel'] = { models: { 'provider/fast': 'fast and cheap' } };
 
     await expect(svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' })).rejects.toMatchObject({
       code: ErrorCodes.CONFIG_INVALID,

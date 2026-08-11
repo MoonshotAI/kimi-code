@@ -2,8 +2,8 @@
  * `subagent` domain — `ISessionSubagentModelsValidationService` implementation.
  *
  * Backstop for the session lifecycle's pre-materialization pool check:
- * validates the configured subagent model pool (`[subagent.models]` +
- * `[subagent].default_model`) once per session at scope construction
+ * validates the configured subagent model pool (`[secondary_model.models]` +
+ * `[secondary_model].default_model`) once per session at scope construction
  * (`ScopeActivation.OnScopeCreated`), so a broken pool fails session creation
  * with `Error2(CONFIG_INVALID)` even on paths that bypass the lifecycle
  * service. Reads the pool through `config` and resolves aliases through the

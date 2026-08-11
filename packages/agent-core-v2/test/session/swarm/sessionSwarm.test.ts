@@ -1180,7 +1180,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     );
   });
 
-  it('points at the [subagent.models] config when a spawn task binding is invalid', async () => {
+  it('points at the [secondary_model.models] config when a spawn task binding is invalid', async () => {
     const service = ix.get(ISessionSwarmService);
     const spawnTask: SessionSwarmSpawnTask = {
       ...spawnSessionTask('src/a.ts'),
@@ -1196,7 +1196,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     ).resolves.toMatchObject([
       {
         status: 'failed',
-        error: expect.stringContaining('comes from [subagent.models]'),
+        error: expect.stringContaining('comes from [secondary_model.models]'),
       },
     ]);
     expect(createAgent).not.toHaveBeenCalled();

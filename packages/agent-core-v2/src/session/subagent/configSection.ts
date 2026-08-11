@@ -1,21 +1,25 @@
 /**
- * `subagent` domain — subagent config-section schema, env binding, and
+ * `subagent` domain — subagent config-section schemas, env binding, and
  * timeout / model resolution.
  *
- * Owns the `[subagent]` configuration section (`timeout_ms`, `default_model`,
- * and the `[subagent.models]` table on disk) together with the
- * `KIMI_SUBAGENT_TIMEOUT_MS` env override (precedence: env > config.toml > 2h
- * default). While the env var is set, `stripEnvBoundFields` restores the
- * env-free raw value before persistence, so the override never leaks into
- * `config.toml`. Per-run timeouts resolve through `resolveSubagentTimeoutMs`,
- * and the timeout message renders with `formatSubagentTimeoutDescription`.
+ * Owns two on-disk sections:
  *
- * The model half of the spawn binding is the subagent model pool
- * (`[subagent.models]`: alias → description, with `[subagent].default_model`
- * naming the fallback). A `default_model` without a `[subagent.models]`
- * table stands on its own as an implicit single-entry pool (empty
- * description) — the minimal "secondary model" configuration. When a pool
- * is configured, newly spawned subagents
+ * - `[subagent]` — `timeout_ms`, together with the `KIMI_SUBAGENT_TIMEOUT_MS`
+ *   env override (precedence: env > config.toml > 2h default). While the env
+ *   var is set, `stripEnvBoundFields` restores the env-free raw value before
+ *   persistence, so the override never leaks into `config.toml`. Per-run
+ *   timeouts resolve through `resolveSubagentTimeoutMs`, and the timeout
+ *   message renders with `formatSubagentTimeoutDescription`. The pool keys
+ *   `default_model` / `models` are declared as deprecations on this section:
+ *   they moved to `[secondary_model]` and their values here no longer apply.
+ *
+ * - `[secondary_model]` — the subagent model pool: `default_model` names the
+ *   fallback model and the `[secondary_model.models]` table maps alias →
+ *   description. A `default_model` without a `[secondary_model.models]` table
+ *   stands on its own as an implicit single-entry pool (empty description) —
+ *   the minimal "secondary model" configuration.
+ *
+ * When a pool is configured, newly spawned subagents
  * bind to the pool's default model unless the parent model picks a pool alias
  * — or `primary` (`PRIMARY_SUBAGENT_MODEL_CHOICE`), the always-available
  * symbolic choice binding the caller's own model and thinking level — per
@@ -46,7 +50,7 @@
  * `- alias` line. Spawn failures are wrapped by `wrapSubagentModelError`:
  * when the bound model is not the caller's own and the catalog failed on
  * exactly that alias, the parent model gets guidance toward
- * `[subagent.models]` instead of a bare resolution error.
+ * `[secondary_model.models]` instead of a bare resolution error.
  * Cross-field pool validation is NOT part of the schema — it is enforced as
  * `Error2(CONFIG_INVALID)` by `assertValidSubagentModelPool` (run before
  * session materialization by the session lifecycle, with the Session-scope
@@ -76,14 +80,20 @@ import { registerConfigSection } from '#/app/config/configSectionContributions';
 import type { IModelCatalog } from '#/kosong/model/catalog';
 
 export const SUBAGENT_SECTION = 'subagent';
+export const SECONDARY_MODEL_SECTION = 'secondaryModel';
 
 export const SubagentConfigSchema = z.object({
   timeoutMs: z.number().int().min(0).optional(),
+});
+
+export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
+
+export const SecondaryModelConfigSchema = z.object({
   defaultModel: z.string().min(1).optional(),
   models: z.record(z.string(), z.string()).optional(),
 });
 
-export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
+export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
 
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
@@ -107,7 +117,13 @@ registerConfigSection(SUBAGENT_SECTION, SubagentConfigSchema, {
   defaultValue: { timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS },
   env: subagentEnvBindings,
   stripEnv: stripSubagentEnv,
+  deprecations: [
+    { key: 'default_model', replacement: 'secondary_model.default_model' },
+    { key: 'models', replacement: 'secondary_model.models' },
+  ],
 });
+
+registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema);
 
 export function resolveSubagentTimeoutMs(config: IConfigService): number {
   return (
@@ -124,7 +140,7 @@ export interface SubagentModelPool {
 }
 
 export function resolveSubagentModelPool(config: IConfigService): SubagentModelPool | undefined {
-  const section = config.get<SubagentConfig | undefined>(SUBAGENT_SECTION);
+  const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   if (section?.models !== undefined) {
     return { defaultModel: section.defaultModel, models: section.models };
   }
@@ -134,19 +150,19 @@ export function resolveSubagentModelPool(config: IConfigService): SubagentModelP
   return undefined;
 }
 
-export const SUBAGENT_DEFAULT_MODEL_REQUIRED_MESSAGE =
-  '[subagent].default_model is required when [subagent.models] is configured';
+export const SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE =
+  '[secondary_model].default_model is required when [secondary_model.models] is configured';
 
-export const SUBAGENT_PRIMARY_MODEL_RESERVED_MESSAGE = `[subagent.models] key "${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved: it always binds the caller's own model. Rename the pool entry.`;
+export const SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE = `[secondary_model.models] key "${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved: it always binds the caller's own model. Rename the pool entry.`;
 
 export function assertValidSubagentModelPool(
   pool: SubagentModelPool,
   modelCatalog: IModelCatalog,
 ): void {
   if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, SUBAGENT_PRIMARY_MODEL_RESERVED_MESSAGE, {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE, {
       details: {
-        section: SUBAGENT_SECTION,
+        section: SECONDARY_MODEL_SECTION,
         field: 'models',
         model: PRIMARY_SUBAGENT_MODEL_CHOICE,
       },
@@ -154,14 +170,14 @@ export function assertValidSubagentModelPool(
   }
   const aliases = Object.keys(pool.models);
   if (pool.defaultModel === undefined) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, SUBAGENT_DEFAULT_MODEL_REQUIRED_MESSAGE, {
-      details: { section: SUBAGENT_SECTION, field: 'defaultModel' },
+    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE, {
+      details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
     });
   }
   if (!Object.hasOwn(pool.models, pool.defaultModel)) {
     throw new Error2(
       ErrorCodes.CONFIG_INVALID,
-      `[subagent].default_model "${pool.defaultModel}" is not a [subagent.models] key. Available models: ${aliases.join(', ')}.`,
+      `[secondary_model].default_model "${pool.defaultModel}" is not a [secondary_model.models] key. Available models: ${aliases.join(', ')}.`,
       { details: { model: pool.defaultModel, availableModels: aliases } },
     );
   }
@@ -171,7 +187,7 @@ export function assertValidSubagentModelPool(
     } catch (error) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
-        `[subagent.models] entry "${alias}" could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
+        `[secondary_model.models] entry "${alias}" could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error, details: { model: alias } },
       );
     }
@@ -191,16 +207,16 @@ export function resolveSubagentBinding(
     if (requested !== undefined) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
-        `Invalid model "${requested}": no [subagent.models] pool is configured, so subagents inherit the caller's model (pass "primary" or omit the model parameter).`,
+        `Invalid model "${requested}": no [secondary_model.models] pool is configured, so subagents inherit the caller's model (pass "primary" or omit the model parameter).`,
         { details: { model: requested } },
       );
     }
     return { model: own.modelAlias, thinking: own.thinkingLevel };
   }
   if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, SUBAGENT_PRIMARY_MODEL_RESERVED_MESSAGE, {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE, {
       details: {
-        section: SUBAGENT_SECTION,
+        section: SECONDARY_MODEL_SECTION,
         field: 'models',
         model: PRIMARY_SUBAGENT_MODEL_CHOICE,
       },
@@ -208,8 +224,8 @@ export function resolveSubagentBinding(
   }
   const choice = requested ?? pool.defaultModel;
   if (choice === undefined) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, SUBAGENT_DEFAULT_MODEL_REQUIRED_MESSAGE, {
-      details: { section: SUBAGENT_SECTION, field: 'defaultModel' },
+    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE, {
+      details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
     });
   }
   if (!Object.hasOwn(pool.models, choice)) {
@@ -283,7 +299,7 @@ export function wrapSubagentModelError(
   if (error.details?.['model'] !== boundModel) return error;
   return new Error2(
     error.code,
-    `${error.message} (subagent model "${boundModel}" comes from [subagent.models] — check that it names a valid [models] entry)`,
+    `${error.message} (subagent model "${boundModel}" comes from [secondary_model.models] — check that it names a valid [models] entry)`,
     {
       cause: error,
       name: error.name,
@@ -291,7 +307,7 @@ export function wrapSubagentModelError(
         ...error.details,
         subagentModel: boundModel,
         subagentModelConfig: {
-          section: 'subagent.models',
+          section: 'secondary_model.models',
         },
       },
     },

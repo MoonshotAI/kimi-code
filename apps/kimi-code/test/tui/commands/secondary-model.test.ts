@@ -1,6 +1,6 @@
 /**
  * Scenario: /secondary-model command behavior in the interactive TUI.
- * Responsibilities: picker filtering, persistence of `[subagent] default_model`
+ * Responsibilities: picker filtering, persistence of `[secondary_model] default_model`
  * (keeping existing pool descriptions), and error paths.
  * Wiring: real command and selector with the SDK/session boundaries stubbed by a small host rig.
  * Run: pnpm -C apps/kimi-code exec vitest run test/tui/commands/secondary-model.test.ts
@@ -31,7 +31,7 @@ function model(name: string): ModelAlias {
 }
 
 function makeHost(options?: {
-  readonly subagent?: { defaultModel?: string; models?: Record<string, string> };
+  readonly secondaryModel?: { defaultModel?: string; models?: Record<string, string> };
 }) {
   const appState = {
     availableModels: {
@@ -56,7 +56,7 @@ function makeHost(options?: {
     harness: {
       getConfig: vi.fn(async () => ({
         providers: {},
-        subagent: options?.subagent,
+        secondaryModel: options?.secondaryModel,
       })),
       setConfig: vi.fn(async () => ({})),
     },
@@ -89,7 +89,7 @@ function mountedPicker(host: { mountEditorReplacement: ReturnType<typeof vi.fn> 
 
 describe('handleSecondaryModelCommand', () => {
   it('opens the picker filtered to user models, with the configured default as current', async () => {
-    const { host } = makeHost({ subagent: { defaultModel: 'cheap' } });
+    const { host } = makeHost({ secondaryModel: { defaultModel: 'cheap' } });
 
     await handleSecondaryModelCommand(host, '');
 
@@ -112,14 +112,14 @@ describe('handleSecondaryModelCommand', () => {
       expect(host.showStatus).toHaveBeenCalled();
     });
     expect(host.harness.setConfig).toHaveBeenCalledWith({
-      subagent: { defaultModel: 'k2' },
+      secondaryModel: { defaultModel: 'k2' },
     });
     expect(host.showError).not.toHaveBeenCalled();
   });
 
   it('adds the picked alias to an existing pool with an empty description', async () => {
     const { host } = makeHost({
-      subagent: {
+      secondaryModel: {
         defaultModel: 'cheap',
         models: { cheap: 'fast and cheap' },
       },
@@ -132,7 +132,7 @@ describe('handleSecondaryModelCommand', () => {
       expect(host.showStatus).toHaveBeenCalled();
     });
     expect(host.harness.setConfig).toHaveBeenCalledWith({
-      subagent: {
+      secondaryModel: {
         defaultModel: 'k2',
         models: { cheap: 'fast and cheap', k2: '' },
       },
@@ -141,7 +141,7 @@ describe('handleSecondaryModelCommand', () => {
 
   it('keeps existing pool descriptions and other pool entries on save', async () => {
     const { host } = makeHost({
-      subagent: {
+      secondaryModel: {
         defaultModel: 'cheap',
         models: { cheap: 'fast and cheap', k2: 'hard tasks' },
       },
@@ -154,7 +154,7 @@ describe('handleSecondaryModelCommand', () => {
       expect(host.showStatus).toHaveBeenCalled();
     });
     expect(host.harness.setConfig).toHaveBeenCalledWith({
-      subagent: {
+      secondaryModel: {
         defaultModel: 'k2',
         models: { cheap: 'fast and cheap', k2: 'hard tasks' },
       },

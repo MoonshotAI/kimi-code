@@ -53,6 +53,23 @@ describe('secondaryModelPatch', () => {
       secondaryModelPatch({ model: 'cheap', maxContextSize: 1024, defaultEffort: 'low' }),
     ).toEqual({ maxContextSize: 1024, defaultEffort: 'low' });
   });
+
+  it('excludes the v2 pool keys (defaultModel / models) from the patch', () => {
+    expect(
+      secondaryModelPatch({
+        model: 'cheap',
+        defaultModel: 'fast',
+        models: { fast: 'fast and cheap' },
+      }),
+    ).toBeUndefined();
+    expect(
+      secondaryModelPatch({
+        model: 'cheap',
+        defaultModel: 'fast',
+        maxOutputSize: 8192,
+      }),
+    ).toEqual({ maxOutputSize: 8192 });
+  });
 });
 
 describe('applySecondaryModelConfig', () => {

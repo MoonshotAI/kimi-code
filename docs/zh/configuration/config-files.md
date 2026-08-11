@@ -192,9 +192,77 @@ display_name = "Kimi for Coding (custom)"
 
 ## `secondary_model`
 
-次主力模型是主模型之外的第二个模型配置——通常是一个更便宜的模型，供不需要主模型能力的功能绑定使用。它目前的消费者是子 Agent 派生：设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；未设置时，子 Agent 继承主 Agent 的模型。
+次主力模型是主模型之外的第二个模型配置——通常是一个更便宜的模型，供不需要主模型能力的功能绑定使用。它目前的消费者是子 Agent 派生。两个引擎都会读取本节，但各取不同的键：
 
-本节由默认的 `kimi` / `kimi -p` 引擎读取；`agent-core-v2` 引擎（`kimi web` 及开启 `KIMI_CODE_EXPERIMENTAL_FLAG` 的路径）会忽略它——在 v2 引擎上请改用[子 Agent 模型池](#子-agent-模型池)。
+- `agent-core-v2` 引擎（`kimi web` 及开启 `KIMI_CODE_EXPERIMENTAL_FLAG` 的路径）读取[子 Agent 模型池](#子-agent-模型池)：`default_model` 与 `[secondary_model.models]` 表。
+- 默认的 `kimi` / `kimi -p` 引擎在次主力模型实验功能启用后读取[配方键](#次主力模型配方)（`model`、`default_effort` 及补丁字段）。
+
+### 子 Agent 模型池
+
+模型池仅由 `agent-core-v2` 引擎读取；默认的 `kimi` / `kimi -p` 引擎会忽略 `default_model` 和 `[secondary_model.models]`，子 Agent 模型按[配方键](#次主力模型配方)解析。
+
+只想让所有子 Agent 默认换用一个模型时不需要 models 表——一行 `default_model` 就是只含一个条目的模型池：
+
+```toml
+[secondary_model]
+default_model = "kimi-hs"
+```
+
+在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器来设置：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的子 Agent 立即按新默认值绑定，无需重启会话。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `default_model` | `string` | — | 子 Agent 默认模型。配置 `[secondary_model.models]` 时必填，且必须是其中的 key；单独写下它（不写 models 表）则等价于只含它一个条目的模型池 |
+| `models` | `table<string, string>` | — | 子 Agent 模型池。key 是 [`[models]`](#models) 中已配置条目的别名，value 是主 Agent 挑选子 Agent 模型时看到的描述（中英文均可；空字符串表示只列出别名、不给提示） |
+
+配置模型池（显式的 `[secondary_model.models]` 表，或仅一行 `default_model` 形成的隐式单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中会列出模型池（默认模型标注 `[default]`），主 Agent 可按次派生选择模型。模型本身的定义仍在 [`[models]`](#models) 中——模型池只引用它们，并附上挑选提示：
+
+```toml
+[models.k3]
+provider = "kimi"
+model = "k3"
+[models.kimi-hs]
+provider = "managed:kimi-code"
+model = "kimi-for-coding-highspeed"
+[models.fable]
+provider = "openai"
+model = "o4-mini"
+[models.codex]
+provider = "openai"
+model = "codex"
+
+[secondary_model]
+default_model = "kimi-hs"
+[secondary_model.models]
+k3 = "前端选它。擅长 React/Vue 组件、CSS、UI/UX 实现、交互逻辑和前端调试。"
+kimi-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
+fable = "难题选它。擅长复杂推理、算法设计、深度调试、数学和系统性难题。"
+codex = "后端选它。擅长 API 设计、数据库建模、服务端架构、业务逻辑实现。"
+```
+
+派生时按以下顺序解析子 Agent 的模型：工具调用显式传入的 `model` → `default_model`。`model` 参数接受池中任意别名，或 `"primary"` ——调用方自己正在运行的模型，始终合法，即使它不在池中。`default_model` 与 `[secondary_model.models]` 都未配置时，该参数不会出现，子 Agent 继承调用方模型。绑定池中别名时不携带显式 Thinking 档位——子 Agent 按 "全局 `[thinking]` 配置 → 所绑定模型的默认 effort" 自然解析，不继承调用方的档位；`"primary"` 则连模型带档位一起继承调用方。
+
+配置错误一律直接报错，不做静默回退：`default_model` 缺失、不是池中 key，或池中 key 无法解析到已配置的 `[models]` 条目时，会话的创建、恢复（resume）与 fork 都会在启动时直接失败。别名 `primary` 是保留字——它始终绑定调用方自己的模型——不能作为池中 key。工具调用传入的 `model` 既不是池中别名也不是 `"primary"` 时，本次派生报错并列出可选值。
+
+模型池键之前位于 `[subagent]` 下；遗留的 `[subagent] default_model` 或 `[subagent.models]` 表不再生效，并会以弃用警告的形式报告——按上文示例移入 `[secondary_model]` 即可。
+
+要把配方配置迁移到 v2 引擎，把模型别名改为池的默认模型即可：
+
+```toml
+# 旧
+[secondary_model]
+model = "kimi-hs"
+
+# 新
+[secondary_model]
+default_model = "kimi-hs"
+```
+
+旧的补丁字段（`default_effort`、`max_output_size` 等）在模型池中没有对应物——请把这些设置写到别名指向的 `[models]` 条目上，例如通过 [`[models."<alias>".overrides]`](#模型覆盖项)。配方键可以继续留在本节中：默认引擎会照常读取它们。
+
+### 次主力模型配方
+
+该读法由默认的 `kimi` / `kimi -p` 引擎使用；v2 引擎会忽略配方键。设置后，新派生的子 Agent（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；未设置时，子 Agent 继承主 Agent 的模型。
 
 这是默认绑定而非强制。实验功能启用后，`Agent` / `AgentSwarm` 工具会获得 `model` 参数（仅接受 `"secondary"` / `"primary"` 两个符号值），工具描述中也会列出可选模型并标注默认值。派生时按以下顺序解析子 Agent 的模型：工具调用显式传入的 `model` → 子 Agent profile 的 [`model_preference`](../customization/agents.md#agent-文件格式) → 已配置的次主力模型（默认）。其中 `"primary"` 指主 Agent 当前正在运行的模型，不一定是 `default_model`——例如会话中途用 `/model` 切换过模型。
 
@@ -285,71 +353,15 @@ max_output_size = 8192
 
 ## `subagent`
 
-`subagent` 控制派生子 Agent（`Agent` / `AgentSwarm`）的运行方式：`timeout_ms` 约束其最长运行时间，`default_model` 与 `[subagent.models]` 表则定义一个可选的模型池，供主 Agent 为每次派生挑选模型。
+`subagent` 控制派生子 Agent（`Agent` / `AgentSwarm`）的运行方式。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `timeout_ms` | `integer` | `7200000`（2 小时） | 单个子代理（`Agent` / `AgentSwarm`）允许运行的最长时间（毫秒）。超时后子代理以 `timed_out` 收尾。`0` 表示无超时——子代理一直运行到自行结束或被模型手动停止。该值是后台任务管理器对每个子代理任务的 per-task timeout，因此对前台与后台子代理同时生效。在 print 模式（`kimi -p`）下未显式设置时默认为 `0`。注意：超过 `2147483647`（约 24.8 天）的值会被运行时钳到约 24.8 天 |
-| `default_model` | `string` | — | 子 Agent 默认模型。配置 `[subagent.models]` 时必填，且必须是其中的 key；单独写下它（不写 models 表）则等价于只含它一个条目的模型池 |
-| `models` | `table<string, string>` | — | 子 Agent 模型池。key 是 [`[models]`](#models) 中已配置条目的别名，value 是主 Agent 挑选子 Agent 模型时看到的描述（中英文均可；空字符串表示只列出别名、不给提示） |
 
 `timeout_ms` 可被环境变量 `KIMI_SUBAGENT_TIMEOUT_MS` 覆盖，优先级高于配置文件。
 
-### 子 Agent 模型池
-
-模型池由 `agent-core-v2` 引擎读取（目前 `kimi web` 和开启 `KIMI_CODE_EXPERIMENTAL_FLAG` 的路径使用该引擎）；默认的 `kimi` / `kimi -p` 引擎会忽略 `default_model` 和 `[subagent.models]`，子 Agent 模型按 [`[secondary_model]`](#secondary-model) 解析。
-
-只想让所有子 Agent 默认换用一个模型时不需要 models 表——一行 `default_model` 就是只含一个条目的模型池：
-
-```toml
-[subagent]
-default_model = "kimi-hs"
-```
-
-在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令打开模型选择器来设置：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的子 Agent 立即按新默认值绑定，无需重启会话。
-
-配置模型池（显式的 `[subagent.models]` 表，或仅一行 `default_model` 形成的隐式单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中会列出模型池（默认模型标注 `[default]`），主 Agent 可按次派生选择模型。模型本身的定义仍在 [`[models]`](#models) 中——模型池只引用它们，并附上挑选提示：
-
-```toml
-[models.k3]
-provider = "kimi"
-model = "k3"
-[models.kimi-hs]
-provider = "managed:kimi-code"
-model = "kimi-for-coding-highspeed"
-[models.fable]
-provider = "openai"
-model = "o4-mini"
-[models.codex]
-provider = "openai"
-model = "codex"
-
-[subagent]
-default_model = "kimi-hs"
-[subagent.models]
-k3 = "前端选它。擅长 React/Vue 组件、CSS、UI/UX 实现、交互逻辑和前端调试。"
-kimi-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
-fable = "难题选它。擅长复杂推理、算法设计、深度调试、数学和系统性难题。"
-codex = "后端选它。擅长 API 设计、数据库建模、服务端架构、业务逻辑实现。"
-```
-
-派生时按以下顺序解析子 Agent 的模型：工具调用显式传入的 `model` → `default_model`。`model` 参数接受池中任意别名，或 `"primary"` ——调用方自己正在运行的模型，始终合法，即使它不在池中。`default_model` 与 `[subagent.models]` 都未配置时，该参数不会出现，子 Agent 继承调用方模型。绑定池中别名时不携带显式 Thinking 档位——子 Agent 按 "全局 `[thinking]` 配置 → 所绑定模型的默认 effort" 自然解析，不继承调用方的档位；`"primary"` 则连模型带档位一起继承调用方。
-
-配置错误一律直接报错，不做静默回退：`default_model` 缺失、不是池中 key，或池中 key 无法解析到已配置的 `[models]` 条目时，会话的创建、恢复（resume）与 fork 都会在启动时直接失败。别名 `primary` 是保留字——它始终绑定调用方自己的模型——不能作为池中 key。工具调用传入的 `model` 既不是池中别名也不是 `"primary"` 时，本次派生报错并列出可选值。
-
-v2 引擎会忽略遗留的 [`[secondary_model]`](#secondary-model) 配置；迁移时把模型别名移入模型池并设为默认：
-
-```toml
-# 旧
-[secondary_model]
-model = "kimi-hs"
-
-# 新
-[subagent]
-default_model = "kimi-hs"
-```
-
-旧的补丁字段（`default_effort`、`max_output_size` 等）在模型池中没有对应物——请把这些设置写到别名指向的 `[models]` 条目上，例如通过 [`[models."<alias>".overrides]`](#模型覆盖项)。
+之前在此配置的模型池（`default_model`、`[subagent.models]`）已移至 `[secondary_model]` 下的[子 Agent 模型池](#子-agent-模型池)；旧键不再生效，并会以弃用警告的形式报告。
 
 ## `mcp`
 

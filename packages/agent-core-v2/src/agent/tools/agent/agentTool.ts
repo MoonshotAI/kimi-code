@@ -11,7 +11,7 @@
  * detach), and terminal text formatting.
  *
  * Spawn bindings use the explicit tool `model` choice first, before
- * `resolveSubagentBinding` falls back to the configured `[subagent.models]`
+ * `resolveSubagentBinding` falls back to the configured `[secondary_model.models]`
  * pool default or the caller's model. The selected alias is
  * resolved through the model catalog before lifecycle allocation. A resumed
  * agent keeps the model recorded in its own wire journal — with per-subagent

@@ -7,7 +7,7 @@
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; no provider calls.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -288,6 +288,32 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       // Sections absent from the write stay untouched.
       expect(next.providers['a']).toBeDefined();
       expect(next.models?.['a/m1']).toBeDefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('round-trips the secondaryModel pool field to the [secondary_model] config section', async () => {
+    const { harness, homeDir } = await makeHarness();
+    try {
+      await harness.setConfig({
+        secondaryModel: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap' },
+        },
+      });
+
+      const toml = await readFile(join(homeDir, 'config.toml'), 'utf-8');
+      expect(toml).toContain('[secondary_model]');
+      expect(toml).toContain('default_model');
+      expect(toml).toContain('[secondary_model.models]');
+      expect(toml).not.toContain('[subagent.models]');
+
+      const reread = await harness.getConfig({ reload: true });
+      expect(reread.secondaryModel).toEqual({
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap' },
+      });
     } finally {
       await harness.close();
     }

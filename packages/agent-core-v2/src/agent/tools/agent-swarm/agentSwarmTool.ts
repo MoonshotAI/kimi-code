@@ -13,7 +13,7 @@
  * threads it through the swarm tasks; otherwise binding is left to the
  * service, which keeps its own "no model bound" check and inherit-caller
  * fallback. The advertised `model` parameter lists the configured
- * `[subagent.models]` pool via `buildSubagentModelDescriptions`. Swarm mode is
+ * `[secondary_model.models]` pool via `buildSubagentModelDescriptions`. Swarm mode is
  * entered through `IAgentSwarmService`; the caller's agent id comes from
  * `IAgentScopeContext`. Pure tool — owns no scoped state.
  *

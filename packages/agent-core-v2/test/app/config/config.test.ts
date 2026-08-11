@@ -88,9 +88,12 @@ import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   resolveSubagentBinding,
+  resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
+  SECONDARY_MODEL_SECTION,
   SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
+  type SecondaryModelConfig,
   type SubagentConfig,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
@@ -1198,6 +1201,31 @@ describe('config deprecations', () => {
     disposables.dispose();
   });
 
+  it('warns and ignores the legacy [subagent] pool keys, which moved to [secondary_model]', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[subagent]\ndefault_model = "provider/fast"\n\n[subagent.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+
+    // The old values no longer apply — the pool only resolves from
+    // [secondary_model] now.
+    expect(resolveSubagentModelPool(config)).toBeUndefined();
+    expect(config.diagnostics()).toContainEqual({
+      domain: SUBAGENT_SECTION,
+      severity: 'warning',
+      message:
+        "[subagent] 'default_model' is deprecated and no longer used; rename it to 'secondary_model.default_model'. Run /update-config to fix it.",
+    });
+    expect(config.diagnostics()).toContainEqual({
+      domain: SUBAGENT_SECTION,
+      severity: 'warning',
+      message:
+        "[subagent] 'models' is deprecated and no longer used; rename it to 'secondary_model.models'. Run /update-config to fix it.",
+    });
+
+    disposables.dispose();
+  });
+
   it('lets the replacement key win when both are present, still warning', async () => {
     const { config, disposables } = await createConfig(
       {},
@@ -1716,13 +1744,13 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
-  it('reads default_model and [subagent.models] from config.toml', async () => {
+  it('reads default_model and [secondary_model.models] from config.toml', async () => {
     const { config, disposables } = await createConfig(
       {},
-      '[subagent]\ndefault_model = "provider/fast"\n\n[subagent.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = ""\n',
+      '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = ""\n',
     );
 
-    expect(config.get<SubagentConfig>(SUBAGENT_SECTION)).toEqual({
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
       defaultModel: 'provider/fast',
       models: { 'provider/fast': 'fast and cheap', 'provider/smart': '' },
     });
@@ -1746,7 +1774,7 @@ describe('subagent config section', () => {
 
     const pool = await createConfig(
       {},
-      '[subagent]\ndefault_model = "provider/fast"\n\n[subagent.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = "hard tasks"\n',
+      '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = "hard tasks"\n',
     );
     // An omitted model falls back to the pool default; pool bindings carry no
     // explicit thinking (the subagent resolves thinking naturally).
@@ -1771,7 +1799,7 @@ describe('subagent config section', () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig(
       {},
-      '[subagent]\ndefault_model = "provider/fast"\n',
+      '[secondary_model]\ndefault_model = "provider/fast"\n',
     );
 
     // An omitted model falls back to the default; pool bindings carry no
@@ -1796,7 +1824,7 @@ describe('subagent config section', () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig(
       {},
-      '[subagent]\ndefault_model = "provider/fast"\n\n[subagent.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = "hard tasks"\n',
+      '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = "hard tasks"\n',
     );
 
     let caught: unknown;
@@ -1819,7 +1847,7 @@ describe('subagent config section', () => {
     const { config, disposables } = await createConfig({});
 
     expect(() => resolveSubagentBinding(config, own, 'provider/fast')).toThrow(
-      /Invalid model "provider\/fast": no \[subagent\.models\] pool is configured/,
+      /Invalid model "provider\/fast": no \[secondary_model\.models\] pool is configured/,
     );
 
     disposables.dispose();
@@ -1836,12 +1864,12 @@ describe('subagent config section', () => {
 
     expect(toErrorPayload(result)).toMatchObject({
       code: ErrorCodes.CONFIG_INVALID,
-      message: expect.stringContaining('comes from [subagent.models]'),
+      message: expect.stringContaining('comes from [secondary_model.models]'),
       details: {
         model: 'provider/bad',
         subagentModel: 'provider/bad',
         subagentModelConfig: {
-          section: 'subagent.models',
+          section: 'secondary_model.models',
         },
       },
       cause: {

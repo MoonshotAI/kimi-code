@@ -38,6 +38,7 @@ const KIMI_CONFIG_DOMAINS = [
   'loopControl',
   'background',
   'subagent',
+  'secondaryModel',
   'mcp',
   'image',
   'modelCatalog',

@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (24 sections · 2 overlay(s))
+# Index (25 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/app/skillCatalog/configSection.ts
 #   cron                     src/app/cron/configSection.ts
@@ -27,6 +27,7 @@
 #   models                   src/app/kosongConfig/configSection.ts
 #   permission               src/agent/permissionRules/configSection.ts
 #   providers                src/app/kosongConfig/configSection.ts
+#   secondaryModel           src/session/subagent/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
 #   task                     src/agent/task/configSection.ts
@@ -315,6 +316,16 @@ merge_all_available_skills = true
   # source: record<string, any>
 
 # ##########################################################################
+# secondaryModel (config.toml: secondary_model)
+#   owner: src/session/subagent/configSection.ts
+#   scope: core
+# ##########################################################################
+
+[secondary_model]
+# default_model: string
+# models: record<string, string>
+
+# ##########################################################################
 # services
 #   owner: src/app/auth/configSection.ts
 #   scope: core
@@ -351,14 +362,15 @@ merge_all_available_skills = true
 #   owner: src/session/subagent/configSection.ts
 #   scope: core
 #   hooks: stripEnv
+#   deprecations (old key is ignored + warns; rename manually):
+#     default_model -> secondary_model.default_model
+#     models -> secondary_model.models
 #   env:
 #     timeout_ms <- KIMI_SUBAGENT_TIMEOUT_MS (custom parse)
 # ##########################################################################
 
 [subagent]
 timeout_ms = 7200000
-# default_model: string
-# models: record<string, string>
 
 # ##########################################################################
 # task

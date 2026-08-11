@@ -37,15 +37,17 @@ function trimmed(value: string | undefined): string | undefined {
 }
 
 /**
- * The patch half of the recipe: every field except `model`. Returns
- * `undefined` when no patch field is set — the signal that subagents bind the
- * pointed entry directly and no derived entry is synthesized.
+ * The patch half of the recipe: every field except `model` and the v2 pool
+ * keys (`defaultModel` / `models`, which live in the same section but are not
+ * model overrides). Returns `undefined` when no patch field is set — the
+ * signal that subagents bind the pointed entry directly and no derived entry
+ * is synthesized.
  */
 export function secondaryModelPatch(
   secondary: SecondaryModelConfig | undefined,
 ): ModelAliasOverrides | undefined {
   if (secondary === undefined) return undefined;
-  const { model: _model, ...rawPatch } = secondary;
+  const { model: _model, defaultModel: _defaultModel, models: _models, ...rawPatch } = secondary;
   const patch = Object.fromEntries(
     Object.entries(rawPatch).filter(([, value]) => value !== undefined),
   ) as ModelAliasOverrides;
