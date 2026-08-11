@@ -320,7 +320,6 @@ watch(contentKind, (kind) => {
 const imageSrc = computed<string | null>(() => {
   const f = props.file;
   if (!f || contentKind.value !== 'image') return null;
-  if (f.sourceUrl) return f.sourceUrl;
   if (f.encoding === 'base64') return `data:${f.mime};base64,${f.content}`;
   if (f.mime === 'image/svg+xml') {
     return `data:${f.mime};charset=utf-8,${encodeURIComponent(f.content)}`;

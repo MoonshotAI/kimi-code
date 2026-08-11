@@ -23,7 +23,6 @@ export default {
   uploadFailed: '上传失败',
   attachFile: '添加附件',
   previewAttachment: '预览 {name}',
-  previewZoom: '缩放',
   interrupt: '中断',
   interruptTitle: '中断当前操作',
   expandTitle: '展开输入框进行多行编辑',

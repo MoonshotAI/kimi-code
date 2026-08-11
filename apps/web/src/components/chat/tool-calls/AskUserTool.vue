@@ -19,7 +19,7 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
-import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
+import type { FilePreviewRequest, OpenMediaRequest, ToolCall } from '../../../types';
 import { toolLabel } from '../../../lib/toolMeta';
 import {
   answerFor,
@@ -33,7 +33,7 @@ import OutputPanel from './OutputPanel.vue';
 const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
 
 defineEmits<{
-  openMedia: [media: ToolMedia];
+  openMedia: [payload: OpenMediaRequest];
   openFile: [target: FilePreviewRequest];
 }>();
 

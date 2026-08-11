@@ -6,7 +6,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
+import type { FilePreviewRequest, OpenMediaRequest, ToolCall } from '../../../types';
 import { toolChip, toolGlyph, toolLabel, toolSummary } from '../../../lib/toolMeta';
 import ToolDisclosure from './ToolDisclosure.vue';
 import OutputPanel from './OutputPanel.vue';
@@ -14,7 +14,7 @@ import OutputPanel from './OutputPanel.vue';
 const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
 
 defineEmits<{
-  openMedia: [media: ToolMedia];
+  openMedia: [payload: OpenMediaRequest];
   openFile: [target: FilePreviewRequest];
 }>();
 

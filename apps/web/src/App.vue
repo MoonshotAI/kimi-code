@@ -11,6 +11,7 @@ import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';
 import SideChatPanel from './components/chat/SideChatPanel.vue';
 import DiffView from './components/chat/DiffView.vue';
 import TurnDiffPanel from './components/chat/TurnDiffPanel.vue';
+import MediaLightbox from './components/chat/MediaLightbox.vue';
 import ModelPicker from './components/settings/ModelPicker.vue';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
@@ -29,7 +30,7 @@ import { useKimiWebClient } from './composables/useKimiWebClient';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import type { PromptAttachment } from './composables/useKimiWebClient';
-import type { TurnAttachment } from './types';
+import type { OpenMediaRequest, ToolMedia, TurnAttachment } from './types';
 import { usePageTitle } from '@moonshot-ai/app-client/composables';
 import { useSidebarLayout } from '@moonshot-ai/app-client/composables';
 import { useFilePreview, type DetailTarget } from '@moonshot-ai/app-client/composables';
@@ -248,7 +249,6 @@ const {
   previewDownloadUrl,
   previewExternalActions,
   openFilePreview,
-  openMediaPreview,
   closeFilePreview,
   openPreviewInEditor,
   revealPreviewFile,
@@ -256,7 +256,6 @@ const {
   client,
   detailTarget,
   t: (key, params) => (params === undefined ? t(key) : t(key, params)),
-  api: getKimiWebApi(),
 });
 
 // True while the right-side slot is actually occupied, so the sidebar reserves
@@ -264,6 +263,18 @@ const {
 // (the real occupant) rather than previewTarget, which can stay set after the
 // panel is hidden.
 const previewOpen = computed(() => detailTarget.value !== null);
+
+// Floating preview for tool-card media (ReadMediaFile image/video): the same
+// MediaLightbox user-bubble attachments get — PhotoSwipe for images (zooming
+// out of the clicked thumbnail), the custom modal player for videos.
+const mediaLightbox = ref<ToolMedia | null>(null);
+/** The clicked thumbnail <img> — the image preview's zoom origin (PhotoSwipe). */
+const mediaLightboxImg = ref<HTMLImageElement | null>(null);
+
+function onOpenMedia(payload: OpenMediaRequest): void {
+  mediaLightboxImg.value = payload.originImg ?? null;
+  mediaLightbox.value = payload.media;
+}
 
 // ---------------------------------------------------------------------------
 // Layout: resizable session column. ResizeHandle owns the column width (with
@@ -1060,7 +1071,7 @@ function openPr(url: string): void {
       @pick-model="openModelPicker()"
       @select-model="handleComposerSelectModel($event)"
       @open-file="openFilePreview($event)"
-      @open-media="openMediaPreview($event)"
+      @open-media="onOpenMedia"
       @open-turn-diff="openTurnDiff($event)"
       @open-compaction="openCompactionPanel($event)"
       @open-agent="openAgentPanel($event)"
@@ -1150,7 +1161,7 @@ function openPr(url: string): void {
         @load-older-messages="loadOlderAgentMessages"
         @open-agent="openAgentPanel"
         @open-file="openFilePreview"
-        @open-media="openMediaPreview"
+        @open-media="onOpenMedia"
         @open-turn-diff="openTurnDiff($event)"
       />
       <SideChatPanel
@@ -1160,6 +1171,7 @@ function openPr(url: string): void {
         :sending="client.sideChatSending.value"
         @send="client.sendSideChatPrompt($event)"
         @close="closeSideChat"
+        @open-media="onOpenMedia"
       />
       <DiffView
         v-else-if="detailTarget === 'diff'"
@@ -1364,6 +1376,17 @@ function openPr(url: string): void {
       :on-cancel-o-auth-login="handleCancelOAuthLogin"
       @success="handleLoginSuccess"
       @close="showLogin = false"
+    />
+    <!-- Floating preview for tool-card media (image/video). The component
+         teleports its own overlays, so mounting inside `.app` is safe. -->
+    <MediaLightbox
+      v-if="mediaLightbox"
+      :media="mediaLightbox"
+      :origin-img="mediaLightboxImg"
+      @close="
+        mediaLightbox = null;
+        mediaLightboxImg = null;
+      "
     />
   </div>
 </template>

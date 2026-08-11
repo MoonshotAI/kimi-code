@@ -11,7 +11,7 @@
 <script setup lang="ts">
 import { computed, inject, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
+import type { FilePreviewRequest, OpenMediaRequest, ToolCall } from '../../../types';
 import type { AppSubagentPhase } from '../../../api/types';
 import type { SwarmMember } from '@moonshot-ai/app-core/client';
 import { toolLabel } from '../../../lib/toolMeta';
@@ -24,7 +24,7 @@ const { t } = useI18n();
 const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
 
 const emit = defineEmits<{
-  openMedia: [media: ToolMedia];
+  openMedia: [payload: OpenMediaRequest];
   openFile: [target: FilePreviewRequest];
   openAgent: [agentId: string];
 }>();

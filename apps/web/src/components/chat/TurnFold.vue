@@ -34,7 +34,7 @@ import ToolCall from './ToolCall.vue';
 import NotificationCard from './NotificationCard.vue';
 import { formatDuration, renderBlockKey, turnWorkMs } from '../chatTurnRendering';
 import type { AssistantRenderBlock } from '../chatTurnRendering';
-import type { FilePreviewRequest, ToolMedia } from '../../types';
+import type { FilePreviewRequest, OpenMediaRequest } from '../../types';
 
 const props = withDefaults(
   defineProps<{
@@ -75,7 +75,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  openMedia: [media: ToolMedia];
+  openMedia: [payload: OpenMediaRequest];
   openFile: [target: FilePreviewRequest];
   openAgent: [toolCallId: string];
 }>();

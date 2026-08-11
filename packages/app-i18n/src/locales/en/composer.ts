@@ -23,7 +23,6 @@ export default {
   uploadFailed: 'Upload failed',
   attachFile: 'Attach file',
   previewAttachment: 'Preview {name}',
-  previewZoom: 'Zoom',
   interrupt: 'Interrupt',
   interruptTitle: 'Interrupt current operation',
   expandTitle: 'Expand input for multi-line editing',

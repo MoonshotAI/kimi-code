@@ -1,14 +1,15 @@
 <!-- apps/kimi-web/src/components/chat/SideChatPanel.vue -->
 <!-- BTW "side chat": a side-channel agent rendered in the right-side panel.
      It keeps the parent's context without creating a sidebar session. Reuses
-     ChatPane for the transcript; its panel-open emits are no-ops here. -->
+     ChatPane for the transcript; its panel-open emits are no-ops here, except
+     openMedia which is forwarded so tool media still opens the lightbox. -->
 <script setup lang="ts">
 import { computed, nextTick, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatPane from './ChatPane.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
 import { Icon, PanelHeader, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
-import type { ChatTurn } from '../../types';
+import type { ChatTurn, OpenMediaRequest } from '../../types';
 
 const props = defineProps<{
   turns: ChatTurn[];
@@ -21,6 +22,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   send: [text: string];
   close: [];
+  openMedia: [payload: OpenMediaRequest];
 }>();
 
 const { t } = useI18n();
@@ -131,6 +133,7 @@ function autosize(): void {
         :turn-active="running"
         :working="sending || running"
         :turn-files-interactive="false"
+        @open-media="emit('openMedia', $event)"
       />
       <div v-if="showLoading" class="sc-loading">
         <WorkingIndicator :label="t('conversation.requesting')" />

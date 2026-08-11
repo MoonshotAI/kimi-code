@@ -1,17 +1,21 @@
 <!-- apps/web/src/components/chat/MediaLightbox.vue
-     Preview entry for media attachments — the sent-message thumbnails and the
-     composer's pending-attachment strip both open here. Two implementations
-     behind one component:
-       - image: PhotoSwipe (lib/mediaPreview.ts) — the preview zooms out of
-         the clicked thumbnail (which also donates its already-loaded bytes
-         and natural dimensions) and shrinks back on close. This component is
-         then just a lifecycle host: it mounts, launches, and renders nothing.
-       - video: the custom modal below — teleports to <body> (no ancestor's
-         overflow or container-type can clip it or capture its fixed geometry)
-         and registers with the shared dialog stack (openDialogCount) — App's
-         side-panel Esc handler and the conversation's Esc-interrupt both defer
-         to open overlays, so a plain window-level Esc handler owns the key
-         while the preview is up (same pattern as the app-ui Dialog primitive).
+     Preview entry for media attachments — the sent-message thumbnails, the
+     composer's pending-attachment strip, and ReadMedia tool cards all open
+     here. Two implementations behind one component:
+       - image: PhotoSwipe (@moonshot-ai/app-client's lib/mediaPreview.ts) —
+         the preview zooms out of the clicked thumbnail (which also donates
+         its already-loaded bytes and natural dimensions). PhotoSwipe's own
+         top bar is disabled, so this component renders the shared close
+         button over it.
+       - video: the custom modal below.
+     Both share the same scrim and the same close button, fixed at the
+     viewport's top-right. The preview teleports to <body> (no ancestor's
+     overflow or container-type can clip it or capture its fixed geometry)
+     and registers with the shared dialog stack (openDialogCount) — App's
+     side-panel Esc handler and the conversation's Esc-interrupt both defer
+     to open overlays, so the video modal's window-level Esc handler owns the
+     key while it is up (same pattern as the app-ui Dialog primitive), while
+     images let PhotoSwipe's own escKey handling own it.
      Bytes come through AuthMedia so file-store media loads with auth; local
      object URLs (composer drafts) pass through. -->
 <script setup lang="ts">
@@ -46,6 +50,11 @@ const dialogLabel = computed(
 
 const overlayRef = ref<HTMLElement | null>(null);
 const closeRef = ref<HTMLButtonElement | null>(null);
+/** Images: the close button shows only once PhotoSwipe is actually up —
+ *  during the resolve gap (blob fetch / dim probe) there is no scrim or Esc
+ *  ownership yet, so a floating button would hover over an interactive
+ *  transcript. */
+const imageOpened = ref(false);
 let previouslyFocused: HTMLElement | null = null;
 let cancelImagePreview: (() => void) | null = null;
 
@@ -84,7 +93,9 @@ onMounted(() => {
       api: getKimiWebApi(),
       media: props.media,
       thumbImg: props.originImg ?? null,
-      labels: { close: t('model.close'), zoom: t('composer.previewZoom') },
+      onOpen: () => {
+        imageOpened.value = true;
+      },
       onClose: () => emit('close'),
     });
     return;
@@ -108,9 +119,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- Image previews live entirely inside PhotoSwipe's own root. -->
-  <Teleport v-if="!isImage" to="body">
+  <!-- Both previews share the same close button at the same spot — the image
+       side runs PhotoSwipe with its own top bar disabled. -->
+  <Teleport to="body">
     <div
+      v-if="!isImage"
       ref="overlayRef"
       class="media-lightbox"
       role="dialog"
@@ -118,20 +131,20 @@ onBeforeUnmount(() => {
       :aria-label="dialogLabel"
       @mousedown.self="emit('close')"
     >
+      <Tooltip :text="t('model.close')">
+        <button
+          ref="closeRef"
+          type="button"
+          class="media-lightbox-close"
+          :aria-label="t('model.close')"
+          @click="emit('close')"
+        >
+          <Icon name="close" size="sm" />
+        </button>
+      </Tooltip>
+      <!-- Frame clips the media (and a video's native controls) to the corner
+           radius — a bare element would let controls square off the corners. -->
       <div class="media-lightbox-card">
-        <Tooltip :text="t('model.close')">
-          <button
-            ref="closeRef"
-            type="button"
-            class="media-lightbox-close"
-            :aria-label="t('model.close')"
-            @click="emit('close')"
-          >
-            <Icon name="close" size="sm" />
-          </button>
-        </Tooltip>
-        <!-- Frame clips the media (and a video's native controls) to the corner
-             radius — a bare element would let controls square off the corners. -->
         <div class="media-lightbox-frame">
           <AuthMedia
             :url="media.url"
@@ -144,6 +157,16 @@ onBeforeUnmount(() => {
         <div v-if="caption" class="media-lightbox-name">{{ caption }}</div>
       </div>
     </div>
+    <Tooltip v-else-if="imageOpened" :text="t('model.close')">
+      <button
+        type="button"
+        class="media-lightbox-close"
+        :aria-label="t('model.close')"
+        @click="emit('close')"
+      >
+        <Icon name="close" size="sm" />
+      </button>
+    </Tooltip>
   </Teleport>
 </template>
 
@@ -156,10 +179,10 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: var(--space-6);
-  background: var(--color-scrim);
+  /* Same backdrop as the PhotoSwipe image preview (--pswp-bg). */
+  background: var(--color-scrim-strong);
 }
 .media-lightbox-card {
-  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -188,13 +211,16 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Close affordance: a raised-surface 36px circle (tokened, matches the
-   thumbnail play badge) plus a ::before halo stretching the hit area to ~48px,
-   so it stays easy to click without visually growing the button. */
+/* Close affordance — shared by both previews (PhotoSwipe's own top bar is
+   disabled): a raised-surface 36px circle (tokened, matches the thumbnail
+   play badge) fixed at the viewport's top-right, plus a ::before halo
+   stretching the hit area to ~48px, so it stays easy to click without
+   visually growing the button. On the above-modal rung so neither the
+   PhotoSwipe root nor the video scrim (both --z-modal) can cover it. */
 .media-lightbox-close {
-  position: absolute;
-  top: calc(var(--space-3) * -1);
-  right: calc(var(--space-3) * -1);
+  position: fixed;
+  top: var(--space-4);
+  right: var(--space-6);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -207,7 +233,7 @@ onBeforeUnmount(() => {
   color: var(--color-text);
   box-shadow: var(--shadow-sm);
   cursor: pointer;
-  z-index: 1;
+  z-index: var(--z-modal-dropdown);
 }
 .media-lightbox-close::before {
   content: '';

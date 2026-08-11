@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { Badge, PanelHeader } from '@moonshot-ai/app-ui';
 
 import { useFollowScroll } from '@moonshot-ai/app-client/composables';
-import type { AgentMember, ChatTurn, FilePreviewRequest, ToolMedia } from '../../types';
+import type { AgentMember, ChatTurn, FilePreviewRequest, OpenMediaRequest } from '../../types';
 import type { TurnFileChange } from '../chatTurnRendering';
 import ChatPane from './ChatPane.vue';
 import OutputPanel from './tool-calls/OutputPanel.vue';
@@ -26,7 +26,7 @@ const emit = defineEmits<{
   loadOlderMessages: [];
   openAgent: [agentId: string];
   openFile: [target: FilePreviewRequest];
-  openMedia: [media: ToolMedia];
+  openMedia: [payload: OpenMediaRequest];
   openTurnDiff: [change: TurnFileChange];
 }>();
 

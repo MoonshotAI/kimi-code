@@ -1,7 +1,7 @@
 <!-- apps/web/src/components/chat/ToolCall.vue -->
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../types';
+import type { FilePreviewRequest, OpenMediaRequest, ToolCall } from '../../types';
 import { resolveToolRenderer } from './tool-calls/toolRegistry';
 
 const props = withDefaults(
@@ -13,7 +13,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  openMedia: [media: ToolMedia];
+  openMedia: [payload: OpenMediaRequest];
   openFile: [target: FilePreviewRequest];
   openAgent: [toolCallId: string];
 }>();

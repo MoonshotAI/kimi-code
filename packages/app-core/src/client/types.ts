@@ -8,7 +8,6 @@ export interface FileData {
   content: string;
   encoding: 'utf-8' | 'base64';
   mime: string;
-  sourceUrl?: string;
   languageId?: string;
   isBinary: boolean;
   size: number;
@@ -133,6 +132,15 @@ export interface ToolMedia {
   /** File-store id when the media is an uploaded file. The preview fetches its
    *  bytes with the Bearer credential (a bare getFileUrl src 401s in <img>). */
   fileId?: string;
+}
+
+/** Payload of the `openMedia` event chain (tool cards → App): opens the
+ *  floating MediaLightbox preview. */
+export interface OpenMediaRequest {
+  media: ToolMedia;
+  /** The clicked thumbnail <img> — the image preview's zoom origin (and byte
+   *  source) for PhotoSwipe; null for videos or when no thumbnail resolved. */
+  originImg?: HTMLImageElement | null;
 }
 
 export type AgentPhase = 'queued' | 'working' | 'suspended' | 'completed' | 'failed';

@@ -28,7 +28,7 @@ import ThinkingBlock from './ThinkingBlock.vue';
 import ToolCall from './ToolCall.vue';
 import { formatDuration, toolStackKey } from '../chatTurnRendering';
 import type { ActivityItem } from '../chatTurnRendering';
-import type { FilePreviewRequest, ToolMedia } from '../../types';
+import type { FilePreviewRequest, OpenMediaRequest } from '../../types';
 import { summarizeActivity, summarizeLive } from '../../lib/activitySummary';
 import type { SummaryClause, SummaryTone } from '../../lib/activitySummary';
 import { toolIconName } from '../../lib/toolMeta';
@@ -46,7 +46,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  openMedia: [media: ToolMedia];
+  openMedia: [payload: OpenMediaRequest];
   openFile: [target: FilePreviewRequest];
   openAgent: [toolCallId: string];
 }>();

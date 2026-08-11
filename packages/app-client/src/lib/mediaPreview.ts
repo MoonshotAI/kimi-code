@@ -10,8 +10,10 @@
 // The instance registers with the shared dialog stack (openDialogCount) while
 // open — App's side-panel Esc handler and the conversation's Esc-interrupt
 // defer to open overlays, and PhotoSwipe's own escKey handling owns the key.
-// UI is the library default (top-bar close/zoom, tap toggles controls);
-// styling is limited to tokens (backdrop, caption) plus the file-name caption.
+// PhotoSwipe's own top bar is disabled (close/zoom: false) — MediaLightbox
+// renders the shared close button instead; zoom stays available via wheel,
+// pinch, and image click. Styling is limited to tokens (backdrop) plus the
+// file-name caption.
 import PhotoSwipe from 'photoswipe';
 import 'photoswipe/style.css';
 import './mediaPreview.css';
@@ -26,7 +28,10 @@ export interface ImagePreviewOptions {
   /** The clicked thumbnail <img>; null (e.g. unresolved src) means no zoom
    *  origin — the preview fades in from the blob-fetch/url fallback. */
   thumbImg: HTMLImageElement | null;
-  labels: { close: string; zoom: string };
+  /** Fired when the opening transition starts (scrim up, dialog stack
+   *  registered) — the host shows its close button from this point, never
+   *  during the resolve gap before PhotoSwipe mounts. */
+  onOpen?: () => void;
   onClose: () => void;
 }
 
@@ -71,6 +76,26 @@ async function resolveImage(api: Pick<KimiWebApi, 'getFileBlob'>, media: ToolMed
   return { src, ...dims, objectUrl };
 }
 
+/** The preview's slide-area inset, derived from the spacing tokens (read as
+ *  px; `read` is injectable for tests). Sides are --space-6, matching the
+ *  video modal's viewport inset; top/bottom add --space-8 so a
+ *  viewport-filling image clears the 36px close button (resting at --space-4)
+ *  and the caption strip instead of sliding under them. */
+export function previewPadding(read: (name: string) => string): {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+} {
+  const px = (name: string, fallback: number): number => {
+    const value = parseFloat(read(name));
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
+  const side = px('--space-6', 24);
+  const vertical = px('--space-8', 32) + side;
+  return { top: vertical, bottom: vertical, left: side, right: side };
+}
+
 /** Opens the preview; returns a cancel fn for the host component's unmount.
  *  Resolution failures call onClose without opening so the parent state resets. */
 export function openImagePreview(opts: ImagePreviewOptions): () => void {
@@ -108,14 +133,22 @@ export function openImagePreview(opts: ImagePreviewOptions): () => void {
       arrowPrev: false,
       arrowNext: false,
       counter: false,
-      close: true,
-      zoom: true,
+      // No library top-bar buttons — MediaLightbox renders the shared close
+      // button; zoom stays on wheel / pinch / image click.
+      close: false,
+      zoom: false,
       wheelToZoom: true,
       escKey: true,
-      closeTitle: opts.labels.close,
-      zoomTitle: opts.labels.zoom,
+      // The shared close button lives OUTSIDE the PhotoSwipe root, so the
+      // library's focus trap (which redirects every focusin back into the
+      // root) would make it unreachable by keyboard.
+      trapFocus: false,
       // --pswp-bg (a scrim token) already carries its alpha.
       bgOpacity: 1,
+      // Inset the slide area from the spacing tokens (see previewPadding) so
+      // a viewport-filling image never kisses the edges or slides under the
+      // close button / caption.
+      padding: previewPadding((name) => getComputedStyle(document.documentElement).getPropertyValue(name)),
     });
     // A detached thumbnail (turn unloaded / strip re-rendered) has no usable
     // bounds — drop it so the transition degrades to a fade instead of
@@ -138,6 +171,7 @@ export function openImagePreview(opts: ImagePreviewOptions): () => void {
     });
     pswp.on('openingAnimationStart', () => {
       openDialogCount.value += 1;
+      opts.onOpen?.();
     });
     pswp.on('destroy', () => {
       done = true;

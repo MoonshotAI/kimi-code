@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedPromptView, TurnAttachment, UIQuestion } from '../../types';
+import type { ChatTurn, ApprovalBlock, FilePreviewRequest, OpenMediaRequest, ToolMedia, QueuedPromptView, TurnAttachment, UIQuestion } from '../../types';
 import ToolCall from './ToolCall.vue';
 import ActivityRun from './ActivityRun.vue';
 import TurnFold from './TurnFold.vue';
@@ -293,7 +293,7 @@ const turnErrorMeta = computed(() => {
 
 const emit = defineEmits<{
   openFile: [target: FilePreviewRequest];
-  openMedia: [media: ToolMedia];
+  openMedia: [payload: OpenMediaRequest];
   /** Show one turn's diff for one file (from its file-change summary card). */
   openTurnDiff: [change: TurnFileChange];
   copyConversationCopied: [];
@@ -715,10 +715,9 @@ function userAttachmentMedia(att: TurnAttachment): ToolMedia {
 const unsupportedOpenName = ref<string | null>(null);
 let unsupportedOpenTimer: ReturnType<typeof setTimeout> | null = null;
 
-// Floating media preview for user-bubble media attachments (image/video).
-// Replaces the right-side detail panel for user uploads — and gives VIDEOS a
-// working preview at all (openMediaPreview ignores non-images, so chip clicks
-// on videos used to be dead).
+// Floating media preview for user-bubble media attachments (image/video) —
+// this pane's own MediaLightbox instance; tool-card media (ReadMediaFile) open
+// the App-level one via the openMedia chain instead of the right-side panel.
 const mediaLightbox = ref<ToolMedia | null>(null);
 /** The clicked thumbnail <img> — the image preview's zoom origin (PhotoSwipe). */
 const mediaLightboxImg = ref<HTMLImageElement | null>(null);

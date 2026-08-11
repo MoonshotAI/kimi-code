@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
+import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, OpenMediaRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
@@ -151,7 +151,7 @@ const emit = defineEmits<{
   /** Composer sign-in entry (no models): deep-link to the settings account tab. */
   login: [];
   openFile: [target: FilePreviewRequest];
-  openMedia: [media: ToolMedia];
+  openMedia: [payload: OpenMediaRequest];
   openTurnDiff: [change: TurnFileChange];
   openCompaction: [target: { turnId: string }];
   openAgent: [toolCallId: string];
