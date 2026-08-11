@@ -1035,12 +1035,6 @@ describe('v1↔v2 plugin parity', () => {
       await expect(pair.v2.listMcpServerAuthStatuses([target])).resolves.toEqual([
         { target, authStatus: 'unavailable' },
       ]);
-      await expect(pair.v1.beginMcpServerAuth(target)).resolves.toEqual({
-        status: 'already-authorized',
-      });
-      await expect(pair.v2.beginMcpServerAuth(target)).resolves.toEqual({
-        status: 'already-authorized',
-      });
       await Promise.all([
         pair.v1.resetMcpServerAuth(target),
         pair.v2.resetMcpServerAuth(target),

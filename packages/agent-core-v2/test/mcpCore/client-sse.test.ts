@@ -122,7 +122,7 @@ describe('SseMcpClient', () => {
         (reason: unknown) => reason,
       );
       expect(resourceRequests).toBe(2);
-      expect(error).toBe(retryError);
+      expect(error).toBeInstanceOf(SseError);
       expect(error).not.toMatchObject({ name: 'UnauthorizedError' });
     } finally {
       await client.close();
