@@ -1544,6 +1544,28 @@ describe('SessionLifecycleService', () => {
       expect(forkUpdate?.updatedAt).toBe(9876);
     });
 
+    it('fork normalizes a legacy ISO-string updatedAt from a cold source to epoch ms', async () => {
+      const updates: { readonly updatedAt?: unknown }[] = [];
+      const metaStub: ISessionMetadata = {
+        ...metadataStub(),
+        // A cold legacy/v1 document read from disk can still carry an ISO
+        // string — the fork must not persist it as the v2 updatedAt.
+        read: () =>
+          Promise.resolve({ updatedAt: '2026-08-10T23:00:00.000Z', agents: {} } as never),
+        update: (patch) => {
+          updates.push(patch);
+          return Promise.resolve();
+        },
+      };
+      const svc = await build([stubPair(ISessionMetadata, metaStub)]);
+
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      const forkUpdate = updates.find((u) => 'forkedFrom' in u);
+      expect(forkUpdate?.updatedAt).toBe(Date.parse('2026-08-10T23:00:00.000Z'));
+    });
+
     it('copies blobs, plans, background tasks, and media originals into the fork', async () => {
       const root = await makeTmpRoot();
       const svc = await build([

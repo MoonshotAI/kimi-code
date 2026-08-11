@@ -115,7 +115,7 @@ import {
   type SessionLifecycleHookSlots,
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { drainSessionMetadataWrites } from '#/session/sessionMetadata/sessionMetadataService';
+import { drainSessionMetadataWrites, toEpochMs } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { IWireService } from '#/wire/wire';
@@ -533,8 +533,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         // The fork is a copy of the source's content as of now, not fresh
         // activity: inherit the source's recency so the fork lands next to it
         // instead of floating to the top of the list. (createdAt stays now —
-        // that's the creation fact.)
-        updatedAt: sourceMeta?.updatedAt ?? Date.now(),
+        // that's the creation fact.) A cold legacy source read from disk can
+        // still carry an ISO-string updatedAt — normalize to epoch ms.
+        updatedAt: toEpochMs(sourceMeta?.updatedAt) || Date.now(),
         lastPrompt: sourceMeta?.lastPrompt,
         // The fork continues the source's conversation, so it inherits the
         // last turn's outcome too — otherwise a restart would drop a failure
