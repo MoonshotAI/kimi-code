@@ -1,5 +1,11 @@
 # @moonshot-ai/pi-tui
 
+## 0.84.1
+
+### Patch Changes
+
+- Re-baseline the fork on upstream `@earendil-works/pi-tui` v0.84.1, keeping all local patches (narrow-terminal hardening, processed-line render caching, editor history hooks, paste-burst fallback, multi-root `@` completion). The upstream renderer is now split into main-screen and alternate-screen implementations, the `TUI` class is now an interface implemented by `TuiMainScreen` and `TuiAltScreen`, and the Markdown component gained opt-out LaTeX math rendering (`renderLatex`). The version line now tracks the upstream baseline it forks from.
+
 ## 0.80.8
 
 ### Patch Changes

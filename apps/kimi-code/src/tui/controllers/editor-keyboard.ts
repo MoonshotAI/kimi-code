@@ -525,7 +525,10 @@ export class EditorKeyboardController {
     }
     this.host.setExternalEditorRunning(true);
     const seed = state.editor.getExpandedText?.() ?? state.editor.getText();
-    state.ui.stop();
+    // Fullscreen: a plain stop() would replay the whole transcript into the
+    // main screen on exit; the external editor only needs the alternate
+    // screen released, so preserve the screen instead.
+    state.ui.stop({ preserveScreen: state.ui.mode === 'fullscreen' ? true : undefined });
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });

@@ -41,7 +41,7 @@ export class PlanBoxComponent implements Component {
     // parse + wrap output keyed on (text, width), so reusing the same
     // instance means repeated render() calls from the parent Container
     // hit the cache instead of re-parsing on every frame.
-    this.markdown = new Markdown(plan.trim(), 0, 0, markdownTheme);
+    this.markdown = new Markdown(plan.trim(), 0, 0, markdownTheme, undefined, { renderLatex: false });
     this.status = opts?.status;
   }
 

@@ -1,11 +1,16 @@
 import type { BackgroundTaskInfo, Session } from '@moonshot-ai/kimi-code-sdk';
-import type { Component, ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
+import type { ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
 
 import { AgentActivityViewer, formatSubagentActivityPreview } from '../components/dialogs/agent-activity-viewer';
 import { TaskOutputViewer } from '../components/dialogs/task-output-viewer';
 import { TasksBrowserApp, type TasksFilter } from '../components/dialogs/tasks-browser';
 import type { Theme } from '#/tui/theme';
 import type { CustomEditor } from '../components/editor/custom-editor';
+import {
+  beginScreenTakeover,
+  endScreenTakeover,
+  type ScreenTakeover,
+} from '../utils/screen-takeover';
 import type { SessionEventHandler } from './session-event-handler';
 import type { SubagentActivityRecord } from './subagent-activity-store';
 
@@ -26,7 +31,7 @@ export interface TasksBrowserHost {
 
 export type TasksBrowserState = {
   component: TasksBrowserApp;
-  savedChildren: readonly Component[];
+  takeover: ScreenTakeover;
   filter: TasksFilter;
   selectedTaskId: string | undefined;
   tailOutput: string | undefined;
@@ -38,7 +43,7 @@ export type TasksBrowserState = {
   viewer:
     | {
         component: TaskOutputViewer | AgentActivityViewer;
-        savedChildren: readonly Component[];
+        takeover: ScreenTakeover;
         taskId: string;
         output: string;
         refreshId: number;
@@ -86,9 +91,7 @@ export class TasksBrowserController {
       state.terminal,
     );
 
-    const savedChildren = [...state.ui.children];
-    state.ui.clear();
-    state.ui.addChild(component);
+    const takeover = beginScreenTakeover(state.ui, component);
     state.ui.setFocus(component);
     state.ui.requestRender(true);
 
@@ -98,7 +101,7 @@ export class TasksBrowserController {
 
     this.host.setTasksBrowser({
       component,
-      savedChildren,
+      takeover,
       filter,
       selectedTaskId,
       tailOutput: undefined,
@@ -123,10 +126,7 @@ export class TasksBrowserController {
     if (browser.pollTimer !== undefined) clearInterval(browser.pollTimer);
     if (browser.flashTimer !== undefined) clearTimeout(browser.flashTimer);
 
-    state.ui.clear();
-    for (const child of browser.savedChildren) {
-      state.ui.addChild(child);
-    }
+    endScreenTakeover(state.ui, browser.takeover);
     this.host.setTasksBrowser(undefined);
     state.ui.setFocus(state.editor);
     state.ui.requestRender(true);
@@ -383,9 +383,7 @@ export class TasksBrowserController {
       state.terminal,
     );
 
-    const savedBrowserChildren = [...state.ui.children];
-    state.ui.clear();
-    state.ui.addChild(viewer);
+    const takeover = beginScreenTakeover(state.ui, viewer);
     state.ui.setFocus(viewer);
     state.ui.requestRender(true);
 
@@ -395,7 +393,7 @@ export class TasksBrowserController {
 
     browser.viewer = {
       component: viewer,
-      savedChildren: savedBrowserChildren,
+      takeover,
       taskId,
       output,
       refreshId: 0,
@@ -424,9 +422,7 @@ export class TasksBrowserController {
       state.terminal,
     );
 
-    const savedBrowserChildren = [...state.ui.children];
-    state.ui.clear();
-    state.ui.addChild(viewer);
+    const takeover = beginScreenTakeover(state.ui, viewer);
     state.ui.setFocus(viewer);
     state.ui.requestRender(true);
 
@@ -437,7 +433,7 @@ export class TasksBrowserController {
 
     browser.viewer = {
       component: viewer,
-      savedChildren: savedBrowserChildren,
+      takeover,
       taskId,
       output: '',
       refreshId: 0,
@@ -538,10 +534,7 @@ export class TasksBrowserController {
     const viewer = browser.viewer;
     clearInterval(viewer.pollTimer);
     browser.viewer = undefined;
-    this.host.state.ui.clear();
-    for (const child of viewer.savedChildren) {
-      this.host.state.ui.addChild(child);
-    }
+    endScreenTakeover(this.host.state.ui, viewer.takeover);
     this.host.state.ui.setFocus(browser.component);
     this.host.state.ui.requestRender(true);
   }

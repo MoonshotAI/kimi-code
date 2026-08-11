@@ -60,6 +60,7 @@ auto_install = false
 
     expect(config).toEqual({
       theme: 'light',
+      tuiMode: 'regular',
       disablePasteBurst: false,
       cacheExpiryHint: true,
       editorCommand: 'code --wait',
@@ -76,6 +77,16 @@ disable_paste_burst = true
 `);
 
     expect(config.disablePasteBurst).toBe(true);
+  });
+
+  it('defaults tui_mode to regular and parses fullscreen', () => {
+    expect(parseTuiConfig('').tuiMode).toBe('regular');
+
+    const config = parseTuiConfig(`
+tui_mode = "fullscreen"
+`);
+
+    expect(config.tuiMode).toBe('fullscreen');
   });
 
   it('parses cache_expiry_hint', () => {
@@ -95,6 +106,7 @@ command = "   "
 
     expect(config).toEqual({
       theme: 'auto',
+      tuiMode: 'regular',
       disablePasteBurst: false,
       cacheExpiryHint: true,
       editorCommand: null,
@@ -141,6 +153,7 @@ command = "   "
 
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
+      tuiMode: 'regular',
       disablePasteBurst: false,
       cacheExpiryHint: true,
       editorCommand: 'vim',

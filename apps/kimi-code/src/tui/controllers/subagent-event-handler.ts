@@ -662,8 +662,11 @@ export class SubAgentEventHandler {
     }
 
     const width = Math.floor(terminalColumns);
+    const dock = state.dockContainer;
+    // Fullscreen: the root children are empty (layout root holds a ScrollView +
+    // dock); the chrome below the transcript is the dock's children instead.
     const rowsAfterSwarm = renderedRowsAfterChild(
-      state.ui.children,
+      dock !== undefined ? [state.transcriptContainer, ...dock.children] : state.ui.children,
       state.transcriptContainer,
       width,
     );

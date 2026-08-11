@@ -1,7 +1,11 @@
 import {
   Container,
   ProcessTerminal,
-  TUI,
+  ScrollView,
+  TuiAltScreen,
+  TuiMainScreen,
+  VStack,
+  type TUI,
 } from '@moonshot-ai/pi-tui';
 
 import { FooterComponent } from './components/chrome/footer';
@@ -35,6 +39,12 @@ export interface TUIState {
   queueContainer: Container;
   btwPanelContainer: Container;
   editorContainer: Container;
+  /**
+   * Fullscreen mode only: the bottom dock (activity/todo/queue/btw/editor +
+   * footer) stacked under the transcript ScrollView. Undefined in regular
+   * mode, where all chrome is a direct child of the root container.
+   */
+  dockContainer: VStack | undefined;
   footer: FooterComponent;
   editor: CustomEditor;
   theme: Theme;
@@ -67,7 +77,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const theme = currentTheme;
 
   const terminal = new ProcessTerminal();
-  const ui = new TUI(terminal);
+  const tuiMode = initialAppState.tuiMode ?? DEFAULT_TUI_CONFIG.tuiMode ?? 'regular';
+  const ui = tuiMode === 'fullscreen' ? new TuiAltScreen(terminal) : new TuiMainScreen(terminal);
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
@@ -83,6 +94,29 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     ui.requestRender();
   });
 
+  let dockContainer: VStack | undefined;
+  if (ui instanceof TuiAltScreen) {
+    // Fullscreen (alternate screen): the transcript scrolls inside the primary
+    // ScrollView while the rest of the chrome stays docked at the bottom. The
+    // footer joins the dock later via mountFooter().
+    const scrollView = new ScrollView(transcriptContainer, {
+      follow: 'end',
+      primary: true,
+      overscroll: 'chain',
+      scrollbar: 'auto',
+    });
+    dockContainer = new VStack();
+    dockContainer.addChild(activityContainer);
+    dockContainer.addChild(todoPanelContainer);
+    dockContainer.addChild(queueContainer);
+    dockContainer.addChild(btwPanelContainer);
+    dockContainer.addChild(editorContainer);
+    const root = new VStack();
+    root.addChild(scrollView, { grow: 1, shrink: 1 });
+    root.addChild(dockContainer, { basis: 'auto' });
+    ui.setLayoutRoot(root);
+  }
+
   return {
     ui,
     terminal,
@@ -93,6 +127,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     queueContainer,
     btwPanelContainer,
     editorContainer,
+    dockContainer,
     editor,
     footer,
     theme,
