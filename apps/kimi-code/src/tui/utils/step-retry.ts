@@ -2,8 +2,10 @@ import { RETRY_DETAIL_MAX_CHARS } from '../constant/rendering';
 import type { StepRetryState } from '../types';
 
 export function formatStepRetryLabel(retry: StepRetryState): string {
+  const base = `retrying (${retry.nextAttempt}/${retry.maxAttempts}) · ${retry.errorName}`;
+  if (retry.phase === 'attempt') return base;
   const delaySeconds = Math.max(1, Math.ceil(retry.delayMs / 1000));
-  return `retrying (${retry.nextAttempt}/${retry.maxAttempts}) · ${retry.errorName} · in ${delaySeconds}s`;
+  return `${base} · in ${delaySeconds}s`;
 }
 
 /** Detail line under the spinner: status code + provider message, single-line, capped. */

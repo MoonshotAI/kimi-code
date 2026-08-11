@@ -97,6 +97,12 @@ export interface StepRetryState {
   errorMessage: string;
   /** HTTP status code for `APIStatusError`; undefined for network/timeout failures. */
   statusCode?: number;
+  /**
+   * `backoff` while sleeping before the next attempt (label shows the
+   * countdown); `attempt` once the v2 engine re-emits `turn.step.started` for
+   * the retried attempt — the countdown has elapsed by then and is dropped.
+   */
+  phase: 'backoff' | 'attempt';
 }
 
 export interface ToolCallBlockData {

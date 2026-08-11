@@ -87,6 +87,7 @@ describe('SessionEventHandler step retry state', () => {
       errorName: 'APIStatusError',
       errorMessage: 'rate limited',
       statusCode: 429,
+      phase: 'backoff',
     });
   });
 
@@ -122,7 +123,7 @@ describe('SessionEventHandler step retry state', () => {
     expect(host.state.appState.stepRetry).toBeNull();
   });
 
-  it('keeps the retry snapshot on turn.step.started (v2 re-emits it per retried attempt)', () => {
+  it('flips the retry to attempt phase on turn.step.started (v2 re-emits it per attempt)', () => {
     const { host } = makeHost();
     const handler = new SessionEventHandler(host);
     handler.handleEvent(retryingEvent as any, vi.fn());
@@ -130,6 +131,6 @@ describe('SessionEventHandler step retry state', () => {
       { type: 'turn.step.started', sessionId: 's1', agentId: 'main', turnId: 1, step: 1 } as any,
       vi.fn(),
     );
-    expect(host.state.appState.stepRetry).not.toBeNull();
+    expect(host.state.appState.stepRetry).toMatchObject({ nextAttempt: 2, phase: 'attempt' });
   });
 });
