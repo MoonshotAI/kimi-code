@@ -487,6 +487,21 @@ describe('AgentLifecycleService', () => {
     expect(removed).toBe(true);
   });
 
+  it('remove still disposes the agent when the wire flush rejects', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const handle = await svc.create({ agentId: 'main' });
+    const flushError = new Error('wire flush failed');
+    vi.spyOn(handle.accessor.get(IWireService), 'flush').mockRejectedValueOnce(flushError);
+    const disposed: string[] = [];
+    disposables.add(svc.onDidDispose((id) => disposed.push(id)));
+
+    await expect(svc.remove('main')).rejects.toBe(flushError);
+
+    expect(svc.get('main')).toBeUndefined();
+    expect(disposed).toEqual(['main']);
+    expect(() => handle.accessor.get(IWireService)).toThrow();
+  });
+
   it('ignites the self-wiring toolDedupe plugin so its listeners exist before the first turn', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
