@@ -984,6 +984,7 @@ export class KimiTUI {
       await this.harness.close();
     } finally {
       this.sessionEventHandler.stopAllMcpServerStatusSpinners();
+      this.sessionEventHandler.clearStepRetryAttemptTimer();
       this.uninstallRainbowDance();
       try {
         await this.state.terminal.drainInput();

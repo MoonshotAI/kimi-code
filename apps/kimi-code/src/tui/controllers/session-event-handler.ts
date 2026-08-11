@@ -482,7 +482,7 @@ export class SessionEventHandler {
     this.host.setAppState({ stepRetry: null });
   }
 
-  private clearStepRetryAttemptTimer(): void {
+  clearStepRetryAttemptTimer(): void {
     if (this.stepRetryAttemptTimer !== undefined) {
       clearTimeout(this.stepRetryAttemptTimer);
       this.stepRetryAttemptTimer = undefined;

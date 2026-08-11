@@ -168,4 +168,13 @@ describe('SessionEventHandler step retry state', () => {
     );
     expect(host.state.appState.stepRetry).toMatchObject({ nextAttempt: 2, phase: 'backoff' });
   });
+
+  it('cancels the pending phase flip via clearStepRetryAttemptTimer (TUI shutdown path)', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    handler.handleEvent(retryingEvent as any, vi.fn());
+    handler.clearStepRetryAttemptTimer();
+    vi.advanceTimersByTime(10_000);
+    expect(host.state.appState.stepRetry).toMatchObject({ phase: 'backoff' });
+  });
 });
