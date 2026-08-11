@@ -1,13 +1,18 @@
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
+import { SseError } from '@modelcontextprotocol/sdk/client/sse.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { SseError } from '@modelcontextprotocol/sdk/client/sse.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { SseMcpClient, isTerminalSseTransportError } from '../../src/mcp/client-sse';
+import { McpOAuthService } from '../../src/mcp/oauth/service';
+import { JsonFileStore } from '../../src/mcp/oauth/store';
 
 const cleanups: Array<() => Promise<void> | void> = [];
 
@@ -123,6 +128,44 @@ describe('SseMcpClient', () => {
       await client.close();
     }
   }, 15000);
+
+  it('restores resource 401 after provider auth wraps the startup error', async () => {
+    const server = await startInProcessSseMcpServer({ authToken: 'fresh-token' });
+    cleanups.push(server.close);
+    const storeDir = await mkdtemp(join(tmpdir(), 'kimi-sse-client-oauth-'));
+    cleanups.push(() => rm(storeDir, { recursive: true, force: true }));
+    const oauth = new McpOAuthService({ store: new JsonFileStore(storeDir) });
+    const provider = oauth.getProvider('stale-sse', server.url);
+    provider.saveTokens({ access_token: 'stale-token', token_type: 'Bearer' });
+    const client = new SseMcpClient(
+      { transport: 'sse', url: server.url },
+      { oauthProvider: provider },
+    );
+    try {
+      await expect(client.connect()).rejects.toMatchObject({
+        name: 'UnauthorizedError',
+        cause: expect.any(Error),
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('does not reclassify a non-401 SSE startup response as unauthorized', async () => {
+    const server = await startInProcessSseMcpServer();
+    cleanups.push(server.close);
+    const client = new SseMcpClient({
+      transport: 'sse',
+      url: new URL('/missing', server.url).href,
+    });
+    try {
+      const connected = client.connect();
+      await expect(connected).rejects.toBeInstanceOf(SseError);
+      await expect(connected).rejects.toMatchObject({ code: 404 });
+    } finally {
+      await client.close();
+    }
+  });
 
   it('classifies terminal SSE transport errors without treating reconnect flaps as terminal', () => {
     const unauthorized = new Error('Unauthorized');

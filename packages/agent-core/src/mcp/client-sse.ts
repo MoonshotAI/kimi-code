@@ -1,6 +1,9 @@
 import type { McpServerSseConfig } from '#/config/schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import {
+  UnauthorizedError,
+  type OAuthClientProvider,
+} from '@modelcontextprotocol/sdk/client/auth.js';
 import { SSEClientTransport, SseError } from '@modelcontextprotocol/sdk/client/sse.js';
 
 import {
@@ -55,16 +58,26 @@ export class SseMcpClient implements MCPClient {
   private hooksInstalled = false;
   private unexpectedCloseListener: UnexpectedCloseListener | undefined;
   private lastTransportError: Error | undefined;
+  private resourceUnauthorizedDuringStartup = false;
   private pendingUnexpectedClose: UnexpectedCloseReason | undefined;
   private unexpectedCloseFired = false;
 
   constructor(config: McpServerSseConfig, options: SseMcpClientOptions = {}) {
     const envLookup = options.envLookup ?? ((name) => process.env[name]);
     const headers = buildMcpRemoteHeaders(config, envLookup);
+    const resourceUrl = new URL(config.url);
+    const fetchImpl = options.fetch ?? fetch;
+    const transportFetch: typeof fetch = async (input, init) => {
+      const response = await fetchImpl(input, init);
+      if (!this.ready && response.status === 401 && isSameUrl(input, resourceUrl)) {
+        this.resourceUnauthorizedDuringStartup = true;
+      }
+      return response;
+    };
 
-    this.transport = new SSEClientTransport(new URL(config.url), {
+    this.transport = new SSEClientTransport(resourceUrl, {
       requestInit: headers !== undefined ? { headers } : undefined,
-      fetch: options.fetch,
+      fetch: transportFetch,
       authProvider: options.oauthProvider,
     });
     this.client = new Client({
@@ -81,6 +94,7 @@ export class SseMcpClient implements MCPClient {
     }
     if (this.started) return;
     this.started = true;
+    this.resourceUnauthorizedDuringStartup = false;
     this.installTransportHooks();
     try {
       await this.client.connect(
@@ -89,6 +103,21 @@ export class SseMcpClient implements MCPClient {
       );
     } catch (error) {
       await this.closeStartedClient();
+      if (this.resourceUnauthorizedDuringStartup) {
+        if (error instanceof UnauthorizedError) throw error;
+        if (error instanceof SseError && error.code === 401) throw error;
+        if (error instanceof Error && error.name === 'UnauthorizedError') throw error;
+        // The SDK may replace the resource's 401 with a later discovery or
+        // registration error while running its provider-driven auth flow.
+        // Restore the explicit resource response without reclassifying other
+        // auth endpoints or ordinary SSE startup failures.
+        const unauthorized = new UnauthorizedError(
+          'The SSE MCP resource returned HTTP 401 during startup',
+        );
+        unauthorized.name = 'UnauthorizedError';
+        (unauthorized as Error & { cause?: unknown }).cause = error;
+        throw unauthorized;
+      }
       throw error;
     }
     if (this.closed) {
@@ -175,4 +204,14 @@ export class SseMcpClient implements MCPClient {
 export function isTerminalSseTransportError(error: Error): boolean {
   if (error.name === 'UnauthorizedError') return true;
   return error instanceof SseError && error.code !== undefined;
+}
+
+function isSameUrl(input: Parameters<typeof fetch>[0], expected: URL): boolean {
+  try {
+    const actual =
+      typeof input === 'string' || input instanceof URL ? new URL(input) : new URL(input.url);
+    return actual.href === expected.href;
+  } catch {
+    return false;
+  }
 }
