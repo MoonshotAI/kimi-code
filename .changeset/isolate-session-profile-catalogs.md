@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Prevent one session's subagent tool projection from changing builtin profiles in later sessions.
+Fix subagent tool changes in one session leaking into builtin profiles in later sessions.

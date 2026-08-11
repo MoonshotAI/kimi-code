@@ -53,6 +53,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       await client.close();
       client = undefined;
     }
+
     homeDir = await cleanupHomeDir(homeDir);
   });
 
@@ -573,6 +574,7 @@ describe('acp-server prompt error hygiene', () => {
       await client.close();
       client = undefined;
     }
+
     homeDir = await cleanupHomeDir(homeDir);
   });
 
@@ -617,6 +619,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
       await client.close();
       client = undefined;
     }
+
     homeDir = await cleanupHomeDir(homeDir);
   });
 
@@ -831,6 +834,7 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
       await client.close();
       client = undefined;
     }
+
     homeDir = await cleanupHomeDir(homeDir);
   });
 

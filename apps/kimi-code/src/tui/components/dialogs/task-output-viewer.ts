@@ -32,7 +32,7 @@ export interface TaskOutputViewerProps {
   readonly onClose: () => void;
 }
 
-const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
+export const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
   running: 'running',
   completed: 'completed',
   failed: 'failed',
@@ -41,7 +41,7 @@ const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
   lost: 'lost',
 };
 
-function statusColor(status: BackgroundTaskStatus): 'success' | 'textMuted' | 'error' {
+export function statusColor(status: BackgroundTaskStatus): 'success' | 'textMuted' | 'error' {
   switch (status) {
     case 'running':
       return 'success';

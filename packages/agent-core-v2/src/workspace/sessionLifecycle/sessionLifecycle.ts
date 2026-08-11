@@ -14,6 +14,11 @@
  * workspace and fork never crosses handlers. Announces lifecycle transitions
  * through `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession`
  * / `onDidForkSession`; the ordered hook slots are per-session seeds.
+ * Workspace-scope services that must participate in a session's creation
+ * (read its seeded facts, contribute a session seed, attach teardown to its
+ * lifetime) subscribe to `onWillCreateSession` — the participation surface
+ * speaks the session domain's own vocabulary, so the lifecycle depends on
+ * neither its participants nor the DI kernel's assembly mechanics.
  * Workspace-scoped — one instance per materialized handler.
  */
 
@@ -94,9 +99,31 @@ export interface SessionForkedEvent {
   readonly handle: ISessionScopeHandle;
 }
 
+/**
+ * Participation surface of `onWillCreateSession` — the business-lifecycle
+ * moment "a session is being created", fired synchronously before the new
+ * session's services activate (the `will` half of `onDidCreateSession`;
+ * resume and fork are creations too). Workspace-scope participants step
+ * into the creation through the session domain's own vocabulary — read the
+ * session's seeded facts (`readSeed`), contribute or replace a session seed
+ * (`contributeSeed`; a seed already projected by the workspace seed
+ * adapters is replaced), and attach teardown work to the session's lifetime
+ * (`onSessionDispose` — runs with the session's teardown on every path:
+ * close, archive, delete, a failed create, workspace teardown). The event
+ * carries only facts the lifecycle itself owns; anything a participant
+ * needs beyond them travels as a session-domain seed.
+ */
+export interface SessionWillCreateEvent {
+  readonly sessionId: string;
+  readSeed<T>(id: ServiceIdentifier<T>): T;
+  contributeSeed<T>(id: ServiceIdentifier<T>, value: T): void;
+  onSessionDispose(dispose: () => void): void;
+}
+
 export interface ISessionLifecycleService {
   readonly _serviceBrand: undefined;
 
+  readonly onWillCreateSession: Event<SessionWillCreateEvent>;
   readonly onDidCreateSession: Event<SessionCreatedEvent>;
   readonly onDidCloseSession: Event<SessionClosedEvent>;
   readonly onDidArchiveSession: Event<SessionArchivedEvent>;

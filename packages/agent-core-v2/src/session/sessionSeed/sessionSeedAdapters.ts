@@ -23,14 +23,15 @@
  *    untouched.
  *
  * The units carry no DI token of their own: the session
- * assembly point constructs them explicitly (`assembleSessionSeedAdapters`,
- * the `assemble` hook of `createScopedChildHandle`) and anchors their
+ * assembly point constructs them explicitly (`installSessionSeedAdapters`,
+ * the `configureContainer` hook of `createScopedChildHandle`) and anchors their
  * disposal into the session container's ledger. Observation (`@ref`) is
  * data-flow semantics — an upstream rebuild re-fires `onDidChange` instead
  * of cascading this adapter down. A session created with ephemeral
- * `mcpServers` passes its merged overlay handle as `sessionMcpHandle`: the
- * MCP adapter is skipped and the overlay handle is provided directly (fixed
- * at creation, like the pre-adapter inline seed).
+ * `mcpServers` (the `ISessionEphemeralMcpServers` seed) gets its
+ * `ISessionMcpHandle` from the `workspaceMcp` participant of the session
+ * lifecycle's `onWillCreateSession` event instead: its contribution lands
+ * after this adapter's provide and replaces the workspace projection.
  */
 
 import type { ServiceClassRecipe } from '#/_base/di/fiber';
@@ -262,15 +263,8 @@ const SESSION_SEED_ADAPTERS: readonly ServiceClassRecipe[] = [
   SessionToolPolicyGateAdapter,
 ];
 
-export function assembleSessionSeedAdapters(
-  container: InstantiationService,
-  sessionMcpHandle?: ISessionMcpHandle,
-): void {
+export function installSessionSeedAdapters(container: InstantiationService): void {
   for (const recipe of SESSION_SEED_ADAPTERS) {
-    if (recipe === SessionMcpHandleAdapter && sessionMcpHandle !== undefined) {
-      container.provide(ISessionMcpHandle, sessionMcpHandle);
-      continue;
-    }
     const adapter = container.fiberHost.constructService(recipe, undefined) as Partial<IDisposable>;
     container.anchorKernelEntry(() => {
       adapter.dispose?.();

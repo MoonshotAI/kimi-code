@@ -134,7 +134,7 @@ export class WorkspaceLifecycleService extends Service implements IWorkspaceLife
       this.instantiation,
       LifecycleScope.Workspace,
       workspaceId,
-      { extra: workspaceContextSeed(ctx) },
+      { seeds: workspaceContextSeed(ctx) },
     ) as IWorkspaceScopeHandle;
     this.live.set(workspaceId, handle);
     this._onDidMaterializeHandler.fire(handle);

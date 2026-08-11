@@ -1,6 +1,9 @@
 /**
  * `/api/v1/debug` channel registry — the set of Services exposed over the
- * wire, which is simply the ENTIRE scoped DI registry (no whitelist).
+ * wire: the ENTIRE scoped DI registry (no whitelist), plus any Service
+ * resolvable by decorator name as a fallback, so runtime-contributed units
+ * (Feature `contributeService`, which bypasses the static scoped registry)
+ * stay callable.
  *
  * In VS Code's `registerChannel` model a Service is registered once, keyed by
  * its decorator id (the public channel name), and from then on all of its
@@ -13,6 +16,7 @@ import {
   Disposable,
   getScopedServiceDescriptors,
   LifecycleScope,
+  lookupServiceDecorator,
 } from '@moonshot-ai/agent-core-v2';
 
 import type { ScopedEntry, ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
@@ -83,7 +87,7 @@ function scopedServiceNameIndex(): Map<string, ServiceIdentifier<unknown>> {
 
 /** Resolve a wire name to its `ServiceIdentifier` anywhere in the DI registry. */
 export function resolveAnyScopedServiceId(name: string): ServiceIdentifier<unknown> | undefined {
-  return scopedServiceNameIndex().get(name);
+  return scopedServiceNameIndex().get(name) ?? lookupServiceDecorator(name);
 }
 
 /**
