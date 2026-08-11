@@ -529,8 +529,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
       const title = opts.title ?? `Fork: ${sourceMeta?.title || sourceId}`;
 
-      await this.duplicateCronTasks(sourceId, targetId);
-
       for (const agentId of agentIds) {
         const sourceAgent = sourceAgents[agentId]!;
         await target.accessor.get(IAgentLifecycleService).create({
@@ -562,6 +560,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         lastTurnReason: sourceMeta?.lastTurnReason,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
       });
+
+      // Cron duplication stays after the durable metadata write: if any step
+      // above rejects, the catch removes the target dir and no cloned cron
+      // records are left pointing at a fork that never materialized.
+      await this.duplicateCronTasks(sourceId, targetId);
 
       await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
       this._onDidForkSession.fire({
