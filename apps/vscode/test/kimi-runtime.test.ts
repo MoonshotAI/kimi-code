@@ -20,10 +20,14 @@ import type {
   SessionSummary,
   ThinkingEffort,
 } from "@moonshot-ai/kimi-code-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { Events } from "../shared/bridge";
 import { KimiRuntime, type OpenSessionOptions } from "../src/runtime/kimi-runtime";
+import {
+  corePermissionForLegacyApproval,
+  legacyApprovalMetadata,
+} from "../src/runtime/legacy-approval";
 
 interface FakeSessionBoundary {
   readonly session: Session;
@@ -578,6 +582,83 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     });
     return { runtime, sdk, broadcasts };
   }
+
+  it("deduplicates concurrent opens of the same session", async () => {
+    const { runtime, sdk, broadcasts } = createRecordingRuntime();
+    const boundary = sdk.addSession("s1", "/workspace");
+
+    // Sidebar and editor tab racing to open the same session must end up on a
+    // single SessionRuntime: a second wrap would double-subscribe the event
+    // stream and broadcast every streamed part twice.
+    const [a, b] = await Promise.all([
+      runtime.openSession(openOptions({ webviewId: "view-1", sessionId: "s1" })),
+      runtime.openSession(openOptions({ webviewId: "view-2", sessionId: "s1" })),
+    ]);
+
+    expect(a).toBe(b);
+    expect(boundary.subscriptionCount()).toBe(1);
+
+    broadcasts.length = 0;
+    boundary.emit({
+      type: "assistant.delta",
+      agentId: "main",
+      sessionId: "s1",
+      delta: "hello",
+    } as unknown as Event);
+
+    // One adapted ContentPart per subscribed view, never two.
+    const parts = broadcasts.filter(
+      ({ data }) => (data as { type?: string }).type === "ContentPart",
+    );
+    expect(parts).toHaveLength(2);
+  });
+
+  it("reconciles approval state when a racing open loses with different settings", async () => {
+    const { runtime, sdk } = createRecordingRuntime();
+    const boundary = sdk.addSession("s1", "/workspace");
+
+    // The loser of the wrap race may already have written its own yoloMode to
+    // the engine session before the reuse guard fired; the surviving
+    // runtime's flags must be what the session is left with.
+    const [a, b] = await Promise.all([
+      runtime.openSession(openOptions({ webviewId: "view-1", sessionId: "s1", yoloMode: false })),
+      runtime.openSession(openOptions({ webviewId: "view-2", sessionId: "s1", yoloMode: true })),
+    ]);
+
+    expect(a).toBe(b);
+    const expected = corePermissionForLegacyApproval(a.legacyApprovalFlags);
+    expect(boundary.setPermissions.at(-1)).toBe(expected);
+    expect(boundary.metadataUpdates.at(-1)).toEqual(
+      legacyApprovalMetadata(a.legacyApprovalFlags),
+    );
+  });
+
+  it("does not close the shared session when the racing open's reconcile fails", async () => {
+    const { runtime, sdk } = createRecordingRuntime();
+    const boundary = sdk.addSession("s1", "/workspace");
+
+    // The third metadata write is always the losing call's reconcile (both
+    // racers write once before wrapping; the winner writes nothing after).
+    const realUpdate = boundary.session.updateMetadata.bind(boundary.session);
+    let writes = 0;
+    vi.spyOn(boundary.session, "updateMetadata").mockImplementation(async (patch: JsonObject) => {
+      writes += 1;
+      if (writes === 3) throw new Error("transient metadata failure");
+      return realUpdate(patch);
+    });
+
+    await expect(
+      Promise.all([
+        runtime.openSession(openOptions({ webviewId: "view-1", sessionId: "s1", yoloMode: false })),
+        runtime.openSession(openOptions({ webviewId: "view-2", sessionId: "s1", yoloMode: true })),
+      ]),
+    ).rejects.toThrow("transient metadata failure");
+
+    // The losing handle's failure must not close the shared engine session
+    // out from under the surviving runtime.
+    expect(boundary.closeCount()).toBe(0);
+    expect(runtime.getSession("s1")).toBeDefined();
+  });
 
   it("fails a reentrant prompt without disturbing the running turn", async () => {
     const { runtime, sdk, broadcasts } = createRecordingRuntime();

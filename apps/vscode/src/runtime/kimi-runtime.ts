@@ -109,6 +109,7 @@ export class KimiRuntime {
               metadata: legacyApprovalMetadata(defaultApproval),
             })
           : await this.harness.resumeSession({ id: requestedId, includeSubagents: true });
+      let wrapped: { runtime: SessionRuntime; reused: boolean } | undefined;
       try {
         assertSessionWorkDir(session, options.workDir);
         const storedApproval = readLegacyApprovalFlags(session.summary?.metadata);
@@ -120,11 +121,20 @@ export class KimiRuntime {
         }
         await applySessionSettings(session, options, approval);
         await this.detachView(options.webviewId);
-        runtime = this.wrapSession(session, approval);
+        wrapped = this.wrapSession(session, approval);
+        runtime = wrapped.runtime;
+        if (wrapped.reused) {
+          await this.reconcileWrappedApproval(session, runtime);
+        }
       } catch (error) {
-        await session.close().catch((closeError: unknown) => {
-          this.log("Failed to close a rejected session", closeError);
-        });
+        // When the wrap was reused, `session` is the losing race handle:
+        // closing it would close the shared engine session out from under the
+        // surviving runtime and any active turn.
+        if (wrapped?.reused !== true) {
+          await session.close().catch((closeError: unknown) => {
+            this.log("Failed to close a rejected session", closeError);
+          });
+        }
         throw error;
       }
     }
@@ -149,6 +159,7 @@ export class KimiRuntime {
     await this.detachView(webviewId);
     let runtime = existing ?? this.sessions.get(session.id);
     if (runtime === undefined) {
+      let wrapped: { runtime: SessionRuntime; reused: boolean } | undefined;
       try {
         const storedApproval = readLegacyApprovalFlags(session.summary?.metadata);
         const restoredApproval =
@@ -162,11 +173,20 @@ export class KimiRuntime {
         const status = await session.getStatus();
         const permission = corePermissionForLegacyApproval(approval);
         if (status.permission !== permission) await session.setPermission(permission);
-        runtime = this.wrapSession(session, approval);
+        wrapped = this.wrapSession(session, approval);
+        runtime = wrapped.runtime;
+        if (wrapped.reused) {
+          await this.reconcileWrappedApproval(session, runtime);
+        }
       } catch (error) {
-        await session.close().catch((closeError: unknown) => {
-          this.log("Failed to close a rejected session", closeError);
-        });
+        // When the wrap was reused, `session` is the losing race handle:
+        // closing it would close the shared engine session out from under the
+        // surviving runtime and any active turn.
+        if (wrapped?.reused !== true) {
+          await session.close().catch((closeError: unknown) => {
+            this.log("Failed to close a rejected session", closeError);
+          });
+        }
         throw error;
       }
     }
@@ -222,7 +242,27 @@ export class KimiRuntime {
     await this.harness.close();
   }
 
-  private wrapSession(session: Session, legacyApproval: LegacyApprovalFlags): SessionRuntime {
+  private wrapSession(
+    session: Session,
+    legacyApproval: LegacyApprovalFlags,
+  ): { runtime: SessionRuntime; reused: boolean } {
+    // Two views can race opening the same session (sidebar + editor tab, or a
+    // reload overlapping a reattach): both pass the `sessions.get` check in
+    // openSession/attachResumedSession, both resume, and without this guard
+    // the later call would overwrite the earlier runtime here — orphaning it
+    // with its event subscription still live, so every streamed part reaches
+    // the shared view twice (interleaved duplicated text in the UI). A
+    // resumed Session handle is inert until wrapped (its constructor
+    // registers nothing), so the loser's handle can simply be dropped.
+    //
+    // The loser may already have pushed its own approval state (metadata,
+    // permission) onto the shared engine session; when `reused` is true,
+    // callers must run reconcileWrappedApproval so the engine and the
+    // surviving runtime agree again.
+    const existing = this.sessions.get(session.id);
+    if (existing !== undefined) {
+      return { runtime: existing, reused: true };
+    }
     const runtime = new SessionRuntime({
       session,
       legacyApproval,
@@ -231,7 +271,24 @@ export class KimiRuntime {
       log: this.log,
     });
     this.sessions.set(session.id, runtime);
-    return runtime;
+    return { runtime, reused: false };
+  }
+
+  /**
+   * Re-assert a surviving runtime's approval state on the engine session
+   * after wrapSession reused it: a racing open that lost may already have
+   * written its own (possibly different) approval flags to the session
+   * metadata and permission before reaching the reuse guard.
+   */
+  private async reconcileWrappedApproval(
+    session: Session,
+    runtime: SessionRuntime,
+  ): Promise<void> {
+    const flags = runtime.legacyApprovalFlags;
+    const status = await session.getStatus();
+    const permission = corePermissionForLegacyApproval(flags);
+    if (status.permission !== permission) await session.setPermission(permission);
+    await session.updateMetadata(legacyApprovalMetadata(flags));
   }
 
   private async readMigratedLegacyApproval(
