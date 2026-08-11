@@ -68,6 +68,16 @@ afterEach(async () => {
   }
 });
 
+function stubProcessPlatform(platform: NodeJS.Platform): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  return () => {
+    if (descriptor !== undefined) {
+      Object.defineProperty(process, 'platform', descriptor);
+    }
+  };
+}
+
 async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }> {
   const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
   tempDirs.push(homeDir);
@@ -168,8 +178,9 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     }
   });
 
-  it('surfaces a missing Git Bash probe failure during ensureConfigFile', async () => {
+  it('surfaces a missing Git Bash probe failure during ensureConfigFile on Windows', async () => {
     hostEnvProbe.failWithMissingShell = true;
+    const restorePlatform = stubProcessPlatform('win32');
     try {
       const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
       tempDirs.push(homeDir);
@@ -184,6 +195,25 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       }
     } finally {
       hostEnvProbe.failWithMissingShell = false;
+      restorePlatform();
+    }
+  });
+
+  it('does not block ensureConfigFile on the host environment probe on POSIX', async () => {
+    hostEnvProbe.failWithMissingShell = true;
+    const restorePlatform = stubProcessPlatform('darwin');
+    try {
+      const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+      tempDirs.push(homeDir);
+      const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+      try {
+        await expect(harness.ensureConfigFile()).resolves.toBeUndefined();
+      } finally {
+        await harness.close();
+      }
+    } finally {
+      hostEnvProbe.failWithMissingShell = false;
+      restorePlatform();
     }
   });
 

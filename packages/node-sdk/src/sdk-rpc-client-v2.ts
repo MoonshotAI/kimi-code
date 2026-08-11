@@ -482,10 +482,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   async ensureConfigFile(): Promise<void> {
     await ensureConfigFile(this.configPath);
-    // Wait for the App-scope host-environment probe so that a missing Git Bash
-    // on Windows is reported early, before the TUI starts, instead of surfacing
-    // as an unhandledRejection later in startup.
-    await this.app.accessor.get(IHostEnvironment).ready;
+    // Surface a missing Git Bash early, before the TUI starts. The wait is
+    // Windows-only: the failure cannot happen on POSIX, and `ready` also
+    // covers the login-shell PATH enrichment, which spawns the user's login
+    // shell (5s timeout) — config-only commands must not block on that.
+    if (process.platform === 'win32') {
+      await this.app.accessor.get(IHostEnvironment).ready;
+    }
   }
 
   async close(): Promise<void> {
