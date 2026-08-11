@@ -11,6 +11,7 @@ import {
   IAppendLogStore,
   IDebugEventsService,
   IEventService,
+  IInstantiationService,
   IPluginService,
   ISessionIndex,
   ISessionMetadata,
@@ -208,6 +209,14 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(Array.isArray(body.data.subscriptions)).toBe(true);
     expect(Array.isArray(body.data.buses)).toBe(true);
     expect(typeof body.data.globalListeners).toBe('number');
+  });
+
+  it('rejects kernel tokens registered neither statically nor by a feature (40001)', async () => {
+    // instantiationService is seeded into every container; a request like
+    // instantiationService/dispose would tear down the root container. The
+    // contributed-service fallback must not widen the surface to it.
+    const { body } = await call<null>('POST', rpc('core', IInstantiationService, 'dispose'));
+    expect(body.code).toBe(40001);
   });
 
   it('lists sessions via GET', async () => {

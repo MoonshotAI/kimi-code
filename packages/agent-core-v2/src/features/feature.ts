@@ -43,6 +43,8 @@ import {
   type AnyAgentTool,
 } from '#/agent/toolRegistry/toolContribution';
 
+import { recordContributedService } from './featureRegistry';
+
 export abstract class Feature extends Service {
   contribute<T>(token: CollectionToken<T>, value: T): FiberHandle {
     return this.provide(token, value);
@@ -66,6 +68,7 @@ export abstract class Feature extends Service {
     ctor: ServiceClassRecipe,
     opts?: FiberProvideOptions,
   ): FiberHandle {
+    recordContributedService(scope, id);
     return this.provide(ScopeUnits(scope), {
       name: `${this.name}:${String(id)}`,
       apply(fiber: Fiber): void {
