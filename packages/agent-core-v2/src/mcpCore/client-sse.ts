@@ -56,8 +56,8 @@ export class SseMcpClient implements MCPClient {
     const fetchImpl = options.fetch ?? fetch;
     const transportFetch: typeof fetch = async (input, init) => {
       const response = await fetchImpl(input, init);
-      if (!this.ready && response.status === 401 && isSameUrl(input, resourceUrl)) {
-        this.resourceUnauthorizedDuringStartup = true;
+      if (!this.ready && isSameUrl(input, resourceUrl)) {
+        this.resourceUnauthorizedDuringStartup = response.status === 401;
       }
       return response;
     };
@@ -94,10 +94,6 @@ export class SseMcpClient implements MCPClient {
         if (error instanceof UnauthorizedError) throw error;
         if (error instanceof SseError && error.code === 401) throw error;
         if (error instanceof Error && error.name === 'UnauthorizedError') throw error;
-        // The SDK may replace the resource's 401 with a later discovery or
-        // registration error while running its provider-driven auth flow.
-        // Restore the explicit resource response without reclassifying other
-        // auth endpoints or ordinary SSE startup failures.
         const unauthorized = new UnauthorizedError(
           'The SSE MCP resource returned HTTP 401 during startup',
         );

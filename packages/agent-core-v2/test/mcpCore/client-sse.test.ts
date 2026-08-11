@@ -74,6 +74,60 @@ describe('SseMcpClient', () => {
     }
   });
 
+  it('clears a startup 401 when the OAuth retry returns a non-401 response', async () => {
+    const resourceUrl = 'https://mcp.example.test/sse';
+    const authorizationServerUrl = 'https://auth.example.test';
+    const tokenUrl = `${authorizationServerUrl}/token`;
+    let resourceRequests = 0;
+    const fetchImpl: typeof fetch = async (input) => {
+      const url =
+        typeof input === 'string' || input instanceof URL ? input.toString() : input.url;
+      if (url === resourceUrl) {
+        const status = ++resourceRequests === 1 ? 401 : 500;
+        return new Response(status === 401 ? 'Unauthorized' : 'Unavailable', { status });
+      }
+      if (url === tokenUrl) {
+        return Response.json({ access_token: 'fresh-token', token_type: 'Bearer' });
+      }
+      return new Response('Not found', { status: 404 });
+    };
+    const provider = new McpOAuthService({
+      store: createMemoryMcpOAuthStore(),
+    }).getProvider('retry-sse', resourceUrl);
+    await provider.ready;
+    await provider.saveClientInformation({ client_id: 'sse-client-test' });
+    await provider.saveTokens({
+      access_token: 'stale-token',
+      refresh_token: 'refresh-token',
+      token_type: 'Bearer',
+    });
+    await provider.saveDiscoveryState({
+      authorizationServerUrl,
+      authorizationServerMetadata: {
+        issuer: authorizationServerUrl,
+        authorization_endpoint: `${authorizationServerUrl}/authorize`,
+        token_endpoint: tokenUrl,
+        response_types_supported: ['code'],
+      },
+    });
+    const client = new SseMcpClient(
+      { transport: 'sse', url: resourceUrl },
+      { fetch: fetchImpl, oauthProvider: provider },
+    );
+    try {
+      const error = await client.connect().then(
+        () => undefined,
+        (reason: unknown) => reason,
+      );
+      expect(resourceRequests).toBe(2);
+      expect(error).toBeInstanceOf(SseError);
+      expect(error).toMatchObject({ code: 500 });
+      expect(error).not.toMatchObject({ name: 'UnauthorizedError' });
+    } finally {
+      await client.close();
+    }
+  });
+
   it('does not reclassify a non-401 SSE startup response as unauthorized', async () => {
     const server = await startInProcessSseMcpServer();
     cleanups.push(server.close);
