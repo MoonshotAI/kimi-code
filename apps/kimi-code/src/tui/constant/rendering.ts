@@ -12,6 +12,11 @@ export const RESULT_PREVIEW_LINES = 3;
 export const THINKING_PREVIEW_LINES = 2;
 export const COMMAND_PREVIEW_LINES = 10;
 
+// Cap on the step-retry detail line under the waiting spinner, so huge
+// provider error bodies (occasionally whole HTML error pages) can't flood
+// the activity pane.
+export const RETRY_DETAIL_MAX_CHARS = 160;
+
 // Retention caps for the subagent activity store (background-agent detail
 // view): only the most recent steps are kept, older steps are discarded
 // whole, and per-step text / per-call output keep bounded tails.

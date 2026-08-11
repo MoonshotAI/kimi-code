@@ -27,6 +27,7 @@ import type {
   TurnStartedEvent,
   TurnStepCompletedEvent,
   TurnStepInterruptedEvent,
+  TurnStepRetryingEvent,
   TurnStepStartedEvent,
   TokenUsage,
   WarningEvent,
@@ -267,7 +268,7 @@ export class SessionEventHandler {
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
       case 'turn.step.completed': this.handleStepCompleted(event); break;
-      case 'turn.step.retrying': break;
+      case 'turn.step.retrying': this.handleStepRetrying(event); break;
       case 'tool.progress': this.handleToolProgress(event); break;
       case 'shell.output': this.host.handleShellOutput(event); break;
       case 'shell.started': this.host.handleShellStarted(event); break;
@@ -354,6 +355,7 @@ export class SessionEventHandler {
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
     this.host.streamingUI.flushNow();
+    this.clearStepRetry();
     if (event.reason === 'cancelled') {
       this.markActiveAgentSwarmsCancelled();
     }
@@ -398,6 +400,10 @@ export class SessionEventHandler {
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
     this.host.streamingUI.flushNow();
+    // NOTE: no clearStepRetry() here — the v2 engine re-emits `turn.step.started`
+    // for every retried attempt of the same step (stepRetryService re-queues the
+    // failed driver), so clearing here would hide the retry label mid-retry. The
+    // state is cleared by the step's terminal events instead.
     this.host.streamingUI.setStep(event.step);
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('waiting');
@@ -414,6 +420,7 @@ export class SessionEventHandler {
 
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
     this.host.streamingUI.flushNow();
+    this.clearStepRetry();
     this.host.noteStepUsage(event.usage);
     this.maybeShowDebugTiming(event);
 
@@ -440,6 +447,24 @@ export class SessionEventHandler {
       ? 'If this limit is wrong for your model, set `max_output_size` on the model alias in your kimi-code config.'
       : undefined;
     this.host.showNotice(title, detail);
+  }
+
+  private handleStepRetrying(event: TurnStepRetryingEvent): void {
+    this.host.setAppState({
+      stepRetry: {
+        nextAttempt: event.nextAttempt,
+        maxAttempts: event.maxAttempts,
+        delayMs: event.delayMs,
+        errorName: event.errorName,
+        errorMessage: event.errorMessage,
+        statusCode: event.statusCode,
+      },
+    });
+  }
+
+  private clearStepRetry(): void {
+    if (this.host.state.appState.stepRetry === null) return;
+    this.host.setAppState({ stepRetry: null });
   }
 
   private maybeShowDebugTiming(event: TurnStepCompletedEvent): void {
@@ -469,6 +494,7 @@ export class SessionEventHandler {
 
   private handleStepInterrupted(event: TurnStepInterruptedEvent): void {
     this.host.streamingUI.flushNow();
+    this.clearStepRetry();
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('idle');
     const reason = event.reason;
@@ -621,6 +647,7 @@ export class SessionEventHandler {
   private handleToolResult(event: ToolResultEvent): void {
     const { streamingUI } = this.host;
     streamingUI.flushNow();
+    this.clearStepRetry();
     const resultData: ToolResultBlockData = {
       tool_call_id: event.toolCallId,
       output: serializeToolResultOutput(event.output),

@@ -64,6 +64,8 @@ export interface AppState {
   isReplaying: boolean;
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing' | 'shell';
   streamingStartTime: number;
+  /** Pending step retry backoff (fed by `turn.step.retrying`); null when no retry is in flight. */
+  stepRetry: StepRetryState | null;
   theme: ThemeName;
   version: string;
   editorCommand: string | null;
@@ -83,6 +85,18 @@ export interface AppState {
   mcpServersSummary: string | null;
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
+}
+
+export interface StepRetryState {
+  /** Upcoming attempt number (1-based). */
+  nextAttempt: number;
+  maxAttempts: number;
+  /** Backoff wait before the next attempt, in milliseconds. */
+  delayMs: number;
+  errorName: string;
+  errorMessage: string;
+  /** HTTP status code for `APIStatusError`; undefined for network/timeout failures. */
+  statusCode?: number;
 }
 
 export interface ToolCallBlockData {
