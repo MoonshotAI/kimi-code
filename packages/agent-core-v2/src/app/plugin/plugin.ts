@@ -1,6 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
-import type { HookDef } from '#/agent/externalHooks/types';
+import type { HookDef } from '#/features/externalHooks/internal/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { SkillRoot } from '#/app/skillCatalog/types';
 

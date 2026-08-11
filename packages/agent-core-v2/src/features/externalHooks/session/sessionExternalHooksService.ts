@@ -1,8 +1,5 @@
 import { Service } from '#/_base/di/service';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IntervalTimer } from '#/_base/utils/timer';
-import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IModelService } from '#/kosong/model/model';
 import {
@@ -20,7 +17,8 @@ import {
   type SessionCreateSource,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 
-import { ISessionExternalHooksService } from './externalHooks';
+import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
+import { ISessionExternalHooksService } from './sessionExternalHooks';
 
 type SessionStartHookSource = Exclude<SessionCreateSource, 'fork'>;
 
@@ -183,11 +181,3 @@ export class SessionExternalHooksService
     });
   }
 }
-
-registerScopedService(
-  LifecycleScope.Session,
-  ISessionExternalHooksService,
-  SessionExternalHooksService,
-  ScopeActivation.OnScopeCreated,
-  'externalHooks',
-);
