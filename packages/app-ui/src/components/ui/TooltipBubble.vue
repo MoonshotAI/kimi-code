@@ -246,10 +246,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Teleport to="body">
+  <!-- Lazy mount: the bubble only teleports into <body> while open. With
+       v-show every tooltip instance parked a dormant node (+ its teleport
+       bookkeeping) in body for the app's whole lifetime — hundreds of them
+       pile up in a long-lived window. -->
+  <Teleport v-if="open" to="body">
     <div
       ref="bubble"
-      v-show="open"
       class="ui-tip__bubble"
       :class="{ positioned }"
       :style="[bubbleStyle, { '--tip-lines': maxLines }]"
