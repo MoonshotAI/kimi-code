@@ -10,10 +10,14 @@
  * document always carries the `agents` / `custom` maps — seeded at creation,
  * backfilled and persisted on load for documents written before the seeding
  * existed (without touching `updatedAt`, so a format heal never reorders
- * session listings). Agent registration is a structural write, not content
- * activity: it never bumps `updatedAt` — neither when resume materializes a
- * cold session's agents, nor when a runtime subagent registers mid-turn (the
- * turn's own submit/end moments carry recency). Bound at Session scope.
+ * session listings). `updatedAt` tracks content activity only: management
+ * writes (rename via `setTitle`, archive/restore via `setArchived`) keep the
+ * persisted value through `touchUpdatedAt: false`, an explicit
+ * `patch.updatedAt` always wins (fork restores the source's recency), and
+ * agent registration is a structural write that never touches it — neither
+ * when resume materializes a cold session's agents, nor when a runtime
+ * subagent registers mid-turn (the turn's own submit/end moments carry
+ * recency). Bound at Session scope.
  *
  * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
  * update is persisted, the fresh summary is recorded into the App-scoped
@@ -124,9 +128,6 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   ): Promise<void> {
     await this.ready;
     if (this.disposed) return;
-    // An explicit patch.updatedAt always wins (fork inherits the source's
-    // recency); otherwise management writes (touchUpdatedAt: false — rename,
-    // archive/restore) keep the current value so listings don't reorder.
     const updatedAt =
       patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
     this.data = { ...this.data, ...patch, updatedAt };
@@ -154,9 +155,6 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       await this.ready;
       const existing = this.data.agents?.[agentId];
       if (existing !== undefined && agentMetaEquals(existing, meta)) return;
-      // The agents map is structural metadata, not content activity: resume
-      // materializing a cold session's main agent (and runtime subagent
-      // registration) must never reorder recency-sorted listings.
       const agents = { ...this.data.agents, [agentId]: meta };
       await this.applyUpdate({ agents }, { touchUpdatedAt: false });
     });

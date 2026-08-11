@@ -38,6 +38,11 @@
  * live Agent wire journals, normalizes a missing protocol envelope, and
  * appends the fork boundary before restoring the target Agent; fork is
  * confined to this handler (source and target share the workspace bucket).
+ * Fork restores the source's recency onto the target: the metadata write
+ * carries an explicit `updatedAt` and runs after agent recreation as the
+ * fork's final metadata write (agent registration is non-touching), ahead
+ * of cron duplication, so a mid-fork failure never leaves cloned cron
+ * records behind.
  * On
  * materialize, the agent-profile loaders' `ready` is awaited
  * before the handle is published — agent-file discovery is local-
@@ -428,9 +433,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     sessionId: string,
     opts?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
-    // agent registration during resume is non-touching (see
-    // SessionMetadata.registerAgent), so the persisted recency survives
-    // materializing a cold session's main agent.
     const handle = await this.resume(sessionId, opts);
     if (handle === undefined) return undefined;
     await handle.accessor.get(ISessionMetadata).setArchived(false);
@@ -538,20 +540,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         });
       }
 
-      // Write the fork metadata AFTER the agent recreation loop so the
-      // fork's meta settles once, after all structural writes (agent
-      // registration is non-touching, but keeping the recency restore last
-      // makes the ordering robust against future structural writes).
       await targetMeta.update({
         title,
         isCustomTitle: opts.title !== undefined ? true : sourceMeta?.isCustomTitle === true,
         forkedFrom: sourceId,
         archived: false,
-        // The fork is a copy of the source's content as of now, not fresh
-        // activity: inherit the source's recency so the fork lands next to it
-        // instead of floating to the top of the list. (createdAt stays now —
-        // that's the creation fact.) A cold legacy source read from disk can
-        // still carry an ISO-string updatedAt — normalize to epoch ms.
         updatedAt: toEpochMs(sourceMeta?.updatedAt) || Date.now(),
         lastPrompt: sourceMeta?.lastPrompt,
         // The fork continues the source's conversation, so it inherits the
@@ -561,9 +554,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
       });
 
-      // Cron duplication stays after the durable metadata write: if any step
-      // above rejects, the catch removes the target dir and no cloned cron
-      // records are left pointing at a fork that never materialized.
       await this.duplicateCronTasks(sourceId, targetId);
 
       await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
