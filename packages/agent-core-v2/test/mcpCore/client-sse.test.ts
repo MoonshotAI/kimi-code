@@ -74,17 +74,19 @@ describe('SseMcpClient', () => {
     }
   });
 
-  it('clears a startup 401 when the OAuth retry returns a non-401 response', async () => {
+  it('clears a startup 401 before an OAuth retry that rejects without a response', async () => {
     const resourceUrl = 'https://mcp.example.test/sse';
     const authorizationServerUrl = 'https://auth.example.test';
     const tokenUrl = `${authorizationServerUrl}/token`;
+    const retryError = new TypeError('fetch failed');
     let resourceRequests = 0;
     const fetchImpl: typeof fetch = async (input) => {
       const url =
         typeof input === 'string' || input instanceof URL ? input.toString() : input.url;
       if (url === resourceUrl) {
-        const status = ++resourceRequests === 1 ? 401 : 500;
-        return new Response(status === 401 ? 'Unauthorized' : 'Unavailable', { status });
+        resourceRequests += 1;
+        if (resourceRequests === 1) return new Response('Unauthorized', { status: 401 });
+        throw retryError;
       }
       if (url === tokenUrl) {
         return Response.json({ access_token: 'fresh-token', token_type: 'Bearer' });
@@ -120,8 +122,7 @@ describe('SseMcpClient', () => {
         (reason: unknown) => reason,
       );
       expect(resourceRequests).toBe(2);
-      expect(error).toBeInstanceOf(SseError);
-      expect(error).toMatchObject({ code: 500 });
+      expect(error).toBe(retryError);
       expect(error).not.toMatchObject({ name: 'UnauthorizedError' });
     } finally {
       await client.close();

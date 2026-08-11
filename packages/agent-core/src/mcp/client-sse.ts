@@ -68,8 +68,10 @@ export class SseMcpClient implements MCPClient {
     const resourceUrl = new URL(config.url);
     const fetchImpl = options.fetch ?? fetch;
     const transportFetch: typeof fetch = async (input, init) => {
+      const isStartupResourceRequest = !this.ready && isSameUrl(input, resourceUrl);
+      if (isStartupResourceRequest) this.resourceUnauthorizedDuringStartup = false;
       const response = await fetchImpl(input, init);
-      if (!this.ready && isSameUrl(input, resourceUrl)) {
+      if (isStartupResourceRequest) {
         this.resourceUnauthorizedDuringStartup = response.status === 401;
       }
       return response;
