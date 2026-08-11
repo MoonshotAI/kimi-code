@@ -2,7 +2,7 @@
  * sessionSeed adapters — unit tests over the real scope tree.
  *
  * Each adapter observes its workspace upstream through `@ref` and provides
- * the Session-scope seed token during the scope's `assemble` hook. Covered
+ * the Session-scope seed token during the scope's `configureContainer` hook. Covered
  * per adapter: live reads across an upstream generation swap (getters never
  * serve a stale closure), `onDidChange` forwarding from the current backing
  * projection, the re-fire on upstream availability change (switch backing
@@ -27,7 +27,7 @@ import type { SkillCatalog } from '#/app/skillCatalog/types';
 import type { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import { assembleSessionSeedAdapters } from '#/session/sessionSeed/sessionSeedAdapters';
+import { installSessionSeedAdapters } from '#/session/sessionSeed/sessionSeedAdapters';
 import { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { NoopSessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGateService';
@@ -234,10 +234,10 @@ describe('sessionSeed adapters', () => {
   function buildSession(workspaceStubs: ScopeSeed): { workspace: Scope; session: Scope } {
     host = createScopedTestHost();
     const workspace = host.app.createChild(LifecycleScope.Workspace, 'ws', {
-      extra: workspaceStubs,
+      seeds: workspaceStubs,
     });
     const session = workspace.createChild(LifecycleScope.Session, 's1', {
-      assemble: assembleSessionSeedAdapters,
+      configureContainer: installSessionSeedAdapters,
     });
     return { workspace, session };
   }

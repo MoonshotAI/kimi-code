@@ -130,6 +130,10 @@ export function createDecorator<T>(name: string): ServiceIdentifier<T> {
   return id;
 }
 
+export function lookupServiceDecorator(name: string): ServiceIdentifier<unknown> | undefined {
+  return _util.serviceIds.get(name);
+}
+
 const SERVICE_IDENTIFIER_MARK = Symbol('serviceIdentifier');
 
 export function isServiceIdentifier(thing: unknown): thing is ServiceIdentifier<unknown> {

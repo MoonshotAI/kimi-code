@@ -16,8 +16,12 @@ import { type DomainEvent, IEventService } from './event';
 export class EventService extends Service implements IEventService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly emitter = this._register(new Emitter<DomainEvent>());
+  private readonly emitter = this._register(new Emitter<DomainEvent>('publish'));
   readonly onDidPublish: Event<DomainEvent> = this.emitter.event;
+
+  get listenerCount(): number {
+    return this.emitter.listenerCount;
+  }
 
   publish(event: DomainEvent): void {
     this.emitter.fire(event);
