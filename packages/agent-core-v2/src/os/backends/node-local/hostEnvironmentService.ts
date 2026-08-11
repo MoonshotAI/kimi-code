@@ -72,6 +72,7 @@ export class HostEnvironmentService implements IHostEnvironment {
       return new HostProcessError(
         OsProcessErrors.codes.SHELL_GIT_BASH_NOT_FOUND,
         error.message,
+        { details: { checkedPaths: error.checked }, cause: error },
       );
     }
     return error instanceof Error ? error : new Error(String(error));

@@ -9,9 +9,10 @@
  *
  * On Windows the probe expects bash from Git for Windows or MSYS2. If no
  * shell can be located the function throws `ProbeShellNotFoundError`, a
- * distinct type whose message carries an install hint and the checked paths,
- * so the DI boundary can tell a missing shell apart from other probe errors
- * and translate it into a coded error. Set `KIMI_SHELL_PATH` to override.
+ * distinct type carrying the checked paths (`checked`) with an install hint
+ * in its message, so the DI boundary can tell a missing shell apart from
+ * other probe errors and translate it into a coded error. Set
+ * `KIMI_SHELL_PATH` to override.
  *
  * Kept as a pure helper with no DI dependencies.
  */
@@ -27,9 +28,12 @@ export type ShellName = 'bash' | 'sh';
 export type PathClass = 'posix' | 'win32';
 
 export class ProbeShellNotFoundError extends Error {
-  constructor(message: string) {
+  readonly checked: readonly string[];
+
+  constructor(message: string, checked: readonly string[]) {
     super(message);
     this.name = 'ProbeShellNotFoundError';
+    this.checked = checked;
   }
 }
 
@@ -192,6 +196,7 @@ async function locateWindowsGitBash(deps: HostEnvironmentProbeDeps): Promise<str
 
   throw new ProbeShellNotFoundError(
     `Git Bash was not found on this Windows host. Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe. Checked: ${checked.join(', ')}.`,
+    checked,
   );
 }
 

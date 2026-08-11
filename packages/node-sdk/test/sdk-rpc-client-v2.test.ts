@@ -47,7 +47,11 @@ vi.mock('@moonshot-ai/agent-core-v2/_base/execEnv/environmentProbe', async (impo
     ...actual,
     probeHostEnvironmentFromNode: () =>
       hostEnvProbe.failWithMissingShell
-        ? Promise.reject(new actual.ProbeShellNotFoundError('Git Bash missing (stubbed)'))
+        ? Promise.reject(
+            new actual.ProbeShellNotFoundError('Git Bash missing (stubbed)', [
+              'C:\\Program Files\\Git\\bin\\bash.exe',
+            ]),
+          )
         : actual.probeHostEnvironmentFromNode(),
   };
 });
