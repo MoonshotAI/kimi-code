@@ -482,6 +482,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   async ensureConfigFile(): Promise<void> {
     await ensureConfigFile(this.configPath);
+    // Wait for the App-scope host-environment probe so that a missing Git Bash
+    // on Windows is reported early, before the TUI starts, instead of surfacing
+    // as an unhandledRejection later in startup.
+    await this.app.accessor.get(IHostEnvironment).ready;
   }
 
   async close(): Promise<void> {

@@ -26,7 +26,9 @@ import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
+  HostProcessError,
   IHostRequestHeaders,
+  OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
 
 import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
@@ -144,6 +146,21 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       expect(headers['X-Msh-Device-Id']).toBeTruthy();
     } finally {
       await client.close();
+    }
+  });
+
+  it('surfaces missing Git Bash during ensureConfigFile on Windows', async () => {
+    if (process.platform !== 'win32') return;
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await expect(harness.ensureConfigFile()).rejects.toBeInstanceOf(HostProcessError);
+      await expect(harness.ensureConfigFile()).rejects.toMatchObject({
+        code: OsProcessErrors.codes.SHELL_GIT_BASH_NOT_FOUND,
+      });
+    } finally {
+      await harness.close();
     }
   });
 

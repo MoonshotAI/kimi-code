@@ -12,7 +12,10 @@ import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { BugIndicatingError } from '#/_base/errors/errors';
-import { probeHostEnvironmentFromNode } from '#/_base/execEnv/environmentProbe';
+import {
+  probeHostEnvironmentFromNode,
+  ProbeShellNotFoundError,
+} from '#/_base/execEnv/environmentProbe';
 import { applyLoginShellPathFromNode } from '#/_base/execEnv/loginShellPath';
 
 import {
@@ -22,11 +25,13 @@ import {
   type PathClass,
   type ShellName,
 } from '#/os/interface/hostEnvironment';
+import { HostProcessError, OsProcessErrors } from '#/os/interface/hostProcess';
 
 export class HostEnvironmentService implements IHostEnvironment {
   declare readonly _serviceBrand: undefined;
 
   private _info?: HostEnvironmentInfo;
+  private _probeError?: unknown;
   readonly ready: Promise<void>;
 
   constructor() {
@@ -36,15 +41,34 @@ export class HostEnvironmentService implements IHostEnvironment {
       }),
       applyLoginShellPathFromNode(),
     ]).then(() => {});
+    // Catch the rejection so it can never become an unhandledRejection while
+    // the App scope is being constructed. The original error is preserved and
+    // rethrown when callers access sync fields or await `ready` themselves.
+    this.ready.catch((error: unknown) => {
+      this._probeError = error;
+    });
   }
 
   private require(field: keyof HostEnvironmentInfo): never | HostEnvironmentInfo[typeof field] {
+    if (this._probeError !== undefined) {
+      throw this.wrapProbeError(this._probeError);
+    }
     if (this._info === undefined) {
       throw new BugIndicatingError(
         `IHostEnvironment.${field} accessed before ready — await IHostEnvironment.ready first (composition root should do so before creating a Session scope).`,
       );
     }
     return this._info[field];
+  }
+
+  private wrapProbeError(error: unknown): unknown {
+    if (error instanceof ProbeShellNotFoundError) {
+      return new HostProcessError(
+        OsProcessErrors.codes.SHELL_GIT_BASH_NOT_FOUND,
+        error.message,
+      );
+    }
+    return error;
   }
 
   get osKind(): OsKind {

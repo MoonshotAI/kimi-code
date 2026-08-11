@@ -24,6 +24,19 @@ export type OsKind = string;
 export type ShellName = 'bash' | 'sh';
 export type PathClass = 'posix' | 'win32';
 
+/**
+ * Thrown by `probeHostEnvironment` on Windows when no Git Bash install can be
+ * located. Carries the list of paths that were probed so callers can include
+ * them in install hints and can distinguish a missing-shell failure from other
+ * probe errors.
+ */
+export class ProbeShellNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProbeShellNotFoundError';
+  }
+}
+
 export interface HostEnvironmentInfo {
   readonly osKind: OsKind;
   readonly osArch: string;
@@ -181,7 +194,7 @@ async function locateWindowsGitBash(deps: HostEnvironmentProbeDeps): Promise<str
     }
   }
 
-  throw new Error(
+  throw new ProbeShellNotFoundError(
     `Git Bash was not found on this Windows host. Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe. Checked: ${checked.join(', ')}.`,
   );
 }
