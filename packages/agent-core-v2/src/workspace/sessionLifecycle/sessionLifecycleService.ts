@@ -525,6 +525,21 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
 
       const title = opts.title ?? `Fork: ${sourceMeta?.title || sourceId}`;
+
+      await this.duplicateCronTasks(sourceId, targetId);
+
+      for (const agentId of agentIds) {
+        const sourceAgent = sourceAgents[agentId]!;
+        await target.accessor.get(IAgentLifecycleService).create({
+          agentId,
+          forkedFrom: sourceAgent.forkedFrom,
+          labels: labelsFromAgentMeta(sourceAgent),
+        });
+      }
+
+      // Write the fork metadata AFTER the agent recreation loop: registering
+      // each copied agent performs an ordinary metadata update that bumps
+      // updatedAt, so the recency restore must come last to survive.
       await targetMeta.update({
         title,
         isCustomTitle: opts.title !== undefined ? true : sourceMeta?.isCustomTitle === true,
@@ -543,17 +558,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         lastTurnReason: sourceMeta?.lastTurnReason,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
       });
-
-      await this.duplicateCronTasks(sourceId, targetId);
-
-      for (const agentId of agentIds) {
-        const sourceAgent = sourceAgents[agentId]!;
-        await target.accessor.get(IAgentLifecycleService).create({
-          agentId,
-          forkedFrom: sourceAgent.forkedFrom,
-          labels: labelsFromAgentMeta(sourceAgent),
-        });
-      }
 
       await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
       this._onDidForkSession.fire({

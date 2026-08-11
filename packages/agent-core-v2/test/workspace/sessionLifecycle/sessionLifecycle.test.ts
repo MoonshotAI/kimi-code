@@ -1566,6 +1566,54 @@ describe('SessionLifecycleService', () => {
       expect(forkUpdate?.updatedAt).toBe(Date.parse('2026-08-10T23:00:00.000Z'));
     });
 
+    it('fork writes the inherited updatedAt AFTER agent registration (registering bumps it)', async () => {
+      const calls: string[] = [];
+      const metaStub: ISessionMetadata = {
+        ...metadataStub(),
+        read: () =>
+          Promise.resolve({
+            updatedAt: 9876,
+            agents: { main: { type: 'main', homedir: '/tmp/h' } },
+          } as never),
+        update: (patch) => {
+          calls.push('forkedFrom' in patch ? 'update:fork' : 'update:other');
+          return Promise.resolve();
+        },
+        registerAgent: () => {
+          calls.push('registerAgent');
+          return Promise.resolve();
+        },
+      };
+      const agentHandle = {
+        id: 'main',
+        kind: LifecycleScope.Agent,
+        accessor: {
+          get: () => {
+            throw new Error('unexpected service access');
+          },
+        },
+        dispose: () => {},
+      } as unknown as IAgentScopeHandle;
+      const svc = await build([
+        stubPair(ISessionMetadata, metaStub),
+        stubPair(IAgentLifecycleService, {
+          ...agentLifecycleStub(),
+          create: async () => {
+            // Mirror the real doCreate: recreation registers the agent, which
+            // is an ordinary metadata write (it bumps updatedAt).
+            await metaStub.registerAgent('main', {});
+            return agentHandle;
+          },
+        }),
+      ]);
+
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      expect(calls).toContain('registerAgent');
+      expect(calls.indexOf('update:fork')).toBeGreaterThan(calls.lastIndexOf('registerAgent'));
+    });
+
     it('copies blobs, plans, background tasks, and media originals into the fork', async () => {
       const root = await makeTmpRoot();
       const svc = await build([
