@@ -1,12 +1,8 @@
 /**
  * `loop` domain error codes.
  *
- * `context.overflow` used to live here; it moved to `ProtocolErrors` because
- * the translation that raises it happens at the `protocol` boundary. The
- * wire code string is unchanged.
- *
- * `turn.agent_busy` is the legacy turn-domain code kept for its last thrower
- * (skill activation while a turn is active); the wire string is unchanged.
+ * `turn.agent_busy` is the legacy turn-domain code; the wire string is
+ * unchanged.
  */
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';

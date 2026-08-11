@@ -1,5 +1,5 @@
 /**
- * `toolDedupe` domain (L4) — `IAgentToolDedupeService` implementation.
+ * `toolDedupe` domain — `IAgentToolDedupeService` implementation.
  *
  * Self-wiring plugin: its constructor registers `loop` onWillBeginStep/onDidFinishStep
  * hooks, an `onBeforeExecuteTool` veto listener (same-step duplicates are
@@ -17,13 +17,15 @@
 
 import { createHash } from 'node:crypto';
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
 import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
@@ -140,7 +142,7 @@ export const toolDedupeActiveTurnIdKey = defineState<number | undefined>(
 );
 export const toolDedupeActiveStepKey = defineState<number>('toolDedupe.activeStep', () => 0);
 
-export class AgentToolDedupeService extends Disposable implements IAgentToolDedupeService {
+export class AgentToolDedupeService extends Service implements IAgentToolDedupeService {
   declare readonly _serviceBrand: undefined;
   private readonly stepDeferreds = new Map<string, Deferred<ToolDedupeResult>>();
 
@@ -179,6 +181,13 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
       }
     });
     toolExecutor.hooks.onDidExecuteTool.register('toolDedupe', async (ctx, next) => {
+      this.registerSkipped(
+        ctx.toolCall.id,
+        ctx.toolCall.name,
+        ctx.args,
+        ctx.toolCall.arguments,
+        ctx.trace,
+      );
       ctx.result = await this.finalizeResult(
         ctx.toolCall.id,
         ctx.toolCall.name,
@@ -303,6 +312,23 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
       return { syntheticResult: null };
     }
     return { syntheticResult: null };
+  }
+
+  private registerSkipped(
+    toolCallId: string,
+    toolName: string,
+    args: unknown,
+    rawArguments: unknown,
+    trace: LLMRequestTrace | undefined,
+  ): void {
+    if (this.callKeyByCallId.has(toolCallId)) return;
+    const keyArgs =
+      rawArguments !== undefined &&
+      rawArguments !== null &&
+      parseToolCallArguments(rawArguments).parseFailed
+        ? rawArguments
+        : args;
+    this.checkToolCall(toolCallId, toolName, keyArgs, trace);
   }
 
   private recordDupType(

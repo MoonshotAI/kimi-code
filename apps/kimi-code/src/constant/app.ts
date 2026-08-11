@@ -10,6 +10,10 @@ export const CLI_UI_MODE = 'shell';
 // Telemetry ui_mode for the `kimi web` host. Same product
 // as the CLI (CLI_USER_AGENT_PRODUCT); the surface is distinguished by ui_mode.
 export const WEB_UI_MODE = 'web';
+// User-Agent suffix for the `kimi web` host: its requests go out as
+// `kimi-code-cli/<version> (web)` so upstream can tell web-UI traffic
+// apart from direct CLI runs without changing the product token or platform.
+export const WEB_USER_AGENT_SUFFIX = 'web';
 
 // Give telemetry a short flush window without making CLI exit feel stuck.
 export const CLI_SHUTDOWN_TIMEOUT_MS = 3000;
@@ -62,6 +66,9 @@ export const DEFAULT_OAUTH_PROVIDER_NAME = 'managed:kimi-code';
 export const OAUTH_LOGIN_REQUIRED_CODE = ErrorCodes.AUTH_LOGIN_REQUIRED;
 
 export const FEEDBACK_ISSUE_URL = 'https://github.com/MoonshotAI/kimi-code/issues';
+// Sign-up / sign-in page offered to signed-out users so they can create an
+// account and submit feedback through the authenticated channel next time.
+export const KIMI_CODE_SIGNUP_URL = 'https://www.kimi.com/code';
 
 // Sent in the feedback `version` field so the backend can distinguish this
 // TypeScript client from clients that send a bare version.

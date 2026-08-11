@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -9,6 +8,8 @@ import {
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import {
   ISessionIndex,
+  type SessionCountQuery,
+  type SessionIndexStatus,
   type SessionListQuery,
   type SessionSummary,
 } from '#/app/sessionIndex/sessionIndex';
@@ -22,12 +23,20 @@ import { WorkspaceSessionsService } from '#/app/workspaceSessions/workspaceSessi
 class FakeSessionIndex implements ISessionIndex {
   readonly _serviceBrand: undefined;
   lastListQuery: SessionListQuery | undefined;
-  listQueries: SessionListQuery[] = [];
+  lastCountQuery: SessionCountQuery | undefined;
   items: readonly SessionSummary[] = [];
+  countResult = 0;
 
-  async list(query: SessionListQuery) {
+  async prepare(): Promise<SessionIndexStatus> {
+    return this.status();
+  }
+
+  status(): SessionIndexStatus {
+    return { state: 'uninitialized', degradedCount: 0 };
+  }
+
+  async listRecent(query: SessionListQuery) {
     this.lastListQuery = query;
-    this.listQueries.push(query);
     return { items: this.items };
   }
 
@@ -35,9 +44,12 @@ class FakeSessionIndex implements ISessionIndex {
     return undefined;
   }
 
-  async countActive(_workspaceIds: readonly string[]): Promise<number> {
-    return 0;
+  async count(query: SessionCountQuery): Promise<number> {
+    this.lastCountQuery = query;
+    return this.countResult;
   }
+
+  async remove(_id: string): Promise<void> {}
 }
 
 class FakeWorkspaceAliases implements IWorkspaceAliases {
@@ -117,14 +129,10 @@ describe('WorkspaceSessionsService', () => {
   it('count folds aliases and includes archived sessions', async () => {
     const { sessions, index, aliases } = build();
     aliases.aliases['wd_abc'] = ['wd_abc', 'wd_abc_legacy'];
-    index.items = [
-      summary('s3', 'wd_abc_legacy', 300),
-      summary('s2', 'wd_abc', 200),
-      summary('s1', 'wd_abc', 100),
-    ];
+    index.countResult = 3;
 
     await expect(sessions.count('wd_abc')).resolves.toBe(3);
-    expect(index.lastListQuery).toEqual({
+    expect(index.lastCountQuery).toEqual({
       workspaceIds: ['wd_abc', 'wd_abc_legacy'],
       includeArchived: true,
     });

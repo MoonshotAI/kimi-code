@@ -18,19 +18,26 @@ export const sessionSummarySchema = z.object({
   updatedAt: z.number(),
   archived: z.boolean(),
   custom: z.record(z.string(), z.unknown()).optional(),
+  lastTurnReason: z.enum(['completed', 'cancelled', 'failed']).optional(),
 });
 
 export const sessionListQuerySchema = z.object({
   workspaceIds: z.array(z.string()).optional(),
   sessionId: z.string().optional(),
   includeArchived: z.boolean().optional(),
-  cursor: z.string().optional(),
   limit: z.number().optional(),
   childOf: z.string().optional(),
+  before: z.string().optional(),
+  after: z.string().optional(),
+});
+
+export const sessionCountQuerySchema = z.object({
+  workspaceIds: z.array(z.string()).optional(),
+  includeArchived: z.boolean().optional(),
 });
 
 export const sessionsContract = {
-  list: { input: z.tuple([sessionListQuerySchema]), output: pageOf(sessionSummarySchema) },
+  listRecent: { input: z.tuple([sessionListQuerySchema]), output: pageOf(sessionSummarySchema) },
   get: { input: z.tuple([z.string()]), output: maybe(sessionSummarySchema) },
-  countActive: { input: z.tuple([z.array(z.string())]), output: z.number() },
+  count: { input: z.tuple([sessionCountQuerySchema]), output: z.number() },
 } satisfies ServiceContract;

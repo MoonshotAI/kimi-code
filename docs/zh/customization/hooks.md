@@ -62,6 +62,8 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 {
   "hook_event_name": "PreToolUse",
   "session_id": "session_abc",
+  "session_title": "修复登录页",
+  "client_type": "kimi_code_cli",
   "cwd": "/path/to/project"
 }
 ```
@@ -99,16 +101,20 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 | 事件 | Matcher 匹配的是 | 会触发阻断？ | 说明 |
 | --- | --- | --- | --- |
 | `UserPromptSubmit` | 用户提交的文本内容 | ✓ | 用户发送消息时触发；返回文本会附加到上下文；若阻断，本轮不调用模型 |
+| `UserPromptQueued` | 排队消息的文本内容 | — | 上一回合仍在运行、消息进入队列时触发；payload 含 `prompt_id`、`prompt` 和 `queue_length`（观察用） |
 | `PreToolUse` | 工具名 | ✓ | 工具调用前触发（权限检查前）；阻断后工具不会执行 |
 | `Stop` | 空字符串 | ✓ | 模型准备结束本轮时触发；阻断后可追加一条消息让模型继续 |
+| `TurnStarted` | 回合来源类型（如 `user`、`task`、`system_trigger`） | — | 新回合开始时触发；payload 含 `turn_id`、`origin_kind`、`origin_name` 和 `prompt`（观察用） |
 | `PostToolUse` | 工具名 | — | 工具成功执行后触发（观察用） |
 | `PostToolUseFailure` | 工具名 | — | 工具失败或被阻断后触发（观察用） |
 | `PermissionRequest` | 工具名 | — | 即将等待用户审批前触发（观察用） |
 | `PermissionResult` | 工具名 | — | 审批结束后触发（观察用） |
-| `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发 |
-| `SessionEnd` | `exit` | — | 会话关闭后触发 |
+| `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发；payload 含 `source`、`model` 和 `profile` |
+| `SessionEnd` | `exit` 或 `archive` | — | 会话关闭后触发；`archive` 表示会话被归档而非退出 |
+| `SessionHeartbeat` | 空字符串 | — | 会话存活期间每 60 秒触发一次；仅当配置了本事件时计时器才会运行。payload 含 `uptime_ms`（观察用） |
 | `SubagentStart` | 子 Agent 名称 | — | 子 Agent 开始运行前触发 |
 | `SubagentStop` | 子 Agent 名称 | — | 子 Agent 成功完成后触发（观察用） |
+| `TaskStarted` | 任务类型（`agent`、`process` 或 `question`） | — | 后台任务启动时触发；payload 含 `task_id`、`description` 和 `detached`（观察用） |
 | `StopFailure` | 错误类型 | — | 本轮因错误失败后触发（观察用） |
 | `Interrupt` | 空字符串 | — | 用户中断本轮时触发（例如按下 Esc）；超时或其他程序性中断不会触发。中断时 `Stop` 不会触发，由本事件替代。payload 含 `reason` 字段（观察用） |
 | `PreCompact` | `manual` 或 `auto` | — | 上下文压缩开始前触发；返回值被完全忽略 |
@@ -153,5 +159,5 @@ process.stdin.on('end', () => {
 
 ## 下一步
 
-- [配置文件](../configuration/config-files.md#hooks) — `[[hooks]]` 在 `config.toml` 中的完整字段声明
+- [配置](#配置) — `[[hooks]]` 在 `config.toml` 中的完整字段声明
 - [Agent 与子 Agent](./agents.md) — 利用 `SubagentStop` 事件在子 Agent 完成后触发通知

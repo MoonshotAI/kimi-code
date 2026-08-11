@@ -1,5 +1,5 @@
 /**
- * `log` domain (L1) — runtime logging configuration.
+ * `log` domain — runtime logging configuration.
  *
  * Builds the `LoggingConfig` from `KIMI_LOG_*` environment variables plus
  * defaults, resolves the global and per-session log paths, and exposes the
@@ -60,7 +60,9 @@ export function resolveLoggingConfig(input: ResolveLoggingInput): LoggingConfig 
 }
 
 export function logSeed(config: LoggingConfig): ScopeSeed {
-  return [[ILogOptions as ServiceIdentifier<unknown>, config satisfies ILogOptions]];
+  return [
+    [ILogOptions as ServiceIdentifier<unknown>, config satisfies ILogOptions],
+  ];
 }
 
 function parseLevel(value: string | undefined): LogLevel | undefined {

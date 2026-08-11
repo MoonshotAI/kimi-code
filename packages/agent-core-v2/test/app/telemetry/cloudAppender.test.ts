@@ -11,7 +11,7 @@ import {
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { CloudAppender, type CloudAppenderOptions } from '#/app/telemetry/cloudAppender';
 
-import { stubBootstrap } from '../bootstrap/stubs';
+import { stubBootstrap, stubClientIdentity } from '../bootstrap/stubs';
 
 interface CapturedRequest {
   readonly url: string;
@@ -50,7 +50,7 @@ function baseOptions(
   const { homeDir: dir = '', storage, ...rest } = overrides;
   return {
     storage: storage ?? new FileStorageService(dir),
-    bootstrap: { ...stubBootstrap(), clientVersion: '1.0.0' },
+    bootstrap: { ...stubBootstrap(), clientIdentity: { ...stubClientIdentity, version: '1.0.0' } },
     deviceId: 'dev',
     appName: 'test-app',
     sleep: async () => {},

@@ -3,8 +3,8 @@
  * tool output, and the `<cron-fire>` injection the scheduler hands to the model
  * when a task fires.
  *
- * Both renderers stay dependency-free so the tools and the service can import
- * them without pulling in the rest of the cron stack.
+ * Both renderers stay dependency-free so they can be imported without
+ * pulling in the rest of the cron stack.
  */
 
 import type { CronJobOrigin } from '#/agent/contextMemory/types';

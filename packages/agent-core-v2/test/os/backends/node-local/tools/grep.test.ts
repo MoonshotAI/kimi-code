@@ -3,6 +3,7 @@ import { Readable, type Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { createServices } from '#/_base/di/test';
 import type {
   ExecutableTool,
@@ -15,6 +16,7 @@ import { AgentToolActivationService } from '#/agent/toolActivation/toolActivatio
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import {
   _clearAgentToolContributionsForTests,
+  AgentToolContribution,
   getAgentToolContributions,
   registerAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
@@ -32,6 +34,8 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
+import { Event } from '#/_base/event';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   type GrepInput,
@@ -51,6 +55,15 @@ vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
 }));
 
 const signal = new AbortController().signal;
+
+class TestContributionAssembly extends Service {
+  constructor() {
+    super();
+    for (const record of getAgentToolContributions()) {
+      this.provide(AgentToolContribution, record);
+    }
+  }
+}
 const workspace: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: ['/extra'] };
 const MAX_COLUMNS_RG_ARGS = ['--max-columns', '500'] as const;
 const COMMON_RG_ARGS = [
@@ -311,6 +324,11 @@ describe('GrepTool', () => {
           reg.define(IGrepTool, ProductionGrepTool);
           reg.define(IAgentToolRegistryService, AgentToolRegistryService);
           reg.define(IAgentToolActivationService, AgentToolActivationService);
+          reg.defineInstance(ISessionToolPolicyGate, {
+            _serviceBrand: undefined,
+            disabledTools: [],
+            onDidChange: Event.None as Event<void>,
+          } satisfies ISessionToolPolicyGate);
           reg.definePartialInstance(IAgentProfileService, {
             data: () => ({}) as unknown as ProfileData,
           });
@@ -320,6 +338,7 @@ describe('GrepTool', () => {
         },
       });
 
+      disposables.add(ix.createInstance(TestContributionAssembly));
       await ix.get(IAgentToolActivationService).activate();
       const tool = ix.get(IAgentToolRegistryService).resolve('Grep');
       const info = ix.get(IAgentToolRegistryService).list().find((entry) => entry.name === 'Grep');

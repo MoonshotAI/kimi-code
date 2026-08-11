@@ -16,6 +16,8 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type Unsubscribe = () => void;
 
+export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+
 export type {
   AgentReplayRecord,
   AgentBackgroundTaskInfo,
@@ -37,6 +39,8 @@ export type {
   GoalSnapshot,
   GoalStatus,
   GoalToolResult,
+  GlobalMcpServerAuthState,
+  GlobalMcpServerAuthStatus,
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
@@ -71,8 +75,22 @@ export type {
 export type { KimiHostIdentity, OAuthRefreshOutcome };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
 export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
+// Contributed commands are an agent-core-v2 seam; the type is re-exported
+// from the v2 engine (v1 sessions report an empty command set).
+export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 
 export type PermissionMode = 'yolo' | 'manual' | 'auto';
+
+/**
+ * Trust state of a workspace directory. Only meaningful on the agent-core-v2
+ * engine; the v1 engine has no workspace-trust concept and reports
+ * `{ trusted: true, gatedMcpServers: [] }`.
+ */
+export interface WorkspaceTrustInfo {
+  readonly trusted: boolean;
+  /** Names of project-level MCP servers that trusting the workspace would enable. */
+  readonly gatedMcpServers: readonly string[];
+}
 
 export interface CreateGoalInput {
   readonly objective: string;
@@ -107,6 +125,16 @@ export interface CreateSessionOptions {
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
+  /**
+   * Main-agent profile name (`--agent`): a builtin profile or one defined by
+   * an agentfile discovered from the user/project agent directories.
+   */
+  readonly agentProfile?: string;
+  /**
+   * Explicit agentfiles (`--agent-file`) loaded for this session with the
+   * highest precedence; an invalid file fails session creation.
+   */
+  readonly agentFiles?: readonly string[];
   readonly sessionStartedProperties?: TelemetryProperties;
   /**
    * Print-mode (`kimi -p`) only: when the main agent ends a turn while
@@ -128,6 +156,8 @@ export interface ResumeSessionInput {
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
+  /** Re-select the session's already-bound main profile; a different name fails. */
+  readonly agentProfile?: string;
   /** Include persisted subagent states in the returned replay snapshot. */
   readonly includeSubagents?: boolean;
   /**
@@ -258,6 +288,8 @@ export interface SessionSummary {
   readonly archived?: boolean | undefined;
   readonly metadata?: JsonObject | undefined;
   readonly additionalDirs?: readonly string[];
+  /** Terminal outcome of the session's latest main turn, when one ended. */
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export interface AddAdditionalDirResult {

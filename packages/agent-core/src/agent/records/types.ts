@@ -53,6 +53,33 @@ export interface AgentRecordEvents {
 
   'config.update': AgentConfigUpdateData;
 
+  /**
+   * v2-engine profile binding (wire protocol 1.5). v1 never writes this
+   * record; the type exists so replay can map a v2 session's profile binding
+   * onto the v1 equivalents (`config.update` + `tools.set_active_tools`).
+   * Field shapes follow the v2 payload: live v2 records carry
+   * `thinkingEffort`, legacy ones may carry `thinkingLevel` instead.
+   */
+  'profile.bind': {
+    modelAlias?: string;
+    profileName?: string;
+    thinkingEffort?: string;
+    thinkingLevel?: string;
+    systemPrompt?: string;
+    /** v2 tool allowlist; absent means "every tool active". */
+    activeToolNames?: readonly string[];
+    /** v2 profile denylist, applied on top of `activeToolNames`. */
+    disallowedTools?: readonly string[];
+    subagents?: readonly string[];
+  };
+
+  /**
+   * v2-engine transition back to the unrestricted default (every tool
+   * active). v1 has no corresponding state to rebuild; replay treats it as a
+   * no-op so the session-level profile fallback keeps its behavior.
+   */
+  'tools.reset_active_tools': {};
+
   'permission.set_mode': {
     mode: PermissionMode;
   };
@@ -81,6 +108,12 @@ export interface AgentRecordEvents {
   };
   'tools.set_active_tools': {
     names: readonly string[];
+    /**
+     * Profile denylist applied on top of `names` (agentfile
+     * `disallowedTools`). Optional for backwards compatibility: wires written
+     * before deny support (and v2-engine wires) carry no deny state.
+     */
+    disallowedNames?: readonly string[];
   };
 
   'usage.record': {

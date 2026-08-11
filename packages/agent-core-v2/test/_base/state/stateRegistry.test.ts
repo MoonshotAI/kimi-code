@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -9,8 +8,10 @@ import {
 import { createScopedTestHost, type ScopedTestHost } from '#/_base/di/test';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { defineState, StateRegistry, type StateChange } from '#/_base/state/stateRegistry';
-import { IStateService } from '#/app/state/state';
-import { StateService } from '#/app/state/stateService';
+import { IAppStateService } from '#/app/state/appState';
+import { AppStateService } from '#/app/state/appStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -141,8 +142,6 @@ describe('StateRegistry', () => {
     class FakeService {
       constructor(readonly dep: object) {}
     }
-    // A resource graph reachable from plain data: plain -> class -> plain…
-    // The class boundary stops the walk, so the deep plain tail never copied.
     const service = new FakeService({ deep: { tail: 'unreachable' } });
     const mixedKey = defineState('test.mixed', () => ({
       plain: { nested: [1, { ok: true }] },
@@ -168,7 +167,20 @@ describe('state services (scoped)', () => {
 
   beforeEach(() => {
     _clearScopedRegistryForTests();
-    registerScopedService(LifecycleScope.App, IStateService, StateService, ScopeActivation.OnScopeCreated, 'state');
+    registerScopedService(
+      LifecycleScope.App,
+      IAppStateService,
+      AppStateService,
+      ScopeActivation.OnScopeCreated,
+      'state',
+    );
+    registerScopedService(
+      LifecycleScope.Workspace,
+      IWorkspaceStateService,
+      WorkspaceStateService,
+      ScopeActivation.OnScopeCreated,
+      'state',
+    );
     registerScopedService(
       LifecycleScope.Session,
       ISessionStateService,
@@ -188,30 +200,80 @@ describe('state services (scoped)', () => {
 
   afterEach(() => host.dispose());
 
-  it('resolves a distinct state service per scope tier', () => {
-    const appState = host.app.accessor.get(IStateService);
-    const session = host.child(LifecycleScope.Session, 's1');
-    const sessionState = session.accessor.get(ISessionStateService);
+  function createChain() {
+    const workspace = host.child(LifecycleScope.Workspace, 'w1');
+    const session = host.childOf(workspace, LifecycleScope.Session, 's1');
     const agent = host.childOf(session, LifecycleScope.Agent, 'main');
+    return { workspace, session, agent };
+  }
+
+  it('resolves a distinct state service per scope tier', () => {
+    const appState = host.app.accessor.get(IAppStateService);
+    const { workspace, session, agent } = createChain();
+    const workspaceState = workspace.accessor.get(IWorkspaceStateService);
+    const sessionState = session.accessor.get(ISessionStateService);
     const agentState = agent.accessor.get(IAgentStateService);
-    expect(appState).not.toBe(sessionState);
+    expect(appState).not.toBe(workspaceState);
+    expect(workspaceState).not.toBe(sessionState);
     expect(sessionState).not.toBe(agentState);
   });
 
   it('keeps registered state invisible to sibling scope tiers', () => {
     const sessionKey = defineState('test.sessionOnly', () => 'seed');
-    const session = host.child(LifecycleScope.Session, 's1');
+    const { workspace, session, agent } = createChain();
     const sessionState = session.accessor.get(ISessionStateService);
     sessionState.register(sessionKey);
     sessionState.set(sessionKey, 'live');
     expect(sessionState.get(sessionKey)).toBe('live');
-    const agent = host.childOf(session, LifecycleScope.Agent, 'main');
     expect(agent.accessor.get(IAgentStateService).has(sessionKey)).toBe(false);
-    expect(host.app.accessor.get(IStateService).has(sessionKey)).toBe(false);
+    expect(workspace.accessor.get(IWorkspaceStateService).has(sessionKey)).toBe(false);
+    expect(host.app.accessor.get(IAppStateService).has(sessionKey)).toBe(false);
   });
 
   it('resolves the same instance within one scope', () => {
-    const session = host.child(LifecycleScope.Session, 's1');
+    const { session } = createChain();
     expect(session.accessor.get(ISessionStateService)).toBe(session.accessor.get(ISessionStateService));
+  });
+
+  it('omits the parent link when a registry has no cascade parent', () => {
+    const loneKey = defineState('test.lone', () => 0);
+    const registry = new StateRegistry();
+    registry.register(loneKey);
+    expect(registry.inspect()).toEqual({
+      scope: 'unknown',
+      state: { 'test.lone': 0 },
+      parent: undefined,
+    });
+  });
+
+  it('cascades inspect from the agent tier up to the app root', () => {
+    const appKey = defineState('test.appOnly', () => 'a');
+    const workspaceKey = defineState('test.workspaceOnly', () => 'w');
+    const sessionKey = defineState('test.sessionCascade', () => 's');
+    const agentKey = defineState('test.agentOnly', () => 'g');
+    host.app.accessor.get(IAppStateService).register(appKey);
+    const { workspace, session, agent } = createChain();
+    workspace.accessor.get(IWorkspaceStateService).register(workspaceKey);
+    session.accessor.get(ISessionStateService).register(sessionKey);
+    const agentState = agent.accessor.get(IAgentStateService);
+    agentState.register(agentKey);
+
+    expect(agentState.inspect()).toEqual({
+      scope: 'agent',
+      state: { 'test.agentOnly': 'g' },
+      parent: {
+        scope: 'session',
+        state: { 'test.sessionCascade': 's' },
+        parent: {
+          scope: 'workspace',
+          state: { 'test.workspaceOnly': 'w' },
+          parent: {
+            scope: 'app',
+            state: { 'test.appOnly': 'a' },
+            parent: undefined,
+          },
+        },
+      },
+    });
   });
 });

@@ -25,6 +25,8 @@ import {
 } from '#/tui/utils/transcript-window';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
+import { replayBackgroundProjection } from '#/tui/utils/message-replay';
+import type { TaskNotificationOrigin } from '#/tui/utils/message-replay';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
@@ -65,6 +67,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      statusLine: { items: null, command: null },
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
@@ -77,7 +80,7 @@ function message(
   extra: {
     readonly toolCalls?: readonly ToolCall[];
     readonly toolCallId?: string;
-    readonly origin?: PromptOrigin;
+    readonly origin?: PromptOrigin | TaskNotificationOrigin;
     readonly isError?: boolean;
   } = {},
 ): AgentReplayRecord {
@@ -89,7 +92,7 @@ function message(
       content: [...content],
       toolCalls: [...(extra.toolCalls ?? [])],
       toolCallId: extra.toolCallId,
-      origin: extra.origin,
+      origin: extra.origin as PromptOrigin | undefined,
       isError: extra.isError,
     },
   };
@@ -905,6 +908,46 @@ describe('KimiTUI resume message replay', () => {
     expect(status?.backgroundAgentStatus?.headline).not.toContain('agent');
   });
 
+  it('renders replayed v2 task notifications (task origin) as bash tasks', async () => {
+    const driver = await replayIntoDriver(
+      [
+        message(
+          'user',
+          [
+            {
+              type: 'text',
+              text: '<notification id="task:bash-done0000:completed" category="task" type="task.completed" source_kind="background_task" source_id="bash-done0000">\nTitle: Background process completed\n</notification>',
+            },
+          ],
+          {
+            origin: {
+              kind: 'task',
+              taskId: 'bash-done0000',
+              status: 'completed',
+              notificationId: 'task:bash-done0000:completed',
+            },
+          },
+        ),
+      ],
+      {
+        background: [backgroundTask('bash-done0000', 'Codex comment poller', 'completed')],
+      },
+    );
+
+    const status = driver.state.transcriptEntries.find(
+      (entry) => entry.backgroundAgentStatus !== undefined,
+    );
+
+    expect(status?.backgroundAgentStatus?.headline).toBe('bash task completed in background');
+    expect(status?.backgroundAgentStatus?.detail).toContain('Codex comment poller');
+    // The raw notification XML must not leak into the visible transcript.
+    expect(
+      driver.state.transcriptEntries.some(
+        (entry) => entry.kind === 'user' && entry.content.includes('<notification'),
+      ),
+    ).toBe(false);
+  });
+
   it('renders only the most recent ten visible user turns', async () => {
     const replay = Array.from({ length: 12 }, (_, index) => [
       message('user', [{ type: 'text', text: `prompt ${index}` }]),
@@ -1309,5 +1352,61 @@ describe('KimiTUI resume message replay', () => {
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
     expect(transcript).not.toContain('final text 0');
     expect(transcript).toContain('final text 4');
+  });
+});
+
+describe('replayBackgroundProjection', () => {
+  function agentTask(overrides: Record<string, unknown> = {}): BackgroundTaskInfo {
+    return {
+      taskId: 'agent-task1',
+      kind: 'agent',
+      agentId: 'agent-1',
+      description: 'background job',
+      status: 'running',
+      startedAt: 1,
+      endedAt: null,
+      ...overrides,
+    } as BackgroundTaskInfo;
+  }
+
+  it('threads the persisted model (catalog-mapped) and concrete effort into the metadata', () => {
+    const projection = replayBackgroundProjection(
+      [agentTask({ model: 'k2-cheap', thinkingEffort: 'low' })],
+      {
+        'k2-cheap': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k2-cheap',
+          displayName: 'Kimi K2 Cheap',
+        },
+      } as never,
+    );
+    expect(projection.backgroundAgentMetadata.get('agent-1')).toMatchObject({
+      model: 'Kimi K2 Cheap',
+      effort: 'low',
+    });
+  });
+
+  it('falls back to the raw alias and drops boolean effort states', () => {
+    const projection = replayBackgroundProjection([
+      agentTask({ model: 'k2-cheap', thinkingEffort: 'on' }),
+      agentTask({
+        taskId: 'agent-task2',
+        agentId: 'agent-2',
+        model: 'k2-cheap',
+        thinkingEffort: 'off',
+      }),
+    ]);
+    expect(projection.backgroundAgentMetadata.get('agent-1')).toMatchObject({
+      model: 'k2-cheap',
+      effort: undefined,
+    });
+    expect(projection.backgroundAgentMetadata.get('agent-2')?.effort).toBeUndefined();
+  });
+
+  it('omits model and effort for records that predate the fields', () => {
+    const projection = replayBackgroundProjection([agentTask()]);
+    const meta = projection.backgroundAgentMetadata.get('agent-1');
+    expect(meta?.model).toBeUndefined();
+    expect(meta?.effort).toBeUndefined();
   });
 });

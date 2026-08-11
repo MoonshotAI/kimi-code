@@ -1,16 +1,14 @@
 /**
- * `permissionPolicy` domain (L3) — `IAgentPermissionPolicyService` implementation.
+ * `permissionPolicy` domain — `IAgentPermissionPolicyService` implementation.
  *
  * Runs the static, ordered permission chain: every node adjudicates the *risk*
  * of a tool call (mode posture, user rules, session approval memory, sensitive
- * paths, intrinsic tool risk, workspace write trust, fallback). Harness
- * constraints (plan guard, swarm batch exclusivity, btw deny) are NOT here —
- * they live in their owning domains as `onBeforeExecuteTool` veto listeners.
- * Bound at Agent scope.
+ * paths, intrinsic tool risk, workspace write trust, fallback). Bound at
+ * Agent scope.
  */
 
 import { IInstantiationService } from "#/_base/di/instantiation";
-import { Disposable } from "#/_base/di/lifecycle";
+import { Service } from "#/_base/di/service";
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { AutoModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-ask-user-question-deny';
@@ -29,10 +27,11 @@ import {
   type PermissionPolicyEvaluation,
 } from './permissionPolicy';
 import type { PermissionPolicy } from "./types";
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 export class AgentPermissionPolicyService
-  extends Disposable
+  extends Service
   implements IAgentPermissionPolicyService
 {
   declare readonly _serviceBrand: undefined;

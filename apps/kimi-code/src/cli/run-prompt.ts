@@ -18,6 +18,7 @@ import { resolve } from 'pathe';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
 
+import { resolveAgentProfileSelection } from './agent-selection';
 import { isKimiV2Enabled } from './experimental-v2';
 import { resolveOutputFormat } from './options';
 import type { CLIOptions, PromptOutputFormat } from './options';
@@ -100,10 +101,9 @@ export async function runPrompt(
   io: PromptRunIO = {},
 ): Promise<void> {
   if (isKimiV2Enabled()) {
-    // The experimental agent-core-v2 engine runs on its own native DI service
-    // runtime (see v2/run-v2-print.ts); it does not share the v1 PromptHarness
-    // path below. Loaded lazily so the v2 module graph stays off the default
-    // (v1) path.
+    // The agent-core-v2 engine runs on its own native DI service runtime (see
+    // v2/run-v2-print.ts); it does not share the v1 PromptHarness path below.
+    // Loaded lazily so the v2 module graph stays off the legacy path.
     const { runV2Print } = await import('./v2/run-v2-print');
     await runV2Print(opts, version, io);
     return;
@@ -296,6 +296,9 @@ async function resolvePromptSession(
   stderr: PromptOutput,
   setRestorePermission: (restorePermission: () => Promise<void>) => void,
 ): Promise<ResolvedPromptSession> {
+  // `--agent`/`--agent-file` are creation-only: validateOptions rejects them
+  // together with --session/--continue, so resume paths never forward a
+  // profile — the bound agent is restored from the session itself.
   if (opts.session !== undefined) {
     const sessions = await harness.listSessions({ sessionId: opts.session, workDir });
     const target = sessions[0];
@@ -365,12 +368,15 @@ async function resolvePromptSession(
     stderr.write(`No sessions to continue under "${workDir}"; starting a fresh session.\n`);
   }
 
+  const agentProfile = await resolveAgentProfileSelection(opts, workDir);
   const model = requireConfiguredModel(opts.model, defaultModel);
   const session = await harness.createSession({
     workDir,
     model,
     permission: 'auto',
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
+    agentProfile,
+    agentFiles: opts.agentFiles?.length ? opts.agentFiles : undefined,
     drainAgentTasksOnStop: true,
   });
   installHeadlessHandlers(session);

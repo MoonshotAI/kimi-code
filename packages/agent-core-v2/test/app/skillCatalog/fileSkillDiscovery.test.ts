@@ -198,6 +198,23 @@ describe('FileSkillDiscovery', () => {
     expect(result.skills.find((s) => s.name === 'outer.child')?.metadata.isSubSkill).toBe(true);
   });
 
+  it('reports only directories the scanner actually traverses', async () => {
+    await writeSkill('skills/terminal/SKILL.md', 'name: terminal\ndescription: terminal');
+    await mkdir(join(root, 'skills', 'terminal', 'runtime', 'nested'), { recursive: true });
+    await writeSkill(
+      'skills/parent/SKILL.md',
+      'name: parent\ndescription: parent\nhas-sub-skill: true',
+    );
+    await writeSkill('skills/parent/child/SKILL.md', 'name: child\ndescription: child');
+
+    const result = await discover([skillRoot('skills')]);
+
+    expect(result.scannedDirectories).toEqual([
+      join(root, 'skills'),
+      join(root, 'skills', 'parent'),
+    ]);
+  });
+
   it('ignores node_modules and dot directories while walking', async () => {
     await writeSkill(
       'skills/node_modules/hidden/SKILL.md',

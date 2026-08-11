@@ -514,6 +514,8 @@ export function projectContext(
       case 'tools.unregister_user_tool':
       case 'tools.set_active_tools':
       case 'tools.update_store':
+      case 'profile.bind':
+      case 'tools.reset_active_tools':
       case 'llm.tools_snapshot':
       case 'llm.request':
       case 'mcp.tools_discovered':

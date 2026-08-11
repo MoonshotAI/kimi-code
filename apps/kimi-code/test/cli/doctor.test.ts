@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { Command } from 'commander';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   handleDoctor,
@@ -14,11 +14,13 @@ import {
 let dir: string;
 
 beforeEach(async () => {
+  vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '');
   dir = join(tmpdir(), `kimi-doctor-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   await mkdir(dir, { recursive: true });
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -99,6 +101,27 @@ describe('kimi doctor', () => {
     expect(out).toContain('SKIP config.toml');
     expect(out).toContain('SKIP tui.toml');
     expect(out).toContain('built-in defaults will apply');
+  });
+
+  it('uses the legacy validator when legacy wins over the experimental flag', async () => {
+    const configPath = join(dir, 'config.toml');
+    const text = '[providers.kimi]\ntype = "kimi"\n';
+    await writeFile(configPath, text, 'utf-8');
+    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    const validateConfigToml = vi.fn(async () => undefined);
+    const { deps } = makeDeps();
+
+    const code = await handleDoctor(
+      {
+        ...deps,
+        configRpc: { validateConfigToml } as unknown as NonNullable<DoctorDeps['configRpc']>,
+      },
+      { target: 'config' },
+    );
+
+    expect(code).toBe(0);
+    expect(validateConfigToml).toHaveBeenCalledWith({ text, filePath: configPath });
   });
 
   it('checks only config.toml when the config target is selected', async () => {
@@ -266,5 +289,139 @@ max_context_size = "large"
     const err = stderr.join('');
     expect(err).toContain('Validation issues:');
     expect(err).toContain('models.kimi.max_context_size:');
+  });
+});
+
+describe('kimi doctor (default v2 config validation)', () => {
+  afterEach(() => {
+    delete process.env['KIMI_LOOP_MAX_RETRIES_PER_STEP'];
+    delete process.env['KIMI_LOOP_MAX_ATTEMPTS_PER_STEP'];
+  });
+
+  it('accepts a config valid for the v2 engine, including schema-less keys', async () => {
+    await writeFile(
+      join(dir, 'config.toml'),
+      `
+default_model = "kimi"
+
+[providers.kimi]
+type = "kimi"
+base_url = "https://api.example.com/v1"
+api_key = "YOUR_API_KEY"
+
+[models.kimi]
+provider = "kimi"
+model = "kimi"
+max_context_size = 262144
+`,
+      'utf-8',
+    );
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
+
+    expect(code).toBe(0);
+    expect(stderr.join('')).toBe('');
+    expect(stdout.join('')).toContain(`OK config.toml  ${join(dir, 'config.toml')}`);
+  });
+
+  it('reports schema-invalid sections with TOML-style field paths', async () => {
+    await writeFile(
+      join(dir, 'config.toml'),
+      `
+[models.kimi]
+provider = "kimi"
+model = "kimi"
+max_context_size = "large"
+`,
+      'utf-8',
+    );
+    const { deps, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
+
+    expect(code).toBe(1);
+    const err = stderr.join('');
+    expect(err).toContain('Validation issues:');
+    expect(err).toContain('models.kimi.max_context_size:');
+  });
+
+  it('warns about unknown top-level keys without failing', async () => {
+    await writeFile(
+      join(dir, 'config.toml'),
+      `
+[providrs.kimi]
+type = "kimi"
+`,
+      'utf-8',
+    );
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
+
+    expect(code).toBe(0);
+    expect(stderr.join('')).toBe('');
+    const out = stdout.join('');
+    expect(out).toContain(`OK config.toml  ${join(dir, 'config.toml')}`);
+    expect(out).toContain('Unknown top-level key ignored by the v2 engine: providrs.');
+  });
+
+  it('reports TOML syntax errors with line and column', async () => {
+    await writeFile(join(dir, 'config.toml'), '[providers.kimi\ntype = "kimi"\n', 'utf-8');
+    const { deps, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
+
+    expect(code).toBe(1);
+    const err = stderr.join('');
+    expect(err).toContain('Invalid TOML in');
+    expect(err).toMatch(/\(line \d+, column \d+\)/);
+  });
+
+  it('warns about deprecated config keys without failing', async () => {
+    await writeFile(
+      join(dir, 'config.toml'),
+      `
+[loop_control]
+max_retries_per_step = 3
+`,
+      'utf-8',
+    );
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
+
+    expect(code).toBe(0);
+    expect(stderr.join('')).toBe('');
+    const out = stdout.join('');
+    expect(out).toContain(`OK config.toml  ${join(dir, 'config.toml')}`);
+    expect(out).toContain("'max_retries_per_step' is deprecated");
+    expect(out).toContain("rename it to 'max_attempts_per_step'");
+  });
+
+  it('warns about a deprecated env var that supplies a value', async () => {
+    await writeFile(join(dir, 'config.toml'), '[loop_control]\n', 'utf-8');
+    process.env['KIMI_LOOP_MAX_RETRIES_PER_STEP'] = '5';
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
+
+    expect(code).toBe(0);
+    expect(stderr.join('')).toBe('');
+    expect(stdout.join('')).toContain(
+      'Environment variable KIMI_LOOP_MAX_RETRIES_PER_STEP is deprecated; use KIMI_LOOP_MAX_ATTEMPTS_PER_STEP instead.',
+    );
+  });
+
+  it('does not warn about the deprecated env var when the primary one is set', async () => {
+    await writeFile(join(dir, 'config.toml'), '[loop_control]\n', 'utf-8');
+    process.env['KIMI_LOOP_MAX_RETRIES_PER_STEP'] = '5';
+    process.env['KIMI_LOOP_MAX_ATTEMPTS_PER_STEP'] = '5';
+    const { deps, stdout } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
+
+    expect(code).toBe(0);
+    expect(stdout.join('')).not.toContain('KIMI_LOOP_MAX_RETRIES_PER_STEP');
   });
 });

@@ -1,9 +1,11 @@
 /**
- * `plugin` domain (L3) — resolves GitHub plugin sources without the REST API.
+ * `plugin` domain — resolves GitHub plugin sources without the REST API.
  *
  * Selects release or ref tarballs and resolves movable refs to commit SHAs
  * through GitHub's Atom feed so installs and update checks use exact content.
  */
+
+import { Error2, ErrorCodes } from '#/errors';
 
 import type { GithubRef } from './source';
 import type { PluginGithubRef } from './types';
@@ -33,14 +35,20 @@ export async function resolveGithubCommitSha(
     signal: AbortSignal.timeout(10_000),
   });
   if (!resp.ok) {
-    throw new Error(
+    throw new Error2(
+      ErrorCodes.PLUGIN_LOAD_FAILED,
       `Could not resolve ${owner}/${repo}@${ref}: HTTP ${resp.status} ${resp.statusText}.`,
+      { details: { owner, repo, ref, status: resp.status } },
     );
   }
   const feed = await resp.text();
   const sha = /Grit::Commit\/([0-9a-f]{40})/i.exec(feed)?.[1];
   if (sha === undefined) {
-    throw new Error(`Could not resolve ${owner}/${repo}@${ref} to a commit SHA.`);
+    throw new Error2(
+      ErrorCodes.PLUGIN_LOAD_FAILED,
+      `Could not resolve ${owner}/${repo}@${ref} to a commit SHA.`,
+      { details: { owner, repo, ref } },
+    );
   }
   return sha.toLowerCase();
 }
@@ -72,11 +80,17 @@ export async function resolveGithubSource(
     signal: AbortSignal.timeout(10_000),
   });
   if (headProbe.status === 404) {
-    throw new Error(`Repository \`${owner}/${repo}\` not found or not accessible.`);
+    throw new Error2(
+      ErrorCodes.PLUGIN_LOAD_FAILED,
+      `Repository \`${owner}/${repo}\` not found or not accessible.`,
+      { details: { owner, repo } },
+    );
   }
   if (!headProbe.ok) {
-    throw new Error(
+    throw new Error2(
+      ErrorCodes.PLUGIN_LOAD_FAILED,
       `Could not access \`${owner}/${repo}\`: HTTP ${headProbe.status} ${headProbe.statusText}.`,
+      { details: { owner, repo, status: headProbe.status } },
     );
   }
   return {
@@ -96,10 +110,12 @@ async function tryResolveLatestReleaseTag(owner: string, repo: string): Promise<
   if (resp.status === 404) return undefined;
 
   if (resp.status !== 301 && resp.status !== 302) {
-    throw new Error(
+    throw new Error2(
+      ErrorCodes.PLUGIN_LOAD_FAILED,
       `Could not look up latest release of \`${owner}/${repo}\`: ` +
         `HTTP ${resp.status} ${resp.statusText} (${url}). ` +
         `Pin a specific ref with \`/tree/<branch|tag|sha>\` to bypass release lookup.`,
+      { details: { owner, repo, status: resp.status, url } },
     );
   }
 

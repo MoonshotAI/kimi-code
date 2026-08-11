@@ -1,5 +1,5 @@
 /**
- * `toolSelect` domain (L4) — `IAgentToolSelectAnnouncementsService`
+ * `toolSelect` domain — `IAgentToolSelectAnnouncementsService`
  * implementation.
  *
  * Appends v1-compatible loadable-tools diff announcements at turn boundaries
@@ -11,8 +11,9 @@
  * (`IAgentStateService`) and read/written through it. Bound at Agent scope.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -28,7 +29,7 @@ export const toolSelectNeedsBoundaryInjectionKey = defineState<boolean>(
   () => false,
 );
 
-export class AgentToolSelectAnnouncementsService extends Disposable implements IAgentToolSelectAnnouncementsService {
+export class AgentToolSelectAnnouncementsService extends Service implements IAgentToolSelectAnnouncementsService {
   declare readonly _serviceBrand: undefined;
 
   constructor(

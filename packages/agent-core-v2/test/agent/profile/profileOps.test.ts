@@ -3,10 +3,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AgentProfileService } from '#/agent/profile/profileService';
 import { ActiveToolsModel, ProfileModel } from '#/agent/profile/profileOps';
-import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import {
+  DEFAULT_AGENT_PROFILE_NAME,
+  type EnvironmentDisclosureSnapshot,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -20,20 +25,18 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostIdentity } from '#/app/hostIdentity/hostIdentity';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-// Side-effect registration: `drivesThinkingThroughTraits('kimi')` (used by
-// the forced-effort override) answers through the provider-definition registry.
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
@@ -57,12 +60,6 @@ function createConfigStub(): IConfigService {
   } as unknown as IConfigService;
 }
 
-/**
- * The pure-data Model the kosong catalog hands out. No morphs: per-turn
- * intent (cache key / sampling / thinking effort+keep) now surfaces through
- * `IAgentProfileService.resolveRequestParams()` instead of `with*` call
- * records on a recording Model stub.
- */
 function createTestModel(
   options: {
     readonly id?: string;
@@ -129,13 +126,6 @@ function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): I
   };
 }
 
-/**
- * The one registry answer the profile reads: whether the (protocol,
- * providerType) pair drives thinking through traits, and whether that driver
- * demands strict effort validation (`strictThinkingValidation`). Mirrored
- * here from the real Kimi definitions: strict on the native openai
- * transport, lenient over anthropic, nothing on other protocols.
- */
 function createProtocolRegistryStub(): IProtocolAdapterRegistry {
   return {
     _serviceBrand: undefined,
@@ -211,12 +201,37 @@ function buildHost(key: string): {
   host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
   host.stub(IHostEnvironment, stubUnused());
   host.stub(IHostFileSystem, stubUnused());
-  host.stub(IHostIdentity, stubUnused());
   host.stub(IBootstrapService, stubUnused());
   host.stub(ISessionContext, createSessionContextStub());
   host.stub(ISessionWorkspaceContext, stubUnused());
-  host.stub(ISessionAgentProfileCatalog, stubUnused());
-  host.stub(ISessionSkillCatalog, stubUnused());
+  host.stub(ISessionAgentProfileCatalog, {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    get: () => undefined,
+    getDefault: () => {
+      throw new Error('catalog resolution is not exercised');
+    },
+    list: () => [],
+    load: async () => {},
+    reload: async () => {},
+    onDidChange: () => ({ dispose: () => {} }),
+  });
+  host.stub(ISessionSkillCatalog, {
+    _serviceBrand: undefined,
+    onDidChange: () => ({ dispose: () => {} }),
+  });
+  host.stub(ISessionInstructionsProvider, {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    agentsMd: undefined,
+    agentsMdWarning: undefined,
+    agentsMdPaths: undefined,
+    onDidChange: Event.None as Event<void>,
+  } satisfies ISessionInstructionsProvider);
+  host.stub(IAgentAgentsMdReminderService, {
+    _serviceBrand: undefined,
+    seedInjected: () => {},
+  });
   host.stub(ISessionToolPolicy, {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
@@ -300,14 +315,12 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
   it('persists and replays an allowlist reset to unrestricted', async () => {
     svc.applyBindingSnapshot({
-      cwd: '/work',
       profileName: 'restricted',
       thinkingLevel: 'off',
       systemPrompt: 'restricted',
       activeToolNames: ['Read'],
     });
     svc.applyBindingSnapshot({
-      cwd: '/work',
       profileName: 'unrestricted',
       thinkingLevel: 'off',
       systemPrompt: 'unrestricted',
@@ -326,31 +339,100 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     replay.ix.dispose();
   });
 
-  it('chdir and emitStatusUpdated run live-only and are silent during replay', async () => {
-    let chdirCalls = 0;
+  it('persists the rendered prompt and disclosure snapshot in one bind record', async () => {
+    const environment: EnvironmentDisclosureSnapshot = {
+      cwd: '/work',
+      date: {
+        disclosed: true,
+        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
+      },
+    };
+    svc.applyBindingSnapshot({
+      modelAlias: 'kimi-code',
+      profileName: 'agent',
+      thinkingLevel: 'off',
+      systemPrompt: 'rendered prompt',
+      environmentDisclosure: environment,
+      renderGeneration: 7,
+      activeToolNames: undefined,
+      disallowedTools: [],
+    });
+
+    const records = await readRecords();
+    expect(records.filter((record) => record.type === 'profile.bind')).toEqual([
+      expect.objectContaining({
+        type: 'profile.bind',
+        systemPrompt: 'rendered prompt',
+        environmentDisclosure: environment,
+        renderGeneration: 7,
+      }),
+    ]);
+    expect(records.filter((record) => record.type === 'config.update')).toHaveLength(0);
+
+    const replay = buildHost('profile-replay-disclosure');
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, 'profile-replay-disclosure'),
+      records,
+    );
+    expect(modelOf(replay.wire)).toMatchObject({
+      systemPrompt: 'rendered prompt',
+      environmentDisclosure: environment,
+      renderGeneration: 7,
+    });
+    replay.ix.dispose();
+  });
+
+  it('replays a legacy config.update record with an explicit renderGeneration verbatim', async () => {
+    const environment: EnvironmentDisclosureSnapshot = {
+      cwd: '/work',
+      date: {
+        disclosed: true,
+        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
+      },
+    };
+
+    const replay = buildHost('profile-replay-legacy-generation');
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, 'profile-replay-legacy-generation'),
+      [
+        {
+          type: 'config.update',
+          systemPrompt: 'legacy prompt',
+          environmentDisclosure: environment,
+          renderGeneration: 100,
+          time: 1,
+        },
+      ],
+    );
+
+    expect(modelOf(replay.wire)).toMatchObject({
+      systemPrompt: 'legacy prompt',
+      environmentDisclosure: environment,
+      renderGeneration: 100,
+    });
+    replay.ix.dispose();
+  });
+
+  it('emitStatusUpdated runs live-only and is silent during replay', async () => {
     let statusEmits = 0;
     svc.configure({
-      chdir: () => {
-        chdirCalls += 1;
-      },
       emitStatusUpdated: () => {
         statusEmits += 1;
       },
     });
 
-    svc.update({ cwd: '/work', profileName: DEFAULT_AGENT_PROFILE_NAME });
-    expect(chdirCalls).toBe(1);
+    svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME });
     expect(statusEmits).toBe(1);
 
     const records = await readRecords();
 
     const host = buildHost('profile-replay');
-    let replayChdir = 0;
     let replayEmits = 0;
     host.svc.configure({
-      chdir: () => {
-        replayChdir += 1;
-      },
       emitStatusUpdated: () => {
         replayEmits += 1;
       },
@@ -362,9 +444,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       testWireScope(SCOPE, 'profile-replay'),
       records,
     );
-    expect(modelOf(host.wire).cwd).toBe('/work');
     expect(modelOf(host.wire).profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
-    expect(replayChdir).toBe(0);
     expect(replayEmits).toBe(0);
 
     const written: WireRecord[] = [];
@@ -448,9 +528,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
 
-    // The morph chain's replacement: the profile's dialect-free per-turn
-    // intent. Wire encoding (`extra_body.thinking.keep`) is the Kimi dialect's
-    // own hook now.
     expect(host.svc.resolveRequestParams()).toEqual({
       cacheKey: 'session-test',
       sampling: { temperature: 0.3 },
@@ -526,8 +603,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'claude-code', thinkingLevel: 'high' });
 
-    // The intent is dialect-free now; how a cache key reaches the Anthropic
-    // wire (`metadata.user_id`) is the dialect's own hook.
     expect(host.svc.resolveRequestParams()).toEqual({
       cacheKey: 'session-test',
       sampling: { temperature: 0.3 },
@@ -546,10 +621,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
 
-    // "Without Kimi generation kwargs" is no longer decidable at the profile:
-    // the durable record in `llmRequester.recordRequest` carries the
-    // thinking/sampling knobs unconditionally, and the Anthropic dialect
-    // encodes the thinking intent itself.
     expect(host.svc.resolveModelContext().thinkingLevel).toBe('max');
     expect(host.svc.resolveRequestParams()).toEqual({
       cacheKey: 'session-test',
@@ -652,10 +723,6 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'claude-sonnet', thinkingLevel: 'high' });
 
-    // The cache-key intent is dialect-free now: the profile resolves it for
-    // every protocol. How each dialect encodes it (Kimi `prompt_cache_key`
-    // vs Anthropic `metadata.user_id` vs silently dropped) is the dialect
-    // hook's own decision, asserted at the kosong/provider composition layer.
     expect(host.svc.resolveRequestParams().cacheKey).toBe('session-test');
   });
 });

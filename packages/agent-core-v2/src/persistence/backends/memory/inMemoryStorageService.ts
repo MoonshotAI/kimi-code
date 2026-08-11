@@ -8,9 +8,7 @@
  * default. A scope that seeds neither backend will fail to resolve the storage
  * tokens on first use.
  *
- * `append` concatenates into the same key slot `write` replaces, mirroring the
- * file implementation's single-namespace semantics so the two are
- * interchangeable for the facades above.
+ * `append` concatenates into the same key slot `write` replaces.
  */
 
 import {
@@ -66,6 +64,28 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     _options: StorageWriteOptions = {},
   ): Promise<void> {
     this.bucket(scope).set(key, data);
+    this.notifyWatchers(scope, key);
+  }
+
+  async writeStream(
+    scope: string,
+    key: string,
+    source: AsyncIterable<Uint8Array>,
+    _options: StorageWriteOptions = {},
+  ): Promise<void> {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for await (const chunk of source) {
+      chunks.push(chunk);
+      total += chunk.byteLength;
+    }
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    this.bucket(scope).set(key, merged);
     this.notifyWatchers(scope, key);
   }
 

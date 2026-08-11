@@ -8,15 +8,15 @@
  * `startServer`).
  */
 
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { hostRequestHeadersSeed } from '@moonshot-ai/agent-core-v2';
 import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command } from 'commander';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
@@ -24,7 +24,7 @@ import { getDataDir } from '#/utils/paths';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import {
-  buildKimiDefaultHeaders,
+  createKimiCodeHostIdentity,
   getHostPackageRoot,
   getVersion,
 } from '../../version';
@@ -266,12 +266,27 @@ async function runServerInProcess(
   // logger, close }`, so adapt it to the `RoutedServer` surface the rest of
   // this runner consumes.
   const logger = createServerLogger({ level: options.logLevel });
+  const webAssetsDir = serverWebAssetsDir();
+  if (webAssetsDir === undefined) {
+    logger.info(
+      'dev mode: web assets not built; starting the API server without the web UI',
+    );
+  }
   const v2 = await startServer({
     host: options.host,
     port: options.port,
     // Report the CLI's product version as `server_version` (/meta, web UI)
     // rather than kap-server's private package version.
-    version,
+    serverVersion: version,
+    // The CLI's host identity: feeds the engine's bootstrap client identity
+    // and the derived outbound headers (User-Agent + X-Msh-*), so web-UI
+    // OAuth flows and model / WebSearch requests carry the CLI identity. The
+    // `web` User-Agent suffix distinguishes web-UI traffic from direct CLI
+    // runs upstream (same product token, same platform).
+    hostIdentity: {
+      ...createKimiCodeHostIdentity(version),
+      userAgentSuffix: WEB_USER_AGENT_SUFFIX,
+    },
     logLevel: options.logLevel,
     logger,
     debugEndpoints: options.debugEndpoints,
@@ -284,11 +299,7 @@ async function runServerInProcess(
     // `telemetry` toggle). Complements the v1 client registered above, which
     // only covers host-level events.
     telemetry: true,
-    // Seed the CLI's Kimi identity headers so the engine's outbound
-    // requests (model, WebSearch, FetchURL) carry the same User-Agent +
-    // X-Msh-* identity as direct CLI runs.
-    seeds: hostRequestHeadersSeed(buildKimiDefaultHeaders(version)),
-    webAssetsDir: serverWebAssetsDir(),
+    webAssetsDir,
   });
   logger.info('serving the REST/WS API and the bundled web UI');
   running = {
@@ -315,8 +326,23 @@ async function runServerInProcess(
   });
 }
 
-function serverWebAssetsDir(): string {
-  return resolveServerWebAssetsDir();
+/**
+ * Resolve the web assets directory passed to kap-server. In dev mode
+ * (`KIMI_CODE_DEV_SERVER=1`, set by the repo's `dev:server` / `dev:kap-server*`
+ * scripts) a missing `dist-web` build is tolerated: the server starts API-only
+ * and the web UI is expected to come from a Vite dev server (the web UI source lives in the code-app repo).
+ * Outside dev mode the directory is always returned and kap-server keeps
+ * failing fast when the assets are missing.
+ */
+export function serverWebAssetsDir(
+  env: NodeJS.ProcessEnv = process.env,
+  nativeWebAssetsDir: string | null = getNativeWebAssetsDir(),
+): string | undefined {
+  const dir = resolveServerWebAssetsDir(nativeWebAssetsDir);
+  if (env['KIMI_CODE_DEV_SERVER'] === '1' && !existsSync(join(dir, 'index.html'))) {
+    return undefined;
+  }
+  return dir;
 }
 
 export function resolveServerWebAssetsDir(

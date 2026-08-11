@@ -6,8 +6,7 @@
  * detached task so the tool call can return immediately with a `task_id`,
  * while the user's answer (parked in `ISessionQuestionService`) settles the
  * task later. The task service fires the terminal notification on settle,
- * which delivers the answer to the agent in a later turn — see
- * `AgentTaskService` terminal notifications.
+ * which delivers the answer to the agent in a later turn.
  */
 
 import { isAbortError } from '#/_base/utils/abort';

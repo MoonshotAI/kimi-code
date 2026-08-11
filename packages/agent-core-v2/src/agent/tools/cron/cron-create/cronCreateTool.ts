@@ -1,5 +1,5 @@
 /**
- * `tools` domain (L7) — `ICronCreateTool` implementation.
+ * `tools` domain — `ICronCreateTool` implementation.
  *
  * CronCreateTool — schedule a prompt to be re-injected into this session
  * at a future wall-clock time, either once (`recurring: false`) or on a
@@ -13,7 +13,7 @@
  * NOT carry over into a brand-new session.
  *
  * The tool itself is pure validation + bookkeeping; the firing /
- * coalesce / jitter / persistence logic lives in `SessionCronService`.
+ * coalesce / jitter / persistence is delegated to `ISessionCronService`.
  * This file only knows how to:
  *
  *   1. validate the request (killswitch, cron parse, 5-year window,
@@ -24,13 +24,15 @@
  *   4. emit `cron_scheduled` telemetry through the service (the tool
  *      does **not** reach into `ITelemetryService` directly).
  *
- * Collaborators: `ISessionCronService` (`session/cron`) for task storage,
+ * Collaborators: `ISessionCronService` for task storage,
  * scheduling state and telemetry emission, `IAgentScopeContext` for the
- * emitting agent id, and the App-scope cron helpers (`app/cron`) for
+ * emitting agent id, and the App-scope cron helpers for
  * expression parsing and timestamp formatting. Bound at Agent scope.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern } from '#/tool/rule-match';

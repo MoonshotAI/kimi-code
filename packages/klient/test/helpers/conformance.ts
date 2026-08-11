@@ -7,10 +7,25 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
+import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
+import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
+
 import type { Klient } from '../../src/index.js';
+import type { TestEngine } from './engine.js';
 
 export interface KlientConformanceTarget {
   readonly klient: Klient;
+  /**
+   * The in-process engine's App scope. Both transports boot the engine
+   * in-process, so the suite can assemble dynamic units (e.g. contributed
+   * commands) through the production `IFeatureManager` path.
+   */
+  readonly app: TestEngine['app'];
   cleanup(): Promise<void>;
 }
 
@@ -72,6 +87,52 @@ export function defineKlientConformance(
       expect(typeof count).toBe('number');
     });
 
+    it('creates a titled session through implicit workspace materialization', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance session',
+      });
+
+      try {
+        expect(created).toMatchObject({
+          title: 'conformance session',
+          cwd: process.cwd(),
+          archived: false,
+        });
+        expect(created.id.length).toBeGreaterThan(0);
+        expect(await target.klient.global.sessions.get(created.id)).toMatchObject({
+          id: created.id,
+          title: 'conformance session',
+        });
+      } finally {
+        await target.klient.session(created.id).close();
+      }
+    });
+
+    it('session skills.list returns the workspace skills as summaries', async () => {
+      const workDir = await mkdtemp(join(tmpdir(), 'klient-conf-skills-'));
+      try {
+        await mkdir(join(workDir, '.kimi-code', 'skills', 'conf-skill'), { recursive: true });
+        await writeFile(
+          join(workDir, '.kimi-code', 'skills', 'conf-skill', 'SKILL.md'),
+          '---\nname: conf-skill\ndescription: conformance fixture skill\n---\n\n# Conf\n',
+        );
+        const created = await target.klient.global.sessions.create({ workDir });
+        try {
+          const skills = await target.klient.session(created.id).skills.list();
+          expect(skills.find((skill) => skill.name === 'conf-skill')).toMatchObject({
+            name: 'conf-skill',
+            description: 'conformance fixture skill',
+            source: 'project',
+          });
+        } finally {
+          await target.klient.session(created.id).close();
+        }
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    });
+
     it('providers.set/get/delete works and emits kosong.providers.changed', async () => {
       const events: Array<{
         added: readonly string[];
@@ -115,6 +176,39 @@ export function defineKlientConformance(
       const all = await target.klient.global.config.getAll();
       expect(typeof all).toBe('object');
       expect(Array.isArray(await target.klient.global.config.diagnostics())).toBe(true);
+    });
+
+    it('config replaceSections writes several domains and clears undefined ones', async () => {
+      const config = target.klient.global.config;
+      const beforeProviders = await config.inspect<Record<string, unknown>>('providers');
+      const beforeModels = await config.inspect<Record<string, unknown>>('models');
+      try {
+        await config.replaceSections({
+          sections: {
+            providers: {
+              ...beforeProviders.userValue,
+              'conf-provider': { type: 'openai', baseUrl: 'http://127.0.0.1:1', apiKey: 'k' },
+            },
+            models: {
+              ...beforeModels.userValue,
+              'conf-provider/m1': { provider: 'conf-provider', model: 'm1', maxContextSize: 100 },
+            },
+            defaultModel: 'conf-provider/m1',
+          },
+        });
+        expect((await config.inspect<string>('defaultModel')).userValue).toBe('conf-provider/m1');
+
+        // A domain mapped to `undefined` is cleared; domains absent from the
+        // sections record are left untouched.
+        await config.replaceSections({ sections: { defaultModel: undefined } });
+        expect((await config.inspect<string>('defaultModel')).userValue).toBeUndefined();
+        const providers = await config.inspect<Record<string, unknown>>('providers');
+        expect(providers.userValue?.['conf-provider']).toBeDefined();
+      } finally {
+        await config.replaceSections({
+          sections: { providers: beforeProviders.userValue, models: beforeModels.userValue },
+        });
+      }
     });
 
     it('hostFs.home() returns the host home and recent roots', async () => {
@@ -172,6 +266,62 @@ export function defineKlientConformance(
       expect(Array.isArray(await target.klient.global.plugins.list())).toBe(true);
       const status = await target.klient.global.auth.status();
       expect(typeof status.loggedIn).toBe('boolean');
+    });
+
+    it('agent commands list and run a contributed command', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance commands',
+      });
+      const calls: string[] = [];
+
+      // A dynamic App-scope unit contributing one command into the
+      // `CommandContribution` collection — the same path a Feature takes.
+      class ConformanceCommands extends Service {
+        static override readonly name = 'klient-conformance-commands';
+        constructor() {
+          super();
+          this.provide(CommandContribution, {
+            name: 'conformance-echo',
+            description: 'records its args',
+            run: (ctx) => {
+              calls.push(ctx.args);
+            },
+          });
+        }
+      }
+
+      const featureManager = target.app.accessor.get(IFeatureManager);
+      const handle = featureManager.provideUnit(ConformanceCommands);
+      try {
+        const agent = target.klient.session(created.id).agent('main');
+
+        // Dynamic assembly goes through the cascade — poll until visible.
+        let infos = await agent.listCommands();
+        const deadline = Date.now() + 5_000;
+        while (!infos.some((command) => command.name === 'conformance-echo')) {
+          if (Date.now() > deadline) break;
+          await new Promise((resolve) => {
+            setTimeout(resolve, 25);
+          });
+          infos = await agent.listCommands();
+        }
+        expect(infos.map((command) => command.name)).toContain('conformance-echo');
+        const echo = infos.find((command) => command.name === 'conformance-echo');
+        expect(echo).toMatchObject({ name: 'conformance-echo', description: 'records its args' });
+        expect(typeof echo?.source).toBe('string');
+
+        await agent.runCommand({ name: 'conformance-echo', args: 'hello commands' });
+        expect(calls).toEqual(['hello commands']);
+
+        // Unknown names fail with a coded engine error.
+        await expect(agent.runCommand({ name: 'conformance-missing' })).rejects.toThrow(
+          /Unknown command/,
+        );
+      } finally {
+        await handle.dispose();
+        await target.klient.session(created.id).close();
+      }
     });
   });
 }

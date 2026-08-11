@@ -9,6 +9,7 @@ import {
   NATIVE_INSTALL_COMMAND_WIN,
 } from '#/constant/app';
 import { loadTuiConfig } from '#/tui/config';
+import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 import { readUpdateCache } from './cache';
 import { tryAcquireUpdateInstallLock } from './install-lock';
@@ -140,6 +141,21 @@ export function spawnForSource(
 
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Resolve a spawn target from `spawnForSource` to an absolute executable path
+ * via PATH, refusing hits inside the current working directory: the update
+ * preflight runs before the workspace trust gate, so a package-manager binary
+ * planted in an untrusted workspace must never be executed. On win32 the
+ * resolved path is quoted because the spawn goes through cmd.exe (shell:
+ * true) and paths like `C:\Program Files\...` would otherwise split. Returns
+ * undefined when the command cannot be safely resolved.
+ */
+function resolveSpawnCommand(cmd: string, platform: NodeJS.Platform): string | undefined {
+  const resolved = resolveCommandPath(cmd);
+  if (resolved === undefined) return undefined;
+  return platform === 'win32' ? `"${resolved}"` : resolved;
 }
 
 const THIRD_PARTY_SOURCE_NOTE =
@@ -493,12 +509,16 @@ export async function installUpdate(
   platform: NodeJS.Platform,
 ): Promise<void> {
   const { cmd, args } = spawnForSource(source, version, platform);
+  const resolvedCmd = resolveSpawnCommand(cmd, platform);
+  if (resolvedCmd === undefined) {
+    throw new Error(`${cmd} was not found in PATH; cannot install the update`);
+  }
   await new Promise<void>((resolve, reject) => {
     // Windows package managers (npm/pnpm/yarn) are .cmd shims. Since the
     // CVE-2024-27980 fix, Node throws EINVAL when spawning a .cmd/.bat without
     // a shell, so run through the shell on win32. The version is a validated
     // semver and the package name is a constant, so args are shell-safe.
-    const child = spawn(cmd, [...args], {
+    const child = spawn(resolvedCmd, [...args], {
       stdio: 'inherit',
       shell: platform === 'win32' ? true : undefined,
     });
@@ -609,7 +629,15 @@ async function startBackgroundInstall(
       });
     };
 
-    const child = spawn(cmd, [...args], {
+    const resolvedCmd = resolveSpawnCommand(cmd, platform);
+    if (resolvedCmd === undefined) {
+      // The package manager cannot be resolved to an absolute path outside
+      // the cwd — record a normal install failure instead of spawning a bare
+      // command name that Windows would resolve into the untrusted workspace.
+      finish(false);
+      return;
+    }
+    const child = spawn(resolvedCmd, [...args], {
       detached: true,
       stdio: 'ignore',
       shell: platform === 'win32' ? true : undefined,

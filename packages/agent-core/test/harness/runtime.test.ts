@@ -228,6 +228,45 @@ micro_compaction = false
     expect(reloadedMainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
   });
 
+  it('live-applies the complete persisted secondary recipe', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL', '1');
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_secondary_refresh',
+      workDir,
+      model: 'default-mock',
+    });
+
+    await rpc.setKimiConfig({
+      secondaryModel: {
+        model: 'default-mock',
+        maxContextSize: 65_536,
+      },
+    });
+    await rpc.applyPersistedSecondaryModel({ sessionId: created.id });
+
+    const config = core.sessions.get(created.id)?.getReadyAgent('main')?.kimiConfig;
+    expect(config?.secondaryModel).toEqual({
+      model: 'default-mock',
+      maxContextSize: 65_536,
+    });
+    expect(config?.models?.['__secondary__']?.overrides?.maxContextSize).toBe(65_536);
+  });
+
   // Regression for https://github.com/MoonshotAI/kimi-code/issues/988: during
   // ACP `session/new` the tool kaos is the reverse-RPC bridge and the client
   // does not know the session yet, so reading `.kimi-code/local.toml` through
@@ -1135,6 +1174,97 @@ base_url = "https://search.example.test/v1"
     expect(reminders).toHaveLength(2);
     expect(reminders.at(-1)).toContain('no active plugin session starts');
     expect(reminders.at(-1)).toContain('supersedes any earlier plugin_session_start');
+  });
+
+  it('replaces only the plugin agent layer when a plugin is disabled before reload', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const pluginRoot = join(tmp, 'plugin');
+    await mkdir(join(homeDir, 'agents'), { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await mkdir(join(pluginRoot, 'agents'), { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    await writeFile(
+      join(homeDir, 'agents', 'local-reviewer.md'),
+      '---\nname: local-reviewer\ndescription: Local reviewer\n---\n\nLocal prompt.\n',
+    );
+    await writeFile(
+      join(pluginRoot, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', agents: ['./agents'] }),
+    );
+    await writeFile(
+      join(pluginRoot, 'agents', 'plugin-reviewer.md'),
+      '---\nname: plugin-reviewer\ndescription: Plugin reviewer\n---\n\nPlugin prompt.\n',
+    );
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    await core.installPlugin({ source: pluginRoot });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload_plugin_agents',
+      workDir,
+      model: 'default-mock',
+    });
+    expect(core.sessions.get(created.id)?.agentCatalog.get('plugin-reviewer')).toBeDefined();
+    expect(core.sessions.get(created.id)?.agentCatalog.get('local-reviewer')).toBeDefined();
+
+    await core.setPluginEnabled({ id: 'demo', enabled: false });
+    await rpc.reloadSession({ sessionId: created.id });
+
+    const reloadedCatalog = core.sessions.get(created.id)?.agentCatalog;
+    expect(reloadedCatalog?.get('plugin-reviewer')).toBeUndefined();
+    expect(reloadedCatalog?.get('local-reviewer')?.description).toBe('Local reviewer');
+  });
+
+  it('adds a newly installed plugin agent on reload and preserves it on resume', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const pluginRoot = join(tmp, 'plugin');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await mkdir(join(pluginRoot, 'agents'), { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    await writeFile(
+      join(pluginRoot, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', agents: ['./agents'] }),
+    );
+    await writeFile(
+      join(pluginRoot, 'agents', 'plugin-reviewer.md'),
+      '---\nname: plugin-reviewer\ndescription: Plugin reviewer\n---\n\nPlugin prompt.\n',
+    );
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload_new_plugin_agent',
+      workDir,
+      model: 'default-mock',
+    });
+    expect(core.sessions.get(created.id)?.agentCatalog.get('plugin-reviewer')).toBeUndefined();
+
+    await core.installPlugin({ source: pluginRoot });
+    await rpc.reloadSession({ sessionId: created.id });
+    expect(core.sessions.get(created.id)?.agentCatalog.get('plugin-reviewer')).toBeDefined();
+
+    await rpc.closeSession({ sessionId: created.id });
+    await rpc.resumeSession({ sessionId: created.id });
+    expect(core.sessions.get(created.id)?.agentCatalog.get('plugin-reviewer')).toBeDefined();
   });
 
   it('does not append a plugin_session_start reminder on reload without the force flag', async () => {

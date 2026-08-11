@@ -24,11 +24,9 @@ import {
   type MediaStripSnapshot,
 } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
-import { IFaultInjectionService } from '#/agent/faultInjection/faultInjection';
-import { FaultInjectionService } from '#/agent/faultInjection/faultInjectionService';
 import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -38,14 +36,13 @@ import { IAgentVideoResolverService } from '#/agent/media/videoResolver';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
-import { IFlagService } from '#/app/flag/flag';
 import {
   APIConnectionError,
   APIEmptyResponseError,
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/kosong/contract/errors';
-import { emptyUsage } from '#/kosong/contract/usage';
+import { emptyUsage, type TokenUsage } from '#/kosong/contract/usage';
 import type { Message } from '#/kosong/contract/message';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { ModelCapability } from '#/kosong/contract/capability';
@@ -143,7 +140,6 @@ function createService(
         >)
     | undefined,
   options: {
-    readonly flagEnabled?: boolean;
     readonly thinkingLevel?: ThinkingEffort;
   } = {},
 ) {
@@ -169,9 +165,12 @@ function createService(
       systemPrompt: 'system',
     }),
   };
-  const contextSize = {
+  const measuredCalls: { readonly messages: number; readonly usage: TokenUsage }[] = [];
+  const tokenCounting = {
     get: () => ({ size: 0, measured: 0, estimated: 0 }),
-    measured: () => undefined,
+    measured: (input: readonly Message[], _output: readonly Message[], usage: TokenUsage) => {
+      measuredCalls.push({ messages: input.length, usage });
+    },
   };
   const usage = { record: () => undefined, status: () => ({}) };
   const context = { get: () => history };
@@ -187,7 +186,6 @@ function createService(
     shapeTools: (entries) => entries,
     shapeHistory: (messages) => messages,
   };
-  const flagEnabled = options.flagEnabled ?? true;
   const testSnapshot = Object.freeze({}) as MediaStripSnapshot;
   const events: DomainEvent[] = [];
   const eventBus: IEventBus = {
@@ -212,8 +210,7 @@ function createService(
       ...projector,
     });
   }
-  ix.stub(IFlagService, { enabled: () => flagEnabled });
-  ix.stub(IAgentContextSizeService, contextSize);
+  ix.stub(IAgentTokenCountingService, tokenCounting);
   ix.stub(IAgentToolRegistryService, tools);
   ix.stub(IAgentProfileService, profile);
   ix.stub(IAgentUsageService, usage);
@@ -234,19 +231,47 @@ function createService(
     log: recordingWireLog(records),
     eventBus,
   });
-  ix.set(IFaultInjectionService, new SyncDescriptor(FaultInjectionService));
   ix.set(IAgentStateService, new AgentStateService());
   ix.set(IAgentLLMRequesterService, new SyncDescriptor(AgentLLMRequesterService));
 
   return {
     service: ix.get(IAgentLLMRequesterService),
-    faultInjection: ix.get(IFaultInjectionService),
     wire: ix.get(IWireService),
     records,
     events,
     telemetryRecords,
+    measuredCalls,
   };
 }
+
+describe('AgentLLMRequesterService measured anchors', () => {
+  it('skips the measured anchor when the stream reports no usage', async () => {
+    const { service, measuredCalls } = createService(createRequester({ value: 0 }), undefined);
+
+    await service.request();
+
+    expect(measuredCalls).toHaveLength(0);
+  });
+
+  it('writes the measured anchor from the reported usage', async () => {
+    const requester = createRequester({ value: 0 });
+    const base = requester.request.bind(requester);
+    requester.request = async function* (input, signal, options) {
+      yield {
+        type: 'usage',
+        usage: { inputOther: 40, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
+        model: 'wire-model',
+      };
+      yield* base(input, signal, options);
+    };
+    const { service, measuredCalls } = createService(requester, undefined);
+
+    await service.request();
+
+    expect(measuredCalls).toHaveLength(1);
+    expect(measuredCalls[0]?.usage.inputOther).toBe(40);
+  });
+});
 
 describe('AgentLLMRequesterService Anthropic effort diagnostics', () => {
   it('warns and sends when the effort is not listed by the model', async () => {
@@ -623,71 +648,6 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
   });
 });
 
-describe('AgentLLMRequesterService fault injection (experimental)', () => {
-  it('raises an armed request-too-large fault before the provider and recovers via the degraded resend', async () => {
-    const calls = { value: 0 };
-    let projectCalls = 0;
-    let degradedCalls = 0;
-    const { service, faultInjection } = createService(createRequester(calls, null), {
-      project: (messages: readonly ContextMessage[]) => {
-        projectCalls += 1;
-        return messages;
-      },
-      projectStrict: (messages: readonly ContextMessage[]) => messages,
-      projectMediaDegraded: (messages: readonly ContextMessage[]) => {
-        degradedCalls += 1;
-        return messages;
-      },
-    });
-
-    faultInjection.arm('request-too-large');
-    expect(faultInjection.status().armed).toBe('request-too-large');
-
-    const result = await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
-
-    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
-    expect(calls.value).toBe(1);
-    expect(projectCalls).toBe(1);
-    expect(degradedCalls).toBe(1);
-    expect(faultInjection.status()).toEqual({
-      armed: undefined,
-      fired: ['request-too-large'],
-    });
-  });
-
-  it('raises an armed image-format fault and recovers via the stripped resend, one-shot only', async () => {
-    const calls = { value: 0 };
-    let strippedCalls = 0;
-    const { service, faultInjection } = createService(createRequester(calls, null), {
-      project: (messages: readonly ContextMessage[]) => messages,
-      projectStrict: (messages: readonly ContextMessage[]) => messages,
-      projectMediaStripped: (messages: readonly ContextMessage[]) => {
-        strippedCalls += 1;
-        return messages;
-      },
-    });
-
-    faultInjection.arm('image-format');
-    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
-    expect(strippedCalls).toBe(1);
-    expect(faultInjection.status().fired).toEqual(['image-format']);
-
-    const result = await service.request({ source: { type: 'turn', turnId: 2, step: 1 } });
-    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
-    expect(faultInjection.status().fired).toEqual(['image-format']);
-  });
-
-  it('refuses to arm when the fault-injection flag is disabled', () => {
-    const { faultInjection } = createService(createRequester({ value: 0 }, null), {
-      project: (messages: readonly ContextMessage[]) => messages,
-      projectStrict: (messages: readonly ContextMessage[]) => messages,
-    }, { flagEnabled: false });
-
-    expect(() => faultInjection.arm('request-too-large')).toThrow(/disabled/);
-    expect(faultInjection.status()).toEqual({ armed: undefined, fired: [] });
-  });
-});
-
 describe('AgentLLMRequesterService trace id', () => {
   const passthroughProjector = {
     project: (messages: readonly ContextMessage[]) => messages,
@@ -791,9 +751,6 @@ describe('AgentLLMRequesterService trace id', () => {
   });
 
   it('keeps the header-captured trace when the request fails after headers arrived', async () => {
-    // A failure after the response headers arrived (empty response, mid-stream
-    // decode error) carries no trace on the error itself; the trace captured
-    // through the provider callback must remain on the request trace.
     const requester = createTracedRequester(null);
     Object.defineProperty(requester, 'request', {
       value: async function* (...args: unknown[]) {

@@ -40,6 +40,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+import { EXAMPLE_CLIENT_IDENTITY } from './identity.js';
+
 import type { AddressInfo } from 'node:net';
 
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
@@ -80,7 +83,7 @@ const tick = (ms: number): Promise<void> =>
 async function probeRealConfig(): Promise<void> {
   const homeDir = process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
   console.log(`\n=== part 1: real config (${homeDir}/config.toml) ===`);
-  const { app } = bootstrap({ homeDir }, [
+  const { app } = bootstrap({ homeDir, clientIdentity: EXAMPLE_CLIENT_IDENTITY }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   try {

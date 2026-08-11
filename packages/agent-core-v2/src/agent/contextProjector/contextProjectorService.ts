@@ -1,5 +1,5 @@
 /**
- * `contextProjector` domain (L4) — projects stored context history into the wire
+ * `contextProjector` domain — projects stored context history into the wire
  * messages sent to the model, and surfaces every repair it had to apply.
  *
  * `AgentContextProjectorService` is the Agent-scope binding. The projection
@@ -26,7 +26,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';

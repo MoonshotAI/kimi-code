@@ -1,10 +1,14 @@
 /**
- * `di` domain (L0) — service identifiers, `createDecorator`, and the `IInstantiationService` contract.
+ * `di` domain — service identifiers, `createDecorator`, and the `IInstantiationService` contract.
  */
 
-import type { SyncDescriptor0 } from './descriptors';
-import type { DisposableStore } from './lifecycle';
+import type { SyncDescriptor, SyncDescriptor0 } from './descriptors';
+import type { CascadeEngine } from './cascadeEngine';
+import type { Event } from '../event';
+import type { DisposableStore, IDisposable } from './lifecycle';
 import type { ServiceCollection } from './serviceCollection';
+
+export type DependencyKind = 'instance' | 'collection' | 'ref';
 
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace _util {
@@ -13,11 +17,25 @@ export namespace _util {
   export const DI_TARGET = '$di$target';
   export const DI_DEPENDENCIES = '$di$dependencies';
 
+  export interface ServiceDependency {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    readonly id: ServiceIdentifier<any>;
+    readonly index: number;
+    readonly kind: DependencyKind;
+  }
+
   export function getServiceDependencies(
     ctor: DI_TARGET_OBJ,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): { id: ServiceIdentifier<any>; index: number }[] {
+  ): ServiceDependency[] {
     return ctor[DI_DEPENDENCIES] || [];
+  }
+
+  export function getInstanceDependencies(
+    ctor: DI_TARGET_OBJ,
+  ): ServiceDependency[] {
+    return getServiceDependencies(ctor).filter(
+      (dependency) => dependency.kind === 'instance',
+    );
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
@@ -25,7 +43,7 @@ export namespace _util {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
     [DI_TARGET]: Function;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    [DI_DEPENDENCIES]: { id: ServiceIdentifier<any>; index: number }[];
+    [DI_DEPENDENCIES]: { id: ServiceIdentifier<any>; index: number; kind: DependencyKind }[];
   }
 }
 
@@ -56,14 +74,26 @@ function storeServiceDependency(
   // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
   target: Function,
   index: number,
+  kind: DependencyKind = 'instance',
 ): void {
   const t = target as _util.DI_TARGET_OBJ;
   if (t[_util.DI_TARGET] === target) {
-    t[_util.DI_DEPENDENCIES].push({ id, index });
+    t[_util.DI_DEPENDENCIES].push({ id, index, kind });
   } else {
-    t[_util.DI_DEPENDENCIES] = [{ id, index }];
+    t[_util.DI_DEPENDENCIES] = [{ id, index, kind }];
     t[_util.DI_TARGET] = target;
   }
+}
+
+export function storeCustomDependency(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  id: ServiceIdentifier<any>,
+  kind: DependencyKind,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  target: any,
+  index: number,
+): void {
+  storeServiceDependency(id, target, index, kind);
 }
 
 export function createDecorator<T>(name: string): ServiceIdentifier<T> {
@@ -94,9 +124,23 @@ export function createDecorator<T>(name: string): ServiceIdentifier<T> {
     writable: false,
     configurable: false,
   });
+  Object.defineProperty(id, SERVICE_IDENTIFIER_MARK, { value: true, enumerable: false });
 
   _util.serviceIds.set(name, id);
   return id;
+}
+
+export function lookupServiceDecorator(name: string): ServiceIdentifier<unknown> | undefined {
+  return _util.serviceIds.get(name);
+}
+
+const SERVICE_IDENTIFIER_MARK = Symbol('serviceIdentifier');
+
+export function isServiceIdentifier(thing: unknown): thing is ServiceIdentifier<unknown> {
+  return (
+    typeof thing === 'function' &&
+    (thing as unknown as Record<symbol, unknown>)[SERVICE_IDENTIFIER_MARK] === true
+  );
 }
 
 export function refineServiceDecorator<T1, T extends T1>(
@@ -105,12 +149,51 @@ export function refineServiceDecorator<T1, T extends T1>(
   return serviceIdentifier as ServiceIdentifier<T>;
 }
 
+export enum ScopeActivation {
+  OnScopeCreated = 0,
+  OnDemand = 1,
+}
+
+export interface LiveRef<T> {
+  readonly current: T | undefined;
+  readonly onDidChange: Event<void>;
+}
+
+export function ref<T>(
+  id: ServiceIdentifier<T>,
+): (target: object, key: string | symbol | undefined, index: number) => void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return function refDecorator(target: any, _key: string | symbol | undefined, index: number): void {
+    if (arguments.length !== 3) {
+      throw new Error('@ref-decorator can only be used to decorate a parameter');
+    }
+    storeServiceDependency(id, target, index, 'ref');
+  };
+}
+
 export interface ServicesAccessor {
   get<T>(id: ServiceIdentifier<T>): T;
 }
 
+export interface ProvideOptions {
+  readonly activation?: 'eager' | 'ondemand';
+  readonly config?: unknown;
+}
+
+export interface ProvideAllEntry<T = unknown> {
+  readonly id: ServiceIdentifier<T>;
+  readonly descriptor: SyncDescriptor<T>;
+  readonly options?: ProvideOptions;
+}
+
+export interface ProvideHandle extends IDisposable {
+  readonly uid: number;
+}
+
 export interface IInstantiationService {
   readonly _serviceBrand: undefined;
+
+  readonly cascade: CascadeEngine;
 
   invokeFunction<R, TS extends any[] = []>(
     fn: (accessor: ServicesAccessor, ...args: TS) => R,
@@ -129,6 +212,13 @@ export interface IInstantiationService {
     ...args: GetLeadingNonServiceArgs<ConstructorParameters<Ctor>>
   ): R;
   createChild(services: ServiceCollection, store?: DisposableStore): IInstantiationService;
+  provide<T>(
+    id: ServiceIdentifier<T>,
+    instanceOrDescriptor: T | SyncDescriptor<T>,
+    options?: ProvideOptions,
+  ): ProvideHandle;
+  provideAll(entries: ReadonlyArray<ProvideAllEntry>): void;
+  unprovide<T>(id: ServiceIdentifier<T>): void;
   dispose(): void;
 }
 
