@@ -11,7 +11,7 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createKimiHarnessV2,
@@ -36,6 +36,21 @@ import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
 import { TEST_IDENTITY } from './test-identity';
 import { startMcpAuthStatusServer } from './mcp-auth-status-server';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
+
+const hostEnvProbe = vi.hoisted(() => ({ failWithMissingShell: false }));
+
+vi.mock('@moonshot-ai/agent-core-v2/_base/execEnv/environmentProbe', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('@moonshot-ai/agent-core-v2/_base/execEnv/environmentProbe')
+  >();
+  return {
+    ...actual,
+    probeHostEnvironmentFromNode: () =>
+      hostEnvProbe.failWithMissingShell
+        ? Promise.reject(new actual.ProbeShellNotFoundError('Git Bash missing (stubbed)'))
+        : actual.probeHostEnvironmentFromNode(),
+  };
+});
 
 const tempDirs: string[] = [];
 
@@ -149,18 +164,22 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     }
   });
 
-  it('surfaces missing Git Bash during ensureConfigFile on Windows', async () => {
-    if (process.platform !== 'win32') return;
-    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
-    tempDirs.push(homeDir);
-    const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+  it('surfaces a missing Git Bash probe failure during ensureConfigFile', async () => {
+    hostEnvProbe.failWithMissingShell = true;
     try {
-      await expect(harness.ensureConfigFile()).rejects.toBeInstanceOf(HostProcessError);
-      await expect(harness.ensureConfigFile()).rejects.toMatchObject({
-        code: OsProcessErrors.codes.SHELL_GIT_BASH_NOT_FOUND,
-      });
+      const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+      tempDirs.push(homeDir);
+      const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+      try {
+        await expect(harness.ensureConfigFile()).rejects.toBeInstanceOf(HostProcessError);
+        await expect(harness.ensureConfigFile()).rejects.toMatchObject({
+          code: OsProcessErrors.codes.SHELL_GIT_BASH_NOT_FOUND,
+        });
+      } finally {
+        await harness.close();
+      }
     } finally {
-      await harness.close();
+      hostEnvProbe.failWithMissingShell = false;
     }
   });
 

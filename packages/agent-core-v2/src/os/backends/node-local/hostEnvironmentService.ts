@@ -5,7 +5,12 @@
  * login-shell PATH enrichment (`applyLoginShellPathFromNode`) at construction
  * time; the sync fields become populated once `ready` resolves. Reads before
  * `ready` throws with a clear message so misuse fails loudly instead of
- * returning stale zeros. Bound at App scope.
+ * returning stale zeros. A failed probe is translated at this boundary — a
+ * missing Git Bash on Windows becomes `HostProcessError`
+ * (`shell.git_bash_not_found`) — and surfaces identically from `ready` and
+ * from sync field reads, while an internal no-op handler keeps the rejection
+ * from ever becoming an unhandledRejection during App-scope construction.
+ * Bound at App scope.
  */
 
 import { LifecycleScope } from '#/app/scopes';
@@ -40,18 +45,19 @@ export class HostEnvironmentService implements IHostEnvironment {
         this._info = info;
       }),
       applyLoginShellPathFromNode(),
-    ]).then(() => {});
-    // Catch the rejection so it can never become an unhandledRejection while
-    // the App scope is being constructed. The original error is preserved and
-    // rethrown when callers access sync fields or await `ready` themselves.
-    this.ready.catch((error: unknown) => {
-      this._probeError = error;
-    });
+    ])
+      .then(() => {})
+      .catch((error: unknown) => {
+        const translated = this.toHostProcessError(error);
+        this._probeError = translated;
+        throw translated;
+      });
+    this.ready.catch(() => {});
   }
 
   private require(field: keyof HostEnvironmentInfo): never | HostEnvironmentInfo[typeof field] {
     if (this._probeError !== undefined) {
-      throw this.wrapProbeError(this._probeError);
+      throw this._probeError;
     }
     if (this._info === undefined) {
       throw new BugIndicatingError(
@@ -61,7 +67,7 @@ export class HostEnvironmentService implements IHostEnvironment {
     return this._info[field];
   }
 
-  private wrapProbeError(error: unknown): unknown {
+  private toHostProcessError(error: unknown): unknown {
     if (error instanceof ProbeShellNotFoundError) {
       return new HostProcessError(
         OsProcessErrors.codes.SHELL_GIT_BASH_NOT_FOUND,

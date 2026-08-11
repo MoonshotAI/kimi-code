@@ -7,9 +7,11 @@
  * same suite runs identically on any host OS. `probeHostEnvironmentFromNode()`
  * bundles the Node defaults for production callers and memoises the promise.
  *
- * On Windows the probe expects bash from Git for Windows or MSYS2. If it
- * cannot be located the function throws a plain `Error` with the checked paths
- * in the message. Set `KIMI_SHELL_PATH` to override.
+ * On Windows the probe expects bash from Git for Windows or MSYS2. If no
+ * shell can be located the function throws `ProbeShellNotFoundError`, a
+ * distinct type whose message carries an install hint and the checked paths,
+ * so the DI boundary can tell a missing shell apart from other probe errors
+ * and translate it into a coded error. Set `KIMI_SHELL_PATH` to override.
  *
  * Kept as a pure helper with no DI dependencies.
  */
@@ -24,12 +26,6 @@ export type OsKind = string;
 export type ShellName = 'bash' | 'sh';
 export type PathClass = 'posix' | 'win32';
 
-/**
- * Thrown by `probeHostEnvironment` on Windows when no Git Bash install can be
- * located. Carries the list of paths that were probed so callers can include
- * them in install hints and can distinguish a missing-shell failure from other
- * probe errors.
- */
 export class ProbeShellNotFoundError extends Error {
   constructor(message: string) {
     super(message);
