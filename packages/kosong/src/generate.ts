@@ -1,4 +1,4 @@
-import { APIEmptyResponseError } from './errors';
+import { APIEmptyResponseError, APITimeoutError } from './errors';
 import {
   isContentPart,
   isToolCall,
@@ -61,6 +61,15 @@ export interface GenerateCallbacks {
 }
 
 /**
+ * Default inactivity budget for the stream-stall watchdog: if no stream part
+ * arrives within this window, the stream is cancelled and the generate call
+ * fails with `APITimeoutError`. Generous on purpose — a legitimately slow
+ * first token on a huge context must not trip it; it exists to catch dead
+ * connections that would otherwise hang the turn forever.
+ */
+export const DEFAULT_STREAM_STALL_TIMEOUT_MS = 300_000;
+
+/**
  * Generate one assistant message by streaming from the given provider.
  *
  * Parts of the message are streamed and merged: consecutive compatible parts
@@ -81,6 +90,9 @@ export interface GenerateCallbacks {
  *
  * @throws {DOMException} with name `"AbortError"` when `options.signal` is
  *   aborted before or during streaming.
+ * @throws {APITimeoutError} when no stream part arrives within the stall
+ *   watchdog budget (`options.streamStallTimeoutMs`, default
+ *   {@link DEFAULT_STREAM_STALL_TIMEOUT_MS}).
  * @throws {APIEmptyResponseError} when the response contains no content and
  *   no tool calls, or only thinking content without any text or tool calls.
  */
@@ -117,7 +129,42 @@ export async function generate(
     : tools;
 
   options?.onRequestStart?.();
-  const stream = await provider.generate(systemPrompt, wireTools, history, options);
+  // Link the caller's signal with an internal controller: when the stall
+  // watchdog fires, aborting this controller is what actually tears down the
+  // provider's HTTP connection (providers forward the signal to their HTTP
+  // clients); the in-flight iteration then settles instead of leaking.
+  const stallAbort = new AbortController();
+  const requestSignal =
+    options?.signal === undefined
+      ? stallAbort.signal
+      : AbortSignal.any([options.signal, stallAbort.signal]);
+  const stallTimeoutMs = options?.streamStallTimeoutMs ?? DEFAULT_STREAM_STALL_TIMEOUT_MS;
+  // The watchdog covers the whole exchange, starting with the response-headers
+  // wait inside provider.generate(): an endpoint that accepts the request but
+  // never answers must not park the turn before the stream even exists.
+  const generatePromise = provider.generate(systemPrompt, wireTools, history, {
+    ...options,
+    signal: requestSignal,
+  });
+  const generateOutcome = await raceStallOrAbort(generatePromise, stallTimeoutMs, requestSignal);
+  if (generateOutcome === 'aborted' || generateOutcome === 'stalled') {
+    if (generateOutcome === 'stalled') {
+      stallAbort.abort();
+    }
+    // The provider call may still be in flight (or have resolved just as the
+    // watchdog fired): cancel whatever it produced, without blocking on it.
+    void generatePromise
+      .then((lateStream) => cancelStream(lateStream))
+      .catch(() => undefined);
+    if (generateOutcome === 'aborted') {
+      throwAbortError();
+    }
+    throw new APITimeoutError(
+      `The API did not respond within ${stallTimeoutMs}ms (no response headers).` +
+        ` Provider: ${provider.name}, model: ${provider.modelName}`,
+    );
+  }
+  const stream = generateOutcome;
   // Early capture: the trace id arrives with the response headers, before the
   // stream body — and before any mid-stream abort — so hosts can attribute
   // even a cancelled stream to its server-side request.
@@ -142,61 +189,84 @@ export async function generate(
   let firstPartAt: number | undefined;
   let lastResumeAt = 0;
 
-  for await (const part of stream) {
-    const arrivedAt = Date.now();
-    if (firstPartAt === undefined) {
-      firstPartAt = arrivedAt;
-    } else {
-      serverDecodeMs += arrivedAt - lastResumeAt;
-    }
+  const iterator = stream[Symbol.asyncIterator]();
+  try {
+    for (;;) {
+      const next = await nextStreamPart(iterator, stream, stallTimeoutMs, requestSignal, stallAbort);
+      if (next === 'stalled') {
+        throw new APITimeoutError(
+          `The API stream stalled: no data received for ${stallTimeoutMs}ms.` +
+            formatFinishReasonHint(stream) +
+            ` Provider: ${provider.name}, model: ${provider.modelName}`,
+        );
+      }
+      if (next.done === true) {
+        break;
+      }
+      const part = next.value;
+      const arrivedAt = Date.now();
+      if (firstPartAt === undefined) {
+        firstPartAt = arrivedAt;
+      } else {
+        serverDecodeMs += arrivedAt - lastResumeAt;
+      }
 
-    try {
-      await throwIfAborted(options?.signal, stream);
-
-      // Notify raw part callback (deep copy to avoid aliasing mutations).
-      if (callbacks?.onMessagePart !== undefined) {
-        await callbacks.onMessagePart(deepCopyPart(part));
+      try {
         await throwIfAborted(options?.signal, stream);
-      }
 
-      // Index-based routing for parallel tool call argument deltas.
-      // When a ToolCallPart arrives with an index referring to a tool call
-      // that is NOT the currently-pending one, append it directly to the
-      // correct ToolCall in message.toolCalls instead of relying on sequential
-      // merging. This prevents argument cross-contamination across parallel calls.
-      if (
-        isToolCallPart(part) &&
-        part.index !== undefined &&
-        !isPendingToolCallAtIndex(pendingPart, part.index)
-      ) {
-        const arrayIdx = toolCallIndexMap.get(part.index);
-        if (arrayIdx !== undefined) {
-          const target = message.toolCalls[arrayIdx];
-          if (target !== undefined && part.argumentsPart !== null) {
-            target.arguments =
-              target.arguments === null
-                ? part.argumentsPart
-                : target.arguments + part.argumentsPart;
-          }
-          continue;
+        // Notify raw part callback (deep copy to avoid aliasing mutations).
+        if (callbacks?.onMessagePart !== undefined) {
+          await callbacks.onMessagePart(deepCopyPart(part));
+          await throwIfAborted(options?.signal, stream);
         }
-        // Unknown index — fall through to the sequential logic as a safety net.
-      }
 
-      if (pendingPart === null) {
-        pendingPart = part;
-      } else if (!mergeInPlace(pendingPart, part)) {
-        // Could not merge — flush the pending part and start a new one.
-        // For parallel tool calls this happens when a new ToolCall header arrives
-        // while a previous ToolCall is still pending; the flush finalizes the
-        // previous tool call into `message.toolCalls`.
-        flushPart(message, pendingPart, toolCallIndexMap);
-        pendingPart = part;
+        // Index-based routing for parallel tool call argument deltas.
+        // When a ToolCallPart arrives with an index referring to a tool call
+        // that is NOT the currently-pending one, append it directly to the
+        // correct ToolCall in message.toolCalls instead of relying on sequential
+        // merging. This prevents argument cross-contamination across parallel calls.
+        if (
+          isToolCallPart(part) &&
+          part.index !== undefined &&
+          !isPendingToolCallAtIndex(pendingPart, part.index)
+        ) {
+          const arrayIdx = toolCallIndexMap.get(part.index);
+          if (arrayIdx !== undefined) {
+            const target = message.toolCalls[arrayIdx];
+            if (target !== undefined && part.argumentsPart !== null) {
+              target.arguments =
+                target.arguments === null
+                  ? part.argumentsPart
+                  : target.arguments + part.argumentsPart;
+            }
+            continue;
+          }
+          // Unknown index — fall through to the sequential logic as a safety net.
+        }
+
+        if (pendingPart === null) {
+          pendingPart = part;
+        } else if (!mergeInPlace(pendingPart, part)) {
+          // Could not merge — flush the pending part and start a new one.
+          // For parallel tool calls this happens when a new ToolCall header arrives
+          // while a previous ToolCall is still pending; the flush finalizes the
+          // previous tool call into `message.toolCalls`.
+          flushPart(message, pendingPart, toolCallIndexMap);
+          pendingPart = part;
+        }
+      } finally {
+        lastResumeAt = Date.now();
+        clientConsumeMs += lastResumeAt - arrivedAt;
       }
-    } finally {
-      lastResumeAt = Date.now();
-      clientConsumeMs += lastResumeAt - arrivedAt;
     }
+  } catch (error) {
+    // `for await` closed the iterator automatically when the body threw; the
+    // manual loop must do it itself, or a throwing callback/merge leaks the
+    // provider connection. Best-effort, never awaited — the original error
+    // must not be masked by a hanging teardown.
+    void cancelStream(stream);
+    teardownIterator(iterator);
+    throw error;
   }
 
   await throwIfAborted(options?.signal, stream);
@@ -284,6 +354,111 @@ async function cancelStream(stream: StreamedMessage): Promise<void> {
   try {
     await cancelable.return?.();
   } catch {}
+}
+
+/**
+ * Race a pending promise against the stall watchdog and the abort signal.
+ *
+ * Returns the settled value, or the `'stalled'` / `'aborted'` sentinels. The
+ * watchdog only arms for a finite positive `stallTimeoutMs` (`0` disables it).
+ * `Promise.race` subscribes to `pending` even when the watchdog wins, so a
+ * late settlement of the abandoned promise is always observed and cannot
+ * surface as an unhandled rejection.
+ */
+async function raceStallOrAbort<T>(
+  pending: Promise<T>,
+  stallTimeoutMs: number,
+  signal: AbortSignal,
+): Promise<T | 'stalled' | 'aborted'> {
+  if (signal.aborted) {
+    return 'aborted';
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const watchdog = new Promise<'stalled' | 'aborted'>((resolve) => {
+    if (Number.isFinite(stallTimeoutMs) && stallTimeoutMs > 0) {
+      timer = setTimeout(() => {
+        resolve('stalled');
+      }, stallTimeoutMs);
+      // The watchdog must never keep the process (or a test runner) alive.
+      (timer as { unref?: () => void }).unref?.();
+    }
+    onAbort = () => {
+      resolve('aborted');
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+
+  try {
+    return await Promise.race([pending, watchdog]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    if (onAbort !== undefined) {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+}
+
+/**
+ * Await the next stream part, bounded by the stall watchdog and the abort
+ * signal.
+ *
+ * Returns the iterator result, or the `'stalled'` sentinel when no part
+ * arrived within `stallTimeoutMs`. On stall the linked abort controller fires
+ * first — providers forward the signal to their HTTP client, so this kills
+ * the dead connection and settles the in-flight iteration. An abort observed
+ * while waiting throws the standard abort error — without this race,
+ * cancelling a stalled stream would hang until the next part arrived.
+ *
+ * All teardown here is fire-and-forget: a faulty provider whose `cancel()` or
+ * `return()` never settles must not hang the stall path — the very failure
+ * this watchdog exists to escape.
+ */
+async function nextStreamPart(
+  iterator: AsyncIterator<StreamedMessagePart>,
+  stream: StreamedMessage,
+  stallTimeoutMs: number,
+  signal: AbortSignal,
+  stallAbort: AbortController,
+): Promise<IteratorResult<StreamedMessagePart> | 'stalled'> {
+  let outcome: IteratorResult<StreamedMessagePart> | 'stalled' | 'aborted';
+  try {
+    outcome = await raceStallOrAbort(iterator.next(), stallTimeoutMs, signal);
+  } catch (error) {
+    // The iteration itself failed. If the caller aborted meanwhile, the abort
+    // contract wins: cancel and surface the standard AbortError, not whatever
+    // provider-specific error the dying stream happened to reject with.
+    if (signal.aborted) {
+      void cancelStream(stream);
+      teardownIterator(iterator);
+      throwAbortError();
+    }
+    throw error;
+  }
+  if (outcome === 'aborted') {
+    void cancelStream(stream);
+    teardownIterator(iterator);
+    throwAbortError();
+  }
+  if (outcome === 'stalled') {
+    stallAbort.abort();
+    void cancelStream(stream);
+    teardownIterator(iterator);
+    return 'stalled';
+  }
+  return outcome;
+}
+
+/**
+ * Best-effort generator teardown. Never awaited: a provider iterator that
+ * ignores the abort signal would otherwise hang the stall path — the very
+ * failure this watchdog exists to escape.
+ */
+function teardownIterator(iterator: AsyncIterator<StreamedMessagePart>): void {
+  void Promise.resolve(iterator.return?.()).catch(() => undefined);
 }
 
 async function throwIfAborted(signal?: AbortSignal, stream?: StreamedMessage): Promise<void> {
