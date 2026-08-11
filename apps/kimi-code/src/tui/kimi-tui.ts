@@ -105,6 +105,7 @@ import {
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
+  SESSION_LIST_PAGE_SIZE,
   SESSIONLESS_STARTUP_NOTICE,
 } from './constant/kimi-tui';
 import { CHROME_GUTTER } from './constant/rendering';
@@ -885,8 +886,10 @@ export class KimiTUI {
           });
           shouldReplayHistory = true;
         } else {
-          const sessions = await this.harness.listSessions({ workDir });
-          const target = sessions[0];
+          // Only the most recent session matters here — fetch a one-item page
+          // instead of materializing the whole listing.
+          const page = await this.harness.listSessionsPage({ workDir, limit: 1 });
+          const target = page.items[0];
           if (target !== undefined) {
             session = await this.harness.resumeSession({
               id: target.id,
@@ -1972,13 +1975,16 @@ export class KimiTUI {
   async fetchSessions(scope: 'cwd' | 'all' = this.state.sessionsScope): Promise<void> {
     this.state.loadingSessions = true;
     this.state.sessionsScope = scope;
+    this.state.sessionsNextCursor = undefined;
+    this.state.sessionsLoadingMore = false;
     try {
-      const sessions =
-        scope === 'all'
-          ? await this.harness.listSessions({})
-          : await this.harness.listSessions({ workDir: this.state.appState.workDir });
+      const page = await this.harness.listSessionsPage({
+        workDir: scope === 'all' ? undefined : this.state.appState.workDir,
+        limit: SESSION_LIST_PAGE_SIZE,
+      });
+      this.state.sessionsNextCursor = page.nextCursor;
       this.state.sessions = sessionRowsForPicker(
-        sessions,
+        page.items,
         this.state.appState.sessionId,
         this.hasSessionContent(),
       );
@@ -1989,6 +1995,63 @@ export class KimiTUI {
       log.warn('failed to fetch sessions for picker', { error: String(error) });
     } finally {
       this.state.loadingSessions = false;
+    }
+  }
+
+  /**
+   * Pulls the next keyset page into the session picker (scroll-bottom paging).
+   * A scope switch or picker close bumps `sessionPickerScopeRequestToken`,
+   * which makes an in-flight append discard its result. Returns whether a page
+   * was appended — callers draining pages stop on the first `false`.
+   */
+  private async fetchMoreSessions(): Promise<boolean> {
+    const cursor = this.state.sessionsNextCursor;
+    if (cursor === undefined || this.state.sessionsLoadingMore) return false;
+    const requestToken = this.sessionPickerScopeRequestToken;
+    this.state.sessionsLoadingMore = true;
+    this.sessionPickerComponent?.setPaging(true, true);
+    this.state.ui.requestRender();
+    try {
+      const page = await this.harness.listSessionsPage({
+        workDir: this.state.sessionsScope === 'all' ? undefined : this.state.appState.workDir,
+        limit: SESSION_LIST_PAGE_SIZE,
+        before: cursor,
+      });
+      if (requestToken !== this.sessionPickerScopeRequestToken) return false;
+      this.state.sessionsNextCursor = page.nextCursor;
+      const rows = sessionRowsForPicker(
+        page.items,
+        this.state.appState.sessionId,
+        this.hasSessionContent(),
+      );
+      this.state.sessions = [...this.state.sessions, ...rows];
+      this.sessionPickerComponent?.appendSessions(rows);
+      this.sessionPickerComponent?.setPaging(page.nextCursor !== undefined, false);
+      return true;
+    } catch (error) {
+      log.warn('failed to fetch more sessions for picker', { error: String(error) });
+      return false;
+    } finally {
+      if (requestToken === this.sessionPickerScopeRequestToken) {
+        this.state.sessionsLoadingMore = false;
+        this.sessionPickerComponent?.setPaging(this.state.sessionsNextCursor !== undefined, false);
+        this.state.ui.requestRender();
+      }
+    }
+  }
+
+  /**
+   * Search covers every session: while a query is active the picker asks for
+   * all remaining pages, drained one at a time in the background. A failed or
+   * superseded fetch stops the drain (the next fresh query re-triggers it).
+   */
+  private async drainSessionsForSearch(): Promise<void> {
+    const requestToken = this.sessionPickerScopeRequestToken;
+    while (
+      this.state.sessionsNextCursor !== undefined &&
+      requestToken === this.sessionPickerScopeRequestToken
+    ) {
+      if (!(await this.fetchMoreSessions())) return;
     }
   }
 
@@ -3233,6 +3296,7 @@ export class KimiTUI {
     forwardEditorExit: false,
   };
   private sessionPickerScopeRequestToken = 0;
+  private sessionPickerComponent: SessionPickerComponent | undefined;
 
   async showSessionPicker(): Promise<void> {
     await this.openSessionPicker({
@@ -3304,6 +3368,7 @@ export class KimiTUI {
 
   hideSessionPicker(): void {
     this.sessionPickerScopeRequestToken += 1;
+    this.sessionPickerComponent = undefined;
     this.editorKeyboard.clearPendingExit();
     this.state.activeDialog = null;
     this.restoreEditor();
@@ -3324,29 +3389,37 @@ export class KimiTUI {
     readonly applyStartupModes?: boolean;
   }): void {
     this.state.activeDialog = 'session-picker';
-    this.mountEditorReplacement(
-      new SessionPickerComponent({
-        sessions: this.state.sessions,
-        loading: this.state.loadingSessions,
-        currentSessionId: this.state.appState.sessionId,
-        scope: this.state.sessionsScope,
-        initialSelectedSessionId: options.initialSelectedSessionId,
-        pageSize: 50,
-        onSelect: (session: SessionRow) => {
-          void this.handleSessionPickerSelect(session, options.applyStartupModes === true).catch(
-            (error) => {
-              this.showError(`Failed to apply startup flags: ${formatErrorMessage(error)}`);
-            },
-          );
-        },
-        onCancel: options.onCancel,
-        onCtrlC: options.onCtrlC,
-        onCtrlD: options.onCtrlD,
-        onToggleScope: (selectedSessionId: string) => {
-          void this.toggleSessionPickerScope(selectedSessionId);
-        },
-      }),
-    );
+    const picker = new SessionPickerComponent({
+      sessions: this.state.sessions,
+      loading: this.state.loadingSessions,
+      currentSessionId: this.state.appState.sessionId,
+      scope: this.state.sessionsScope,
+      initialSelectedSessionId: options.initialSelectedSessionId,
+      pageSize: SESSION_LIST_PAGE_SIZE,
+      hasMore: this.state.sessionsNextCursor !== undefined,
+      loadingMore: this.state.sessionsLoadingMore,
+      onLoadMore: () => {
+        void this.fetchMoreSessions();
+      },
+      onSearchDrain: () => {
+        void this.drainSessionsForSearch();
+      },
+      onSelect: (session: SessionRow) => {
+        void this.handleSessionPickerSelect(session, options.applyStartupModes === true).catch(
+          (error) => {
+            this.showError(`Failed to apply startup flags: ${formatErrorMessage(error)}`);
+          },
+        );
+      },
+      onCancel: options.onCancel,
+      onCtrlC: options.onCtrlC,
+      onCtrlD: options.onCtrlD,
+      onToggleScope: (selectedSessionId: string) => {
+        void this.toggleSessionPickerScope(selectedSessionId);
+      },
+    });
+    this.sessionPickerComponent = picker;
+    this.mountEditorReplacement(picker);
   }
 
   private async handleSessionPickerSelect(

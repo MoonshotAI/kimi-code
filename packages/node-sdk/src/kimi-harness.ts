@@ -35,6 +35,7 @@ import type {
   ResumeSessionInput,
   ReloadSessionInput,
   SessionSummary,
+  SessionSummaryPage,
   SkillSummary,
   TelemetryClient,
   TelemetryContextPatch,
@@ -256,6 +257,15 @@ export class KimiHarness {
 
   async listSessions(options: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     return this.rpc.listSessions(options);
+  }
+
+  /**
+   * One keyset page of the session listing (`limit` / `before` in
+   * `ListSessionsOptions`). Paged on the v2 engine; the v1 engine serves the
+   * whole filtered set as a single terminal page.
+   */
+  async listSessionsPage(options: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
+    return this.rpc.listSessionsPage(options);
   }
 
   /** Skills visible to a new session in `workDir`, without creating that session. */

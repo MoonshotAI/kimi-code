@@ -193,7 +193,7 @@ function loginRequiredError(): Error & { readonly code: string } {
 }
 
 function makeHarness(session = makeSession(), overrides: Record<string, unknown> = {}) {
-  return {
+  const harness = {
     getConfig: vi.fn(async () => ({
       models: {
         k2: { model: 'moonshot-v1', maxContextSize: 100 },
@@ -215,6 +215,23 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     },
     ...overrides,
   };
+  // The TUI lists sessions through keyset pages; derive the page mock from
+  // the (possibly overridden) full-list mock unless a test overrides paging.
+  if (!('listSessionsPage' in harness)) {
+    const listSessions = harness.listSessions as (input?: {
+      workDir?: string;
+      sessionId?: string;
+    }) => Promise<unknown[]>;
+    Object.assign(harness, {
+      listSessionsPage: vi.fn(
+        async (input: { workDir?: string; sessionId?: string } = {}) => ({
+          items: await listSessions({ workDir: input.workDir, sessionId: input.sessionId }),
+          nextCursor: undefined,
+        }),
+      ),
+    });
+  }
+  return harness;
 }
 
 function makeDriver(harness: ReturnType<typeof makeHarness>, input: KimiTUIStartupInput) {
@@ -1055,6 +1072,70 @@ describe('KimiTUI startup', () => {
 
     expect(driver.state.activeDialog).toBeNull();
     expect(mountSessionPicker).toHaveBeenCalledTimes(1);
+  });
+
+  function makePagedListSessionsPage() {
+    const firstPage = Array.from({ length: 50 }, (_, index) => ({
+      id: `ses-page1-${String(index).padStart(2, '0')}`,
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now() - index * 1000,
+    }));
+    return vi.fn(async (input: { workDir?: string; before?: string } = {}) =>
+      input.before === undefined
+        ? { items: firstPage, nextCursor: 'ses-page1-49' }
+        : {
+            items: [{ id: 'ses-page2-0', workDir: '/tmp/proj-a', updatedAt: 0 }],
+            nextCursor: undefined,
+          },
+    );
+  }
+
+  it('fetches the next session page when the picker scrolls to the fetched end', async () => {
+    const listSessionsPage = makePagedListSessionsPage();
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), { listSessionsPage });
+    const driver = makeDriver(harness, makeStartupInput());
+    await expect(driver.init()).resolves.toBe(false);
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    expect(listSessionsPage).toHaveBeenCalledWith({ workDir: '/tmp/proj-a', limit: 50 });
+    expect(driver.state.sessions).toHaveLength(50);
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    for (let i = 0; i < 49; i++) {
+      picker.handleInput('\u001B[B');
+    }
+    await vi.waitFor(() => {
+      expect(driver.state.sessions).toHaveLength(51);
+    });
+
+    expect(listSessionsPage).toHaveBeenLastCalledWith({
+      workDir: '/tmp/proj-a',
+      limit: 50,
+      before: 'ses-page1-49',
+    });
+    expect(driver.state.sessions.map((session) => session.id)).toContain('ses-page2-0');
+  });
+
+  it('drains the remaining session pages in the background once a query is typed', async () => {
+    const listSessionsPage = makePagedListSessionsPage();
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), { listSessionsPage });
+    const driver = makeDriver(harness, makeStartupInput());
+    await expect(driver.init()).resolves.toBe(false);
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    expect(driver.state.sessions).toHaveLength(50);
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('x');
+    await vi.waitFor(() => {
+      expect(driver.state.sessions).toHaveLength(51);
+    });
+
+    expect(listSessionsPage).toHaveBeenLastCalledWith({
+      workDir: '/tmp/proj-a',
+      limit: 50,
+      before: 'ses-page1-49',
+    });
   });
 
   it('clears the sessions picker search query when toggling scope with Ctrl+A', async () => {
