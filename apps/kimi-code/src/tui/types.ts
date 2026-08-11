@@ -99,8 +99,8 @@ export interface StepRetryState {
   statusCode?: number;
   /**
    * `backoff` while sleeping before the next attempt (label shows the
-   * countdown); `attempt` once the v2 engine re-emits `turn.step.started` for
-   * the retried attempt — the countdown has elapsed by then and is dropped.
+   * countdown); `attempt` once the `delayMs` backoff has elapsed and the next
+   * attempt is running — the countdown has expired by then and is dropped.
    */
   phase: 'backoff' | 'attempt';
 }

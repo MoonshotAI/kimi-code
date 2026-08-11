@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
 import { getBuiltInPalette } from '#/tui/theme';
@@ -76,6 +76,13 @@ const retryingEvent = {
 } as const;
 
 describe('SessionEventHandler step retry state', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('stores the retry snapshot when a step starts retrying', () => {
     const { host } = makeHost();
     const handler = new SessionEventHandler(host);
@@ -123,7 +130,35 @@ describe('SessionEventHandler step retry state', () => {
     expect(host.state.appState.stepRetry).toBeNull();
   });
 
-  it('flips the retry to attempt phase on turn.step.started (v2 re-emits it per attempt)', () => {
+  it('flips to attempt phase once the backoff delay elapses', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    handler.handleEvent(retryingEvent as any, vi.fn());
+    expect(host.state.appState.stepRetry).toMatchObject({ phase: 'backoff' });
+    vi.advanceTimersByTime(4000);
+    expect(host.state.appState.stepRetry).toMatchObject({ nextAttempt: 2, phase: 'attempt' });
+  });
+
+  it('cancels the phase flip when the retry is cleared during the backoff', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    handler.handleEvent(retryingEvent as any, vi.fn());
+    handler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        sessionId: 's1',
+        agentId: 'main',
+        turnId: 1,
+        step: 1,
+        reason: 'error',
+      } as any,
+      vi.fn(),
+    );
+    vi.advanceTimersByTime(10_000);
+    expect(host.state.appState.stepRetry).toBeNull();
+  });
+
+  it('keeps the retry snapshot on turn.step.started (v2 re-emits it per attempt)', () => {
     const { host } = makeHost();
     const handler = new SessionEventHandler(host);
     handler.handleEvent(retryingEvent as any, vi.fn());
@@ -131,6 +166,6 @@ describe('SessionEventHandler step retry state', () => {
       { type: 'turn.step.started', sessionId: 's1', agentId: 'main', turnId: 1, step: 1 } as any,
       vi.fn(),
     );
-    expect(host.state.appState.stepRetry).toMatchObject({ nextAttempt: 2, phase: 'attempt' });
+    expect(host.state.appState.stepRetry).toMatchObject({ nextAttempt: 2, phase: 'backoff' });
   });
 });

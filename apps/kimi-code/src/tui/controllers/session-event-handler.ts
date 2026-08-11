@@ -167,6 +167,7 @@ export class SessionEventHandler {
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
+  private stepRetryAttemptTimer: ReturnType<typeof setTimeout> | undefined;
 
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
@@ -185,6 +186,7 @@ export class SessionEventHandler {
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
+    this.clearStepRetryAttemptTimer();
     this.stopAllMcpServerStatusSpinners();
   }
 
@@ -400,16 +402,6 @@ export class SessionEventHandler {
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
     this.host.streamingUI.flushNow();
-    // The v2 engine re-emits `turn.step.started` for every retried attempt of
-    // the same step (stepRetryService re-queues the failed driver after the
-    // backoff sleep). Reaching here with a retry still set means the backoff
-    // has elapsed and the attempt is now running — flip the phase so the
-    // label drops the stale countdown instead of clearing the state (the
-    // attempt itself may take a while, e.g. a connection timeout).
-    const retry = this.host.state.appState.stepRetry;
-    if (retry !== null && retry.phase === 'backoff') {
-      this.host.setAppState({ stepRetry: { ...retry, phase: 'attempt' } });
-    }
     this.host.streamingUI.setStep(event.step);
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('waiting');
@@ -472,11 +464,29 @@ export class SessionEventHandler {
         phase: 'backoff',
       },
     });
+    // Both engines sleep for `delayMs` before the next attempt runs, but only
+    // v2 re-emits `turn.step.started` for it — flip the phase on a timer so the
+    // stale countdown drops on the legacy engine too.
+    this.clearStepRetryAttemptTimer();
+    this.stepRetryAttemptTimer = setTimeout(() => {
+      this.stepRetryAttemptTimer = undefined;
+      const retry = this.host.state.appState.stepRetry;
+      if (retry === null) return;
+      this.host.setAppState({ stepRetry: { ...retry, phase: 'attempt' } });
+    }, event.delayMs);
   }
 
   private clearStepRetry(): void {
+    this.clearStepRetryAttemptTimer();
     if (this.host.state.appState.stepRetry === null) return;
     this.host.setAppState({ stepRetry: null });
+  }
+
+  private clearStepRetryAttemptTimer(): void {
+    if (this.stepRetryAttemptTimer !== undefined) {
+      clearTimeout(this.stepRetryAttemptTimer);
+      this.stepRetryAttemptTimer = undefined;
+    }
   }
 
   private maybeShowDebugTiming(event: TurnStepCompletedEvent): void {
