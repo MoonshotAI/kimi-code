@@ -2003,14 +2003,32 @@ export class KimiTUI {
    * A scope switch or picker close bumps `sessionPickerScopeRequestToken`,
    * which makes an in-flight append discard its result. Returns whether a page
    * was appended — callers draining pages stop on the first `false`.
+   * Scroll triggers pass no argument and are dropped while a fetch is running;
+   * the search drain passes `waitForInFlight` to join the running fetch and
+   * continue with the next page, so a query typed mid-fetch still ends up
+   * covering every session.
    */
-  private async fetchMoreSessions(): Promise<boolean> {
+  private async fetchMoreSessions(waitForInFlight = false): Promise<boolean> {
+    while (this.sessionsPageFetchInFlight !== undefined) {
+      if (!waitForInFlight) return false;
+      await this.sessionsPageFetchInFlight;
+    }
     const cursor = this.state.sessionsNextCursor;
-    if (cursor === undefined || this.state.sessionsLoadingMore) return false;
+    if (cursor === undefined) return false;
     const requestToken = this.sessionPickerScopeRequestToken;
     this.state.sessionsLoadingMore = true;
     this.sessionPickerComponent?.setPaging(true, true);
     this.state.ui.requestRender();
+    const run = this.appendNextSessionPage(cursor, requestToken);
+    this.sessionsPageFetchInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (this.sessionsPageFetchInFlight === run) this.sessionsPageFetchInFlight = undefined;
+    }
+  }
+
+  private async appendNextSessionPage(cursor: string, requestToken: number): Promise<boolean> {
     try {
       const page = await this.harness.listSessionsPage({
         workDir: this.state.sessionsScope === 'all' ? undefined : this.state.appState.workDir,
@@ -2051,7 +2069,7 @@ export class KimiTUI {
       this.state.sessionsNextCursor !== undefined &&
       requestToken === this.sessionPickerScopeRequestToken
     ) {
-      if (!(await this.fetchMoreSessions())) return;
+      if (!(await this.fetchMoreSessions(true))) return;
     }
   }
 
@@ -3297,6 +3315,7 @@ export class KimiTUI {
   };
   private sessionPickerScopeRequestToken = 0;
   private sessionPickerComponent: SessionPickerComponent | undefined;
+  private sessionsPageFetchInFlight: Promise<boolean> | undefined;
 
   async showSessionPicker(): Promise<void> {
     await this.openSessionPicker({

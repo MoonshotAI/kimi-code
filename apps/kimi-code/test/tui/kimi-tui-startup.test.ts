@@ -1138,6 +1138,63 @@ describe('KimiTUI startup', () => {
     });
   });
 
+  it('continues the search drain after an in-flight scroll fetch settles', async () => {
+    const firstPage = Array.from({ length: 50 }, (_, index) => ({
+      id: `ses-page1-${String(index).padStart(2, '0')}`,
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now() - index * 1000,
+    }));
+    let resolveScrollPage!: (page: { items: unknown[]; nextCursor?: string }) => void;
+    const listSessionsPage = vi.fn((input: { workDir?: string; before?: string } = {}) => {
+      if (input.before === undefined) {
+        return Promise.resolve({ items: firstPage, nextCursor: 'ses-page1-49' });
+      }
+      if (input.before === 'ses-page1-49') {
+        // The scroll-triggered page fetch stays pending until the test resolves it.
+        return new Promise<{ items: unknown[]; nextCursor?: string }>((resolve) => {
+          resolveScrollPage = resolve;
+        });
+      }
+      return Promise.resolve({
+        items: [{ id: 'ses-page3-0', workDir: '/tmp/proj-a', updatedAt: 0 }],
+        nextCursor: undefined,
+      });
+    });
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), { listSessionsPage });
+    const driver = makeDriver(harness, makeStartupInput());
+    await expect(driver.init()).resolves.toBe(false);
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    // Reach the fetched end: the scroll-triggered fetch for page 2 starts.
+    for (let i = 0; i < 49; i++) {
+      picker.handleInput('\u001B[B');
+    }
+    await vi.waitFor(() => {
+      expect(listSessionsPage).toHaveBeenCalledWith({
+        workDir: '/tmp/proj-a',
+        limit: 50,
+        before: 'ses-page1-49',
+      });
+    });
+
+    // Typing a query while that fetch is in flight must join it, not stop the
+    // drain: the remaining pages arrive after the in-flight one settles.
+    picker.handleInput('x');
+    resolveScrollPage({
+      items: [{ id: 'ses-page2-0', workDir: '/tmp/proj-a', updatedAt: 1 }],
+      nextCursor: 'ses-page2-0',
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.sessions).toHaveLength(52);
+    });
+    expect(listSessionsPage).toHaveBeenLastCalledWith({
+      workDir: '/tmp/proj-a',
+      limit: 50,
+      before: 'ses-page2-0',
+    });
+  });
+
   it('clears the sessions picker search query when toggling scope with Ctrl+A', async () => {
     const currentWorkDirSession = {
       id: 'ses-cwd',
