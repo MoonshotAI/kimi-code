@@ -15,7 +15,7 @@ export const COMMAND_PREVIEW_LINES = 10;
 // Retention caps for the subagent activity store (background-agent detail
 // view): only the most recent steps are kept, older steps are discarded
 // whole, and per-step text / per-call output keep bounded tails.
-export const MAX_SUBAGENT_ACTIVITY_STEPS = 10;
+export const MAX_SUBAGENT_ACTIVITY_STEPS = 20;
 export const SUBAGENT_STEP_TEXT_TAIL_CHARS = 4000;
 export const SUBAGENT_TOOL_OUTPUT_MAX_CHARS = 8000;
 
