@@ -1026,14 +1026,45 @@ describe('v1↔v2 plugin parity', () => {
       await expect(pair.v2.listGlobalMcpServers()).resolves.toEqual([]);
 
       await Promise.all([
+        pair.v1.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false),
+        pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false),
+      ]);
+      await expect(pair.v1.listMcpServerAuthStatuses([target])).resolves.toEqual([
+        { target, authStatus: 'unavailable' },
+      ]);
+      await expect(pair.v2.listMcpServerAuthStatuses([target])).resolves.toEqual([
+        { target, authStatus: 'unavailable' },
+      ]);
+      await expect(pair.v1.beginMcpServerAuth(target)).resolves.toEqual({
+        status: 'already-authorized',
+      });
+      await expect(pair.v2.beginMcpServerAuth(target)).resolves.toEqual({
+        status: 'already-authorized',
+      });
+      await Promise.all([
         pair.v1.resetMcpServerAuth(target),
         pair.v2.resetMcpServerAuth(target),
+      ]);
+      await Promise.all([
+        pair.v1.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', true),
+        pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', true),
       ]);
       await expect(pair.v1.listMcpServerAuthStatuses([target])).resolves.toEqual([
         { target, authStatus: 'oauth-required' },
       ]);
       await expect(pair.v2.listMcpServerAuthStatuses([target])).resolves.toEqual([
         { target, authStatus: 'oauth-required' },
+      ]);
+
+      await Promise.all([
+        pair.v1.setPluginEnabled(FIXTURE_PLUGIN_ID, false),
+        pair.v2.setPluginEnabled(FIXTURE_PLUGIN_ID, false),
+      ]);
+      await expect(pair.v1.listMcpServerAuthStatuses([target])).resolves.toEqual([
+        { target, authStatus: 'unavailable' },
+      ]);
+      await expect(pair.v2.listMcpServerAuthStatuses([target])).resolves.toEqual([
+        { target, authStatus: 'unavailable' },
       ]);
     } finally {
       await closePluginPair(pair);

@@ -2341,17 +2341,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       .get(IPluginService)
       .getPluginInfo({ id: target.pluginId });
     const config = plugin.manifest?.mcpServers?.[target.serverName];
-    const runtimeName = plugin.mcpServers.find(
+    const serverInfo = plugin.mcpServers.find(
       (server) => server.name === target.serverName,
-    )?.runtimeName;
-    if (config === undefined || runtimeName === undefined) {
+    );
+    if (config === undefined || serverInfo === undefined) {
       throw new KimiError(
         ErrorCodes.MCP_SERVER_NOT_FOUND,
         `MCP server "${target.serverName}" was not found in plugin "${plugin.id}"`,
         { details: { pluginId: plugin.id, serverName: target.serverName } },
       );
     }
-    return { runtimeName, config };
+    return {
+      runtimeName: serverInfo.runtimeName,
+      config: {
+        ...config,
+        enabled: plugin.enabled && plugin.state === 'ok' && serverInfo.enabled,
+      },
+    };
   }
 
   /**
