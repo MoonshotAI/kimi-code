@@ -320,6 +320,14 @@ const emit = defineEmits<{
   resumeTurn: [];
 }>();
 
+// Stable event relays for the per-turn child components: inline arrow props
+// would be new identities on every render, defeating shouldUpdateComponent's
+// bail-out and re-rendering every card on each streamed chunk.
+const onOpenFile = (target: FilePreviewRequest) => emit('openFile', target);
+const onOpenMedia = (payload: OpenMediaRequest) => emit('openMedia', payload);
+const onOpenAgent = (toolCallId: string) => emit('openAgent', toolCallId);
+const onOpenTurnDiff = (change: TurnFileChange) => emit('openTurnDiff', change);
+
 // ---- Inline queue (pending messages while running) ------------------------
 // Edit/remove are one-click; reorder is HTML5 drag-and-drop initiated from the
 // grip handle (the body stays a click-to-edit button).
@@ -988,23 +996,23 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           :created-ms="isoMs(turn.createdAt)"
           :ended-ms="isoMs(turn.endedAt)"
           :duration-ms="turn.durationMs"
-          @open-media="emit('openMedia', $event)"
-          @open-file="emit('openFile', $event)"
-          @open-agent="emit('openAgent', $event)"
+          @open-media="onOpenMedia"
+          @open-file="onOpenFile"
+          @open-agent="onOpenAgent"
         />
         <template v-for="(blk, bi) in assistantFold(turn).visible" :key="renderBlockKey(blk, bi)">
           <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" />
-          <div v-else-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :open-file="(target) => emit('openFile', target)" /></div>
+          <div v-else-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :open-file="onOpenFile" /></div>
           <ActivityRun
             v-else-if="blk.kind === 'activity-run'"
             :items="blk.items"
             mobile
             :streaming="isStreamingActivityRun(turn, blk)"
-            @open-media="emit('openMedia', $event)"
-            @open-file="emit('openFile', $event)"
-            @open-agent="emit('openAgent', $event)"
+            @open-media="onOpenMedia"
+            @open-file="onOpenFile"
+            @open-agent="onOpenAgent"
           />
-          <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-agent="emit('openAgent', $event)" />
+          <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile @open-media="onOpenMedia" @open-file="onOpenFile" @open-agent="onOpenAgent" />
           <NotificationCard v-else-if="blk.kind === 'notification'" :items="blk.items" />
         </template>
         <TurnFilesSummary
@@ -1012,8 +1020,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           :changes="turnFileChangesById.get(turn.id)!"
           :cwd="props.cwd"
           :interactive="turnFilesInteractive"
-          @open-diff="emit('openTurnDiff', $event)"
-          @open-file="emit('openFile', $event)"
+          @open-diff="onOpenTurnDiff"
+          @open-file="onOpenFile"
         />
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turnDurationLabel(turn))" class="a-msg-ft">
           <span v-if="turnDurationLabel(turn)" class="a-duration">{{ turnDurationLabel(turn) }}</span>

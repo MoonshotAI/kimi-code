@@ -129,7 +129,24 @@ export interface AssistantFold {
   visible: AssistantRenderBlock[];
 }
 
+// Per-turn memo: the turns projector reuses a settled turn's ChatTurn object
+// while every source message is unchanged (turnsProjector.ts), so object
+// identity implies identical content. ChatPane calls this per turn on every
+// render (three times per turn, in fact), and a streamed chunk rebuilds the
+// turns array each frame — without the memo every call returned FRESH arrays,
+// defeating prop-equality bail-outs downstream and re-rendering the whole
+// transcript per chunk.
+const splitFoldCache = new WeakMap<ChatTurn, AssistantFold>();
+
 export function splitAssistantFold(turn: ChatTurn): AssistantFold {
+  const cached = splitFoldCache.get(turn);
+  if (cached !== undefined) return cached;
+  const split = computeAssistantFold(turn);
+  splitFoldCache.set(turn, split);
+  return split;
+}
+
+function computeAssistantFold(turn: ChatTurn): AssistantFold {
   const rendered = assistantRenderBlocks(turn);
   let splitAt = -1;
   for (let i = rendered.length - 1; i >= 0; i--) {
