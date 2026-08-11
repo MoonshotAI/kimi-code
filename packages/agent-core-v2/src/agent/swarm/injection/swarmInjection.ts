@@ -1,17 +1,9 @@
 /**
  * `swarm` domain — swarm-mode context injection.
  *
- * Owns the `swarm_mode` context-injection provider, mirroring
- * `permissionMode`: the enter guidance is re-announced whenever its live
- * positions are folded away (compaction), and enter/exit transitions render
- * the corresponding reminder. Tool-triggered swarms never render — the
- * AgentSwarm tool result already tells the model. Reconciliation derives the
- * rendered state from the typed disclosure recorded on the newest surviving
- * injection, never from rendered text, so reminder copy edits cannot corrupt
- * the state of restored sessions. Sessions written before disclosures existed
- * fall back to variant matching against `contextMemory`: a surviving
- * `swarm_mode` injection means active, a surviving legacy `swarm_mode_exit`
- * injection means inactive, whichever is latest wins.
+ * Registers swarm-mode guidance through `contextInjector` and reads
+ * `contextMemory` for restored legacy state. Used by the Agent-scoped swarm
+ * service.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

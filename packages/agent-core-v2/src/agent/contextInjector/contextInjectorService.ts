@@ -1,43 +1,10 @@
 /**
  * `contextInjector` domain — `IAgentContextInjectorService` implementation.
  *
- * The reconcile scheduler for the registered context providers
- * (present-tense state reminders). At each injection boundary (turn start,
- * step, compaction follow-up) it reconciles the registered providers
- * through `loop` hooks and routes their results into the conversation:
- * strings become `<system-reminder>` messages through `systemReminder`,
- * content parts append as bare user messages, and tagged raw messages
- * (`{ message }`) append verbatim with the injection origin stamped — the
- * form for structured payloads such as the dynamic-tool schema
- * declaration's `tools` field. Past-tense one-off reminders (a cancelled
- * goal, a discovered AGENTS.md, …) do NOT pass through this service:
- * their producers append them at the event point through `systemReminder`,
- * sharing the same `injection` origin vocabulary. A provider that throws
- * or rejects at a step or compaction boundary is logged and skipped, so
- * one bad provider can neither starve the rest nor fail the turn.
- * Provider positions are never cached: each provider call derives them by
- * scanning `contextMemory` for its own surviving injection messages, so
- * splices, compaction folds, and `wire` restoration need no index
- * bookkeeping. Each provider call receives the newest surviving injection
- * of its own variant (`lastInjection`) and the typed disclosure recorded
- * on it (`lastDisclosure`), so providers never read context layout or
- * position indexes themselves. Turn-start providers run synchronously
- * after `turn.started` — before the turn's first step request materializes
- * its prompt — and must stay synchronous (a provider that throws or
- * returns a Promise is logged and skipped, so one bad provider cannot
- * starve the rest); they are also reconciled at every later step boundary
- * as a fallback for facts that arrive after `turn.started` (for example, a
- * queued turn cancelled while another turn is already running).
- * `isNewTurn` is derived per boundary and never stored: the step hook
- * reads it from the loop's own step counter
- * (`BeforeStepContext.firstStepOfTurn`), and the compaction follow-up
- * passes it explicitly, so interleaved triggers cannot consume or steal a
- * shared flag. A compaction follow-up that lands inside a step hook chain
- * (the auto-compaction path) doubles as that step's new-turn delivery —
- * the enclosing step then injects with `isNewTurn: false`, so the upcoming
- * request receives one new-turn injection, not two. `entries` stays a
- * plain instance field (its values hold functions, not plain data).
- * Bound at Agent scope.
+ * Reconciles registered model-context providers against `contextMemory`,
+ * observes turn and step boundaries through `eventBus` and `loop`, writes
+ * reminders through `systemReminder`, and reports provider failures through
+ * `log`. Bound at Agent scope.
  */
 
 import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";

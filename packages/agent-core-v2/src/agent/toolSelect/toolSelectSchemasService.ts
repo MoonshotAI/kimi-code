@@ -1,14 +1,8 @@
 /**
  * `toolSelect` domain — `IAgentToolSelectSchemasService` implementation.
  *
- * Registers dynamic-tool schema declarations as a `contextInjector`
- * provider (variant `dynamic_tool_schema`): every injection boundary drains
- * the tools `toolSelect` marked loaded since the last declaration and
- * appends them as a `role: 'system'` raw injection message whose `tools`
- * field carries the full definitions, so the declaration lands at a
- * quiescent boundary instead of mid-step inside a streaming tool exchange.
- * The folded history itself remains the loaded-tool ledger, so undo,
- * compaction, and resume self-heal by re-folding. Bound at Agent scope.
+ * Declares pending dynamic-tool schemas from `toolSelect` through
+ * `contextInjector`. Bound at Agent scope.
  */
 
 import { Service } from '#/_base/di/service';

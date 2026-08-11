@@ -74,6 +74,12 @@ async function runInjectionBoundary(loop: IAgentLoopService): Promise<void> {
   await loop.hooks.onWillBeginStep.run({ turnId: 0, step: 1, firstStepOfTurn: true, signal });
 }
 
+function messageText(message: ContextMessage | undefined): string {
+  return (
+    message?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? ''
+  );
+}
+
 function context<Input>(
   args: Input,
   toolCallId = 'call_swarm',
@@ -252,36 +258,50 @@ describe('AgentSwarmService', () => {
     ]);
   });
 
-  it('renders the enter guidance on enter and the exit guidance on exit through the injector', async () => {
+  it('renders enter guidance when manual swarm mode becomes active', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    const textOf = (message: ContextMessage | undefined): string =>
-      message?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
 
     swarm.enter('manual');
     await runInjectionBoundary(ix.get(IAgentLoopService));
 
-    let reminder = context.get().at(-1);
+    const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
       variant: 'swarm_mode',
       disclosure: { kind: 'swarm_mode', state: 'active' },
     });
-    expect(textOf(reminder)).toContain('You are now in "agent swarm" mode.');
-
-    await runInjectionBoundary(ix.get(IAgentLoopService));
+    expect(messageText(reminder)).toContain('You are now in "agent swarm" mode.');
     expect(context.get()).toHaveLength(1);
+  });
 
+  it('keeps one enter guidance when a later boundary sees the same active state', async () => {
+    const swarm = ix.get(IAgentSwarmService);
+    const context = ix.get(IAgentContextMemoryService);
+
+    swarm.enter('manual');
+    await runInjectionBoundary(ix.get(IAgentLoopService));
+    await runInjectionBoundary(ix.get(IAgentLoopService));
+
+    expect(context.get()).toHaveLength(1);
+  });
+
+  it('renders exit guidance when manual swarm mode becomes inactive', async () => {
+    const swarm = ix.get(IAgentSwarmService);
+    const context = ix.get(IAgentContextMemoryService);
+
+    swarm.enter('manual');
+    await runInjectionBoundary(ix.get(IAgentLoopService));
     swarm.exit();
     await runInjectionBoundary(ix.get(IAgentLoopService));
 
-    reminder = context.get().at(-1);
+    const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
       variant: 'swarm_mode',
       disclosure: { kind: 'swarm_mode', state: 'inactive' },
     });
-    expect(textOf(reminder)).toContain('Swarm Mode has ended.');
+    expect(messageText(reminder)).toContain('Swarm Mode has ended.');
     expect(context.get()).toHaveLength(2);
   });
 

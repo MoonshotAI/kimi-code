@@ -38,12 +38,8 @@ import {
   stubWire,
 } from '../loop/stubs';
 
-type InjectableContextInjector = IAgentContextInjectorService & {
-  inject(boundary: undefined, isNewTurn: boolean): Promise<void>;
-};
-
-function injector(ix: TestInstantiationService): InjectableContextInjector {
-  return ix.get(IAgentContextInjectorService) as InjectableContextInjector;
+function injector(ix: TestInstantiationService): IAgentContextInjectorService {
+  return ix.get(IAgentContextInjectorService);
 }
 
 function userMessage(text: string): ContextMessage {

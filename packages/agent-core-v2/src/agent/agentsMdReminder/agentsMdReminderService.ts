@@ -2,61 +2,12 @@
  * `agentsMdReminder` domain — `IAgentAgentsMdReminderService`
  * implementation.
  *
- * Self-wiring plugin: registers an `onDidExecuteTool` hook on `toolExecutor`
- * that probes the directories a tool call touches for AGENTS.md files the
- * system prompt did not inject, and appends a once-per-agent
- * `<system-reminder>` through `systemReminder` right at the tool-execution
- * point. The hook only
- * observes — it never rewrites the tool result, so results stay verbatim
- * for the truncation pipeline and the reminder can never be truncated away
- * with an oversized output. `Read`/`Edit`/`Write` consume the canonical
- * file access declared by their resolved execution (a successful touch
- * landing on an AGENTS.md itself marks just that file known),
- * `Glob`/`Grep` consume their canonical search root, and `Bash`
- * contributes its explicit `cwd` plus the literal directory operands
- * extracted from the command's syntax tree (see `./bashTargets`), resolved
- * against the frozen
- * `sessionContext.cwd` exactly like the Bash tool itself (`args.cwd ??
- * sessionContext.cwd` — a base that deliberately differs from the live agent
- * cwd after a chdir). Only calls whose `ToolDidExecuteContext.outcome` is
- * `executed` are probed: preflight rejects, resolution failures, aborts,
- * permission vetoes, and synthetic/duplicate results have not touched the
- * requested resource and are ignored.
- *
- * Known-set discipline: candidates are claimed synchronously per discovered
- * file into an in-memory `claimed` set (parallel calls can never duplicate a
- * reminder and a failed attempt releases the claim), while `agentState`
- * (`agentsMdReminder.known`) is only ever whole-value replaced after the
- * telemetry emitted and the reminder appended — never mutated in place, and
- * never ahead of the reminder it records. The telemetry event fires before
- * the append so a telemetry failure simply retries the reminder on the next
- * qualifying touch. Probing anchors at the nearest existing ancestor (so
- * `Write` into a not-yet-created directory still resolves), walks
- * `findProjectRoot → touched dir`, skips chain
- * directories whose candidates are all known, and applies the same
- * per-directory candidate rules as the init-time load (shared through
- * `profile/context`'s `findAgentsMdInDir`; blank files are included in
- * neither). Directories with unknown candidates are re-statted on every
- * qualifying call — deliberate, so an AGENTS.md created mid-session is
- * picked up on the next touch; there is no negative cache. Probing is
- * lexical like the tools' own path policy: a symlinked directory's AGENTS.md
- * is discovered through the link at its lexical address, never by realpath.
- * The hook never throws — a probe failure appends nothing.
- *
- * Seeding: `profile` reports the injected paths after every successful
- * bind/apply/refresh and `sessionInit` re-seeds after `/init`. A prompt can
- * also commit without any of those entry points — session resume and forks
- * restore the already-rendered system prompt (AGENTS.md content included)
- * from the wire journal or a binding snapshot. The wire restore hook seeds
- * the exact persisted paths (legacy prompts recover their source annotations),
- * so the first qualifying call of a never-seeded agent does not confuse the
- * current filesystem with the restored prompt. The seeded cwd lives in
- * `agentState` as well; restored provenance comes from `wire`/`profile`; fs
- * probes go through the os `IHostFileSystem`, the home directory through
- * `IHostEnvironment`, the brand home through `bootstrap`, syntax
- * trees through `bashParser`, the shown-event
- * through `telemetry`, and the reminder write head through
- * `systemReminder`. Bound at Agent scope.
+ * Discovers AGENTS.md files reached through `toolExecutor` and the tool path
+ * policy, parsing Bash targets through `bashParser` and probing through the os
+ * services. Restores prompt provenance through `wire` and `profile`, resolves
+ * roots through `sessionContext` and `bootstrap`, stores discovery state in
+ * `agentState`, appends through `systemReminder`, and reports through
+ * `telemetry`. Bound at Agent scope.
  */
 
 import { basename, dirname, isAbsolute, join, normalize } from 'pathe';
@@ -205,9 +156,7 @@ export class AgentAgentsMdReminderService
         variant: 'agents_md',
       });
       this.publishKnown([...selfKnown, ...discovered]);
-    } catch {
-      // A probe or append failure simply retries on the next qualifying touch.
-    } finally {
+    } catch {} finally {
       for (const path of discovered) this.claimed.delete(path);
     }
   }
