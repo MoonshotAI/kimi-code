@@ -1820,6 +1820,30 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
+  it('binds every spawn to the forced default_model, rejecting even "primary"', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n',
+    );
+
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      defaultModel: 'provider/fast',
+      force: true,
+    });
+    // An omitted model binds the forced default, with no thinking inheritance.
+    expect(resolveSubagentBinding(config, own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    // Any explicit choice — "primary" included — is rejected.
+    expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
+      /Invalid model "primary": \[secondary_model\]\.force is set/,
+    );
+
+    disposables.dispose();
+  });
+
   it('rejects an alias outside the pool, listing the available models', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig(

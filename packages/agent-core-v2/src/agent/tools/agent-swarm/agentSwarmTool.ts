@@ -13,7 +13,8 @@
  * threads it through the swarm tasks; otherwise binding is left to the
  * service, which keeps its own "no model bound" check and inherit-caller
  * fallback. The advertised `model` parameter lists the configured
- * `[secondary_model.models]` pool via `buildSubagentModelDescriptions`. Swarm mode is
+ * `[secondary_model.models]` pool via `buildSubagentModelDescriptions` (the
+ * parameter is not advertised at all under `[secondary_model].force`). Swarm mode is
  * entered through `IAgentSwarmService`; the caller's agent id comes from
  * `IAgentScopeContext`. Pure tool — owns no scoped state.
  *
@@ -43,8 +44,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import {
   buildSubagentModelDescriptions,
+  exposesSubagentModelChoice,
   resolveSubagentBinding,
-  resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   stripSubagentModelParameter,
 } from '#/session/subagent/configSection';
@@ -93,9 +94,9 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   readonly name = 'AgentSwarm' as const;
 
   get parameters(): Record<string, unknown> {
-    return resolveSubagentModelPool(this.config) === undefined
-      ? AGENT_SWARM_PARAMETERS_NO_MODEL
-      : AGENT_SWARM_PARAMETERS;
+    return exposesSubagentModelChoice(this.config)
+      ? AGENT_SWARM_PARAMETERS
+      : AGENT_SWARM_PARAMETERS_NO_MODEL;
   }
 
   private readonly callerAgentId: string;

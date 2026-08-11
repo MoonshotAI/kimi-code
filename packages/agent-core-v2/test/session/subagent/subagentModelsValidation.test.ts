@@ -157,4 +157,45 @@ describe('SessionSubagentModelsValidationService', () => {
     expect((error as Error2).message).toContain('"provider/typo" is not configured');
     expect(isError2((error as Error2).cause)).toBe(true);
   });
+
+  it('constructs fine when force pins a resolvable default_model', () => {
+    modelIds.add('provider/fast');
+    setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/fast', force: true } });
+    expect(resolve()).toBeUndefined();
+  });
+
+  it('fails session creation when force is set without default_model', () => {
+    setup({ [SECONDARY_MODEL_SECTION]: { force: true } });
+    const error = resolve();
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((error as Error2).message).toContain(
+      '[secondary_model].default_model is required when [secondary_model].force is set',
+    );
+  });
+
+  it('fails session creation when force is combined with a models table', () => {
+    modelIds.add('provider/fast');
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap' },
+        force: true,
+      },
+    });
+    const error = resolve();
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((error as Error2).message).toContain(
+      '[secondary_model].force cannot be combined with [secondary_model.models]',
+    );
+  });
+
+  it('fails session creation when the forced default_model does not resolve', () => {
+    setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/typo', force: true } });
+    const error = resolve();
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((error as Error2).message).toContain('"provider/typo"');
+  });
 });

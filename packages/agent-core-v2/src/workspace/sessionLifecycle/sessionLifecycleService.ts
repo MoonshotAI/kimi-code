@@ -65,7 +65,8 @@
  * the top of `materializeSession`, before the MCP overlay, the session scope,
  * and any persisted artifact come into existence, and again at the top of
  * `fork` before the source session's files are copied — so a broken pool
- * fails create/resume/fork without leaving orphaned session dirs or leaked
+ * (or invalid `force` configuration) fails create/resume/fork without
+ * leaving orphaned session dirs or leaked
  * overlay connections behind; the Session-scope validation service
  * (`session/subagent/subagentModelsValidationService.ts`) repeats the same
  * check at scope activation as a backstop for paths that bypass this service.
@@ -130,10 +131,7 @@ import {
   type WireRecord,
 } from '#/wire/record';
 import { IModelCatalog } from '#/kosong/model/catalog';
-import {
-  assertValidSubagentModelPool,
-  resolveSubagentModelPool,
-} from '#/session/subagent/configSection';
+import { assertValidSubagentModelConfig } from '#/session/subagent/configSection';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
@@ -272,10 +270,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async assertSubagentModelPoolPreFlight(): Promise<void> {
     await this.config.ready;
-    const pool = resolveSubagentModelPool(this.config);
-    if (pool !== undefined) {
-      assertValidSubagentModelPool(pool, this.modelCatalog);
-    }
+    assertValidSubagentModelConfig(this.config, this.modelCatalog);
   }
 
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {

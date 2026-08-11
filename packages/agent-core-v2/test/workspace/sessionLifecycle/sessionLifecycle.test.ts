@@ -718,6 +718,21 @@ describe('SessionLifecycleService', () => {
     expect(svc.get('s-pool')).toBe(h);
   });
 
+  it('rejects create with CONFIG_INVALID when force is set without default_model', async () => {
+    const svc = await build([
+      stubPair(IConfigService, configStub({ secondaryModel: { force: true } })),
+      stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+    ]);
+
+    await expect(svc.create({ sessionId: 's-force', workDir: '/tmp/proj' })).rejects.toMatchObject(
+      {
+        code: ErrorCodes.CONFIG_INVALID,
+        message: expect.stringContaining('[secondary_model].default_model is required'),
+      },
+    );
+    expect(svc.get('s-force')).toBeUndefined();
+  });
+
   it('rejects fork with CONFIG_INVALID for a broken pool before copying any files', async () => {
     const root = await makeTmpRoot();
     const sections: Record<string, unknown> = {

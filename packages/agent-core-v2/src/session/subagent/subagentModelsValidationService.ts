@@ -1,17 +1,16 @@
 /**
  * `subagent` domain — `ISessionSubagentModelsValidationService` implementation.
  *
- * Backstop for the session lifecycle's pre-materialization pool check:
- * validates the configured subagent model pool (`[secondary_model.models]` +
- * `[secondary_model].default_model`) once per session at scope construction
- * (`ScopeActivation.OnScopeCreated`), so a broken pool fails session creation
- * with `Error2(CONFIG_INVALID)` even on paths that bypass the lifecycle
- * service. Reads the pool through `config` and resolves aliases through the
- * model catalog — a lone `default_model` included, as the implicit
- * single-entry pool; only a session with neither is a no-op. The checks
- * themselves live in `assertValidSubagentModelPool` (configSection): the
- * reserved `primary` key rejected, default present, default in the pool,
- * every pool alias resolvable. Bound at Session scope.
+ * Backstop for the session lifecycle's pre-materialization check: validates
+ * the configured subagent model section (`[secondary_model.models]` +
+ * `[secondary_model].default_model`, plus the `force` rules) once per session
+ * at scope construction (`ScopeActivation.OnScopeCreated`), so a broken pool
+ * or forced model fails session creation with `Error2(CONFIG_INVALID)` even
+ * on paths that bypass the lifecycle service. Reads the section through
+ * `config` and resolves aliases through the model catalog — a lone
+ * `default_model` included, as the implicit single-entry pool; only a session
+ * with neither pool nor force is a no-op. The checks themselves live in
+ * `assertValidSubagentModelConfig` (configSection). Bound at Session scope.
  */
 
 import { LifecycleScope } from '#/app/scopes';
@@ -19,10 +18,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
 
-import {
-  assertValidSubagentModelPool,
-  resolveSubagentModelPool,
-} from './configSection';
+import { assertValidSubagentModelConfig } from './configSection';
 import { ISessionSubagentModelsValidationService } from './subagentModelsValidation';
 
 export class SessionSubagentModelsValidationService
@@ -34,8 +30,7 @@ export class SessionSubagentModelsValidationService
     @IConfigService config: IConfigService,
     @IModelCatalog modelCatalog: IModelCatalog,
   ) {
-    const pool = resolveSubagentModelPool(config);
-    if (pool !== undefined) assertValidSubagentModelPool(pool, modelCatalog);
+    assertValidSubagentModelConfig(config, modelCatalog);
   }
 }
 

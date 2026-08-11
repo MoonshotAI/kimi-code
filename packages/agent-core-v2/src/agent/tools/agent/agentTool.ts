@@ -12,7 +12,9 @@
  *
  * Spawn bindings use the explicit tool `model` choice first, before
  * `resolveSubagentBinding` falls back to the configured `[secondary_model.models]`
- * pool default or the caller's model. The selected alias is
+ * pool default or the caller's model; with `[secondary_model].force` set the
+ * `model` parameter is not advertised and every spawn binds `default_model`.
+ * The selected alias is
  * resolved through the model catalog before lifecycle allocation. A resumed
  * agent keeps the model recorded in its own wire journal — with per-subagent
  * models there is no "child follows the parent's current model" invariant to
@@ -86,9 +88,9 @@ import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAg
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import {
   buildSubagentModelDescriptions,
+  exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
   resolveSubagentBinding,
-  resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   stripSubagentModelParameter,
   wrapSubagentModelError,
@@ -118,9 +120,9 @@ export class SubagentTool implements ISubagentTool {
   readonly name: string = 'Agent';
 
   get parameters(): Record<string, unknown> {
-    return resolveSubagentModelPool(this.config) === undefined
-      ? SUBAGENT_TOOL_PARAMETERS_NO_MODEL
-      : SUBAGENT_TOOL_PARAMETERS;
+    return exposesSubagentModelChoice(this.config)
+      ? SUBAGENT_TOOL_PARAMETERS
+      : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
   }
 
   private readonly callerAgentId: string;

@@ -214,8 +214,9 @@ default_model = "kimi-hs"
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | 子 Agent 默认模型。配置 `[secondary_model.models]` 时必填，且必须是其中的 key；单独写下它（不写 models 表）则等价于只含它一个条目的模型池 |
 | `models` | `table<string, string>` | — | 子 Agent 模型池。key 是 [`[models]`](#models) 中已配置条目的别名，value 是主 Agent 挑选子 Agent 模型时看到的描述（中英文均可；空字符串表示只列出别名、不给提示） |
+| `force` | `boolean` | `false` | 把所有子 Agent 固定到 `default_model`：不再提供 `model` 参数，主 Agent 无法改选其他模型或 `"primary"`。必须配置 `default_model`，且不能与 `[secondary_model.models]` 同时使用 |
 
-配置模型池（显式的 `[secondary_model.models]` 表，或仅一行 `default_model` 形成的隐式单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中会列出模型池（默认模型标注 `[default]`），主 Agent 可按次派生选择模型。模型本身的定义仍在 [`[models]`](#models) 中——模型池只引用它们，并附上挑选提示：
+配置模型池（显式的 `[secondary_model.models]` 表，或仅一行 `default_model` 形成的隐式单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中会列出模型池（默认模型标注 `[default]`），主 Agent 可按次派生选择模型（除非设置了 `force`，见下文）。模型本身的定义仍在 [`[models]`](#models) 中——模型池只引用它们，并附上挑选提示：
 
 ```toml
 [models.k3]
@@ -242,7 +243,37 @@ codex = "后端选它。擅长 API 设计、数据库建模、服务端架构、
 
 派生时按以下顺序解析子 Agent 的模型：工具调用显式传入的 `model` → `default_model`。`model` 参数接受池中任意别名，或 `"primary"` ——调用方自己正在运行的模型，始终合法，即使它不在池中。`default_model` 与 `[secondary_model.models]` 都未配置时，该参数不会出现，子 Agent 继承调用方模型。绑定池中别名时不携带显式 Thinking 档位——子 Agent 按 "全局 `[thinking]` 配置 → 所绑定模型的默认 effort" 自然解析，不继承调用方的档位；`"primary"` 则连模型带档位一起继承调用方。
 
-配置错误一律直接报错，不做静默回退：`default_model` 缺失、不是池中 key，或池中 key 无法解析到已配置的 `[models]` 条目时，会话的创建、恢复（resume）与 fork 都会在启动时直接失败。别名 `primary` 是保留字——它始终绑定调用方自己的模型——不能作为池中 key。工具调用传入的 `model` 既不是池中别名也不是 `"primary"` 时，本次派生报错并列出可选值。
+要彻底收回主 Agent 的选择权——让所有子 Agent 固定跑在同一个模型上——加上 `force = true`：
+
+```toml
+[secondary_model]
+default_model = "kimi-hs"
+force = true
+```
+
+设置 `force` 后不再提供 `model` 参数（与完全未配置时一样），每次派生都绑定 `default_model`；显式传入 `model`（包括 `"primary"`）会报错。`force` 必须搭配 `default_model`，且不能与 `[secondary_model.models]` 表同时使用——表的意义在于提供选择，而 force 取消了选择。
+
+利用自然解析会落到所绑定模型的默认 effort 这一点，可以给池中不同条目配不同的 Thinking 档位：为同一个底层模型再注册一个 `[models]` 条目作为「变体」，用 [`[models."<alias>".overrides]`](#模型覆盖项) 只覆盖 `default_effort`，再把两个别名都放进模型池——主 Agent 挑选别名时便同时选定了档位：
+
+```toml
+# kimi-hs 已在 [models] 中配置；这里为同一模型注册一个高档位变体
+[models.kimi-hs-deep]
+provider = "managed:kimi-code"
+model = "kimi-for-coding-highspeed"
+
+[models.kimi-hs-deep.overrides]
+default_effort = "high"
+
+[secondary_model]
+default_model = "kimi-hs"
+[secondary_model.models]
+kimi-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
+kimi-hs-deep = "同一模型的高 Thinking 档位。适合较难的子任务。"
+```
+
+注意 `default_effort` 是模型级默认值：一旦设置了全局 `[thinking].effort`，它对主 Agent 和子 Agent 都优先生效，变体的默认档位只在全局未设置时起作用。取值与回落规则同 [`[models]` 条目的 `default_effort`](#models)。
+
+配置错误一律直接报错，不做静默回退：`default_model` 缺失、不是池中 key，或池中 key 无法解析到已配置的 `[models]` 条目时，会话的创建、恢复（resume）与 fork 都会在启动时直接失败；`force` 未搭配 `default_model` 或与 `[secondary_model.models]` 表同用时亦然。别名 `primary` 是保留字——它始终绑定调用方自己的模型——不能作为池中 key。工具调用传入的 `model` 既不是池中别名也不是 `"primary"` 时，本次派生报错并列出可选值。
 
 模型池键之前位于 `[subagent]` 下；遗留的 `[subagent] default_model` 或 `[subagent.models]` 表不再生效，并会以弃用警告的形式报告——按上文示例移入 `[secondary_model]` 即可。
 

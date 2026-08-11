@@ -17,9 +17,13 @@
  *   fallback model and the `[secondary_model.models]` table maps alias →
  *   description. A `default_model` without a `[secondary_model.models]` table
  *   stands on its own as an implicit single-entry pool (empty description) —
- *   the minimal "secondary model" configuration.
+ *   the minimal "secondary model" configuration. `force = true` instead
+ *   removes the choice entirely: every spawn binds `default_model`, the tools
+ *   hide the `model` parameter exactly like the no-pool case, and combining
+ *   it with a `[secondary_model.models]` table is rejected — the table's only
+ *   purpose is offering the main agent a choice.
  *
- * When a pool is configured, newly spawned subagents
+ * When a pool is configured (and not forced), newly spawned subagents
  * bind to the pool's default model unless the parent model picks a pool alias
  * — or `primary` (`PRIMARY_SUBAGENT_MODEL_CHOICE`), the always-available
  * symbolic choice binding the caller's own model and thinking level — per
@@ -32,9 +36,14 @@
  * `stripSubagentModelParameter`, so the concept never enters the prompt and a
  * stray `model` argument is rejected instead of silently inheriting; the
  * strip returns a shallow copy and never mutates the input, so callers can
- * keep both schema variants as shared constants.
+ * keep both schema variants as shared constants. `force = true` shares this
+ * hidden-parameter surface (see `exposesSubagentModelChoice`) while binding
+ * every spawn to `default_model` in `resolveSubagentBinding`.
  *
- * Spawn bindings resolve through `resolveSubagentBinding`: `primary`
+ * Spawn bindings resolve through `resolveSubagentBinding`: a forced
+ * configuration short-circuits to `default_model` before anything else, and
+ * any explicit request — `primary` included — throws (defensive; the tools
+ * strip the parameter); `primary`
  * short-circuits to the caller's own model+thinking; with no pool a stray
  * non-`primary` request throws (defensive — the tools strip the parameter);
  * with a pool the request must be a pool alias, an omitted request falls back
@@ -51,18 +60,21 @@
  * when the bound model is not the caller's own and the catalog failed on
  * exactly that alias, the parent model gets guidance toward
  * `[secondary_model.models]` instead of a bare resolution error.
- * Cross-field pool validation is NOT part of the schema — it is enforced as
- * `Error2(CONFIG_INVALID)` by `assertValidSubagentModelPool` (run before
+ * Cross-field validation is NOT part of the schema — it is enforced as
+ * `Error2(CONFIG_INVALID)` by `assertValidSubagentModelConfig` (run before
  * session materialization by the session lifecycle, with the Session-scope
- * validation service in `subagentModelsValidationService.ts` as backstop):
- * the default must be present and name a pool key, every pool key must
- * resolve through the model catalog, and the reserved `primary` alias is
- * rejected outright — as a pool key it would be unreachable (explicit
- * requests short-circuit to the caller's model) and would render a
- * self-contradictory description. `resolveSubagentBinding` repeats the
- * reserved-key check so a pool broken by a runtime config edit fails loudly
- * at spawn instead of binding the wrong model; any other malformation the
- * startup checks missed surfaces as the spawn-time errors above.
+ * validation service in `subagentModelsValidationService.ts` as backstop),
+ * which checks the `force` rules (`default_model` required, a
+ * `[secondary_model.models]` table rejected) and delegates the pool checks to
+ * `assertValidSubagentModelPool`: the default must be present and name a
+ * pool key, every pool key must resolve through the model catalog, and the
+ * reserved `primary` alias is rejected outright — as a pool key it would be
+ * unreachable (explicit requests short-circuit to the caller's model) and
+ * would render a self-contradictory description. `resolveSubagentBinding`
+ * repeats the reserved-key and force-rule checks so a pool broken by a
+ * runtime config edit fails loudly at spawn instead of binding the wrong
+ * model; any other malformation the startup checks missed surfaces as the
+ * spawn-time errors above.
  * Self-registered at module load via `registerConfigSection`.
  */
 
@@ -91,6 +103,7 @@ export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
 export const SecondaryModelConfigSchema = z.object({
   defaultModel: z.string().min(1).optional(),
   models: z.record(z.string(), z.string()).optional(),
+  force: z.boolean().optional(),
 });
 
 export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
@@ -150,6 +163,21 @@ export function resolveSubagentModelPool(config: IConfigService): SubagentModelP
   return undefined;
 }
 
+export const SECONDARY_MODEL_FORCE_REQUIRES_DEFAULT_MESSAGE =
+  '[secondary_model].default_model is required when [secondary_model].force is set';
+
+export const SECONDARY_MODEL_FORCE_EXCLUDES_MODELS_MESSAGE =
+  '[secondary_model].force cannot be combined with [secondary_model.models]: the pool table only exists to offer the main agent a choice, and force removes that choice';
+
+export function isSubagentModelForced(config: IConfigService): boolean {
+  return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION)?.force === true;
+}
+
+export function exposesSubagentModelChoice(config: IConfigService): boolean {
+  if (isSubagentModelForced(config)) return false;
+  return resolveSubagentModelPool(config) !== undefined;
+}
+
 export const SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE =
   '[secondary_model].default_model is required when [secondary_model.models] is configured';
 
@@ -194,11 +222,49 @@ export function assertValidSubagentModelPool(
   }
 }
 
+export function assertValidSubagentModelConfig(
+  config: IConfigService,
+  modelCatalog: IModelCatalog,
+): void {
+  const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
+  if (section?.force === true) {
+    if (section.models !== undefined) {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_EXCLUDES_MODELS_MESSAGE, {
+        details: { section: SECONDARY_MODEL_SECTION, field: 'force' },
+      });
+    }
+    if (section.defaultModel === undefined) {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_REQUIRES_DEFAULT_MESSAGE, {
+        details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
+      });
+    }
+  }
+  const pool = resolveSubagentModelPool(config);
+  if (pool !== undefined) assertValidSubagentModelPool(pool, modelCatalog);
+}
+
 export function resolveSubagentBinding(
   config: IConfigService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: string,
 ): { model: string; thinking?: string } {
+  const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
+  if (section?.force === true) {
+    const forcedModel = section.defaultModel;
+    if (forcedModel === undefined) {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_REQUIRES_DEFAULT_MESSAGE, {
+        details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
+      });
+    }
+    if (requested !== undefined) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `Invalid model "${requested}": [secondary_model].force is set, so every subagent binds "${forcedModel}" (omit the model parameter).`,
+        { details: { model: requested } },
+      );
+    }
+    return { model: forcedModel };
+  }
   if (requested === PRIMARY_SUBAGENT_MODEL_CHOICE) {
     return { model: own.modelAlias, thinking: own.thinkingLevel };
   }
@@ -243,8 +309,8 @@ export function buildSubagentModelDescriptions(
   config: IConfigService,
   callerModelAlias: string | undefined,
 ): string | undefined {
-  const pool = resolveSubagentModelPool(config);
-  if (pool === undefined) return undefined;
+  if (!exposesSubagentModelChoice(config)) return undefined;
+  const pool = resolveSubagentModelPool(config)!;
   const lines = ['Available models (pass via model):'];
   const defaultModel = pool.defaultModel;
   const markersFor = (alias: string): string => {

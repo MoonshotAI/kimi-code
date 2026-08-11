@@ -214,8 +214,9 @@ In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md)
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | Default subagent model. Required when `[secondary_model.models]` is configured, and must be one of its keys; written on its own (without a models table) it is equivalent to a pool containing only that entry |
 | `models` | `table<string, string>` | — | Subagent model pool. Each key is the alias of a configured [`[models]`](#models) entry; each value is the description the main agent sees when picking a subagent model (Chinese or English; an empty string lists the alias with no hint) |
+| `force` | `boolean` | `false` | Pin every subagent to `default_model`: the `model` parameter is not advertised, so the main agent cannot pick another model or `"primary"`. Requires `default_model`; cannot be combined with `[secondary_model.models]` |
 
-A configured pool — an explicit `[secondary_model.models]` table or a lone `default_model` — enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Model definitions stay in [`[models]`](#models) — the pool only references them and attaches the selection hints:
+A configured pool — an explicit `[secondary_model.models]` table or a lone `default_model` — enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn (unless `force` is set — see below). Model definitions stay in [`[models]`](#models) — the pool only references them and attaches the selection hints:
 
 ```toml
 [models.k3]
@@ -242,7 +243,38 @@ codex = "后端选它。擅长 API 设计、数据库建模、服务端架构、
 
 A spawn resolves the subagent's model in this order: an explicit tool-call `model` → `default_model`. The `model` parameter accepts any pool alias, or `"primary"` — the model the caller itself is running, always valid even when that model is not in the pool. When neither `default_model` nor `[secondary_model.models]` is configured, the parameter is not advertised and subagents inherit the caller's model. Binding a pool alias carries no explicit thinking effort — the subagent resolves it naturally (global `[thinking]` config → the bound model's default effort) instead of inheriting the caller's level, while `"primary"` inherits both the model and the level from the caller.
 
-Configuration errors fail loudly instead of falling back silently: session creation, resume, and fork all fail at startup when `default_model` is missing, is not a pool key, or a pool key does not resolve to a configured `[models]` entry. The alias `primary` is reserved — it always binds the caller's own model — and is rejected as a pool key. A spawn whose `model` is neither a pool alias nor `"primary"` fails with an error listing the available choices.
+To take the choice away from the main agent entirely — every subagent runs on one fixed model — add `force = true`:
+
+```toml
+[secondary_model]
+default_model = "kimi-hs"
+force = true
+```
+
+With `force` set, the `model` parameter is not advertised (just like when nothing is configured) and every spawn binds `default_model`; an explicit `model` argument, `"primary"` included, is rejected with an error. `force` requires `default_model` and cannot be combined with a `[secondary_model.models]` table — the table exists to offer a choice, and force removes it.
+
+Because natural resolution lands on the bound model's default effort, different pool entries can carry different thinking levels: register a second `[models]` entry as a "variant" of the same underlying model, override only its `default_effort` via [`[models."<alias>".overrides]`](#model-overrides), and list both aliases in the pool — the main agent picks the thinking level together with the alias:
+
+```toml
+# kimi-hs is already configured under [models]; this registers a
+# higher-effort variant of the same model
+[models.kimi-hs-deep]
+provider = "managed:kimi-code"
+model = "kimi-for-coding-highspeed"
+
+[models.kimi-hs-deep.overrides]
+default_effort = "high"
+
+[secondary_model]
+default_model = "kimi-hs"
+[secondary_model.models]
+kimi-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
+kimi-hs-deep = "同一模型的高 Thinking 档位。适合较难的子任务。"
+```
+
+Note that `default_effort` stays a model-level default: once a global `[thinking].effort` is set, it wins for the main agent and subagents alike, and the variant's default only applies when no global effort is set. Value and fallback rules follow the [`[models]` entry's `default_effort`](#models).
+
+Configuration errors fail loudly instead of falling back silently: session creation, resume, and fork all fail at startup when `default_model` is missing, is not a pool key, or a pool key does not resolve to a configured `[models]` entry — and likewise when `force` is set without `default_model` or combined with a `[secondary_model.models]` table. The alias `primary` is reserved — it always binds the caller's own model — and is rejected as a pool key. A spawn whose `model` is neither a pool alias nor `"primary"` fails with an error listing the available choices.
 
 The pool keys used to live under `[subagent]`; a leftover `[subagent] default_model` or `[subagent.models]` table no longer applies and is reported as a deprecation warning — move them into `[secondary_model]` as shown above.
 

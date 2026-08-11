@@ -907,6 +907,19 @@ describe('Agent tool description', () => {
       '- primary: the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks',
     );
   });
+
+  it('hides the model parameter and the pool description when force is set', () => {
+    ctx = createTestAgent({
+      initialConfig: {
+        secondaryModel: { defaultModel: 'provider/fast', force: true },
+        models: POOL_MODEL_ENTRIES,
+      },
+    });
+
+    const properties = agentParameters()['properties'] as Record<string, unknown>;
+    expect(properties).not.toHaveProperty('model');
+    expect(agentDescription()).not.toContain('Available models');
+  });
 });
 
 describe('Agent tool execution contract', () => {
@@ -1279,6 +1292,36 @@ describe('Agent tool execution contract', () => {
           model: 'mock-model',
           thinking: 'off',
         }),
+      }),
+    );
+  });
+
+  it('binds the forced default_model and rejects any explicit choice, "primary" included', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(lifecycle, {
+      initialConfig: {
+        secondaryModel: { defaultModel: 'provider/fast', force: true },
+      },
+    });
+
+    // The model parameter is not advertised under force; a stray choice is
+    // rejected instead of binding anything.
+    const rejected = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      model: 'primary',
+    });
+    expect(rejected.isError).toBe(true);
+    expect(rejected.output).toContain('[secondary_model].force is set');
+    expect(lifecycle.create).not.toHaveBeenCalled();
+
+    await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+    expect(lifecycle.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ model: 'provider/fast', thinking: undefined }),
       }),
     );
   });
