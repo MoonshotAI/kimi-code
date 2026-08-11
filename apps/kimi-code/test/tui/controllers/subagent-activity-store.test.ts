@@ -219,4 +219,22 @@ describe('SubagentActivityStore', () => {
     store.clear();
     expect(store.get('agent-1')).toBeUndefined();
   });
+
+  it('drop() removes one record along with its streaming buffers', () => {
+    const store = new SubagentActivityStore();
+    store.ensureRecord(spawn());
+    store.ensureRecord(spawn({ agentId: 'agent-2', agentName: 'general' }));
+    store.applyEvent(
+      ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 't1', name: 'Write', argumentsPart: '{"path":"a"}' }),
+    );
+
+    store.drop('agent-1');
+
+    expect(store.get('agent-1')).toBeUndefined();
+    expect(store.get('agent-2')).toBeDefined();
+    const buffers = (
+      store as unknown as { streamingArgs: Map<string, string> }
+    ).streamingArgs;
+    expect([...buffers.keys()].every((key) => !key.startsWith('agent-1:'))).toBe(true);
+  });
 });

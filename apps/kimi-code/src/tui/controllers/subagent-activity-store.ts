@@ -255,6 +255,18 @@ export class SubagentActivityStore {
     this.streamingArgs.clear();
   }
 
+  /** Drop one agent's record and its in-flight arg buffers. Used when a
+   *  foreground-only subagent (never backgrounded, so it can never appear in
+   *  /tasks) reaches a terminal state — its record would otherwise stay
+   *  resident until the session reset. */
+  drop(agentId: string): void {
+    this.records.delete(agentId);
+    const prefix = `${agentId}:`;
+    for (const key of this.streamingArgs.keys()) {
+      if (key.startsWith(prefix)) this.streamingArgs.delete(key);
+    }
+  }
+
   /** Get-or-create: events can arrive for agents this process never saw a
    *  spawn for (e.g. switching back to a session whose background agents are
    *  still running) — keep their activity rather than dropping it. */

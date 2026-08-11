@@ -293,6 +293,7 @@ export class SubAgentEventHandler {
     event: SubagentLifecycleEventOf<'subagent.completed'>,
   ): void {
     this.activityStore.markCompleted(event.subagentId, event.resultSummary);
+    this.pruneForegroundOnlyRecord(event.subagentId);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
       const taskId = this.findAgentTaskId(
@@ -323,6 +324,7 @@ export class SubAgentEventHandler {
     event: SubagentLifecycleEventOf<'subagent.failed'>,
   ): void {
     this.activityStore.markFailed(event.subagentId, event.error);
+    this.pruneForegroundOnlyRecord(event.subagentId);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
       const taskId = this.findAgentTaskId(
@@ -376,6 +378,16 @@ export class SubAgentEventHandler {
       match = info.taskId;
     }
     return match;
+  }
+
+  /** A subagent that never became a background task (foreground-only) can
+   *  never appear in /tasks, so its activity record is dropped at terminal
+   *  state — otherwise records would pile up for the rest of the session. */
+  private pruneForegroundOnlyRecord(subagentId: string): void {
+    for (const info of this.deps.backgroundTasks.values()) {
+      if (info.kind === 'agent' && info.agentId === subagentId) return;
+    }
+    this.activityStore.drop(subagentId);
   }
 
   private buildBackgroundAgentMetadata(
