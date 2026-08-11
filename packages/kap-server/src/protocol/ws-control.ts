@@ -77,8 +77,9 @@ export const serverHelloPayloadSchema = z.object({
   ws_connection_id: z.string(),
   protocol_version: z.number().int().positive(),
   /**
-   * Legacy servers advertise their ping interval here. kap-server dropped the
-   * server-initiated heartbeat and omits this field — clients must treat it as
+   * Server heartbeat interval. kap-server sends an application-level `ping`
+   * at this cadence and closes the connection after two silent cycles; older
+   * servers omit the field and send no heartbeat, so clients must treat it as
    * advisory and not require it.
    */
   heartbeat_ms: z.number().int().positive().optional(),
