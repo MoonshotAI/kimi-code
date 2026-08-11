@@ -205,7 +205,7 @@ To simply point every subagent at one model by default, no models table is neede
 
 ```toml
 [secondary_model]
-default_model = "kimi-hs"
+default_model = "kimi-code/kimi-for-coding-highspeed"
 ```
 
 In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector for this: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately — no session restart needed.
@@ -216,29 +216,15 @@ In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md)
 | `models` | `table<string, string>` | — | Subagent model pool. Each key is the alias of a configured [`[models]`](#models) entry; each value is the description the main agent sees when picking a subagent model (Chinese or English; an empty string lists the alias with no hint) |
 | `force` | `boolean` | `false` | Pin every subagent to `default_model`: the `model` parameter is not advertised, so the main agent cannot pick another model or `"primary"`. Requires `default_model`; cannot be combined with `[secondary_model.models]` |
 
-A configured pool — an explicit `[secondary_model.models]` table or a lone `default_model` — enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn (unless `force` is set — see below). Model definitions stay in [`[models]`](#models) — the pool only references them and attaches the selection hints:
+A configured pool — an explicit `[secondary_model.models]` table or a lone `default_model` — enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn (unless `force` is set — see below). The pool only references configured [`[models]`](#models) entries — the `kimi-code/*` aliases below are provisioned by `/login` — and attaches the selection hints:
 
 ```toml
-[models.k3]
-provider = "kimi"
-model = "k3"
-[models.kimi-hs]
-provider = "managed:kimi-code"
-model = "kimi-for-coding-highspeed"
-[models.fable]
-provider = "openai"
-model = "o4-mini"
-[models.codex]
-provider = "openai"
-model = "codex"
-
 [secondary_model]
-default_model = "kimi-hs"
+default_model = "kimi-code/kimi-for-coding-highspeed"
 [secondary_model.models]
-k3 = "前端选它。擅长 React/Vue 组件、CSS、UI/UX 实现、交互逻辑和前端调试。"
-kimi-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
-fable = "难题选它。擅长复杂推理、算法设计、深度调试、数学和系统性难题。"
-codex = "后端选它。擅长 API 设计、数据库建模、服务端架构、业务逻辑实现。"
+"kimi-code/k3" = "难题选它。擅长复杂推理、算法设计、深度调试、数学和系统性难题。"
+"kimi-code/kimi-for-coding-highspeed" = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
+"kimi-code/kimi-for-coding" = "均衡的编码主力。适合大多数功能开发和代码修改任务。"
 ```
 
 A spawn resolves the subagent's model in this order: an explicit tool-call `model` → `default_model`. The `model` parameter accepts any pool alias, or `"primary"` — the model the caller itself is running, always valid even when that model is not in the pool. When neither `default_model` nor `[secondary_model.models]` is configured, the parameter is not advertised and subagents inherit the caller's model. Binding a pool alias carries no explicit thinking effort — the subagent resolves it naturally (global `[thinking]` config → the bound model's default effort) instead of inheriting the caller's level, while `"primary"` inherits both the model and the level from the caller.
@@ -247,7 +233,7 @@ To take the choice away from the main agent entirely — every subagent runs on 
 
 ```toml
 [secondary_model]
-default_model = "kimi-hs"
+default_model = "kimi-code/kimi-for-coding-highspeed"
 force = true
 ```
 
@@ -256,20 +242,20 @@ With `force` set, the `model` parameter is not advertised (just like when nothin
 Because natural resolution lands on the bound model's default effort, different pool entries can carry different thinking levels: register a second `[models]` entry as a "variant" of the same underlying model, override only its `default_effort` via [`[models."<alias>".overrides]`](#model-overrides), and list both aliases in the pool — the main agent picks the thinking level together with the alias:
 
 ```toml
-# kimi-hs is already configured under [models]; this registers a
-# higher-effort variant of the same model
-[models.kimi-hs-deep]
+# "kimi-code/kimi-for-coding-highspeed" is provisioned by /login; this
+# registers a higher-effort variant of the same model
+[models.kimi-for-coding-highspeed-deep]
 provider = "managed:kimi-code"
 model = "kimi-for-coding-highspeed"
 
-[models.kimi-hs-deep.overrides]
+[models.kimi-for-coding-highspeed-deep.overrides]
 default_effort = "high"
 
 [secondary_model]
-default_model = "kimi-hs"
+default_model = "kimi-code/kimi-for-coding-highspeed"
 [secondary_model.models]
-kimi-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
-kimi-hs-deep = "同一模型的高 Thinking 档位。适合较难的子任务。"
+"kimi-code/kimi-for-coding-highspeed" = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
+kimi-for-coding-highspeed-deep = "同一模型的高 Thinking 档位。适合较难的子任务。"
 ```
 
 Note that `default_effort` stays a model-level default: once a global `[thinking].effort` is set, it wins for the main agent and subagents alike, and the variant's default only applies when no global effort is set. Value and fallback rules follow the [`[models]` entry's `default_effort`](#models).
@@ -283,11 +269,11 @@ To carry a recipe setup over to the v2 engine, point the pool default at the sam
 ```toml
 # Before
 [secondary_model]
-model = "kimi-hs"
+model = "kimi-code/kimi-for-coding-highspeed"
 
 # After
 [secondary_model]
-default_model = "kimi-hs"
+default_model = "kimi-code/kimi-for-coding-highspeed"
 ```
 
 The recipe patch fields (`default_effort`, `max_output_size`, …) have no pool equivalent — write those settings onto the `[models]` entry the alias points to, for example via [`[models."<alias>".overrides]`](#model-overrides). The recipe keys can stay in the section: the legacy engine keeps reading them.
@@ -304,7 +290,7 @@ This feature is experimental and disabled by default. Enable it with `KIMI_CODE_
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `model` | `string` | — | The alias of a configured [`[models]`](#models) entry, e.g. `kimi-code/kimi-k2.5` (any provider, not limited to Kimi models) |
+| `model` | `string` | — | The alias of a configured [`[models]`](#models) entry, e.g. `kimi-code/kimi-for-coding` (any provider, not limited to Kimi models) |
 | `default_effort` | `string` | — | Thinking effort applied when subagents bind to the secondary model. Unset, the effort resolves naturally (global `[thinking]` config → the bound model's default effort) instead of inheriting the main agent's effort. Follows the main model's thinking-effort semantics: models with strict effort validation (e.g. Kimi models) fall back to their default effort for unsupported values; other providers receive the value as-is |
 | Other fields | — | — | Accepts every field of [`[models."<alias>".overrides]`](#models) (`max_context_size`, `max_output_size`, `support_efforts`, …) as a model patch applied only to subagents |
 
@@ -312,7 +298,7 @@ Every field besides `model` forms a patch: when at least one patch field is set,
 
 ```toml
 [secondary_model]
-model = "kimi-code/kimi-k2.5"
+model = "kimi-code/kimi-for-coding"
 default_effort = "low"
 max_output_size = 8192
 ```

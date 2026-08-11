@@ -205,7 +205,7 @@ display_name = "Kimi for Coding (custom)"
 
 ```toml
 [secondary_model]
-default_model = "kimi-hs"
+default_model = "kimi-code/kimi-for-coding-highspeed"
 ```
 
 在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器来设置：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的子 Agent 立即按新默认值绑定，无需重启会话。
@@ -216,29 +216,15 @@ default_model = "kimi-hs"
 | `models` | `table<string, string>` | — | 子 Agent 模型池。key 是 [`[models]`](#models) 中已配置条目的别名，value 是主 Agent 挑选子 Agent 模型时看到的描述（中英文均可；空字符串表示只列出别名、不给提示） |
 | `force` | `boolean` | `false` | 把所有子 Agent 固定到 `default_model`：不再提供 `model` 参数，主 Agent 无法改选其他模型或 `"primary"`。必须配置 `default_model`，且不能与 `[secondary_model.models]` 同时使用 |
 
-配置模型池（显式的 `[secondary_model.models]` 表，或仅一行 `default_model` 形成的隐式单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中会列出模型池（默认模型标注 `[default]`），主 Agent 可按次派生选择模型（除非设置了 `force`，见下文）。模型本身的定义仍在 [`[models]`](#models) 中——模型池只引用它们，并附上挑选提示：
+配置模型池（显式的 `[secondary_model.models]` 表，或仅一行 `default_model` 形成的隐式单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中会列出模型池（默认模型标注 `[default]`），主 Agent 可按次派生选择模型（除非设置了 `force`，见下文）。模型池只引用已配置的 [`[models]`](#models) 条目——下面的 `kimi-code/*` 别名由 `/login` 自动提供——并附上挑选提示：
 
 ```toml
-[models.k3]
-provider = "kimi"
-model = "k3"
-[models.kimi-hs]
-provider = "managed:kimi-code"
-model = "kimi-for-coding-highspeed"
-[models.fable]
-provider = "openai"
-model = "o4-mini"
-[models.codex]
-provider = "openai"
-model = "codex"
-
 [secondary_model]
-default_model = "kimi-hs"
+default_model = "kimi-code/kimi-for-coding-highspeed"
 [secondary_model.models]
-k3 = "前端选它。擅长 React/Vue 组件、CSS、UI/UX 实现、交互逻辑和前端调试。"
-kimi-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
-fable = "难题选它。擅长复杂推理、算法设计、深度调试、数学和系统性难题。"
-codex = "后端选它。擅长 API 设计、数据库建模、服务端架构、业务逻辑实现。"
+"kimi-code/k3" = "难题选它。擅长复杂推理、算法设计、深度调试、数学和系统性难题。"
+"kimi-code/kimi-for-coding-highspeed" = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
+"kimi-code/kimi-for-coding" = "均衡的编码主力。适合大多数功能开发和代码修改任务。"
 ```
 
 派生时按以下顺序解析子 Agent 的模型：工具调用显式传入的 `model` → `default_model`。`model` 参数接受池中任意别名，或 `"primary"` ——调用方自己正在运行的模型，始终合法，即使它不在池中。`default_model` 与 `[secondary_model.models]` 都未配置时，该参数不会出现，子 Agent 继承调用方模型。绑定池中别名时不携带显式 Thinking 档位——子 Agent 按 "全局 `[thinking]` 配置 → 所绑定模型的默认 effort" 自然解析，不继承调用方的档位；`"primary"` 则连模型带档位一起继承调用方。
@@ -247,7 +233,7 @@ codex = "后端选它。擅长 API 设计、数据库建模、服务端架构、
 
 ```toml
 [secondary_model]
-default_model = "kimi-hs"
+default_model = "kimi-code/kimi-for-coding-highspeed"
 force = true
 ```
 
@@ -256,19 +242,19 @@ force = true
 利用自然解析会落到所绑定模型的默认 effort 这一点，可以给池中不同条目配不同的 Thinking 档位：为同一个底层模型再注册一个 `[models]` 条目作为「变体」，用 [`[models."<alias>".overrides]`](#模型覆盖项) 只覆盖 `default_effort`，再把两个别名都放进模型池——主 Agent 挑选别名时便同时选定了档位：
 
 ```toml
-# kimi-hs 已在 [models] 中配置；这里为同一模型注册一个高档位变体
-[models.kimi-hs-deep]
+# "kimi-code/kimi-for-coding-highspeed" 由 /login 提供；这里为同一模型注册一个高档位变体
+[models.kimi-for-coding-highspeed-deep]
 provider = "managed:kimi-code"
 model = "kimi-for-coding-highspeed"
 
-[models.kimi-hs-deep.overrides]
+[models.kimi-for-coding-highspeed-deep.overrides]
 default_effort = "high"
 
 [secondary_model]
-default_model = "kimi-hs"
+default_model = "kimi-code/kimi-for-coding-highspeed"
 [secondary_model.models]
-kimi-hs = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
-kimi-hs-deep = "同一模型的高 Thinking 档位。适合较难的子任务。"
+"kimi-code/kimi-for-coding-highspeed" = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
+kimi-for-coding-highspeed-deep = "同一模型的高 Thinking 档位。适合较难的子任务。"
 ```
 
 注意 `default_effort` 是模型级默认值：一旦设置了全局 `[thinking].effort`，它对主 Agent 和子 Agent 都优先生效，变体的默认档位只在全局未设置时起作用。取值与回落规则同 [`[models]` 条目的 `default_effort`](#models)。
@@ -282,11 +268,11 @@ kimi-hs-deep = "同一模型的高 Thinking 档位。适合较难的子任务。
 ```toml
 # 旧
 [secondary_model]
-model = "kimi-hs"
+model = "kimi-code/kimi-for-coding-highspeed"
 
 # 新
 [secondary_model]
-default_model = "kimi-hs"
+default_model = "kimi-code/kimi-for-coding-highspeed"
 ```
 
 旧的补丁字段（`default_effort`、`max_output_size` 等）在模型池中没有对应物——请把这些设置写到别名指向的 `[models]` 条目上，例如通过 [`[models."<alias>".overrides]`](#模型覆盖项)。配方键可以继续留在本节中：旧版引擎会照常读取它们。
@@ -303,7 +289,7 @@ default_model = "kimi-hs"
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `model` | `string` | — | [`[models]`](#models) 中已配置条目的别名，如 `kimi-code/kimi-k2.5`（不限 kimi 模型，可用任意供应商） |
+| `model` | `string` | — | [`[models]`](#models) 中已配置条目的别名，如 `kimi-code/kimi-for-coding`（不限 kimi 模型，可用任意供应商） |
 | `default_effort` | `string` | — | 子 Agent 绑定次主力模型时使用的 thinking effort。未设置时按"全局 `[thinking]` 配置 → 模型默认 effort"的链路解析，不再继承主 Agent 的 effort。与主模型的 thinking effort 语义一致：严格校验 effort 的模型（如 kimi 模型）在不支持该取值时回退到模型默认 effort，其他供应商的模型按原样发送给后端 |
 | 其他字段 | — | — | 接受 [`[models."<alias>".overrides]`](#models) 的全部字段（`max_context_size`、`max_output_size`、`support_efforts` 等），作为仅对子 Agent 生效的模型补丁 |
 
@@ -311,7 +297,7 @@ default_model = "kimi-hs"
 
 ```toml
 [secondary_model]
-model = "kimi-code/kimi-k2.5"
+model = "kimi-code/kimi-for-coding"
 default_effort = "low"
 max_output_size = 8192
 ```
