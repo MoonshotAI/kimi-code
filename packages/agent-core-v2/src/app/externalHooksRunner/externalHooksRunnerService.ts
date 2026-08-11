@@ -3,7 +3,10 @@
  *
  * Owns the configured-hook lifecycle: builds the event→hooks index from
  * `IConfigService` (`[[hooks]]`) + `IPluginService.enabledHooks()`, reloads it
- * on `plugin.onDidReload`, and dispatches each trigger through the pure
+ * on plugin reload and on config change (the interactive TUI can (re)load
+ * `config.toml` into the layered config after app-scope construction, so the
+ * index must be rebuilt or late `[[hooks]]` would silently never fire, #2779),
+ * and dispatches each trigger through the pure
  * `runMatchedHooks`. The App-scope `IHostProcessService` is injected here and
  * threaded down to `runHook`, so hook commands spawn through the shared host
  * process service (cross-platform kill, hidden console on Windows) rather than
@@ -38,6 +41,9 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
 
   private byEvent = new Map<string, HookDef[]>();
   readonly ready: Promise<void>;
+  // Serializes index rebuilds so a trigger that lands right after a config
+  // change awaits the newest index instead of reading the stale one.
+  private reloadChain: Promise<void>;
 
   private readonly _onDidReload = this._register(new Emitter<void>());
   readonly onDidReload: Event<void> = this._onDidReload.event;
@@ -51,22 +57,21 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
   ) {
     super();
     this.ready = this.loadSafe();
+    this.reloadChain = Promise.resolve();
     this._register(
       this.plugins.onDidReload(() => {
-        void this.reloadSafe();
+        this.queueReload();
       }),
     );
     // Rebuild the hook index when the config changes, not just on plugin
-    // reload. The user config file (`config.toml`) can be (re)loaded into the
-    // layered config service after this runner's initial `loadSafe()` — in the
-    // interactive TUI in particular, `[[hooks]]` may arrive late. Without this
-    // subscription the index would stay empty forever and every hook would
-    // silently never fire (#2779). The member check keeps the subscription a
-    // no-op against partial `IConfigService` stubs in unit tests.
+    // reload: the user config file (`config.toml`) can be (re)loaded into the
+    // layered config service after this runner's initial `loadSafe()`, and in
+    // the interactive TUI `[[hooks]]` may arrive late. The member check keeps
+    // the subscription a no-op against partial `IConfigService` stubs.
     if (this.config.onDidChangeConfiguration !== undefined) {
       this._register(
         this.config.onDidChangeConfiguration(() => {
-          void this.reloadSafe();
+          this.queueReload();
         }),
       );
     }
@@ -115,6 +120,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     args: ExternalHooksRunnerTriggerArgs,
   ): Promise<HookResult[]> {
     await this.ready;
+    await this.reloadChain;
     return runMatchedHooks(
       this.hostProcess,
       this.byEvent,
@@ -137,10 +143,8 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     } catch {}
   }
 
-  private async reloadSafe(): Promise<void> {
-    try {
-      await this.load();
-    } catch {}
+  private queueReload(): void {
+    this.reloadChain = this.reloadChain.then(() => this.loadSafe());
   }
 
   private async load(): Promise<void> {
