@@ -20,7 +20,7 @@ import { safeRemove, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '@moonshot-ai/app-core/lib';
 import { isFindKeyEvent } from '@moonshot-ai/app-core/lib';
-import { useComposerAutoFocus } from '../../composables/useComposerAutoFocus';
+import { useComposerAutoFocus } from '@moonshot-ai/app-client/composables';
 import { turnBlocks } from '../chatTurnRendering';
 import type { TurnFileChange } from '../chatTurnRendering';
 

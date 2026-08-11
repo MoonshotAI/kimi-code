@@ -4,7 +4,7 @@ import { nextTick, ref } from 'vue';
 import {
   useComposerAutoFocus,
   type ComposerFocusHandle,
-} from '../../src/renderer/composables/useComposerAutoFocus';
+} from '@moonshot-ai/app-client/composables';
 
 // Node env has no DOM — stub the one thing the composable reads,
 // `document.activeElement`, and model focus as handles moving a fake element

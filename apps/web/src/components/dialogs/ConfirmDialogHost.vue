@@ -2,7 +2,7 @@
 <!-- Renders the single global ConfirmDialog driven by useConfirmDialog(). Mount
      once at the app root; callers elsewhere just `await confirm(...)`. -->
 <script setup lang="ts">
-import { useConfirmDialog } from '../../composables/useConfirmDialog';
+import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import ConfirmDialog from './ConfirmDialog.vue';
 
 const { current, busy, settle, runAction } = useConfirmDialog();

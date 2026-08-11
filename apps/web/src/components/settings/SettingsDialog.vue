@@ -8,7 +8,7 @@ import { useI18n } from 'vue-i18n';
 import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import type { AppSession } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
-import { useConfirmDialog } from '../../composables/useConfirmDialog';
+import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import ProvidersPanel from './ProvidersPanel.vue';
 import { serverEndpointLabel } from '../../api/config';

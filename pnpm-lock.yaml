@@ -80,6 +80,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../../kimi-code/packages/agent-core-v2
+      '@moonshot-ai/app-client':
+        specifier: workspace:*
+        version: link:../../packages/app-client
       '@moonshot-ai/app-core':
         specifier: workspace:*
         version: link:../../packages/app-core
@@ -176,6 +179,9 @@ importers:
       '@fontsource-variable/jetbrains-mono':
         specifier: ^5.2.8
         version: 5.2.8
+      '@moonshot-ai/app-client':
+        specifier: workspace:*
+        version: link:../../packages/app-client
       '@moonshot-ai/app-core':
         specifier: workspace:*
         version: link:../../packages/app-core
@@ -765,6 +771,28 @@ importers:
       web-tree-sitter:
         specifier: 0.25.10
         version: 0.25.10
+
+  packages/app-client:
+    dependencies:
+      '@moonshot-ai/app-core':
+        specifier: workspace:^
+        version: link:../app-core
+      '@moonshot-ai/app-i18n':
+        specifier: workspace:^
+        version: link:../app-i18n
+    devDependencies:
+      typescript:
+        specifier: 6.0.2
+        version: 6.0.2
+      vitest:
+        specifier: 4.1.4
+        version: 4.1.4(@types/node@24.13.3)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+      vue:
+        specifier: ^3.5.35
+        version: 3.5.39(typescript@6.0.2)
+      vue-tsc:
+        specifier: ~3.2.0
+        version: 3.2.9(typescript@6.0.2)
 
   packages/app-core:
     dependencies:

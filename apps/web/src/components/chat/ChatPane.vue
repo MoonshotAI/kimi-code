@@ -19,9 +19,10 @@ import MediaThumb from './MediaThumb.vue';
 import AttachmentChip from './AttachmentChip.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
 import { Icon, Kbd, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
-import { useConfirmDialog } from '../../composables/useConfirmDialog';
+import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
-import { openFileAttachment } from '../../lib/openFileAttachment';
+import { openFileAttachment } from '@moonshot-ai/app-client/lib';
+import { getKimiWebApi } from '../../api';
 import {
   formatDuration,
   formatTokens,
@@ -732,7 +733,7 @@ function onAttachmentClick(att: TurnAttachment, img?: HTMLImageElement | null): 
   // anything else gets the unsupported hint instead of an active-document
   // preview (see openFileAttachment).
   if (att.fileId === undefined) return;
-  void openFileAttachment(att.fileId, att.name, att.mediaType).then((result) => {
+  void openFileAttachment(getKimiWebApi(), att.fileId, att.name, att.mediaType).then((result) => {
     if (result !== 'unsupported') return;
     unsupportedOpenName.value = att.name ?? att.fileId ?? '';
     if (unsupportedOpenTimer !== null) clearTimeout(unsupportedOpenTimer);

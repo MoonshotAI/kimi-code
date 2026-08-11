@@ -424,3 +424,21 @@ export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 
 /** Permission mode (client-side policy). */
 export type PermissionMode = 'manual' | 'auto' | 'yolo';
+
+/** One file touched by the turn's Edit/MultiEdit/Write calls, aggregated across
+    every call that named it (a file edited three times appears once). */
+export interface TurnFileChange {
+  path: string;
+  added: number;
+  removed: number;
+  /** At least one Write named the file. */
+  hasWrite: boolean;
+  /** At least one edit's stats could not be derived from its args
+      (replace_all, args beyond the diff budget, unparseable arg) — or it was
+      a Write, whose removed lines are unknowable (new file vs overwrite).
+      The totals are then a lower bound, not the full count. */
+  statsIncomplete: boolean;
+  /** The turn's line diff for this file (the same LCS the stats derive from),
+      segments joined in call order; null when underivable (Write / incomplete). */
+  diff: DiffViewLine[] | null;
+}

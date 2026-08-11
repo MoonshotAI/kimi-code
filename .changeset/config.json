@@ -1,7 +1,10 @@
 {
   "changelog": [
     "@changesets/changelog-github",
-    { "repo": "MoonshotAI/kimi-code-app", "disableThanks": true }
+    {
+      "repo": "MoonshotAI/kimi-code-app",
+      "disableThanks": true
+    }
   ],
   "commit": false,
   "fixed": [],
@@ -15,7 +18,8 @@
     "@moonshot-ai/app-core",
     "@moonshot-ai/app-i18n",
     "@moonshot-ai/app-markdown",
-    "@moonshot-ai/app-ui"
+    "@moonshot-ai/app-ui",
+    "@moonshot-ai/app-client"
   ],
   "snapshot": {
     "useCalculatedVersion": true,

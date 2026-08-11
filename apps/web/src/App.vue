@@ -27,14 +27,14 @@ import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
 import { getKimiWebApi } from './api';
-import { useConfirmDialog } from './composables/useConfirmDialog';
+import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import type { PromptAttachment } from './composables/useKimiWebClient';
 import type { TurnAttachment } from './types';
-import { usePageTitle } from './composables/usePageTitle';
-import { useSidebarLayout } from './composables/useSidebarLayout';
-import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
-import { useDetailPanel } from './composables/useDetailPanel';
-import { useIsMobile } from './composables/useIsMobile';
+import { usePageTitle } from '@moonshot-ai/app-client/composables';
+import { useSidebarLayout } from '@moonshot-ai/app-client/composables';
+import { useFilePreview, type DetailTarget } from '@moonshot-ai/app-client/composables';
+import { useDetailPanel } from '@moonshot-ai/app-client/composables';
+import { useIsMobile } from '@moonshot-ai/app-client/composables';
 import { openDialogCount } from '@moonshot-ai/app-ui';
 import type { SwarmMember } from '@moonshot-ai/app-core/client';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
@@ -121,7 +121,7 @@ const running = computed(() => client.activity.value !== 'idle');
 // Static page title (app name only). The session title and workspace name are
 // intentionally excluded so the tab title stays stable. Prefixes an animated
 // spinner while the agent is running so activity is visible at a glance.
-usePageTitle({ running });
+usePageTitle({ running, title: 'Kimi Code Web' });
 
 // The /thinking slash command has no popover anchor, so it steps to the next
 // segment for the active model (effort models cycle through their declared
@@ -252,7 +252,12 @@ const {
   closeFilePreview,
   openPreviewInEditor,
   revealPreviewFile,
-} = useFilePreview({ client, detailTarget });
+} = useFilePreview({
+  client,
+  detailTarget,
+  t: (key, params) => (params === undefined ? t(key) : t(key, params)),
+  api: getKimiWebApi(),
+});
 
 // True while the right-side slot is actually occupied, so the sidebar reserves
 // room for it and the conversation can never be squeezed. Keyed off detailTarget

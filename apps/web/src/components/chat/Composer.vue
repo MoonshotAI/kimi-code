@@ -19,12 +19,13 @@ import {
   modelThinkingAvailability,
   segmentsFor,
 } from '@moonshot-ai/app-core/lib';
-import { useInputHistory } from '../../composables/useInputHistory';
-import { useSlashMenu } from '../../composables/useSlashMenu';
-import { useMentionMenu } from '../../composables/useMentionMenu';
-import { useComposerDraft } from '../../composables/useComposerDraft';
+import { useInputHistory } from '@moonshot-ai/app-client/composables';
+import { useSlashMenu } from '@moonshot-ai/app-client/composables';
+import { useMentionMenu } from '@moonshot-ai/app-client/composables';
+import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, type Attachment } from '../../composables/useAttachmentUpload';
-import { openFileAttachment } from '../../lib/openFileAttachment';
+import { openFileAttachment } from '@moonshot-ai/app-client/lib';
+import { getKimiWebApi } from '../../api';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
 import AttachmentChip from './AttachmentChip.vue';
@@ -423,7 +424,7 @@ const previewThumbImg = ref<HTMLImageElement | null>(null);
 
 function onAttachmentActivate(att: Attachment, img?: HTMLImageElement | null): void {
   if (att.kind === 'file') {
-    if (att.fileId !== undefined) void openFileAttachment(att.fileId, att.name, att.mediaType);
+    if (att.fileId !== undefined) void openFileAttachment(getKimiWebApi(), att.fileId, att.name, att.mediaType);
     return;
   }
   previewThumbImg.value = img ?? null;

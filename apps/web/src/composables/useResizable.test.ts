@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 
-import { useResizable } from './useResizable';
+import { useResizable } from '@moonshot-ai/app-client/composables';
 
 // Runs in the node environment: the composable guards every DOM touch, so a
 // fake handle element plus stubbed rAF / localStorage is enough to drive a

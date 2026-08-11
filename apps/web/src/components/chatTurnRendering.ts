@@ -2,7 +2,7 @@
 // Pure turn-rendering helpers: pure functions of their arguments (no Vue
 // reactivity, no component state). Shared by ChatPane.vue's template and its
 // stateful copy/edit helpers.
-import type { ChatTurn, DiffViewLine, TaskNotification, TurnBlock } from '../types';
+import type { ChatTurn, DiffViewLine, TaskNotification, TurnBlock, TurnFileChange } from '../types';
 import { diffStats } from '@moonshot-ai/app-core/client';
 import { buildEditDiffLines, toolFilePath } from '@moonshot-ai/app-core/client';
 import { normalizeToolName } from '../lib/toolMeta';
@@ -275,22 +275,9 @@ export function renderBlockKey(block: AssistantRenderBlock, index: number): stri
 }
 
 /** One file touched by the turn's Edit/MultiEdit/Write calls, aggregated across
-    every call that named it (a file edited three times appears once). */
-export interface TurnFileChange {
-  path: string;
-  added: number;
-  removed: number;
-  /** At least one Write named the file. */
-  hasWrite: boolean;
-  /** At least one edit's stats could not be derived from its args
-      (replace_all, args beyond the diff budget, unparseable arg) — or it was
-      a Write, whose removed lines are unknowable (new file vs overwrite).
-      The totals are then a lower bound, not the full count. */
-  statsIncomplete: boolean;
-  /** The turn's line diff for this file (the same LCS the stats derive from),
-      segments joined in call order; null when underivable (Write / incomplete). */
-  diff: DiffViewLine[] | null;
-}
+    every call that named it (a file edited three times appears once). The type
+    lives in @moonshot-ai/app-core/client; re-exported for existing importers. */
+export type { TurnFileChange } from '@moonshot-ai/app-core/client';
 
 /** The turn's file modifications, derived from its Edit/MultiEdit/Write tool
     calls (the daemon carries no per-turn diff stats). Counts what the agent

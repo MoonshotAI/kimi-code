@@ -462,7 +462,7 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - 验收：`pnpm test` 2409 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 无新增 findings（.vue 仅 import 行变动）✅；双端发消息冒烟待人工补。
 - 无 changeset（纯重构）。
 
-### P3 — 🚧 进行中（2026-08-11；代码在 PR #197，合并后本条转「已完成」）
+### P3 — 已完成（2026-08-11；PR #197 合入 main squash d718ea3f）
 
 - 完成：`agentEventProjector.ts`（1559 行）下沉 `packages/app-core/src/api/daemon/`；api 壳合并——`createKimiWebApi(deps: { origin, identity, tracer, credentialStore, t, mainAgentOnly? })` 工厂落 `packages/app-core/src/api/createKimiWebApi.ts`，两端 `api/bootstrap.ts` 各瘦身为 ~75 行接线（tracer / credentialStore / runtime config / i18n t），`mainAgentOnly` desktop `true`、web 不传（spec 归属矩阵 §102/117 原已预登记，无需改）。两端 `src/api/` 剩 `bootstrap.ts`（接线）+ `config.ts`（runtime config，按计划留端）+ re-export 壳（index/types/errors）+ desktop 独有 `devBackend.ts`。
 - **t 注入口径**：`contracts.ts` 新增 `Translator` 类型；`createAgentProjector(deps: { t: Translator })`；模块级 helper（`patchSubagent` / `projectSubagentProgress` / `subagentProgressText` / `toolArgSummary`）逐线穿参。两端 bootstrap 传 `(k, p) => p === undefined ? i18n.global.t(k) : i18n.global.t(k, p)`（沿用 useKimiWebClient 的 CreateCoreDeps.t 先例）。**已知问题（计划内不修）**：已投影进 state 的文本不随切语言重算。
@@ -472,4 +472,16 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - **app-core tsconfig**：`noPropertyAccessFromIndexSignature` 显式设 `false` 与消费者对齐（web tsconfig 独立未开、desktop renderer 显式关）——否则迁入的 projector 在包自检下报 102 个 TS4111，而实际编译面（apps typecheck）一直是关的。注意：包级 `vue-tsc -p packages/app-core` 无任何门禁在跑，main 上本就有 79 个存量 error（desktopFlag 的 `__KIMI_WEB_DESKTOP__` 全局声明在 app 侧 env.d.ts 等），P3 未治理。
 - **openFileAttachment / mediaPreview 未收，改归 P4（app-client）**：两者除 api 单例外还拖 PhotoSwipe / CSS / `@moonshot-ai/app-ui` 等 UI 层依赖，不该进 app-core；P4 建 client 包时连同注入缝一起处理更顺（偏差登记）。
 - 验收：`pnpm test` 2392 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅；动了连接/事件层，外部 server 模式（`KIMI_SERVER_URL`）+ 双端冒烟待人工补。
+- 无 changeset（纯重构）。
+
+### P4 — 🚧 进行中（2026-08-11；代码在 PR #198，合并后本条转「已完成」）
+
+- 完成：新建 `@moonshot-ai/app-client` 包（`packages/app-client/`，exports `.` / `./composables` / `./contracts`，deps app-core + app-i18n，peer vue；纳入根 vitest include 花括号列表；两端 package.json 声明 workspace 依赖）。`src/contracts.ts` 定义 `ProductTracker`（`track(event, payload)` + `noopProductTracker`），**未接线**（P6 desktop 接 track 适配器、web 接 no-op）。
+- **迁移 15 个 composables**（`packages/app-client/src/composables/`）：纯批 `useIsMobile` / `useViewportWidth` / `useFollowScroll` / `useResizable` / `useConfirmDialog` / `useComposerDraft` / `useComposerAutoFocus` / `useInputHistory` / `useSlashMenu` / `useMentionMenu` / `useSidebarLayout` 零改动直迁（两端副本实测仅头注释差异）；`useTerminal` / `useFilePreview` / `useDetailPanel` 落注入缝后迁；`usePageTitle` 两端合并。
+- **注入缝（§3.3 模式）**：`useTerminal(sessionId, api: KimiWebApi)`（原 `getKimiWebApi()` 单例 ×3）；`useFilePreview({ client, detailTarget, t, api })`——t 注入替 `useI18n()`，api 窄化为 `Pick<KimiWebApi, 'getFileBlob'>`，god object 类型耦合改窄结构接口 `FilePreviewClient`；`useDetailPanel` 同理定义 `DetailPanelClient` / `DetailPanelAuxiliaryTranscripts` 窄接口（turns / activeAppTasks / auxiliaryTranscripts / sideChat 系列）。`TurnFileChange` 类型从 `components/chatTurnRendering.ts` 上移 `app-core/src/client/types.ts`（chatTurnRendering 改 import + re-export，8 个组件 import 站点零改动）。调用点：Terminal.vue / App.vue 两端各一处适配新签名（t 沿用 `(k, p) => …i18n.global.t` 包装先例）。
+- **usePageTitle 合并**：标题参数化（默认 `Kimi Code`，web 传 `Kimi Code Web`），转圈动画按计划按 `isDesktop`（app-core/lib desktopFlag）分支关闭——desktop 静态标题、web 动画，两端行为逐字保持（行为对齐点：两端标题逻辑单源）。
+- **测试**：8 个测试随迁 `packages/app-client/test/`（desktop useFollowScroll/useResizable/useMentionMenu/useDetailPanel.agentTranscript/detail-panel-toggle + web composer-draft/input-history/slash-menu），77 用例全绿；web `mention-menu` / `detail-panel-toggle` 与 desktop 版逐行相同（仅 import 路径）删除（总数 2392→2375 全部来自此）；detail-panel-toggle 随新签名去掉 vue-i18n mock 改传 t/假 api。desktop 独有 `useNativeTerminal.test.ts` 滞留（原生桥相关）。
+- **约束条目随阶段更新（计划要求）**：根 AGENTS.md 目录地图 packages 清单 + apps/web 依赖约束放行 app-client；apps/web/AGENTS.md 的 api/composables/lib 布局描述与 wire.ts 引用一并刷到 P1–P4 后的实际结构。
+- **openFileAttachment 收编 / mediaPreview 缓迁**：`openFileAttachment` 实测仅依赖 `getKimiWebApi().getFileBlob`，注入 api（`Pick<KimiWebApi,'getFileBlob'>` 首参）后落 `packages/app-client/src/lib/`（新增 `./lib` 出口），ChatPane/Composer 两端 4 个调用点适配；web 侧 11 用例随迁（vi.mock api 单例改直接传假 api）。`mediaPreview` 拖 PhotoSwipe + CSS 资产 + `@moonshot-ai/app-ui`（openDialogCount）——收编需要先决策 app-client 的依赖面（是否引 app-ui/photoswipe、包内 CSS 出口形态），不属于本批；登记待后续阶段（P5 icons 批前后）专项处理。
+- 验收：`pnpm test` 2375 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅；双端冒烟待人工补。
 - 无 changeset（纯重构）。

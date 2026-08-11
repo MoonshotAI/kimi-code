@@ -5,7 +5,8 @@ import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
 import type { Terminal as XTerm, ITheme } from '@xterm/xterm';
 import { computed, nextTick, onMounted, onUnmounted, ref, toRef, watch } from 'vue';
 import { useIsDark } from '@moonshot-ai/app-core';
-import { useTerminal } from '../composables/useTerminal';
+import { useTerminal } from '@moonshot-ai/app-client/composables';
+import { getKimiWebApi } from '../api';
 import { Button } from '@moonshot-ai/app-ui';
 
 const props = defineProps<{ sessionId: string }>();
@@ -19,7 +20,7 @@ const TERMINAL_FONT =
 
 const hostRef = ref<HTMLElement | null>(null);
 const sessionId = toRef(props, 'sessionId');
-const terminalClient = useTerminal(sessionId);
+const terminalClient = useTerminal(sessionId, getKimiWebApi());
 const isDark = useIsDark();
 
 let term: XTerm | null = null;

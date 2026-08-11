@@ -3,7 +3,7 @@
 // supersede, the isConfirmOpen open-state flag, and the async `action` flow
 // (busy state, close-on-settle, rejection propagation).
 import { beforeEach, describe, expect, it } from 'vitest';
-import { useConfirmDialog } from '../src/composables/useConfirmDialog';
+import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 
 function deferred<T = void>(): {
   promise: Promise<T>;

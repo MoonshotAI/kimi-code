@@ -4,7 +4,7 @@ import { computed, inject, onBeforeUnmount, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Badge, PanelHeader } from '@moonshot-ai/app-ui';
 
-import { useFollowScroll } from '../../composables/useFollowScroll';
+import { useFollowScroll } from '@moonshot-ai/app-client/composables';
 import type { AgentMember, ChatTurn, FilePreviewRequest, ToolMedia } from '../../types';
 import type { TurnFileChange } from '../chatTurnRendering';
 import ChatPane from './ChatPane.vue';

@@ -12,7 +12,7 @@ import type { ConversationStatus, PermissionMode } from '../../types';
 import type { AppModel, AppSession, ManagedUserInfo, ThinkingLevel } from '../../api/types';
 import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
 import { useKimiWebClient } from '../../composables/useKimiWebClient';
-import { useConfirmDialog } from '../../composables/useConfirmDialog';
+import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import {
   commitLevel,
   effectiveThinkingLevel,

@@ -10,7 +10,7 @@
 import { reactive, type ComputedRef, type Ref } from 'vue';
 import { getKimiWebApi } from '../../api';
 import { i18n } from '../../i18n';
-import { useConfirmDialog } from '../useConfirmDialog';
+import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { isDaemonApiError } from '../../api/errors';
 import { SERVER_AUTH_UNAUTHORIZED_CODE, isPageTokenMismatchError, isPlaceholderSessionUsage, toAppSessionFromV2 } from '@moonshot-ai/app-core/api';
 import type {

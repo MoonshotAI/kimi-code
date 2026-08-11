@@ -18,10 +18,10 @@ The browser web UI for Kimi Code — a peer to the TUI in `apps/kimi-code`. It t
 ## Layout (`src/`)
 
 - `main.ts` — bootstrap (creates the app, installs i18n, mounts `#app`). `App.vue` — root component, holds most app state.
-- `api/` — server client. `index.ts` exposes the `getKimiWebApi()` singleton; `config.ts` builds REST/WS URLs; `daemon/` holds the wire client (`http.ts`, `ws.ts`, `wire.ts`, `mappers.ts`, `agentEventProjector.ts`). The session event reducer (`createInitialState` / `reduceAppEvent` / `KimiClientState`) lives in `@moonshot-ai/app-core/api` so web + desktop share one state machine.
+- `api/` — app-side wiring only: `bootstrap.ts` composes the shared `createKimiWebApi` factory (from `@moonshot-ai/app-core/api`) with this app's tracer / credential store / runtime config / i18n `t`; `index.ts` exposes the `getKimiWebApi()` singleton; `config.ts` reads `window` / `import.meta.env` / sessionStorage for origin and identity; `types.ts` / `errors.ts` are re-export shells. The transport, wire types, mappers, event reducer, and agent event projector all live in `@moonshot-ai/app-core/api` so web + desktop share one implementation.
 - `components/` — SFCs grouped by area: `chat/` (conversation/chat UI), `settings/` (settings & configuration), `dialogs/` (modal dialogs & sheets), `mobile/` (mobile-specific shell), plus shared layout components at the top level. The design-system primitives formerly under `components/ui/` now live in the `@moonshot-ai/app-ui` package (see "Design system" above).
-- `composables/` — reusable state logic, `useX` naming (`useKimiWebClient`, `useIsDark`, `usePaneLayout`, …).
-- `lib/` — pure helpers (`parseDiff`, `slashCommands`, `sessionRoute`, `toolMeta`, …).
+- `composables/` — app-side composables that remain here (`useKimiWebClient`, `client/*`, …). Shared, non-diverged composables (`useIsMobile`, `useFilePreview`, `useDetailPanel`, …) live in `@moonshot-ai/app-client/composables` and take api / translator / tracker by injection — new shared composables go there, not here.
+- `lib/` — app-side helpers that remain here (`toolMeta` / `activitySummary` shells, `icons`, …). Shared pure helpers live in `@moonshot-ai/app-core/lib`; rendering types and hot-path pure modules (turns projection, diff builders, event batching) in `@moonshot-ai/app-core/client`.
 - `i18n/` — vue-i18n setup plus locale namespaces.
 - `debug/` — `DebugPanel.vue` and `trace.ts` for client error/trace capture.
 
@@ -54,7 +54,7 @@ All via `pnpm --filter kimi-code-web …`:
 
 ## Gotchas / hard rules
 
-- **Do not depend on `@moonshot-ai/agent-core`** (mirrors the CLI/SDK rule). The web app is decoupled from core/protocol; wire types are re-implemented locally in `src/api/daemon/wire.ts`. Keep it that way.
+- **Do not depend on `@moonshot-ai/agent-core`** (mirrors the CLI/SDK rule). The web app is decoupled from core/protocol; wire types are maintained in `@moonshot-ai/app-core/api` (`daemon/wire.ts`). Keep it that way.
 - **Same-origin by default:** the browser only talks to its own origin; Vite proxies `/api/v1` for both HTTP and WS. Set `VITE_KIMI_SERVER_HTTP_URL` only when you intentionally want direct (CORS) mode.
 - Vite-injected globals (`__KIMI_DEV_PROXY_TARGET__`, `__KIMI_CLIENT_VERSION__`) are declared in `src/env.d.ts` and defined in `vite.config.ts`. Do not hand-edit `dist/`.
 - **Theming:** the root element carries `data-color-scheme` (`light` | `dark` | `system`); react to it through `useIsDark()`, not by reading the DOM directly.

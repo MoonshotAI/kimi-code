@@ -9,7 +9,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicIn
 import { useI18n } from 'vue-i18n';
 import type { ManagedUsageResult, UsageRow } from '../api/types';
 import { useKimiWebClient, type ColorScheme } from '../composables/useKimiWebClient';
-import { useConfirmDialog } from '../composables/useConfirmDialog';
+import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { availableLocales, setLocale, type LocaleCode } from '../i18n';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
 import {
