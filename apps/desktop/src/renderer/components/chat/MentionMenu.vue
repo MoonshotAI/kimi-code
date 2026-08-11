@@ -2,7 +2,7 @@
 <!-- Popup list of file paths shown when user types @ in the Composer textarea. -->
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import { iconSvg } from '../../lib/icons';
+import { iconSvg } from '@moonshot-ai/app-client/icons';
 import type { FileItem } from '../../types';
 
 // Re-exported for the .vue consumers (Composer / ChatDock / ConversationPane)

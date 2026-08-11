@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <path id="bar-divider" d="M 9.3 18.951 L 9.3 4.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path id="bar-box" d="M -7.9 -4.8 C -7.9 -6.512 -6.512 -7.9 -4.8 -7.9 L 4.8 -7.9 C 6.512 -7.9 7.9 -6.512 7.9 -4.8 L 7.9 4.8 C 7.9 6.512 6.512 7.9 4.8 7.9 L -4.8 7.9 C -6.512 7.9 -7.9 6.512 -7.9 4.8 L -7.9 -4.8 Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="butt" stroke-linejoin="miter" transform="matrix(1 0 0 1 11.8 11.8)"/>
-  <path id="bar-arrow" d="M -1.25 -2.5 L 1.25 0 L -1.25 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>

@@ -20,7 +20,7 @@ import PlanUsageCard from './PlanUsageCard.vue';
 import SecondaryModelPicker from './SecondaryModelPicker.vue';
 import PlanUpgradeCard from './PlanUpgradeCard.vue';
 import { logWarn } from '@moonshot-ai/app-core/lib';
-import type { IconName } from '../../lib/icons';
+import type { IconName } from '@moonshot-ai/app-client/icons';
 import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();

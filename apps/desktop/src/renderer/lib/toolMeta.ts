@@ -15,7 +15,7 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import type { Translator } from '@moonshot-ai/app-core/contracts';
 import { i18n } from '../i18n';
-import { iconSvg, type IconName } from './icons';
+import { iconSvg, type IconName } from '@moonshot-ai/app-client/icons';
 
 const t: Translator = (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params));
 

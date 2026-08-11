@@ -780,7 +780,16 @@ importers:
       '@moonshot-ai/app-i18n':
         specifier: workspace:^
         version: link:../app-i18n
+      '@moonshot-ai/app-ui':
+        specifier: workspace:^
+        version: link:../app-ui
+      photoswipe:
+        specifier: ^5.4.4
+        version: 5.4.4
     devDependencies:
+      '@moonshot-ai/vite-preset':
+        specifier: workspace:*
+        version: link:../vite-preset
       typescript:
         specifier: 6.0.2
         version: 6.0.2

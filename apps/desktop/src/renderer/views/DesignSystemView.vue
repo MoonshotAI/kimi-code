@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
-import { ICON_GROUPS } from '../lib/icons';
+import { ICON_GROUPS } from '@moonshot-ai/app-client/icons';
 import { Icon } from '@moonshot-ai/app-ui';
 import DockIconPicker from '../components/settings/DockIconPicker.vue';
 import WorkingIndicator from '../components/chat/WorkingIndicator.vue';

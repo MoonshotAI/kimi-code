@@ -19,7 +19,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AuthMedia from './AuthMedia.vue';
 import { Icon, Tooltip, openDialogCount } from '@moonshot-ai/app-ui';
-import { openImagePreview } from '../../lib/mediaPreview';
+import { openImagePreview } from '@moonshot-ai/app-client/lib';
+import { getKimiWebApi } from '../../api';
 import type { ToolMedia } from '../../types';
 
 const props = defineProps<{
@@ -80,6 +81,7 @@ function onKeydown(e: KeyboardEvent): void {
 onMounted(() => {
   if (isImage.value) {
     cancelImagePreview = openImagePreview({
+      api: getKimiWebApi(),
       media: props.media,
       thumbImg: props.originImg ?? null,
       labels: { close: t('model.close'), zoom: t('composer.previewZoom') },

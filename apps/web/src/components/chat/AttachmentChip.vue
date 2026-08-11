@@ -12,7 +12,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AuthMedia from './AuthMedia.vue';
 import { Icon, Spinner, Tooltip } from '@moonshot-ai/app-ui';
-import type { IconName } from '../../lib/icons';
+import type { IconName } from '@moonshot-ai/app-client/icons';
 
 const props = withDefaults(
   defineProps<{

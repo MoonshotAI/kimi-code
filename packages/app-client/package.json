@@ -7,19 +7,24 @@
     ".": "./src/index.ts",
     "./composables": "./src/composables/index.ts",
     "./contracts": "./src/contracts.ts",
-    "./lib": "./src/lib/index.ts"
+    "./icons": "./src/icons/icons.ts",
+    "./lib": "./src/lib/index.ts",
+    "./package.json": "./package.json"
   },
   "dependencies": {
     "@moonshot-ai/app-core": "workspace:^",
-    "@moonshot-ai/app-i18n": "workspace:^"
+    "@moonshot-ai/app-i18n": "workspace:^",
+    "@moonshot-ai/app-ui": "workspace:^",
+    "photoswipe": "^5.4.4"
   },
   "peerDependencies": {
     "vue": "^3.5.35"
   },
   "devDependencies": {
+    "@moonshot-ai/vite-preset": "workspace:*",
+    "typescript": "6.0.2",
     "vitest": "4.1.4",
     "vue": "^3.5.35",
-    "vue-tsc": "~3.2.0",
-    "typescript": "6.0.2"
+    "vue-tsc": "~3.2.0"
   }
 }

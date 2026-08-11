@@ -1,6 +1,6 @@
-// apps/kimi-web/src/lib/icons.test.ts
+// packages/app-client/test/icons.test.ts
 import { describe, expect, it } from 'vitest';
-import { ICONS, SIZE_PX, getIcon, iconSvg } from './icons';
+import { ICONS, SIZE_PX, getIcon, iconSvg } from '../src/icons/icons';
 
 describe('ICONS registry', () => {
   it('is non-empty', () => {

@@ -10,7 +10,9 @@ import { KIMI_CORE_VERSION } from './scripts/kimi-core-version.mjs';
 // only the plugins (root/build stay test-scoped).
 const preset = kimiRendererViteConfig({
   root: fileURLToPath(new URL('./src/renderer', import.meta.url)),
-  iconsDir: fileURLToPath(new URL('./src/renderer/icons/kimi', import.meta.url)),
+  iconsDir: fileURLToPath(
+    new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-client/package.json')),
+  ),
 });
 
 export default defineConfig({

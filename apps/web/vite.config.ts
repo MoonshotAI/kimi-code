@@ -32,7 +32,9 @@ function readCliVersion(): string {
 // proxy, build output dir) are layered on top below.
 const preset = kimiRendererViteConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
-  iconsDir: fileURLToPath(new URL('./src/icons/kimi', import.meta.url)),
+  iconsDir: fileURLToPath(
+    new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-client/package.json')),
+  ),
   // Expose the dev proxy's upstream server target to the client so the UI can
   // show which server it is connected to (the browser otherwise only sees its
   // own same-origin URL). Unused by the same-origin production build.

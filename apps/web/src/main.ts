@@ -6,7 +6,7 @@ import App from './App.vue';
 import i18n from './i18n';
 import { useKimiWebClient } from './composables/useKimiWebClient';
 import { isDesktop } from '@moonshot-ai/app-core/lib';
-import { getIcon, type IconName } from './lib/icons';
+import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
 import { installClientErrorCapture } from './debug/trace';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import './style.css';

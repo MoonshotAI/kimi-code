@@ -474,7 +474,7 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - 验收：`pnpm test` 2392 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅；动了连接/事件层，外部 server 模式（`KIMI_SERVER_URL`）+ 双端冒烟待人工补。
 - 无 changeset（纯重构）。
 
-### P4 — 🚧 进行中（2026-08-11；代码在 PR #198，合并后本条转「已完成」）
+### P4 — 已完成（2026-08-11；PR #198 合入 main）
 
 - 完成：新建 `@moonshot-ai/app-client` 包（`packages/app-client/`，exports `.` / `./composables` / `./contracts`，deps app-core + app-i18n，peer vue；纳入根 vitest include 花括号列表；两端 package.json 声明 workspace 依赖）。`src/contracts.ts` 定义 `ProductTracker`（`track(event, payload)` + `noopProductTracker`），**未接线**（P6 desktop 接 track 适配器、web 接 no-op）。
 - **迁移 15 个 composables**（`packages/app-client/src/composables/`）：纯批 `useIsMobile` / `useViewportWidth` / `useFollowScroll` / `useResizable` / `useConfirmDialog` / `useComposerDraft` / `useComposerAutoFocus` / `useInputHistory` / `useSlashMenu` / `useMentionMenu` / `useSidebarLayout` 零改动直迁（两端副本实测仅头注释差异）；`useTerminal` / `useFilePreview` / `useDetailPanel` 落注入缝后迁；`usePageTitle` 两端合并。
@@ -484,4 +484,13 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - **约束条目随阶段更新（计划要求）**：根 AGENTS.md 目录地图 packages 清单 + apps/web 依赖约束放行 app-client；apps/web/AGENTS.md 的 api/composables/lib 布局描述与 wire.ts 引用一并刷到 P1–P4 后的实际结构。
 - **openFileAttachment 收编 / mediaPreview 缓迁**：`openFileAttachment` 实测仅依赖 `getKimiWebApi().getFileBlob`，注入 api（`Pick<KimiWebApi,'getFileBlob'>` 首参）后落 `packages/app-client/src/lib/`（新增 `./lib` 出口），ChatPane/Composer 两端 4 个调用点适配；web 侧 11 用例随迁（vi.mock api 单例改直接传假 api）。`mediaPreview` 拖 PhotoSwipe + CSS 资产 + `@moonshot-ai/app-ui`（openDialogCount）——收编需要先决策 app-client 的依赖面（是否引 app-ui/photoswipe、包内 CSS 出口形态），不属于本批；登记待后续阶段（P5 icons 批前后）专项处理。
 - 验收：`pnpm test` 2375 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅；双端冒烟待人工补。
+- 无 changeset（纯重构）。
+
+### P5 — 🚧 进行中（2026-08-11；代码在 PR #199，合并后本条转「已完成」）
+
+- 完成：两端 `icons/kimi/*.svg` 合并（71 个，共有文件逐字节相同，desktop 仅多 `keyboard.svg`）移入 `packages/app-client/src/icons/kimi/`；`lib/icons.ts` 取并集（desktop 版，仅多 keyboard 一项）落 `packages/app-client/src/icons/icons.ts`，新增 `./icons` 出口；两端 16 个 import 站点改指 `@moonshot-ai/app-client/icons`。
+- **vite iconsDir 指包内**：app-client 显式 export `./package.json`，四个配置（两端 vite.config + vitest.config）统一 `fileURLToPath(new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-client/package.json')))`——`import.meta.resolve` 对带 exports map 的包必须显式声明该子路径，否则抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`（计划预判的坑，按预案落地）。
+- **icons.test 随迁的连锁**：`~icons/*` 虚拟模块需要 unplugin-icons 插件，根 vitest 的 packages 内联 project 无插件——app-client 新增自己的 `vitest.config.ts`（复用 vite-preset 的 plugins），根 config 把 app-client 从花括号列表拆出为独立 project 条目；app-client devDeps +`@moonshot-ai/vite-preset`。web 侧 icons.test 与 desktop 版仅头注释差异，删除（总数 2375→2366 全部来自此）。
+- **mediaPreview 收编（P3/P4 登记的尾巴）**：落 `packages/app-client/src/lib/mediaPreview.ts`（css 随迁，侧效应 import 在包内源码下由消费者 vite 处理，无需 CSS 出口）；api 注入（`Pick<KimiWebApi,'getFileBlob'>` 进 `ImagePreviewOptions`，MediaLightbox 两端各一处适配）。依赖面决策：app-client deps +`photoswipe` + `@moonshot-ai/app-ui`（openDialogCount 是无头计数器，app-ui 不反向依赖 app-client，无环）——自此 app-client 分层修正为「Vue composables + 浏览器层 UI helper」，根 AGENTS.md 描述沿用。
+- 验收：`pnpm test` 2366 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 29 findings 与 main 基线相同 ✅；**全量图标视觉验证**（DesignSystemView §02 图标目录页逐排核对）+ 双端冒烟待人工补。
 - 无 changeset（纯重构）。

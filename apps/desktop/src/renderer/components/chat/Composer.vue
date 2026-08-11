@@ -7,7 +7,7 @@ import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
 import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX } from '@moonshot-ai/app-core/lib';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
-import type { IconName } from '../../lib/icons';
+import type { IconName } from '@moonshot-ai/app-client/icons';
 import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView, ToolMedia } from '../../types';
 import type { AppGoal, AppModel, AppSkill, ThinkingLevel } from '../../api/types';

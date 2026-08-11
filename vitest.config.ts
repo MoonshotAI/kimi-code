@@ -10,12 +10,15 @@ export default defineConfig({
       // apps/* each carry a vitest.config.ts with their renderer plugin set
       // (Vue + unplugin-icons), so `~icons/*` and `?raw` imports resolve.
       'apps/*',
-      // packages/* have no build-time plugin needs; run their tests with the
-      // default pipeline from their own roots.
+      // app-client carries its own vitest.config.ts for the same reason (the
+      // icons registry pulls `~icons/*` virtuals).
+      'packages/app-client',
+      // The remaining packages/* have no build-time plugin needs; run their
+      // tests with the default pipeline from their own roots.
       {
         test: {
           name: 'packages',
-          include: ['packages/{app-core,app-i18n,app-markdown,app-ui,app-client,vite-preset}/{src,test}/**/*.test.ts'],
+          include: ['packages/{app-core,app-i18n,app-markdown,app-ui,vite-preset}/{src,test}/**/*.test.ts'],
         },
       },
     ],

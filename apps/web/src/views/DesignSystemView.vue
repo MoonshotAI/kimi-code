@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue';
-import { ICON_GROUPS } from '../lib/icons';
+import { ICON_GROUPS } from '@moonshot-ai/app-client/icons';
 import { Icon } from '@moonshot-ai/app-ui';
 import WorkingIndicator from '../components/chat/WorkingIndicator.vue';
 import TurnFilesSummary from '../components/chat/TurnFilesSummary.vue';

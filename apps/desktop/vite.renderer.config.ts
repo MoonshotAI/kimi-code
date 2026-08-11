@@ -17,11 +17,14 @@ import { kimiRendererViteConfig } from '@moonshot-ai/vite-preset';
 const root = fileURLToPath(new URL('./src/renderer', import.meta.url));
 const outDir = fileURLToPath(new URL('./desktop-dist', import.meta.url));
 
-// iconsDir: the web source tree (including src/icons/kimi) is now copied into
-// src/renderer (desktop and web maintain two copies for now, on purpose), so
-// point iconsDir at the in-tree copy. SVGs are bundled into desktop-dist at
-// build time, so the packaged app does not depend on apps/web's filesystem.
-const iconsDir = fileURLToPath(new URL('./src/renderer/icons/kimi', import.meta.url));
+// iconsDir: the `kimi` icon collection lives in @moonshot-ai/app-client
+// (src/icons/kimi); resolve the package's own package.json (explicitly
+// exported — exports-map packages reject import.meta.resolve of undeclared
+// subpaths) and derive the svg dir from it. SVGs are bundled into
+// desktop-dist at build time, so the packaged app reads no workspace paths.
+const iconsDir = fileURLToPath(
+  new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-client/package.json')),
+);
 
 // The renderer reports this version to the server as its clientVersion. Read
 // it from the desktop package.json (same idiom as apps/web/vite.config.ts) so

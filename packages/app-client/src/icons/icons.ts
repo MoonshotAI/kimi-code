@@ -1,16 +1,17 @@
-// apps/web/src/lib/icons.ts
-// Single source of truth for apps/web icons (design-system §02).
+// packages/app-client/src/icons/icons.ts
+// Single source of truth for both apps' renderer icons (design-system §02).
 //
 // Icons come from three collections, all bundled by unplugin-icons at build
 // time — only the icons listed below end up in the production bundle:
 //   - `~icons/kimi/*` — Kimi Design System icons (24×24 outlined,
-//     fill="currentColor"), local SVGs under src/icons/kimi/ copied from the
-//     Kimi design-system icon set and registered as a custom collection in
-//     vite.config.ts. Preferred whenever a Kimi glyph exists for the intent.
-//     A few glyphs are filed under their intent rather than the upstream asset
-//     name (terminal.svg is the upstream "Code" glyph, mail.svg its "Message"
-//     envelope, clock.svg "History", comment.svg backs message, task.svg backs
-//     sparkles).
+//     fill="currentColor"), local SVGs under src/icons/kimi/ (this package)
+//     copied from the Kimi design-system icon set and registered as a custom
+//     collection via the vite-preset's iconsDir (both apps point it here).
+//     Preferred whenever a Kimi glyph
+//     exists for the intent. A few glyphs are filed under their intent rather
+//     than the upstream asset name (terminal.svg is the upstream "Code" glyph,
+//     mail.svg its "Message" envelope, clock.svg "History", comment.svg backs
+//     message, task.svg backs sparkles).
 //     dark-mode.svg, add-conversation.svg, left-panel.svg and
 //     left-panel-expand.svg are newer designer exports that intentionally
 //     diverge from the set's originals — do not overwrite them on the next
@@ -28,7 +29,7 @@
 //
 // Two consumers share this registry:
 //   - the <Icon> Vue component (components/ui/Icon.vue) for template use;
-//   - iconSvg() below, for v-html contexts (e.g. lib/toolMeta.ts).
+//   - iconSvg() below, for v-html contexts (e.g. the apps' lib/toolMeta.ts).
 
 import type { Component } from 'vue';
 
@@ -67,6 +68,7 @@ import KimiHistogram from '~icons/kimi/histogram';
 import KimiImage from '~icons/kimi/image';
 import KimiImageFailed from '~icons/kimi/image-failed';
 import KimiInfo from '~icons/kimi/info';
+import KimiKeyboard from '~icons/kimi/keyboard';
 import KimiLeftBar from '~icons/kimi/left-panel';
 import KimiLeftPanelExpand from '~icons/kimi/left-panel-expand';
 import KimiLightMode from '~icons/kimi/light-mode';
@@ -164,6 +166,7 @@ import RawKimiHistogram from '~icons/kimi/histogram?raw';
 import RawKimiImage from '~icons/kimi/image?raw';
 import RawKimiImageFailed from '~icons/kimi/image-failed?raw';
 import RawKimiInfo from '~icons/kimi/info?raw';
+import RawKimiKeyboard from '~icons/kimi/keyboard?raw';
 import RawKimiLeftBar from '~icons/kimi/left-panel?raw';
 import RawKimiLeftPanelExpand from '~icons/kimi/left-panel-expand?raw';
 import RawKimiLightMode from '~icons/kimi/light-mode?raw';
@@ -295,6 +298,7 @@ export type IconName =
   | 'translate'
   | 'check-list'
   | 'bolt'
+  | 'keyboard'
   | 'trash'
   | 'git-fork'
   | 'git-pull-request'
@@ -404,6 +408,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   translate: entry(KimiTranslate, RawKimiTranslate),
   'check-list': entry(KimiTodo, RawKimiTodo),
   bolt: entry(RiFlashlightLine, RawFlashlightLine),
+  keyboard: entry(KimiKeyboard, RawKimiKeyboard),
   trash: entry(KimiTrash, RawKimiTrash),
   'git-fork': entry(RiGitForkLine, RawGitForkLine),
   'git-pull-request': entry(RiGitPullRequestLine, RawGitPullRequestLine),
@@ -531,6 +536,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'calendar-schedule',
       'calendar-todo',
       'calendar-close',
+      'keyboard',
       'trash',
       'microscope',
     ],

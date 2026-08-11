@@ -1,4 +1,4 @@
-// apps/web/src/lib/mediaPreview.ts
+// packages/app-client/src/lib/mediaPreview.ts
 // PhotoSwipe launcher for image attachments — the sent-message thumbnails and
 // the composer's pending-attachment strip open the same full-screen preview.
 // The thumbnail <img> doubles as the zoom origin AND the byte source: its
@@ -16,10 +16,12 @@ import PhotoSwipe from 'photoswipe';
 import 'photoswipe/style.css';
 import './mediaPreview.css';
 import { openDialogCount } from '@moonshot-ai/app-ui';
-import { getKimiWebApi } from '../api';
-import type { ToolMedia } from '../types';
+import type { KimiWebApi } from '@moonshot-ai/app-core/api';
+import type { ToolMedia } from '@moonshot-ai/app-core/client';
 
 export interface ImagePreviewOptions {
+  /** Authenticated file-store access (the app's composed api singleton). */
+  api: Pick<KimiWebApi, 'getFileBlob'>;
   media: ToolMedia;
   /** The clicked thumbnail <img>; null (e.g. unresolved src) means no zoom
    *  origin — the preview fades in from the blob-fetch/url fallback. */
@@ -45,7 +47,7 @@ function loadDims(src: string): Promise<{ w: number; h: number } | null> {
   });
 }
 
-async function resolveImage(media: ToolMedia, thumbImg: HTMLImageElement | null): Promise<ResolvedImage | null> {
+async function resolveImage(api: Pick<KimiWebApi, 'getFileBlob'>, media: ToolMedia, thumbImg: HTMLImageElement | null): Promise<ResolvedImage | null> {
   if (thumbImg?.currentSrc && thumbImg.naturalWidth > 0) {
     return { src: thumbImg.currentSrc, w: thumbImg.naturalWidth, h: thumbImg.naturalHeight, objectUrl: null };
   }
@@ -53,7 +55,7 @@ async function resolveImage(media: ToolMedia, thumbImg: HTMLImageElement | null)
   let objectUrl: string | null = null;
   if (media.fileId) {
     try {
-      const blob = await getKimiWebApi().getFileBlob(media.fileId);
+      const blob = await api.getFileBlob(media.fileId);
       objectUrl = URL.createObjectURL(blob);
       src = objectUrl;
     } catch {
@@ -77,7 +79,7 @@ export function openImagePreview(opts: ImagePreviewOptions): () => void {
   let pswp: PhotoSwipe | null = null;
 
   void (async () => {
-    const resolved = await resolveImage(opts.media, opts.thumbImg);
+    const resolved = await resolveImage(opts.api, opts.media, opts.thumbImg);
     if (cancelled) {
       if (resolved?.objectUrl) URL.revokeObjectURL(resolved.objectUrl);
       return;
