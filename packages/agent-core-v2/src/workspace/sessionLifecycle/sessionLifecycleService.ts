@@ -428,9 +428,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     sessionId: string,
     opts?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
+    // Capture the persisted recency BEFORE resume: a cold session without a
+    // persisted main agent gets one created during resume, and that
+    // registration is an ordinary metadata write that bumps updatedAt —
+    // without restoring it here, unarchiving an empty session floats it to
+    // the top of recency-sorted listings.
+    const summary = await this.index.get(sessionId);
     const handle = await this.resume(sessionId, opts);
     if (handle === undefined) return undefined;
-    await handle.accessor.get(ISessionMetadata).setArchived(false);
+    await handle.accessor.get(ISessionMetadata).update(
+      { archived: false, archivedAt: undefined, updatedAt: summary?.updatedAt },
+      { touchUpdatedAt: false },
+    );
     return handle;
   }
 
