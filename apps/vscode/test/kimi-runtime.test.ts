@@ -599,6 +599,8 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     const busyWarning = broadcasts.find(({ data }) => (data as { type?: string }).type === "error");
     expect(busyWarning?.data).toMatchObject({
       type: "error",
+      code: "turn.agent_busy",
+      message: "A message is being sent. Please wait.",
       phase: "runtime",
       detail: "A response is already being generated for this session.",
       terminal: false,
