@@ -215,6 +215,10 @@ class Bridge {
     return this.call<SessionInfo[]>(Methods.GetAllKimiSessions);
   }
 
+  isSessionBusy(sessionId: string) {
+    return this.call<{ busy: boolean }>(Methods.IsSessionBusy, { sessionId });
+  }
+
   getRegisteredWorkDirs() {
     return this.call<string[]>(Methods.GetRegisteredWorkDirs);
   }

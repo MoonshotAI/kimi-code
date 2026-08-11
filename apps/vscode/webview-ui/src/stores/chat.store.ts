@@ -371,7 +371,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       get().processEvent(event);
     }
 
-    // All steps are finished when loading from history
+    // All steps are finished when loading from history. A turn_active marker
+    // means the session has an in-flight turn — keep the streaming state so
+    // new input enqueues instead of bouncing off the busy runtime.
+    const hasActiveTurn = events.some((event) => event.type === "turn_active");
     set(
       produce((draft: ChatState) => {
         for (const msg of draft.messages) {
@@ -385,12 +388,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
           }
         }
-        draft.isStreaming = false;
+        draft.isStreaming = hasActiveTurn;
         draft.isCompacting = false;
         draft.pendingQuestion = null;
       }),
     );
     useApprovalStore.getState().clearRequests();
+
+    if (hasActiveTurn) {
+      // The marker was sampled when the history was built; if the live turn
+      // ended while the replay was being applied, its terminal event was
+      // consumed by the pre-load state and no later one will come. Revalidate
+      // and converge: unlock the composer and flush anything queued.
+      void bridge
+        .isSessionBusy(sessionId)
+        .then(({ busy }) => {
+          if (busy) return;
+          const s = get();
+          if (s.sessionId !== sessionId || !s.isStreaming) return;
+          set({ isStreaming: false });
+          if (s.queue.length > 0) {
+            setTimeout(() => get().sendNextQueued(), 50);
+          }
+        })
+        .catch(() => undefined);
+    }
   },
 
   startNewConversation: async () => {

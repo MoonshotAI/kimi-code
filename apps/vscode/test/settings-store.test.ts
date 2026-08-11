@@ -13,6 +13,7 @@ const boundary = vi.hoisted(() => ({
   streamChat: vi.fn(),
   abortChat: vi.fn(),
   trackFiles: vi.fn(),
+  isSessionBusy: vi.fn(),
   toastError: vi.fn(),
   toastWarning: vi.fn(),
 }));
@@ -23,6 +24,7 @@ vi.mock("@/services", () => ({
     streamChat: boundary.streamChat,
     abortChat: boundary.abortChat,
     trackFiles: boundary.trackFiles,
+    isSessionBusy: boundary.isSessionBusy,
   },
 }));
 vi.mock("@/components/ui/sonner", () => ({
@@ -57,6 +59,8 @@ beforeEach(() => {
   boundary.streamChat.mockResolvedValue({ done: false });
   boundary.abortChat.mockReset();
   boundary.abortChat.mockResolvedValue({ aborted: true });
+  boundary.isSessionBusy.mockReset();
+  boundary.isSessionBusy.mockResolvedValue({ busy: true });
   boundary.trackFiles.mockReset();
   boundary.toastError.mockReset();
   boundary.toastWarning.mockReset();
@@ -588,5 +592,54 @@ describe("Webview send reply correlation", () => {
     expect(state.isStreaming).toBe(true);
     expect(state.pendingInput).toEqual({ content: "second", model: "plain" });
     expect(state.queue).toHaveLength(0);
+  });
+});
+
+describe("Webview session load streaming state", () => {
+  it("keeps streaming state when the loaded session has an active turn", async () => {
+    await useChatStore.getState().loadSession("s1", [
+      { type: "turn_active", payload: {}, _sessionId: "s1" },
+    ]);
+
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    // New input enqueues instead of taking the send path.
+    useChatStore.getState().sendMessage("queued while live");
+    expect(useChatStore.getState().queue).toHaveLength(1);
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+  });
+
+  it("resets streaming state when the loaded session has no active turn", async () => {
+    useChatStore.setState({ isStreaming: true });
+
+    await useChatStore.getState().loadSession("s1", []);
+
+    expect(useChatStore.getState().isStreaming).toBe(false);
+  });
+});
+
+describe("Webview session load revalidation", () => {
+  it("unlocks the composer when the live turn ended before the replay was applied", async () => {
+    boundary.isSessionBusy.mockResolvedValue({ busy: false });
+
+    await useChatStore.getState().loadSession("s1", [
+      { type: "turn_active", payload: {}, _sessionId: "s1" },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(useChatStore.getState().isStreaming).toBe(false);
+    });
+  });
+
+  it("keeps streaming state when the session is still busy at apply time", async () => {
+    boundary.isSessionBusy.mockResolvedValue({ busy: true });
+
+    await useChatStore.getState().loadSession("s1", [
+      { type: "turn_active", payload: {}, _sessionId: "s1" },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(boundary.isSessionBusy).toHaveBeenCalledWith("s1");
+    });
+    expect(useChatStore.getState().isStreaming).toBe(true);
   });
 });
