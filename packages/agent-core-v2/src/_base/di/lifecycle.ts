@@ -5,7 +5,15 @@
 import { onUnexpectedError } from '../errors/unexpectedError';
 import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
 
+export interface IDisposableDebugLabel {
+  readonly debugLabel?: string;
+}
+
 function disposableLabel(d: IDisposable): string {
+  const debugLabel = (d as IDisposableDebugLabel).debugLabel;
+  if (typeof debugLabel === 'string' && debugLabel.length > 0) {
+    return debugLabel;
+  }
   return `disposable:${d.constructor?.name ?? 'anonymous'}`;
 }
 

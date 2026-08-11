@@ -9,6 +9,7 @@ import {
   IAgentRPCService,
   IAgentShellCommandService,
   IAppendLogStore,
+  IDebugEventsService,
   IEventService,
   IPluginService,
   ISessionIndex,
@@ -185,6 +186,28 @@ describe('server-v2 /api/v1/debug RPC', () => {
     });
     // Framework plumbing stays out of the listing.
     expect(meta?.methods.map((m) => m.name)).not.toContain('dispose');
+  });
+
+  it('reaches a runtime-contributed Service absent from /channels (decorator-name fallback)', async () => {
+    // IDebugEventsService comes from DebugEventsFeature's contributeService,
+    // which bypasses the static scoped registry: /channels omits it, but the
+    // dispatcher still resolves it through the global decorator registry.
+    const channels = await call<readonly { name: string }[]>(
+      'GET',
+      '/api/v1/debug/channels',
+    );
+    expect(channels.body.data.some((c) => c.name === String(IDebugEventsService))).toBe(false);
+
+    const { status, body } = await call<{
+      subscriptions: unknown[];
+      buses: unknown[];
+      globalListeners?: number;
+    }>('GET', rpc('core', IDebugEventsService, 'subscriptions'));
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+    expect(Array.isArray(body.data.subscriptions)).toBe(true);
+    expect(Array.isArray(body.data.buses)).toBe(true);
+    expect(typeof body.data.globalListeners).toBe('number');
   });
 
   it('lists sessions via GET', async () => {
