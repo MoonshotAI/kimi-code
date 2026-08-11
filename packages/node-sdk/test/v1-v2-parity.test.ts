@@ -4392,23 +4392,15 @@ describe('v1↔v2 residual surface parity', () => {
             key === 'origin' ? undefined : value,
           ),
         );
-      // v2 queues the side-question reminder until its next injection
-      // boundary; v1 materializes it while forking. The inherited context is
-      // already identical before that boundary.
-      expect(v2Context.history).toHaveLength(1);
+      // Both engines materialize the side-question reminder while forking:
+      // v2 appends it at the fork event point (a past-tense one-off fact),
+      // so the inherited contexts are already identical right after fork.
       expect(v1Context.history).toHaveLength(2);
-      const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
-      const v2Child = v2Session?.accessor.get(IAgentLifecycleService).get(v2ChildId);
-      expect(v2Child).toBeDefined();
-      await v2Child!.accessor.get(IAgentContextInjectorService).injectAfterCompaction();
-      const [v1Materialized, v2Materialized] = await Promise.all([
-        pair.v1.withInteractiveAgent(v1ChildId, () => pair.v1.getContext({ sessionId })),
-        pair.v2.withInteractiveAgent(v2ChildId, () => pair.v2.getContext({ sessionId })),
-      ]);
-      expect(stripOrigins(v2Materialized)).toEqual(stripOrigins(v1Materialized));
+      expect(v2Context.history).toHaveLength(2);
+      expect(stripOrigins(v2Context)).toEqual(stripOrigins(v1Context));
       // Non-vacuous: the inherited import plus the side-question reminder
       // (byte-identical template on both engines).
-      const v1History = v1Materialized.history;
+      const v1History = v1Context.history;
       expect(v1History.length).toBeGreaterThanOrEqual(2);
       const reminder = v1History.at(-1);
       expect(JSON.stringify(reminder)).toContain('side-channel conversation');
