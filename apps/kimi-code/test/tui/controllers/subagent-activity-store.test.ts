@@ -276,4 +276,19 @@ describe('SubagentActivityStore', () => {
     }
     expect(buffers.has('agent-1:t-trunc')).toBe(false);
   });
+
+  it('drops leftover arg buffers when the record turns terminal', () => {
+    const store = new SubagentActivityStore();
+    store.ensureRecord(spawn());
+    store.applyEvent(
+      ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 't-trunc', name: 'Write', argumentsPart: '{"path":"a"' }),
+    );
+    const buffers = (
+      store as unknown as { streamingArgs: Map<string, string> }
+    ).streamingArgs;
+    expect(buffers.has('agent-1:t-trunc')).toBe(true);
+
+    store.markCompleted('agent-1', 'done');
+    expect(buffers.has('agent-1:t-trunc')).toBe(false);
+  });
 });

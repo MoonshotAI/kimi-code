@@ -265,6 +265,7 @@ export class SubagentActivityStore {
     if (record === undefined) return;
     record.status = 'completed';
     record.resultSummary = resultSummary;
+    this.dropStreamingBuffers(agentId);
     this.bump(record);
   }
 
@@ -273,6 +274,7 @@ export class SubagentActivityStore {
     if (record === undefined) return;
     record.status = 'failed';
     record.error = error;
+    this.dropStreamingBuffers(agentId);
     this.bump(record);
   }
 
@@ -287,6 +289,12 @@ export class SubagentActivityStore {
    *  resident until the session reset. */
   drop(agentId: string): void {
     this.records.delete(agentId);
+    this.dropStreamingBuffers(agentId);
+  }
+
+  /** No more deltas arrive once the record is terminal, so any buffer left
+   *  by a call truncated before started/result can be released here. */
+  private dropStreamingBuffers(agentId: string): void {
     const prefix = `${agentId}:`;
     for (const key of this.streamingArgs.keys()) {
       if (key.startsWith(prefix)) this.streamingArgs.delete(key);
