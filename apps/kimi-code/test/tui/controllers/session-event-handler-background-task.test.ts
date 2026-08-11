@@ -17,6 +17,11 @@ function makeStreamingUIStub() {
     removeToolComponentIfInactive: vi.fn(),
     applyBackgroundTaskTerminalStatus: vi.fn(),
     markSubagentBackgrounded: vi.fn(),
+    setTurnId: vi.fn(),
+    flushNow: vi.fn(),
+    setTodoList: vi.fn(),
+    resetToolUi: vi.fn(),
+    finalizeTurn: vi.fn(),
   };
 }
 
@@ -192,5 +197,24 @@ describe('SessionEventHandler — background.task.terminated', () => {
     const record = store.get('agent-8');
     expect(record?.status).toBe('completed');
     expect(record?.resultSummary).toBe('final summary');
+  });
+
+  it('drops foreground-only records when the main turn ends (aborted subagents emit no lifecycle event)', () => {
+    const handler = new SessionEventHandler(makeSessionEventHost());
+    const store = handler.subAgentEventHandler.activityStore;
+    store.ensureRecord({ agentId: 'agent-7', agentName: 'explore', parentToolCallId: 'tc-7' });
+
+    handler.handleEvent(
+      {
+        sessionId: 's1',
+        agentId: 'main',
+        type: 'turn.ended',
+        turnId: 1,
+        reason: 'cancelled',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(store.get('agent-7')).toBeUndefined();
   });
 });

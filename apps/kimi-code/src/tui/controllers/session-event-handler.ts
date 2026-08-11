@@ -357,6 +357,10 @@ export class SessionEventHandler {
     if (event.reason === 'cancelled') {
       this.markActiveAgentSwarmsCancelled();
     }
+    // Aborted foreground subagents emit no completed/failed lifecycle event
+    // (v2 suppresses it for aborts), so their activity records would linger
+    // until the session reset — prune them when the owning turn ends.
+    this.subAgentEventHandler.dropForegroundOnlyActivityRecords();
     if (event.reason === 'failed' && event.error?.code === 'provider.filtered') {
       this.host.showStatus('Turn stopped: provider safety policy blocked the response.', 'error');
     }

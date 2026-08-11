@@ -393,6 +393,15 @@ export class SubAgentEventHandler {
     this.activityStore.drop(subagentId);
   }
 
+  /** Drop every foreground-only record. Called when the main turn ends: any
+   *  foreground subagent of the turn is over at that point, and an aborted
+   *  one emits no `subagent.completed`/`subagent.failed` to prune it. */
+  dropForegroundOnlyActivityRecords(): void {
+    for (const agentId of this.activityStore.agentIds()) {
+      this.pruneForegroundOnlyRecord(agentId);
+    }
+  }
+
   private buildBackgroundAgentMetadata(
     event: SubagentLifecycleEventOf<'subagent.spawned'>,
   ): BackgroundAgentMetadata {

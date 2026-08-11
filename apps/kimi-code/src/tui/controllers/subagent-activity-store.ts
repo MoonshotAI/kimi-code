@@ -140,6 +140,10 @@ export class SubagentActivityStore {
     return this.records.get(agentId);
   }
 
+  agentIds(): readonly string[] {
+    return [...this.records.keys()];
+  }
+
   applyEvent(event: Event): void {
     switch (event.type) {
       case 'turn.step.started': {
