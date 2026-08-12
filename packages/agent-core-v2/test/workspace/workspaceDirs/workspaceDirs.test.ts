@@ -36,6 +36,9 @@ import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
+import { stubProviderService } from '../../app/provider/stubs';
 import { IFlagService } from '#/app/flag/flag';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
@@ -300,6 +303,11 @@ describe('workspace add-dir (handler chain)', () => {
         onDidSectionChange: () => ({ dispose: () => {} }),
       } as unknown as IConfigService),
       stubPair(IModelCatalog, { _serviceBrand: undefined } as unknown as IModelCatalog),
+      stubPair(IModelService, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+      } as unknown as IModelService),
+      stubPair(IProviderService, stubProviderService()),
       stubPair(IFlagService, stubFlag(() => false)),
       stubPair(ITelemetryService, noopTelemetryService),
       stubPair(IWorkspaceService, workspaceCatalogStub()),
