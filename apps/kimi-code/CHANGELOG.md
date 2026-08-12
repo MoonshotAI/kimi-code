@@ -50,6 +50,8 @@
 
 - [#2813](https://github.com/MoonshotAI/kimi-code/pull/2813) [`619564d`](https://github.com/MoonshotAI/kimi-code/commit/619564dcf9ee10a3cfbf7ecbc764c6b9b63fc91b) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix the web UI repeatedly losing its realtime connection every ~30 seconds when the server runs behind a reverse proxy or gateway with an idle connection timeout; the server now sends a WebSocket heartbeat and only closes connections that stop responding entirely.
 
+- [#2842](https://github.com/MoonshotAI/kimi-code/pull/2842) [`e476c5a`](https://github.com/MoonshotAI/kimi-code/commit/e476c5a8bbe68fb0b6eb0096aa1efcb893b1a8fc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Add the Modern Web Guidance plugin to the bundled plugin marketplace. Run /plugins and select Modern Web Guidance to install it.
+
 ## 0.34.0
 
 ### Minor Changes
