@@ -1,6 +1,7 @@
 import { Container, Spacer, Text } from '@moonshot-ai/pi-tui';
 
 import type { MoonLoader } from '#/tui/components/chrome/moon-loader';
+import { ACTIVITY_DETAIL_INDENT } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 
 export type ActivityPaneMode = 'hidden' | 'waiting' | 'thinking' | 'composing' | 'tool';
@@ -32,7 +33,7 @@ export class ActivityPaneComponent extends Container {
       options.spinner.setTip(formatActivitySpinnerTip(options.tip));
       this.addChild(options.spinner);
       if (options.detail !== undefined && options.detail.length > 0) {
-        this.addChild(new Text(currentTheme.fg('textDim', options.detail), 1, 0));
+        this.addChild(new Text(currentTheme.fg('textDim', options.detail), ACTIVITY_DETAIL_INDENT, 0));
       }
     }
   }

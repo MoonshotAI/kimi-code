@@ -58,7 +58,7 @@ describe('ActivityPaneComponent', () => {
     const lines = component
       .render(80)
       .map((line) => line.replaceAll(/\u001B\[[0-9;]*m/g, '').trimEnd());
-    expect(lines).toEqual(['', 'working', ' 429 · rate limited']);
+    expect(lines).toEqual(['', 'working', '    429 · rate limited']);
   });
 
   it.each(['waiting', 'tool', 'composing'] as const)(

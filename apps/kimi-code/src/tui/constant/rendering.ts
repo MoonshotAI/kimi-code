@@ -16,6 +16,10 @@ export const COMMAND_PREVIEW_LINES = 10;
 // provider error bodies (occasionally whole HTML error pages) can't flood
 // the activity pane.
 export const RETRY_DETAIL_MAX_CHARS = 160;
+// Left indent (cells) for the detail line under the waiting spinner, aligning
+// it with the label text: 1 (the spinner Text's own paddingX) + 2 (moon
+// frame) + 1 (space between frame and label).
+export const ACTIVITY_DETAIL_INDENT = 4;
 
 // Retention caps for the subagent activity store (background-agent detail
 // view): only the most recent steps are kept, older steps are discarded
