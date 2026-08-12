@@ -332,6 +332,7 @@ export class TUI extends Container {
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
+	private hardwareCursorCol = 0; // Actual terminal cursor column (tracked to avoid spurious ANSI writes)
 	private showHardwareCursor = process.env['PI_HARDWARE_CURSOR'] === "1";
 	private clearOnShrink = process.env['PI_CLEAR_ON_SHRINK'] === "1"; // Clear empty rows when content shrinks (default: off)
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
@@ -739,6 +740,7 @@ export class TUI extends Container {
 			this.previousHeight = -1; // -1 triggers heightChanged, forcing a full clear
 			this.cursorRow = 0;
 			this.hardwareCursorRow = 0;
+		this.hardwareCursorCol = 0;
 			this.maxLinesRendered = 0;
 			this.previousViewportTop = 0;
 			if (this.renderTimer) {
@@ -1672,6 +1674,13 @@ export class TUI extends Container {
 		const targetRow = Math.max(0, Math.min(cursorPos.row, totalLines - 1));
 		const targetCol = Math.max(0, cursorPos.col);
 
+		// Skip repositioning when cursor hasn't moved and hardware cursor is hidden.
+		// This avoids spurious ANSI sequences that can cause viewport scroll jumps
+		// on terminals with Kitty keyboard protocol support.
+		if (!this.showHardwareCursor && targetRow === this.hardwareCursorRow && targetCol === this.hardwareCursorCol) {
+			return;
+		}
+
 		// Move cursor from current position to target
 		const rowDelta = targetRow - this.hardwareCursorRow;
 		let buffer = "";
@@ -1688,6 +1697,7 @@ export class TUI extends Container {
 		}
 
 		this.hardwareCursorRow = targetRow;
+		this.hardwareCursorCol = targetCol;
 		if (this.showHardwareCursor) {
 			this.terminal.showCursor();
 		} else {
