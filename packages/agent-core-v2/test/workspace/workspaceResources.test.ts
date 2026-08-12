@@ -27,8 +27,6 @@ import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
-import { IMcpAuthCoordinator } from '#/app/mcpAuthCoordinator/mcpAuthCoordinator';
-import { McpAuthCoordinatorService } from '#/app/mcpAuthCoordinator/mcpAuthCoordinatorService';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
@@ -299,7 +297,6 @@ describe('workspace resource sharing (handler chain)', () => {
         onDidSectionChange: () => ({ dispose: () => {} }),
       } as unknown as IConfigService),
       stubPair(ITelemetryService, noopTelemetryService),
-      stubPair(IMcpAuthCoordinator, new McpAuthCoordinatorService()),
       stubPair(ISkillDiscovery, discovery),
       stubPair(IPluginService, pluginStub()),
       stubPair(IWorkspaceService, workspaceCatalogStub()),

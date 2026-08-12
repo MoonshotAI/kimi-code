@@ -585,7 +585,6 @@ describe('PluginService (plugin boundary)', () => {
         mcpServers: {
           finance: { command: 'finance-mcp', env: { CUSTOM: '1' } },
           docs: { url: 'https://example.test/mcp' },
-          disabled: { command: 'disabled-mcp', enabled: false },
         },
       });
       createdDirs.push(pluginRoot);
@@ -605,19 +604,6 @@ describe('PluginService (plugin boundary)', () => {
         }),
       );
       expect(JSON.stringify(servers['plugin-demo:docs'])).not.toContain('KIMI_CODE_BASE_URL');
-      expect(servers).not.toHaveProperty('plugin-demo:disabled');
-      await expect(svc.mcpServers()).resolves.toContainEqual(
-        expect.objectContaining({
-          pluginId: 'demo',
-          serverName: 'disabled',
-          runtimeName: 'plugin-demo:disabled',
-          enabled: false,
-          config: expect.objectContaining({
-            command: 'disabled-mcp',
-            env: expect.objectContaining({ KIMI_CODE_BASE_URL: 'https://api.example.test/' }),
-          }),
-        }),
-      );
     } finally {
       host.dispose();
     }

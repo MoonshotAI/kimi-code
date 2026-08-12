@@ -23,13 +23,11 @@ import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
-import { McpOAuthCoordinator } from '#/mcpCore/oauth/coordinator';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
-import { IMcpAuthCoordinator } from '#/app/mcpAuthCoordinator/mcpAuthCoordinator';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import {
@@ -61,7 +59,6 @@ describe('WorkspaceMcpService', () => {
   let configChanges: Emitter<McpServersChange>;
   let assemblyEvents: Emitter<SessionWillCreateEvent>;
   let manager: InstanceType<typeof McpConnectionManager> | undefined;
-  let authCoordinator: McpOAuthCoordinator;
 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-cwd-'));
@@ -72,7 +69,6 @@ describe('WorkspaceMcpService', () => {
     configChanges = new Emitter<McpServersChange>();
     assemblyEvents = disposables.add(new Emitter<SessionWillCreateEvent>());
     manager = undefined;
-    authCoordinator = new McpOAuthCoordinator();
   });
 
   afterEach(async () => {
@@ -99,7 +95,6 @@ describe('WorkspaceMcpService', () => {
         reg.definePartialInstance(IWorkspaceContext, { cwd });
         reg.defineInstance(IWorkspaceMcpConfigService, mcpConfigStub());
         reg.definePartialInstance(IMcpOAuthStore, createMemoryMcpOAuthStore());
-        reg.definePartialInstance(IMcpAuthCoordinator, authCoordinator);
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
         reg.definePartialInstance(ISessionLifecycleService, {
@@ -124,71 +119,6 @@ describe('WorkspaceMcpService', () => {
 
     expect(connectAll).toHaveBeenCalledTimes(1);
     expect(Object.keys(connectAll.mock.calls[0]?.[0] ?? {}).toSorted()).toEqual(['alpha', 'beta']);
-  });
-
-  it('reconnects only the matching needs-auth server after credentials change', async () => {
-    const service = createService();
-    manager = service.connectionManager();
-    await service.ready;
-    vi.spyOn(manager, 'get').mockImplementation((name) =>
-      name === 'remote'
-        ? { name, transport: 'http', status: 'needs-auth', toolCount: 0 }
-        : undefined,
-    );
-    vi.spyOn(manager, 'getRemoteServerUrl').mockReturnValue('https://mcp.example.test/mcp');
-    const reconnect = vi.spyOn(manager, 'reconnectAndJoin').mockResolvedValue(undefined);
-
-    authCoordinator.notifyCredentialsChanged('other', 'https://mcp.example.test/mcp');
-    authCoordinator.notifyCredentialsChanged('remote', 'https://other.example.test/mcp');
-    authCoordinator.notifyCredentialsChanged('remote', 'https://mcp.example.test/mcp');
-
-    await vi.waitFor(() => expect(reconnect).toHaveBeenCalledOnce());
-    expect(reconnect).toHaveBeenCalledWith('remote');
-  });
-
-  it('reconnects after a pending attempt settles when credentials change', async () => {
-    const service = createService();
-    manager = service.connectionManager();
-    await service.ready;
-    vi.spyOn(manager, 'get').mockReturnValue({
-      name: 'remote',
-      transport: 'http',
-      status: 'pending',
-      toolCount: 0,
-    });
-    vi.spyOn(manager, 'getRemoteServerUrl').mockReturnValue('https://mcp.example.test/mcp');
-    const reconnect = vi.spyOn(manager, 'reconnectAfterCurrent').mockResolvedValue(undefined);
-    let statusListener: Parameters<McpConnectionManager['onStatusChange']>[0] | undefined;
-    vi.spyOn(manager, 'onStatusChange').mockImplementation((listener) => {
-      statusListener = listener;
-      return () => {};
-    });
-
-    authCoordinator.notifyCredentialsChanged('remote', 'https://mcp.example.test/mcp');
-    expect(reconnect).not.toHaveBeenCalled();
-    statusListener?.({ name: 'remote', transport: 'http', status: 'needs-auth', toolCount: 0 });
-
-    await vi.waitFor(() => expect(reconnect).toHaveBeenCalledOnce());
-  });
-
-  it('forgets cached credentials for a matching disabled server without reconnecting', async () => {
-    const service = createService();
-    manager = service.connectionManager();
-    await service.ready;
-    vi.spyOn(manager, 'get').mockReturnValue({
-      name: 'remote',
-      transport: 'http',
-      status: 'disabled',
-      toolCount: 0,
-    });
-    vi.spyOn(manager, 'getRemoteServerUrl').mockReturnValue('https://mcp.example.test/mcp');
-    const forgetProvider = vi.spyOn(manager.oauthService!, 'forgetProvider');
-    const reconnect = vi.spyOn(manager, 'reconnectAndJoin').mockResolvedValue(undefined);
-
-    authCoordinator.notifyCredentialsChanged('remote', 'https://mcp.example.test/mcp');
-
-    expect(forgetProvider).toHaveBeenCalledWith('remote', 'https://mcp.example.test/mcp');
-    expect(reconnect).not.toHaveBeenCalled();
   });
 
   it('reads timeout tunables from the config domain at connect', async () => {

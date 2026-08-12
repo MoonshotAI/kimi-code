@@ -215,94 +215,7 @@ describe('standalone MCP check (connection result)', () => {
 });
 
 describe('MCP OAuth facade (host-controlled browser flow)', () => {
-  it('merges global and plugin MCP entries without writing plugin entries to mcp.json', async () => {
-    const homeDir = await makeTempDir();
-    const pluginDir = await makeTempDir();
-    const statusServer = await startMcpAuthStatusServer();
-    await writeMcpConfig(homeDir, {
-      mcpServers: { global: { transport: 'http', url: statusServer.plainUrl } },
-    });
-    await writeFile(
-      join(pluginDir, 'kimi.plugin.json'),
-      JSON.stringify({
-        name: 'status-plugin',
-        mcpServers: {
-          remote: { transport: 'http', url: statusServer.oauthUrl, auth: 'oauth' },
-        },
-      }),
-      'utf-8',
-    );
-    const harness = createKimiHarness({ homeDir });
-
-    try {
-      await harness.installPlugin(pluginDir);
-      await expect(harness.inspectAppMcpServers()).resolves.toEqual([
-        expect.objectContaining({
-          serverId: 'global:global',
-          locator: { source: 'global', name: 'global' },
-          runtimeName: 'global',
-          origin: 'global',
-          editable: true,
-          authStatus: 'not-applicable',
-        }),
-        expect.objectContaining({
-          serverId: 'plugin:status-plugin:remote',
-          locator: { source: 'plugin', pluginId: 'status-plugin', serverName: 'remote' },
-          runtimeName: 'plugin-status-plugin:remote',
-          origin: 'plugin',
-          editable: false,
-          enabled: true,
-          authStatus: 'oauth-required',
-        }),
-      ]);
-      expect(await readMcpConfig(homeDir)).toEqual({
-        mcpServers: { global: { transport: 'http', url: statusServer.plainUrl } },
-      });
-
-      const collidingName = 'plugin-status-plugin:remote';
-      await harness.addMcpServer({
-        name: collidingName,
-        transport: 'http',
-        url: statusServer.oauthUrl,
-        auth: 'oauth',
-      });
-      await expect(
-        harness.inspectAppMcpServers([
-          { source: 'plugin', pluginId: 'status-plugin', serverName: 'remote' },
-        ]),
-      ).resolves.toEqual([
-        expect.objectContaining({
-          runtimeName: collidingName,
-          authStatus: 'unavailable',
-          error: `MCP runtime name "${collidingName}" is not unique`,
-        }),
-      ]);
-
-      await harness.setPluginMcpServerEnabled('status-plugin', 'remote', false);
-      await expect(
-        harness.inspectAppMcpServers([
-          { source: 'plugin', pluginId: 'status-plugin', serverName: 'remote' },
-        ]),
-      ).resolves.toEqual([
-        expect.objectContaining({
-          enabled: false,
-          authStatus: 'not-applicable',
-        }),
-      ]);
-      await expect(
-        harness.resetAppMcpServerAuth({
-          source: 'plugin',
-          pluginId: 'status-plugin',
-          serverName: 'remote',
-        }),
-      ).resolves.toBeUndefined();
-    } finally {
-      await harness.close();
-      await statusServer.close();
-    }
-  }, 15_000);
-
-  it('reports authorization from a real MCP connection instead of token presence alone', async () => {
+  it('reports authorization from real connections while preserving legacy status values', async () => {
     const homeDir = await makeTempDir();
     const statusServer = await startMcpAuthStatusServer();
     const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
@@ -312,11 +225,16 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
     await externalOAuth
       .getProvider('oauth-stale', statusServer.oauthUrl)
       .saveTokens({ access_token: 'stale-test-access-token', token_type: 'Bearer' });
+    await externalOAuth
+      .getProvider('sse', statusServer.oauthUrl)
+      .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
     await writeMcpConfig(homeDir, {
       mcpServers: {
         stdio: { command: 'local-command' },
         plain: { transport: 'http', url: statusServer.plainUrl },
         detected: { transport: 'http', url: statusServer.oauthUrl },
+        sse: { transport: 'sse', url: statusServer.oauthUrl },
+        'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
         bearer: {
           transport: 'http',
           url: 'https://bearer.example.test/mcp',
@@ -337,34 +255,21 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
           url: statusServer.oauthUrl,
           auth: 'oauth',
         },
-        'unavailable-explicit': {
-          transport: 'http',
-          url: statusServer.unavailableUrl,
-          auth: 'oauth',
-        },
-        'unavailable-dynamic': {
-          transport: 'http',
-          url: statusServer.unavailableUrl,
-        },
       },
     });
     const harness = createKimiHarness({ homeDir });
 
     try {
-      await expect(
-        harness
-          .inspectAppMcpServers()
-          .then((servers) => servers.map(({ runtimeName: name, authStatus }) => ({ name, authStatus }))),
-      ).resolves.toEqual([
+      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-required' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
         { name: 'oauth-stale', authStatus: 'oauth-required' },
-        { name: 'unavailable-explicit', authStatus: 'unavailable' },
-        { name: 'unavailable-dynamic', authStatus: 'unavailable' },
       ]);
     } finally {
       await harness.close();

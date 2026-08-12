@@ -21,10 +21,6 @@ export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability
 export type {
   AgentReplayRecord,
   AgentBackgroundTaskInfo,
-  AppMcpServerAuthState,
-  AppMcpServerConfig,
-  AppMcpServerDescriptor,
-  AppMcpServerInspection,
   BackgroundConfig,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
@@ -49,7 +45,6 @@ export type {
   KimiConfigPatch,
   LoopControl,
   McpServerInfo,
-  McpServerLocator,
   McpStartupMetrics,
   ModelAlias,
   MoonshotServiceConfig,

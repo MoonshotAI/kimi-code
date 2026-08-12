@@ -12,7 +12,6 @@ import type { KimiAuthFacade } from '#/auth';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AuthenticateMcpServerOptions,
-  AppMcpServerInspection,
   CapabilityStatus,
   ConfigDiagnostics,
   CreateSessionOptions,
@@ -27,7 +26,6 @@ import type {
   ListSessionsOptions,
   McpServerConfig,
   McpServerInfo,
-  McpServerLocator,
   McpTestResult,
   PluginCommandDef,
   PluginInfo,
@@ -410,12 +408,6 @@ export class KimiHarness {
     return this.rpc.listGlobalMcpServerAuthStatuses();
   }
 
-  async inspectAppMcpServers(
-    targets?: readonly McpServerLocator[],
-  ): Promise<readonly AppMcpServerInspection[]> {
-    return this.rpc.inspectAppMcpServers(targets);
-  }
-
   async addMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
     return this.rpc.addGlobalMcpServer(server);
   }
@@ -449,33 +441,8 @@ export class KimiHarness {
     }
   }
 
-  async authenticateAppMcpServer(
-    locator: McpServerLocator,
-    options: AuthenticateMcpServerOptions,
-  ): Promise<void> {
-    const started = await this.rpc.beginMcpServerAuth(locator);
-    if (started.status === 'already-authorized') return;
-    try {
-      const opened = await options.onAuthorizationUrl(started.authorizationUrl);
-      if (opened === false) {
-        throw new KimiError(ErrorCodes.REQUEST_INVALID, 'MCP OAuth authorization was cancelled');
-      }
-      await this.rpc.completeMcpServerAuth(
-        { flowId: started.flowId, timeoutMs: options.timeoutMs },
-        options.signal,
-      );
-    } catch (error) {
-      await this.rpc.cancelMcpServerAuth(started.flowId).catch(() => undefined);
-      throw error;
-    }
-  }
-
   async resetMcpServerAuth(name: string): Promise<void> {
     return this.rpc.resetGlobalMcpServerAuth(name);
-  }
-
-  async resetAppMcpServerAuth(locator: McpServerLocator): Promise<void> {
-    return this.rpc.resetMcpServerAuth(locator);
   }
 
   async testMcpServer(

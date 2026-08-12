@@ -37,9 +37,7 @@
  * failures are status entries). The manager (and its stdio child processes,
  * whose cwd is the handler root) lives as long as the handler — i.e. the
  * process — so a stateful stdio server is shared by concurrent sessions of
- * the workspace rather than owned by one session. Credential changes from
- * `mcpAuthCoordinator` invalidate cached OAuth providers and reconnect the
- * matching manager entry. Bound at Workspace scope.
+ * the workspace rather than owned by one session. Bound at Workspace scope.
  *
  * The client name announced to MCP servers — on initialize and on OAuth
  * dynamic registration — is the identity snapshot's slug. Every manager it
@@ -58,10 +56,8 @@ import { ILogService } from '#/_base/log/log';
 import { McpConnectionManager, type McpConnectionView } from '#/mcpCore/connection-manager';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
-import { canonicalMcpOAuthResource } from '#/mcpCore/oauth/store';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
-import { IMcpAuthCoordinator } from '#/app/mcpAuthCoordinator/mcpAuthCoordinator';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
@@ -94,7 +90,6 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
     @IWorkspaceContext workspace: IWorkspaceContext,
     @IWorkspaceMcpConfigService private readonly mcpConfig: IWorkspaceMcpConfigService,
     @IMcpOAuthStore oauthStore: IMcpOAuthStore,
-    @IMcpAuthCoordinator mcpAuthCoordinator: IMcpAuthCoordinator,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
@@ -105,7 +100,6 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
     this.oauthService = new McpOAuthService({
       store: oauthStore,
       resolveClientName: this.resolveClientName,
-      coordinator: mcpAuthCoordinator,
     });
     this.manager = new McpConnectionManager({
       log: this.log,
@@ -120,42 +114,6 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
         this.scheduleApply(change);
       }),
     );
-    this._register({
-      dispose: mcpAuthCoordinator.onCredentialsChanged((event) => {
-        const entry = this.manager.get(event.serverName);
-        if (entry === undefined) return;
-        const serverUrl = this.manager.getRemoteServerUrl(event.serverName);
-        if (serverUrl === undefined || canonicalMcpOAuthResource(serverUrl) !== event.serverUrl) {
-          return;
-        }
-        this.oauthService.forgetProvider(event.serverName, event.serverUrl);
-        if (entry.status === 'disabled' || entry.status === 'removed') return;
-        const reconnect = (afterCurrent = false) => {
-          void this.ready
-            .then(() =>
-              this.mutate(() =>
-                afterCurrent
-                  ? this.manager.reconnectAfterCurrent(event.serverName)
-                  : this.manager.reconnectAndJoin(event.serverName),
-              ),
-            )
-            .catch((error: unknown) => {
-              this.log.warn(`mcp reconnect after credentials change failed: ${String(error)}`);
-            });
-        };
-        if (entry.status === 'pending') {
-          const unsubscribe = this.manager.onStatusChange((next) => {
-            if (next.name !== event.serverName || next.status === 'pending') return;
-            unsubscribe();
-            if (next.status !== 'disabled' && next.status !== 'removed') reconnect(true);
-          });
-          this._register({ dispose: unsubscribe });
-          return;
-        }
-        if (event.kind !== 'invalidated' && entry.status !== 'needs-auth') return;
-        reconnect();
-      }),
-    });
     this._register(
       sessionLifecycle.onWillCreateSession((event) => {
         const servers = event.readSeed(ISessionEphemeralMcpServers);

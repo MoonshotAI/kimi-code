@@ -183,7 +183,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
 
   async reconnect(name: string, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
-    await this.mcpHandle.connectionManager.reconnectAndJoin(name);
+    await this.mcpHandle.connectionManager.reconnect(name);
     signal?.throwIfAborted();
   }
 

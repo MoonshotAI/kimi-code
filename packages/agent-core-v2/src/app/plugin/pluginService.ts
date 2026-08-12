@@ -47,7 +47,6 @@ import type {
   PluginAgentRoot,
   PluginMutation,
   PluginMutationSummary,
-  PluginMcpServerRuntimeConfig,
   PluginSummary,
   PluginUpdateStatus,
   ReloadSummary,
@@ -206,25 +205,6 @@ export class PluginService extends Service implements IPluginService {
       }
       const managedEnv = await this.managedKimiCodeEnvForPlugins();
       return withManagedKimiPluginEnv(pluginServers, managedEnv);
-    });
-  }
-
-  mcpServers(): Promise<readonly PluginMcpServerRuntimeConfig[]> {
-    return this.runConsumptionRead([], async () => {
-      const pluginServers = this.manager.mcpServers();
-      if (!pluginServers.some((server) => server.config.transport === 'stdio')) {
-        return pluginServers;
-      }
-      const managedEnv = await this.managedKimiCodeEnvForPlugins();
-      return pluginServers.map((server) => ({
-        ...server,
-        config:
-          server.config.transport === 'stdio'
-            ? withManagedKimiPluginEnv({ [server.runtimeName]: server.config }, managedEnv)[
-                server.runtimeName
-              ]!
-            : server.config,
-      }));
     });
   }
 

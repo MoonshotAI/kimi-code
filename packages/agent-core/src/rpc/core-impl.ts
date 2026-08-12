@@ -1695,6 +1695,9 @@ function legacyGlobalMcpAuthState(
   server: AppMcpServerInspection,
   credentialPresent: boolean,
 ): GlobalMcpServerAuthState {
+  if (server.config.transport === 'sse' && server.config.auth !== 'oauth') {
+    return 'not-applicable';
+  }
   if (server.authStatus !== 'unavailable') return server.authStatus;
   if (credentialPresent) return 'oauth-authorized';
   return server.config.transport !== 'stdio' && server.config.auth === 'oauth'
