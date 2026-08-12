@@ -100,8 +100,11 @@ class FakeSessionMetadata implements ISessionMetadata {
     return this.update({ title, titleKind: 'custom' });
   }
 
-  async setGeneratedTitleIfUncustomized(title: string): Promise<boolean> {
-    if (this.meta.titleKind === 'custom') return false;
+  async setGeneratedTitleIfUncustomized(
+    title: string,
+    opts?: { force?: boolean },
+  ): Promise<boolean> {
+    if (opts?.force !== true && this.meta.titleKind === 'custom') return false;
     await this.update({ title, titleKind: 'generated' });
     return true;
   }
@@ -318,6 +321,41 @@ describe('SessionTitleService', () => {
     await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(metadata.meta.title).toBe('已生成的标题');
+  });
+
+  it('force regenerates an already-generated title', async () => {
+    await metadata.setGeneratedTitleIfUncustomized('已生成的标题');
+    titlePrompts = ['hello'];
+
+    await expect(
+      ix.get(ISessionTitleService).generateTitle({ force: true }),
+    ).resolves.toBe('生成的标题');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(metadata.meta.title).toBe('生成的标题');
+    expect(metadata.meta.titleKind).toBe('generated');
+  });
+
+  it('force overwrites a custom title and drops its custom marking', async () => {
+    await metadata.setTitle('user 取的标题');
+    titlePrompts = ['hello'];
+
+    await expect(
+      ix.get(ISessionTitleService).generateTitle({ force: true }),
+    ).resolves.toBe('生成的标题');
+    expect(metadata.meta.title).toBe('生成的标题');
+    expect(metadata.meta.titleKind).toBe('generated');
+  });
+
+  it('force still degrades when the backend request fails', async () => {
+    fetchMock.mockImplementationOnce(async () => new Response('', { status: 500 }));
+    await metadata.setTitle('user 取的标题');
+    titlePrompts = ['hello'];
+
+    await expect(
+      ix.get(ISessionTitleService).generateTitle({ force: true }),
+    ).resolves.toBeUndefined();
+    expect(metadata.meta.title).toBe('user 取的标题');
+    expect(metadata.meta.titleKind).toBe('custom');
   });
 
   it('keeps the current title when the backend request fails', async () => {

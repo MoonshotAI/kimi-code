@@ -527,7 +527,7 @@ describe('server-v2 /api/v1/sessions', () => {
       `/api/v1/sessions/${created.body.data.id}/title/generate`,
     );
 
-    expect(generated.body.code).toBe(40922);
+    expect(generated.body.code).toBe(40923);
   });
 
   it('generates and persists a title through the public REST path', async () => {
@@ -633,6 +633,26 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+
+    // A second non-force call refuses: the title is already generated.
+    const again = await postJson<null>(`/api/v1/sessions/${id}/title/generate`);
+    expect(again.body.code).toBe(40923);
+
+    // `force: true` regenerates an already-generated title …
+    const forced = await postJson<{ title: string }>(`/api/v1/sessions/${id}/title/generate`, {
+      force: true,
+    });
+    expect(forced.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+
+    // … and overwrites a user-customized title.
+    await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, { title: 'custom title' });
+    const forcedCustom = await postJson<{ title: string }>(
+      `/api/v1/sessions/${id}/title/generate`,
+      { force: true },
+    );
+    expect(forcedCustom.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+    const afterCustom = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(afterCustom.body.data.title).toBe('generated from REST');
   });
 
   it('returns session-not-found when generating a title for a missing session', async () => {

@@ -21,7 +21,8 @@
  * (`setGeneratedTitleIfUncustomized`) serializes through the same update
  * queue as everything else and re-checks the title kind inside the queued
  * write, so a custom title set while a generation was in flight is never
- * overwritten.
+ * overwritten — unless the caller passes `force` (explicit regeneration,
+ * last writer wins).
  * Re-registering an agent whose metadata is unchanged is
  * a no-op (no write, no mirror, no event), so resuming a session — which
  * re-registers its agents as they materialize — never bumps `updatedAt` and
@@ -124,10 +125,13 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     await this.update({ title, titleKind: 'custom' });
   }
 
-  async setGeneratedTitleIfUncustomized(title: string): Promise<boolean> {
+  async setGeneratedTitleIfUncustomized(
+    title: string,
+    opts?: { force?: boolean },
+  ): Promise<boolean> {
     return this.enqueueUpdate(async () => {
       await this.ready;
-      if (this.data.titleKind === 'custom') return false;
+      if (opts?.force !== true && this.data.titleKind === 'custom') return false;
       return this.applyUpdate({ title, titleKind: 'generated' });
     });
   }

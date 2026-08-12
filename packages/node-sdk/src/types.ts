@@ -146,6 +146,8 @@ export interface RenameSessionInput {
 
 export interface GenerateSessionTitleInput {
   readonly id: string;
+  /** Regenerate even when the session already has a generated/custom title. */
+  readonly force?: boolean;
 }
 
 export interface ResumeSessionInput {

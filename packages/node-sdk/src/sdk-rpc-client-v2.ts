@@ -1154,7 +1154,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     input: GenerateSessionTitleInput,
   ): Promise<string | undefined> {
     return this.runSessionAccess(input.id, () =>
-      this.withTemporarySession(input.id, () => this.klient.session(input.id).generateTitle()),
+      this.withTemporarySession(input.id, () =>
+        this.klient.session(input.id).generateTitle({ force: input.force === true }),
+      ),
     );
   }
 

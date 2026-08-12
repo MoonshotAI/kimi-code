@@ -623,6 +623,12 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       method: 'POST',
       path: '/sessions/{session_id}/title/generate',
       params: sessionIdParamSchema,
+      // Optional body: `{ "force": true }` requests an explicit regeneration
+      // that overwrites an already-generated or user-customized title.
+      body: z.preprocess(
+        (value) => (value === undefined ? {} : value),
+        z.object({ force: z.boolean().optional() }),
+      ),
       success: { data: z.object({ title: z.string() }) },
       errors: {
         [ErrorCode.SESSION_NOT_FOUND]: {},
@@ -641,7 +647,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           );
           return;
         }
-        const title = await handle.accessor.get(ISessionTitleService).generateTitle();
+        const title = await handle.accessor
+          .get(ISessionTitleService)
+          .generateTitle({ force: req.body.force === true });
         if (title === undefined) {
           reply.send(
             errEnvelope(
