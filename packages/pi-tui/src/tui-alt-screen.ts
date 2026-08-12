@@ -547,9 +547,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				if (hadNonEmptyActiveSelection) this.requestRender();
 			}
 			this.lastClick = undefined;
-			return { consume: true };
+			// Do not consume focus reports: app-level input listeners (terminal
+			// focus tracking for notifications, clipboard-image hints) rely on
+			// them too, and the main-screen renderer lets them through.
+			return undefined;
 		}
-		if (data === FOCUS_IN) return { consume: true };
+		if (data === FOCUS_IN) return undefined;
 
 		const wheelEvent = this.parseWheelEvent(data);
 		if (wheelEvent) {

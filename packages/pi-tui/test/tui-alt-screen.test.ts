@@ -541,6 +541,29 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("lets focus reports reach app-level input listeners", async () => {
+		const terminal = new VirtualTerminal(20, 10);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("content", 0, 0));
+		// App-level listeners install after the renderer's own viewport listener;
+		// focus reports must still fan out to them (the main-screen path lets them
+		// through, and notification/clipboard features depend on it).
+		const seenByApp: string[] = [];
+		tui.addInputListener((data) => {
+			seenByApp.push(data);
+			return undefined;
+		});
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[O"); // FOCUS_OUT
+		terminal.sendInput("\x1b[I"); // FOCUS_IN
+		await terminal.waitForRender();
+		assert.deepStrictEqual(seenByApp, ["\x1b[O", "\x1b[I"]);
+
+		tui.stop();
+	});
+
 	it("scrolls the transcript by one line with custom bindings", async () => {
 		const originalKeybindings = getKeybindings();
 		const terminal = new VirtualTerminal(20, 10);
