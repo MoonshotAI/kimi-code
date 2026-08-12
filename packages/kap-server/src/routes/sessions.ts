@@ -40,11 +40,15 @@
  * `GET /sessions/{id}/warnings` surfaces session-level notices in the v1
  * `{ code, message, severity }` wire shape: the `agents-md-oversized` warning
  * (projected from the main agent's `IAgentProfileService.getAgentsMdWarning()`
- * — computed and cached when the agent binds a profile) and the
- * secondary-model early-validation warning (projected from the Session-scope
+ * — computed and cached when the agent binds a profile), the secondary-model
+ * early-validation warning (projected from the Session-scope
  * `ISessionSecondaryModelWarningService` — computed and cached when the main
- * agent is created). An unbound main agent or a valid/unset secondary model
- * yields an empty list, matching v1's "no warning" case.
+ * agent is created), and one `skill-load-failed` entry per
+ * `ISessionSkillCatalog` `getSkippedByPolicy()` result whose `SKILL.md` failed
+ * to parse (invalid frontmatter, unsupported `type`, …), so a skill dropped
+ * during load is reported instead of vanishing silently. An unbound main agent,
+ * a valid/unset secondary model, and a clean catalog together yield an empty
+ * list, matching v1's "no warning" case.
  *
  * **Wire fidelity**: mirrors v1's `toProtocolSession`
  * (`packages/agent-core/src/services/session/session.ts`), which populates
@@ -90,6 +94,7 @@ import {
   ISessionMetadata,
   ISessionLegacyService,
   ISessionSecondaryModelWarningService,
+  ISessionSkillCatalog,
   IEventService,
   IWorkspaceAliases,
   ISessionLifecycleService,
@@ -1061,6 +1066,18 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const secondaryModelWarning = session.accessor
           .get(ISessionSecondaryModelWarningService)
           .getSecondaryModelWarning();
+
+        // Surface any skill that got dropped during catalog load (invalid
+        // frontmatter, unsupported `type`, …) instead of leaving it silently
+        // missing from the skill list.
+        const skillCatalog = session.accessor.get(ISessionSkillCatalog);
+        await skillCatalog.ready;
+        const skillWarnings = skillCatalog.catalog.getSkippedByPolicy().map((skipped) => ({
+          code: 'skill-load-failed',
+          message: `Skill at ${skipped.path} was not loaded: ${skipped.reason}`,
+          severity: 'warning' as const,
+        }));
+
         const warnings = [
           ...(agentsMdWarning === undefined
             ? []
@@ -1080,6 +1097,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
                   severity: 'warning' as const,
                 },
               ]),
+          ...skillWarnings,
         ];
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
