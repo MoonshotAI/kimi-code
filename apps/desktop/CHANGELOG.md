@@ -1,5 +1,33 @@
 # kimi-code-app
 
+## 0.0.16
+
+### Patch Changes
+
+- [#204](https://github.com/MoonshotAI/kimi-code-app/pull/204) [`c5440b8`](https://github.com/MoonshotAI/kimi-code-app/commit/c5440b863d02f99457f48520c16c609eae73f12b) - 减少长会话中 AI 流式输出时的界面卡顿。
+
+- [#192](https://github.com/MoonshotAI/kimi-code-app/pull/192) [`5a0c0ef`](https://github.com/MoonshotAI/kimi-code-app/commit/5a0c0ef746638f5112573cb9bcdb173580fbb762) - 为没有文字说明的图标按钮补充悬停提示。
+
+- [#200](https://github.com/MoonshotAI/kimi-code-app/pull/200) [`d8790b9`](https://github.com/MoonshotAI/kimi-code-app/commit/d8790b9bc225ab89d8419f45619a8f0449eb2067) - 全屏图片预览四周增加留白，图片不再顶到屏幕边缘。
+
+- [#200](https://github.com/MoonshotAI/kimi-code-app/pull/200) [`d8790b9`](https://github.com/MoonshotAI/kimi-code-app/commit/d8790b9bc225ab89d8419f45619a8f0449eb2067) - 统一图片和视频全屏预览的样式：共用同一个视口右上角的圆形关闭按钮和相同的背景遮罩。
+
+- [#194](https://github.com/MoonshotAI/kimi-code-app/pull/194) [`863da83`](https://github.com/MoonshotAI/kimi-code-app/commit/863da8345795b2fbfd4067a6336e8389362c9173) - 加宽侧边栏可拖拽的最小宽度。
+
+- [#212](https://github.com/MoonshotAI/kimi-code-app/pull/212) [`4707ee6`](https://github.com/MoonshotAI/kimi-code-app/commit/4707ee6c77737f44cd0059b52aff2082f25e264d) - 修复会话内新建 PR 后，会话列表上的 PR 标记不刷新的问题。
+
+- [#212](https://github.com/MoonshotAI/kimi-code-app/pull/212) [`4707ee6`](https://github.com/MoonshotAI/kimi-code-app/commit/4707ee6c77737f44cd0059b52aff2082f25e264d) - 会话列表的 PR 标记改为带背景的小标签样式。
+
+- [#201](https://github.com/MoonshotAI/kimi-code-app/pull/201) [`aa78dac`](https://github.com/MoonshotAI/kimi-code-app/commit/aa78dac9903514f06477cbb0fc5275946d274e44) - 优化侧边栏 session 状态和排序逻辑。
+
+- [#200](https://github.com/MoonshotAI/kimi-code-app/pull/200) [`d8790b9`](https://github.com/MoonshotAI/kimi-code-app/commit/d8790b9bc225ab89d8419f45619a8f0449eb2067) - 查看图片或视频的工具结果现在点击后全屏预览，图片支持缩放。
+
+- [#202](https://github.com/MoonshotAI/kimi-code-app/pull/202) [`2b72850`](https://github.com/MoonshotAI/kimi-code-app/commit/2b728505b03ef293ac052d2e6d5e9fea36c253fb) - 减少窗口长时间运行后的内存和 CPU 占用。
+
+- [#203](https://github.com/MoonshotAI/kimi-code-app/pull/203) [`61ba25b`](https://github.com/MoonshotAI/kimi-code-app/commit/61ba25b278ac7ff7af9808e275749b0276915188) - 减少长会话使用过程中的内存占用和卡顿。
+
+- [#210](https://github.com/MoonshotAI/kimi-code-app/pull/210) [`852d2cc`](https://github.com/MoonshotAI/kimi-code-app/commit/852d2ccb22c46a7d259f05411a2700677996145d) - 按工作区分组视图新增「按最近活动」排序选项，在视图选项菜单中切换；新增工作区默认排到最上面。
+
 ## 0.0.15
 
 ### Patch Changes

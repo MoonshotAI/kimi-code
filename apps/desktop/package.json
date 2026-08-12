@@ -1,8 +1,8 @@
 {
   "name": "kimi-code-app",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "private": true,
-  "description": "Kimi Code desktop client \u2014 an Electron shell around the Kimi Code web UI.",
+  "description": "Kimi Code desktop client — an Electron shell around the Kimi Code web UI.",
   "author": "Moonshot AI",
   "homepage": "https://github.com/MoonshotAI/kimi-code-app",
   "type": "module",
