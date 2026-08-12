@@ -14,6 +14,7 @@ import {
   NO_ACTIVE_SESSION_MESSAGE,
 } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { mentionGroundingPart } from '../utils/file-mention-resolver';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
 import { extractMediaAttachments } from '../utils/image-placeholder';
 import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
@@ -294,9 +295,22 @@ export class EditorKeyboardController {
           host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
           return;
         }
+        // Mirror KimiTUI.sendNormalUserInput: resolve `@mention`s against the
+        // workspace and append a grounding part so a steered message doesn't
+        // lose the same "agent has to rediscover the file" fix (see #2688).
+        const grounding = mentionGroundingPart(
+          text,
+          host.state.appState.workDir,
+          host.state.appState.additionalDirs,
+        );
+        const mediaParts = editorExtraction.hasMedia ? editorExtraction.parts : undefined;
+        const parts =
+          grounding === undefined
+            ? mediaParts
+            : [...(mediaParts ?? [{ type: 'text' as const, text }]), grounding];
         items.push({
           text,
-          parts: editorExtraction.hasMedia ? editorExtraction.parts : undefined,
+          parts,
           imageAttachmentIds:
             editorExtraction.imageAttachmentIds.length > 0
               ? editorExtraction.imageAttachmentIds

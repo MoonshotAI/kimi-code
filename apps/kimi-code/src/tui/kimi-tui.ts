@@ -147,6 +147,7 @@ import {
 import { hasDispose, isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
+import { mentionGroundingPart } from './utils/file-mention-resolver';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
@@ -1353,12 +1354,26 @@ export class KimiTUI {
       session = await this.ensureSession();
       if (session === undefined) return;
     }
+    // `@mention` tokens are opaque text to the model — resolve any that
+    // point at a real file/dir and append a grounding part naming its
+    // absolute path, so the agent doesn't have to rediscover it with
+    // ls/find (see #2688). The grounding part is appended after whatever
+    // else is being sent (plain text, or text + media) and never replaces
+    // the transcript entry above, which still records the user's original
+    // `text` verbatim.
+    const grounding = mentionGroundingPart(
+      text,
+      this.state.appState.workDir,
+      this.state.appState.additionalDirs,
+    );
     if (extraction.hasMedia) {
       this.sendMessage(session, text, {
         hasMedia: true,
-        parts: extraction.parts,
+        parts: grounding === undefined ? extraction.parts : [...extraction.parts, grounding],
         imageAttachmentIds: extraction.imageAttachmentIds,
       });
+    } else if (grounding !== undefined) {
+      this.sendMessage(session, text, { parts: [{ type: 'text', text }, grounding] });
     } else {
       this.sendMessage(session, text);
     }
