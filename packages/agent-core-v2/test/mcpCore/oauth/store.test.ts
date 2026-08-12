@@ -82,7 +82,7 @@ describe('MCP OAuth credential identity', () => {
     await expect(service.hasTokens('linear', 'https://second.example.com/mcp')).resolves.toBe(false);
   });
 
-  it('reloads credentials written by another service after forgetting its cached provider', async () => {
+  it('reloads credentials written by another service before returning tokens', async () => {
     const store = createMemoryMcpOAuthStore();
     const workspaceService = new McpOAuthService({ store });
     const globalService = new McpOAuthService({ store });
@@ -92,9 +92,6 @@ describe('MCP OAuth credential identity', () => {
     const externalProvider = globalService.getProvider('notion', serverUrl);
     await externalProvider.ready;
     await externalProvider.saveTokens(token('new-token'));
-    await expect(workspaceService.hasTokens('notion', serverUrl)).resolves.toBe(false);
-
-    workspaceService.forgetProvider('notion', serverUrl);
     await expect(workspaceService.hasTokens('notion', serverUrl)).resolves.toBe(true);
   });
 

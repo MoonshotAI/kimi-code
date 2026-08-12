@@ -119,7 +119,10 @@ export class McpOAuthService {
 
     let authorizationUrl: URL | undefined;
     try {
-      const result = await auth(provider as OAuthClientProvider, { serverUrl });
+      const result = await auth(provider as OAuthClientProvider, {
+        serverUrl,
+        fetchFn: provider.createOAuthFetch(),
+      });
       if (result !== 'REDIRECT') {
         await callbackServer.close();
         this.coordinator?.notifyCredentialsChanged(serverName, serverUrl);
@@ -166,6 +169,7 @@ export class McpOAuthService {
         const finalResult = await auth(provider as OAuthClientProvider, {
           serverUrl,
           authorizationCode: code,
+          fetchFn: provider.createOAuthFetch(),
         });
         if (finalResult !== 'AUTHORIZED') {
           throw new Error2(
@@ -192,7 +196,7 @@ export class McpOAuthService {
     serverUrl: string | URL,
     scope: 'all' | 'client' | 'tokens' | 'discovery' = 'all',
   ): Promise<void> {
-    return this.getProvider(serverName, serverUrl).invalidateCredentials(scope);
+    return this.getProvider(serverName, serverUrl).clearCredentials(scope);
   }
 
   forgetProvider(serverName: string, serverUrl: string | URL): void {

@@ -190,3 +190,6 @@ export type {
   RefreshProviderScope,
   RefreshResult,
 } from './refreshProviderModels';
+
+export type { OAuthTokenTransactionOptions } from './oauth-token-transaction';
+export { OAuthTokenTransaction } from './oauth-token-transaction';

@@ -133,11 +133,14 @@ export class McpOAuthService {
     // See invalidateStaleRegistration: a reused registration whose redirect
     // URIs no longer cover this flow's random-port callback would be rejected
     // at the authorization endpoint with an error only the browser ever sees.
-    provider.invalidateStaleRegistration(callbackServer.redirectUri);
+    await provider.invalidateStaleRegistration(callbackServer.redirectUri);
 
     let authorizationUrl: URL | undefined;
     try {
-      const result = await auth(provider as OAuthClientProvider, { serverUrl });
+      const result = await auth(provider as OAuthClientProvider, {
+        serverUrl,
+        fetchFn: provider.createOAuthFetch(),
+      });
       if (result !== 'REDIRECT') {
         // Tokens already valid (e.g. unexpired refresh). Nothing to do.
         await callbackServer.close();
@@ -179,6 +182,7 @@ export class McpOAuthService {
         const finalResult = await auth(provider as OAuthClientProvider, {
           serverUrl,
           authorizationCode: code,
+          fetchFn: provider.createOAuthFetch(),
         });
         if (finalResult !== 'AUTHORIZED') {
           throw new Error(`OAuth code exchange returned "${finalResult}" instead of AUTHORIZED`);
@@ -205,8 +209,8 @@ export class McpOAuthService {
     serverName: string,
     serverUrl: string | URL,
     scope: 'all' | 'client' | 'tokens' | 'discovery' = 'all',
-  ): void {
-    this.getProvider(serverName, serverUrl).invalidateCredentials(scope);
+  ): Promise<void> {
+    return this.getProvider(serverName, serverUrl).clearCredentials(scope);
   }
 
   forgetProvider(serverName: string, serverUrl: string | URL): void {

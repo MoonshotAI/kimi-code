@@ -904,7 +904,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async resetMcpServerAuth({ locator }: McpServerLocatorPayload): Promise<void> {
     const server = await this.resolveAppMcpServer(locator);
     const config = requireRemoteMcpConfig(server.runtimeName, server.config);
-    this.globalMcpOAuth.invalidate(server.runtimeName, config.url);
+    await this.globalMcpOAuth.invalidate(server.runtimeName, config.url);
     this.mcpOAuthCoordinator.notifyCredentialsInvalidated(server.runtimeName, config.url);
   }
 

@@ -656,7 +656,7 @@ describe('McpConnectionManager', () => {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
     } satisfies OAuthClientInformationFull);
-    provider.saveTokens({
+    await provider.saveTokens({
       access_token: 'stale-access-token',
       refresh_token: 'stale-refresh-token',
       token_type: 'Bearer',
@@ -916,7 +916,7 @@ describe('Session MCP startup', () => {
         throw new Error('Expected session MCP manager to own an OAuth service');
       }
       const provider = oauthService.getProvider('gated', 'https://example.com/mcp');
-      provider.saveTokens({
+      await provider.saveTokens({
         access_token: 'session-token',
         token_type: 'Bearer',
       } satisfies OAuthTokens);
