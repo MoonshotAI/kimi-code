@@ -146,6 +146,31 @@ describe('WorkspaceMcpService', () => {
     expect(reconnect).toHaveBeenCalledWith('remote');
   });
 
+  it('reconnects after a pending attempt settles when credentials change', async () => {
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+    vi.spyOn(manager, 'get').mockReturnValue({
+      name: 'remote',
+      transport: 'http',
+      status: 'pending',
+      toolCount: 0,
+    });
+    vi.spyOn(manager, 'getRemoteServerUrl').mockReturnValue('https://mcp.example.test/mcp');
+    const reconnect = vi.spyOn(manager, 'reconnectAndJoin').mockResolvedValue(undefined);
+    let statusListener: Parameters<McpConnectionManager['onStatusChange']>[0] | undefined;
+    vi.spyOn(manager, 'onStatusChange').mockImplementation((listener) => {
+      statusListener = listener;
+      return () => {};
+    });
+
+    authCoordinator.notifyCredentialsChanged('remote', 'https://mcp.example.test/mcp');
+    expect(reconnect).not.toHaveBeenCalled();
+    statusListener?.({ name: 'remote', transport: 'http', status: 'needs-auth', toolCount: 0 });
+
+    await vi.waitFor(() => expect(reconnect).toHaveBeenCalledOnce());
+  });
+
   it('forgets cached credentials for a matching disabled server without reconnecting', async () => {
     const service = createService();
     manager = service.connectionManager();

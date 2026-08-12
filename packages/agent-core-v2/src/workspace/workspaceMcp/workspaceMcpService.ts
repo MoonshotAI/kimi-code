@@ -37,7 +37,9 @@
  * failures are status entries). The manager (and its stdio child processes,
  * whose cwd is the handler root) lives as long as the handler — i.e. the
  * process — so a stateful stdio server is shared by concurrent sessions of
- * the workspace rather than owned by one session. Bound at Workspace scope.
+ * the workspace rather than owned by one session. Credential changes from
+ * `mcpAuthCoordinator` invalidate cached OAuth providers and reconnect the
+ * matching manager entry. Bound at Workspace scope.
  *
  * The client name announced to MCP servers — on initialize and on OAuth
  * dynamic registration — is the identity snapshot's slug. Every manager it
@@ -127,13 +129,25 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
           return;
         }
         this.oauthService.forgetProvider(event.serverName, event.serverUrl);
-        if (entry.status === 'disabled') return;
-        if (event.kind !== 'invalidated' && entry.status !== 'needs-auth') return;
-        void this.ready
-          .then(() => this.mutate(() => this.manager.reconnectAndJoin(event.serverName)))
-          .catch((error: unknown) => {
-            this.log.warn(`mcp reconnect after credentials change failed: ${String(error)}`);
+        if (entry.status === 'disabled' || entry.status === 'removed') return;
+        const reconnect = () => {
+          void this.ready
+            .then(() => this.mutate(() => this.manager.reconnectAndJoin(event.serverName)))
+            .catch((error: unknown) => {
+              this.log.warn(`mcp reconnect after credentials change failed: ${String(error)}`);
+            });
+        };
+        if (entry.status === 'pending') {
+          const unsubscribe = this.manager.onStatusChange((next) => {
+            if (next.name !== event.serverName || next.status === 'pending') return;
+            unsubscribe();
+            if (next.status !== 'disabled' && next.status !== 'removed') reconnect();
           });
+          this._register({ dispose: unsubscribe });
+          return;
+        }
+        if (event.kind !== 'invalidated' && entry.status !== 'needs-auth') return;
+        reconnect();
       }),
     });
     this._register(

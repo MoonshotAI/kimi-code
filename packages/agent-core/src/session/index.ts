@@ -343,6 +343,20 @@ export class Session {
     if (serverUrl === undefined || canonicalMcpOAuthResource(serverUrl) !== event.serverUrl) return;
     this.mcp.oauthService?.forgetProvider(event.serverName, event.serverUrl);
     if (entry.status === 'disabled') return;
+    if (entry.status === 'pending') {
+      await new Promise<void>((resolve, reject) => {
+        const unsubscribe = this.mcp.onStatusChange((next) => {
+          if (next.name !== event.serverName || next.status === 'pending') return;
+          unsubscribe();
+          if (next.status === 'disabled') {
+            resolve();
+            return;
+          }
+          void this.mcp.reconnectAndJoin(event.serverName).then(resolve, reject);
+        });
+      });
+      return;
+    }
     if (event.kind !== 'invalidated' && entry.status !== 'needs-auth') return;
     await this.mcp.reconnectAndJoin(event.serverName);
   }
