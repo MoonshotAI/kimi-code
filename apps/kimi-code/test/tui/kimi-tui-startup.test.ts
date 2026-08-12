@@ -309,12 +309,11 @@ describe('KimiTUI startup', () => {
     });
   });
 
-  it('mounts the docked fullscreen layout when tui_mode is fullscreen', async () => {
+  it('mounts the docked fullscreen layout when KIMI_CODE_TUI_FULL_SCREEN=1', async () => {
     const harness = makeHarness(makeSession());
-    const driver = makeDriver(harness, {
-      ...makeStartupInput({}, { tuiMode: 'fullscreen' }),
-      engineV2: true,
-    });
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
+    const driver = makeDriver(harness, { ...makeStartupInput(), engineV2: true });
+    vi.unstubAllEnvs();
 
     // buildLayout() runs in the constructor: fullscreen keeps the root
     // children list empty and mounts the layout root instead.

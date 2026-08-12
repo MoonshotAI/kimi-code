@@ -60,7 +60,6 @@ auto_install = false
 
     expect(config).toEqual({
       theme: 'light',
-      tuiMode: 'regular',
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
@@ -78,16 +77,6 @@ disable_paste_burst = true
 `);
 
     expect(config.disablePasteBurst).toBe(true);
-  });
-
-  it('defaults tui_mode to regular and parses fullscreen', () => {
-    expect(parseTuiConfig('').tuiMode).toBe('regular');
-
-    const config = parseTuiConfig(`
-tui_mode = "fullscreen"
-`);
-
-    expect(config.tuiMode).toBe('fullscreen');
   });
 
   it('defaults render_latex to true and parses false', () => {
@@ -117,7 +106,6 @@ command = "   "
 
     expect(config).toEqual({
       theme: 'auto',
-      tuiMode: 'regular',
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
@@ -165,7 +153,6 @@ command = "   "
 
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
-      tuiMode: 'regular',
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,

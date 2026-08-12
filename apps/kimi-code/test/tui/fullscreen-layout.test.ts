@@ -5,7 +5,7 @@
  * shrink distribution with no minSize, so a tall transcript crushed it and
  * the editor's bottom border row was clipped off screen.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { Spacer, type Terminal, TuiAltScreen } from '@moonshot-ai/pi-tui';
 import { VirtualTerminal } from '../../../../packages/pi-tui/test/virtual-terminal';
@@ -68,10 +68,12 @@ async function mountFullscreen(): Promise<{
   vt: VirtualTerminal;
 }> {
   const opts: KimiTUIOptions = {
-    initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen' },
+    initialAppState: fakeInitialAppState(),
     startup: { continueLast: false, yolo: false, auto: false, plan: false },
   };
+  vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
   const state = createTUIState(opts);
+  vi.unstubAllEnvs();
   const vt = new VirtualTerminal(WIDTH, HEIGHT);
   (state.ui as { terminal: Terminal }).terminal = vt;
 

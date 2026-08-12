@@ -21,9 +21,6 @@ export const TuiThemeSchema = z.string();
 
 export const NotificationConditionSchema = z.enum(['unfocused', 'always']);
 
-export const TuiModeSchema = z.enum(['regular', 'fullscreen']);
-export type TuiMode = z.infer<typeof TuiModeSchema>;
-
 export const NotificationsConfigSchema = z.object({
   enabled: z.boolean(),
   condition: NotificationConditionSchema,
@@ -56,7 +53,6 @@ export const DEFAULT_STATUS_LINE_CONFIG: StatusLineConfig = {
 
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
-  tui_mode: TuiModeSchema.optional(),
   render_latex: z.boolean().optional(),
   disable_paste_burst: z.boolean().optional(),
   cache_expiry_hint: z.boolean().optional(),
@@ -81,9 +77,6 @@ export const TuiConfigFileSchema = z.object({
 
 export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
-  tuiMode: TuiModeSchema.optional(),
   /** LaTeX math rendering in Markdown; optional only so older hand-built test
    * fixtures still typecheck. */
   renderLatex: z.boolean().optional(),
@@ -115,7 +108,6 @@ export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
 
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
-  tuiMode: 'regular',
   renderLatex: true,
   disablePasteBurst: false,
   cacheExpiryHint: true,
@@ -203,7 +195,6 @@ export function normalizeTuiConfig(
       .map((item) => item as StatusLineItem) ?? null;
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
-    tuiMode: config.tui_mode ?? DEFAULT_TUI_CONFIG.tuiMode,
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
@@ -254,7 +245,6 @@ export function renderTuiConfig(config: TuiConfig): string {
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
 
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
-tui_mode = "${config.tuiMode ?? 'regular'}" # "regular" | "fullscreen" (alternate-screen UI; applies on next start)
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit

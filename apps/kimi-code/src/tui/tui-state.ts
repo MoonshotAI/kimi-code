@@ -80,10 +80,11 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const theme = currentTheme;
 
   const terminal = new ProcessTerminal();
-  const tuiMode = initialAppState.tuiMode ?? DEFAULT_TUI_CONFIG.tuiMode ?? 'regular';
   setMarkdownRenderLatex(initialAppState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true);
+  // Fullscreen is experimental and env-gated for now: KIMI_CODE_TUI_FULL_SCREEN=1.
+  const fullscreen = process.env['KIMI_CODE_TUI_FULL_SCREEN'] === '1';
   const ui =
-    tuiMode === 'fullscreen'
+    fullscreen
       ? new TuiAltScreen(terminal, undefined, undefined, {
           // Mouse capture takes over the terminal's native link activation, so
           // route OSC 8 clicks through our own opener.

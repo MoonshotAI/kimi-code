@@ -9,7 +9,7 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { NotificationsConfig, StatusLineConfig, TuiMode, UpgradePreferences } from './config';
+import type { NotificationsConfig, StatusLineConfig, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
 
@@ -69,8 +69,6 @@ export interface AppState {
   editorCommand: string | null;
   /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */
   disablePasteBurst?: boolean;
-  /** Renderer selection from tui.toml; defaults to 'regular' when absent from older fixtures. */
-  tuiMode?: TuiMode;
   /** LaTeX math rendering in Markdown; defaults to true when absent from older fixtures. */
   renderLatex?: boolean;
   /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
