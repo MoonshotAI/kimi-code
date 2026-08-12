@@ -511,9 +511,9 @@ function openPullRequest(): void {
     <div v-if="session.cwdLabel !== undefined" class="sub">
       <Icon class="sub-icon" name="folder-closed" size="sm" />
       <span class="sub-text">{{ session.cwdLabel }}</span>
-      <!-- PR association (v2 git domain): a quiet chip at the second line's
+      <!-- PR association (v2 git domain): a small tag at the second line's
            right edge; click opens the PR (system browser / new tab). Open PRs
-           stand out in success green, merged/closed stay faint. -->
+           stand out in success green, merged in purple, closed stays neutral. -->
       <button
         v-if="session.pullRequest"
         type="button"
@@ -714,36 +714,43 @@ function openPullRequest(): void {
   color: var(--color-text-muted);
 }
 
-/* PR chip at the second line's right edge. State colors follow GitHub: open =
-   success green, merged = --color-done purple, closed = quiet faint. */
+/* PR tag at the second line's right edge — a mini Badge (§03 recipe: soft
+   ground + state color + hairline edge, radius-sm corners). State colors
+   follow GitHub: open = success green, merged = --color-done purple,
+   closed = quiet neutral. */
 .pr {
   display: inline-flex;
   align-items: center;
   gap: var(--space-05);
   flex: none;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--color-text-faint);
+  padding: 1px var(--space-1);
+  border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
   font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  line-height: var(--leading-tight);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  line-height: 1;
   cursor: pointer;
 }
 .pr:hover {
-  color: var(--color-text-muted);
+  border-color: var(--color-line-strong);
 }
 .pr:focus-visible {
   outline: none;
-  border-radius: var(--radius-xs);
   box-shadow: var(--p-focus-ring);
 }
 .pr--open,
 .pr--open:hover {
+  background: var(--color-success-soft);
+  border-color: var(--color-success-bd);
   color: var(--color-success);
 }
 .pr--merged,
 .pr--merged:hover {
+  background: var(--color-done-soft);
+  border-color: var(--color-done-bd);
   color: var(--color-done);
 }
 .sub-text {

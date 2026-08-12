@@ -3412,10 +3412,14 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
   // wolf when opening a historical session.
   workspaceState.finishPromptLocal(sid, { turnWasActive });
 
-  // For the session on screen, refresh git status (edits the agent just made)
-  // and runtime status (model/context usage may have changed this turn).
+  // Refresh git status after every turn (the agent may have edited files or
+  // opened a PR): for the on-screen session this drives the header; the load
+  // also mirrors pullRequest into the sessions pool — the sidebar row's only
+  // live update channel, since WS events never carry the git domain.
+  void workspaceState.loadGitStatus(sid);
   if (sid === rawState.activeSessionId) {
-    void workspaceState.loadGitStatus(sid);
+    // Runtime status (model/context usage may have changed this turn) is only
+    // shown for the session on screen.
     void refreshSessionStatus(sid);
   } else if (status === 'idle' && !goalActive) {
     // A background session finished a turn the user hasn't seen — light up its

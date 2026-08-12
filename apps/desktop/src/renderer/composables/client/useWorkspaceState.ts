@@ -98,6 +98,23 @@ function isTaskAlreadyFinishedError(err: unknown): boolean {
   return isDaemonApiError(err) && err.code === TASK_ALREADY_FINISHED_CODE;
 }
 
+/** Narrow the fs:git_status PR payload to the session-pool shape. The daemon
+ *  normalizes `state` to open/closed/merged (anything else fails its parse and
+ *  comes back as null), so an unrecognized value means a newer daemon — treat
+ *  it as no-PR rather than render a chip with unknown styling. */
+function toSessionPullRequest(
+  pr: { number: number; state: string; url: string } | null,
+): AppSession['pullRequest'] {
+  if (!pr) return null;
+  if (pr.state !== 'open' && pr.state !== 'closed' && pr.state !== 'merged') return null;
+  return { number: pr.number, state: pr.state, url: pr.url };
+}
+
+function samePullRequest(a: AppSession['pullRequest'], b: AppSession['pullRequest']): boolean {
+  if (a == null || b == null) return a == null && b == null;
+  return a.number === b.number && a.state === b.state && a.url === b.url;
+}
+
 /**
  * Question ids with an in-flight respond/dismiss, keyed by questionId with the
  * action kind. Drives the card's loading state and guards against a duplicate
@@ -516,6 +533,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         ...rawState.gitStatusBySession,
         [sessionId]: result,
       };
+      // The sidebar row's PR chip reads session.pullRequest, which otherwise
+      // only the v2 list's git domain seeds (WS events never carry it) —
+      // mirror the fresh value into the pool so the row updates together
+      // with the header. Guarded by a field compare: loadGitStatus runs on
+      // every session select, so an unchanged PR must not churn the pool.
+      const pr = toSessionPullRequest(result.pullRequest);
+      updateSession(sessionId, (s) => (samePullRequest(s.pullRequest, pr) ? s : { ...s, pullRequest: pr }));
     } catch {
       // Stale/old sessions may 404 — leave undefined, no crash
     }
