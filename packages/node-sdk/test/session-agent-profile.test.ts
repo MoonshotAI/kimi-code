@@ -129,4 +129,44 @@ describe('SDKRpcClientV2.createSession startup agent profile', () => {
       await rpc.close();
     }
   });
+
+  it('binds an --agent-file profile that is not discoverable from user/project agent dirs', async () => {
+    const homeDir = await makeTempDir('kimi-sdk-agent-file-home-');
+    const workDir = await makeTempDir('kimi-sdk-agent-file-work-');
+    await writeTestHome(homeDir);
+    // Supplied solely through `agentFiles`: the file lives at the (otherwise
+    // empty) workDir root — not under <homeDir>/agents and not under any
+    // project agent root (.kimi-code/agents / .agents/agents) — so only the
+    // engine's explicit loader (which the SDK seeds from `agentFiles`) can
+    // register it. Without that registration the parsed profile name is absent
+    // from the session catalog and `profile.bind` would reject it as unknown.
+    const agentFilePath = join(workDir, 'explicit-only.md');
+    await writeFile(
+      agentFilePath,
+      `---
+name: explicit-only
+description: Agent-file-only profile for the interactive --agent-file bind.
+tools:
+  - Read
+  - Glob
+---
+
+You are an explicit agent-file-only profile.
+`,
+      'utf-8',
+    );
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const summary = await rpc.createSession({
+        workDir,
+        model: 'kimi-test-model',
+        agentFiles: [agentFilePath],
+      });
+      const data = await mainAgentProfileData(rpc, summary.id);
+      expect(data.profileName).toBe('explicit-only');
+      expect(data.activeToolNames).toEqual(['Read', 'Glob']);
+    } finally {
+      await rpc.close();
+    }
+  });
 });

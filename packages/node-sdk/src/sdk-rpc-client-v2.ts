@@ -180,6 +180,7 @@ import {
   IBootstrapService,
   IConfigService,
   IEventService,
+  IExplicitAgentProfileLoader,
   IHostEnvironment,
   IHostFileSystem,
   IModelCatalog,
@@ -1090,6 +1091,33 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // — so a profile's `tools` / `disallowedTools` policy is enforced in
     // interactive sessions too, not just `-p`.
     const agentProfileName = await this.resolveStartupAgentProfile(input, workDir);
+    // Register `--agent-file` profiles with the engine before the main agent
+    // binds them: the workspace explicit loader reads only
+    // `IBootstrapService.args.agentFiles`, and this client's bootstrap seeds
+    // only `skillDirs`, so an agentfile supplied solely through `agentFiles`
+    // would otherwise be absent from the session catalog and `profile.bind`
+    // would reject it as an unknown profile. Seed the session's files through
+    // the same channel `run-v2-print` uses at bootstrap, then re-arm the
+    // workspace explicit loader (`handlerFor` is create-or-get, so a
+    // pre-existing handler would otherwise keep a stale explicit contribution)
+    // so the catalog re-projects before the bind below.
+    const sessionAgentFiles =
+      input.agentFiles !== undefined && input.agentFiles.length > 0
+        ? [...input.agentFiles]
+        : undefined;
+    const bootstrapService = this.engineAccessor.get(IBootstrapService);
+    // `bootstrap.args` is the plain object this client seeded at bootstrap; the
+    // `HostArgs` fields are typed `readonly`, but nothing re-derives them after
+    // construction, so the session's files ride the same channel `run-v2-print`
+    // seeds at bootstrap time.
+    const hostArgs = bootstrapService.args as { agentFiles?: readonly string[] };
+    // Only touch the channel when this session has files or a previous session
+    // seeded the process-global args — clearing on the no-agent-file path stops
+    // a prior session's files leaking into a fresh workspace handler.
+    if (sessionAgentFiles !== undefined || hostArgs.agentFiles !== undefined) {
+      hostArgs.agentFiles = sessionAgentFiles;
+      await handler.accessor.get(IExplicitAgentProfileLoader).reload();
+    }
     if (
       agentProfileName !== undefined ||
       input.model !== undefined ||
