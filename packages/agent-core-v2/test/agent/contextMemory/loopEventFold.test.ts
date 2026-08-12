@@ -231,11 +231,7 @@ describe('loop-event fold parity', () => {
     ]);
   });
 
-  it('drops a step whose thinking block has real content but no provider signature', () => {
-    // An interrupted turn leaves unsigned thinking behind; sealed into
-    // history it serializes to neither content nor tool calls on
-    // OpenAI-compatible providers, and strict gateways reject every later
-    // request with a 400 (#1404).
+  it('seals a step whose thinking block has real content', () => {
     context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
     context.appendLoopEvent({
       type: 'content.part',
@@ -244,7 +240,7 @@ describe('loop-event fold parity', () => {
     });
     context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
 
-    expect(context.get()).toEqual([]);
+    expect(context.get().at(-1)?.content).toEqual([{ type: 'think', think: 'real reasoning' }]);
   });
 
   it('seals a step whose empty thinking block carries a provider signature', () => {
