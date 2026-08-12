@@ -42,7 +42,10 @@
  * transform's `setDefined` drops those). The kosong
  * persistence bridge then pushes the change into the registries, which is
  * also what invalidates the catalog cache. Multi-step sequences are
- * serialized through `enqueueProviderWrite`.
+ * serialized through `enqueueProviderWrite`. Delete additionally cascades
+ * into the `[secondary_model]` subagent pool (filtering entries whose model
+ * alias disappeared, clearing the section when its default dangles) so the
+ * engine's create/resume pool validation never meets a dangling pool.
  */
 
 import {
@@ -68,6 +71,10 @@ import {
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from '@moonshot-ai/agent-core-v2/app/kosongConfig/configSection';
+import {
+  SECONDARY_MODEL_SECTION,
+  type SecondaryModelConfig,
+} from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -174,6 +181,29 @@ async function loadConfig(core: Scope): Promise<IConfigService> {
   await config.ready;
   await core.accessor.get(IKosongConfigService).ready;
   return config;
+}
+
+/**
+ * Provider-deletion cascade for the `[secondary_model]` subagent pool,
+ * mirroring the SDK's `planProviderRemoval`: pool entries naming a removed
+ * model alias are filtered out, and the whole section is cleared (`null` →
+ * `replace` drops it) when its effective default (`default_model`, or the
+ * legacy recipe's `model` fallback) dangles — a surviving pool table without
+ * its default would fail pool validation on every session create.
+ */
+function cascadeSecondaryModelPool(
+  section: SecondaryModelConfig | undefined,
+  survivingModels: Record<string, unknown>,
+): SecondaryModelConfig | null | undefined {
+  if (section === undefined) return undefined;
+  const defaultAlias = section.defaultModel ?? section.model;
+  if (defaultAlias !== undefined && !(defaultAlias in survivingModels)) return null;
+  const pool = section.models;
+  if (pool === undefined) return undefined;
+  const entries = Object.entries(pool);
+  const surviving = entries.filter(([alias]) => alias in survivingModels);
+  if (surviving.length === entries.length) return undefined;
+  return { ...section, models: Object.fromEntries(surviving) };
 }
 
 async function loadDiscovery(core: Scope): Promise<IProviderDiscoveryService> {
@@ -764,6 +794,13 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         );
         if (Object.keys(restModels).length !== Object.keys(models).length) {
           await config.replace(MODELS_SECTION, restModels);
+        }
+        const secondaryModel = config.inspect<SecondaryModelConfig>(
+          SECONDARY_MODEL_SECTION,
+        ).userValue;
+        const cascadedPool = cascadeSecondaryModelPool(secondaryModel, restModels);
+        if (cascadedPool !== undefined) {
+          await config.replace(SECONDARY_MODEL_SECTION, cascadedPool);
         }
         (reply as unknown as StatusReply).code(204).send();
       });

@@ -58,6 +58,21 @@ const DANGLING_DEFAULT_TOML = [
   '',
 ].join('\n');
 
+/** Subagent pool whose default survives an openai deletion; one entry dangles. */
+const POOL_TOML = [
+  DEFAULTED_TOML,
+  '[secondary_model]',
+  'default_model = "k2"',
+  '',
+  '[secondary_model.models]',
+  'k2 = "fast"',
+  'gpt4o = "smart"',
+  '',
+].join('\n');
+
+/** Subagent pool whose effective default belongs to the deleted provider. */
+const POOL_DANGLING_DEFAULT_TOML = POOL_TOML.replace('default_model = "k2"', 'default_model = "gpt4o"');
+
 const MANAGED_TOML = [
   '[providers."managed:kimi-code"]',
   'type = "kimi"',
@@ -451,6 +466,29 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(onDisk['models']).toEqual({
       k2: { provider: 'kimi', model: 'kimi-k2', max_context_size: 131072 },
     });
+  });
+
+  it('filters secondary_model pool entries whose provider was deleted', async () => {
+    await boot(POOL_TOML);
+    const { status } = await deleteJson<unknown>('/api/v1/providers/openai');
+    expect(status).toBe(204);
+
+    const onDisk = await readConfigToml();
+    expect(onDisk['secondary_model']).toEqual({
+      default_model: 'k2',
+      models: { k2: 'fast' },
+    });
+  });
+
+  it('drops the secondary_model section when its default dangles after deletion', async () => {
+    await boot(POOL_DANGLING_DEFAULT_TOML);
+    const { status } = await deleteJson<unknown>('/api/v1/providers/openai');
+    expect(status).toBe(204);
+
+    // A leftover pool table without its default would fail the engine's pool
+    // validation on every session create — the whole section goes instead.
+    const onDisk = await readConfigToml();
+    expect(onDisk['secondary_model']).toBeUndefined();
   });
 
   it('round-trips a created provider: delete removes every trace from config.toml', async () => {
