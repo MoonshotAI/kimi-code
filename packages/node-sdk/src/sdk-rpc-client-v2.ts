@@ -2195,10 +2195,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const inspections = await this.inspectAppMcpServers(
       servers.map((server) => ({ source: 'global', name: server.name })),
     );
-    return inspections.map((server) => ({
-      name: server.runtimeName,
-      authStatus: legacyGlobalMcpAuthState(server),
-    }));
+    const oauth = await this.globalMcpOAuthService();
+    return Promise.all(
+      inspections.map(async (server) => ({
+        name: server.runtimeName,
+        authStatus: legacyGlobalMcpAuthState(
+          server,
+          server.authStatus === 'unavailable' &&
+            server.config.transport !== 'stdio' &&
+            (await oauth.hasTokens(server.runtimeName, server.config.url)),
+        ),
+      })),
+    );
   }
 
   override async inspectAppMcpServers(
@@ -2612,8 +2620,10 @@ function configuredMcpAuthState(
 
 function legacyGlobalMcpAuthState(
   server: AppMcpServerInspection,
+  credentialPresent: boolean,
 ): GlobalMcpServerAuthState {
   if (server.authStatus !== 'unavailable') return server.authStatus;
+  if (credentialPresent) return 'oauth-authorized';
   return server.config.transport !== 'stdio' && server.config.auth === 'oauth'
     ? 'oauth-required'
     : 'not-applicable';

@@ -3592,6 +3592,12 @@ describe('v1↔v2 global MCP parity', () => {
       await externalOAuth
         .getProvider('oauth-stale', statusServer.oauthUrl)
         .saveTokens({ access_token: 'stale-test-access-token', token_type: 'Bearer' });
+      await externalOAuth
+        .getProvider('unavailable-explicit', statusServer.unavailableUrl)
+        .saveTokens({ access_token: 'offline-test-access-token', token_type: 'Bearer' });
+      await externalOAuth
+        .getProvider('unavailable-dynamic', statusServer.unavailableUrl)
+        .saveTokens({ access_token: 'offline-test-access-token', token_type: 'Bearer' });
     }
 
     try {
@@ -3640,8 +3646,8 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'oauth-required', authStatus: 'oauth-required' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
         { name: 'oauth-stale', authStatus: 'oauth-required' },
-        { name: 'unavailable-explicit', authStatus: 'oauth-required' },
-        { name: 'unavailable-dynamic', authStatus: 'not-applicable' },
+        { name: 'unavailable-explicit', authStatus: 'oauth-authorized' },
+        { name: 'unavailable-dynamic', authStatus: 'oauth-authorized' },
       ]);
     } finally {
       await closeGlobalMcpPair(pair);

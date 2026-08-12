@@ -801,7 +801,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     });
     return inspections.map((server) => ({
       name: server.runtimeName,
-      authStatus: legacyGlobalMcpAuthState(server),
+      authStatus: legacyGlobalMcpAuthState(
+        server,
+        server.authStatus === 'unavailable' &&
+          server.config.transport !== 'stdio' &&
+          this.globalMcpOAuth.hasTokens(server.runtimeName, server.config.url),
+      ),
     }));
   }
 
@@ -1684,8 +1689,10 @@ function configuredMcpAuthState(
 
 function legacyGlobalMcpAuthState(
   server: AppMcpServerInspection,
+  credentialPresent: boolean,
 ): GlobalMcpServerAuthState {
   if (server.authStatus !== 'unavailable') return server.authStatus;
+  if (credentialPresent) return 'oauth-authorized';
   return server.config.transport !== 'stdio' && server.config.auth === 'oauth'
     ? 'oauth-required'
     : 'not-applicable';
