@@ -11,6 +11,9 @@
  * classification (already-converted errors crossing an outer catch pass
  * through without re-consulting). The developer-role model detection lives
  * here.
+ *
+ * Its tool-call-id policy preserves Kimi's canonical native id shape; see
+ * `KIMI_NATIVE_TOOL_CALL_ID` for the rationale and trade-off.
  */
 
 import OpenAI from 'openai';
@@ -62,7 +65,10 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from '../request-auth';
-import { normalizeToolCallIdsForProvider, sanitizeOpenAIResponsesCallId } from '../tool-call-id';
+import {
+  normalizeToolCallIdsForProvider,
+  sanitizeOpenAIResponsesCallIdPreservingNative,
+} from '../tool-call-id';
 
 function normalizeResponsesFinishReason(
   status: string | null | undefined,
@@ -94,7 +100,7 @@ function normalizeResponsesFinishReason(
 
 type RawObject = Record<string, unknown>;
 const OPENAI_RESPONSES_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
-  normalize: (id) => sanitizeOpenAIResponsesCallId(id, 64),
+  normalize: (id) => sanitizeOpenAIResponsesCallIdPreservingNative(id, 64),
   maxLength: 64,
 };
 

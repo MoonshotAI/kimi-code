@@ -453,6 +453,52 @@ describe('KimiChatProvider', () => {
       ]);
     });
 
+    it('preserves canonical native tool call ids (functions.<name>:<idx>) targeting Kimi', async () => {
+      // Kimi-K2 requires its native id format echoed back verbatim in history; sanitizing it
+      // to `functions_Read_0` makes the model reason without emitting a tool call. The pair
+      // above ("normalizes invalid historical tool call ids") pins the complementary case:
+      // a non-canonical id is still rewritten for cross-provider safety.
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Read a file' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'functions.Read:0',
+              name: 'Read',
+              arguments: '{"path":"/tmp/file"}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'content' }],
+          toolCallId: 'functions.Read:0',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        { role: 'user', content: 'Read a file' },
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              type: 'function',
+              id: 'functions.Read:0',
+              function: { name: 'Read', arguments: '{"path":"/tmp/file"}' },
+            },
+          ],
+        },
+        { role: 'tool', content: 'content', tool_call_id: 'functions.Read:0' },
+      ]);
+    });
+
     it('tool call with image result', async () => {
       const provider = createProvider();
       const toolCall: ToolCall = {

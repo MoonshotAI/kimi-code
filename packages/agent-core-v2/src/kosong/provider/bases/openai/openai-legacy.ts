@@ -22,6 +22,9 @@
  *    tool-result `extract_text` fallback and tool-declaration-only skip are
  *    handed over to the trait wholesale: every history message is
  *    base-converted, post-processed by the hook, and dropped on `null`.
+ *
+ * Its tool-call-id policy preserves Kimi's canonical native id shape; see
+ * `KIMI_NATIVE_TOOL_CALL_ID` for the rationale and trade-off.
  */
 
 import OpenAI from 'openai';
@@ -78,13 +81,16 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from '../request-auth';
-import { normalizeToolCallIdsForProvider, sanitizeToolCallId } from '../tool-call-id';
+import {
+  normalizeToolCallIdsForProvider,
+  sanitizeToolCallIdPreservingNative,
+} from '../tool-call-id';
 
 
 const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
 
 export const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
-  normalize: (id) => sanitizeToolCallId(id, 64),
+  normalize: (id) => sanitizeToolCallIdPreservingNative(id, 64),
   maxLength: 64,
 };
 
