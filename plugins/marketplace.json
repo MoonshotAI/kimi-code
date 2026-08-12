@@ -7,7 +7,10 @@
       "displayName": "Kimi Datasource",
       "version": "3.3.0",
       "description": "Official datasource workflows.",
-      "keywords": ["data", "mcp"],
+      "keywords": [
+        "data",
+        "mcp"
+      ],
       "source": "./official/kimi-datasource"
     },
     {
@@ -16,7 +19,11 @@
       "displayName": "Kimi WebBridge",
       "version": "1.11.3",
       "description": "Control your real browser from Kimi Code.",
-      "keywords": ["browser", "automation", "webbridge"],
+      "keywords": [
+        "browser",
+        "automation",
+        "webbridge"
+      ],
       "source": "./official/kimi-webbridge"
     },
     {
@@ -25,7 +32,13 @@
       "displayName": "Superpowers",
       "description": "Planning, TDD, debugging, and delivery workflows for coding agents.",
       "homepage": "https://github.com/obra/superpowers",
-      "keywords": ["skills", "planning", "tdd", "debugging", "code-review"],
+      "keywords": [
+        "skills",
+        "planning",
+        "tdd",
+        "debugging",
+        "code-review"
+      ],
       "source": "https://github.com/obra/superpowers"
     },
     {
@@ -34,8 +47,30 @@
       "displayName": "Vercel Plugin",
       "description": "Comprehensive Vercel ecosystem plugin — skills, agents, and conventions for the Vercel platform.",
       "homepage": "https://vercel.com/docs/agent-resources/vercel-plugin",
-      "keywords": ["vercel", "deployment", "nextjs", "skills", "agents"],
+      "keywords": [
+        "vercel",
+        "deployment",
+        "nextjs",
+        "skills",
+        "agents"
+      ],
       "source": "https://github.com/vercel/vercel-plugin"
+    },
+    {
+      "id": "azure-cosmosdb",
+      "tier": "curated",
+      "displayName": "Azure Cosmos DB",
+      "description": "Official Kimi Code plugin for Azure Cosmos DB (NoSQL) with bundled skills and MCP access for data modeling, partition key design, query optimization, and vector search.",
+      "homepage": "https://github.com/AzureCosmosDB/cosmosdb-agent-kit",
+      "keywords": [
+        "azure",
+        "cosmosdb",
+        "database",
+        "nosql",
+        "vector-search",
+        "mcp"
+      ],
+      "source": "https://github.com/AzureCosmosDB/cosmosdb-agent-kit"
     }
   ]
 }
