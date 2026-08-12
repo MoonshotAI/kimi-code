@@ -798,17 +798,26 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   ): Promise<readonly GlobalMcpServerAuthStatus[]> {
     const servers = await this.globalMcpConfig.list();
     const inspections = await this.inspectAppMcpServers({
-      targets: servers.map((server) => ({ source: 'global', name: server.name })),
+      targets: servers
+        .filter((server) => !isLegacyNonOAuthSse(server))
+        .map((server) => ({ source: 'global', name: server.name })),
     });
-    return inspections.map((server) => ({
-      name: server.runtimeName,
-      authStatus: legacyGlobalMcpAuthState(
-        server,
-        server.authStatus === 'unavailable' &&
-          server.config.transport !== 'stdio' &&
-          this.globalMcpOAuth.hasTokens(server.runtimeName, server.config.url),
-      ),
-    }));
+    const inspectionsByName = new Map(inspections.map((server) => [server.runtimeName, server]));
+    return servers.map((server) => {
+      if (isLegacyNonOAuthSse(server)) {
+        return { name: server.name, authStatus: 'not-applicable' };
+      }
+      const inspection = inspectionsByName.get(server.name)!;
+      return {
+        name: server.name,
+        authStatus: legacyGlobalMcpAuthState(
+          inspection,
+          inspection.authStatus === 'unavailable' &&
+            inspection.config.transport !== 'stdio' &&
+            this.globalMcpOAuth.hasTokens(inspection.runtimeName, inspection.config.url),
+        ),
+      };
+    });
   }
 
   async inspectAppMcpServers({
@@ -993,7 +1002,21 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     locator: McpServerLocator,
   ): Promise<AppMcpServerRuntimeDescriptor> {
     const catalog = await this.appMcpServerDescriptors();
-    return selectAppMcpServerDescriptors(catalog, [locator])[0]!;
+    const server = selectAppMcpServerDescriptors(catalog, [locator])[0]!;
+    const conflict = catalog.find(
+      (candidate) =>
+        candidate.serverId !== server.serverId &&
+        candidate.enabled &&
+        candidate.config.enabled !== false &&
+        candidate.runtimeName === server.runtimeName,
+    );
+    if (conflict !== undefined) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        `MCP runtime name "${server.runtimeName}" is shared by multiple enabled servers`,
+      );
+    }
+    return server;
   }
 
   private async inspectAppMcpServerDescriptors(
@@ -1703,6 +1726,10 @@ function legacyGlobalMcpAuthState(
   return server.config.transport !== 'stdio' && server.config.auth === 'oauth'
     ? 'oauth-required'
     : 'not-applicable';
+}
+
+function isLegacyNonOAuthSse(config: McpServerConfig): boolean {
+  return config.transport === 'sse' && config.auth !== 'oauth';
 }
 
 function isOAuthProbeCandidate(server: AppMcpServerRuntimeDescriptor): boolean {

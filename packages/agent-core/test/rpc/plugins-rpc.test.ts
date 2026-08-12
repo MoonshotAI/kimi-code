@@ -158,6 +158,27 @@ describe('KimiCore plugin RPCs', () => {
       locator: { source: 'plugin', pluginId: 'demo', serverName: 'remote' },
     });
     expect(oauth.hasTokens('plugin-demo:remote', 'https://mcp.example.test/service')).toBe(false);
+
+    await oauth
+      .getProvider('plugin-demo:remote', 'https://mcp.example.test/service')
+      .saveTokens({ access_token: 'plugin-test-token', token_type: 'Bearer' });
+    await core.setPluginMcpServerEnabled({ id: 'demo', server: 'remote', enabled: true });
+    await core.addGlobalMcpServer({
+      server: {
+        name: 'plugin-demo:remote',
+        transport: 'http',
+        url: 'https://global.example.test/service',
+        auth: 'oauth',
+      },
+    });
+    const locator = { source: 'plugin', pluginId: 'demo', serverName: 'remote' } as const;
+    await expect(core.beginMcpServerAuth({ locator })).rejects.toThrow(
+      'is shared by multiple enabled servers',
+    );
+    await expect(core.resetMcpServerAuth({ locator })).rejects.toThrow(
+      'is shared by multiple enabled servers',
+    );
+    expect(oauth.hasTokens('plugin-demo:remote', 'https://mcp.example.test/service')).toBe(true);
   });
 
   it('injects persisted managed Kimi Code environment into the datasource plugin MCP server', async () => {

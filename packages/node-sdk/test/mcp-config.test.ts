@@ -233,7 +233,7 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
         stdio: { command: 'local-command' },
         plain: { transport: 'http', url: statusServer.plainUrl },
         detected: { transport: 'http', url: statusServer.oauthUrl },
-        sse: { transport: 'sse', url: statusServer.oauthUrl },
+        sse: { transport: 'sse', url: statusServer.unavailableUrl },
         'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
         bearer: {
           transport: 'http',
@@ -271,6 +271,7 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
         { name: 'oauth-stale', authStatus: 'oauth-required' },
       ]);
+      expect(statusServer.requestCount('/unavailable')).toBe(0);
     } finally {
       await harness.close();
       await statusServer.close();

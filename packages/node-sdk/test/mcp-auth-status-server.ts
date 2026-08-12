@@ -10,13 +10,17 @@ export interface McpAuthStatusServer {
   readonly plainUrl: string;
   readonly oauthUrl: string;
   readonly unavailableUrl: string;
+  requestCount(pathname: string): number;
   close(): Promise<void>;
 }
 
 export async function startMcpAuthStatusServer(): Promise<McpAuthStatusServer> {
   const authToken = 'valid-test-access-token';
   let baseUrl = '';
+  const requestCounts = new Map<string, number>();
   const server = createServer((request, response) => {
+    const pathname = new URL(request.url ?? '/', baseUrl).pathname;
+    requestCounts.set(pathname, (requestCounts.get(pathname) ?? 0) + 1);
     void handleRequest(request, response, baseUrl, authToken).catch((error: unknown) => {
       if (!response.headersSent) response.writeHead(500);
       response.end(String(error));
@@ -33,6 +37,7 @@ export async function startMcpAuthStatusServer(): Promise<McpAuthStatusServer> {
     plainUrl: `${baseUrl}/plain`,
     oauthUrl: `${baseUrl}/oauth`,
     unavailableUrl: `${baseUrl}/unavailable`,
+    requestCount: (pathname) => requestCounts.get(pathname) ?? 0,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => {
