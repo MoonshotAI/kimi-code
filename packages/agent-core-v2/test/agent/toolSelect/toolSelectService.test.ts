@@ -438,15 +438,20 @@ async function announce(h: Harness, step = 1): Promise<string | undefined> {
 }
 
 async function announceAfterCompaction(h: Harness): Promise<string | undefined> {
-  const injector = h.ix.get(IAgentContextInjectorService) as unknown as {
-    injectAfterCompaction(): Promise<void>;
-  };
-  const before = h.contextMemory.appended.length;
-  await injector.injectAfterCompaction();
-  const announcement = h.contextMemory.appended.slice(before).find(isNewAnnouncement);
-  h.contextMemory.landAppended();
-  if (announcement === undefined) return undefined;
-  return announcementText(announcement);
+  h.eventBus.publish({
+    type: 'context.spliced',
+    start: 0,
+    deleteCount: 1,
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Compacted summary.' }],
+        toolCalls: [],
+        origin: { kind: 'compaction_summary' },
+      },
+    ],
+  });
+  return announce(h, 99);
 }
 
 async function declareSchemas(h: Harness, step = 1): Promise<ContextMessage | undefined> {

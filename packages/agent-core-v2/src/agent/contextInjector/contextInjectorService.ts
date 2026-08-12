@@ -1,10 +1,13 @@
 /**
  * `contextInjector` domain — `IAgentContextInjectorService` implementation.
  *
- * Reconciles registered model-context providers against `contextMemory`,
- * observes turn and step boundaries through `eventBus` and `loop`, writes
- * reminders through `systemReminder`, and reports provider failures through
- * `log`. Bound at Agent scope.
+ * Reconciles registered model-context providers against `contextMemory` at the
+ * head of every loop step (before the step's request is built), so every LLM
+ * request sees the freshest injections. A compaction splice re-arms the
+ * new-turn flag for the next step. `reconcileWhenIdle` lets out-of-loop
+ * callers (SDK RPC surfaces) refresh one provider immediately while the loop
+ * is quiet. Writes reminders through `systemReminder` and reports provider
+ * failures through `log`. Bound at Agent scope.
  */
 
 import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
@@ -14,7 +17,8 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
+import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -25,20 +29,17 @@ import {
   type ContextInjectionMessage,
   type ContextInjectionProvider,
   type ContextInjectionResult,
-  type SyncContextInjectionProvider,
 } from './contextInjector';
 
 interface ContextInjectionEntry {
   readonly provider: ContextInjectionProvider<unknown>;
   readonly name: string;
-  readonly boundary: 'step' | 'turn-start';
 }
 
 export class AgentContextInjectorService extends Service implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
-  private enclosingStep: BeforeStepContext | undefined;
-  private newTurnDeliveredTo: BeforeStepContext | undefined;
+  private newTurnRearmed = false;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -50,18 +51,25 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     super();
     this._register(
       loopService.hooks.onWillBeginStep.register('context-injector', async (ctx, next) => {
-        this.enclosingStep = ctx;
-        try {
-          await next();
-        } finally {
-          this.enclosingStep = undefined;
+        await this.inject(this.takeNewTurnFlag(ctx.firstStepOfTurn));
+        await next();
+        // Compaction can run inside a later handler of this same chain
+        // (full-compaction's beforeStep). Its splice always drops injection
+        // messages, so re-reconcile here — still before the step's request.
+        if (this.newTurnRearmed) {
+          this.newTurnRearmed = false;
+          await this.inject(true);
         }
-        await this.inject('step', ctx.firstStepOfTurn && this.newTurnDeliveredTo !== ctx);
       }),
     );
     this._register(
-      this.eventBus.subscribe('turn.started', () => {
-        this.injectAtTurnStart();
+      this.eventBus.subscribe('context.spliced', (splice) => {
+        if (
+          splice.deleteCount > 0 &&
+          splice.messages.some(isCompactionSummaryMessage)
+        ) {
+          this.newTurnRearmed = true;
+        }
       }),
     );
   }
@@ -70,35 +78,14 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     name: string,
     provider: ContextInjectionProvider<D>,
   ): IDisposable {
-    return this.registerProvider(name, provider, 'step');
-  }
-
-  registerAtTurnStart<D = unknown>(
-    name: string,
-    provider: SyncContextInjectionProvider<D>,
-  ): IDisposable {
-    return this.registerProvider(name, provider, 'turn-start');
-  }
-
-  private registerProvider<D>(
-    name: string,
-    provider: ContextInjectionProvider<D>,
-    boundary: ContextInjectionEntry['boundary'],
-  ): IDisposable {
     const entry: ContextInjectionEntry = {
       provider: provider as ContextInjectionProvider<unknown>,
       name,
-      boundary,
     };
     this.entries.add(entry);
     return toDisposable(() => {
       this.entries.delete(entry);
     });
-  }
-
-  async injectAfterCompaction(): Promise<void> {
-    this.newTurnDeliveredTo = this.enclosingStep;
-    await this.inject(undefined, true);
   }
 
   async reconcileWhenIdle(name: string): Promise<void> {
@@ -114,12 +101,14 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     }
   }
 
-  private async inject(
-    boundary: ContextInjectionEntry['boundary'] | undefined,
-    isNewTurn: boolean,
-  ): Promise<void> {
+  private takeNewTurnFlag(firstStepOfTurn: boolean): boolean {
+    const rearmed = this.newTurnRearmed;
+    this.newTurnRearmed = false;
+    return firstStepOfTurn || rearmed;
+  }
+
+  private async inject(isNewTurn: boolean): Promise<void> {
     for (const entry of this.entries) {
-      if (boundary !== undefined && !shouldRunAtBoundary(entry, boundary)) continue;
       await this.injectEntry(entry, isNewTurn);
     }
   }
@@ -134,30 +123,6 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     }
     if (!this.entries.has(entry)) return;
     this.appendResult(entry, content);
-  }
-
-  private injectAtTurnStart(): void {
-    for (const entry of this.entries) {
-      if (entry.boundary !== 'turn-start') continue;
-      let content: ReturnType<ContextInjectionProvider>;
-      try {
-        content = entry.provider(this.providerContext(entry, true));
-      } catch (error) {
-        this.log.error('turn-start context provider failed; skipping it', {
-          name: entry.name,
-          error,
-        });
-        continue;
-      }
-      if (isThenable(content)) {
-        this.log.error('turn-start context provider returned a Promise; skipping it', {
-          name: entry.name,
-        });
-        continue;
-      }
-      if (!this.entries.has(entry)) continue;
-      this.appendResult(entry, content);
-    }
   }
 
   private providerContext(
@@ -255,20 +220,6 @@ function findInjections(
     }
   });
   return positions;
-}
-
-function shouldRunAtBoundary(
-  entry: ContextInjectionEntry,
-  boundary: NonNullable<ContextInjectionEntry['boundary']>,
-): boolean {
-  if (entry.boundary === boundary) return true;
-  return boundary === 'step' && entry.boundary === 'turn-start';
-}
-
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-  return (
-    (typeof value === 'object' && value !== null) || typeof value === 'function'
-  ) && 'then' in value && typeof value.then === 'function';
 }
 
 registerScopedService(

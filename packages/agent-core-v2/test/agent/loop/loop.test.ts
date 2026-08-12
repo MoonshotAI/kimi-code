@@ -1125,9 +1125,14 @@ describe('interruption reminder', () => {
   it('appends no reminder when a queued turn is user-cancelled before starting', async () => {
     let release!: () => void;
     let armed = true;
+    let signalEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      signalEntered = resolve;
+    });
     loop.hooks.onWillBeginStep.register('test-hang-queued-cancel', async (hookCtx, next) => {
       if (armed) {
         armed = false;
+        signalEntered();
         await new Promise<void>((resolve) => {
           release = resolve;
         });
@@ -1140,6 +1145,7 @@ describe('interruption reminder', () => {
     const queued = (await loop.enqueue(nextTurnMessage('queued')).assigned).turn;
     expect(loop.cancel(queued.id)).toBe(true);
     await expect(queued.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
+    await entered;
     release();
     loop.cancel(active.id);
     await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });

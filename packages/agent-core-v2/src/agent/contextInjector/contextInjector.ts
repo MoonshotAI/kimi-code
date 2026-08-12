@@ -36,10 +36,6 @@ export type ContextInjectionProvider<D = unknown> = (
   | undefined
   | Promise<ContextInjectionContent | ContextInjectionResult<D> | undefined>;
 
-export type SyncContextInjectionProvider<D = unknown> = (
-  context: ContextInjectionContext<D>,
-) => ContextInjectionContent | ContextInjectionResult<D> | undefined;
-
 export interface IAgentContextInjectorService {
   readonly _serviceBrand: undefined;
 
@@ -48,14 +44,7 @@ export interface IAgentContextInjectorService {
     provider: ContextInjectionProvider<D>,
   ): IDisposable;
 
-  registerAtTurnStart<D = unknown>(
-    name: string,
-    provider: SyncContextInjectionProvider<D>,
-  ): IDisposable;
-
   reconcileWhenIdle(name: string): Promise<void>;
-
-  injectAfterCompaction(): Promise<void>;
 }
 
 export const IAgentContextInjectorService = createDecorator<IAgentContextInjectorService>(

@@ -43,9 +43,7 @@ const injectorStub: IAgentContextInjectorService = {
       },
     };
   },
-  registerAtTurnStart: () => ({ dispose: () => {} }),
   reconcileWhenIdle: async () => {},
-  injectAfterCompaction: async () => {},
 };
 
 let disposables: DisposableStore;
@@ -182,8 +180,6 @@ describe('AgentPermissionModeService (wire-backed)', () => {
         restoredProvider = provider as ContextInjectionProvider;
         return { dispose: () => {} };
       },
-      reconcileWhenIdle: async () => {},
-      injectAfterCompaction: async () => {},
     });
     ix2.set(IAgentStateService, new AgentStateService());
     disposables.add(ix2.createInstance(PermissionModeInjection, svc));

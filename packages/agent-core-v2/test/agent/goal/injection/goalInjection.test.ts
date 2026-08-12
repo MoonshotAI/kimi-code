@@ -18,14 +18,14 @@ import { stubAgentSwarm } from '../stubs';
 
 type GoalServiceTestManager = IAgentGoalService & AgentGoalService;
 type InjectableContextInjector = IAgentContextInjectorService & {
-  inject(boundary: undefined, isNewTurn: boolean): Promise<void>;
+  inject(isNewTurn: boolean): Promise<void>;
 };
 
 async function injectDynamic(
   injector: InjectableContextInjector,
   isNewTurn: boolean,
 ): Promise<void> {
-  await injector.inject(undefined, isNewTurn);
+  await injector.inject(isNewTurn);
 }
 
 async function registerLookupTool(
