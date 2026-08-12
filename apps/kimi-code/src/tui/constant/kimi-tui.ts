@@ -7,13 +7,6 @@ export const NO_ACTIVE_SESSION_MESSAGE = 'No active session. Send /login to logi
 export const CTRL_D_HINT = 'Press Ctrl+D again to exit';
 export const CTRL_C_HINT = 'Press Ctrl+C again to exit';
 export const MAIN_AGENT_ID = 'main';
-// Runtime-only model entry synthesized by the v1 engine's `[secondary_model]`
-// recipe; it must never be selectable in the TUI model pickers.
-export const SECONDARY_DERIVED_MODEL_ALIAS = '__secondary__';
-// Symbolic choice of the v2 engine's subagent model pool: it always binds the
-// caller's own model, so the pool reserves it as a key — a user model alias
-// named `primary` can never serve as the subagent default model.
-export const PRIMARY_SUBAGENT_MODEL_CHOICE = 'primary';
 export const OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE = 'OAuth login expired. Send /login to login.';
 export const SESSIONLESS_STARTUP_NOTICE =
   'No session yet — one will be created on your first message.';

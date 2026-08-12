@@ -10,6 +10,7 @@ import {
   CatalogFetchError,
   DEFAULT_CATALOG_URL,
   resolveCatalogImport,
+  SECONDARY_DERIVED_MODEL_ALIAS,
   type Catalog,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -26,7 +27,7 @@ import {
   type ProviderManagerOptions,
 } from '../components/dialogs/provider-manager';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
-import { DEFAULT_OAUTH_PROVIDER_NAME, SECONDARY_DERIVED_MODEL_ALIAS } from '../constant/kimi-tui';
+import { DEFAULT_OAUTH_PROVIDER_NAME } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { effectiveModelForHost } from './config';
