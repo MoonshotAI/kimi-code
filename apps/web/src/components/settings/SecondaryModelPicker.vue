@@ -48,6 +48,7 @@ const VIEWPORT_MARGIN = 8;
 const rootRef = ref<HTMLElement | null>(null);
 const triggerRef = ref<HTMLButtonElement | null>(null);
 const menuRef = ref<HTMLElement | null>(null);
+const flyoutRef = ref<HTMLElement | null>(null);
 const modelRowRefs = new Map<string, HTMLElement>();
 const open = ref(false);
 // Set on open when the space below the trigger cannot fit the menu — it then
@@ -160,14 +161,22 @@ function positionMenu(): void {
 
 // Anchors the flyout to the row's CURRENT rendered position (recomputed on
 // scroll so it stays glued to the row), opening to the right and flipping
-// left near the viewport edge per the §03 menu anchoring rules.
+// left near the viewport edge per the §03 menu anchoring rules. Vertically it
+// aligns with the row but is clamped into the viewport: hovering the LAST
+// model row (menu near the viewport bottom) would otherwise fly the effort
+// list past the lower edge, leaving its options unreachable.
 function positionFlyout(): void {
   const menu = menuRef.value;
   const row = flyoutFor.value === null ? undefined : modelRowRefs.get(flyoutFor.value);
   if (!menu || !row) return;
   const menuRect = menu.getBoundingClientRect();
   const rowRect = row.getBoundingClientRect();
-  flyoutTop.value = Math.max(0, Math.min(rowRect.top - menuRect.top - 4, menu.offsetHeight - 40));
+  const flyoutHeight = flyoutRef.value?.offsetHeight ?? 0;
+  const maxTop = Math.max(0, window.innerHeight - VIEWPORT_MARGIN - flyoutHeight - menuRect.top);
+  flyoutTop.value = Math.max(
+    0,
+    Math.min(rowRect.top - menuRect.top - 4, menu.offsetHeight - 40, maxTop),
+  );
   const spaceRight = window.innerWidth - menuRect.right;
   const spaceLeft = menuRect.left;
   flyoutDir.value = spaceRight >= FLYOUT_WIDTH || spaceRight >= spaceLeft ? 'right' : 'left';
@@ -395,6 +404,7 @@ onUnmounted(() => {
 
         <div
           v-if="flyoutFor !== null"
+          ref="flyoutRef"
           class="sm-picker__flyout"
           :class="`sm-picker__flyout--${flyoutDir}`"
           :style="{ top: `${flyoutTop}px` }"
