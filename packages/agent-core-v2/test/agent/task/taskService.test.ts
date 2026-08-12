@@ -101,7 +101,7 @@ describe('AgentTaskService', () => {
     ix.stub(IEventBus, eventBus);
     ix.stub(IAgentContextInjectorService, {
       register: (name, provider) => {
-        injectionProviders.set(name, provider);
+        injectionProviders.set(name, provider as ContextInjectionProvider);
         return toDisposable(() => {
           injectionProviders.delete(name);
         });

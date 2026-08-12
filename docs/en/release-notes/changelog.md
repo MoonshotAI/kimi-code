@@ -6,6 +6,20 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.35.0 (2026-08-12)
+
+### Features
+
+- Add the Modern Web Guidance plugin to the bundled plugin marketplace. Run `/plugins` and select Modern Web Guidance to install it.
+- Show the live work progress of background subagents in the `/tasks` panel.
+
+### Bug Fixes
+
+- Fix coder subagents spawning further subagents by default.
+- Fix the token counts reported after compaction reading far below the real context size; they now match the numbers shown while the session runs.
+- Fix two binary-planting risks on Windows.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.34.0 (2026-08-06)
 
 ### Features

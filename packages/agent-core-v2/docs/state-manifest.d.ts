@@ -23,7 +23,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 70 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 69 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -57,10 +57,10 @@
 //     activityView.lastTurn                           src/agent/activityView/activityViewService.ts
 //     activityView.lifecycle                          src/agent/activityView/activityViewService.ts
 //     activityView.turn                               src/agent/activityView/activityViewService.ts
+//     agentPlugin.sessionStartRefreshPending          src/agent/plugin/agentPluginService.ts
 //     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
-//     contextInjector.isNewTurn                       src/agent/contextInjector/contextInjectorService.ts
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
 //     dateChange.seed                                 src/agent/dateChange/dateChangeService.ts
 //     externalHooks.stopHookContinuationUsed          src/agent/externalHooks/externalHooksService.ts
@@ -118,7 +118,6 @@
 //     toolDedupe.syntheticCallIds                     src/agent/toolDedupe/toolDedupeService.ts
 //     toolExecutor.dupTypeTurnId                      src/agent/toolExecutor/toolExecutorService.ts
 //     toolExecutor.toolCallDupTypes                   src/agent/toolExecutor/toolExecutorService.ts
-//     toolSelect.needsBoundaryInjection               src/agent/toolSelect/toolSelectAnnouncementsService.ts
 //     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
 //     usage.currentTurn                               src/agent/usage/usageService.ts
 //     usage.currentTurnId                             src/agent/usage/usageService.ts
@@ -454,6 +453,7 @@ export interface SessionStateSnapshot {
     readonly createdAt: number;
     readonly updatedAt: number;
     readonly archived: boolean;
+    readonly archivedAt?: number;
     readonly cwd?: string;
     readonly forkedFrom?: string;
     readonly agents?: Readonly<Record<string, /* AgentMeta — packages/agent-core-v2/src/session/sessionMetadata/sessionMetadata.ts */ {
@@ -752,12 +752,7 @@ export interface AgentStateSnapshot {
         readonly kind: 'injection';
         readonly variant: string;
         readonly ownerPromptId?: string;
-        readonly disclosure?: /* ContextInjectionDisclosure — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-          readonly kind: 'date';
-          readonly renderGeneration: number;
-          readonly localDate: string;
-          readonly timeZone: string;
-        };
+        readonly disclosure?: unknown;
       } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';
@@ -882,12 +877,7 @@ export interface AgentStateSnapshot {
       readonly kind: 'injection';
       readonly variant: string;
       readonly ownerPromptId?: string;
-      readonly disclosure?: /* ContextInjectionDisclosure — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-        readonly kind: 'date';
-        readonly renderGeneration: number;
-        readonly localDate: string;
-        readonly timeZone: string;
-      };
+      readonly disclosure?: unknown;
     } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'shell_command';
       readonly phase: 'input' | 'output';
@@ -944,12 +934,7 @@ export interface AgentStateSnapshot {
         readonly kind: 'injection';
         readonly variant: string;
         readonly ownerPromptId?: string;
-        readonly disclosure?: /* ContextInjectionDisclosure — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-          readonly kind: 'date';
-          readonly renderGeneration: number;
-          readonly localDate: string;
-          readonly timeZone: string;
-        };
+        readonly disclosure?: unknown;
       } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';
@@ -1012,8 +997,6 @@ export interface AgentStateSnapshot {
   'agentsMdReminder.cwd': string | undefined;
   'agentsMdReminder.known': Set<string>;
   'agentsMdReminder.seeded': boolean;
-  // src/agent/contextInjector/contextInjectorService.ts
-  'contextInjector.isNewTurn': boolean;
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
   // src/agent/dateChange/dateChangeService.ts
@@ -1125,6 +1108,8 @@ export interface AgentStateSnapshot {
   }>;
   // src/agent/permissionMode/injection/permissionModeInjection.ts
   'permissionMode.lastMode': 'manual' | 'yolo' | 'auto' | undefined;
+  // src/agent/plugin/agentPluginService.ts
+  'agentPlugin.sessionStartRefreshPending': boolean;
   // src/agent/profile/profileService.ts
   'profile.activeToolNamesOverlay': readonly string[] | undefined;
   'profile.agentsMdWarning': string | undefined;
@@ -1197,8 +1182,6 @@ export interface AgentStateSnapshot {
   // src/agent/toolExecutor/toolExecutorService.ts
   'toolExecutor.dupTypeTurnId': number | undefined;
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
-  // src/agent/toolSelect/toolSelectAnnouncementsService.ts
-  'toolSelect.needsBoundaryInjection': boolean;
   // src/agent/toolSelect/toolSelectService.ts
   'toolSelect.pendingLoaded': Set<string>;
   // src/agent/usage/usageService.ts

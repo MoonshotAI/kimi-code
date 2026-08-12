@@ -22,6 +22,7 @@ function fakeInitialAppState(): AppState {
     isReplaying: false,
     streamingPhase: 'idle',
     streamingStartTime: 0,
+    stepRetry: null,
     theme: 'dark',
     version: '0.0.0-test',
     editorCommand: null,

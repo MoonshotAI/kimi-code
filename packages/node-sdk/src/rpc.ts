@@ -59,6 +59,7 @@ import type {
   ResumeSessionInput,
   ResumedSessionSummary,
   SessionSummary,
+  SessionSummaryPage,
   SkillSummary,
   PluginCommandDef,
   Unsubscribe,
@@ -222,6 +223,17 @@ export abstract class SDKRpcClientBase {
   async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listSessions(input);
+  }
+
+  /**
+   * One keyset page of the session listing (`limit` / `before` in
+   * `ListSessionsOptions`). The base implementation serves the whole filtered
+   * set as a single terminal page — the v1 engine has no paged listing;
+   * `SDKRpcClientV2` overrides this with real index paging.
+   */
+  async listSessionsPage(input: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
+    const items = await this.listSessions(input);
+    return { items, nextCursor: undefined };
   }
 
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {

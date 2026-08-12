@@ -255,6 +255,22 @@ describe('PluginManager', () => {
     expect(manager.info('superpowers')?.skillCount).toBe(3);
   });
 
+  it('counts only the root SKILL.md at the plugin root fallback', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('root-skill-plugin');
+    await writeFile(
+      path.join(root, 'SKILL.md'),
+      '---\nname: root-skill\ndescription: at root\n---\nbody',
+      'utf8',
+    );
+    // Sibling docs at the plugin root are not skills.
+    await writeFile(path.join(root, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    expect(manager.info('root-skill-plugin')?.skillCount).toBe(1);
+  });
+
   it('reload() picks up edits to the managed plugin copy', async () => {
     const home = await makeKimiHome();
     const root = await makePlugin('demo');

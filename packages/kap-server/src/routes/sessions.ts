@@ -1088,6 +1088,7 @@ export interface SessionWireFields {
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly archived: boolean;
+  readonly archivedAt?: number;
   readonly custom?: Record<string, unknown>;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
@@ -1103,6 +1104,10 @@ export function toWireSession(
     title: fields.title ?? '',
     created_at: new Date(fields.createdAt).toISOString(),
     updated_at: new Date(fields.updatedAt).toISOString(),
+    // Archive moment; sessions archived before the field existed report
+    // nothing (clients fall back to updated_at for display).
+    archived_at:
+      fields.archivedAt === undefined ? undefined : new Date(fields.archivedAt).toISOString(),
     busy: facts.busy,
     main_turn_active: facts.mainTurnActive,
     pending_interaction: facts.pendingInteraction,

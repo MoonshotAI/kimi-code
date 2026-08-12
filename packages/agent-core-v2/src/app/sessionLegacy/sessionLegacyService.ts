@@ -95,6 +95,7 @@ export class SessionLegacyService implements ISessionLegacyService {
       createdAt: meta.createdAt,
       updatedAt: meta.updatedAt,
       archived: meta.archived,
+      archivedAt: meta.archivedAt,
       custom: meta.custom,
     };
   }

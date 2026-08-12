@@ -37,6 +37,13 @@ const mocks = vi.hoisted(() => ({
   resolveUpdateDeviceId: vi.fn(),
   appendRolloutDecisionLog: vi.fn(),
   spawn: vi.fn(),
+  // Identity by default: resolution is covered by resolve-command.test.ts;
+  // here we only care which command string reaches spawn().
+  resolveCommandPath: vi.fn((cmd: string) => cmd as string | undefined),
+}));
+
+vi.mock('#/utils/process/resolve-command', () => ({
+  resolveCommandPath: mocks.resolveCommandPath,
 }));
 
 vi.mock('../../../src/cli/update/cache', () => ({
@@ -240,6 +247,7 @@ describe('runUpdatePreflight', () => {
       filePath: '/tmp/kimi-update-install.lock',
       release: vi.fn().mockResolvedValue(undefined),
     });
+    mocks.resolveCommandPath.mockImplementation((cmd: string) => cmd);
   });
 
   afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
@@ -437,7 +445,8 @@ describe('runUpdatePreflight', () => {
       const { options } = captureOutput();
       await runUpdatePreflight('0.4.0', options);
       expect(mocks.spawn).toHaveBeenCalledWith(
-        'pnpm.cmd',
+        // Resolved to an absolute path and quoted for the cmd.exe shell.
+        '"pnpm.cmd"',
         ['add', '-g', '@moonshot-ai/kimi-code@0.5.0'],
         { stdio: 'inherit', shell: true },
       );
@@ -570,6 +579,66 @@ describe('runUpdatePreflight', () => {
     expect(stdout.join('')).not.toContain('Updated @moonshot-ai/kimi-code');
   });
 
+  it('spawns the resolved absolute path instead of the bare command name', async () => {
+    disableAutoInstall();
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('npm-global');
+    mocks.promptForInstallChoice.mockResolvedValue('install');
+    mocks.resolveCommandPath.mockReturnValue('/usr/local/bin/npm');
+    mockSpawnExit(0);
+    const { options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('exit');
+
+    expect(mocks.resolveCommandPath).toHaveBeenCalledWith('npm');
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      '/usr/local/bin/npm',
+      ['install', '-g', '@moonshot-ai/kimi-code@0.5.0'],
+      { stdio: 'inherit' },
+    );
+  });
+
+  it('warns and continues without spawning when the package manager cannot be resolved', async () => {
+    disableAutoInstall();
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('npm-global');
+    mocks.promptForInstallChoice.mockResolvedValue('install');
+    // Only resolvable inside the cwd (or missing entirely): refuse to run it.
+    mocks.resolveCommandPath.mockReturnValue(undefined);
+    const { stdout, stderr, options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(stderr.join('')).toContain('warning: failed to install');
+    expect(stdout.join('')).not.toContain('Updated @moonshot-ai/kimi-code');
+  });
+
+  it('records a background install failure without spawning when the package manager cannot be resolved', async () => {
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.readUpdateInstallState.mockResolvedValue(installState());
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('npm-global');
+    mocks.resolveCommandPath.mockReturnValue(undefined);
+    const { stderr, options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+    await flushBackgroundInstall();
+
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(stderr.join('')).toBe('');
+    expect(writeUpdateInstallState).toHaveBeenLastCalledWith(expect.objectContaining({
+      active: null,
+      lastFailure: expect.objectContaining({
+        version: '0.5.0',
+        attempts: 1,
+      }),
+      lastSuccess: null,
+    }));
+  });
+
   it('starts an automatic update in the background by default', async () => {
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.readUpdateInstallState.mockResolvedValue(installState());
@@ -619,7 +688,8 @@ describe('runUpdatePreflight', () => {
       const { options } = captureOutput();
       await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
       expect(mocks.spawn).toHaveBeenCalledWith(
-        'npm.cmd',
+        // Resolved to an absolute path and quoted for the cmd.exe shell.
+        '"npm.cmd"',
         ['install', '-g', '@moonshot-ai/kimi-code@0.5.0'],
         { detached: true, stdio: 'ignore', shell: true, windowsHide: true },
       );

@@ -84,8 +84,8 @@ export type ScopeSeed = ReadonlyArray<
 
 export interface ScopeOptions {
   readonly id?: string;
-  readonly extra?: ScopeSeed;
-  readonly assemble?: (container: InstantiationService) => void;
+  readonly seeds?: ScopeSeed;
+  readonly configureContainer?: (container: InstantiationService) => void;
 }
 
 export interface IScopeHandle<K extends ScopeKind = ScopeKind> {
@@ -100,10 +100,10 @@ export type IWorkspaceScopeHandle = IScopeHandle<'workspace'>;
 export type ISessionScopeHandle = IScopeHandle<'session'>;
 export type IAgentScopeHandle = IScopeHandle<'agent'>;
 
-function buildCollection(extra?: ScopeSeed): ServiceCollection {
+function buildCollection(seeds?: ScopeSeed): ServiceCollection {
   const collection = new ServiceCollection();
-  if (extra) {
-    for (const [id, value] of extra) {
+  if (seeds) {
+    for (const [id, value] of seeds) {
       collection.set(id, value);
     }
   }
@@ -137,12 +137,12 @@ export function createScopedChildHandle(
   id: string,
   options: ScopeOptions = {},
 ): IScopeHandle {
-  const collection = buildCollection(options.extra);
+  const collection = buildCollection(options.seeds);
   const child = parent.createChild(collection);
   (child as InstantiationService).debugLabel = id;
   try {
     watchScopeUnits(child as InstantiationService, kind);
-    options.assemble?.(child as InstantiationService);
+    options.configureContainer?.(child as InstantiationService);
     provideScopeServices(child, kind, collection);
   } catch (error) {
     child.dispose();
@@ -189,12 +189,12 @@ export class Scope implements IDisposable {
 
   static createApp(options: ScopeOptions = {}): Scope {
     const kind: ScopeKind = 'app';
-    const collection = buildCollection(options.extra);
+    const collection = buildCollection(options.seeds);
     const instantiation = new InstantiationService(collection, true);
     instantiation.debugLabel = options.id ?? 'app';
     try {
       watchScopeUnits(instantiation, kind);
-      options.assemble?.(instantiation);
+      options.configureContainer?.(instantiation);
       provideScopeServices(instantiation, kind, collection);
     } catch (error) {
       instantiation.dispose();
@@ -223,12 +223,12 @@ export class Scope implements IDisposable {
     if (this.children.has(id)) {
       throw new Error(`Scope '${this.id}' already has a child with id '${id}'`);
     }
-    const collection = buildCollection(options.extra);
+    const collection = buildCollection(options.seeds);
     const childInstantiation = this.instantiation.createChild(collection);
     (childInstantiation as InstantiationService).debugLabel = id;
     try {
       watchScopeUnits(childInstantiation as InstantiationService, kind);
-      options.assemble?.(childInstantiation as InstantiationService);
+      options.configureContainer?.(childInstantiation as InstantiationService);
       provideScopeServices(childInstantiation, kind, collection);
     } catch (error) {
       childInstantiation.dispose();

@@ -82,6 +82,7 @@ registerErrorDomain(OsProcessErrors);
 export const HostProcessErrorCode = {
   SpawnFailed: OsProcessErrors.codes.OS_PROCESS_SPAWN_FAILED,
   KillFailed: OsProcessErrors.codes.OS_PROCESS_KILL_FAILED,
+  ShellGitBashNotFound: OsProcessErrors.codes.SHELL_GIT_BASH_NOT_FOUND,
 } as const;
 
 export type HostProcessErrorCode = (typeof HostProcessErrorCode)[keyof typeof HostProcessErrorCode];

@@ -12,6 +12,27 @@ export const RESULT_PREVIEW_LINES = 3;
 export const THINKING_PREVIEW_LINES = 2;
 export const COMMAND_PREVIEW_LINES = 10;
 
+// Cap on the step-retry detail line under the waiting spinner, so huge
+// provider error bodies (occasionally whole HTML error pages) can't flood
+// the activity pane.
+export const RETRY_DETAIL_MAX_CHARS = 160;
+// Left indent (cells) for the detail line under the waiting spinner, aligning
+// it with the label text: 1 (the spinner Text's own paddingX) + 2 (moon
+// frame) + 1 (space between frame and label).
+export const ACTIVITY_DETAIL_INDENT = 4;
+
+// Retention caps for the subagent activity store (background-agent detail
+// view): only the most recent steps are kept, older steps are discarded
+// whole, and per-step text / per-call output keep bounded tails.
+export const MAX_SUBAGENT_ACTIVITY_STEPS = 20;
+export const SUBAGENT_STEP_TEXT_TAIL_CHARS = 4000;
+export const SUBAGENT_TOOL_OUTPUT_MAX_CHARS = 8000;
+// Cap on individual string argument values kept in a record (Write/Edit
+// carry whole-file contents). Only header summaries and the Edit/Write line
+// chips read args, so long values are truncated; chips become approximate
+// beyond the cap.
+export const SUBAGENT_ARG_STRING_MAX_CHARS = 16 * 1024;
+
 // Animation frames are shared by the login/update loaders and live thinking.
 export const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 export const BRAILLE_SPINNER_INTERVAL_MS = 80;

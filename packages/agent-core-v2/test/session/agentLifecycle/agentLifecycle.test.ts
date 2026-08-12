@@ -234,6 +234,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(ILogService, noopLog);
     ix.stub(IAgentPluginService, {
       _serviceBrand: undefined,
+      refreshSessionStart: async () => {},
     });
     ix.stub(IAgentToolRegistryService, {
       _serviceBrand: undefined,

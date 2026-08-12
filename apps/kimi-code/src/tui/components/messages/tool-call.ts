@@ -412,7 +412,7 @@ function formatKeyArgument(
   return truncateArgValue(key, displayValue);
 }
 
-function extractKeyArgument(
+export function extractKeyArgument(
   toolName: string,
   args: Record<string, unknown>,
   workspaceDir?: string,

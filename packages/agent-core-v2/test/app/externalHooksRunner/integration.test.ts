@@ -89,6 +89,7 @@ function makeAfterStep(signal: AbortSignal): AfterStepContext {
   return {
     turnId: 0,
     step: 1,
+    firstStepOfTurn: true,
     signal,
     usage: emptyUsage(),
     finishReason: 'completed',
@@ -107,6 +108,7 @@ function stubContextMemory(): IAgentContextMemoryService & {
       messages.push(...inserted);
     },
     appendLoopEvent: () => {},
+    publishTrailingRemoval: () => false,
     clear: () => {
       messages.splice(0);
     },

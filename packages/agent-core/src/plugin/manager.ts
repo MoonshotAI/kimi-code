@@ -211,6 +211,7 @@ export class PluginManager {
           path: dir,
           source: 'extra',
           plugin: { id: record.id, instructions: record.skillInstructions },
+          scanMode: record.manifest.rootSkillFallback ? 'root-skill-only' : undefined,
         });
       }
     }
@@ -437,6 +438,7 @@ async function countDiscoveredPluginSkills(
     path: dir,
     source: 'extra',
     plugin: { id: pluginId, instructions: manifest?.skillInstructions },
+    scanMode: manifest?.rootSkillFallback ? 'root-skill-only' : undefined,
   }) satisfies SkillRoot);
   if (roots.length === 0) return 0;
   const skills = await discoverSkills({ roots });

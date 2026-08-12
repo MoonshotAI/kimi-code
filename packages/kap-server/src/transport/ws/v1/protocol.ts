@@ -9,6 +9,8 @@
 export interface ServerHelloPayload {
   ws_connection_id: string;
   protocol_version: number;
+  /** Server heartbeat cadence — a `ping` frame arrives at least this often. */
+  heartbeat_ms: number;
   max_event_buffer_size: number;
   capabilities: {
     event_batching: boolean;
@@ -24,6 +26,16 @@ export interface ServerHelloFrame {
 
 export function buildServerHello(payload: ServerHelloPayload): ServerHelloFrame {
   return { type: 'server_hello', timestamp: new Date().toISOString(), payload };
+}
+
+export interface PingFrame {
+  type: 'ping';
+  timestamp: string;
+  payload: { nonce: string };
+}
+
+export function buildPing(nonce: string): PingFrame {
+  return { type: 'ping', timestamp: new Date().toISOString(), payload: { nonce } };
 }
 
 export interface AckFrame<P = unknown> {

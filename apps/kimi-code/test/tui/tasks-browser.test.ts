@@ -1,5 +1,5 @@
 import type { Terminal } from '@moonshot-ai/pi-tui';
-import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi-code-sdk';
+import type { BackgroundTaskInfo, BackgroundTaskStatus, Event } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -7,6 +7,10 @@ import {
   type TasksBrowserProps,
   type TasksFilter,
 } from '@/tui/components/dialogs/tasks-browser';
+import { AgentActivityViewer } from '@/tui/components/dialogs/agent-activity-viewer';
+import { TaskOutputViewer } from '@/tui/components/dialogs/task-output-viewer';
+import { SubagentActivityStore } from '@/tui/controllers/subagent-activity-store';
+import { TasksBrowserController } from '@/tui/controllers/tasks-browser';
 import { darkColors } from '@/tui/theme/colors';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
@@ -537,5 +541,125 @@ describe('TasksBrowserApp — setProps', () => {
         app.setProps(makeProps({ tasks, filter }));
       }).not.toThrow();
     }
+  });
+});
+
+describe('TasksBrowserController — opening an agent task', () => {
+  function makeControllerHost(tasks: BackgroundTaskInfo[], store: SubagentActivityStore) {
+    const ui = {
+      children: [] as unknown[],
+      clear() {
+        this.children = [];
+      },
+      addChild(child: unknown) {
+        this.children.push(child);
+      },
+      setFocus: () => {},
+      requestRender: () => {},
+    };
+    const state = {
+      tasksBrowser: undefined as unknown,
+      terminal: fakeTerminal(30),
+      ui,
+      editor: {},
+    };
+    const host = {
+      state,
+      backgroundTasks: new Map(tasks.map((t) => [t.taskId, t])),
+      sessionEventHandler: { subAgentEventHandler: { activityStore: store } },
+      session: {
+        listBackgroundTasks: async () => tasks,
+        getBackgroundTaskOutput: async () => 'captured output',
+      },
+      showError: vi.fn(),
+      setTasksBrowser(value: unknown) {
+        state.tasksBrowser = value;
+      },
+    };
+    return { host, state };
+  }
+
+  function agentTaskInfo(store: SubagentActivityStore | null): BackgroundTaskInfo {
+    const info = task({
+      taskId: 'agent-task-1',
+      kind: 'agent',
+      agentId: 'agent-1',
+      status: 'running',
+    } as Partial<BackgroundTaskInfo>);
+    if (store !== null) {
+      store.ensureRecord({ agentId: 'agent-1', agentName: 'explore', parentToolCallId: 'tc-1' });
+    }
+    return info;
+  }
+
+  async function openSelectedViewer(controller: TasksBrowserController, taskId: string) {
+    await (
+      controller as unknown as { handleOpenOutput(taskId: string): Promise<void> }
+    ).handleOpenOutput(taskId);
+  }
+
+  it('opens the activity viewer when a record exists for the agent', async () => {
+    const store = new SubagentActivityStore();
+    const { host, state } = makeControllerHost([agentTaskInfo(store)], store);
+    const controller = new TasksBrowserController(host as never);
+    await controller.show();
+
+    await openSelectedViewer(controller, 'agent-task-1');
+
+    const viewer = (state.tasksBrowser as { viewer: { component: unknown } }).viewer;
+    expect(viewer.component).toBeInstanceOf(AgentActivityViewer);
+    controller.close();
+  });
+
+  it('falls back to the output viewer when no record exists', async () => {
+    const store = new SubagentActivityStore();
+    const { host, state } = makeControllerHost([agentTaskInfo(null)], store);
+    const controller = new TasksBrowserController(host as never);
+    await controller.show();
+
+    await openSelectedViewer(controller, 'agent-task-1');
+
+    const viewer = (state.tasksBrowser as { viewer: { component: unknown } }).viewer;
+    expect(viewer.component).toBeInstanceOf(TaskOutputViewer);
+    controller.close();
+  });
+
+  it('feeds the preview pane from the activity store for agent tasks', async () => {
+    const store = new SubagentActivityStore();
+    store.ensureRecord({ agentId: 'agent-1', agentName: 'explore', parentToolCallId: 'tc-1' });
+    store.applyEvent({
+      sessionId: 's1',
+      agentId: 'agent-1',
+      type: 'turn.step.started',
+      turnId: 1,
+      step: 0,
+    } as Event);
+    store.applyEvent({
+      sessionId: 's1',
+      agentId: 'agent-1',
+      type: 'tool.call.started',
+      turnId: 1,
+      toolCallId: 't1',
+      name: 'Grep',
+      args: { pattern: 'foo' },
+    } as Event);
+    store.applyEvent({
+      sessionId: 's1',
+      agentId: 'agent-1',
+      type: 'tool.result',
+      turnId: 1,
+      toolCallId: 't1',
+      output: 'src/a.ts:1:foo\nsrc/b.ts:2:foo',
+      isError: false,
+    } as Event);
+
+    const { host, state } = makeControllerHost([agentTaskInfo(null)], store);
+    const controller = new TasksBrowserController(host as never);
+    await controller.show();
+
+    const browser = state.tasksBrowser as { tailOutput?: string };
+    expect(browser.tailOutput).toContain('── step 0 ──');
+    expect(browser.tailOutput).toContain('✓ Used Grep (foo) · 2 matches');
+    controller.close();
   });
 });

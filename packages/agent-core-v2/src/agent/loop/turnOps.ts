@@ -6,8 +6,7 @@
  * legacy loop-event observations. Also persists the terminal `turn.ended`
  * record (reason / error / durationMs) so downstream history rebuilds and
  * cold-resumed read models (e.g. the activity view) can recover how the last
- * turn ended. Consumed by the Agent-scope `loopService`; the
- * `interruptionReminder` domain projects `turn.cancel` into its own model.
+ * turn ended. Consumed by the Agent-scope `loopService`.
  */
 
 import { z } from 'zod';

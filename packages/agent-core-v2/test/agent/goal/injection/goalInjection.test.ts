@@ -17,10 +17,15 @@ import {
 import { stubAgentSwarm } from '../stubs';
 
 type GoalServiceTestManager = IAgentGoalService & AgentGoalService;
-type InjectableContextInjector = IAgentContextInjectorService & { inject(): Promise<void> };
+type InjectableContextInjector = IAgentContextInjectorService & {
+  inject(isNewTurn: boolean): Promise<void>;
+};
 
-async function injectDynamic(injector: InjectableContextInjector): Promise<void> {
-  await injector.inject();
+async function injectDynamic(
+  injector: InjectableContextInjector,
+  isNewTurn: boolean,
+): Promise<void> {
+  await injector.inject(isNewTurn);
 }
 
 async function registerLookupTool(
@@ -76,7 +81,7 @@ describe('GoalInjection content', () => {
     configure: (goals: GoalServiceTestManager) => Promise<void>,
   ): Promise<string | undefined> {
     await configure(goals);
-    await injectDynamic(injector);
+    await injectDynamic(injector, true);
     return lastGoalReminder(context);
   }
 
@@ -292,7 +297,7 @@ describe('GoalInjection integration', () => {
     it('main-agent dynamic injection writes a context.append_message with origin.variant goal', async () => {
       await goals.createGoal({ objective: 'Ship feature X' });
 
-      await injectDynamic(injector);
+      await injectDynamic(injector, true);
 
       const goalRecords = await flushedGoalReminderRecords(ctx, persistence);
       expect(goalRecords).toHaveLength(1);
@@ -303,8 +308,8 @@ describe('GoalInjection integration', () => {
     it('dynamic injection writes at most once for one turn boundary', async () => {
       await goals.createGoal({ objective: 'Ship feature X' });
 
-      await injectDynamic(injector);
-      await injectDynamic(injector);
+      await injectDynamic(injector, true);
+      await injectDynamic(injector, false);
 
       await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(1);
     });
@@ -363,7 +368,7 @@ describe('GoalInjection integration', () => {
     });
 
     it('writes no goal record when there is no active goal', async () => {
-      await injectDynamic(injector);
+      await injectDynamic(injector, true);
 
       await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(0);
     });

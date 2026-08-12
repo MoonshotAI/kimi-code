@@ -11,8 +11,10 @@
  * (`sessionOverlay()`): a session-owned manager for those servers — never
  * persisted, never part of the config domain's effective set, invisible to
  * the handler's other sessions — presented to the session through a merged
- * view, and released by the caller (`shutdown()`) when the session scope
- * tears down. Ephemeral servers are a caller-explicit injection channel
+ * view. The service activates overlays itself from the session lifecycle's
+ * `onWillCreateSession` event (keyed by the `ISessionEphemeralMcpServers`
+ * seed) and attaches each overlay's `shutdown()` to the session's teardown.
+ * Ephemeral servers are a caller-explicit injection channel
  * (like the user-level `mcp.json`), so they are not gated by workspace
  * trust — only the project-level config files are. Bound at Workspace scope.
  */
