@@ -56,6 +56,10 @@ export async function applyReloadedTuiConfig(
   host: SlashCommandHost,
   config: TuiConfig,
 ): Promise<void> {
+  // Set the LaTeX toggle before applyTheme: theme application invalidates the
+  // transcript components, which rebuild their Markdown children and copy the
+  // options at construction — so the new value must be live by then.
+  setMarkdownRenderLatex(config.renderLatex ?? true);
   const resolved = config.theme === 'auto'
     ? (currentTheme.palette === lightColors ? 'light' : 'dark')
     : undefined;
@@ -71,7 +75,6 @@ export async function applyReloadedTuiConfig(
     statusLine: config.statusLine,
   });
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
-  setMarkdownRenderLatex(config.renderLatex ?? true);
 }
 
 function applyRuntimeConfig(host: SlashCommandHost, config: KimiConfig): void {
