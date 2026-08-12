@@ -19,12 +19,12 @@ function retry(partial: Partial<StepRetryState> = {}): StepRetryState {
 
 describe('formatStepRetryLabel', () => {
   it('shows attempts, raw error name, and backoff delay', () => {
-    expect(formatStepRetryLabel(retry())).toBe('retrying (2/10) · APIStatusError · in 4s');
+    expect(formatStepRetryLabel(retry())).toBe('Retrying (2/10) · APIStatusError · in 4s');
   });
 
   it('drops the stale countdown once the attempt is running', () => {
     expect(formatStepRetryLabel(retry({ phase: 'attempt' }))).toBe(
-      'retrying (2/10) · APIStatusError',
+      'Retrying (2/10) · APIStatusError',
     );
   });
 
