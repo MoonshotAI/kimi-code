@@ -82,6 +82,9 @@ export interface WireSession {
   pending_interaction?: 'none' | 'approval' | 'question';
   last_turn_reason?: 'completed' | 'cancelled' | 'failed';
   archived: boolean;
+  /** Archive moment (ISO 8601); absent for sessions archived before the daemon
+   *  shipped the field — display falls back to `updated_at`. */
+  archived_at?: string;
   current_prompt_id?: string;
   /** Text of the most recent user prompt, for search/preview. */
   last_prompt?: string;

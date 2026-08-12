@@ -110,6 +110,9 @@ export interface AppSession {
    *  `!busy && (cancelled | failed)`. */
   lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   archived: boolean;
+  /** Archive moment (ISO). Absent for sessions archived before the daemon
+   *  shipped the field — the archived list falls back to `updatedAt`. */
+  archivedAt?: string;
   currentPromptId?: string;
   /** Text of the most recent user prompt, for search/preview. */
   lastPrompt?: string;
@@ -178,6 +181,9 @@ export interface V2Session {
     /** Unix 毫秒。 */
     updated_at: number;
     archived: boolean;
+    /** Unix 毫秒；null/缺省 = 未归档、归档于该字段上线前、或 daemon 尚未透出
+     *  （展示回退 updated_at）。 */
+    archived_at?: number | null;
   };
   activity: {
     status: V2SessionActivityStatus;

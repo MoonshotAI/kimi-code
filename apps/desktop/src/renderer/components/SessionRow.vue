@@ -12,7 +12,7 @@ import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/app-core/lib';
 import SessionEmojiPicker from './SessionEmojiPicker.vue';
-import { sessionRowStatus } from '@moonshot-ai/app-core/lib';
+import { sessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 
 const { t } = useI18n();
 
@@ -61,24 +61,28 @@ const fullTime = computed(() =>
 // undefined. Differences: no leading status slot — the title is left-aligned —
 // and the first line's right side shows the session's status (pills, spinner,
 // unread dot) INSTEAD of the time. The time only renders when there is
-// nothing to report. The flag logic lives in sessionRowStatus.ts.
+// nothing to report. The status itself is the shared SessionDisplayStatus
+// derivation (app-core sessionDisplayStatus.ts) — one status per row at any
+// moment; inline rename reports 'idle' (badges would fight the input).
 const isFlat = computed(() => props.session.cwdLabel !== undefined);
-const rowStatus = computed(() =>
-  sessionRowStatus({
-    busy: props.session.busy,
-    unread: props.unread,
-    renaming: renaming.value,
-    questionCount: props.questionCount,
-    approvalCount: props.approvalCount,
-    pendingInteraction: props.session.pendingInteraction,
-    lastTurnReason: props.session.lastTurnReason,
-  }),
+const displayStatus = computed(() =>
+  renaming.value
+    ? ('idle' as const)
+    : sessionDisplayStatus({
+        busy: props.session.busy,
+        unread: props.unread,
+        questionCount: props.questionCount,
+        approvalCount: props.approvalCount,
+        pendingInteraction: props.session.pendingInteraction,
+        lastTurnReason: props.session.lastTurnReason,
+      }),
 );
-const showQuestionBadge = computed(() => rowStatus.value.showQuestionBadge);
-const showApprovalBadge = computed(() => rowStatus.value.showApprovalBadge);
-const showAbortedBadge = computed(() => rowStatus.value.showAbortedBadge);
-const showBusySpinner = computed(() => rowStatus.value.showBusySpinner);
-const flatHasStatus = computed(() => rowStatus.value.hasStatus);
+const showQuestionBadge = computed(() => displayStatus.value === 'awaiting-question');
+const showApprovalBadge = computed(() => displayStatus.value === 'awaiting-approval');
+const showAbortedBadge = computed(() => displayStatus.value === 'aborted');
+const showBusySpinner = computed(() => displayStatus.value === 'running');
+const showUnreadDot = computed(() => displayStatus.value === 'unread');
+const flatHasStatus = computed(() => displayStatus.value !== 'idle');
 
 // Right-click menu — the row's only menu (there is no kebab button; the hover
 // actions are one-shot pin / archive buttons).
@@ -386,13 +390,14 @@ function openPullRequest(): void {
   <div class="se" :class="{ on: active, flat: isFlat }" @click="emit('select', session.id)" @contextmenu="onRowContextMenu">
     <div class="row">
       <!-- Leading status slot (in the gutter left of the title): a spinner
-           while the session runs, otherwise an unread blue dot. Fixed width
-           so the title start never shifts. Grouped rows only — the flat-style
-           rows (flat list, pinned section) drop the slot (left-aligned) and
-           move status right. -->
+           while the session runs, otherwise an unread blue dot; when an
+           attention pill owns the row the slot stays empty (the enum reports
+           one status at a time). Fixed width so the title start never shifts.
+           Grouped rows only — the flat-style rows (flat list, pinned section)
+           drop the slot (left-aligned) and move status right. -->
       <span v-if="!isFlat" class="lead" aria-hidden="true">
-        <Spinner v-if="session.busy" size="sm" />
-        <span v-else-if="unread" class="unread-dot" />
+        <Spinner v-if="showBusySpinner" size="sm" />
+        <span v-else-if="showUnreadDot" class="unread-dot" />
       </span>
 
       <div class="left">
@@ -468,7 +473,7 @@ function openPullRequest(): void {
              spinner yields to attention pills (showBusySpinner): a session
              waiting for approval/answer never shows both. -->
         <span v-if="!isFlat || !flatHasStatus" class="ts">{{ session.time }}</span>
-        <span v-else-if="showBusySpinner || unread" class="st">
+        <span v-else-if="showBusySpinner || showUnreadDot" class="st">
           <Spinner v-if="showBusySpinner" size="sm" />
           <span v-else class="unread-dot" />
         </span>

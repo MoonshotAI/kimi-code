@@ -242,7 +242,7 @@ export interface UseWorkspaceStateDeps {
   // assigns rawState.sessions directly — it goes through these.
   setSessions: (next: AppSession[]) => void;
   updateSession: (id: string, update: (session: AppSession) => AppSession) => void;
-  upsertSessionFront: (session: AppSession) => void;
+  upsertSessionSorted: (session: AppSession) => void;
   appendSession: (session: AppSession) => void;
   forgetSession: (id: string) => void;
   /** Drop pins in bulk — the pinned backfill's stale-id cleanup (404/archived). */
@@ -263,6 +263,10 @@ export interface UseWorkspaceStateDeps {
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
   refreshSessionGoal: (sessionId: string) => Promise<void>;
+  /** load()'s post-reload goal refill: fetches with the goal-active pending
+   *  mark held (facade-owned), so a turn boundary landing mid-refill still
+   *  suppresses the per-turn unread/notification for an active goal. */
+  refillSessionGoalOnReload: (sessionId: string) => void;
   refreshSessionPlans: (sessionId: string, toolCallId?: string) => Promise<void>;
   /** Persist profile fields to the daemon. Resolves false (after surfacing the
    *  failure itself) when the daemon rejected the patch — awaited callers that
@@ -313,7 +317,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     sessionsKnownEmpty,
     setSessions,
     updateSession,
-    upsertSessionFront,
+    upsertSessionSorted,
     appendSession,
     forgetSession,
     unpinSessions,
@@ -326,6 +330,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     hasLoadedMessages,
     refreshSessionStatus,
     refreshSessionGoal,
+    refillSessionGoalOnReload,
     refreshSessionPlans,
     persistSessionProfile,
     mergedWorkspaces,
@@ -1309,6 +1314,22 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         if (stale.length > 0) unpinSessions(stale);
       }
 
+      // A goal running in the background survives a client reload only in the
+      // wire facts (busy); its goalBySession entry was client-local. Turn-end
+      // side effects key off goalBySession (an active goal suppresses the
+      // per-turn unread dot + completion notification), so refill the goal
+      // state for any session still running a main turn — otherwise the first
+      // intermediate boundary after a reload leaks one alert. The reload
+      // refill holds the facade's goal-active pending mark until it lands, so
+      // a boundary arriving mid-refill is covered too. mainTurnActive may be
+      // omitted by older daemons — fall back to busy (a stray refill for a
+      // background-only busy session is a cheap no-op GET).
+      for (const s of rawState.sessions) {
+        if ((s.mainTurnActive ?? s.busy) && rawState.goalBySession[s.id] === undefined) {
+          refillSessionGoalOnReload(s.id);
+        }
+      }
+
       // First load: pick the workspace of the most-recent session, unless the
       // user already has a persisted active workspace that still exists.
       const mostRecent = sessions[0];
@@ -1545,7 +1566,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       draftPick !== undefined && (!session.model || session.model.length === 0)
         ? { ...session, model: draftPick }
         : session;
-    upsertSessionFront(created);
+    upsertSessionSorted(created);
     // Seed BEFORE selectSession: the thinking watcher re-resolves from the new
     // session's own entry the moment the active session changes.
     const sid = session.id;
@@ -3048,7 +3069,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function restoreSession(id: string): Promise<boolean> {
     try {
       const restored = await getKimiWebApi().restoreSession(id);
-      upsertSessionFront(restored);
+      upsertSessionSorted(restored);
       return true;
     } catch (err) {
       pushOperationFailure('restoreSession', err, { sessionId: id });
@@ -3105,7 +3126,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (!sid) return;
     try {
       const forked = await getKimiWebApi().forkSession(sid);
-      upsertSessionFront(forked);
+      upsertSessionSorted(forked);
       // Forks are already counted by session_menu_action — no session_created.
       await selectSession(forked.id, { skipTrack: true });
     } catch (err) {
@@ -3161,7 +3182,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (frontBackup !== undefined) {
         const cleared = { ...frontBackup };
         delete cleared.lastTurnReason;
-        upsertSessionFront(cleared);
+        upsertSessionSorted(cleared);
       }
     }
     try {
@@ -3171,7 +3192,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     } catch (err) {
       if (optimistic) {
         rawState.messagesBySession = { ...rawState.messagesBySession, [sid]: msgs };
-        if (frontBackup !== undefined) upsertSessionFront(frontBackup);
+        if (frontBackup !== undefined) upsertSessionSorted(frontBackup);
         await syncSessionFromSnapshot(sid).catch(() => undefined);
       }
       pushOperationFailure('undo', err, { sessionId: sid });

@@ -215,9 +215,9 @@ function advanceSeq(state: KimiClientState, sessionId: string | undefined, seq: 
 
 /** Float a session to the top of the sidebar by bumping its `updatedAt` to now
  *  (never backwards). Recency is deliberately coarse: only moments the user
- *  should look at bump it — main-turn end and new approval/question requests.
- *  Per-step and per-tool-call messages do NOT (they re-sorted the session list
- *  mid-turn). */
+ *  should look at bump it — main-turn start and end, and new approval/question
+ *  requests. Per-step and per-tool-call messages do NOT (they re-sorted the
+ *  session list mid-turn). */
 function bumpSessionRecency(state: KimiClientState, sessionId: string): void {
   const now = new Date().toISOString();
   state.sessions = state.sessions.map((s) =>
@@ -926,6 +926,10 @@ export function reduceAppEvent(
         // any leftover retry state.
         delete next.turnErrorBySession[event.sessionId];
         delete next.turnRetryBySession[event.sessionId];
+        // A turn start IS new activity: under pure recency ordering the
+        // session floats now (one bump per turn — per-step churn is still
+        // excluded), not only when the turn ends.
+        bumpSessionRecency(next, event.sessionId);
       } else {
         delete next.turnActiveBySession[event.sessionId];
         delete next.turnRetryBySession[event.sessionId];

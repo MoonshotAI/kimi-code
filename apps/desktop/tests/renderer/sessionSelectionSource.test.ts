@@ -73,7 +73,7 @@ function createWorkspaceState(getSession: (sessionId: string) => Promise<AppSess
       rawState.sessions = sessions;
     },
     updateSession: vi.fn(),
-    upsertSessionFront: vi.fn(),
+    upsertSessionSorted: vi.fn(),
     appendSession: (next: AppSession) => rawState.sessions.push(next),
     forgetSession: vi.fn(),
     unpinSessions: vi.fn(),

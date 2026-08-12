@@ -27,6 +27,7 @@ function v2Item(
       created_at: 1,
       updated_at: opts.updatedAt ?? 1000,
       archived: false,
+      archived_at: null,
     },
     activity: { status: 'idle' },
   };

@@ -9,13 +9,12 @@ import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import {
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
-  type DropPosition,
 } from '@moonshot-ai/app-core/lib';
 import { logError, logWarn } from '@moonshot-ai/app-core/lib';
 import { track } from '../lib/track';
 import { mergeWorkspaces } from '@moonshot-ai/app-core/lib';
 import { basename } from '@moonshot-ai/app-core/lib';
-import { sessionRowStatus } from '@moonshot-ai/app-core/lib';
+import { insertSessionByRecency, sessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { mergeSnapshotMessages } from '@moonshot-ai/app-core/lib';
 import { mergeSnapshotSubagents } from '@moonshot-ai/app-core/lib';
@@ -37,8 +36,6 @@ import {
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
 import {
-  insertPinnedAt,
-  mergePinnedOrder,
   partitionByPinned,
   pinSessionId,
   unpinSessionId,
@@ -97,6 +94,7 @@ import {
   reduceAppEvent,
   toAppEvent,
   isPlaceholderSessionUsage,
+  mergeSnapshotSession,
   shallowEqualArray,
   type CompactionStatus,
   type KimiClientState,
@@ -584,9 +582,11 @@ function setSessions(next: AppSession[]): void {
 function updateSession(id: string, update: (session: AppSession) => AppSession): void {
   rawState.sessions = rawState.sessions.map((s) => (s.id === id ? update(s) : s));
 }
-/** Add or move a session to the front (recency order), de-duped by id. */
-function upsertSessionFront(session: AppSession): void {
-  rawState.sessions = [session, ...rawState.sessions.filter((s) => s.id !== session.id)];
+/** Add or replace a session in the pool, keeping updatedAt-desc order
+ *  (de-duped by id). Position comes from the timestamp alone — callers never
+ *  force the front (a restore/fork lands at its content time, not the top). */
+function upsertSessionSorted(session: AppSession): void {
+  rawState.sessions = insertSessionByRecency(rawState.sessions, session);
 }
 /** Append a session to the end (e.g. a deep-linked older session). */
 function appendSession(session: AppSession): void {
@@ -822,6 +822,24 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   }
 }
 
+// A reload-time goal-state refill in flight (see useWorkspaceState load()).
+// onMainTurnEnd treats these sessions as goal-active while the refill is
+// pending: the first intermediate goal boundary after a reload could
+// otherwise arrive before the refill lands and leak one unread dot +
+// completion notification. Deliberately NOT set for ordinary
+// refreshSessionGoal callers (e.g. selectSession's sidecar refresh) — a
+// non-goal session's completion must never be suppressed.
+const goalFetchPendingBySession = new Set<string>();
+
+/** load()'s post-reload goal refill: fetch with the pending mark held, so a
+ *  turn boundary landing mid-refetch still reads goal-active (see above). */
+function refillSessionGoalOnReload(sessionId: string): void {
+  goalFetchPendingBySession.add(sessionId);
+  void refreshSessionGoal(sessionId).finally(() => {
+    goalFetchPendingBySession.delete(sessionId);
+  });
+}
+
 /**
  * Fetch GET /sessions/{id}/goal and fold the result into goalBySession — the
  * recovery channel for the goal card after a full-page reload (the snapshot +
@@ -1023,6 +1041,13 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   if (!shallowEqualArray(next.warnings, snapshot.warnings)) {
     rawState.warnings = next.warnings;
   }
+
+  // A live goal event supersedes any in-flight goal refetch (the refill's
+  // version guard discards its result), so the pending mark must clear with
+  // it — otherwise a goalUpdated(complete) followed by the terminal turn end
+  // would still read "goal fetch pending" and suppress the one completion
+  // alert (unread dot + notification) the user was supposed to get.
+  if (event.type === 'goalUpdated') goalFetchPendingBySession.delete(sessionId);
 
   if (event.type === 'configChanged') {
     rawState.defaultModel = event.config.defaultModel ?? null;
@@ -1963,31 +1988,14 @@ async function syncSessionFromSnapshot(
     }
 
     const snapUsagePlaceholder = isPlaceholderSessionUsage(snap.session.usage);
-    updateSession(sessionId, (s) => ({
-      ...snap.session,
-      model:
-        snap.session.model && snap.session.model.length > 0
-          ? snap.session.model
-          : s.model,
-      // The wire session's usage is a placeholder (both engines return zeros
-      // for the heavy fields); keep the live usage folded in from /status and
-      // the WS status stream instead of zeroing it on every snapshot sync.
-      usage: snapUsagePlaceholder ? s.usage : snap.session.usage,
-      // Recency never moves backwards on a snapshot: the server's updatedAt
-      // is prompt-submit-grained while the client bumps at turn end and on
-      // approval/question requests. Blindly taking the server value re-sorted
-      // the sidebar on every click (and could even downgrade a newer local
-      // bump), so keep whichever timestamp is newer — except while the main
-      // turn is still running: the server also bumps mid-turn (prompt submit,
-      // auto title, subagent registration), and importing that on click floats
-      // the workspace in the sidebar's recent sort before the turn finishes.
-      // The turn's end bumps recency via the WS event (durable, replayed after
-      // a reconnect), so nothing is lost by holding the local value until then.
-      updatedAt:
-        !snap.session.mainTurnActive && snap.session.updatedAt > s.updatedAt
-          ? snap.session.updatedAt
-          : s.updatedAt,
-    }));
+    // The effective main-turn liveness: older daemons omit mainTurnActive —
+    // fall back to the snapshot's in-flight turn gated on busy. Shared by the
+    // session merge (recency guard) and the indicator seeding below.
+    const snapMainTurnActive =
+      snap.session.mainTurnActive ?? (snap.inFlightTurn !== null && snap.session.busy);
+    // Snapshot merge: keep the pool's live usage/model, newer local recency,
+    // and the v2-only pullRequest — see mergeSnapshotSession.
+    updateSession(sessionId, (s) => mergeSnapshotSession(s, snap.session, snapMainTurnActive));
     // The snapshot only carries the most recent page; keep any older pages the
     // user already loaded so reopening does not reset scrollback.
     setSessionMessages(
@@ -2035,9 +2043,7 @@ async function syncSessionFromSnapshot(
     // whose turn.ended was lost (abrupt agent disposal) — the server-side
     // busy read is the reconciler, so a dead turn never relights the indicator.
     {
-      const mainTurnActive =
-        snap.session.mainTurnActive ?? (snap.inFlightTurn !== null && snap.session.busy);
-      if (mainTurnActive) rawState.turnActiveBySession[sessionId] = true;
+      if (snapMainTurnActive) rawState.turnActiveBySession[sessionId] = true;
       else delete rawState.turnActiveBySession[sessionId];
     }
 
@@ -3012,31 +3018,6 @@ function togglePinSession(id: string): void {
   else pinSession(id);
 }
 
-/**
- * Replace the pinned order after a drag reorder in the sidebar. The UI only
- * renders pinned sessions that are loaded, so ids it never saw (not yet
- * fetched) keep their spots at the end instead of being silently unpinned.
- */
-function reorderPinnedSessions(ids: string[]): void {
-  const next = mergePinnedOrder(ids, pinnedSessionIds.value);
-  pinnedSessionIds.value = next;
-  savePinnedSessions(next);
-}
-
-/**
- * Pin a session dropped into the pinned section at a specific spot (drag from
- * a workspace group). `targetId`/`position` name the landing row; like
- * `reorderPinnedSessions`, stored ids the UI never rendered keep their tail
- * spots instead of being dropped.
- */
-function pinSessionAt(id: string, targetId: string | null, position: DropPosition): void {
-  const visible = pinnedSessions.value.map((s) => s.id);
-  const placed = insertPinnedAt(visible, id, targetId, position);
-  const next = mergePinnedOrder(placed, pinnedSessionIds.value);
-  pinnedSessionIds.value = next;
-  savePinnedSessions(next);
-}
-
 /** Sidebar-facing workspace list, in the user's manual (dragged/persisted)
  *  order, reconciled against the daemon's workspace set by the watcher above. */
 const workspacesView = computed<WorkspaceView[]>(() => {
@@ -3140,17 +3121,18 @@ const flatSessionsAll = computed<Session[]>(() => {
   const pinnedSet = new Set(pinnedSessionIds.value);
   const byUpdatedDesc = (a: AppSession, b: AppSession) =>
     new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-  // Attention-first ordering: anything with a status worth noticing (running,
-  // awaiting approval/answer, aborted, unread) floats to the top; each tier is
-  // updated_at desc. Clearing the status drops the session back to its time
-  // position. The predicate is the row's own status logic (sessionRowStatus).
-  // The rest tier only renders rows at/inside the v2 walk's frontier — pool
-  // rows from other sources (per-workspace v1 pages) carry no global-order
-  // guarantee beyond it: one workspace owning the newest 100 sessions would
-  // otherwise leave a hole at rows 51–100.
+  // Pure recency order (updatedAt desc) — no attention tiering: a status
+  // (running / awaiting / aborted / unread) never floats a session above
+  // newer ones, it only renders as the row's pill/spinner/dot.
+  // The frontier still gates which pool rows may render: rows from other
+  // sources (per-workspace v1 pages) carry no global-order guarantee beyond
+  // the v2 walk's frontier (one workspace owning the newest 100 sessions
+  // would otherwise leave a hole at rows 51–100). Rows with a live status
+  // are exempt from the frontier — a session that just started running must
+  // not vanish because its page hasn't been walked yet (visibility only;
+  // its position is still its timestamp).
   const frontier = rawState.flatSessionsFrontier;
-  const attention: AppSession[] = [];
-  const rest: AppSession[] = [];
+  const rows: AppSession[] = [];
   for (const s of rawState.sessions) {
     if (
       s.parentSessionId ||
@@ -3160,25 +3142,20 @@ const flatSessionsAll = computed<Session[]>(() => {
     ) {
       continue;
     }
-    const status = sessionRowStatus({
-      busy: isMainTurnActive(s.id, s.mainTurnActive),
-      unread: unreadBySession.value[s.id] ?? false,
-      renaming: false,
-      questionCount: pendingBySession.value[s.id]?.questions ?? 0,
-      approvalCount: pendingBySession.value[s.id]?.approvals ?? 0,
-      pendingInteraction: s.pendingInteraction,
-      lastTurnReason: s.lastTurnReason,
-    });
-    if (status.hasStatus) {
-      attention.push(s);
-      continue;
-    }
-    if (frontier !== null && new Date(s.updatedAt).getTime() < frontier) continue;
-    rest.push(s);
+    const hasStatus =
+      sessionDisplayStatus({
+        busy: isMainTurnActive(s.id, s.mainTurnActive),
+        unread: unreadBySession.value[s.id] ?? false,
+        questionCount: pendingBySession.value[s.id]?.questions ?? 0,
+        approvalCount: pendingBySession.value[s.id]?.approvals ?? 0,
+        pendingInteraction: s.pendingInteraction,
+        lastTurnReason: s.lastTurnReason,
+      }) !== 'idle';
+    if (!hasStatus && frontier !== null && new Date(s.updatedAt).getTime() < frontier) continue;
+    rows.push(s);
   }
-  attention.sort(byUpdatedDesc);
-  rest.sort(byUpdatedDesc);
-  return [...attention, ...rest].map((s) => {
+  rows.sort(byUpdatedDesc);
+  return rows.map((s) => {
     const workspaceId = workspaceIdForSession(s);
     return {
       id: s.id,
@@ -3198,22 +3175,60 @@ const flatSessionsAll = computed<Session[]>(() => {
   });
 });
 
-/** The flat list's visible window: newest N rows of the pool. */
+/** The flat list's visible window: the newest N rows — stretched to also
+ *  cover any row with a live status beyond the window. A session that starts
+ *  running / awaiting input / turns unread deep in the list keeps its
+ *  timestamp position (pure time order) but must still RENDER: its status is
+ *  the whole point of the row. Load-more still grows the base window. */
+/** Row-level live-status check on the projected flat row (busy here is the
+ *  effective main-turn flag; unread/pending counts ride the facade maps). */
+function flatRowHasStatus(s: Session): boolean {
+  return (
+    sessionDisplayStatus({
+      busy: s.busy,
+      unread: unreadBySession.value[s.id] ?? false,
+      questionCount: pendingBySession.value[s.id]?.questions ?? 0,
+      approvalCount: pendingBySession.value[s.id]?.approvals ?? 0,
+      pendingInteraction: s.pendingInteraction,
+      lastTurnReason: s.lastTurnReason,
+    }) !== 'idle'
+  );
+}
+
+/** The effective render window: the base (user-driven) window stretched to
+ *  also cover any row with a live status beyond it. A session that starts
+ *  running / awaiting input / turns unread deep in the list keeps its
+ *  timestamp position (pure time order) but must still RENDER: its status is
+ *  the whole point of the row. This is the single source for the rendered
+ *  slice AND the load-more bookkeeping, so the two never drift apart. */
+const flatRenderCount = computed<number>(() => {
+  const all = flatSessionsAll.value;
+  let window = flatVisibleCount.value;
+  for (let i = all.length - 1; i >= window; i--) {
+    if (flatRowHasStatus(all[i]!)) {
+      window = i + 1;
+      break;
+    }
+  }
+  return window;
+});
+
 const flatSessions = computed<Session[]>(() =>
-  flatSessionsAll.value.slice(0, flatVisibleCount.value),
+  flatSessionsAll.value.slice(0, flatRenderCount.value),
 );
 
-/** More rows available, either on the server or already loaded past the window. */
+/** More rows available, either on the server or already loaded past the
+ *  (status-stretched) render window. */
 const flatListHasMore = computed(
   () =>
-    rawState.flatSessionsHasMore || flatVisibleCount.value < flatSessionsAll.value.length,
+    rawState.flatSessionsHasMore || flatRenderCount.value < flatSessionsAll.value.length,
 );
 
-/** One "load more" click: widen the window by one page (instant local reveal
- *  when the pool covers it), and top the pool up only when the window
- *  outgrows it. */
+/** One "load more" click: widen the window by one page PAST any status
+ *  stretch (so the click always reveals fresh rows), and top the pool up
+ *  only when the window outgrows it. */
 function loadMoreFlatSessions(): void {
-  flatVisibleCount.value += FLAT_SESSIONS_PAGE_SIZE;
+  flatVisibleCount.value = flatRenderCount.value + FLAT_SESSIONS_PAGE_SIZE;
   if (
     flatVisibleCount.value > flatSessionsAll.value.length &&
     rawState.flatSessionsHasMore
@@ -3277,14 +3292,16 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => buildWorkspaceGroups(tr
 const mobileWorkspaceGroups = computed<WorkspaceGroup[]>(() => buildWorkspaceGroups(false));
 
 /**
- * The pinned sidebar section: every pinned session across workspaces, in the
- * user's manual order. Pinned sessions are filtered OUT of `workspaceGroups`
- * above, so a session renders exactly once. Visibility matches
- * `sessionsForView`: child sessions, archived sessions (archived elsewhere —
- * a local archive already dropped the pin via forgetSession), and sessions
- * under a removed (hidden) workspace stay out. A pinned id whose session is
- * not loaded yet (the first page per workspace is small) is backfilled during
- * `load()` — until then it simply does not render.
+ * The pinned sidebar section: every pinned session across workspaces, in pure
+ * recency order (updatedAt desc — no attention tiering, no manual order: the
+ * stored id list is just a membership set). Pinned sessions are filtered
+ * OUT of `workspaceGroups` above, so a session renders exactly once.
+ * Visibility matches `sessionsForView`: child sessions, archived sessions
+ * (archived elsewhere — a local archive already dropped the pin via
+ * forgetSession), and sessions under a removed (hidden) workspace stay out.
+ * A pinned id whose session is not loaded yet (the first page per workspace
+ * is small) is backfilled during `load()` — until then it simply does not
+ * render.
  */
 const pinnedSessions = computed<Session[]>(() => {
   void sessionTimeClock.value;
@@ -3294,7 +3311,11 @@ const pinnedSessions = computed<Session[]>(() => {
     (s) =>
       !s.parentSessionId && !s.archived && visibleWorkspaceIds.has(workspaceIdForSession(s)),
   );
-  return partitionByPinned(candidates, pinnedSessionIds.value).pinned.map((s) => {
+  const pinned = partitionByPinned(candidates, pinnedSessionIds.value)
+    .pinned.toSorted(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
+  return pinned.map((s) => {
     const workspaceId = workspaceIdForSession(s);
     return {
       id: s.id,
@@ -3411,7 +3432,7 @@ const workspaceState = useWorkspaceState(rawState, {
   sessionsKnownEmpty,
   setSessions,
   updateSession,
-  upsertSessionFront,
+  upsertSessionSorted,
   appendSession,
   forgetSession,
   unpinSessions,
@@ -3424,6 +3445,7 @@ const workspaceState = useWorkspaceState(rawState, {
   hasLoadedMessages,
   refreshSessionStatus,
   refreshSessionGoal,
+  refillSessionGoalOnReload,
   refreshSessionPlans,
   persistSessionProfile,
   mergedWorkspaces,
@@ -3486,6 +3508,17 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
   // Capture before finishPromptLocal drops it — it keys the completion
   // notification's dedup tag so each finished turn alerts once.
   const finishedPromptId = rawState.promptIdBySession[sid];
+  // A goal run drives many turn boundaries (each continuation is a full
+  // prompt→turn cycle). Intermediate boundaries must not light the unread dot
+  // or fire a notification per turn — the user should be told once, when the
+  // goal STOPS needing to run. Timing makes this predicate exact: a terminal
+  // UpdateGoal fires goalUpdated mid-turn (seq ahead of that turn's turn.ended;
+  // 'complete' clears the entry, 'blocked'/'paused' keep a non-active status),
+  // so only genuinely-intermediate boundaries read 'active' here. A goal-state
+  // refetch still in flight (the post-reload refill) counts as active too —
+  // the first intermediate boundary could otherwise beat the refill.
+  const goalActive =
+    rawState.goalBySession[sid]?.status === 'active' || goalFetchPendingBySession.has(sid);
   // Shared finish cleanup: clears in-flight/prompt-id and drains one
   // queued message. The notification/unread side effects below stay
   // WS-event-only — the snapshot path (handleSessionSnapshot) must not cry
@@ -3497,7 +3530,7 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
   if (sid === rawState.activeSessionId) {
     void workspaceState.loadGitStatus(sid);
     void refreshSessionStatus(sid);
-  } else if (status === 'idle') {
+  } else if (status === 'idle' && !goalActive) {
     // A background session finished a turn the user hasn't seen — light up its
     // unread dot until they open it. Aborted (cancelled/failed) turns are
     // excluded on purpose: there is no fresh result to read, and counting them
@@ -3511,7 +3544,7 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
   // blocked on approval/question do not fire the generic "Turn finished" alert.
   const hasPendingApproval = (rawState.approvalsBySession[sid] ?? []).length > 0;
   const hasPendingQuestion = (rawState.questionsBySession[sid] ?? []).length > 0;
-  if (shouldNotifyCompletion(status, hasPendingApproval, hasPendingQuestion)) {
+  if (!goalActive && shouldNotifyCompletion(status, hasPendingApproval, hasPendingQuestion)) {
     notification.maybeNotifyCompletion(sid, {
       isUserWatching: isUserWatching(sid),
       sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
@@ -3728,8 +3761,6 @@ export function useKimiWebClient() {
     pinSession,
     unpinSession,
     togglePinSession,
-    reorderPinnedSessions,
-    pinSessionAt,
     archiveSession: workspaceState.archiveSession,
     exportSession: workspaceState.exportSession,
     restoreSession: workspaceState.restoreSession,

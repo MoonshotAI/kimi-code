@@ -88,7 +88,7 @@ const props = withDefaults(
     activeWorkspaceId: string | null;
     sessions: Session[];
     groups: WorkspaceGroupType[];
-    /** Pinned sessions (across workspaces, manual order) — rendered in the
+    /** Pinned sessions (across workspaces, recency order) — rendered in the
      *  pinned section above all workspace groups; empty hides the section. */
     pinnedSessions?: Session[];
     /** Flat mode: every session across workspaces, newest first (pinned
@@ -150,8 +150,9 @@ const emit = defineEmits<{
   fork: [id: string];
   export: [id: string];
   pin: [id: string];
-  reorderPinned: [ids: string[]];
-  pinAt: [id: string, targetId: string | null, position: DropPosition];
+  /** A session row dropped into the pinned section (pin it; the section
+   *  renders in recency order, so no position is carried). */
+  dropPin: [id: string];
   unpin: [id: string];
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
@@ -475,8 +476,8 @@ function chooseViewMode(mode: SidebarViewMode): void {
 }
 
 // Flat rows double as drag sources for the pinned section — the same marker
-// MIME as the grouped rows (WorkspaceGroup), so PinnedSessionList's
-// pin-at-drop-position works unchanged. Dragging is suspended while a row is
+// MIME as the grouped rows (WorkspaceGroup), so PinnedSessionList's drop-to-pin
+// works unchanged. Dragging is suspended while a row is
 // being renamed inline (text selection would otherwise start a row drag),
 // mirroring the pinned section's rename-state-change handling.
 const renamingFlatId = ref<string | null>(null);
@@ -543,9 +544,9 @@ function onPinSession(id: string): void {
   emit('pin', id);
 }
 
-function onPinSessionAt(id: string, targetId: string | null, position: DropPosition): void {
+function onDropPin(id: string): void {
   pinnedListRef.value?.expand();
-  emit('pinAt', id, targetId, position);
+  emit('dropPin', id);
 }
 
 function onSearchSelectSession(sessionId: string): void {
@@ -1051,10 +1052,9 @@ onBeforeUnmount(() => {
           @fork-session="(id) => emit('fork', id)"
           @export-session="(id) => emit('export', id)"
           @pin-session="onPinSession"
-          @pin-session-at="onPinSessionAt"
+          @drop-pin="onDropPin"
           @session-drag-start="onPinnedSessionDragStart"
           @session-drag-end="onPinnedSessionDragEnd"
-          @reorder="(ids) => emit('reorderPinned', ids)"
         />
         <div class="side-section-label">
           <span class="side-section-title">{{ t('sidebar.sessionsHeader') }}</span>

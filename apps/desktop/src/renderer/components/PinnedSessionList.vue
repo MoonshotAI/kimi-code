@@ -1,15 +1,17 @@
 <!-- apps/web/src/components/PinnedSessionList.vue -->
 <!-- The pinned section above all workspace groups: every pinned session across
-     workspaces, in the user's manual (drag) order. Rows are the shared
+     workspaces, in pure recency order (updatedAt desc — no manual ordering,
+     no attention tiering; the facade owns the order). Rows are the shared
      SessionRow (always the flat-style variant — this section is itself a flat
-     list); drag reorders within the section only. State and persistence live
-     in the client — this component renders the list and forwards every intent
-     back up. -->
+     list). Drag vocabulary: drag a session row IN to pin it (drop anywhere in
+     the section — position carries no ordering meaning), drag a pinned row
+     OUT to its home workspace group / the flat list to unpin (that half lives
+     in Sidebar/WorkspaceGroup). State and persistence live in the client —
+     this component renders the list and forwards every intent back up. -->
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
-import { moveInOrder, type DropPosition } from '@moonshot-ai/app-core/lib';
 import { SESSION_ROW_DRAG_MIME } from '@moonshot-ai/app-core/lib';
 import { loadPinnedCollapsed, savePinnedCollapsed } from '@moonshot-ai/app-core/lib';
 import SessionRow from './SessionRow.vue';
@@ -31,13 +33,13 @@ const emit = defineEmits<{
   forkSession: [id: string];
   exportSession: [id: string];
   pinSession: [id: string];
-  pinSessionAt: [id: string, targetId: string | null, position: DropPosition];
+  /** A session row was dropped into the section (pin it). */
+  dropPin: [id: string];
   /** A pinned row started/ended being dragged. Sidebar broadcasts the drag to
    *  the workspace groups so only the session's home workspace accepts the
    *  drop-back (unpin). */
   sessionDragStart: [id: string, workspaceId: string];
   sessionDragEnd: [];
-  reorder: [ids: string[]];
 }>();
 
 // Section collapse: the pinned block is pinned above the scrolling workspace
@@ -50,7 +52,7 @@ function toggleCollapsed(): void {
   savePinnedCollapsed(collapsed.value);
 }
 
-// Feedback for a new pin: Sidebar calls this from its pin / pin-at handlers
+// Feedback for a new pin: Sidebar calls this from its pin / drop-pin handlers
 // so the new row shows up where the user can see it. Deliberately NOT a
 // sessions-length watcher: first load fetches only each workspace's first
 // page and the missing pinned rows arrive in a later backfill, and that
@@ -62,14 +64,13 @@ function expand(): void {
 }
 defineExpose({ expand });
 
-// Drag-to-reorder, scoped to this section — the workspace drag's vocabulary
-// (Sidebar.vue): track the dragged row + the insertion marker (top/bottom
-// half of the row under the pointer), then emit the new id order on drop.
+// Row dragging exists for the drag-OUT (unpin) gesture — there is no
+// in-section reorder (the section renders in recency order). We only track
+// the dragged row for the fade + the drag broadcast to workspace groups.
 const draggingId = ref<string | null>(null);
-const dragOver = ref<{ id: string; position: DropPosition } | null>(null);
 
-// A row in inline-rename mode suspends dragging on its drop-target wrapper,
-// so a drag gesture over the input selects text instead of moving the row.
+// A row in inline-rename mode suspends dragging on its wrapper, so a drag
+// gesture over the input selects text instead of moving the row.
 const renamingSessionId = ref<string | null>(null);
 
 function onDragStart(id: string, event: DragEvent): void {
@@ -83,96 +84,56 @@ function onDragStart(id: string, event: DragEvent): void {
 
 function onDragEnd(): void {
   draggingId.value = null;
-  dragOver.value = null;
   emit('sessionDragEnd');
 }
 
 // The drop-back-to-unpin path removes the dragged row mid-drag; if dragend
 // never arrives because the source element is gone, the local drag state
-// would stick and the next external drag would be mistaken for an internal
-// reorder — reset it once the dragged row is no longer rendered.
+// would stick — reset it once the dragged row is no longer rendered.
 watch(
   () => props.sessions,
   (sessions) => {
     if (draggingId.value !== null && !sessions.some((s) => s.id === draggingId.value)) {
       draggingId.value = null;
-      dragOver.value = null;
     }
   },
 );
 
-function dropPosition(event: DragEvent): DropPosition {
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-}
+// Drop-in (pin): external session-row drags carry a marker MIME type; during
+// dragover only the types list is readable, the id payload comes out on drop.
+// Internal drags (a pinned row on its way out) set no marker, so the section
+// never accepts its own rows back.
+const dropActive = ref(false);
 
-// External drags (a session row pulled in from a workspace group) carry a
-// marker MIME type; during dragover only the types list is readable, the id
-// payload comes out on drop.
 function isSessionRowDrag(event: DragEvent): boolean {
   return event.dataTransfer?.types.includes(SESSION_ROW_DRAG_MIME) ?? false;
 }
 
-function onDragOver(event: DragEvent, targetId: string): void {
-  if (draggingId.value === targetId) return;
-  if (draggingId.value === null && !isSessionRowDrag(event)) return;
-  event.preventDefault();
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-  dragOver.value = { id: targetId, position: dropPosition(event) };
-}
-
-function onDrop(targetId: string, event: DragEvent): void {
-  const fromId = draggingId.value;
-  const position = dragOver.value?.id === targetId ? dragOver.value.position : 'before';
-  dragOver.value = null;
-  draggingId.value = null;
-  if (fromId !== null) {
-    if (fromId !== targetId) {
-      emit('reorder', moveInOrder(props.sessions.map((s) => s.id), fromId, targetId, position));
-    }
-    return;
-  }
-  const droppedId = event.dataTransfer?.getData(SESSION_ROW_DRAG_MIME);
-  if (droppedId) emit('pinSessionAt', droppedId, targetId, position);
-}
-
-// The container's own dragover/drop covers the gaps and the section label —
-// the row handlers stop propagation, so landing there means "at the END".
 function onContainerDragOver(event: DragEvent): void {
-  if (draggingId.value === null && !isSessionRowDrag(event)) return;
+  if (!isSessionRowDrag(event)) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-  const last = props.sessions[props.sessions.length - 1];
-  if (last !== undefined) dragOver.value = { id: last.id, position: 'after' };
+  dropActive.value = true;
 }
 
 function onContainerDrop(event: DragEvent): void {
-  const ids = props.sessions.map((s) => s.id);
-  const fromId = draggingId.value;
-  dragOver.value = null;
-  draggingId.value = null;
-  if (fromId !== null) {
-    const lastId = ids[ids.length - 1];
-    if (lastId !== undefined && fromId !== lastId) {
-      emit('reorder', [...ids.filter((id) => id !== fromId), fromId]);
-    }
-    return;
-  }
+  dropActive.value = false;
   const droppedId = event.dataTransfer?.getData(SESSION_ROW_DRAG_MIME);
-  if (droppedId) emit('pinSessionAt', droppedId, ids[ids.length - 1] ?? null, 'after');
+  if (droppedId) emit('dropPin', droppedId);
 }
 
 // External drags never fire dragend inside this component — clear the marker
 // when the pointer leaves the section instead.
 function onContainerDragLeave(event: DragEvent): void {
   if ((event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) return;
-  dragOver.value = null;
+  dropActive.value = false;
 }
 </script>
 
 <template>
   <div
     class="pinned"
+    :class="{ 'drop-active': dropActive }"
     @dragover="onContainerDragOver"
     @drop="onContainerDrop"
     @dragleave="onContainerDragLeave"
@@ -197,17 +158,11 @@ function onContainerDragLeave(event: DragEvent): void {
       <div
         v-for="s in sessions"
         :key="s.id"
-        class="pin-drop-target"
-        :class="{
-          dragging: draggingId === s.id,
-          'drop-before': dragOver?.id === s.id && dragOver.position === 'before',
-          'drop-after': dragOver?.id === s.id && dragOver.position === 'after',
-        }"
+        class="pin-row"
+        :class="{ dragging: draggingId === s.id }"
         :draggable="renamingSessionId !== s.id"
         @dragstart="onDragStart(s.id, $event)"
         @dragend="onDragEnd"
-        @dragover.stop="onDragOver($event, s.id)"
-        @drop.stop="onDrop(s.id, $event)"
       >
         <SessionRow
           :session="s"
@@ -294,9 +249,11 @@ function onContainerDragLeave(event: DragEvent): void {
 }
 
 /* Drag affordance: the dragged row fades (the workspace group's .dragging),
-   and a line above/below the row under the cursor marks the landing spot —
-   inset shadows avoid layout shift (Sidebar's .ws-drop-target vocabulary). */
-.pin-drop-target.dragging { opacity: 0.45; }
-.pin-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--color-accent); }
-.pin-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--color-accent); }
+   and an accent frame marks the section while an external session-row drag
+   is over it (Sidebar's .pinned-drag-active vocabulary, no layout shift). */
+.pin-row.dragging { opacity: 0.45; }
+.pinned.drop-active {
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
 </style>

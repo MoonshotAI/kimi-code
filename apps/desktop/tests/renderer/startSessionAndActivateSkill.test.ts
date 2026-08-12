@@ -122,7 +122,7 @@ function createWorkspaceState() {
       rawState.sessions = sessions;
     },
     updateSession: vi.fn(),
-    upsertSessionFront: (next: AppSession) => rawState.sessions.unshift(next),
+    upsertSessionSorted: (next: AppSession) => rawState.sessions.unshift(next),
     appendSession: (next: AppSession) => rawState.sessions.push(next),
     forgetSession: vi.fn(),
     unpinSessions: vi.fn(),

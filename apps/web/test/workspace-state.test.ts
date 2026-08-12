@@ -11,6 +11,7 @@ import { createInitialState, reduceAppEvent } from '@moonshot-ai/app-core/api';
 import { mergeWorkspaces } from '@moonshot-ai/app-core/lib';
 import { foldDaemonThinkingLevel } from '@moonshot-ai/app-core/lib';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '@moonshot-ai/app-core/lib';
+import { insertSessionByRecency } from '@moonshot-ai/app-core/lib';
 import { useWorkspaceState, forgetLocalTurnState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 import { clearTrace, traceKeyEvent } from '../src/debug/trace';
@@ -23,6 +24,8 @@ const apiMock = vi.hoisted(() => ({
   updateWorkspace: vi.fn(),
   createSession: vi.fn(),
   exportSession: vi.fn(),
+  forkSession: vi.fn(),
+  restoreSession: vi.fn(),
   updateSession: vi.fn(),
   submitPrompt: vi.fn(),
   respondQuestion: vi.fn(),
@@ -130,7 +133,7 @@ function createDeps(): UseWorkspaceStateDeps {
     sessionsKnownEmpty: new Set(),
     setSessions: vi.fn(),
     updateSession: vi.fn(),
-    upsertSessionFront: vi.fn(),
+    upsertSessionSorted: vi.fn(),
     appendSession: vi.fn(),
     forgetSession: vi.fn(),
     setActiveSessionId: vi.fn(),
@@ -142,6 +145,7 @@ function createDeps(): UseWorkspaceStateDeps {
     hasLoadedMessages: vi.fn(),
     refreshSessionStatus: vi.fn(),
     refreshSessionGoal: vi.fn(),
+    refillSessionGoalOnReload: vi.fn(),
     persistSessionProfile: vi.fn().mockResolvedValue(true),
     mergedWorkspaces: computed(() => []),
     workspacesView: computed(() => []),
@@ -913,9 +917,9 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
         // Mirror the real gated read: the session's own seeded entry wins.
         resolveThinkingForPrompt: async (sid: string) => state2.thinkingBySession[sid],
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
-      // upsertSessionFront must actually land the new session in rawState.sessions
+      // upsertSessionSorted must actually land the new session in rawState.sessions
       // so startSessionAndActivateSkill can read its model.
-      upsertSessionFront: vi.fn((s) => {
+      upsertSessionSorted: vi.fn((s) => {
         state2.sessions = [s, ...state2.sessions.filter((x) => x.id !== s.id)];
       }),
       draftModes: { planMode: true, swarmMode: false, goalMode: false },
@@ -939,7 +943,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     const deps = skillDeps(activateSkill);
     const state = createState();
     state.thinking = 'max';
-    deps.upsertSessionFront = vi.fn((s) => {
+    deps.upsertSessionSorted = vi.fn((s) => {
       state.sessions = [s, ...state.sessions.filter((x) => x.id !== s.id)];
     });
     let seededWhenSelected: string | undefined;
@@ -3022,5 +3026,65 @@ describe('useWorkspaceState — upsertWorkspacePreserveOrder hidden roots', () =
     ws.upsertWorkspacePreserveOrder(workspace('wd_y', '/home/foo', 'foo'));
 
     expect(state.hiddenWorkspaceRoots).toEqual(['/home/Foo']);
+  });
+});
+
+describe('useWorkspaceState — recency-ordered restore/fork', () => {
+  const T = {
+    newest: '2026-08-11T04:00:00.000Z',
+    middle: '2026-08-11T02:00:00.000Z',
+    between: '2026-08-11T01:00:00.000Z',
+    oldest: '2026-08-10T23:00:00.000Z',
+  };
+
+  function poolSession(id: string, updatedAt: string): AppSession {
+    return { ...createSession(), id, updatedAt };
+  }
+
+  function setup() {
+    const state = createState();
+    state.sessions = [
+      poolSession('a', T.newest),
+      poolSession('b', T.middle),
+      poolSession('c', T.oldest),
+    ];
+    const deps = createDeps();
+    // Faithful stand-in for the facade's upsertSessionSorted.
+    deps.upsertSessionSorted = (s: AppSession) => {
+      state.sessions = insertSessionByRecency(state.sessions, s);
+    };
+    deps.setActiveSessionId = (id: string | undefined) => {
+      state.activeSessionId = id;
+    };
+    const ws = useWorkspaceState(state, deps);
+    return { state, deps, ws };
+  }
+
+  beforeEach(() => {
+    apiMock.restoreSession.mockReset();
+    apiMock.forkSession.mockReset();
+  });
+
+  it('restoreSession lands the session at its content time, not the front', async () => {
+    const { state, ws } = setup();
+    apiMock.restoreSession.mockResolvedValue(poolSession('restored', T.between));
+
+    const ok = await ws.restoreSession('restored');
+
+    expect(ok).toBe(true);
+    expect(apiMock.restoreSession).toHaveBeenCalledWith('restored');
+    expect(state.sessions.map((s) => s.id)).toEqual(['a', 'b', 'restored', 'c']);
+  });
+
+  it('forkSession lands the fork next to the source and selects it', async () => {
+    const { state, ws } = setup();
+    apiMock.forkSession.mockResolvedValue(poolSession('forked', T.middle));
+
+    await ws.forkSession('b');
+
+    expect(apiMock.forkSession).toHaveBeenCalledWith('b');
+    // Same timestamp as the source: lands right after it, never at the front.
+    expect(state.sessions.map((s) => s.id)).toEqual(['a', 'b', 'forked', 'c']);
+    expect(state.activeSessionId).toBe('forked');
   });
 });

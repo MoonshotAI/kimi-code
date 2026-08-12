@@ -18,7 +18,7 @@ export type { DaemonEventSocketHandlers, DaemonEventSocketOptions } from './daem
 export { classifyFrame } from './daemon/frameClassifier';
 export type { FrameRoute } from './daemon/frameClassifier';
 export type { AgentProjector, ProjectMeta } from './daemon/projector';
-export { toAppEvent, toAppMessageContent, toAppSessionFromV2, isPlaceholderSessionUsage } from './daemon/mappers';
+export { toAppEvent, toAppMessageContent, toAppSessionFromV2, isPlaceholderSessionUsage, mergeSnapshotSession } from './daemon/mappers';
 export type { WireMessageContent } from './daemon/wire';
 export {
   createInitialState,

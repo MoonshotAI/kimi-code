@@ -239,7 +239,11 @@ const filteredArchived = computed<AppSession[]>(() => {
   if (q) rows = rows.filter((s) => s.title.toLowerCase().includes(q));
   rows = rows.slice();
   if (archiveSort.value === 'archived-desc') {
-    rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    // archivedAt carries the archive moment; sessions archived before the
+    // field existed fall back to updatedAt (which was the archive bump then).
+    rows.sort((a, b) =>
+      (b.archivedAt ?? b.updatedAt).localeCompare(a.archivedAt ?? a.updatedAt),
+    );
   } else if (archiveSort.value === 'created-desc') {
     rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   } else {
@@ -474,7 +478,7 @@ watch(
         <div v-for="s in filteredArchived" :key="s.id" class="arch-row">
           <div class="arch-meta">
             <div class="arch-name">{{ s.title }}</div>
-            <div class="arch-time">{{ t('settings.archivedAt', { time: archiveTime(s.updatedAt) }) }}</div>
+            <div class="arch-time">{{ t('settings.archivedAt', { time: archiveTime(s.archivedAt ?? s.updatedAt) }) }}</div>
           </div>
           <Button variant="secondary" size="sm" @click="onRestore(s.id)">{{ t('settings.archivedRestore') }}</Button>
         </div>

@@ -40,7 +40,7 @@ const props = withDefaults(
     activeWorkspaceId: string | null;
     sessions: Session[];
     groups: WorkspaceGroupType[];
-    /** Pinned sessions (across workspaces, manual order) — rendered in the
+    /** Pinned sessions (across workspaces, recency order) — rendered in the
      *  pinned section above all workspace groups; empty hides the section. */
     pinnedSessions?: Session[];
     /** Flat mode: every session across workspaces, newest first (pinned
@@ -99,8 +99,9 @@ const emit = defineEmits<{
   fork: [id: string];
   export: [id: string];
   pin: [id: string];
-  reorderPinned: [ids: string[]];
-  pinAt: [id: string, targetId: string | null, position: DropPosition];
+  /** A session row dropped into the pinned section (pin it; the section
+   *  renders in recency order, so no position is carried). */
+  dropPin: [id: string];
   unpin: [id: string];
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
@@ -498,9 +499,9 @@ function onPinSession(id: string): void {
   emit('pin', id);
 }
 
-function onPinSessionAt(id: string, targetId: string | null, position: DropPosition): void {
+function onDropPin(id: string): void {
   pinnedListRef.value?.expand();
-  emit('pinAt', id, targetId, position);
+  emit('dropPin', id);
 }
 
 // ---------------------------------------------------------------------------
@@ -918,10 +919,9 @@ onBeforeUnmount(() => {
           @fork-session="(id) => emit('fork', id)"
           @export-session="(id) => emit('export', id)"
           @pin-session="onPinSession"
-          @pin-session-at="onPinSessionAt"
+          @drop-pin="onDropPin"
           @session-drag-start="onPinnedSessionDragStart"
           @session-drag-end="onPinnedSessionDragEnd"
-          @reorder="(ids) => emit('reorderPinned', ids)"
         />
         <div class="side-section-label">
           <span class="side-section-title">{{ t('sidebar.sessionsHeader') }}</span>

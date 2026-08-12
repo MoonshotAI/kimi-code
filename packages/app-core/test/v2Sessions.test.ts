@@ -27,6 +27,7 @@ describe('toAppSessionFromV2', () => {
         created_at: Date.parse('2026-01-01T00:00:00.000Z'),
         updated_at: Date.parse('2026-01-02T00:00:00.000Z'),
         archived: false,
+        archived_at: null,
       },
       activity: { status: over.status ?? 'idle' },
     };
@@ -112,6 +113,7 @@ describe('DaemonKimiWebApi.listSessionsV2', () => {
         created_at: 1,
         updated_at: 2,
         archived: false,
+        archived_at: null,
       },
       activity: { status: 'idle' },
     };

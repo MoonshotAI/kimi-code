@@ -123,17 +123,23 @@ describe('reduceAppEvent turnActiveChanged', () => {
     }
   });
 
-  it('does not touch updatedAt when a turn starts', () => {
-    const state = {
-      ...createInitialState(),
-      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
-    };
-    const next = reduceAppEvent(
-      state,
-      { type: 'turnActiveChanged', sessionId: 's1', active: true },
-      { sessionId: 's1', seq: 1 },
-    );
-    expect(next.sessions[0]?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  it('bumps the session updatedAt when a turn starts (turn start is real activity)', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T11:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      };
+      const next = reduceAppEvent(
+        state,
+        { type: 'turnActiveChanged', sessionId: 's1', active: true },
+        { sessionId: 's1', seq: 1 },
+      );
+      expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T11:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('never moves updatedAt backwards on turn end', () => {

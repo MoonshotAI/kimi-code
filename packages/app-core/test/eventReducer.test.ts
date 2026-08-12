@@ -455,8 +455,56 @@ describe('freshness gates on turn failure/retry state', () => {
   });
 });
 
-describe('sessionWorkChanged fallback freshness', () => {
-  it('does not clear a live retry on a stale work_changed replay', () => {
+describe('turn-start recency bump', () => {
+  function stateWithIdleSession(): KimiClientState {
+    const session: AppSession = {
+      id: SID,
+      title: 'Session',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      busy: false,
+      mainTurnActive: false,
+      archived: false,
+      cwd: '/workspace',
+      model: 'model',
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalCostUsd: 0,
+        contextTokens: 0,
+        contextLimit: 0,
+        turnCount: 0,
+      },
+      messageCount: 0,
+      lastSeq: 0,
+    };
+    const state = createInitialState();
+    state.sessions = [session];
+    return state;
+  }
+
+  it('a fresh turn start floats the session (turn start is real activity)', () => {
+    const state = reduceAppEvent(
+      stateWithIdleSession(),
+      { type: 'turnActiveChanged', sessionId: SID, active: true },
+      meta(),
+    );
+    expect(state.sessions[0]!.updatedAt > '2026-01-01T00:00:00.000Z').toBe(true);
+  });
+
+  it('a replayed (stale) turn start does not bump recency', () => {
+    const state = reduceAppEvent(
+      stateWithIdleSession(),
+      { type: 'turnActiveChanged', sessionId: SID, active: true },
+      { sessionId: SID, seq: 0 },
+    );
+    expect(state.sessions[0]!.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+});
+
+describe('sessionWorkChanged fallback freshness', () => {  it('does not clear a live retry on a stale work_changed replay', () => {
     const retry = { failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 1000 };
     let state = reduceAppEvent(createInitialState(), { type: 'turnRetry', sessionId: SID, retry }, meta());
     const session = {
