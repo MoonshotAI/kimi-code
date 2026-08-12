@@ -19,6 +19,7 @@ import type {
   ExportSessionResult,
   ForkSessionInput,
   GetConfigOptions,
+  GlobalMcpServerAuthStatus,
   KimiConfig,
   KimiConfigPatch,
   KimiHostIdentity,
@@ -34,6 +35,7 @@ import type {
   ResumeSessionInput,
   ReloadSessionInput,
   SessionSummary,
+  SessionSummaryPage,
   SkillSummary,
   TelemetryClient,
   TelemetryContextPatch,
@@ -257,6 +259,15 @@ export class KimiHarness {
     return this.rpc.listSessions(options);
   }
 
+  /**
+   * One keyset page of the session listing (`limit` / `before` in
+   * `ListSessionsOptions`). Paged on the v2 engine; the v1 engine serves the
+   * whole filtered set as a single terminal page.
+   */
+  async listSessionsPage(options: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
+    return this.rpc.listSessionsPage(options);
+  }
+
   /** Skills visible to a new session in `workDir`, without creating that session. */
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     return this.rpc.listWorkspaceSkills(workDir);
@@ -391,6 +402,10 @@ export class KimiHarness {
   /** User-global MCP entries from `<KIMI_CODE_HOME>/mcp.json` only. */
   async listMcpServers(): Promise<readonly McpServerConfig[]> {
     return this.rpc.listGlobalMcpServers();
+  }
+
+  async listMcpServerAuthStatuses(): Promise<readonly GlobalMcpServerAuthStatus[]> {
+    return this.rpc.listGlobalMcpServerAuthStatuses();
   }
 
   async addMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {

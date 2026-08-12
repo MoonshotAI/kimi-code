@@ -14,7 +14,7 @@ import {
   foldAnnouncedToolNames,
   isDynamicToolSchemaMessage,
   isLoadableToolsAnnouncement,
-  LOADABLE_TOOLS_TRIGGER,
+  LOADABLE_TOOLS_VARIANT,
   renderLoadableToolsAnnouncement,
   stripDynamicToolContext,
 } from '#/agent/toolSelect/dynamicTools';
@@ -26,7 +26,7 @@ function announcement(added: readonly string[], removed: readonly string[]): Con
     role: 'user',
     content: [{ type: 'text', text }],
     toolCalls: [],
-    origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_TRIGGER },
+    origin: { kind: 'injection', variant: LOADABLE_TOOLS_VARIANT },
   };
 }
 

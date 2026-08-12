@@ -29,6 +29,7 @@ import {
 import { UsagePanelComponent } from '../components/messages/usage-panel';
 import { createMarkdownTheme } from '../theme/pi-tui-theme';
 import { formatErrorMessage } from '../utils/event-payload';
+import { createMarkdownOptions } from '../utils/markdown-options';
 import {
   formatPluginSourceLabel,
   isOfficialPluginInstall,
@@ -566,7 +567,7 @@ async function installCapabilityFromPanel(
     host.showNotice(`${label} is installed.`);
     host.state.transcriptContainer.addChild(new Spacer(1));
     host.state.transcriptContainer.addChild(
-      new Markdown(WEBBRIDGE_POST_INSTALL_MARKDOWN, 2, 0, createMarkdownTheme()),
+      new Markdown(WEBBRIDGE_POST_INSTALL_MARKDOWN, 2, 0, createMarkdownTheme(), undefined, createMarkdownOptions()),
     );
     host.state.ui.requestRender();
     return;

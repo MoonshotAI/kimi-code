@@ -16,10 +16,15 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  IAgentLifecycleService,
   ISessionApprovalService,
   ISessionQuestionService,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
+
+import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
+
+import { startMcpAuthStatusServer } from './mcp-auth-status-server';
 
 import {
   createKimiHarness,
@@ -167,6 +172,16 @@ function scrubHomePrefixes(value: unknown, home: HomePair): unknown {
  * the comparison still covers everything not listed here. Keep empty unless a
  * gap is genuinely accepted; remove entries as gaps close.
  */
+function stripOriginDisclosure(history: readonly unknown[]): readonly unknown[] {
+  return history.map((message) => {
+    const record = message as { readonly origin?: { readonly disclosure?: unknown } };
+    if (record.origin?.disclosure === undefined) return message;
+    const origin = { ...record.origin };
+    delete origin.disclosure;
+    return { ...record, origin };
+  });
+}
+
 const KNOWN_DIFFS = {
   // v2's flag registry is per-domain and already carries flags v1 does not
   // have (minidb backend, subagent); v1-only flags would be the symmetric
@@ -245,10 +260,14 @@ const KNOWN_DIFFS = {
   // provider-MEASURED prefix. In-memory appends (e.g. importContext) count
   // identically on both engines via the shared `estimateTokensForMessages`,
   // but once the provider reports measured usage the counts diverge by
-  // design. Histories compare in full; the count compares only in the
-  // pre-LLM state where both sides still estimate.
+  // design. Histories compare in full except for `origin.disclosure` — v2
+  // records typed reminder-render state there (swarm mode, once-reminder
+  // ids) and v1 has no such field; the count compares only in the pre-LLM
+  // state where both sides still estimate.
   getContext: (context: { readonly history: readonly unknown[] }): unknown =>
-    context.history.length === 0 ? context : { history: context.history },
+    context.history.length === 0
+      ? context
+      : { history: stripOriginDisclosure(context.history) },
   // Plan ids are random per engine (hero slugs) and the plan path embeds
   // both the per-home session dir and the id, so the comparison covers the
   // content and the path LAYOUT (id scrubbed); the id itself is asserted
@@ -892,10 +911,30 @@ async function writeFixturePlugin(dir: string): Promise<void> {
   );
 }
 
-async function makePluginParityPair(): Promise<PluginParityPair> {
+async function writeManagedFixtureSkill(home: HomePair, body: string): Promise<void> {
+  await writeFile(
+    join(
+      home.real,
+      'plugins',
+      'managed',
+      FIXTURE_PLUGIN_ID,
+      'skills',
+      'parity-skill',
+      'SKILL.md',
+    ),
+    `---\nname: parity-skill\ndescription: Skill from the parity fixture plugin\n---\n\n${body}\n`,
+    'utf-8',
+  );
+}
+
+async function makePluginParityPair(configToml?: string): Promise<PluginParityPair> {
   const v1HomeDir = await makeTempDir('kimi-sdk-parity-v1-home-');
   const v2HomeDir = await makeTempDir('kimi-sdk-parity-v2-home-');
   const sourceDir = await makeTempDir('kimi-sdk-parity-plugin-src-');
+  if (configToml !== undefined) {
+    await writeFile(join(v1HomeDir, 'config.toml'), configToml, 'utf-8');
+    await writeFile(join(v2HomeDir, 'config.toml'), configToml, 'utf-8');
+  }
   await writeFixturePlugin(sourceDir);
   return {
     v1: new SDKRpcClient({ homeDir: v1HomeDir, identity: TEST_IDENTITY }),
@@ -1085,6 +1124,54 @@ describe('v1↔v2 plugin parity', () => {
       ]);
       expect(normalize(v2Plugins, 'id')).toEqual(normalize(v1Plugins, 'id'));
       expect(v1Plugins[0]?.version).toBe('2.0.0');
+    } finally {
+      await closePluginPair(pair);
+    }
+  });
+
+  it('reloadPlugins refreshes frozen session-start guidance in a live v2 session', async () => {
+    const pair = await makePluginParityPair(AGENT_CONFIG_TOML);
+    const workDir = await makeTempDir('kimi-sdk-parity-work-');
+    try {
+      await pair.v2.installPlugin(pair.sourceDir);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-stdio', false);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false);
+      const session = await pair.v2.createSession({ workDir, permission: 'yolo' });
+
+      await pair.v2.reloadPlugins();
+      expect(JSON.stringify((await pair.v2.getContext({ sessionId: session.id })).history)).toContain(
+        'Parity skill body.',
+      );
+
+      await writeManagedFixtureSkill(pair.v2Home, 'Live reload skill body.');
+      await pair.v2.reloadPlugins();
+
+      const history = (await pair.v2.getContext({ sessionId: session.id })).history;
+      expect(JSON.stringify(history.at(-1))).toContain('Live reload skill body.');
+    } finally {
+      await closePluginPair(pair);
+    }
+  });
+
+  it('reloadSession refreshes frozen session-start guidance for a cold v2 session', async () => {
+    const pair = await makePluginParityPair(AGENT_CONFIG_TOML);
+    const workDir = await makeTempDir('kimi-sdk-parity-work-');
+    try {
+      await pair.v2.installPlugin(pair.sourceDir);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-stdio', false);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false);
+      const session = await pair.v2.createSession({ workDir, permission: 'yolo' });
+      await pair.v2.reloadPlugins();
+      await pair.v2.closeSession({ sessionId: session.id });
+
+      await writeManagedFixtureSkill(pair.v2Home, 'Cold reload skill body.');
+      await pair.v2.reloadSession({
+        sessionId: session.id,
+        forcePluginSessionStartReminder: true,
+      });
+
+      const history = (await pair.v2.getContext({ sessionId: session.id })).history;
+      expect(JSON.stringify(history.at(-1))).toContain('Cold reload skill body.');
     } finally {
       await closePluginPair(pair);
     }
@@ -2423,28 +2510,26 @@ describe('v1↔v2 agent interaction parity', () => {
     }
   });
 
-  it('steer on an idle session: v1 launches a turn, v2 rejects prompt.not_found (pinned)', async () => {
+  it('steer on an idle session: both engines launch a turn and update metadata', async () => {
     const restoreEnv = scrubConfigEnv();
     const pair = await makeSessionParityPair();
     try {
       await createOnBoth(pair, { id: 'session_parity_agent_steer' });
       const input = { sessionId: 'session_parity_agent_steer' } as const;
-      // Pinned divergence: v1 treats an idle steer like a prompt — it
-      // launches a fresh turn and updates title/lastPrompt. v2's steer RPC
-      // enqueues first (which itself launches the turn), so the follow-up
-      // steer step finds no pending prompt and rejects with prompt.not_found;
-      // the v2 path never touches the metadata.
+      // v1 treats an idle steer like a prompt — it launches a fresh turn and
+      // updates title/lastPrompt. v2's steer RPC enqueues first (which itself
+      // launches the turn) and converges on the same end state: the launched
+      // turn is returned instead of rejecting, and the metadata is updated.
       await pair.v1.steer({ ...input, input: [{ type: 'text', text: 'steer text' }] });
-      await expect(
-        pair.v2.steer({ ...input, input: [{ type: 'text', text: 'steer text' }] }),
-      ).rejects.toMatchObject({ code: 'prompt.not_found' });
+      await pair.v2.steer({ ...input, input: [{ type: 'text', text: 'steer text' }] });
       const [v1List, v2List] = await Promise.all([
         pair.v1.listSessions(),
         pair.v2.listSessions(),
       ]);
       expect(v1List[0]?.title).toBe('steer text');
       expect(v1List[0]?.lastPrompt).toBe('steer text');
-      expect(v2List[0]?.lastPrompt).not.toBe('steer text');
+      expect(v2List[0]?.title).toBe('steer text');
+      expect(v2List[0]?.lastPrompt).toBe('steer text');
       await settleTurns();
     } finally {
       await closeSessionPair(pair);
@@ -3461,6 +3546,65 @@ async function expectSameMcpRejection(
 }
 
 describe('v1↔v2 global MCP parity', () => {
+  it('classifies global MCP authorization identically from persisted credentials', async () => {
+    const statusServer = await startMcpAuthStatusServer();
+    const authorizedUrl = 'https://authorized.example.test/mcp';
+    const pair = await makeGlobalMcpParityPair({
+      mcpServers: {
+        stdio: { command: 'local-command' },
+        plain: { transport: 'http', url: statusServer.plainUrl },
+        detected: { transport: 'http', url: statusServer.oauthUrl },
+        sse: { transport: 'sse', url: statusServer.oauthUrl },
+        'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
+        bearer: {
+          transport: 'http',
+          url: 'https://bearer.example.test/mcp',
+          bearerTokenEnvVar: 'EXAMPLE_MCP_TOKEN',
+        },
+        'oauth-required': {
+          transport: 'http',
+          url: 'https://required.example.test/mcp',
+          auth: 'oauth',
+        },
+        'oauth-authorized': {
+          transport: 'http',
+          url: authorizedUrl,
+          auth: 'oauth',
+        },
+      },
+    });
+    for (const homeDir of [pair.v1HomeDir, pair.v2HomeDir]) {
+      const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
+      externalOAuth
+        .getProvider('oauth-authorized', authorizedUrl)
+        .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
+      externalOAuth
+        .getProvider('sse', statusServer.oauthUrl)
+        .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
+    }
+
+    try {
+      const [v1Statuses, v2Statuses] = await Promise.all([
+        pair.v1.listGlobalMcpServerAuthStatuses(),
+        pair.v2.listGlobalMcpServerAuthStatuses(),
+      ]);
+      expect(v2Statuses).toEqual(v1Statuses);
+      expect(v1Statuses).toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'sse-oauth', authStatus: 'oauth-required' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+      ]);
+    } finally {
+      await closeGlobalMcpPair(pair);
+      await statusServer.close();
+    }
+  }, 15_000);
+
   it('CRUD round-trips identically and writes byte-identical mcp.json files', async () => {
     const pair = await makeGlobalMcpParityPair({
       custom: { keep: true },
@@ -4238,10 +4382,9 @@ describe('v1↔v2 event & interaction parity', () => {
 // Residual surface parity (exportSession / startBtw / swarm mode / listSkills)
 //
 // The last migrated methods, driven through `SDKRpcClient` / `SDKRpcClientV2`
-// directly like the other session batches. No provider calls: export reads
-// persisted state, btw/swarm are context-only, and the `swarm()` case uses the
-// model-less prompt failure path (its turn start/end is what drives the
-// task-trigger auto-exit on both engines).
+// directly like the other session batches. Reminder assertions force the v2
+// context-injection boundary explicitly, so they test model-facing
+// materialization without contacting a provider.
 // ---------------------------------------------------------------------------
 
 /** Poll a condition until it holds or the budget runs out (engine-async settle). */
@@ -4380,6 +4523,11 @@ describe('v1↔v2 residual surface parity', () => {
             key === 'origin' ? undefined : value,
           ),
         );
+      // Both engines materialize the side-question reminder while forking:
+      // v2 appends it at the fork event point (a past-tense one-off fact),
+      // so the inherited contexts are already identical right after fork.
+      expect(v1Context.history).toHaveLength(2);
+      expect(v2Context.history).toHaveLength(2);
       expect(stripOrigins(v2Context)).toEqual(stripOrigins(v1Context));
       // Non-vacuous: the inherited import plus the side-question reminder
       // (byte-identical template on both engines).
@@ -4435,8 +4583,8 @@ describe('v1↔v2 residual surface parity', () => {
       expect(v1Inactive.swarmMode).toBe(false);
       expect(v2Inactive.swarmMode).toBe(false);
       const [v1Exited, v2Exited] = await historyOnBoth();
-      expect(project(v2Exited)).toEqual(project(v1Exited));
       expect(v1Exited.history).toHaveLength(0);
+      expect(project(v2Exited)).toEqual(project(v1Exited));
 
       // Exit is idempotent too: a second exit is a silent no-op on both.
       await Promise.all([
@@ -4445,7 +4593,7 @@ describe('v1↔v2 residual surface parity', () => {
       ]);
       const [v1Idle, v2Idle] = await historyOnBoth();
       expect(v1Idle.history).toHaveLength(0);
-      expect(v2Idle.history).toHaveLength(0);
+      expect(project(v2Idle)).toEqual(project(v1Idle));
 
       // The `tool` trigger injects no reminder on either engine.
       await Promise.all([
@@ -4457,7 +4605,7 @@ describe('v1↔v2 residual surface parity', () => {
       expect(v2Tool.swarmMode).toBe(true);
       const [v1ToolHistory, v2ToolHistory] = await historyOnBoth();
       expect(v1ToolHistory.history).toHaveLength(0);
-      expect(v2ToolHistory.history).toHaveLength(0);
+      expect(project(v2ToolHistory)).toEqual(project(v1ToolHistory));
       await Promise.all([
         pair.v1.setSwarmMode({ ...input, enabled: false }),
         pair.v2.setSwarmMode({ ...input, enabled: false }),

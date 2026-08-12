@@ -1,103 +1,73 @@
 /**
  * `contextInjector` domain — `IAgentContextInjectorService` implementation.
  *
- * Injects registered context providers through `loop` and `systemReminder`,
- * tracks their positions in `contextMemory` through `eventBus`, and reconciles
- * those positions after `wire` restoration. Each provider call receives the
- * newest surviving injection of its own variant (`lastInjection`) and the
- * typed disclosure recorded on it (`lastDisclosure`), so providers never read
- * context layout or position indexes themselves. The plain-data `isNewTurn`
- * flag is registered into `agentState` (`IAgentStateService`) and read/written
- * through it; `entries` stays a plain instance field (its values hold provider
- * functions, not plain data). Bound at Agent scope.
+ * Reconciles registered model-context providers against `contextMemory` at the
+ * head of every loop step (before the step's request is built), so every LLM
+ * request sees the freshest injections. A compaction splice re-arms the
+ * new-turn flag for the next step. `reconcileWhenIdle` lets out-of-loop
+ * callers (SDK RPC surfaces) refresh one provider immediately while the loop
+ * is quiet. Writes reminders through `systemReminder` and reports provider
+ * failures through `log`. Bound at Agent scope.
  */
 
-import { toDisposable } from "#/_base/di/lifecycle";
+import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { Service } from "#/_base/di/service";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { ILogService } from '#/_base/log/log';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentStateService } from '#/agent/state/agentState';
+import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
+import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IWireService } from '#/wire/wire';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContent,
+  type ContextInjectionContext,
+  type ContextInjectionMessage,
   type ContextInjectionProvider,
   type ContextInjectionResult,
 } from './contextInjector';
 
 interface ContextInjectionEntry {
-  readonly provider: ContextInjectionProvider;
+  readonly provider: ContextInjectionProvider<unknown>;
   readonly name: string;
-  readonly positions: number[];
 }
-
-export const contextInjectorIsNewTurnKey = defineState<boolean>(
-  'contextInjector.isNewTurn',
-  () => true,
-);
 
 export class AgentContextInjectorService extends Service implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
+  private compactionRearmPending = false;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentLoopService loopService: IAgentLoopService,
+    @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
-    @IWireService wire: IWireService,
-    @IAgentStateService private readonly states: IAgentStateService,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
-    this.states.register(contextInjectorIsNewTurnKey);
     this._register(
-      loopService.hooks.onWillBeginStep.register('context-injector', async (_ctx, next) => {
-        await next();
-        await this.inject();
-      }),
+      loopService.hooks.onWillBeginStep.register('context-injector', (ctx, next) =>
+        this.reconcileAroundStep(ctx, next),
+      ),
     );
     this._register(
-      this.eventBus.subscribe('turn.started', () => {
-        this.isNewTurn = true;
-      }),
-    );
-    this._register(
-      this.eventBus.subscribe('context.spliced', (e) => {
-        this.handleSplice(e);
-      }),
-    );
-    this._register(
-      wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
-        this.resyncPositions();
-        await next();
+      this.eventBus.subscribe('context.spliced', (splice) => {
+        if (isCompactionSplice(splice)) this.compactionRearmPending = true;
       }),
     );
   }
 
-  private get isNewTurn(): boolean {
-    return this.states.get(contextInjectorIsNewTurnKey);
-  }
-
-  private set isNewTurn(value: boolean) {
-    this.states.set(contextInjectorIsNewTurnKey, value);
-  }
-
-  register(
+  register<D = unknown>(
     name: string,
-    provider: ContextInjectionProvider,
-  ) {
-    const positions = findInjections(this.context.get(), name);
+    provider: ContextInjectionProvider<D>,
+  ): IDisposable {
     const entry: ContextInjectionEntry = {
-      provider,
+      provider: provider as ContextInjectionProvider<unknown>,
       name,
-      positions,
     };
     this.entries.add(entry);
     return toDisposable(() => {
@@ -105,101 +75,148 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     });
   }
 
-  async injectAfterCompaction(): Promise<void> {
-    this.isNewTurn = true;
-    await this.inject();
+  async reconcileWhenIdle(name: string): Promise<void> {
+    const quiescence = this.loopService.tryAcquireQuiescence();
+    if (quiescence === undefined) return;
+    try {
+      for (const entry of this.entries) {
+        if (entry.name !== name) continue;
+        await this.injectEntry(entry, false);
+      }
+    } finally {
+      quiescence.dispose();
+    }
   }
 
-  private async inject(): Promise<void> {
-    const isNewTurn = this.isNewTurn;
-    this.isNewTurn = false;
-    const history = this.context.get();
+  private async reconcileAroundStep(
+    ctx: BeforeStepContext,
+    next: (context?: BeforeStepContext) => Promise<void>,
+  ): Promise<void> {
+    const rearmed = this.takeCompactionRearm();
+    await this.inject(ctx.firstStepOfTurn || rearmed);
+    await next();
+    // Compaction can run inside a later handler of this same chain
+    // (full-compaction's beforeStep). Its splice always drops injection
+    // messages, so re-reconcile here — still before the step's request.
+    if (this.takeCompactionRearm()) {
+      await this.inject(true);
+    }
+  }
+
+  /** Reads and clears the flag set when a compaction splice arrives. */
+  private takeCompactionRearm(): boolean {
+    const pending = this.compactionRearmPending;
+    this.compactionRearmPending = false;
+    return pending;
+  }
+
+  private async inject(isNewTurn: boolean): Promise<void> {
     for (const entry of this.entries) {
-      const injectedPositions: readonly number[] = [...entry.positions];
-      const lastInjectedAt = injectedPositions.at(-1) ?? null;
-      const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
-      const content = await entry.provider({
-        injectedPositions,
-        lastInjectedAt,
-        lastInjection,
-        lastDisclosure:
-          lastInjection?.origin?.kind === 'injection'
-            ? lastInjection.origin.disclosure
-            : undefined,
-        isNewTurn,
-      });
-      if (!this.entries.has(entry)) continue;
-      if (content === undefined) continue;
-      const result: ContextInjectionResult =
-        typeof content === 'object' && content !== null && !Array.isArray(content)
-          ? (content as ContextInjectionResult)
-          : { content: content as ContextInjectionContent };
-      const origin = {
-        kind: 'injection' as const,
-        variant: entry.name,
-        disclosure: result.disclosure,
-      };
-      if (typeof result.content === 'string') {
-        if (result.content.trim().length === 0) continue;
-        this.reminders.appendSystemReminder(result.content, origin);
-        continue;
+      await this.injectEntry(entry, isNewTurn);
+    }
+  }
+
+  private async injectEntry(entry: ContextInjectionEntry, isNewTurn: boolean): Promise<void> {
+    let content: Awaited<ReturnType<ContextInjectionProvider>>;
+    try {
+      content = await entry.provider(this.providerContext(entry, isNewTurn));
+    } catch (error) {
+      this.log.error('context provider failed; skipping it', { name: entry.name, error });
+      return;
+    }
+    if (!this.entries.has(entry)) return;
+    this.appendResult(entry, content);
+  }
+
+  private providerContext(
+    entry: ContextInjectionEntry,
+    isNewTurn: boolean,
+  ): ContextInjectionContext<unknown> {
+    const history = this.context.get();
+    const injectedPositions = findInjections(history, entry.name);
+    const lastInjectedAt = injectedPositions.at(-1) ?? null;
+    const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
+    return {
+      injectedPositions,
+      lastInjectedAt,
+      lastInjection,
+      lastDisclosure:
+        lastInjection?.origin?.kind === 'injection'
+          ? lastInjection.origin.disclosure
+          : undefined,
+      isNewTurn,
+    };
+  }
+
+  private appendResult(
+    entry: ContextInjectionEntry,
+    content: ContextInjectionContent | ContextInjectionResult<unknown> | undefined,
+  ): void {
+    if (content === undefined) return;
+    const result: ContextInjectionResult<unknown> = isInjectionResult(content)
+      ? content
+      : { content };
+    const origin = {
+      kind: 'injection' as const,
+      variant: entry.name,
+      disclosure: result.disclosure,
+    };
+    const resolved = result.content;
+    if (typeof resolved === 'string') {
+      if (resolved.trim().length === 0) return;
+      this.reminders.appendSystemReminder(resolved, origin);
+      return;
+    }
+    if (isRawInjectionMessage(resolved)) {
+      const message = resolved.message;
+      if (
+        message.content.length === 0 &&
+        (message.tools === undefined || message.tools.length === 0)
+      ) {
+        return;
       }
-      if (result.content.length === 0) continue;
       this.context.append({
-        role: 'user',
-        content: [...result.content],
+        role: message.role,
+        content: [...message.content],
         toolCalls: [],
+        tools: message.tools,
         origin,
       });
+      return;
     }
-  }
-
-  private resyncPositions(): void {
-    const history = this.context.get();
-    for (const entry of this.entries) {
-      const found = findInjections(history, entry.name);
-      entry.positions.length = 0;
-      entry.positions.push(...found);
-    }
-  }
-
-  private handleSplice(splice: ContextSplice): void {
-    let insertedInjections: Map<string, number[]> | undefined;
-    splice.messages.forEach((message, offset) => {
-      if (message.origin?.kind !== 'injection') return;
-      insertedInjections ??= new Map();
-      const positions = insertedInjections.get(message.origin.variant);
-      if (positions === undefined) {
-        insertedInjections.set(message.origin.variant, [splice.start + offset]);
-      } else {
-        positions.push(splice.start + offset);
-      }
+    if (resolved.length === 0) return;
+    this.context.append({
+      role: 'user',
+      content: [...resolved],
+      toolCalls: [],
+      origin,
     });
-    if (insertedInjections === undefined && splice.deleteCount === 0) return;
-
-    const deletedEnd = splice.start + splice.deleteCount;
-    const delta = splice.messages.length - splice.deleteCount;
-    for (const entry of this.entries) {
-      const adopted = insertedInjections?.get(entry.name) ?? [];
-      const positions = entry.positions;
-      if (adopted.length === 0 && positions.length === 0) continue;
-      let lo = 0;
-      while (lo < positions.length && positions[lo]! < splice.start) lo++;
-      let hi = lo;
-      while (hi < positions.length && positions[hi]! < deletedEnd) hi++;
-      for (let index = hi; index < positions.length; index++) {
-        positions[index] = positions[index]! + delta;
-      }
-      positions.splice(lo, hi - lo, ...adopted);
-    }
   }
 }
 
-type ContextSplice = {
-  readonly start: number;
+function isCompactionSplice(splice: {
   readonly deleteCount: number;
   readonly messages: readonly ContextMessage[];
-};
+}): boolean {
+  return splice.deleteCount > 0 && splice.messages.some(isCompactionSummaryMessage);
+}
+
+function isRawInjectionMessage(
+  content: Exclude<ContextInjectionContent, string>,
+): content is { readonly message: ContextInjectionMessage } {
+  return !Array.isArray(content);
+}
+
+function isInjectionResult(
+  content: ContextInjectionContent | ContextInjectionResult<unknown>,
+): content is ContextInjectionResult<unknown> {
+  return (
+    typeof content === 'object' &&
+    content !== null &&
+    !Array.isArray(content) &&
+    'content' in content
+  );
+}
 
 function findInjections(
   history: readonly ContextMessage[],

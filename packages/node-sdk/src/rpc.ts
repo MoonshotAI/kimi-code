@@ -35,6 +35,7 @@ import type {
   CreateGoalInput,
   ForkSessionInput,
   GetConfigOptions,
+  GlobalMcpServerAuthStatus,
   McpServerConfig,
   GoalSnapshot,
   GoalToolResult,
@@ -58,6 +59,7 @@ import type {
   ResumeSessionInput,
   ResumedSessionSummary,
   SessionSummary,
+  SessionSummaryPage,
   SkillSummary,
   PluginCommandDef,
   Unsubscribe,
@@ -223,6 +225,17 @@ export abstract class SDKRpcClientBase {
     return rpc.listSessions(input);
   }
 
+  /**
+   * One keyset page of the session listing (`limit` / `before` in
+   * `ListSessionsOptions`). The base implementation serves the whole filtered
+   * set as a single terminal page — the v1 engine has no paged listing;
+   * `SDKRpcClientV2` overrides this with real index paging.
+   */
+  async listSessionsPage(input: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
+    const items = await this.listSessions(input);
+    return { items, nextCursor: undefined };
+  }
+
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listWorkspaceSkills({ workDir });
@@ -313,6 +326,11 @@ export abstract class SDKRpcClientBase {
   async listGlobalMcpServers(): Promise<readonly McpServerConfig[]> {
     const rpc = await this.getRpc();
     return rpc.listGlobalMcpServers({});
+  }
+
+  async listGlobalMcpServerAuthStatuses(): Promise<readonly GlobalMcpServerAuthStatus[]> {
+    const rpc = await this.getRpc();
+    return rpc.listGlobalMcpServerAuthStatuses({});
   }
 
   async addGlobalMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {

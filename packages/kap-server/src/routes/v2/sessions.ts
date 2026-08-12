@@ -159,6 +159,9 @@ const v2SessionSchema = z.object({
     created_at: z.number().int(),
     updated_at: z.number().int(),
     archived: z.boolean(),
+    /** Unix ms; null when absent (never archived, or archived before the
+     *  field existed — clients fall back to updated_at for display). */
+    archived_at: z.number().int().nullable(),
   }),
   activity: z.object({ status: v2ActivityStatusSchema }),
   git: v2GitDomainSchema.optional(),
@@ -492,6 +495,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
             created_at: summary.createdAt,
             updated_at: summary.updatedAt,
             archived: summary.archived,
+            archived_at: summary.archivedAt ?? null,
           },
           activity: { status: mapActivityStatus(factsOf(summary.id), summary.lastTurnReason) },
           git:

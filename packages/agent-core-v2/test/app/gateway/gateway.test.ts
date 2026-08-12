@@ -91,6 +91,7 @@ describe('RestGateway', () => {
 
     const sessionLifecycle: ISessionLifecycleService = {
       _serviceBrand: undefined,
+      onWillCreateSession: () => ({ dispose: () => {} }),
       onDidCreateSession: () => ({ dispose: () => {} }),
       onDidCloseSession: () => ({ dispose: () => {} }),
       onDidArchiveSession: () => ({ dispose: () => {} }),

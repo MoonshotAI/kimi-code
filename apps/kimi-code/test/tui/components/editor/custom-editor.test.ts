@@ -516,8 +516,6 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain('[paste #1');
     expect(editor.getText()).toContain('[paste #2');
 
-    editor.setText('[paste #1 +15 lines] [paste #2 +15 lines]');
-
     simulateLargePaste(editor, 'anything');
 
     expect(editor.getText()).toContain('[paste #1');
@@ -550,7 +548,9 @@ describe('CustomEditor paste marker expansion', () => {
     simulateLargePaste(editor, 'anything');
     expect(editor.getText()).toContain(longText);
 
-    editor.setText(markerText);
+    // Undo (Ctrl+-) restores both the marker text and its paste-registry entry.
+    editor.handleInput('\x1b[45;5u');
+    expect(editor.getText()).toContain('[paste #1');
 
     simulateLargePaste(editor, 'anything');
     expect(editor.getText()).not.toContain('[paste #');

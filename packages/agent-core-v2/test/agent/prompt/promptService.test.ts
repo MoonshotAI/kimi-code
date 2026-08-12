@@ -134,6 +134,33 @@ describe('AgentPromptService', () => {
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
   });
 
+  it('delivers a blocked prompt’s compression captions right after their host message', async () => {
+    const { prompt, context } = harness();
+    prompt.hooks.onBeforeSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
+    const handle = await prompt.enqueue({
+      id: 'prompt-caption',
+      message: message(
+        '<system>Image compressed to fit model limits: 800x600</system>look at this',
+      ),
+    });
+    await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
+
+    const history = context.get();
+    expect(history).toHaveLength(2);
+    expect(history[0]?.origin).toEqual({
+      kind: 'injection',
+      variant: 'image_compression',
+      ownerPromptId: 'prompt-caption',
+    });
+    expect(history[1]?.origin).toEqual({ kind: 'user' });
+    expect(history[1]?.content).toEqual([{ type: 'text', text: 'look at this' }]);
+    const captionPart = history[0]?.content[0];
+    expect(captionPart?.type).toBe('text');
+    expect((captionPart as { text: string }).text).toContain(
+      'Image compressed to fit model limits: 800x600',
+    );
+  });
+
   it('settles the prompt as failed when the loop throws on launch', async () => {
     const { prompt, loop } = harness();
     vi.spyOn(loop, 'enqueue').mockImplementation(() => {

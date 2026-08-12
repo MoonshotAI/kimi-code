@@ -10,10 +10,14 @@
  * document always carries the `agents` / `custom` maps — seeded at creation,
  * backfilled and persisted on load for documents written before the seeding
  * existed (without touching `updatedAt`, so a format heal never reorders
- * session listings). Re-registering an agent whose metadata is unchanged is
- * a no-op (no write, no mirror, no event), so resuming a session — which
- * re-registers its agents as they materialize — never bumps `updatedAt` and
- * never reorders session listings. Bound at Session scope.
+ * session listings). `updatedAt` tracks content activity only: management
+ * writes (rename via `setTitle`, archive/restore via `setArchived`) keep the
+ * persisted value through `touchUpdatedAt: false`, an explicit
+ * `patch.updatedAt` always wins (fork restores the source's recency), and
+ * agent registration is a structural write that never touches it — neither
+ * when resume materializes a cold session's agents, nor when a runtime
+ * subagent registers mid-turn (the turn's own submit/end moments carry
+ * recency). Bound at Session scope.
  *
  * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
  * update is persisted, the fresh summary is recorded into the App-scoped
@@ -124,7 +128,8 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   ): Promise<void> {
     await this.ready;
     if (this.disposed) return;
-    const updatedAt = opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now();
+    const updatedAt =
+      patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
     this.data = { ...this.data, ...patch, updatedAt };
     await this.store.set(this.scope, META_KEY, this.data);
     if (this.disposed) return;
@@ -135,11 +140,14 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   }
 
   async setTitle(title: string): Promise<void> {
-    await this.update({ title, isCustomTitle: true });
+    await this.update({ title, isCustomTitle: true }, { touchUpdatedAt: false });
   }
 
   async setArchived(archived: boolean): Promise<void> {
-    await this.update({ archived });
+    await this.update(
+      archived ? { archived: true, archivedAt: Date.now() } : { archived: false, archivedAt: undefined },
+      { touchUpdatedAt: false },
+    );
   }
 
   async registerAgent(agentId: string, meta: AgentMeta): Promise<void> {
@@ -148,7 +156,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       const existing = this.data.agents?.[agentId];
       if (existing !== undefined && agentMetaEquals(existing, meta)) return;
       const agents = { ...this.data.agents, [agentId]: meta };
-      await this.applyUpdate({ agents });
+      await this.applyUpdate({ agents }, { touchUpdatedAt: false });
     });
   }
 
@@ -173,6 +181,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
           createdAt: this.data.createdAt,
           updatedAt: this.data.updatedAt,
           archived: this.data.archived === true,
+          archivedAt: this.data.archivedAt,
           custom: this.data.custom,
           lastTurnReason: this.data.lastTurnReason,
         }),

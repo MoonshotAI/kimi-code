@@ -3,8 +3,9 @@
  *
  * Mounts the reflection dispatcher under `basePath`: the routes mirror the
  * scope tree; all share one handler. `:service` is a decorator id (channel
- * name) resolved against the scoped DI registry; `:method` is invoked by
- * reflection. Reads use `GET`, writes use `POST`.
+ * name) resolved against the scoped DI registry, then the Feature
+ * contributed-service table (runtime-contributed Services); `:method` is
+ * invoked by reflection. Reads use `GET`, writes use `POST`.
  *
  *   GET|POST {basePath}/:service/:method
  *   GET|POST {basePath}/workspace/:workspace_id/:service/:method

@@ -17,6 +17,7 @@ export const sessionSummarySchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   archived: z.boolean(),
+  archivedAt: z.number().optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
   lastTurnReason: z.enum(['completed', 'cancelled', 'failed']).optional(),
 });
