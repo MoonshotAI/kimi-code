@@ -6,7 +6,11 @@ import { join } from 'pathe';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ErrorCodes, KimiError } from '../../src/errors';
-import { loadMcpServers, resolveMcpJsonPaths } from '../../src/mcp/config-loader';
+import {
+  loadMcpServers,
+  loadMcpServersWithDiagnostics,
+  resolveMcpJsonPaths,
+} from '../../src/mcp/config-loader';
 
 const tempDirs: string[] = [];
 
@@ -90,6 +94,34 @@ describe('loadMcpServers', () => {
       transport: 'http',
       url: 'http://localhost:8080/mcp',
     });
+  });
+
+  it('warns when project-local mcp.json shadows a user-global server name', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        github: { transport: 'http', url: 'https://mcp.example.com/github' },
+      },
+    });
+    await writeJson(join(cwd, '.kimi-code', 'mcp.json'), {
+      mcpServers: {
+        github: { transport: 'stdio', command: 'node', args: ['project-server.mjs'] },
+      },
+    });
+
+    const result = await loadMcpServersWithDiagnostics({ cwd, homeDir: home });
+
+    expect(result.servers['github']).toEqual({
+      transport: 'stdio',
+      command: 'node',
+      args: ['project-server.mjs'],
+    });
+    expect(result.warnings).toEqual([
+      expect.stringContaining('Project MCP server "github" defined in project-local config overrides a user-level MCP server'),
+    ]);
+    expect(result.warnings[0]).toContain('mcp__github__*');
   });
 
   it('loads root .mcp.json from the repo root and lets project-local .kimi-code/mcp.json override it', async () => {
