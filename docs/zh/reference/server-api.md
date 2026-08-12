@@ -50,7 +50,8 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 | 鉴权失败 / 触发限流 | 401 / 429 |
 | 创建供应商、导入供应商目录成功 | 201 |
 | 删除供应商成功 | 204 |
-| 文件下载类端点 | 206（Range 分段）/ 304（ETag 未变），错误用真实 404 / 500 |
+| 二进制与流式端点 | 支持时返回 206（Range 分段）/ 304（ETag 未变），各端点能力不同，详见「[二进制与流式端点](#二进制与流式端点)」 |
+| `GET /api/v1/files/{file_id}` 下载错误 | 真实 404 / 500（响应体仍为信封） |
 
 其中 201 的响应体仍是标准信封（`code` 为 `0`），只是状态行遵循 REST 的资源创建习惯；204 按 HTTP 语义没有响应体，删除成功以状态码本身为准。
 
@@ -326,14 +327,16 @@ PTY 终端接口，仅 loopback 绑定时挂载。
 
 ## 二进制与流式端点
 
-以下端点不走信封，使用真实 HTTP 语义（ETag / 304、Range / 206）：
+以下端点返回二进制流而非 JSON 载荷，各端点的 HTTP 能力并不相同：
 
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/files/{file_id}` | 下载已上传文件 |
-| `GET /api/v1/sessions/{session_id}/fs/{path}:download` | 下载会话工作区文件 |
-| `GET /api/v1/fs:content` | 读取本机任意文件（仅受 token 保护，谨慎暴露端口） |
-| `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流） |
+| 方法与路径 | 说明 | Range 分段（206） | ETag / 304 |
+| --- | --- | --- | --- |
+| `GET /api/v1/files/{file_id}` | 下载已上传文件 | 支持 | 不支持（会发送 `etag` 头，但不处理 `If-None-Match`） |
+| `GET /api/v1/sessions/{session_id}/fs/{path}:download` | 下载会话工作区文件 | 支持 | 支持 |
+| `GET /api/v1/fs:content` | 读取本机任意文件（仅受 token 保护，谨慎暴露端口） | 支持 | 支持 |
+| `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流） | 不支持 | 不支持 |
+
+错误语义也不相同：`GET /api/v1/files/{file_id}` 对查找和存储失败返回真实 404 / 500 状态码（参数校验失败仍走 HTTP 200 信封），其余三个端点的所有失败都走标准[响应信封](#响应信封)——客户端在这三个端点上仍需检查信封中的 `code`。
 
 ## 下一步
 
