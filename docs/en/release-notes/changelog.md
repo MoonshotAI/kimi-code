@@ -10,6 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
+- Add the Modern Web Guidance plugin to the bundled plugin marketplace. Run `/plugins` and select Modern Web Guidance to install it.
 - Show the live work progress of background subagents in the `/tasks` panel.
 
 ### Bug Fixes

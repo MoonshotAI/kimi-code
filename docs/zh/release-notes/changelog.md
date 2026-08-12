@@ -10,6 +10,7 @@ outline: 2
 
 ### 新功能
 
+- 内置插件市场新增 Modern Web Guidance 插件，通过 `/plugins` 选择 Modern Web Guidance 安装。
 - `/tasks` 面板现实时展示后台子 Agent 的工作进度。
 
 ### 修复
