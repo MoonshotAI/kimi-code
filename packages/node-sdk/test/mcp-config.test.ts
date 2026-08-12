@@ -306,10 +306,10 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
     const homeDir = await makeTempDir();
     const statusServer = await startMcpAuthStatusServer();
     const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
-    externalOAuth
+    await externalOAuth
       .getProvider('oauth-authorized', statusServer.oauthUrl)
       .saveTokens({ access_token: statusServer.authToken, token_type: 'Bearer' });
-    externalOAuth
+    await externalOAuth
       .getProvider('oauth-stale', statusServer.oauthUrl)
       .saveTokens({ access_token: 'stale-test-access-token', token_type: 'Bearer' });
     await writeMcpConfig(homeDir, {

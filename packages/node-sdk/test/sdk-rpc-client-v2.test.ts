@@ -90,7 +90,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     tempDirs.push(homeDir);
     const statusServer = await startMcpAuthStatusServer();
     const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
-    externalOAuth
+    await externalOAuth
       .getProvider('oauth-authorized', statusServer.oauthUrl)
       .saveTokens({ access_token: statusServer.authToken, token_type: 'Bearer' });
     await writeFile(
@@ -135,10 +135,10 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
       ]);
 
-      externalOAuth
+      await externalOAuth
         .getProvider('oauth-required', statusServer.oauthUrl)
         .saveTokens({ access_token: statusServer.authToken, token_type: 'Bearer' });
-      externalOAuth.invalidate('oauth-authorized', statusServer.oauthUrl, 'tokens');
+      await externalOAuth.invalidate('oauth-authorized', statusServer.oauthUrl, 'tokens');
 
       await expect(
         harness
