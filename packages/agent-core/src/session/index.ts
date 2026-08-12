@@ -222,6 +222,7 @@ export class Session {
   readonly mcp: McpConnectionManager;
   readonly log: Logger;
   private readonly logHandle: SessionLogHandle | undefined;
+  private readonly unsubscribeMcpOAuthCredentials: (() => void) | undefined;
   readonly hookEngine: HookEngine;
   readonly experimentalFlags: ExperimentalFlagResolver;
   readonly imageLimits: ImageLimits;
@@ -304,6 +305,16 @@ export class Session {
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);
     });
+    this.unsubscribeMcpOAuthCredentials = options.mcpOAuthCoordinator?.onCredentialsChanged(
+      (event) => {
+        void this.reconnectMcpAfterCredentialsChanged(event).catch((error: unknown) => {
+          this.log.warn('mcp reconnect after credentials change failed', {
+            server: event.serverName,
+            error,
+          });
+        });
+      },
+    );
     this.agentCatalog =
       options.agents?.catalog ??
       new SessionAgentProfileCatalog({
@@ -515,6 +526,7 @@ export class Session {
   }
 
   async close(): Promise<void> {
+    this.unsubscribeMcpOAuthCredentials?.();
     try {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
@@ -533,6 +545,7 @@ export class Session {
   }
 
   async closeForReload(): Promise<void> {
+    this.unsubscribeMcpOAuthCredentials?.();
     try {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),

@@ -290,16 +290,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       kimiHomeDir: this.homeDir,
       coordinator: this.mcpOAuthCoordinator,
     });
-    this.mcpOAuthCoordinator.onCredentialsChanged((event) => {
-      for (const session of this.sessions.values()) {
-        void session.reconnectMcpAfterCredentialsChanged(event).catch((error: unknown) => {
-          session.log.warn('mcp reconnect after credentials change failed', {
-            server: event.serverName,
-            error,
-          });
-        });
-      }
-    });
     this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
     // Capture the error rather than swallow it: mutators and explicit /plugins
     // reads rethrow so the user sees what's wrong; createSession/resumeSession
@@ -1037,7 +1027,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       runtimeNameCounts.set(server.runtimeName, (runtimeNameCounts.get(server.runtimeName) ?? 0) + 1);
     }
     const credentialPresent = new Map<string, boolean>();
-    const probeConfigs: Record<string, McpServerConfig> = {};
+    const probeConfigs = Object.create(null) as Record<string, McpServerConfig>;
     for (const server of descriptors) {
       if (!isOAuthProbeCandidate(server)) continue;
       if (runtimeNameCounts.get(server.runtimeName) !== 1) continue;

@@ -44,6 +44,17 @@ async function writeMcpConfig(homeDir: string, value: unknown): Promise<void> {
   await writeFile(join(homeDir, 'mcp.json'), JSON.stringify(value), 'utf-8');
 }
 
+function definePrototypeNamedMcpServer(
+  servers: Record<string, unknown>,
+  url: string,
+): Record<string, unknown> {
+  Object.defineProperty(servers, '__proto__', {
+    value: { transport: 'http', url },
+    enumerable: true,
+  });
+  return servers;
+}
+
 async function readMcpConfig(homeDir: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(join(homeDir, 'mcp.json'), 'utf-8')) as Record<
     string,
@@ -229,7 +240,7 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
       .getProvider('sse', statusServer.unavailableUrl)
       .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
     await writeMcpConfig(homeDir, {
-      mcpServers: {
+      mcpServers: definePrototypeNamedMcpServer({
         stdio: { command: 'local-command' },
         plain: { transport: 'http', url: statusServer.plainUrl },
         detected: { transport: 'http', url: statusServer.oauthUrl },
@@ -260,7 +271,7 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
           url: statusServer.oauthUrl,
           auth: 'oauth',
         },
-      },
+      }, statusServer.oauthUrl),
     });
     const harness = createKimiHarness({ homeDir });
 
@@ -276,6 +287,7 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
         { name: 'oauth-required', authStatus: 'oauth-required' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
         { name: 'oauth-stale', authStatus: 'oauth-required' },
+        { name: '__proto__', authStatus: 'oauth-required' },
       ]);
       expect(statusServer.requestCount('/unavailable')).toBe(0);
     } finally {
