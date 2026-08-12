@@ -18,7 +18,7 @@ import { ILogService } from '#/_base/log/log';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -39,7 +39,7 @@ interface ContextInjectionEntry {
 export class AgentContextInjectorService extends Service implements IAgentContextInjectorService {
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
-  private newTurnRearmed = false;
+  private compactionRearmPending = false;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -50,26 +50,13 @@ export class AgentContextInjectorService extends Service implements IAgentContex
   ) {
     super();
     this._register(
-      loopService.hooks.onWillBeginStep.register('context-injector', async (ctx, next) => {
-        await this.inject(this.takeNewTurnFlag(ctx.firstStepOfTurn));
-        await next();
-        // Compaction can run inside a later handler of this same chain
-        // (full-compaction's beforeStep). Its splice always drops injection
-        // messages, so re-reconcile here — still before the step's request.
-        if (this.newTurnRearmed) {
-          this.newTurnRearmed = false;
-          await this.inject(true);
-        }
-      }),
+      loopService.hooks.onWillBeginStep.register('context-injector', (ctx, next) =>
+        this.reconcileAroundStep(ctx, next),
+      ),
     );
     this._register(
       this.eventBus.subscribe('context.spliced', (splice) => {
-        if (
-          splice.deleteCount > 0 &&
-          splice.messages.some(isCompactionSummaryMessage)
-        ) {
-          this.newTurnRearmed = true;
-        }
+        if (isCompactionSplice(splice)) this.compactionRearmPending = true;
       }),
     );
   }
@@ -101,10 +88,26 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     }
   }
 
-  private takeNewTurnFlag(firstStepOfTurn: boolean): boolean {
-    const rearmed = this.newTurnRearmed;
-    this.newTurnRearmed = false;
-    return firstStepOfTurn || rearmed;
+  private async reconcileAroundStep(
+    ctx: BeforeStepContext,
+    next: (context?: BeforeStepContext) => Promise<void>,
+  ): Promise<void> {
+    const rearmed = this.takeCompactionRearm();
+    await this.inject(ctx.firstStepOfTurn || rearmed);
+    await next();
+    // Compaction can run inside a later handler of this same chain
+    // (full-compaction's beforeStep). Its splice always drops injection
+    // messages, so re-reconcile here — still before the step's request.
+    if (this.takeCompactionRearm()) {
+      await this.inject(true);
+    }
+  }
+
+  /** Reads and clears the flag set when a compaction splice arrives. */
+  private takeCompactionRearm(): boolean {
+    const pending = this.compactionRearmPending;
+    this.compactionRearmPending = false;
+    return pending;
   }
 
   private async inject(isNewTurn: boolean): Promise<void> {
@@ -129,11 +132,10 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     entry: ContextInjectionEntry,
     isNewTurn: boolean,
   ): ContextInjectionContext<unknown> {
-    const injectedPositions = findInjections(this.context.get(), entry.name);
+    const history = this.context.get();
+    const injectedPositions = findInjections(history, entry.name);
     const lastInjectedAt = injectedPositions.at(-1) ?? null;
-    const lastInjection = lastInjectedAt === null
-      ? undefined
-      : this.context.get()[lastInjectedAt];
+    const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
     return {
       injectedPositions,
       lastInjectedAt,
@@ -190,6 +192,13 @@ export class AgentContextInjectorService extends Service implements IAgentContex
       origin,
     });
   }
+}
+
+function isCompactionSplice(splice: {
+  readonly deleteCount: number;
+  readonly messages: readonly ContextMessage[];
+}): boolean {
+  return splice.deleteCount > 0 && splice.messages.some(isCompactionSummaryMessage);
 }
 
 function isRawInjectionMessage(
