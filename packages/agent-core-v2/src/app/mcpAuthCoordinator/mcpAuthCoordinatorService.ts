@@ -1,8 +1,8 @@
 /**
  * `mcpAuthCoordinator` domain — `IMcpAuthCoordinator` implementation.
  *
- * Provides the App-scoped credential event broadcaster. Browser authorization
- * flows remain owned by their callers.
+ * Broadcasts credential events through `mcpCore`'s `McpOAuthCoordinator`.
+ * Browser authorization flows remain owned by their callers. Bound at App scope.
  */
 
 import { LifecycleScope } from '#/app/scopes';
