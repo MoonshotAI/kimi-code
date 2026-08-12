@@ -75,6 +75,44 @@ describe('SessionSubagentModelsValidationService', () => {
     expect(resolve()).toBeUndefined();
   });
 
+  it('constructs fine when the legacy model key alone forms the fallback pool', () => {
+    modelIds.add('provider/fast');
+    setup({ [SECONDARY_MODEL_SECTION]: { model: 'provider/fast' } });
+    expect(resolve()).toBeUndefined();
+  });
+
+  it('fails session creation when the legacy model fallback does not resolve', () => {
+    setup({ [SECONDARY_MODEL_SECTION]: { model: 'provider/typo' } });
+    const error = resolve();
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((error as Error2).message).toContain(
+      '[secondary_model.models] entry "provider/typo" could not be resolved',
+    );
+  });
+
+  it('constructs fine when force pins the legacy model fallback', () => {
+    modelIds.add('provider/fast');
+    setup({ [SECONDARY_MODEL_SECTION]: { model: 'provider/fast', force: true } });
+    expect(resolve()).toBeUndefined();
+  });
+
+  it('fails session creation when a pool table relies on the legacy model key for its default', () => {
+    modelIds.add('provider/fast');
+    setup({
+      [SECONDARY_MODEL_SECTION]: {
+        model: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap' },
+      },
+    });
+    const error = resolve();
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((error as Error2).message).toContain(
+      '[secondary_model].default_model is required when [secondary_model.models] is configured',
+    );
+  });
+
   it('fails session creation when a pool-less default_model does not resolve', () => {
     setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/typo' } });
     const error = resolve();

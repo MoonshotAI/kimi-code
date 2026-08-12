@@ -325,6 +325,7 @@ merge_all_available_skills = true
 # default_model: string
 # models: record<string, string>
 # force: boolean
+# model: string
 
 # ##########################################################################
 # services

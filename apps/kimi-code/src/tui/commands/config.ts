@@ -287,7 +287,10 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
     host.showError(`Unknown model alias: ${alias}`);
     return;
   }
-  const current = (await host.harness.getConfig()).secondaryModel?.defaultModel ?? '';
+  const secondary = (await host.harness.getConfig()).secondaryModel;
+  // The v2 engine honors a lone legacy `model` key as the fallback pool
+  // default — reflect it as the picker's current value.
+  const current = secondary?.defaultModel ?? secondary?.model ?? '';
   showSecondaryModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
 }
 

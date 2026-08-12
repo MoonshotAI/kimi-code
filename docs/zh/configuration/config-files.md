@@ -194,7 +194,7 @@ display_name = "Kimi for Coding (custom)"
 
 次主力模型是主模型之外的第二个模型配置——通常是一个更便宜的模型，供不需要主模型能力的功能绑定使用。它目前的消费者是子 Agent 派生。两个引擎都会读取本节，但各取不同的键：
 
-- 默认的 `agent-core-v2` 引擎（`kimi`、`kimi -p` 和 `kimi web`）读取[子 Agent 模型池](#子-agent-模型池)：`default_model` 与 `[secondary_model.models]` 表。
+- 默认的 `agent-core-v2` 引擎（`kimi`、`kimi -p` 和 `kimi web`）读取[子 Agent 模型池](#子-agent-模型池)：`default_model` 与 `[secondary_model.models]` 表，并兼容读取单独的配方键 `model` 作为兜底。
 - 使用 `KIMI_CODE_LEGACY_FLAG=1` 为 `kimi` / `kimi -p` 选择旧版 `agent-core` 引擎后，该引擎在次主力模型实验功能启用时读取[配方键](#次主力模型配方)（`model`、`default_effort` 及补丁字段）。
 
 ### 子 Agent 模型池
@@ -214,7 +214,7 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | 子 Agent 默认模型。配置 `[secondary_model.models]` 时必填，且必须是其中的 key；单独写下它（不写 models 表）则等价于只含它一个条目的模型池 |
 | `models` | `table<string, string>` | — | 子 Agent 模型池。key 是 [`[models]`](#models) 中已配置条目的别名，value 是主 Agent 挑选子 Agent 模型时看到的描述（中英文均可；空字符串表示只列出别名、不给提示） |
-| `force` | `boolean` | `false` | 把所有子 Agent 固定到 `default_model`：不再提供 `model` 参数，主 Agent 无法改选其他模型或 `"primary"`。必须配置 `default_model`，且不能与 `[secondary_model.models]` 同时使用 |
+| `force` | `boolean` | `false` | 把所有子 Agent 固定到 `default_model`：不再提供 `model` 参数，主 Agent 无法改选其他模型或 `"primary"`。必须配置 `default_model`（或兼容读取的 `model` 键），且不能与 `[secondary_model.models]` 同时使用 |
 
 配置模型池（显式的 `[secondary_model.models]` 表，或仅一行 `default_model` 形成的隐式单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中会列出模型池（默认模型标注 `[default]`），主 Agent 可按次派生选择模型（除非设置了 `force`，见下文）。模型池只引用已配置的 [`[models]`](#models) 条目——下面的 `kimi-code/*` 别名由 `/login` 自动提供——并附上挑选提示：
 
@@ -237,7 +237,7 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 force = true
 ```
 
-设置 `force` 后不再提供 `model` 参数（与完全未配置时一样），每次派生都绑定 `default_model`；显式传入 `model`（包括 `"primary"`）会报错。`force` 必须搭配 `default_model`，且不能与 `[secondary_model.models]` 表同时使用——表的意义在于提供选择，而 force 取消了选择。
+设置 `force` 后不再提供 `model` 参数（与完全未配置时一样），每次派生都绑定 `default_model`；显式传入 `model`（包括 `"primary"`）会报错。`force` 必须搭配 `default_model`（或单独的 `model` 键），且不能与 `[secondary_model.models]` 表同时使用——表的意义在于提供选择，而 force 取消了选择。
 
 利用自然解析会落到所绑定模型的默认 effort 这一点，可以给池中不同条目配不同的 Thinking 档位：为同一个底层模型再注册一个 `[models]` 条目作为「变体」，用 [`[models."<alias>".overrides]`](#模型覆盖项) 只覆盖 `default_effort`，再把两个别名都放进模型池——主 Agent 挑选别名时便同时选定了档位：
 
@@ -263,7 +263,9 @@ kimi-for-coding-highspeed-deep = "同一模型的高 Thinking 档位。适合较
 
 模型池键之前位于 `[subagent]` 下；遗留的 `[subagent] default_model` 或 `[subagent.models]` 表不再生效，并会以弃用警告的形式报告——按上文示例移入 `[secondary_model]` 即可。
 
-要把配方配置迁移到 v2 引擎，把模型别名改为池的默认模型即可：
+只写了配方键 `model`（没有 `default_model`，也没有 `[secondary_model.models]` 表）时，v2 引擎会兼容读取它，把该别名当作池的默认模型——等价于只含它一个条目的隐式模型池，优先级低于 `default_model`，所以从配方迁移过来不改配置也能工作。注意兼容只取模型别名：补丁字段（`default_effort`、`max_output_size` 等）不会随之生效——请把这些设置写到别名指向的 `[models]` 条目上，例如通过 [`[models."<alias>".overrides]`](#模型覆盖项)。一旦配置了 `[secondary_model.models]` 表，`default_model` 依旧必填，`model` 不能顶替。
+
+要显式迁移，把模型别名改为池的默认模型即可：
 
 ```toml
 # 旧
@@ -275,7 +277,7 @@ model = "kimi-code/kimi-for-coding-highspeed"
 default_model = "kimi-code/kimi-for-coding-highspeed"
 ```
 
-旧的补丁字段（`default_effort`、`max_output_size` 等）在模型池中没有对应物——请把这些设置写到别名指向的 `[models]` 条目上，例如通过 [`[models."<alias>".overrides]`](#模型覆盖项)。配方键可以继续留在本节中：旧版引擎会照常读取它们。
+配方键可以继续留在本节中：旧版引擎会照常读取它们。
 
 ### 次主力模型配方
 

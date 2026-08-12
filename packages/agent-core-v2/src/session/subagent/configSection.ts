@@ -17,9 +17,15 @@
  *   fallback model and the `[secondary_model.models]` table maps alias →
  *   description. A `default_model` without a `[secondary_model.models]` table
  *   stands on its own as an implicit single-entry pool (empty description) —
- *   the minimal "secondary model" configuration. `force = true` instead
- *   removes the choice entirely: every spawn binds `default_model`, the tools
- *   hide the `model` parameter exactly like the no-pool case, and combining
+ *   the minimal "secondary model" configuration. As a compatibility fallback
+ *   for the v1 engine's recipe, a lone legacy `model` key (likewise without a
+ *   pool table) forms the same implicit single-entry pool, ranked below
+ *   `default_model`; the recipe's patch fields (`default_effort`, ...) have
+ *   no pool counterpart and are ignored, and `model` never substitutes for
+ *   the pool table's required `default_model`. `force = true` instead
+ *   removes the choice entirely: every spawn binds the resolved default
+ *   (`default_model` ?? `model`), the tools hide the `model` parameter
+ *   exactly like the no-pool case, and combining
  *   it with a `[secondary_model.models]` table is rejected — the table's only
  *   purpose is offering the main agent a choice.
  *
@@ -38,10 +44,10 @@
  * strip returns a shallow copy and never mutates the input, so callers can
  * keep both schema variants as shared constants. `force = true` shares this
  * hidden-parameter surface (see `exposesSubagentModelChoice`) while binding
- * every spawn to `default_model` in `resolveSubagentBinding`.
+ * every spawn to the resolved default in `resolveSubagentBinding`.
  *
  * Spawn bindings resolve through `resolveSubagentBinding`: a forced
- * configuration short-circuits to `default_model` before anything else, and
+ * configuration short-circuits to the resolved default before anything else, and
  * any explicit request — `primary` included — throws (defensive; the tools
  * strip the parameter); `primary`
  * short-circuits to the caller's own model+thinking; with no pool a stray
@@ -64,7 +70,8 @@
  * `Error2(CONFIG_INVALID)` by `assertValidSubagentModelConfig` (run before
  * session materialization by the session lifecycle, with the Session-scope
  * validation service in `subagentModelsValidationService.ts` as backstop),
- * which checks the `force` rules (`default_model` required, a
+ * which checks the `force` rules (a default — `default_model` or the legacy
+ * `model` fallback — required, a
  * `[secondary_model.models]` table rejected) and delegates the pool checks to
  * `assertValidSubagentModelPool`: the default must be present and name a
  * pool key, every pool key must resolve through the model catalog, and the
@@ -104,6 +111,7 @@ export const SecondaryModelConfigSchema = z.object({
   defaultModel: z.string().min(1).optional(),
   models: z.record(z.string(), z.string()).optional(),
   force: z.boolean().optional(),
+  model: z.string().min(1).optional(),
 });
 
 export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
@@ -159,6 +167,9 @@ export function resolveSubagentModelPool(config: IConfigService): SubagentModelP
   }
   if (section?.defaultModel !== undefined) {
     return { defaultModel: section.defaultModel, models: { [section.defaultModel]: '' } };
+  }
+  if (section?.model !== undefined) {
+    return { defaultModel: section.model, models: { [section.model]: '' } };
   }
   return undefined;
 }
@@ -233,7 +244,7 @@ export function assertValidSubagentModelConfig(
         details: { section: SECONDARY_MODEL_SECTION, field: 'force' },
       });
     }
-    if (section.defaultModel === undefined) {
+    if (section.defaultModel === undefined && section.model === undefined) {
       throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_REQUIRES_DEFAULT_MESSAGE, {
         details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
       });
@@ -250,7 +261,7 @@ export function resolveSubagentBinding(
 ): { model: string; thinking?: string } {
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   if (section?.force === true) {
-    const forcedModel = section.defaultModel;
+    const forcedModel = section.defaultModel ?? section.model;
     if (forcedModel === undefined) {
       throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_REQUIRES_DEFAULT_MESSAGE, {
         details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },

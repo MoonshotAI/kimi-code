@@ -194,7 +194,7 @@ You can also switch models temporarily without touching the config file — by s
 
 The secondary model is a second model configuration alongside the main model — typically a cheaper one, for features that do not need the main model's capability. Its consumer today is subagent spawning. Both engines read this section, but different keys from it:
 
-- The default `agent-core-v2` engine (`kimi`, `kimi -p`, and `kimi web`) reads the [subagent model pool](#subagent-model-pool): `default_model` and the `[secondary_model.models]` table.
+- The default `agent-core-v2` engine (`kimi`, `kimi -p`, and `kimi web`) reads the [subagent model pool](#subagent-model-pool): `default_model` and the `[secondary_model.models]` table, and also honors a lone recipe `model` key as a fallback default.
 - The legacy `agent-core` engine, selected for `kimi` / `kimi -p` with `KIMI_CODE_LEGACY_FLAG=1`, reads the [recipe keys](#secondary-model-recipe) (`model`, `default_effort`, and the patch fields) behind the secondary-model experiment.
 
 ### Subagent model pool
@@ -214,7 +214,7 @@ In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md)
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | Default subagent model. Required when `[secondary_model.models]` is configured, and must be one of its keys; written on its own (without a models table) it is equivalent to a pool containing only that entry |
 | `models` | `table<string, string>` | — | Subagent model pool. Each key is the alias of a configured [`[models]`](#models) entry; each value is the description the main agent sees when picking a subagent model (Chinese or English; an empty string lists the alias with no hint) |
-| `force` | `boolean` | `false` | Pin every subagent to `default_model`: the `model` parameter is not advertised, so the main agent cannot pick another model or `"primary"`. Requires `default_model`; cannot be combined with `[secondary_model.models]` |
+| `force` | `boolean` | `false` | Pin every subagent to `default_model`: the `model` parameter is not advertised, so the main agent cannot pick another model or `"primary"`. Requires `default_model` (or a lone `model` key); cannot be combined with `[secondary_model.models]` |
 
 A configured pool — an explicit `[secondary_model.models]` table or a lone `default_model` — enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn (unless `force` is set — see below). The pool only references configured [`[models]`](#models) entries — the `kimi-code/*` aliases below are provisioned by `/login` — and attaches the selection hints:
 
@@ -237,7 +237,7 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 force = true
 ```
 
-With `force` set, the `model` parameter is not advertised (just like when nothing is configured) and every spawn binds `default_model`; an explicit `model` argument, `"primary"` included, is rejected with an error. `force` requires `default_model` and cannot be combined with a `[secondary_model.models]` table — the table exists to offer a choice, and force removes it.
+With `force` set, the `model` parameter is not advertised (just like when nothing is configured) and every spawn binds `default_model`; an explicit `model` argument, `"primary"` included, is rejected with an error. `force` requires `default_model` (or a lone `model` key) and cannot be combined with a `[secondary_model.models]` table — the table exists to offer a choice, and force removes it.
 
 Because natural resolution lands on the bound model's default effort, different pool entries can carry different thinking levels: register a second `[models]` entry as a "variant" of the same underlying model, override only its `default_effort` via [`[models."<alias>".overrides]`](#model-overrides), and list both aliases in the pool — the main agent picks the thinking level together with the alias:
 
@@ -264,7 +264,9 @@ Configuration errors fail loudly instead of falling back silently: session creat
 
 The pool keys used to live under `[subagent]`; a leftover `[subagent] default_model` or `[subagent.models]` table no longer applies and is reported as a deprecation warning — move them into `[secondary_model]` as shown above.
 
-To carry a recipe setup over to the v2 engine, point the pool default at the same alias:
+When only the recipe `model` key is set — no `default_model`, no `[secondary_model.models]` table — the v2 engine reads it compatibly as the pool default: an implicit single-entry pool ranked below `default_model`, so a recipe setup keeps working unchanged. The compatibility only takes the model alias, though: the recipe patch fields (`default_effort`, `max_output_size`, …) do not carry over — write those settings onto the `[models]` entry the alias points to, for example via [`[models."<alias>".overrides]`](#model-overrides). Once a `[secondary_model.models]` table is configured, `default_model` stays required and `model` does not substitute for it.
+
+To migrate explicitly, point the pool default at the same alias:
 
 ```toml
 # Before
@@ -276,7 +278,7 @@ model = "kimi-code/kimi-for-coding-highspeed"
 default_model = "kimi-code/kimi-for-coding-highspeed"
 ```
 
-The recipe patch fields (`default_effort`, `max_output_size`, …) have no pool equivalent — write those settings onto the `[models]` entry the alias points to, for example via [`[models."<alias>".overrides]`](#model-overrides). The recipe keys can stay in the section: the legacy engine keeps reading them.
+The recipe keys can stay in the section: the legacy engine keeps reading them.
 
 ### Secondary-model recipe
 

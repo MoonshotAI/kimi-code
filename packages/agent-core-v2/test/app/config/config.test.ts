@@ -1820,6 +1820,80 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
+  it('falls back to the legacy model key when no pool keys are set', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\n',
+    );
+
+    // Recipe patch fields have no pool counterpart and are stripped by the
+    // schema; the lone legacy key forms the implicit single-entry pool.
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/fast',
+    });
+    expect(resolveSubagentModelPool(config)).toEqual({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': '' },
+    });
+    expect(resolveSubagentBinding(config, own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    expect(() => resolveSubagentBinding(config, own, 'provider/smart')).toThrow(
+      /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
+    );
+
+    disposables.dispose();
+  });
+
+  it('lets default_model win over the legacy model key', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/slow"\ndefault_model = "provider/fast"\n',
+    );
+
+    expect(resolveSubagentBinding(config, own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+
+    disposables.dispose();
+  });
+
+  it('does not let the legacy model key substitute for a pool table default_model', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+
+    expect(() => resolveSubagentBinding(config, own)).toThrow(
+      '[secondary_model].default_model is required when [secondary_model.models] is configured',
+    );
+
+    disposables.dispose();
+  });
+
+  it('lets force pin the legacy model fallback when no default_model is set', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\nforce = true\n',
+    );
+
+    expect(resolveSubagentBinding(config, own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
+      /Invalid model "primary": \[secondary_model\]\.force is set/,
+    );
+
+    disposables.dispose();
+  });
+
   it('binds every spawn to the forced default_model, rejecting even "primary"', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig(
