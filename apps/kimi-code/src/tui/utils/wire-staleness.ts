@@ -28,7 +28,7 @@ export function agentWirePath(sessionDir: string, agentId: string): string {
   return join(sessionDir, 'agents', agentId, 'wire.jsonl');
 }
 
-/** How many trailing bytes of the journal we read to locate the newest turn. */
+/** Size of the backward scan windows used to locate the newest turn. */
 const WIRE_TAIL_READ_BYTES = 64 * 1024;
 
 /**
@@ -49,7 +49,7 @@ export function lastTurnBoundaryTimeInChunk(chunk: string): number | undefined {
     try {
       record = JSON.parse(line) as { type?: unknown; time?: unknown };
     } catch {
-      // Fragment from the tail-read boundary — keep scanning upward.
+      // Fragment from the read boundary — keep scanning upward.
       continue;
     }
     if (typeof record.time === 'number' && TURN_BOUNDARY_TYPES.has(record.type as string)) {
@@ -76,9 +76,17 @@ export function wireTailAheadOfTranscript(opts: {
 /**
  * Read the newest user-turn timestamp of an agent's `wire.jsonl`.
  *
- * Failures (missing session dir, unreadable journal, a tail record larger than
- * {@link WIRE_TAIL_READ_BYTES}) degrade to `undefined` so the staleness guard
- * always fails open rather than blocking the user on a corrupt file.
+ * Walks backward from the journal tail in {@link WIRE_TAIL_READ_BYTES} windows
+ * until a `turn.prompt` boundary is found or the start of the file is reached,
+ * so a single external turn whose response/tool output spans more than one
+ * window cannot hide its prompt boundary. A record split across a read
+ * boundary is reassembled before scanning: the fragment at the top of each
+ * window is the tail half of a record whose head lives at the end of the next
+ * (older) window, and the two are joined back into one line.
+ *
+ * Failures (missing session dir, unreadable journal) degrade to `undefined`
+ * so the staleness guard always fails open rather than blocking the user on a
+ * corrupt file.
  */
 export async function readWireTurnBoundaryTime(
   sessionDir: string,
@@ -89,10 +97,35 @@ export async function readWireTurnBoundaryTime(
     try {
       const { size } = await file.stat();
       if (size <= 0) return undefined;
-      const length = Math.min(size, WIRE_TAIL_READ_BYTES);
-      const buffer = Buffer.alloc(length);
-      await file.read(buffer, 0, length, size - length);
-      return lastTurnBoundaryTimeInChunk(buffer.toString('utf8'));
+      let offset = size;
+      // Tail half of the record split by the last read boundary; its head is
+      // the final line of the next (older) window.
+      let carry = '';
+      while (offset > 0) {
+        const start = Math.max(0, offset - WIRE_TAIL_READ_BYTES);
+        const length = offset - start;
+        const buffer = Buffer.alloc(length);
+        await file.read(buffer, 0, length, start);
+        const chunk = buffer.toString('utf8');
+        const firstNl = chunk.indexOf('\n');
+        if (firstNl >= 0) {
+          // The first line may be the tail half of a split record; the rest
+          // are complete. Appending the carried tail to the window's own last
+          // line (the head half) reassembles the split record, which is the
+          // newest line this window contributes and is scanned first.
+          const rest = chunk.slice(firstNl + 1);
+          const time = lastTurnBoundaryTimeInChunk(rest + carry);
+          if (time !== undefined) return time;
+          carry = chunk.slice(0, firstNl);
+        } else {
+          // The whole window is one un-terminated record — accumulate it with
+          // the carried tail so the record is reassembled in an older window.
+          carry = chunk + carry;
+        }
+        offset = start;
+      }
+      // The oldest record reached the head of the file still split.
+      return carry.length > 0 ? lastTurnBoundaryTimeInChunk(carry) : undefined;
     } finally {
       await file.close();
     }
