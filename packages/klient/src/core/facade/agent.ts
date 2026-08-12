@@ -1,9 +1,9 @@
 /**
  * The agent facade — one `session.agent(id)` handle over the agent-scope
  * services the wire exposes. Turn-driving calls (prompt / steer / cancel) go
- * through the `agentRPCService` channel; shell commands, model, usage, plan,
- * and task calls go straight to their domain services. Prompt streaming is
- * NOT on this interface: it flows through the agent's `events` hub
+ * through the `agentRPCService` channel; shell commands, model, usage,
+ * permission, plan, and task calls go straight to their domain services.
+ * Prompt streaming is NOT on this interface: it flows through the agent's `events` hub
  * (`turn.*`, `assistant.delta`, `tool.call.*`, `prompt.completed`, …).
  */
 
@@ -55,6 +55,7 @@ export interface AgentFacade {
   getThinking(): Promise<ThinkingLevel>;
   setThinking(level: string): Promise<void>;
   setPermission(mode: PermissionMode): Promise<void>;
+  getPermission(): Promise<PermissionMode>;
   getUsage(): Promise<UsageStatus>;
   getContext(): Promise<AgentContextData>;
   listCommands(): Promise<readonly AgentCommandInfo[]>;
@@ -101,6 +102,8 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     setThinking: (level) =>
       call(scope, 'agentProfileService', 'setThinking', [level]) as Promise<void>,
     setPermission: (mode) => rpc('setPermission', { mode }) as Promise<void>,
+    getPermission: () =>
+      call(scope, 'agentPermissionModeService', 'mode', []) as Promise<PermissionMode>,
     getUsage: () => call(scope, 'agentUsageService', 'status', []) as Promise<UsageStatus>,
     getContext: () => rpc('getContext', {}) as Promise<AgentContextData>,
     listCommands: () => rpc('listCommands', {}) as Promise<readonly AgentCommandInfo[]>,

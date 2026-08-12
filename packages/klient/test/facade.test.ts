@@ -182,6 +182,43 @@ describe('agent profile routing', () => {
   });
 });
 
+describe('agent permission routing', () => {
+  it('getPermission routes through the permission mode service', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = 'auto';
+    await expect(agent.getPermission()).resolves.toBe('auto');
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentPermissionModeService',
+      method: 'mode',
+      args: [],
+    });
+  });
+
+  it('permission.mode.changed maps to the permission mode emitter', () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+    const seen: unknown[] = [];
+
+    agent.events.on('permission.mode.changed', (event) => seen.push(event));
+    expect(channel.subscriptions[0]).toMatchObject({
+      scope: { sessionId: 's1', agentId: 'main' },
+      source: {
+        kind: 'emitter',
+        service: 'agentPermissionModeService',
+        event: 'onDidChangeMode',
+      },
+    });
+
+    channel.emit(0, { mode: 'auto', previousMode: 'manual' });
+    expect(seen).toEqual([{ mode: 'auto', previousMode: 'manual' }]);
+  });
+});
+
 describe('session skills routing', () => {
   it('skills.list routes to sessionSkillCatalog.list with the session scope', async () => {
     const channel = new FakeChannel();

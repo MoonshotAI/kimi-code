@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AcpSession } from '../src/session';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
@@ -19,10 +19,19 @@ interface ModesState {
   readonly availableModes: ReadonlyArray<{ readonly id: string }>;
 }
 
-interface NewSessionResult {
-  readonly sessionId: string;
+interface SessionConfigSnapshot {
   readonly configOptions: readonly ConfigOption[];
   readonly modes?: ModesState;
+}
+
+interface NewSessionResult extends SessionConfigSnapshot {
+  readonly sessionId: string;
+}
+
+interface ModeProjectionUpdate {
+  readonly sessionUpdate?: string;
+  readonly currentModeId?: string;
+  readonly configOptions?: readonly ConfigOption[];
 }
 
 describe('acp-server config surface', () => {
@@ -48,9 +57,12 @@ describe('acp-server config surface', () => {
     altThinking?: boolean;
     altSupportEfforts?: readonly string[];
     altDefaultEffort?: string;
+    configToml?: string;
   }): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-config-'));
-    if (opts?.fakeModel === true) {
+    if (opts?.configToml !== undefined) {
+      await writeFile(join(homeDir, 'config.toml'), opts.configToml, 'utf8');
+    } else if (opts?.fakeModel === true) {
       await writeFakeModelConfig(homeDir, {
         thinking: opts?.thinking === true,
         supportEfforts: opts?.supportEfforts,
@@ -70,6 +82,24 @@ describe('acp-server config surface', () => {
       cwd: homeDir,
       mcpServers: [],
     })) as NewSessionResult;
+  }
+
+  function modeProjectionUpdates(
+    messages: ReturnType<TestClient['sessionUpdates']>,
+  ): { current: string[]; config: string[] } {
+    const current: string[] = [];
+    const config: string[] = [];
+    for (const message of messages) {
+      const update = (message.params as { update?: ModeProjectionUpdate } | undefined)?.update;
+      if (update?.sessionUpdate === 'current_mode_update' && update.currentModeId !== undefined) {
+        current.push(update.currentModeId);
+      }
+      if (update?.sessionUpdate === 'config_option_update') {
+        const mode = update.configOptions?.find((option) => option.id === 'mode')?.currentValue;
+        if (mode !== undefined) config.push(mode);
+      }
+    }
+    return { current, config };
   }
 
   it(
@@ -99,6 +129,133 @@ describe('acp-server config surface', () => {
         'auto',
         'yolo',
       ]);
+    },
+    30_000,
+  );
+
+  it.each(['auto', 'yolo'] as const)(
+    'session/new reports the engine %s permission mode',
+    async (permission) => {
+      await boot({ configToml: `default_permission_mode = "${permission}"\n` });
+
+      const { sessionId, configOptions, modes } = await newSession();
+      await expect(
+        client!.server.klient.session(sessionId).agent('main').getPermission(),
+      ).resolves.toBe(permission);
+      expect(modes?.currentModeId).toBe(permission);
+      expect(configOptions.find((option) => option.id === 'mode')?.currentValue).toBe(permission);
+    },
+    30_000,
+  );
+
+  it(
+    'session/resume restores the persisted permission mode',
+    async () => {
+      await boot();
+      const { sessionId } = await newSession();
+      await client!.send('session/set_mode', { sessionId, modeId: 'auto' });
+      await client!.send('session/close', { sessionId });
+
+      const resumed = (await client!.send('session/resume', {
+        sessionId,
+        cwd: homeDir,
+        mcpServers: [],
+      })) as SessionConfigSnapshot;
+      expect(resumed.modes?.currentModeId).toBe('auto');
+      expect(resumed.configOptions.find((option) => option.id === 'mode')?.currentValue).toBe(
+        'auto',
+      );
+    },
+    30_000,
+  );
+
+  it(
+    'session/new reports plan mode ahead of the permission mode',
+    async () => {
+      await boot({
+        configToml: 'default_plan_mode = true\ndefault_permission_mode = "yolo"\n',
+      });
+
+      const { configOptions, modes } = await newSession();
+      expect(modes?.currentModeId).toBe('plan');
+      expect(configOptions.find((option) => option.id === 'mode')?.currentValue).toBe('plan');
+    },
+    30_000,
+  );
+
+  it.each(['auto', 'yolo'] as const)(
+    'pushes consistent ACP projections when permission changes to %s outside ACP',
+    async (permission) => {
+      await boot();
+      const { sessionId } = await newSession();
+      const cursor = client!.sessionUpdates().length;
+
+      await client!.server.klient.session(sessionId).agent('main').setPermission(permission);
+
+      await vi.waitFor(() => {
+        expect(modeProjectionUpdates(client!.sessionUpdates().slice(cursor))).toEqual({
+          current: [permission],
+          config: [permission],
+        });
+      });
+    },
+    30_000,
+  );
+
+  it(
+    'pushes plan projection when plan mode is entered outside ACP',
+    async () => {
+      await boot({ configToml: 'default_permission_mode = "auto"\n' });
+      const { sessionId } = await newSession();
+      const cursor = client!.sessionUpdates().length;
+
+      await client!.server.klient.session(sessionId).agent('main').enterPlan();
+
+      await vi.waitFor(() => {
+        expect(modeProjectionUpdates(client!.sessionUpdates().slice(cursor))).toEqual({
+          current: ['plan'],
+          config: ['plan'],
+        });
+      });
+    },
+    30_000,
+  );
+
+  it(
+    'restores yolo projection when plan mode is exited outside ACP',
+    async () => {
+      await boot({
+        configToml: 'default_plan_mode = true\ndefault_permission_mode = "yolo"\n',
+      });
+      const { sessionId } = await newSession();
+      const cursor = client!.sessionUpdates().length;
+
+      await client!.server.klient.session(sessionId).agent('main').cancelPlan();
+
+      await vi.waitFor(() => {
+        expect(modeProjectionUpdates(client!.sessionUpdates().slice(cursor))).toEqual({
+          current: ['yolo'],
+          config: ['yolo'],
+        });
+      });
+    },
+    30_000,
+  );
+
+  it(
+    'publishes only yolo when ACP switches from plan mode',
+    async () => {
+      await boot();
+      const { sessionId } = await newSession();
+      await client!.send('session/set_mode', { sessionId, modeId: 'plan' });
+      const cursor = client!.sessionUpdates().length;
+
+      await client!.send('session/set_mode', { sessionId, modeId: 'yolo' });
+
+      expect(modeProjectionUpdates(client!.sessionUpdates().slice(cursor))).toEqual({
+        current: ['yolo'],
+        config: ['yolo'],
+      });
     },
     30_000,
   );
@@ -136,6 +293,8 @@ describe('acp-server config surface', () => {
         enterPlan: async () => {
           throw new Error('plan toggle failed');
         },
+        getPermission: async () => 'manual' as const,
+        getPlan: async () => null,
         setPermission: async () => {},
       };
       Object.assign(session as unknown as Record<string, unknown>, {
@@ -143,6 +302,12 @@ describe('acp-server config surface', () => {
         conn: { sessionUpdate: async (update: unknown) => updates.push(update) },
         sessionId: 'session-test',
         currentModeId: 'default',
+        disposed: false,
+        modeMutationDepth: 0,
+        modeRefreshDirty: false,
+        modeRefreshRevision: 0,
+        modeStateInitialized: true,
+        reportedModeId: 'default',
       });
 
       await expect(session.setMode('plan')).rejects.toThrow('plan toggle failed');
