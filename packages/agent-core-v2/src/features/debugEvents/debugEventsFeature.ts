@@ -5,8 +5,8 @@
  * Contributes the App-scope `IDebugEventsService` (OnDemand) through the
  * `features` base-class seam; retracting the unit withdraws the service
  * across the scope tree. The service is intentionally absent from the static
- * scoped registry — the debug RPC dispatcher reaches it by decorator-name
- * fallback. Registered into the feature table at import.
+ * scoped registry — the debug RPC dispatcher reaches it through the
+ * contributed-service fallback. Registered into the feature table at import.
  */
 
 import { ScopeActivation } from '#/_base/di/instantiation';

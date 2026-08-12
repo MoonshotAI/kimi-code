@@ -155,6 +155,7 @@ import { SECONDARY_MODEL_SECTION } from '@moonshot-ai/agent-core-v2/app/kosongCo
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { wrapSubagentModelError } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/workspace/workspaceMcpConfig/internal/config-loader';
+import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
   applyPromptMetadataUpdate,
   bootstrap,
@@ -164,9 +165,11 @@ import {
   ensureKimiHome,
   ensureMainAgent,
   IAgentActivityView,
+  IAgentContextInjectorService,
   IAgentContextMemoryService,
   IAgentFullCompactionService,
   IAgentGoalService,
+  IAgentPluginService,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPermissionModeService,
@@ -233,6 +236,7 @@ import {
   type Scope,
   type SecondaryModelConfig,
   type ServicesAccessor,
+  type SessionSummary as V2SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentHandle, Klient } from '@moonshot-ai/klient';
 import { createKlient } from '@moonshot-ai/klient/memory';
@@ -299,6 +303,7 @@ import type {
   SessionPlan,
   SessionStatus,
   SessionSummary,
+  SessionSummaryPage,
   SessionUsage,
   SkillSummary,
   TelemetryClient,
@@ -595,9 +600,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: true }),
         loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: false }),
       ]);
-      const gatedMcpServers = Object.keys(withProject)
-        .filter((name) => !(name in userOnly))
-        .toSorted();
+      const gatedMcpServers = Object.entries(withProject)
+        .filter(([name]) => !(name in userOnly))
+        .map(([name, config]) => describeWorkspaceMcpServer(name, config))
+        .toSorted((a, b) => a.name.localeCompare(b.name));
       return { trusted: false, gatedMcpServers };
     } catch {
       return { trusted: false, gatedMcpServers: [] };
@@ -725,7 +731,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async reloadPlugins(): Promise<ReloadSummary> {
-    return this.klient.global.plugins.reload();
+    const summary = await this.klient.global.plugins.reload();
+    await this.refreshPluginSessionStarts();
+    return summary;
   }
 
   override async getPluginInfo(id: string): Promise<PluginInfo> {
@@ -997,50 +1005,92 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
+    // Full-set semantics: drain keyset pages until the listing is exhausted
+    // (an unpaged query currently answers in one page, but a backend may cap
+    // it — never silently truncate the unpaged contract).
+    const all: SessionSummary[] = [];
+    let before: string | undefined;
+    for (;;) {
+      const page = await this.listSessionsPage({
+        workDir: input.workDir,
+        sessionId: input.sessionId,
+        before,
+      });
+      all.push(...page.items);
+      if (page.nextCursor === undefined) return all;
+      before = page.nextCursor;
+    }
+  }
+
+  override async listSessionsPage(input: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
     // v1 rejects an empty workDir and bucket-filters by the normalized path;
     // the v2 index filters by workspace-id set instead.
     const workspaceIds =
       input.workDir === undefined
         ? undefined
         : await this.workspaceIdsFor(normalizeRequiredWorkDir('listSessions', input.workDir));
-    const page = await this.klient.global.sessions.list({
-      workspaceIds,
-      sessionId: input.sessionId,
-    });
-    const bootstrapService = this.engineAccessor.get(IBootstrapService);
     const workspacesById = new Map(
       (await this.klient.global.workspaces.list()).map((workspace) => [workspace.id, workspace]),
     );
-    const summaries: SessionSummary[] = [];
-    for (const item of page.items) {
-      const workDir = item.cwd ?? workspacesById.get(item.workspaceId)?.root;
-      // A session whose workDir is unrecoverable (corrupt metadata, deleted
-      // workspace) cannot be resumed on either engine; v1's store never lists
-      // one in the first place, so drop it here too.
-      if (workDir === undefined) continue;
-      // A live session reports its own outcome; the index may still carry a
-      // stale one while the mirror's clear is queued (a fresh turn just
-      // started after a failure).
-      const liveHandle = getLiveSessionById(this.engineAccessor, item.id);
-      const effectiveItem =
-        liveHandle === undefined
-          ? item
-          : {
-              ...item,
-              lastTurnReason: liveHandle.accessor.get(ISessionActivityView).state().lastTurnReason,
-            };
-      summaries.push(
-        v2SummaryToSessionSummary(effectiveItem, {
-          workDir,
-          sessionDir: sessionDirOf(
-            bootstrapService.homeDir,
-            workspacePersistenceScope(bootstrapService.scope('sessions'), item.workspaceId),
-            item.id,
-          ),
-        }),
-      );
+    const collected: SessionSummary[] = [];
+    let before = input.before;
+    // Entries dropped by the mapping (unrecoverable workDir) shrink the page;
+    // keep pulling keyset pages until the requested size is filled so callers
+    // never see a short or empty page that still carries a cursor.
+    for (;;) {
+      const remaining = input.limit === undefined ? undefined : input.limit - collected.length;
+      if (remaining !== undefined && remaining <= 0) break;
+      const page = await this.klient.global.sessions.list({
+        workspaceIds,
+        sessionId: input.sessionId,
+        limit: remaining,
+        before,
+      });
+      if (page.items.length === 0) return { items: collected, nextCursor: undefined };
+      for (const item of page.items) {
+        const summary = this.mapIndexSummary(item, workspacesById);
+        if (summary !== undefined) collected.push(summary);
+      }
+      if (page.nextCursor === undefined) return { items: collected, nextCursor: undefined };
+      before = page.nextCursor;
+      if (input.limit === undefined) return { items: collected, nextCursor: before };
     }
-    return summaries;
+    return { items: collected, nextCursor: before };
+  }
+
+  /**
+   * Map one v2 index summary to the v1 wire shape, resolving the filesystem
+   * facts the index does not carry. Returns `undefined` when the session's
+   * workDir is unrecoverable (corrupt metadata, deleted workspace): such a
+   * session cannot be resumed on either engine, and v1's store never lists
+   * one in the first place.
+   */
+  private mapIndexSummary(
+    item: V2SessionSummary,
+    workspacesById: ReadonlyMap<string, { readonly root: string }>,
+  ): SessionSummary | undefined {
+    const workDir = item.cwd ?? workspacesById.get(item.workspaceId)?.root;
+    if (workDir === undefined) return undefined;
+    // A live session reports its own outcome; the index may still carry a
+    // stale one while the mirror's clear is queued (a fresh turn just
+    // started after a failure).
+    const liveHandle = getLiveSessionById(this.engineAccessor, item.id);
+    const effectiveItem =
+      liveHandle === undefined
+        ? item
+        : {
+            ...item,
+            lastTurnReason: liveHandle.accessor.get(ISessionActivityView).state().lastTurnReason,
+          };
+    const bootstrapService = this.engineAccessor.get(IBootstrapService);
+    return v2SummaryToSessionSummary(effectiveItem, {
+      workDir,
+      sessionDir: sessionDirOf(
+        bootstrapService.homeDir,
+        workspacePersistenceScope(bootstrapService.scope('sessions'), item.workspaceId),
+        item.id,
+      ),
+    });
   }
 
   /**
@@ -1194,8 +1244,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * the live session, resume from disk. The v2 busy check reads each live
    * agent's activity view (turn lane only — background tasks do not block,
    * matching v1's `hasActiveTurn`). `forcePluginSessionStartReminder` has no
-   * v2 channel (the engine owns plugin session-start injection) and is
-   * ignored.
+   * v2 channel (the engine owns plugin session-start injection), so reload
+   * refreshes the durable guidance snapshot through the Agent service.
    */
   override async reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary> {
     const sessionId = input.sessionId;
@@ -1216,6 +1266,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     await this.configReady;
     await this.klient.global.config.reload();
     await this.klient.global.plugins.reload();
+    await this.refreshPluginSessionStarts(sessionId);
     if (live !== undefined) {
       await closeSessionById(this.engineAccessor, sessionId);
     }
@@ -1224,8 +1275,28 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     this.printSteerStates.delete(sessionId);
     const handle = await resumeSessionById(this.engineAccessor, sessionId);
     if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
+    const main = handle.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+    await main?.accessor.get(IAgentPluginService).refreshSessionStart();
     this.wireSession(handle);
     return this.resumedSessionSummary(handle);
+  }
+
+  private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {
+    const workspaceLifecycle = this.engineAccessor.get(IWorkspaceLifecycleService);
+    await Promise.all(
+      workspaceLifecycle.handlers.list().map(async (handler) => {
+        await handler.accessor.get(IWorkspaceSkillCatalog).reload();
+        const sessions = handler.accessor.get(ISessionLifecycleService).list();
+        await Promise.all(
+          sessions.map(async (session) => {
+            if (session.id === excludedSessionId) return;
+            const main = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+            if (main === undefined) return;
+            await main.accessor.get(IAgentPluginService).refreshSessionStart();
+          }),
+        );
+      }),
+    );
   }
 
   /**
@@ -1820,9 +1891,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const swarm = agent.accessor.get(IAgentSwarmService);
     if (input.enabled) {
       swarm.enter(input.trigger);
-      return;
+    } else {
+      swarm.exit();
     }
-    swarm.exit();
+    await agent.accessor.get(IAgentContextInjectorService).reconcileWhenIdle('swarm_mode');
   }
 
   /** v1's `swarm()` composition: enter with the one-shot `task` trigger, then prompt. */
@@ -2333,4 +2405,20 @@ function normalizeRequiredWorkDir(operation: string, workDir: string): string {
     throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, `${operation} requires workDir`);
   }
   return normalizeWorkDir(workDir);
+}
+
+function describeWorkspaceMcpServer(
+  name: string,
+  config: WorkspaceMcpServerConfig,
+): WorkspaceTrustInfo['gatedMcpServers'][number] {
+  if (config.transport === 'stdio') {
+    return {
+      name,
+      transport: config.transport,
+      command: config.command,
+      args: config.args,
+      cwd: config.cwd,
+    };
+  }
+  return { name, transport: config.transport, url: config.url };
 }

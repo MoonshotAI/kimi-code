@@ -76,6 +76,7 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'interaction.resolved',
   'plan.revision',
   'interruptionReminder.recorded',
+  'plugin.session_start',
   'turn.ended',
 ]);
 
@@ -385,7 +386,10 @@ describe('AgentRecords persistence metadata', () => {
     ]);
     expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
     const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
+    expect(reminder?.origin).toEqual({
+      kind: 'injection',
+      variant: 'goal_fork_cleared',
+    });
     expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
   });
 
@@ -411,8 +415,8 @@ describe('AgentRecords persistence metadata', () => {
       objective: 'fork work',
     });
     expect(context.get().at(-1)?.origin).toEqual({
-      kind: 'system_trigger',
-      name: 'goal_fork_cleared',
+      kind: 'injection',
+      variant: 'goal_fork_cleared',
     });
   });
 

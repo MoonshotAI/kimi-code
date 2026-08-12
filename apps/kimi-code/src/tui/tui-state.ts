@@ -60,6 +60,10 @@ export interface TUIState {
   toolOutputExpanded: boolean;
   sessions: SessionRow[];
   loadingSessions: boolean;
+  /** Keyset cursor for the next older page; `undefined` when the listing is exhausted. */
+  sessionsNextCursor: string | undefined;
+  /** A follow-up session page fetch is in flight. */
+  sessionsLoadingMore: boolean;
   sessionsScope: 'cwd' | 'all';
   activeDialog: 'session-picker' | 'help' | 'trust-prompt' | 'cache-hint' | null;
   tasksBrowser: TasksBrowserState | undefined;
@@ -171,6 +175,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     toolOutputExpanded: false,
     sessions: [],
     loadingSessions: false,
+    sessionsNextCursor: undefined,
+    sessionsLoadingMore: false,
     sessionsScope: 'cwd',
     activeDialog: null,
     tasksBrowser: undefined,

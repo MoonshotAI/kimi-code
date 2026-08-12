@@ -38,6 +38,11 @@
  * live Agent wire journals, normalizes a missing protocol envelope, and
  * appends the fork boundary before restoring the target Agent; fork is
  * confined to this handler (source and target share the workspace bucket).
+ * Fork restores the source's recency onto the target: the metadata write
+ * carries an explicit `updatedAt` and runs after agent recreation as the
+ * fork's final metadata write (agent registration is non-touching), ahead
+ * of cron duplication, so a mid-fork failure never leaves cloned cron
+ * records behind.
  * On
  * materialize, the agent-profile loaders' `ready` is awaited
  * before the handle is published — agent-file discovery is local-
@@ -115,7 +120,7 @@ import {
   type SessionLifecycleHookSlots,
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { drainSessionMetadataWrites } from '#/session/sessionMetadata/sessionMetadataService';
+import { drainSessionMetadataWrites, toEpochMs } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { IWireService } from '#/wire/wire';
@@ -525,20 +530,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
 
       const title = opts.title ?? `Fork: ${sourceMeta?.title || sourceId}`;
-      await targetMeta.update({
-        title,
-        isCustomTitle: opts.title !== undefined ? true : sourceMeta?.isCustomTitle === true,
-        forkedFrom: sourceId,
-        archived: false,
-        lastPrompt: sourceMeta?.lastPrompt,
-        // The fork continues the source's conversation, so it inherits the
-        // last turn's outcome too — otherwise a restart would drop a failure
-        // the warm fork was still reporting.
-        lastTurnReason: sourceMeta?.lastTurnReason,
-        custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
-      });
-
-      await this.duplicateCronTasks(sourceId, targetId);
 
       for (const agentId of agentIds) {
         const sourceAgent = sourceAgents[agentId]!;
@@ -548,6 +539,22 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           labels: labelsFromAgentMeta(sourceAgent),
         });
       }
+
+      await targetMeta.update({
+        title,
+        isCustomTitle: opts.title !== undefined ? true : sourceMeta?.isCustomTitle === true,
+        forkedFrom: sourceId,
+        archived: false,
+        updatedAt: toEpochMs(sourceMeta?.updatedAt) || Date.now(),
+        lastPrompt: sourceMeta?.lastPrompt,
+        // The fork continues the source's conversation, so it inherits the
+        // last turn's outcome too — otherwise a restart would drop a failure
+        // the warm fork was still reporting.
+        lastTurnReason: sourceMeta?.lastTurnReason,
+        custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
+      });
+
+      await this.duplicateCronTasks(sourceId, targetId);
 
       await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
       this._onDidForkSession.fire({

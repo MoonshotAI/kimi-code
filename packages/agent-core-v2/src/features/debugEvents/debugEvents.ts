@@ -11,9 +11,9 @@
  * the caller never registered on a unit book. Unmaterialized on-demand units
  * and anonymous fiber units are not enumerable and are simply absent.
  * Contributed at App scope through `DebugEventsFeature` — reachable over the
- * debug RPC surface by decorator name, but absent from the static scoped
- * registry (`GET /api/v1/debug/channels`). All payloads are JSON-serializable
- * wire data.
+ * debug RPC surface through the contributed-service fallback, but absent from
+ * the static scoped registry (`GET /api/v1/debug/channels`). All payloads are
+ * JSON-serializable wire data.
  */
 
 import { createDecorator } from '#/_base/di/instantiation';
