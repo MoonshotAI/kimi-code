@@ -52,6 +52,8 @@
 
 - [#2842](https://github.com/MoonshotAI/kimi-code/pull/2842) [`e476c5a`](https://github.com/MoonshotAI/kimi-code/commit/e476c5a8bbe68fb0b6eb0096aa1efcb893b1a8fc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Add the Modern Web Guidance plugin to the bundled plugin marketplace. Run /plugins and select Modern Web Guidance to install it.
 
+- Thanks [@Leakless](https://github.com/Leakless) and [@winmin](https://github.com/winmin) for reporting the Windows binary-planting issues fixed in this release.
+
 ## 0.34.0
 
 ### Minor Changes
