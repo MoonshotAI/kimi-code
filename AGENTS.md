@@ -72,4 +72,4 @@ pnpm build         # pnpm -r run build
 
   Token 通过 `KIMI_CODE_HOME` 共享：两边默认 `~/.kimi-code`，desktop 读到的正是外部 server 写入的 token 文件；server 用自定义 `KIMI_CODE_HOME` 启动时，`pnpm dev:desktop` 要传同一个。外部 server 使用 CLI 的 host 身份（不是 `kimi-desktop`），开发场景没有影响。不带 `KIMI_SERVER_URL` 时 `pnpm dev:desktop` 保持内嵌 server 行为。
 - **bump submodule**：工作克隆推了新 commit 后，在 `kimi-code/` 里 `git fetch origin <branch> && git checkout <commit>`，回本仓根目录 `git add kimi-code && git commit -m "chore: bump kimi-code submodule"`。
-- **web 改动同步**：`pnpm --filter kimi-code-web run build` → `KIMI_CODE_REPO=<kimi-code checkout> pnpm run sync:web`。
+- **web 改动同步**：`pnpm --filter kimi-code-web run build` → `KIMI_CODE_REPO=<kimi-code checkout> pnpm run sync:web`。要给 kimi-code 提 dist PR（含 changeset 衔接核对）时走 `sync-web-dist` skill（`.agents/skills/sync-web-dist/SKILL.md`）。
