@@ -2,7 +2,7 @@
  * Renders a user message in the transcript.
  */
 
-import { Spacer, Text, truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
+import { Spacer, Text, truncateToWidth, visibleWidth, type Component } from '@moonshot-ai/pi-tui';
 
 import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
@@ -82,23 +82,26 @@ export class UserMessageComponent implements Component {
 
     const marker = this.bullet ?? USER_MESSAGE_BULLET;
     const formattedTime = this.showTimestamp ? formatTimestamp(this.timestamp, undefined, now) : '';
+    const bullet = marker.length > 0 ? currentTheme.boldFg('roleUser', marker) : '';
+    const bulletWidth = visibleWidth(bullet);
+    const contentWidth = formattedTime.length > 0 ? safeWidth : Math.max(1, safeWidth - bulletWidth);
 
     if (formattedTime.length > 0) {
-      const headerMarker = marker.length > 0 ? currentTheme.boldFg('roleUser', marker) : '';
-      lines.push(`${headerMarker}${currentTheme.dim(formattedTime)}`);
-    } else if (marker.length > 0) {
-      lines.push(currentTheme.boldFg('roleUser', marker));
+      lines.push(`${bullet}${currentTheme.dim(formattedTime)}`);
     }
 
     const coloredText = currentTheme.boldFg('roleUser', this.text);
-    const textLines = new Text(coloredText, 0, 0).render(safeWidth);
-    for (const line of textLines) {
-      lines.push(line);
+    const textLines = new Text(coloredText, 0, 0).render(contentWidth);
+    for (let i = 0; i < textLines.length; i++) {
+      const prefix = formattedTime.length === 0
+        ? (i === 0 ? bullet : ' '.repeat(bulletWidth))
+        : '';
+      lines.push(prefix + textLines[i]);
     }
     for (const thumbnail of this.imageThumbnails) {
-      const imageLines = thumbnail.render(safeWidth);
+      const imageLines = thumbnail.render(contentWidth);
       for (const line of imageLines) {
-        lines.push(line);
+        lines.push((formattedTime.length === 0 ? ' '.repeat(bulletWidth) : '') + line);
       }
     }
 

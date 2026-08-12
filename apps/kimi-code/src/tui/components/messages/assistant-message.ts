@@ -5,8 +5,9 @@
  * to align after the bullet.
  */
 
-import { Container, Markdown, truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
+import { Container, Markdown, truncateToWidth, visibleWidth, type Component } from '@moonshot-ai/pi-tui';
 
+import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
@@ -151,22 +152,28 @@ export class AssistantMessageComponent implements Component {
       return this.renderCache.lines;
     }
 
-    const lines: string[] = [''];
     const formattedTime = this.showTimestamp
       ? formatTimestamp(this.timestamp, this.endedAt, now)
       : '';
+    const lines: string[] = [''];
 
-    if (this.showBullet) {
-      const bulletText = currentTheme.boldFg('textStrong', STATUS_BULLET);
-      const headerText = formattedTime.length > 0 ? `${bulletText}${currentTheme.dim(formattedTime)}` : bulletText;
-      lines.push(headerText);
-    } else if (formattedTime.length > 0) {
-      lines.push(currentTheme.dim(formattedTime));
-    }
-
-    const contentLines = this.contentContainer.render(safeWidth);
-    for (const line of contentLines) {
-      lines.push(line);
+    if (formattedTime.length > 0) {
+      if (this.showBullet) {
+        const bulletText = currentTheme.boldFg('textStrong', STATUS_BULLET);
+        lines.push(`${bulletText}${currentTheme.dim(formattedTime)}`);
+      } else {
+        lines.push(currentTheme.dim(formattedTime));
+      }
+      lines.push(...this.contentContainer.render(safeWidth));
+    } else {
+      const prefix = this.showBullet ? STATUS_BULLET : MESSAGE_INDENT;
+      const contentWidth = Math.max(1, safeWidth - visibleWidth(prefix));
+      const contentLines = this.contentContainer.render(contentWidth);
+      for (let i = 0; i < contentLines.length; i++) {
+        const linePrefix =
+          i === 0 && this.showBullet ? currentTheme.fg('text', STATUS_BULLET) : MESSAGE_INDENT;
+        lines.push(linePrefix + contentLines[i]);
+      }
     }
     const rendered = markOsc133Zone(lines.map((line) => truncateToWidth(line, safeWidth, '…')));
     if (isRenderCacheEnabled()) {

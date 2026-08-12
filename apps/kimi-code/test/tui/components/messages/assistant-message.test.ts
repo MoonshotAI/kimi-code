@@ -39,9 +39,8 @@ describe('AssistantMessageComponent', () => {
     component.updateContent('abcdef');
 
     const lines = component.render(8).map(strip);
-    expect(lines).toContain(`${STATUS_BULLET}`);
-    expect(lines.some((l) => l.includes('abcdef'))).toBe(true);
-    expect(visibleWidth(lines[1] ?? '')).toBe(2);
+    expect(lines).toEqual(['', `${STATUS_BULLET}abcdef`]);
+    expect(visibleWidth(lines[1] ?? '')).toBe(8);
   });
 
   it('keeps assistant lines within very narrow widths', () => {
