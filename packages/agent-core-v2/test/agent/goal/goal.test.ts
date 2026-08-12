@@ -953,6 +953,15 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(abort).toHaveBeenCalledOnce();
   });
 
+  it('keeps the live continuation running on a graceful pause', async () => {
+    const abort = await startLiveContinuation();
+
+    await goals.pauseGoal({}, 'user', { preserveLiveContinuation: true });
+
+    expect(abort).not.toHaveBeenCalled();
+    expect(goals.getGoal().goal?.status).toBe('paused');
+  });
+
   it('aborts a live continuation when the user cancels the goal', async () => {
     const abort = await startLiveContinuation();
 

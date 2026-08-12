@@ -82,7 +82,7 @@ import { IWireService } from '#/wire/wire';
 import { defineModel } from '#/wire/model';
 import { IEventBus } from '#/app/event/eventBus';
 
-import { IAgentGoalService, type GoalReasonInput, type ResumeGoalInput } from './goal';
+import { IAgentGoalService, type GoalReasonInput, type PauseGoalOptions, type ResumeGoalInput } from './goal';
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 import { clearGoal, createGoal, GoalModel, updateGoal, type GoalState } from './goalOps';
 import type {
@@ -543,7 +543,11 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.clearInternal('system');
   }
 
-  async pauseGoal(input: GoalReasonInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+  async pauseGoal(
+    input: GoalReasonInput = {},
+    actor: GoalActor = 'user',
+    opts: PauseGoalOptions = {},
+  ): Promise<GoalSnapshot> {
     this.assertSupportedAgent();
     const state = this.requireState();
     if (state.status === 'paused') return this.toSnapshot(state);
@@ -553,7 +557,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         `Cannot pause a goal in status "${state.status}"`,
       );
     }
-    return this.applyLifecycle(state, 'paused', input.reason, actor);
+    return this.applyLifecycle(state, 'paused', input.reason, actor, {
+      preserveLiveContinuation: opts.preserveLiveContinuation === true,
+    });
   }
 
   async pauseActiveGoal(
@@ -950,6 +956,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         }
         return turn.result;
       })
+      .catch(() => {})
       .finally(() => {
         if (pending.turnId !== undefined) this.pendingContinuationGoals.delete(pending.turnId);
         if (this.pendingContinuation === pending) this.pendingContinuation = undefined;

@@ -55,11 +55,13 @@ export function installCrashHandlersForClient(client: TelemetryClient): () => vo
   // the only listener (print / server modes) rethrow to preserve it; the
   // dedupe set above keeps the monitor from double-reporting that path.
   installedRejectionHandler = (reason: unknown) => {
+    // AbortError rejections are expected cancellation noise (e.g. a goal's
+    // pending continuation aborted by pauseGoal) — never track or rethrow
+    // them, or the daemon dies on a perfectly normal cancel.
+    if (isAbortError(reason)) return;
     const soleListener = process.listenerCount('unhandledRejection') === 1;
-    if (!isAbortError(reason)) {
-      trackCrash(crashErrorType(reason), 'unhandledRejection');
-      recordedRejections.add(reason);
-    }
+    trackCrash(crashErrorType(reason), 'unhandledRejection');
+    recordedRejections.add(reason);
     if (soleListener) {
       throw reason;
     }

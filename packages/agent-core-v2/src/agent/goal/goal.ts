@@ -18,6 +18,10 @@ export interface GoalReasonInput {
   readonly reason?: string;
 }
 
+export interface PauseGoalOptions {
+  readonly preserveLiveContinuation?: boolean;
+}
+
 export interface ResumeGoalInput extends GoalReasonInput {
   readonly continueIfPaused?: boolean;
   readonly continueIfBlocked?: boolean;
@@ -29,7 +33,11 @@ export interface IAgentGoalService {
   getGoal(): GoalToolResult;
   isGoalToolTarget(turnId: number, goalId: string): boolean;
   createGoal(input: CreateGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
-  pauseGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
+  pauseGoal(
+    input?: GoalReasonInput,
+    actor?: GoalActor,
+    opts?: PauseGoalOptions,
+  ): Promise<GoalSnapshot>;
   resumeGoal(input?: ResumeGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
   cancelGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
   setBudgetLimits(
