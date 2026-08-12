@@ -77,6 +77,8 @@
  * overlay connections behind; the Session-scope validation service
  * (`session/subagent/subagentModelsValidationService.ts`) repeats the same
  * check at scope activation as a backstop for paths that bypass this service.
+ * The pool is gated behind the `secondary-model` experiment, so with the
+ * experiment off these validations are no-ops and the section stays inert.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -139,6 +141,7 @@ import {
   type WireRecord,
 } from '#/wire/record';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import { IFlagService } from '#/app/flag/flag';
 import { assertValidSubagentModelConfig } from '#/session/subagent/configSection';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
@@ -219,6 +222,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     super();
   }
@@ -261,7 +265,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async assertSubagentModelPoolPreFlight(): Promise<void> {
     await this.config.ready;
-    assertValidSubagentModelConfig(this.config, this.modelCatalog);
+    assertValidSubagentModelConfig(this.config, this.flags, this.modelCatalog);
   }
 
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {

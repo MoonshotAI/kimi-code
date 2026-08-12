@@ -38,6 +38,7 @@ import { PluginAgentProfileLoaderService } from '#/workspace/workspaceAgentProfi
 import { IBootstrapService, resolveHostArgs } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import { IFlagService } from '#/app/flag/flag';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -104,6 +105,7 @@ import { IPluginSkillSource, PluginSkillSource } from '#/workspace/workspaceSkil
 import { IWorkspaceRootSkillSource, WorkspaceRootSkillSource } from '#/workspace/workspaceSkillCatalog/rootFileSkillSource';
 
 import { stubLog } from '../_base/log/stubs';
+import { stubFlag } from '../app/flag/stubs';
 import { stubSkill } from '../app/skillCatalog/stubs';
 import { stdioFixture } from '../mcpCore/stubs';
 
@@ -298,6 +300,7 @@ describe('workspace resource sharing (handler chain)', () => {
         onDidSectionChange: () => ({ dispose: () => {} }),
       } as unknown as IConfigService),
       stubPair(IModelCatalog, { _serviceBrand: undefined } as unknown as IModelCatalog),
+      stubPair(IFlagService, stubFlag(() => false)),
       stubPair(ITelemetryService, noopTelemetryService),
       stubPair(ISkillDiscovery, discovery),
       stubPair(IPluginService, pluginStub()),

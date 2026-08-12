@@ -36,6 +36,7 @@ import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import { IFlagService } from '#/app/flag/flag';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
 import {
@@ -87,6 +88,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 
 import { stubLog } from '../../_base/log/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 
 function workspaceCatalogStub(): IWorkspaceService {
   const workspaces = new Map<string, Workspace>();
@@ -298,6 +300,7 @@ describe('workspace add-dir (handler chain)', () => {
         onDidSectionChange: () => ({ dispose: () => {} }),
       } as unknown as IConfigService),
       stubPair(IModelCatalog, { _serviceBrand: undefined } as unknown as IModelCatalog),
+      stubPair(IFlagService, stubFlag(() => false)),
       stubPair(ITelemetryService, noopTelemetryService),
       stubPair(IWorkspaceService, workspaceCatalogStub()),
       stubPair(ISessionIndex, {

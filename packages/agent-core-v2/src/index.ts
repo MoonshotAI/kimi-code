@@ -390,6 +390,7 @@ export * from '#/workspace/workspaceMcp/workspaceMcp';
 export * from '#/workspace/workspaceMcp/workspaceMcpService';
 export * from '#/session/subagent/subagent';
 export * from '#/session/subagent/subagentService';
+import '#/session/subagent/flag';
 export * from '#/session/subagent/subagentModelsValidation';
 import '#/session/subagent/subagentModelsValidationService';
 export * from '#/agent/tools/agent/subagent-task';

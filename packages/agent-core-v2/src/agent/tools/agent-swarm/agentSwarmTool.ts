@@ -8,13 +8,15 @@
  * Session-scoped coordinator so later `resume_agent_ids` calls relabel
  * resumed subagents like v1. When the caller has a model bound, the tool
  * resolves the explicit tool `model` choice up front via
- * `resolveSubagentBinding` (against `IConfigService`,
+ * `resolveSubagentBinding` (against `IConfigService`, `IFlagService`,
  * `ISessionAgentProfileCatalog`, and the caller's `IAgentProfileService`) and
  * threads it through the swarm tasks; otherwise binding is left to the
  * service, which keeps its own "no model bound" check and inherit-caller
  * fallback. The advertised `model` parameter lists the configured
- * `[secondary_model.models]` pool via `buildSubagentModelDescriptions` (the
- * parameter is not advertised at all under `[secondary_model].force`). Swarm mode is
+ * `[secondary_model.models]` pool via `buildSubagentModelDescriptions`; the
+ * pool is gated behind the `secondary-model` experiment, so while it is off
+ * (or under `[secondary_model].force`) the parameter is not advertised at
+ * all. Swarm mode is
  * entered through `IAgentSwarmService`; the caller's agent id comes from
  * `IAgentScopeContext`. Pure tool — owns no scoped state.
  *
@@ -33,6 +35,7 @@ import { Error2, ErrorCodes } from '#/errors';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -94,7 +97,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   readonly name = 'AgentSwarm' as const;
 
   get parameters(): Record<string, unknown> {
-    return exposesSubagentModelChoice(this.config)
+    return exposesSubagentModelChoice(this.config, this.flags)
       ? AGENT_SWARM_PARAMETERS
       : AGENT_SWARM_PARAMETERS_NO_MODEL;
   }
@@ -106,6 +109,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentSwarmService private readonly swarmMode: IAgentSwarmService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentProfileService private readonly profile: IAgentProfileService,
   ) {
@@ -115,6 +119,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   get description(): string {
     const modelLines = buildSubagentModelDescriptions(
       this.config,
+      this.flags,
       this.profile.data().modelAlias,
     );
     return modelLines === undefined
@@ -182,6 +187,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       if (own.modelAlias !== undefined) {
         const resolved = resolveSubagentBinding(
           this.config,
+          this.flags,
           { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
           args.model,
         );

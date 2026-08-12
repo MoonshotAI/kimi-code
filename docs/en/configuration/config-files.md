@@ -192,12 +192,14 @@ You can also switch models temporarily without touching the config file — by s
 
 ## `secondary_model`
 
-The secondary model is a second model configuration alongside the main model — typically a cheaper one, for features that do not need the main model's capability. Its consumer today is subagent spawning. Both engines read this section, but different keys from it:
+The secondary model is a second model configuration alongside the main model — typically a cheaper one, for features that do not need the main model's capability. Its consumer today is subagent spawning. Both engines read this section, but different keys from it, and both gate the feature behind the secondary-model experiment:
 
 - The default `agent-core-v2` engine (`kimi`, `kimi -p`, and `kimi web`) reads the [subagent model pool](#subagent-model-pool): `default_model` and the `[secondary_model.models]` table, and also honors a lone recipe `model` key as a fallback default.
-- The legacy `agent-core` engine, selected for `kimi` / `kimi -p` with `KIMI_CODE_LEGACY_FLAG=1`, reads the [recipe keys](#secondary-model-recipe) (`model`, `default_effort`, and the patch fields) behind the secondary-model experiment.
+- The legacy `agent-core` engine, selected for `kimi` / `kimi -p` with `KIMI_CODE_LEGACY_FLAG=1`, reads the [recipe keys](#secondary-model-recipe) (`model`, `default_effort`, and the patch fields).
 
 ### Subagent model pool
+
+This feature is experimental and disabled by default. Enable it with `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`, or the master `KIMI_CODE_EXPERIMENTAL_FLAG=1`. It takes effect in every launch mode, including the interactive TUI. While the experiment is off, the pool keys stay inert: subagents inherit the caller's model and session startup skips the pool validation.
 
 The pool is read by the `agent-core-v2` engine only; the legacy `agent-core` engine selected with `KIMI_CODE_LEGACY_FLAG=1` ignores `default_model` and `[secondary_model.models]`, and resolves subagent models through the [recipe keys](#secondary-model-recipe) instead.
 

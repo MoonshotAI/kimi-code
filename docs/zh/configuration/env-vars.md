@@ -155,7 +155,7 @@ kimi
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检——不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
 
-`KIMI_CODE_IDENTITY_*` 和 `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` 这三个变量由默认的 `agent-core-v2` 引擎读取。设置 `KIMI_CODE_LEGACY_FLAG=1` 后，旧版 `kimi` / `kimi -p` 路径会忽略它们。反过来，`KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL`、`KIMI_SECONDARY_MODEL` 和 `KIMI_SECONDARY_EFFORT` 仅由旧版引擎读取，默认引擎会忽略它们。
+`KIMI_CODE_IDENTITY_*` 和 `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` 这三个变量由默认的 `agent-core-v2` 引擎读取。设置 `KIMI_CODE_LEGACY_FLAG=1` 后，旧版 `kimi` / `kimi -p` 路径会忽略它们。反过来，`KIMI_SECONDARY_MODEL` 和 `KIMI_SECONDARY_EFFORT` 仅由旧版引擎读取，默认引擎会忽略它们；`KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` 则由两个引擎共同读取（它同时门控 v2 的[子 Agent 模型池](./config-files.md#子-agent-模型池)和旧版的[次主力模型配方](./config-files.md#次主力模型配方)）。
 
 ## 诊断日志
 

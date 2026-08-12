@@ -11,6 +11,7 @@ import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import { IFlagService } from '#/app/flag/flag';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -51,6 +52,7 @@ import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceT
 import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
 import { stubLog } from '../../_base/log/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
 import { WorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycleService';
@@ -328,6 +330,7 @@ describe('WorkspaceLifecycleService', () => {
       stubPair(ISessionIndexMirror, sessionIndexMirrorStub()),
       stubPair(IConfigService, { get: () => undefined } as unknown as IConfigService),
       stubPair(IModelCatalog, { _serviceBrand: undefined } as unknown as IModelCatalog),
+      stubPair(IFlagService, stubFlag(() => false)),
       stubPair(IAppendLogStore, {
         _serviceBrand: undefined,
         append: () => {},

@@ -18,6 +18,7 @@ import { ILogService } from '#/_base/log/log';
 import type { Hooks } from '#/hooks';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -42,6 +43,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidation';
+import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
@@ -82,6 +84,7 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes } from '#/errors';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 import { stubLog } from '../../_base/log/stubs';
 
 function bootstrapStub(): IBootstrapService {
@@ -445,6 +448,10 @@ function modelCatalogStub(knownIds: readonly string[] = []): IModelCatalog {
   } as unknown as IModelCatalog;
 }
 
+function secondaryModelFlagStub(enabled: boolean): IFlagService {
+  return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
+}
+
 function agentLifecycleCapturingPlanSpy(opts: { mainPreexists?: boolean } = {}): {
   lifecycle: IAgentLifecycleService;
   enter: ReturnType<typeof vi.fn>;
@@ -617,6 +624,7 @@ describe('SessionLifecycleService', () => {
       stubPair(IWorkspaceMcpService, workspaceMcpServiceStub()),
       stubPair(IConfigService, configStub()),
       stubPair(IModelCatalog, modelCatalogStub()),
+      stubPair(IFlagService, secondaryModelFlagStub(false)),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
       stubPair(ISessionSubagentModelsValidationService, {
         _serviceBrand: undefined,
@@ -691,6 +699,7 @@ describe('SessionLifecycleService', () => {
         configStub({ secondaryModel: { models: { 'provider/fast': 'fast and cheap' } } }),
       ),
       stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+      stubPair(IFlagService, secondaryModelFlagStub(true)),
     ]);
 
     await expect(svc.create({ sessionId: 's-broken', workDir: '/tmp/proj' })).rejects.toMatchObject(
@@ -714,6 +723,7 @@ describe('SessionLifecycleService', () => {
         }),
       ),
       stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+      stubPair(IFlagService, secondaryModelFlagStub(true)),
     ]);
 
     const h = await svc.create({ sessionId: 's-pool', workDir: '/tmp/proj' });
@@ -724,6 +734,7 @@ describe('SessionLifecycleService', () => {
     const svc = await build([
       stubPair(IConfigService, configStub({ secondaryModel: { force: true } })),
       stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+      stubPair(IFlagService, secondaryModelFlagStub(true)),
     ]);
 
     await expect(svc.create({ sessionId: 's-force', workDir: '/tmp/proj' })).rejects.toMatchObject(
@@ -733,6 +744,19 @@ describe('SessionLifecycleService', () => {
       },
     );
     expect(svc.get('s-force')).toBeUndefined();
+  });
+
+  it('creates a session with a broken pool while the secondary-model experiment is off', async () => {
+    const svc = await build([
+      stubPair(
+        IConfigService,
+        configStub({ secondaryModel: { models: { 'provider/fast': 'fast and cheap' } } }),
+      ),
+      stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+    ]);
+
+    const h = await svc.create({ sessionId: 's-inert', workDir: '/tmp/proj' });
+    expect(svc.get('s-inert')).toBe(h);
   });
 
   it('rejects fork with CONFIG_INVALID for a broken pool before copying any files', async () => {
@@ -752,6 +776,7 @@ describe('SessionLifecycleService', () => {
         onDidSectionChange: () => ({ dispose: () => {} }),
       } as unknown as IConfigService),
       stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+      stubPair(IFlagService, secondaryModelFlagStub(true)),
     ]);
     await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
     const srcDir = join(root, 'sessions', 'wd_stub', 'src');

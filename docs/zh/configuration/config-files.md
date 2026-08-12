@@ -192,12 +192,14 @@ display_name = "Kimi for Coding (custom)"
 
 ## `secondary_model`
 
-次主力模型是主模型之外的第二个模型配置——通常是一个更便宜的模型，供不需要主模型能力的功能绑定使用。它目前的消费者是子 Agent 派生。两个引擎都会读取本节，但各取不同的键：
+次主力模型是主模型之外的第二个模型配置——通常是一个更便宜的模型，供不需要主模型能力的功能绑定使用。它目前的消费者是子 Agent 派生。两个引擎都会读取本节，但各取不同的键，且都以次主力模型实验功能为开关：
 
 - 默认的 `agent-core-v2` 引擎（`kimi`、`kimi -p` 和 `kimi web`）读取[子 Agent 模型池](#子-agent-模型池)：`default_model` 与 `[secondary_model.models]` 表，并兼容读取单独的配方键 `model` 作为兜底。
-- 使用 `KIMI_CODE_LEGACY_FLAG=1` 为 `kimi` / `kimi -p` 选择旧版 `agent-core` 引擎后，该引擎在次主力模型实验功能启用时读取[配方键](#次主力模型配方)（`model`、`default_effort` 及补丁字段）。
+- 使用 `KIMI_CODE_LEGACY_FLAG=1` 为 `kimi` / `kimi -p` 选择旧版 `agent-core` 引擎后，该引擎读取[配方键](#次主力模型配方)（`model`、`default_effort` 及补丁字段）。
 
 ### 子 Agent 模型池
+
+该功能目前是实验功能，默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用，或使用 master `KIMI_CODE_EXPERIMENTAL_FLAG=1`。它在包括交互式 TUI 在内的所有启动方式下生效。实验功能关闭时，模型池配置不生效：子 Agent 继承调用方模型，会话启动也会跳过池校验。
 
 模型池仅由 `agent-core-v2` 引擎读取；使用 `KIMI_CODE_LEGACY_FLAG=1` 选择的旧版 `agent-core` 引擎会忽略 `default_model` 和 `[secondary_model.models]`，子 Agent 模型按[配方键](#次主力模型配方)解析。
 

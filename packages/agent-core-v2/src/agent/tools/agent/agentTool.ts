@@ -14,6 +14,9 @@
  * `resolveSubagentBinding` falls back to the configured `[secondary_model.models]`
  * pool default or the caller's model; with `[secondary_model].force` set the
  * `model` parameter is not advertised and every spawn binds `default_model`.
+ * The pool is gated behind the `secondary-model` experiment (via
+ * `IFlagService`): while it is off the `model` parameter is stripped and
+ * every spawn inherits the caller's model.
  * The selected alias is
  * resolved through the model catalog before lifecycle allocation. A resumed
  * agent keeps the model recorded in its own wire journal — with per-subagent
@@ -77,6 +80,7 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
@@ -120,7 +124,7 @@ export class SubagentTool implements ISubagentTool {
   readonly name: string = 'Agent';
 
   get parameters(): Record<string, unknown> {
-    return exposesSubagentModelChoice(this.config)
+    return exposesSubagentModelChoice(this.config, this.flags)
       ? SUBAGENT_TOOL_PARAMETERS
       : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
   }
@@ -145,6 +149,7 @@ export class SubagentTool implements ISubagentTool {
     @ILogService private readonly log: ILogService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
     this.callerAgentId = scopeContext.agentId;
@@ -179,6 +184,7 @@ export class SubagentTool implements ISubagentTool {
     }
     const modelLines = buildSubagentModelDescriptions(
       this.config,
+      this.flags,
       this.profile.data().modelAlias,
     );
     if (modelLines !== undefined) {
@@ -308,6 +314,7 @@ export class SubagentTool implements ISubagentTool {
       }
       const binding = resolveSubagentBinding(
         this.config,
+        this.flags,
         { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
         args.model,
       );

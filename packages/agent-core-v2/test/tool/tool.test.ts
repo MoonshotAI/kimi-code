@@ -34,6 +34,7 @@ import {
   type SubagentToolInput,
 } from '#/agent/tools/agent/agent';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS, SECONDARY_MODEL_SECTION, SUBAGENT_SECTION } from '#/session/subagent/configSection';
+import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import { Error2, ErrorCodes } from '#/errors';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
@@ -47,6 +48,7 @@ import {
 } from '#/session/subagent/subagent';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -61,7 +63,9 @@ import type { IProcess, ISessionProcessRunner } from '#/session/process/processR
 import { IWireService } from '#/wire/wire';
 import { createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import { StubConfigService } from '../kosong/stubs';
+import { stubFlag } from '../app/flag/stubs';
 import {
+  appService,
   configServices,
   createCommandRunner,
   createTestAgent,
@@ -78,6 +82,13 @@ import {
 import { executeTool } from '../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
+
+function secondaryModelFlags(enabled = true): TestAgentServiceOverride {
+  return appService(
+    IFlagService,
+    stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID),
+  );
+}
 
 function agentSchemaProperties<T = unknown>(): Record<string, T> {
   return (
@@ -770,7 +781,7 @@ describe('Agent tool description', () => {
   });
 
   it('renders the pool in config order with the default first and a generic primary line', () => {
-    ctx = createTestAgent({
+    ctx = createTestAgent(secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'provider/fast',
@@ -798,7 +809,7 @@ describe('Agent tool description', () => {
   });
 
   it('lists the caller-in-pool alias with a [main model] marker and renders empty descriptions bare', () => {
-    ctx = createTestAgent({
+    ctx = createTestAgent(secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'provider/fast',
@@ -827,7 +838,7 @@ describe('Agent tool description', () => {
   });
 
   it('marks the caller-as-default alias with both [default] and [main model]', () => {
-    ctx = createTestAgent({
+    ctx = createTestAgent(secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'mock-model',
@@ -871,7 +882,7 @@ describe('Agent tool description', () => {
   });
 
   it('advertises the model parameter when a pool is configured', () => {
-    ctx = createTestAgent({
+    ctx = createTestAgent(secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'provider/fast',
@@ -890,8 +901,24 @@ describe('Agent tool description', () => {
     expect(properties['model']?.enum).toBeUndefined();
   });
 
+  it('strips the model parameter and pool description while the experiment is off', () => {
+    ctx = createTestAgent(secondaryModelFlags(false), {
+      initialConfig: {
+        secondaryModel: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap' },
+        },
+        models: POOL_MODEL_ENTRIES,
+      },
+    });
+
+    const properties = agentParameters()['properties'] as Record<string, unknown>;
+    expect(properties).not.toHaveProperty('model');
+    expect(agentDescription()).not.toContain('Available models');
+  });
+
   it('treats a pool-less default_model as an implicit single-entry pool', () => {
-    ctx = createTestAgent({
+    ctx = createTestAgent(secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: { defaultModel: 'provider/fast' },
         models: POOL_MODEL_ENTRIES,
@@ -909,7 +936,7 @@ describe('Agent tool description', () => {
   });
 
   it('hides the model parameter and the pool description when force is set', () => {
-    ctx = createTestAgent({
+    ctx = createTestAgent(secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: { defaultModel: 'provider/fast', force: true },
         models: POOL_MODEL_ENTRIES,
@@ -1126,7 +1153,7 @@ describe('Agent tool execution contract', () => {
 
   it('spawns the subagent on the pool default model when the tool call omits model', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, {
+    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'provider/fast',
@@ -1161,7 +1188,7 @@ describe('Agent tool execution contract', () => {
 
   it('spawns on the caller model when the tool call opts into "primary"', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, {
+    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'provider/fast',
@@ -1190,7 +1217,7 @@ describe('Agent tool execution contract', () => {
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-child', 'agent-child-2'],
     });
-    const context = createAgentToolContext(lifecycle, {
+    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'provider/fast',
@@ -1228,7 +1255,7 @@ describe('Agent tool execution contract', () => {
 
   it('spawns on the pool alias chosen via the model parameter', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, {
+    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'provider/fast',
@@ -1255,7 +1282,7 @@ describe('Agent tool execution contract', () => {
 
   it('rejects a model choice outside the pool, listing the available models', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, {
+    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'provider/fast',
@@ -1298,7 +1325,7 @@ describe('Agent tool execution contract', () => {
 
   it('binds the forced default_model and rejects any explicit choice, "primary" included', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, {
+    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: { defaultModel: 'provider/fast', force: true },
       },
@@ -1328,7 +1355,7 @@ describe('Agent tool execution contract', () => {
 
   it('rejects a pool that gained the reserved "primary" key through a runtime config edit', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
-    const context = createAgentToolContext(lifecycle, {
+    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'provider/fast',
@@ -1365,6 +1392,7 @@ describe('Agent tool execution contract', () => {
     const context = createAgentToolContext(
       lifecycle,
       modelProviderServices(modelCatalogResolving('mock-model', 'provider/bad')),
+      secondaryModelFlags(),
       {
         initialConfig: {
           secondaryModel: { defaultModel: 'provider/bad', models: { 'provider/bad': 'broken' } },
@@ -1386,7 +1414,7 @@ describe('Agent tool execution contract', () => {
     const lifecycle = createAgentLifecycleStub({
       createError: new Error('MCP server failed to start'),
     });
-    const context = createAgentToolContext(lifecycle, {
+    const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: { defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap' } },
       },
@@ -2294,7 +2322,7 @@ describe('AgentSwarm tool description', () => {
   });
 
   it('renders the configured pool with the default marker and a generic primary line', () => {
-    ctx = createTestAgent({
+    ctx = createTestAgent(secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'provider/fast',
@@ -2330,7 +2358,7 @@ describe('AgentSwarm tool description', () => {
   });
 
   it('advertises the model parameter when a pool is configured', () => {
-    ctx = createTestAgent({
+    ctx = createTestAgent(secondaryModelFlags(), {
       initialConfig: {
         secondaryModel: {
           defaultModel: 'provider/fast',
@@ -2454,6 +2482,7 @@ describe('AgentSwarm tool execution contract', () => {
     };
     ctx = createTestAgent(
       swarmServices(swarmService),
+      secondaryModelFlags(),
       {
         initialConfig: {
           secondaryModel: {
@@ -2514,6 +2543,7 @@ describe('AgentSwarm tool execution contract', () => {
     };
     ctx = createTestAgent(
       swarmServices(swarmService),
+      secondaryModelFlags(),
       {
         initialConfig: {
           secondaryModel: {
