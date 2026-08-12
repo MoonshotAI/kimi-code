@@ -296,9 +296,11 @@ const KNOWN_DIFFS = {
   // diverges after a detach by design (v1 keeps the foreground deadline in
   // the reported info; v2 rewrites it to the detach deadline — pinned in the
   // migration tracker), so it is deleted too; the pre-detach equality is
-  // asserted explicitly at the call site. Everything else (kind, command,
-  // description, status, detached, exitCode, stopReason, flags) compares in
-  // full.
+  // asserted explicitly at the call site. `exitCode` is deleted only for
+  // `killed` tasks, where the value is an OS race rather than an engine
+  // difference (see projectBackgroundTask). Everything else (kind, command,
+  // description, status, detached, exitCode on non-killed tasks, stopReason,
+  // flags) compares in full.
   listBackgroundTasks: (tasks: readonly BackgroundTaskInfo[]): unknown =>
     tasks.map((task) => projectBackgroundTask(task)),
   detachBackgroundTask: (info: BackgroundTaskInfo | undefined): unknown =>
@@ -354,6 +356,14 @@ function projectBackgroundTask(info: BackgroundTaskInfo): unknown {
   delete projected['startedAt'];
   delete projected['endedAt'];
   delete projected['timeoutMs'];
+  // Killing a background task signals the whole process group, and the shell
+  // settles two ways depending on which member the signal is observed on
+  // first: reaped by SIGTERM itself (`code=null`, mapped to -1) or outliving
+  // its child and exiting 128+SIGTERM (143). Both engines map the raw `exit`
+  // payload with the same `code ?? -1`, so each lands on its own side of that
+  // OS race and the two disagree at random. Status and stopReason still
+  // compare, and non-killed tasks keep their deterministic exit codes.
+  if (projected['status'] === 'killed') delete projected['exitCode'];
   return projected;
 }
 
@@ -3167,6 +3177,11 @@ describe('v1↔v2 background task parity', () => {
       ]);
       expect(projectList([v2Killed])).toEqual(projectList([v1Killed]));
       expect(v1Killed).toMatchObject({ status: 'killed', stopReason: 'parity stop' });
+      // The projection drops `exitCode` for killed tasks because the value is
+      // an OS race, not an engine difference. Both engines must still settle
+      // on a concrete code rather than leaving the field unset.
+      expect(typeof (v1Killed as { readonly exitCode?: unknown }).exitCode).toBe('number');
+      expect(typeof (v2Killed as { readonly exitCode?: unknown }).exitCode).toBe('number');
       // Active-only filtering drops the terminal task on both engines.
       const [v1Active, v2Active] = await Promise.all([
         pair.v1.listBackgroundTasks({ ...input, activeOnly: true }),
