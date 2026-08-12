@@ -57,6 +57,12 @@ export class AssistantMessageComponent implements Component {
     this.markRenderDirty();
   }
 
+  setTimestamp(timestamp?: number): void {
+    if (this.timestamp === timestamp) return;
+    this.timestamp = timestamp;
+    this.markRenderDirty();
+  }
+
   setEndedAt(endedAt?: number): void {
     if (this.endedAt === endedAt) return;
     this.endedAt = endedAt;

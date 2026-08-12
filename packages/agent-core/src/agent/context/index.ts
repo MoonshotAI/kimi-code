@@ -54,6 +54,7 @@ export class ContextMemory {
   private _tokenCount = 0;
   private tokenCountCoveredMessageCount = 0;
   private openSteps: Map<string, ContextMessage> = new Map();
+  private openStepStartedAt = new Map<string, number>();
   private pendingToolResultIds = new Set<string>();
   private deferredMessages: ContextMessage[] = [];
   private _lastAssistantAt: number | null = null;
@@ -175,6 +176,7 @@ export class ContextMemory {
     this._tokenCount = 0;
     this.tokenCountCoveredMessageCount = 0;
     this.openSteps.clear();
+    this.openStepStartedAt.clear();
     this.pendingToolResultIds.clear();
     this.deferredMessages = [];
     this._lastAssistantAt = null;
@@ -287,6 +289,7 @@ export class ContextMemory {
     this.agent.replayBuilder.removeLastMessages(removedMessages);
 
     this.openSteps.clear();
+    this.openStepStartedAt.clear();
     this.pendingToolResultIds.clear();
     this.deferredMessages = [];
     this.agent.microCompaction.reset(this._history.length);
@@ -416,6 +419,7 @@ export class ContextMemory {
       ? [summaryMessage, ...this._history.slice(input.compactedCount)]
       : [...keptMessages, summaryMessage];
     this.openSteps.clear();
+    this.openStepStartedAt.clear();
     this.pendingToolResultIds.clear();
     // Drop deferred messages (mostly injections/system reminders) instead of
     // flushing them: initial context is rebuilt every turn.
@@ -598,6 +602,7 @@ export class ContextMemory {
 
   finishResume(): void {
     this.openSteps.clear();
+    this.openStepStartedAt.clear();
     const closed = this.closePendingToolResults();
     if (closed.length > 0) {
       // Routine end-of-resume close of a genuinely interrupted trailing call
@@ -679,16 +684,36 @@ export class ContextMemory {
           content: [],
           toolCalls: [],
         };
-        this.agent.replayBuilder.setMessageTiming(message, { createdAt: eventTime });
         this.pushHistory(message);
         this.openSteps.set(event.uuid, message);
+        if (eventTime !== undefined) this.openStepStartedAt.set(event.uuid, eventTime);
         return eventTime;
       }
       case 'step.end': {
         const openStep = this.openSteps.get(event.uuid);
         this.openSteps.delete(event.uuid);
-        if (openStep !== undefined) {
-          this.agent.replayBuilder.setMessageTiming(openStep, { completedAt: eventTime });
+        const stepStartedAt = this.openStepStartedAt.get(event.uuid);
+        this.openStepStartedAt.delete(event.uuid);
+        const firstTokenLatencyMs = event.llmFirstTokenLatencyMs;
+        const estimatedStartedAt =
+          stepStartedAt !== undefined &&
+          firstTokenLatencyMs !== undefined &&
+          Number.isFinite(firstTokenLatencyMs) &&
+          firstTokenLatencyMs >= 0
+            ? stepStartedAt + firstTokenLatencyMs
+            : undefined;
+        const createdAt =
+          stepStartedAt === undefined
+            ? undefined
+            : estimatedStartedAt !== undefined &&
+                (eventTime === undefined || estimatedStartedAt <= eventTime)
+              ? estimatedStartedAt
+              : stepStartedAt;
+        if (openStep !== undefined && createdAt !== undefined) {
+          this.agent.replayBuilder.setMessageTiming(openStep, {
+            createdAt,
+            completedAt: eventTime,
+          });
         }
         if (event.usage !== undefined) {
           const openStepIndex = openStep === undefined ? -1 : this._history.indexOf(openStep);

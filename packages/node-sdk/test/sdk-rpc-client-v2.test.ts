@@ -529,7 +529,13 @@ describe('foldAgentWireReplay', () => {
       },
       {
         type: 'context.append_loop_event',
-        event: { type: 'step.end', uuid: 'step-1', turnId: '0', step: 1 },
+        event: {
+          type: 'step.end',
+          uuid: 'step-1',
+          turnId: '0',
+          step: 1,
+          llmFirstTokenLatencyMs: 500,
+        },
         time: 5000,
       },
     ];
@@ -539,7 +545,7 @@ describe('foldAgentWireReplay', () => {
 
     expect(folded.replay[0]).toMatchObject({
       type: 'message',
-      createdAt: 2000,
+      createdAt: 2500,
       completedAt: 5000,
       message: { role: 'assistant' },
     });

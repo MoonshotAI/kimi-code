@@ -104,10 +104,27 @@ export class StreamingUIController {
     this._currentStepStartedAt = startedAt;
   }
 
-  completeStep(turnId: string, step: number, completedAt: number): void {
+  completeStep(
+    turnId: string,
+    step: number,
+    completedAt: number,
+    firstTokenLatencyMs?: number,
+  ): void {
     const key = assistantStepKey(turnId, step);
     const block = this._assistantBlocksByStep.get(key);
     if (block === undefined) return;
+    if (
+      this._currentStepStartedAt !== undefined &&
+      firstTokenLatencyMs !== undefined &&
+      Number.isFinite(firstTokenLatencyMs) &&
+      firstTokenLatencyMs >= 0
+    ) {
+      const estimatedStartedAt = this._currentStepStartedAt + firstTokenLatencyMs;
+      if (estimatedStartedAt <= completedAt) {
+        block.entry.createdAt = estimatedStartedAt;
+        block.component.setTimestamp(estimatedStartedAt);
+      }
+    }
     block.entry.endedAt = completedAt;
     block.component.setEndedAt(completedAt);
     this._assistantBlocksByStep.delete(key);
@@ -133,7 +150,7 @@ export class StreamingUIController {
 
   appendAssistantDelta(delta: string): void {
     if (this._streamingBlock === null) {
-      this.onStreamingTextStart(this._currentStepStartedAt);
+      this.onStreamingTextStart();
     }
     this._assistantDraft += delta;
     this.pendingAssistantFlush = true;

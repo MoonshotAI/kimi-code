@@ -417,6 +417,7 @@ describe('KimiTUI resume message replay', () => {
           sessionId: 'ses-live',
           turnId: 1,
           step: 1,
+          llmFirstTokenLatencyMs: 1_000,
         } as Event,
         vi.fn(),
       );
@@ -424,7 +425,7 @@ describe('KimiTUI resume message replay', () => {
       const live = driver.state.transcriptEntries.find(
         (entry) => entry.content === 'checking the workspace',
       );
-      expect(live).toMatchObject({ createdAt: 1_000, endedAt: 5_000 });
+      expect(live).toMatchObject({ createdAt: 2_000, endedAt: 5_000 });
 
       await driver.switchToSession(
         makeSession([
@@ -433,7 +434,7 @@ describe('KimiTUI resume message replay', () => {
             [{ type: 'text', text: 'checking the workspace' }],
             {
               toolCalls: [toolCall('call-1', 'Bash', { command: 'echo ok' })],
-              createdAt: 1_000,
+              createdAt: 2_000,
               completedAt: 5_000,
             },
           ),
@@ -447,7 +448,7 @@ describe('KimiTUI resume message replay', () => {
       );
       expect(replayed).toMatchObject({ createdAt: live?.createdAt, endedAt: live?.endedAt });
       expect(stripAnsi(driver.state.transcriptContainer.render(140).join('\n'))).toContain(
-        '(took 4s)',
+        '(took 3s)',
       );
     } finally {
       now.mockRestore();

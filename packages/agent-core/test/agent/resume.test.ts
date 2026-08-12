@@ -61,7 +61,13 @@ describe('Agent resume', () => {
       },
       {
         type: 'context.append_loop_event',
-        event: { type: 'step.end', uuid: 'timed-step', turnId: '0', step: 1 },
+        event: {
+          type: 'step.end',
+          uuid: 'timed-step',
+          turnId: '0',
+          step: 1,
+          llmFirstTokenLatencyMs: 500,
+        },
         time: 5_000,
       },
     ]);
@@ -77,7 +83,7 @@ describe('Agent resume', () => {
       }),
       expect.objectContaining({
         type: 'message',
-        createdAt: 2_000,
+        createdAt: 2_500,
         completedAt: 5_000,
         message: expect.objectContaining({ role: 'assistant' }),
       }),
@@ -126,6 +132,74 @@ describe('Agent resume', () => {
     expect(messages[0]?.createdAt).toBeUndefined();
     expect(messages[1]?.createdAt).toBeUndefined();
     expect(messages[1]?.completedAt).toBeUndefined();
+  });
+
+  it('falls back to the persisted step boundary when an older journal has no TTFT', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'legacy-timed-step', turnId: '0', step: 1 },
+        time: 2_000,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'legacy-timed-part',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'legacy-timed-step',
+          part: { type: 'text', text: 'legacy timed response' },
+        },
+        time: 2_500,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: 'legacy-timed-step', turnId: '0', step: 1 },
+        time: 5_000,
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.replayBuilder.buildResult()[0]).toMatchObject({
+      type: 'message',
+      createdAt: 2_000,
+      completedAt: 5_000,
+      message: { role: 'assistant' },
+    });
+  });
+
+  it('falls back to the persisted step boundary when TTFT exceeds the step duration', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'invalid-ttft-step', turnId: '0', step: 1 },
+        time: 2_000,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.end',
+          uuid: 'invalid-ttft-step',
+          turnId: '0',
+          step: 1,
+          llmFirstTokenLatencyMs: 10_000,
+        },
+        time: 5_000,
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.replayBuilder.buildResult()[0]).toMatchObject({
+      type: 'message',
+      createdAt: 2_000,
+      completedAt: 5_000,
+      message: { role: 'assistant' },
+    });
   });
 
   it('does not append metadata when resuming records that include legacy app version', async () => {

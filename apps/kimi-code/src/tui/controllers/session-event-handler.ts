@@ -420,7 +420,12 @@ export class SessionEventHandler {
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
     const completedAt = event.completedAt ?? Date.now();
     this.host.streamingUI.flushNow();
-    this.host.streamingUI.completeStep(String(event.turnId), event.step, completedAt);
+    this.host.streamingUI.completeStep(
+      String(event.turnId),
+      event.step,
+      completedAt,
+      event.llmFirstTokenLatencyMs,
+    );
     this.clearStepRetry();
     this.host.noteStepUsage(event.usage);
     this.maybeShowDebugTiming(event);
