@@ -22,6 +22,9 @@
  *    tool-result `extract_text` fallback and tool-declaration-only skip are
  *    handed over to the trait wholesale: every history message is
  *    base-converted, post-processed by the hook, and dropped on `null`.
+ *  - A reasoning-only assistant is projected with explicit empty `content`.
+ *    The reasoning field remains intact while strict Chat Completions
+ *    gateways still see the required `content` or `tool_calls` shape.
  *
  * The SDK client is built with `maxRetries: 0`: the SDK's internal backoff
  * sleep never observes the turn's AbortSignal, so rate-limit / server /
@@ -271,6 +274,15 @@ function convertMessage(
 
   if (message.toolCallId !== undefined) {
     result.tool_call_id = message.toolCallId;
+  }
+
+  if (
+    message.role === 'assistant' &&
+    hasReasoningPart &&
+    result.content === undefined &&
+    result.tool_calls === undefined
+  ) {
+    result.content = '';
   }
 
   if (hasReasoningPart || (preserveThinking && message.role === 'assistant')) {
