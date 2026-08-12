@@ -5,10 +5,12 @@
  * active slot and FIFO, converts selected pending prompts into active-turn
  * steers, settles lifecycle handles, and keeps system input outside the prompt
  * resource model. `submit` / `submitSteer` are the wire-facing user entry
- * points: they gate on `toolPolicy` session disabled tools, track `input_steer`
- * through `telemetry`, persist the derived title/lastPrompt through
- * `sessionMetadata` for the main agent only (publishing the live update
- * through `event`), enqueue, and settle `{turn_id}` from the launch handle.
+ * points: they track `input_steer` through `telemetry`, persist the derived
+ * title/lastPrompt through `sessionMetadata` for the main agent only
+ * (publishing the live update through `event`), enqueue, and settle
+ * `{turn_id}` from the launch handle. Session tool gating is an edge
+ * concern: callers apply `IAgentToolPolicyService.setSessionDisabledTools`
+ * before submitting, the way kap-server's prompt route composes it.
  * The pure-data `launching` flag is registered into
  * `agentState` (`IAgentStateService`) and read/written through it; the
  * `active` / `pending` / `steered` records stay plain fields because their
@@ -40,9 +42,7 @@ import { IEventService } from '#/app/event/event';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 import { IWireService } from '#/wire/wire';
-import { ProfileError } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -101,7 +101,6 @@ export class AgentPromptService implements IAgentPromptService {
     @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,
@@ -154,16 +153,6 @@ export class AgentPromptService implements IAgentPromptService {
   }
 
   async submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
-    if (payload.disabledTools !== undefined) {
-      try {
-        await this.toolPolicy.setSessionDisabledTools(payload.disabledTools);
-      } catch (error) {
-        if (error instanceof ProfileError) {
-          throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
-        }
-        throw error;
-      }
-    }
     await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
     const handle = await this.enqueue({ message: {
       role: 'user',

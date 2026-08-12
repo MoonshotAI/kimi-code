@@ -1,7 +1,6 @@
 /**
  * Scenario: `IAgentPromptService.submit` is the wire-facing prompt entry —
- * disabledTools gating, prompt-metadata persistence, and `{turn_id}`
- * settlement.
+ * prompt-metadata persistence and `{turn_id}` settlement.
  *
  * Migrated from the kap-server debug-RPC suite (`test/rpc.test.ts`) when the
  * RPC aggregation layer was removed: the composition now lives in the prompt
@@ -12,7 +11,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { IEventService } from '#/app/event/event';
-import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
@@ -36,23 +34,6 @@ describe('prompt submit', () => {
     // Turn ids are 0-based; the point is the launch result came back at all.
     expect(launched?.turn_id).toBe(0);
     await ctx.untilTurnEnd();
-  });
-
-  it('rejects disabledTools before bind without mutating prompt metadata', async () => {
-    ctx = createTestAgent();
-
-    // The default test agent has no profile bound, so the session denylist is
-    // rejected as a profile error, mapped to `request.invalid`.
-    await expect(
-      ctx.rpc.prompt({
-        input: [{ type: 'text', text: 'must not become metadata' }],
-        disabledTools: ['Bash'],
-      }),
-    ).rejects.toMatchObject({ code: ErrorCodes.REQUEST_INVALID });
-
-    const metadata = await ctx.get(ISessionMetadata).read();
-    expect(metadata.title).toBeUndefined();
-    expect(metadata.lastPrompt).toBeUndefined();
   });
 
   it('derives the session title and lastPrompt from the first prompt', async () => {

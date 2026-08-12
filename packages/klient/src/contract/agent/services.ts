@@ -48,6 +48,11 @@ export const agentPermissionModeContract = {
   setModeAndBroadcast: { input: z.tuple([permissionModeSchema]), output: noResult },
 } satisfies ServiceContract;
 
+/** `IAgentToolPolicyService.setSessionDisabledTools` — the client-managed session tool denylist (full-replace). */
+export const agentToolPolicyContract = {
+  setSessionDisabledTools: { input: z.tuple([z.array(z.string())]), output: noResult },
+} satisfies ServiceContract;
+
 export const agentCommandContract = {
   list: { input: z.tuple([]), output: z.array(agentCommandInfoSchema) },
   run: { input: z.tuple([z.string(), z.string().optional()]), output: noResult },

@@ -88,8 +88,19 @@ export interface AgentFacade {
 
 export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFacade {
   return {
-    prompt: (input) =>
-      call(scope, 'agentPromptService', 'submit', [input]) as Promise<PromptLaunchResult>,
+    prompt: async (input) => {
+      // Session tool gating is an edge concern, not the prompt domain's:
+      // apply the client-managed denylist before submitting (full-replace
+      // semantics), the way kap-server's prompt route composes it.
+      if (input.disabledTools !== undefined) {
+        await call(scope, 'agentToolPolicyService', 'setSessionDisabledTools', [
+          [...input.disabledTools],
+        ]);
+      }
+      return call(scope, 'agentPromptService', 'submit', [
+        { input: input.input },
+      ]) as Promise<PromptLaunchResult>;
+    },
     steer: (input) =>
       call(scope, 'agentPromptService', 'submitSteer', [input]) as Promise<PromptLaunchResult>,
     activateSkill: (input) =>

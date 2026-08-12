@@ -22,6 +22,7 @@ import {
   agentSkillContract,
   agentTaskContract,
   agentTokenCountingContract,
+  agentToolPolicyContract,
   agentUsageContract,
 } from './agent/services.js';
 import { authContract, authSummaryContract } from './global/auth.js';
@@ -77,6 +78,7 @@ export const globalContract: KlientContract = {
   agentSkillService: agentSkillContract,
   agentLoopService: agentLoopContract,
   agentPermissionModeService: agentPermissionModeContract,
+  agentToolPolicyService: agentToolPolicyContract,
   agentCommandService: agentCommandContract,
   agentContextMemoryService: agentContextMemoryContract,
   agentTokenCountingService: agentTokenCountingContract,

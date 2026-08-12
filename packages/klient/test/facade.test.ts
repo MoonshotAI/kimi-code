@@ -260,9 +260,15 @@ describe('session skills routing', () => {
     expect(channel.calls).toEqual([
       {
         scope,
+        service: 'agentToolPolicyService',
+        method: 'setSessionDisabledTools',
+        args: [['Bash']],
+      },
+      {
+        scope,
         service: 'agentPromptService',
         method: 'submit',
-        args: [{ input: [{ type: 'text', text: 'hi' }], disabledTools: ['Bash'] }],
+        args: [{ input: [{ type: 'text', text: 'hi' }] }],
       },
       {
         scope,
