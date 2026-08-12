@@ -204,7 +204,7 @@ describe('ExternalHooksRunnerService', () => {
   });
 
   it('does not dedupe hooks that share a command but have different cwd', async () => {
-    const command = nodeCommand('process.stdout.write(process.cwd() + "\\n");');
+    const command = nodeCommand('process.stdout.write(process.cwd());');
     const runner = makeHookRunner([
       { event: 'Stop', command, timeout: 5, cwd: process.cwd() },
       { event: 'Stop', command, timeout: 5, cwd: tmpdir() },
