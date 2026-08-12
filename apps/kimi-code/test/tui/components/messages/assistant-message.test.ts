@@ -112,6 +112,52 @@ describe('AssistantMessageComponent', () => {
     expect(finalized).not.toBe(streaming);
   });
 
+  it('preserves incomplete math source while assistant content is streaming', () => {
+    const component = new AssistantMessageComponent();
+    const source = String.raw`[lead $\text{a](b)} tail`;
+
+    component.updateContent(source, { transient: true });
+
+    expect(strip(component.render(120).join('\n'))).toContain(source);
+  });
+
+  it('preserves incomplete math source after a streaming render is invalidated', () => {
+    const component = new AssistantMessageComponent();
+    const source = String.raw`[lead $\text{a](b)} tail`;
+    component.updateContent(source, { transient: true });
+
+    component.invalidate();
+
+    expect(strip(component.render(120).join('\n'))).toContain(source);
+  });
+
+  it('preserves math-like incomplete source when assistant content is finalized', () => {
+    const component = new AssistantMessageComponent();
+    const source = String.raw`$5 \theta^*_A + \phi^*_B`;
+    component.updateContent(source, { transient: true });
+
+    component.updateContent(source, { transient: false });
+
+    expect(strip(component.render(120).join('\n'))).toContain(source);
+  });
+
+  it('reparses an unmatched dollar as ordinary table text when streaming finishes', () => {
+    const component = new AssistantMessageComponent();
+    const source = `| Price | Meaning |
+| --- | --- |
+| $5 | cheap |`;
+
+    component.updateContent(source, { transient: true });
+    expect(strip(component.render(120).join('\n'))).toContain('| --- | --- |');
+
+    component.updateContent(source, { transient: false });
+    const finalized = strip(component.render(120).join('\n'));
+
+    expect(finalized).toContain('┌───────┬─────────┐');
+    expect(finalized).toContain('│ $5    │ cheap   │');
+    expect(finalized).not.toContain('| --- | --- |');
+  });
+
   it('skips synchronous syntax highlighting in transient markdown themes', () => {
     const highlightSpy = vi.mocked(cliHighlight.highlight);
     highlightSpy.mockClear();
