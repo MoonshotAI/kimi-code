@@ -297,6 +297,73 @@ describe('McpConnectionManager', () => {
     }
   });
 
+  it('reconnectAndJoin joins an in-flight reconnect instead of starting a second one', async () => {
+    const cm = new McpConnectionManager();
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((entry) => {
+      seen.push({ name: entry.name, status: entry.status });
+    });
+
+    try {
+      await cm.connectAll({ slow: stdioConfig() });
+      seen.length = 0;
+
+      await Promise.all([cm.reconnectAndJoin('slow'), cm.reconnectAndJoin('slow')]);
+
+      expect(cm.get('slow')?.status).toBe('connected');
+      expect(seen.filter((event) => event.name === 'slow').map((event) => event.status)).toEqual([
+        'pending',
+        'connected',
+      ]);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20_000);
+
+  it('returns the public reconnect attempt when reconnectAndJoin overlaps it', async () => {
+    const cm = new McpConnectionManager();
+    const attempts: Promise<void>[] = [];
+    try {
+      await cm.connectAll({ slow: stdioConfig() });
+
+      const reconnect = cm.reconnect('slow');
+      const joined = cm.reconnectAndJoin('slow');
+      attempts.push(reconnect, joined);
+
+      expect(joined).toBe(reconnect);
+      await joined;
+    } finally {
+      await Promise.allSettled(attempts);
+      await cm.shutdown();
+    }
+  }, 20_000);
+
+  it('rejects reconnectAndJoin with mcp.startup_failed when reconnect cannot connect', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      await cm.connectAll({
+        broken: { transport: 'stdio', command: '/this/path/does/not/exist/anywhere' },
+      });
+
+      await expect(cm.reconnectAndJoin('broken')).rejects.toMatchObject({
+        code: 'mcp.startup_failed',
+      });
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20_000);
+
+  it('reconnectAndJoin rejects when the server name is unknown', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      const reconnect = cm.reconnectAndJoin('nope');
+      await expect(reconnect).rejects.toBeInstanceOf(KimiError);
+      await expect(reconnect).rejects.toMatchObject({ code: 'mcp.server_not_found' });
+    } finally {
+      await cm.shutdown();
+    }
+  });
+
   it('shutdown clears entries and is idempotent', async () => {
     const cm = new McpConnectionManager();
     await cm.connectAll({ alpha: stdioConfig() });

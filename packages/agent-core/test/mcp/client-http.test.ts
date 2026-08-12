@@ -1,9 +1,19 @@
+/**
+ * Scenario: Streamable HTTP MCP transport setup, requests, and failures.
+ *
+ * Exercises the real HTTP client against in-process MCP servers and classifies
+ * SDK transport errors directly. Run with `pnpm --filter
+ * @moonshot-ai/agent-core exec vitest run test/mcp/client-http.test.ts`.
+ */
+
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
+import { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -11,6 +21,7 @@ import { ErrorCodes, KimiError } from '../../src/errors';
 import {
   buildMcpHttpHeaders,
   HttpMcpClient,
+  isMcpSessionInvalidResponse,
   isTerminalTransportError,
 } from '../../src/mcp/client-http';
 
@@ -112,6 +123,75 @@ describe('buildMcpHttpHeaders', () => {
     expect(isTerminalTransportError(new Error('SSE stream disconnected: ECONNRESET'))).toBe(false);
     expect(isTerminalTransportError(new Error('fetch failed'))).toBe(false);
     expect(isTerminalTransportError(new Error('Connection closed'))).toBe(false);
+  });
+
+  it('recognizes HTTP 404 as the standard Streamable HTTP session-expiry signal', () => {
+    expect(
+      isMcpSessionInvalidResponse(
+        new StreamableHTTPError(404, 'Error POSTing to endpoint: session not found'),
+      ),
+    ).toBe(true);
+  });
+
+  it('recognizes an HTTP 400 JSON-RPC InvalidRequest response that requires reinitialization', () => {
+    const response = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      error: {
+        code: -32600,
+        message: "Unknown session id 'expired'; client should reinitialize",
+      },
+    });
+    expect(
+      isMcpSessionInvalidResponse(
+        new StreamableHTTPError(400, `Error POSTing to endpoint: ${response}`),
+      ),
+    ).toBe(true);
+  });
+
+  it.each(['Invalid session id; client should reinitialize', 'Expired session; reinitialize'])(
+    'recognizes the explicit HTTP 400 session rejection %j',
+    (message) => {
+      const response = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        error: { code: -32600, message },
+      });
+      expect(
+        isMcpSessionInvalidResponse(
+          new StreamableHTTPError(400, `Error POSTing to endpoint: ${response}`),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it('does not treat an SDK InvalidRequest as proof that an HTTP session was rejected', () => {
+    expect(
+      isMcpSessionInvalidResponse(
+        new McpError(
+          ErrorCode.InvalidRequest,
+          "Unknown session id 'expired'; client should reinitialize",
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not treat unrelated InvalidRequest responses as session expiry', () => {
+    const response = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      error: { code: -32600, message: 'Invalid tool arguments' },
+    });
+    expect(
+      isMcpSessionInvalidResponse(
+        new StreamableHTTPError(400, `Error POSTing to endpoint: ${response}`),
+      ),
+    ).toBe(false);
+    expect(
+      isMcpSessionInvalidResponse(
+        new McpError(ErrorCode.InvalidRequest, 'Invalid tool arguments'),
+      ),
+    ).toBe(false);
   });
 
   it('strips case-variant authorization headers before injecting the bearer', () => {

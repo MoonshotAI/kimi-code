@@ -1,12 +1,16 @@
 import type { McpServerHttpConfig } from '#/config/schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 import {
   buildRequestOptions,
   KIMI_MCP_CLIENT_NAME,
   KIMI_MCP_CLIENT_VERSION,
+  McpSessionInvalidError,
   toMcpToolDefinition,
   toMcpToolResult,
   type UnexpectedCloseListener,
@@ -141,8 +145,22 @@ export class HttpMcpClient implements MCPClient {
     signal?: AbortSignal,
   ): Promise<MCPToolResult> {
     const requestOptions = buildRequestOptions(this.toolCallTimeoutMs, signal);
-    const result = await this.client.callTool({ name, arguments: args }, undefined, requestOptions);
-    return toMcpToolResult(result);
+    try {
+      const result = await this.client.callTool(
+        { name, arguments: args },
+        undefined,
+        requestOptions,
+      );
+      return toMcpToolResult(result);
+    } catch (error) {
+      if (
+        this.transport.sessionId !== undefined &&
+        isMcpSessionInvalidResponse(error)
+      ) {
+        throw new McpSessionInvalidError(error);
+      }
+      throw error;
+    }
   }
 
   private async closeStartedClient(): Promise<void> {
@@ -214,6 +232,67 @@ export function isTerminalTransportError(error: Error): boolean {
   if (error.name === 'UnauthorizedError') return true;
   if (/Maximum reconnection attempts/i.test(error.message)) return true;
   return false;
+}
+
+/**
+ * Recognizes the two session-expiry signals used by Streamable HTTP servers:
+ *
+ * - HTTP 404, required by the MCP transport specification for a terminated
+ *   session.
+ * - A structured InvalidRequest response whose message explicitly says the
+ *   session id is invalid and the client must reinitialize. Some deployed
+ *   servers return this as HTTP 400 instead of the specification's 404.
+ *
+ * The caller additionally verifies that the transport actually owns a
+ * session id, so an unrelated endpoint-level 404 cannot trigger recovery.
+ */
+export function isMcpSessionInvalidResponse(error: unknown): error is Error {
+  if (error instanceof StreamableHTTPError) {
+    if (error.code === 404) return true;
+    if (error.code !== 400) return false;
+    const responseError = parseJsonRpcErrorFromHttpMessage(error.message);
+    return (
+      responseError?.code === -32600 &&
+      isExplicitSessionReinitializeMessage(responseError.message)
+    );
+  }
+  return false;
+}
+
+function parseJsonRpcErrorFromHttpMessage(
+  message: string,
+): { readonly code: number; readonly message: string } | undefined {
+  const marker = 'Error POSTing to endpoint:';
+  const markerIndex = message.indexOf(marker);
+  if (markerIndex === -1) return undefined;
+  const body = message.slice(markerIndex + marker.length).trim();
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed !== 'object' || parsed === null || !('error' in parsed)) {
+      return undefined;
+    }
+    const responseError = parsed.error;
+    if (
+      typeof responseError !== 'object' ||
+      responseError === null ||
+      !('code' in responseError) ||
+      !('message' in responseError) ||
+      typeof responseError.code !== 'number' ||
+      typeof responseError.message !== 'string'
+    ) {
+      return undefined;
+    }
+    return { code: responseError.code, message: responseError.message };
+  } catch {
+    return undefined;
+  }
+}
+
+function isExplicitSessionReinitializeMessage(message: string): boolean {
+  return (
+    /\b(?:unknown|invalid|expired)\s+session(?:\s+id)?\b/i.test(message) &&
+    /\breinitiali[sz]e\b/i.test(message)
+  );
 }
 
 export function buildMcpHttpHeaders(
