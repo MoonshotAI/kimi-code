@@ -172,6 +172,7 @@ describe('default agent profiles', () => {
         'Write',
         'Edit',
         'Bash',
+        'Agent',
         'Skill',
         'TaskList',
         'TaskOutput',

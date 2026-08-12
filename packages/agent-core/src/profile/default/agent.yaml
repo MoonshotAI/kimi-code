@@ -22,6 +22,8 @@ tools:
   - TodoList
   - Skill
   - WebSearch
+  - Agent
+  - AgentSwarm
   - FetchURL
   - AskUserQuestion
   - EnterPlanMode

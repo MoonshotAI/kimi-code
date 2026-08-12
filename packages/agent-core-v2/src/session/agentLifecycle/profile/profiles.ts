@@ -35,6 +35,8 @@ const AGENT_TOOLS = [
   'TodoList',
   'Skill',
   'WebSearch',
+  'Agent',
+  'AgentSwarm',
   'FetchURL',
   'AskUserQuestion',
   'EnterPlanMode',
