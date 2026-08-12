@@ -338,5 +338,29 @@ export function defineKlientConformance(
         await target.klient.session(created.id).close();
       }
     });
+
+    it('emits the current permission mode change', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance permission event',
+      });
+
+      try {
+        const agent = target.klient.session(created.id).agent('main');
+        const changed = new Promise<{ mode: string; previousMode: string }>((resolve) => {
+          const subscription = agent.events.on('permission.mode.changed', (event) => {
+            subscription.dispose();
+            resolve(event);
+          });
+        });
+        await agent.getPermission();
+
+        await agent.setPermission('auto');
+
+        await expect(changed).resolves.toEqual({ mode: 'auto', previousMode: 'manual' });
+      } finally {
+        await target.klient.session(created.id).close();
+      }
+    });
   });
 }

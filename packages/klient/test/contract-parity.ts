@@ -22,7 +22,10 @@ import type {
   TurnPhase,
 } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
-import type { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
+import type {
+  IAgentPermissionModeService,
+  PermissionModeChangedContext,
+} from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type {
@@ -191,6 +194,7 @@ import {
   compactionStartedEventSchema,
   promptAbortedEventSchema,
   promptCompletedEventSchema,
+  permissionModeChangedEventSchema,
   thinkingDeltaEventSchema,
   toolCallDeltaEventSchema,
   toolCallStartedEventSchema,
@@ -621,6 +625,10 @@ const _compactionCancelledEvent: AssertWire<
 const _compactionCompletedEvent: AssertWire<
   typeof compactionCompletedEventSchema,
   CompactionCompletedEvent
+> = true;
+const _permissionModeChangedEvent: AssertWire<
+  typeof permissionModeChangedEventSchema,
+  PermissionModeChangedContext
 > = true;
 const _warningEvent: AssertWire<typeof warningEventSchema, WarningEvent> = true;
 // No parity assertions for `errorEventSchema`, `permissionApproval*Schema`,

@@ -1,15 +1,16 @@
 /**
  * Klient-level agent-scope events — the public, typed, namespaced event
- * surface of one agent. All registrations filter the per-agent `events`
- * scope stream by `type`; the payload is the whole flat `{ type, ... }`
- * event (schemas keep the `type` literal so listeners receive it intact).
- * Payload shapes mirror `protocol/src/events.ts`; events that are loose in
- * the engine (or absent from the protocol union) are `z.looseObject`s.
+ * surface of one agent. Most registrations filter the per-agent `events`
+ * scope stream by `type`; domain-specific changes may bind a Service emitter
+ * instead. Stream payloads keep the whole flat `{ type, ... }` event intact.
+ * Payload shapes mirror `protocol/src/events.ts`; events that are loose in the
+ * engine (or absent from the protocol union) are `z.looseObject`s.
  */
 
 import { z } from 'zod';
 
 import type { EventRegistration } from '../types.js';
+import { permissionModeSchema } from './rpc.js';
 
 /**
  * Scope-stream registration (`kind: 'stream'`). Declared structurally here
@@ -166,6 +167,11 @@ export const permissionApprovalResolvedEventSchema = z.looseObject({
   toolCallId: z.string(),
 });
 
+export const permissionModeChangedEventSchema = z.object({
+  mode: permissionModeSchema,
+  previousMode: permissionModeSchema,
+});
+
 /** `error` payloads carry the full `KimiErrorPayload`; kept loose. */
 export const errorEventSchema = z.looseObject({
   message: z.string(),
@@ -180,6 +186,7 @@ export const warningEventSchema = z.object({
 /** `agent.status.updated` carries a wide optional status bag; kept loose. */
 export const agentStatusUpdatedEventSchema = z.looseObject({
   phase: z.string().optional(),
+  planMode: z.boolean().optional(),
 });
 
 // ── registrations ───────────────────────────────────────────────────────────
@@ -202,6 +209,7 @@ export interface AgentEventPayloads {
   'compaction.completed': z.infer<typeof compactionCompletedEventSchema>;
   'permission.approval.requested': z.infer<typeof permissionApprovalRequestedEventSchema>;
   'permission.approval.resolved': z.infer<typeof permissionApprovalResolvedEventSchema>;
+  'permission.mode.changed': z.infer<typeof permissionModeChangedEventSchema>;
   error: z.infer<typeof errorEventSchema>;
   warning: z.infer<typeof warningEventSchema>;
   'agent.status.updated': z.infer<typeof agentStatusUpdatedEventSchema>;
@@ -256,6 +264,12 @@ export const agentEvents = {
     name: 'events',
     type: 'permission.approval.resolved',
     schema: permissionApprovalResolvedEventSchema,
+  },
+  'permission.mode.changed': {
+    kind: 'emitter',
+    service: 'agentPermissionModeService',
+    event: 'onDidChangeMode',
+    schema: permissionModeChangedEventSchema,
   },
   error: { kind: 'stream', name: 'events', type: 'error', schema: errorEventSchema },
   warning: { kind: 'stream', name: 'events', type: 'warning', schema: warningEventSchema },

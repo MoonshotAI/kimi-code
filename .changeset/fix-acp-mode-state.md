@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Report the active permission or plan mode to ACP clients when creating or restoring a session.
+Keep ACP clients synchronized with the active permission or plan mode throughout a session.

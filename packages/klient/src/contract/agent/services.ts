@@ -1,8 +1,8 @@
 /**
  * Agent-scope domain service contracts. These mirror the positional-arg
  * signatures of the engine's domain Services (shellCommand / profile / usage /
- * permissionMode / plan / task) that the agent facade calls directly; payload and result
- * schemas are shared with `agent/rpc.ts` (they mirror the same wire shapes).
+ * permissionMode / plan / task) that the agent facade calls directly; payload
+ * and result schemas are shared with `agent/rpc.ts`.
  */
 
 import { z } from 'zod';

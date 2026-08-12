@@ -2,8 +2,8 @@
  * The agent facade — one `session.agent(id)` handle over the agent-scope
  * services the wire exposes. Turn-driving calls (prompt / steer / cancel) go
  * through the `agentRPCService` channel; shell commands, model, usage,
- * permission, plan, and task calls go straight to their domain services. Prompt streaming is
- * NOT on this interface: it flows through the agent's `events` hub
+ * permission, plan, and task calls go straight to their domain services.
+ * Prompt streaming is NOT on this interface: it flows through the agent's `events` hub
  * (`turn.*`, `assistant.delta`, `tool.call.*`, `prompt.completed`, …).
  */
 

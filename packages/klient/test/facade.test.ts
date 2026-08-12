@@ -197,6 +197,26 @@ describe('agent permission routing', () => {
       args: [],
     });
   });
+
+  it('permission.mode.changed maps to the permission mode emitter', () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+    const seen: unknown[] = [];
+
+    agent.events.on('permission.mode.changed', (event) => seen.push(event));
+    expect(channel.subscriptions[0]).toMatchObject({
+      scope: { sessionId: 's1', agentId: 'main' },
+      source: {
+        kind: 'emitter',
+        service: 'agentPermissionModeService',
+        event: 'onDidChangeMode',
+      },
+    });
+
+    channel.emit(0, { mode: 'auto', previousMode: 'manual' });
+    expect(seen).toEqual([{ mode: 'auto', previousMode: 'manual' }]);
+  });
 });
 
 describe('session skills routing', () => {

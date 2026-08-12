@@ -192,6 +192,16 @@ export class AcpSession {
   private currentThinkingLevel: string = 'off';
   /** Current ACP mode. */
   private currentModeId: AcpModeId = DEFAULT_MODE_ID;
+  /** Last mode included in a lifecycle response or pushed to the ACP client. */
+  private reportedModeId: AcpModeId = DEFAULT_MODE_ID;
+  /** Coalesces permission/plan invalidations into one authoritative refresh loop. */
+  private modeRefreshDirty = false;
+  private modeRefreshRevision = 0;
+  private modeRefreshRunner: Promise<void> | undefined;
+  private modeStateInitialized = false;
+  /** Suppresses intermediate updates while `setMode` changes two engine toggles. */
+  private modeMutationDepth = 0;
+  private disposed = false;
   /**
    * Cached session skill summaries — the backing data for slash-intent
    * detection and `availableCommands()`. Seeded in `init()` and refreshed on
@@ -316,6 +326,14 @@ export class AcpSession {
           this.onTurnEnded(event);
         });
       }),
+      events.on('permission.mode.changed', () => {
+        void this.requestModeRefresh();
+      }),
+      events.on('agent.status.updated', (event) => {
+        if (typeof event.planMode === 'boolean') {
+          void this.requestModeRefresh();
+        }
+      }),
       // Compaction runs as a background LLM task outside any turn, so these
       // are not turn-scoped; the subscription is already agent-grained (this
       // session's main agent), which keeps other sessions' events out.
@@ -364,21 +382,86 @@ export class AcpSession {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    // Awaited: the post-`session/new` `available_commands_update` must already
+    // carry the skills (see `activateSession`).
+    await this.refreshSkills();
+    await this.requestModeRefresh();
+    this.reportedModeId = this.currentModeId;
+    this.modeStateInitialized = true;
+  }
+
+  /** Mark the engine mode snapshot stale and join the current refresh, if any. */
+  private requestModeRefresh(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    this.modeRefreshDirty = true;
+    this.modeRefreshRevision += 1;
+    if (this.modeRefreshRunner !== undefined) return this.modeRefreshRunner;
+    const runner = this.runModeRefreshLoop();
+    this.modeRefreshRunner = runner;
+    return runner;
+  }
+
+  /** Re-read until no permission/plan invalidation arrived during the last read. */
+  private async runModeRefreshLoop(): Promise<void> {
     try {
-      const [permission, plan] = await Promise.all([
+      while (this.modeRefreshDirty && !this.disposed) {
+        this.modeRefreshDirty = false;
+        await this.refreshModeState(this.modeRefreshRevision);
+      }
+    } finally {
+      this.modeRefreshRunner = undefined;
+    }
+  }
+
+  /** Reconcile the cached ACP projection from one permission/plan snapshot. */
+  private async refreshModeState(revision: number): Promise<void> {
+    let permission: Awaited<ReturnType<AgentHandle['getPermission']>>;
+    let plan: Awaited<ReturnType<AgentHandle['getPlan']>>;
+    try {
+      [permission, plan] = await Promise.all([
         this.agent.getPermission(),
         this.agent.getPlan(),
       ]);
-      this.currentModeId = acpModeFromEngineState(permission, plan !== null);
     } catch (error) {
-      log.warn('acp: could not seed permission/plan state', {
+      log.warn('acp: could not refresh permission/plan state', {
+        sessionId: this.sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    // A later invalidation owns the authoritative snapshot. Skip this result
+    // entirely so a trailing refresh cannot be preceded by a stale update.
+    if (
+      this.disposed ||
+      revision !== this.modeRefreshRevision ||
+      this.modeMutationDepth > 0
+    ) {
+      return;
+    }
+
+    const nextModeId = acpModeFromEngineState(permission, plan !== null);
+    this.currentModeId = nextModeId;
+    if (!this.modeStateInitialized || nextModeId === this.reportedModeId) {
+      return;
+    }
+
+    this.reportedModeId = nextModeId;
+    await this.emitModeStateUpdate(nextModeId);
+  }
+
+  /** Push both ACP representations from the same reconciled mode snapshot. */
+  private async emitModeStateUpdate(modeId: AcpModeId): Promise<void> {
+    if (this.disposed) return;
+    try {
+      await this.conn.sessionUpdate(currentModeUpdateNotification(this.sessionId, modeId));
+    } catch (error) {
+      log.warn('acp: failed to push current_mode_update', {
         sessionId: this.sessionId,
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    // Awaited: the post-`session/new` `available_commands_update` must already
-    // carry the skills (see `activateSession`).
-    await this.refreshSkills();
+    if (this.disposed) return;
+    await this.emitConfigOptionUpdate(modeId);
   }
 
   /** Refresh the skill cache from the session catalog (best-effort). */
@@ -399,6 +482,9 @@ export class AcpSession {
    * and detaches the event subscriptions. Idempotent.
    */
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.modeRefreshDirty = false;
     this.cancel();
     const driver = this.driver;
     if (driver !== undefined) {
@@ -1033,13 +1119,15 @@ export class AcpSession {
    * thinking-capable (see `buildSessionConfigOptions`).
    */
   async configOptions(): Promise<SessionConfigOption[]> {
+    return this.configOptionsForMode(this.currentModeId);
+  }
+
+  /** Build config options with a captured mode so paired updates cannot diverge. */
+  private async configOptionsForMode(modeId: AcpModeId): Promise<SessionConfigOption[]> {
+    const modelId = this.currentModelId;
+    const thinkingLevel = this.currentThinkingLevel;
     const models = projectModelCatalog(await this.klient.global.kosong.listModels());
-    return buildSessionConfigOptions(
-      models,
-      this.currentModelId,
-      this.currentThinkingLevel,
-      this.currentModeId,
-    );
+    return buildSessionConfigOptions(models, modelId, thinkingLevel, modeId);
   }
 
   /**
@@ -1120,30 +1208,32 @@ export class AcpSession {
   /** Switch the ACP mode (plan mode + permission mode). */
   async setMode(id: AcpModeId): Promise<void> {
     const { plan, permission } = acpModeToToggles(id);
-    if (plan) {
-      await this.agent.enterPlan();
-    } else {
-      // KLIENT-GAP(plan): `exitPlan` (`planService.exit()`) is not on the
-      // klient surface; `cancelPlan` (`planModeCancel`) has the identical
-      // state effect (see `agent/plan/planOps.ts`) — only the persisted op
-      // name differs.
-      await this.agent.cancelPlan();
+    this.modeMutationDepth += 1;
+    try {
+      if (plan) {
+        await this.agent.enterPlan();
+      } else {
+        // KLIENT-GAP(plan): `exitPlan` (`planService.exit()`) is not on the
+        // klient surface; `cancelPlan` (`planModeCancel`) has the identical
+        // state effect (see `agent/plan/planOps.ts`) — only the persisted op
+        // name differs.
+        await this.agent.cancelPlan();
+      }
+      await this.agent.setPermission(permission);
+    } finally {
+      this.modeMutationDepth -= 1;
+      await this.requestModeRefresh();
     }
-    await this.agent.setPermission(permission);
-    this.currentModeId = id;
-    // Both notifications fire: `current_mode_update` serves clients reading
-    // the first-class `modes` state, `config_option_update` serves clients
-    // reading the `mode` config-option arm. (Engine-side mode changes are not
-    // observable — klient exposes no permission/plan change event.)
-    this.emit(currentModeUpdateNotification(this.sessionId, id));
-    await this.emitConfigOptionUpdate();
   }
 
   /** Push a fresh `config_option_update` to the client. */
-  private async emitConfigOptionUpdate(): Promise<void> {
+  private async emitConfigOptionUpdate(modeId = this.currentModeId): Promise<void> {
     try {
       await this.conn.sessionUpdate(
-        configOptionUpdateNotification(this.sessionId, await this.configOptions()),
+        configOptionUpdateNotification(
+          this.sessionId,
+          await this.configOptionsForMode(modeId),
+        ),
       );
     } catch (error) {
       log.warn('acp: failed to push config_option_update', {
