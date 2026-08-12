@@ -53,6 +53,41 @@ npm install -g @moonshot-ai/kimi-code
 pnpm add -g @moonshot-ai/kimi-code
 ```
 
+## 从源码构建
+
+如需从仓库构建独立的 `kimi` 可执行文件，请先克隆仓库：
+
+```sh
+git clone https://github.com/MoonshotAI/kimi-code.git
+cd kimi-code
+```
+
+在 macOS、Linux 或 WSL 上，使用 [nvm](https://github.com/nvm-sh/nvm) 安装 `.nvmrc` 中锁定的 Node.js 版本，再通过 Corepack 启用 pnpm：
+
+```sh
+nvm install
+corepack enable pnpm
+```
+
+在原生 Windows 上不适用 `nvm-sh`。请安装 `.nvmrc` 中标明的 Node.js 版本；例如，将该版本显式传给 [nvm-windows](https://github.com/coreybutler/nvm-windows)，然后启用 pnpm：
+
+```powershell
+$nodeVersion = (Get-Content .nvmrc).Trim()
+nvm install $nodeVersion
+nvm use $nodeVersion
+corepack enable pnpm
+```
+
+Corepack 会使用 `package.json` 中声明的 pnpm 版本。接着安装依赖、构建原生可执行文件并运行 smoke 测试：
+
+```sh
+pnpm install --frozen-lockfile
+pnpm --filter @moonshot-ai/kimi-code run build:native:sea
+pnpm --filter @moonshot-ai/kimi-code run test:native:smoke
+```
+
+可执行文件会写入 `apps/kimi-code/dist-native/bin/<platform>-<architecture>/kimi`（Windows 上为 `kimi.exe`）。该命令面向当前平台和架构进行构建；本地构建无需发布签名或公证。
+
 ## 升级与卸载
 
 安装完成后，验证可执行文件是否就绪：
