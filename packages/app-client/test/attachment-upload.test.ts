@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import { useAttachmentUpload, type Attachment } from '../src/composables/useAttachmentUpload';
+import { noopProductTracker, setProductTracker } from '../src/contracts';
 
 // The composable registers its paste listener and cleanup via onMounted /
 // onUnmounted. Outside a component (unit test) there is no active instance, so
@@ -11,8 +12,8 @@ vi.mock('vue', async (importOriginal) => {
   return { ...actual, onMounted: vi.fn(), onUnmounted: vi.fn() };
 });
 
-const apiMock = vi.hoisted(() => ({ getFileBlob: vi.fn() }));
-vi.mock('../src/api', () => ({ getKimiWebApi: () => apiMock }));
+// The api is injected; stub the file-byte fetch.
+const apiMock = { getFileBlob: vi.fn() };
 
 type UploadImage = (
   file: Blob,
@@ -20,7 +21,11 @@ type UploadImage = (
 ) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
 
 function setup(uploadImage?: UploadImage, sessionId: string | null = 'test-session') {
-  return useAttachmentUpload({ uploadImage: () => uploadImage, sessionId: () => sessionId ?? undefined });
+  return useAttachmentUpload({
+    api: apiMock,
+    uploadImage: () => uploadImage,
+    sessionId: () => sessionId ?? undefined,
+  });
 }
 
 function imageFile(name: string): File {
@@ -285,7 +290,11 @@ describe('useAttachmentUpload', () => {
   it('isolates attachments between sessions', () => {
     const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
     const sessionId = ref<string | undefined>('sess-a');
-    const att = useAttachmentUpload({ uploadImage: () => uploadImage, sessionId: () => sessionId.value });
+    const att = useAttachmentUpload({
+      api: apiMock,
+      uploadImage: () => uploadImage,
+      sessionId: () => sessionId.value,
+    });
 
     att.handleFileInputChange(inputEvent([imageFile('a.png')]));
     expect(att.attachments.value).toHaveLength(1);
@@ -355,5 +364,107 @@ describe('useAttachmentUpload', () => {
     // No fetch with the empty URL (a same-document fetch would upload the page).
     expect(fetchSpy.mock.calls.every((call) => call[0] !== '')).toBe(true);
     fetchSpy.mockRestore();
+  });
+});
+
+// attachment_added tracking: `via` comes from the entry handler, `kind` from
+// the file's MIME bucket, `size_bucket` from its byte size, and `count` is
+// the batch size shared by every per-file event. Only the exported handlers
+// are exercised here (the paste listener registers on `document`, which the
+// node test environment has no equivalent of); the drop and click paths
+// share the same track call inside addFiles.
+describe('attachment_added tracking', () => {
+  let spy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    spy = vi.fn();
+    setProductTracker({ track: spy });
+  });
+
+  afterEach(() => {
+    setProductTracker(noopProductTracker);
+  });
+
+  const uploadOk = async () => ({ fileId: 'file_1', name: 'n', mediaType: 'application/octet-stream' });
+
+  function makeUpload(enabled = true) {
+    return useAttachmentUpload({
+      api: apiMock,
+      uploadImage: () => (enabled ? uploadOk : undefined),
+      sessionId: () => 'sess_1',
+    });
+  }
+
+  function dropEvent(files: File[]): DragEvent {
+    return {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      dataTransfer: { files },
+    } as unknown as DragEvent;
+  }
+
+  it('tracks each picked file as via click with its MIME-derived kind', () => {
+    const up = makeUpload();
+    up.handleFileInputChange(
+      inputEvent([
+        new File(['x'], 'shot.png', { type: 'image/png' }),
+        new File(['x'], 'notes.pdf', { type: 'application/pdf' }),
+      ]),
+    );
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenNthCalledWith(1, 'attachment_added', {
+      via: 'click',
+      kind: 'image',
+      size_bucket: '<1mb',
+      count: 2,
+    });
+    expect(spy).toHaveBeenNthCalledWith(2, 'attachment_added', {
+      via: 'click',
+      kind: 'file',
+      size_bucket: '<1mb',
+      count: 2,
+    });
+  });
+
+  it('tracks a composer drop as via drop', () => {
+    const up = makeUpload();
+    up.handleDrop(dropEvent([new File(['x'], 'clip.mp4', { type: 'video/mp4' })]));
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('attachment_added', {
+      via: 'drop',
+      kind: 'video',
+      size_bucket: '<1mb',
+      count: 1,
+    });
+  });
+
+  it('buckets the file size around the 1/10/50 MB edges', () => {
+    const up = makeUpload();
+    const fileOfSize = (size: number) => {
+      const f = new File(['x'], 'big.bin', { type: 'application/octet-stream' });
+      Object.defineProperty(f, 'size', { value: size });
+      return f;
+    };
+    up.handleFileInputChange(
+      inputEvent([
+        fileOfSize(1024 * 1024), // exactly 1 MB → 1-10mb
+        fileOfSize(10 * 1024 * 1024), // exactly 10 MB → 10-50mb
+        fileOfSize(50 * 1024 * 1024), // exactly 50 MB → 50mb+
+      ]),
+    );
+    expect(spy).toHaveBeenCalledTimes(3);
+    const buckets = spy.mock.calls.map((call) => (call[1] as { size_bucket: string }).size_bucket);
+    expect(buckets).toEqual(['1-10mb', '10-50mb', '50mb+']);
+    // Every per-file event in the batch reports the same total count.
+    for (const call of spy.mock.calls) {
+      expect((call[1] as { count: number }).count).toBe(3);
+    }
+  });
+
+  it('tracks nothing when attaching is disabled (no upload dep)', () => {
+    const up = makeUpload(false);
+    up.handleFileInputChange(inputEvent([new File(['x'], 'shot.png', { type: 'image/png' })]));
+    up.handleDrop(dropEvent([new File(['x'], 'shot.png', { type: 'image/png' })]));
+    expect(spy).not.toHaveBeenCalled();
   });
 });

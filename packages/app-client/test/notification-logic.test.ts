@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { i18n } from '../src/i18n';
+import { createKimiI18n } from '@moonshot-ai/app-i18n';
+import type { Translator } from '@moonshot-ai/app-core/contracts';
 import { STORAGE_KEYS, safeGetString } from '@moonshot-ai/app-core/lib';
 import {
   approvalNotificationCopy,
@@ -7,7 +8,12 @@ import {
   questionNotificationCopy,
   shouldNotifyCompletion,
   useNotification,
-} from '../src/composables/client/useNotification';
+} from '../src/composables/useNotification';
+
+// Real i18n (the tests assert on localized output); the copy builders take the
+// translator by injection.
+const i18n = createKimiI18n({ locale: 'en' });
+const t: Translator = (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params));
 
 function createMemoryStorage(): Storage {
   const data = new Map<string, string>();
@@ -43,7 +49,7 @@ function installStorage(storage: Storage): void {
 // Singleton — module-level refs + setters. The OS Notification API is absent in
 // the test env, so the *enable* path is a no-op; the disable path and the
 // load-from-storage defaults are what we exercise here.
-const { notifyEnabled, notifySound, setNotifyEnabled, setNotifySound } = useNotification();
+const { notifyEnabled, notifySound, setNotifyEnabled, setNotifySound } = useNotification({ t });
 const importedEnabledDefault = notifyEnabled.value;
 const importedSoundDefault = notifySound.value;
 
@@ -83,46 +89,46 @@ describe('notification copy', () => {
   });
 
   it('uses an event title and session-title body for completion notifications', () => {
-    expect(completionNotificationCopy('Refactor auth flow')).toEqual({
+    expect(completionNotificationCopy(t, 'Refactor auth flow')).toEqual({
       title: 'Kimi Code · Turn finished',
       body: 'Refactor auth flow',
     });
   });
 
   it('falls back to a result hint when there is no session title', () => {
-    expect(completionNotificationCopy('  ')).toEqual({
+    expect(completionNotificationCopy(t, '  ')).toEqual({
       title: 'Kimi Code · Turn finished',
       body: 'View result',
     });
   });
 
   it('prefers the question preview in question notifications', () => {
-    expect(questionNotificationCopy('Storage migration', 'Which database?')).toEqual({
+    expect(questionNotificationCopy(t, 'Storage migration', 'Which database?')).toEqual({
       title: 'Kimi Code · Needs answer',
       body: 'Which database?',
     });
   });
 
   it('falls back to the session title before the generic question line', () => {
-    expect(questionNotificationCopy('Storage migration', ' ')).toEqual({
+    expect(questionNotificationCopy(t, 'Storage migration', ' ')).toEqual({
       title: 'Kimi Code · Needs answer',
       body: 'Storage migration',
     });
   });
 
   it('uses tool name in approval notifications', () => {
-    expect(approvalNotificationCopy('Refactor auth flow', 'bash')).toEqual({
+    expect(approvalNotificationCopy(t, 'Refactor auth flow', 'bash')).toEqual({
       title: 'Kimi Code · Approval required',
       body: 'bash',
     });
   });
 
   it('falls back to session title and then generic approval line', () => {
-    expect(approvalNotificationCopy('Refactor auth flow', ' ')).toEqual({
+    expect(approvalNotificationCopy(t, 'Refactor auth flow', ' ')).toEqual({
       title: 'Kimi Code · Approval required',
       body: 'Refactor auth flow',
     });
-    expect(approvalNotificationCopy('  ', '  ')).toEqual({
+    expect(approvalNotificationCopy(t, '  ', '  ')).toEqual({
       title: 'Kimi Code · Approval required',
       body: 'A tool needs your approval',
     });
@@ -130,7 +136,7 @@ describe('notification copy', () => {
 
   it('localizes approval notification copy', () => {
     i18n.global.locale.value = 'zh';
-    expect(approvalNotificationCopy('', '')).toEqual({
+    expect(approvalNotificationCopy(t, '', '')).toEqual({
       title: 'Kimi Code · 等待审批',
       body: '有工具等待你审批',
     });
@@ -139,11 +145,11 @@ describe('notification copy', () => {
   it('localizes the notification copy', () => {
     i18n.global.locale.value = 'zh';
 
-    expect(completionNotificationCopy('')).toEqual({
+    expect(completionNotificationCopy(t, '')).toEqual({
       title: 'Kimi Code · 回合完成',
       body: '点击查看结果',
     });
-    expect(questionNotificationCopy('', '')).toEqual({
+    expect(questionNotificationCopy(t, '', '')).toEqual({
       title: 'Kimi Code · 待回答',
       body: '有提问等待你回答',
     });
@@ -181,7 +187,7 @@ describe('notification tags', () => {
     close(): void {}
   }
 
-  const { maybeNotifyCompletion, maybeNotifyQuestion, maybeNotifyApproval } = useNotification();
+  const { maybeNotifyCompletion, maybeNotifyQuestion, maybeNotifyApproval } = useNotification({ t });
   const base = { isUserWatching: false, sessionTitle: 'T', onClick: () => {} };
 
   beforeEach(() => {

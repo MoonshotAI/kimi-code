@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useAttachmentUpload.ts
+// packages/app-client/src/composables/useAttachmentUpload.ts
 // Attachment handling for the composer: file picker, paste, drag & drop, the
 // upload machinery, the chip strip, and the preview lightbox. Images and
 // videos get media chips with thumbnails; any other file type attaches as a
@@ -15,7 +15,8 @@
 // paste listener + object-URL cleanup lifecycle.
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { getKimiWebApi } from '../api';
+import type { KimiWebApi } from '@moonshot-ai/app-core/api';
+import { track } from '../contracts';
 import { partitionDroppedItems } from '@moonshot-ai/app-core/lib';
 
 export interface Attachment {
@@ -45,6 +46,9 @@ type UploadImage = (
 ) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
 
 export interface AttachmentUploadDeps {
+  /** Authenticated file-byte fetch — a bare getFileUrl src 401s under daemon
+      auth, so protected thumbnails load through the API client. */
+  api: Pick<KimiWebApi, 'getFileBlob'>;
   /** Upload a blob; resolves to the daemon file id, or null on failure.
       Getter so a prop change is picked up. Undefined disables attaching. */
   uploadImage: () => UploadImage | undefined;
@@ -58,7 +62,7 @@ export interface AttachmentUploadDeps {
 }
 
 export function useAttachmentUpload(deps: AttachmentUploadDeps) {
-  const { uploadImage, sessionId, insertFolderPaths } = deps;
+  const { api, uploadImage, sessionId, insertFolderPaths } = deps;
 
   const attachmentsBySession = ref<Record<string, Attachment[]>>({});
   const attachments = computed(() => attachmentsBySession.value[sessionId() ?? ''] ?? []);
@@ -87,7 +91,14 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     return 'file';
   }
 
-  async function addFiles(files: File[]): Promise<void> {
+  function attachmentSizeBucket(size: number): '<1mb' | '1-10mb' | '10-50mb' | '50mb+' {
+    if (size < 1024 * 1024) return '<1mb';
+    if (size < 10 * 1024 * 1024) return '1-10mb';
+    if (size < 50 * 1024 * 1024) return '10-50mb';
+    return '50mb+';
+  }
+
+  async function addFiles(files: File[], via: 'drop' | 'click' | 'paste'): Promise<void> {
     const upload = uploadImage();
     if (!upload) return;
     // Capture the session at upload time; async completion must update the same
@@ -97,6 +108,14 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
 
     for (const file of files) {
       const kind = attachmentKind(file.type);
+      track('attachment_added', {
+        via,
+        kind,
+        size_bucket: attachmentSizeBucket(file.size),
+        // The contract caps count at 100 — an over-cap batch would fail
+        // validation and drop every event in it.
+        count: Math.min(files.length, 100),
+      });
       const localId = nextLocalId();
       // Only media gets a thumbnail object URL; files render an icon chip.
       const previewUrl = kind === 'file' ? undefined : URL.createObjectURL(file);
@@ -166,7 +185,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   function handleFileInputChange(e: Event): void {
     const input = e.target as HTMLInputElement;
     const files = Array.from(input.files ?? []);
-    void addFiles(files);
+    void addFiles(files, 'click');
     // Reset so re-selecting the same file fires change again.
     input.value = '';
   }
@@ -207,7 +226,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     if (files.length === 0) return; // No files — let normal text paste proceed unmodified.
 
     e.preventDefault();
-    void addFiles(files);
+    void addFiles(files, 'paste');
   }
 
   // Drag-drop handlers. WindowDragDepth tracks nested dragenter/dragleave pairs
@@ -244,7 +263,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     // Stop the document-level drop handler from adding the same files twice.
     e.preventDefault();
     e.stopPropagation();
-    void addFiles(files);
+    void addFiles(files, 'drop');
   }
 
   // Window-level drag & drop. Without a document-wide handler, dropping a file
@@ -285,7 +304,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     }
     if (!uploadImage()) return;
     e.preventDefault();
-    void addFiles(files);
+    void addFiles(files, 'drop');
   }
 
   /** Revoke every object URL and drop all attachments for the current session
@@ -351,7 +370,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
         };
         setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
         if (att.kind === 'image' && !isData && !isBlob) {
-          void getKimiWebApi().getFileBlob(att.fileId).then((blob) => {
+          void api.getFileBlob(att.fileId).then((blob) => {
             const blobUrl = URL.createObjectURL(blob);
             const current = attachmentsBySession.value[sid] ?? [];
             if (!current.some((a) => a.localId === localId)) {

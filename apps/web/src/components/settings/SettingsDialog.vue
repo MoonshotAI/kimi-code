@@ -13,7 +13,7 @@ import LanguageSwitcher from './LanguageSwitcher.vue';
 import ProvidersPanel from './ProvidersPanel.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
-import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUpdateStatus';
+import { useUpdateStatus, type UpdateCheckResult } from '@moonshot-ai/app-client/composables';
 import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel, ManagedUserInfo, ManagedUsageResult } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';
@@ -782,7 +782,7 @@ function archiveTime(iso: string): string {
               <Switch
                 :model-value="updateTracker.autoDownload.value"
                 :label="t('settings.autoDownloadUpdate')"
-                @update:model-value="updateTracker.setAutoDownload($event)"
+                @update:model-value="updateTracker.setAutoDownload($event, 'settings')"
               />
             </div>
             </div>

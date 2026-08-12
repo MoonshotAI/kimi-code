@@ -13,7 +13,7 @@ import { useI18n } from 'vue-i18n';
 import { useAppearance, type ColorScheme } from '@moonshot-ai/app-core';
 import { Button } from '@moonshot-ai/app-ui';
 import { availableLocales, setLocale, type LocaleCode } from '../../i18n';
-import { type OAuthLoginStartResult } from '../../composables/useOAuthLoginFlow';
+import { type OAuthLoginStartResult } from '@moonshot-ai/app-client/composables';
 import BrandLogo from './BrandLogo.vue';
 import OnboardingLoginStep from './OnboardingLoginStep.vue';
 

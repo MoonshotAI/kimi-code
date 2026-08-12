@@ -10,7 +10,7 @@ import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import {
   useOAuthLoginFlow,
   type OAuthLoginStartResult,
-} from '../../composables/useOAuthLoginFlow';
+} from '@moonshot-ai/app-client/composables';
 import { AuthStateIcon, Button, Icon, Spinner } from '@moonshot-ai/app-ui';
 import BrandLogo from './BrandLogo.vue';
 

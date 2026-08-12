@@ -486,11 +486,25 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - 验收：`pnpm test` 2375 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅；双端冒烟待人工补。
 - 无 changeset（纯重构）。
 
-### P5 — 🚧 进行中（2026-08-11；代码在 PR #199，合并后本条转「已完成」）
+### P5 — 已完成（2026-08-11；PR #199 合入 main squash 3488055c）
 
 - 完成：两端 `icons/kimi/*.svg` 合并（71 个，共有文件逐字节相同，desktop 仅多 `keyboard.svg`）移入 `packages/app-client/src/icons/kimi/`；`lib/icons.ts` 取并集（desktop 版，仅多 keyboard 一项）落 `packages/app-client/src/icons/icons.ts`，新增 `./icons` 出口；两端 16 个 import 站点改指 `@moonshot-ai/app-client/icons`。
 - **vite iconsDir 指包内**：app-client 显式 export `./package.json`，四个配置（两端 vite.config + vitest.config）统一 `fileURLToPath(new URL('./src/icons/kimi', import.meta.resolve('@moonshot-ai/app-client/package.json')))`——`import.meta.resolve` 对带 exports map 的包必须显式声明该子路径，否则抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`（计划预判的坑，按预案落地）。
 - **icons.test 随迁的连锁**：`~icons/*` 虚拟模块需要 unplugin-icons 插件，根 vitest 的 packages 内联 project 无插件——app-client 新增自己的 `vitest.config.ts`（复用 vite-preset 的 plugins），根 config 把 app-client 从花括号列表拆出为独立 project 条目；app-client devDeps +`@moonshot-ai/vite-preset`。web 侧 icons.test 与 desktop 版仅头注释差异，删除（总数 2375→2366 全部来自此）。
 - **mediaPreview 收编（P3/P4 登记的尾巴）**：落 `packages/app-client/src/lib/mediaPreview.ts`（css 随迁，侧效应 import 在包内源码下由消费者 vite 处理，无需 CSS 出口）；api 注入（`Pick<KimiWebApi,'getFileBlob'>` 进 `ImagePreviewOptions`，MediaLightbox 两端各一处适配）。依赖面决策：app-client deps +`photoswipe` + `@moonshot-ai/app-ui`（openDialogCount 是无头计数器，app-ui 不反向依赖 app-client，无环）——自此 app-client 分层修正为「Vue composables + 浏览器层 UI helper」，根 AGENTS.md 描述沿用。
 - 验收：`pnpm test` 2366 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 29 findings 与 main 基线相同 ✅；**全量图标视觉验证**（DesignSystemView §02 图标目录页逐排核对）+ 双端冒烟待人工补。
+- 无 changeset（纯重构）。
+
+### P6 — 🚧 进行中（2026-08-12 本地实施 + 验收完成；待提交 PR，合并后本条转「已完成」）
+
+- 完成：`ProductTracker` 接线落地 + 5 个 telemetry/平台分叉 composable 收编 `packages/app-client/src/composables/`，两端副本（10 个文件）删除。
+- **注入缝形态（计划只写「app-client 接线」，实测定为模块级 registry）**：`contracts.ts` 追加 `setProductTracker` / `track` 委托（no-op 默认）；desktop 在 `main.ts`（`installClientErrorCapture` 后）`setProductTracker(productTracker)`——适配器放 `lib/track.ts`（`track(event as RendererEventName, payload as never)`，包内事件绕开 desktop 编译期契约，主进程 zod schema 仍是运行时边界）；web 不动（no-op 默认即「注入 no-op」，行为与现状一致）。参数透传方案被否：track 调用点散在 4 个 composable 深层，registry 让迁移 diff 只剩 import 行。
+- **useNotification**：desktop 版为正本；`NotificationKind` 改本地联合类型（对齐 track-events.ts:183 zod enum，摆脱 shared/track-events import）；i18n 解耦走 P3 模式——copy 三函数 `t: Translator` 首参（`@moonshot-ai/app-core/contracts`），`useNotification(deps: { t })`，两端 `useKimiWebClient` 传 `(k, p) => …i18n.global.t` 包装；`shouldNotifyCompletion` 保持无参纯函数。
+- **useAttachmentUpload**：desktop 版为正本；`AttachmentUploadDeps` 新增必填 `api: Pick<KimiWebApi,'getFileBlob'>`（替 `getKimiWebApi()` 单例），两端 `Composer.vue` 传 `api: getKimiWebApi()`。
+- **useOAuthLoginFlow / useUpdateStatus**：仅 track 改 contracts + 头注释，其余逐字节不动。行为对齐点两条（随 PR 描述声明）：① web 两处 `setAutoDownload` 调用补 `source` 参数（UpdateIndicator `'update_prompt'` / SettingsDialog `'settings'`，与 desktop 一致）；② web 获得 desktop 的 oauth `flowCancelled` poll 守卫（D 类并集）。`useUpdateStatus` 头注释保留 "Desktop-only" 字样（描述功能归属，web 无桥降级说明文件内已有）。
+- **useAuxiliaryTranscripts**：两端实测已字节一致，纯移动（无头注释，未加）。
+- **测试合并随迁 5 文件进 `packages/app-client/test/`**：desktop 超集版 oauth（20 例）/ updateStatus（19 例）直接收编，web 子集版删除；attachment-upload 合并 = web 上传逻辑 24 例 + desktop 埋点 4 例（无逐行重复）；notification-logic（23 例）改 `createKimiI18n({ locale: 'en' })`；useAuxiliaryTranscripts（7 例）仅改 import。埋点断言统一从「mock window.kimiDesktop / vi.mock lib/track」改为 `setProductTracker({ track: spy })` + afterEach 复位 `noopProductTracker`。
+- **基线偏差**：P5 台账记的 2366 已过时——P5 后 main 前进（#200–#204），HEAD 实测 2383；本次净 -27 → 2356，全部来自 web 两个子集测试文件删除（oauth -13 / updateStatus -14），其余删除均在包内 1:1 重建。
+- **环境坑**：`pnpm build` 首跑挂在 kimi-code submodule 的 node-sdk（缺 `@microsoft/api-extractor`，submodule 根 manifest 有声明但未装）——`kimi-code/` 内补跑一次 `pnpm install` 即可，tracked 内容不受影响。
+- 验收：`pnpm test` 2356 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 29 findings 与基线同 ✅；**desktop 侧埋点冒烟**（notification_shown / attachment_added / oauth_login_step 各触发一次，主进程日志可见）**+ 双端发消息冒烟待人工补**。
 - 无 changeset（纯重构）。

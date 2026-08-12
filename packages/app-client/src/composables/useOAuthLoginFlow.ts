@@ -1,4 +1,4 @@
-// apps/web/src/composables/useOAuthLoginFlow.ts
+// packages/app-client/src/composables/useOAuthLoginFlow.ts
 // Shared device-code OAuth login state machine, used by both the standalone
 // LoginDialog and the onboarding wizard's embedded login step. Owns the flow
 // lifecycle (start → poll → terminal), the countdown, and the timers; the
@@ -12,7 +12,7 @@
 
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
 
-import { track } from '../lib/track';
+import { track } from '../contracts';
 
 export type OAuthLoginStep = 'starting' | 'device-code' | 'success' | 'expired' | 'error';
 

@@ -1,4 +1,4 @@
-// apps/web/src/composables/client/useNotification.ts
+// packages/app-client/src/composables/useNotification.ts
 // System notifications for when the agent needs attention: a turn finished, a
 // question waiting for an answer, or a tool needing approval. One master
 // on/off preference (persisted, default on) gates all three kinds, plus a
@@ -10,8 +10,19 @@
 // objects.
 
 import { ref } from 'vue';
-import { i18n } from '../../i18n';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
+import type { Translator } from '@moonshot-ai/app-core/contracts';
+import { track } from '../contracts';
+
+type NotificationKind = 'turn_complete' | 'question' | 'approval';
+
+// The tag prefix identifies the kind (see maybeNotify* below).
+function kindFromTag(tag: string): NotificationKind | undefined {
+  if (tag.startsWith('kimi-complete-')) return 'turn_complete';
+  if (tag.startsWith('kimi-question-')) return 'question';
+  if (tag.startsWith('kimi-approval-')) return 'approval';
+  return undefined;
+}
 
 export function shouldNotifyCompletion(
   status: 'idle' | 'aborted',
@@ -109,37 +120,39 @@ function firstText(...values: Array<string | undefined>): string {
   return '';
 }
 
-export function completionNotificationCopy(sessionTitle: string): NotificationCopy {
+export function completionNotificationCopy(t: Translator, sessionTitle: string): NotificationCopy {
   return {
-    title: i18n.global.t('settings.notifyTitle'),
-    body: firstText(sessionTitle, i18n.global.t('settings.notifyFallback')),
+    title: t('settings.notifyTitle'),
+    body: firstText(sessionTitle, t('settings.notifyFallback')),
   };
 }
 
 export function questionNotificationCopy(
+  t: Translator,
   sessionTitle: string,
   questionPreview: string,
 ): NotificationCopy {
   return {
-    title: i18n.global.t('settings.notifyQuestionTitle'),
+    title: t('settings.notifyQuestionTitle'),
     body: firstText(
       questionPreview,
       sessionTitle,
-      i18n.global.t('settings.notifyQuestionFallback'),
+      t('settings.notifyQuestionFallback'),
     ),
   };
 }
 
 export function approvalNotificationCopy(
+  t: Translator,
   sessionTitle: string,
   toolName: string,
 ): NotificationCopy {
   return {
-    title: i18n.global.t('settings.notifyApprovalTitle'),
+    title: t('settings.notifyApprovalTitle'),
     body: firstText(
       toolName,
       sessionTitle,
-      i18n.global.t('settings.notifyApprovalFallback'),
+      t('settings.notifyApprovalFallback'),
     ),
   };
 }
@@ -174,6 +187,8 @@ function fire(ctx: NotifyBaseCtx, copy: NotificationCopy, tag: string): void {
       icon: NOTIFICATION_ICON,
       silent: !notifySound.value,
     });
+    const kind = kindFromTag(tag);
+    if (kind !== undefined) track('notification_shown', { kind });
     n.onclick = () => {
       try {
         // Desktop hide-on-close: the native window may be alive but hidden,
@@ -184,6 +199,7 @@ function fire(ctx: NotifyBaseCtx, copy: NotificationCopy, tag: string): void {
       } catch {
         // ignore
       }
+      if (kind !== undefined) track('notification_clicked', { kind });
       ctx.onClick();
       n.close();
     };
@@ -192,40 +208,40 @@ function fire(ctx: NotifyBaseCtx, copy: NotificationCopy, tag: string): void {
   }
 }
 
-/** Fire a completion notification for a finished session, but only when the
-    caller says the user isn't already looking at it. The tag carries the turn's
-    prompt id: same-tag notifications replace silently, so without it a stale
-    notification left in the notification center would swallow every later
-    turn's alert for that session. */
-function maybeNotifyCompletion(sid: string, ctx: NotifyCompletionCtx): void {
-  maybeNotify(
-    ctx,
-    completionNotificationCopy(ctx.sessionTitle),
-    `kimi-complete-${sid}-${ctx.promptId ?? Date.now()}`,
-  );
-}
+export function useNotification(deps: { t: Translator }) {
+  /** Fire a completion notification for a finished session, but only when the
+      caller says the user isn't already looking at it. The tag carries the turn's
+      prompt id: same-tag notifications replace silently, so without it a stale
+      notification left in the notification center would swallow every later
+      turn's alert for that session. */
+  function maybeNotifyCompletion(sid: string, ctx: NotifyCompletionCtx): void {
+    maybeNotify(
+      ctx,
+      completionNotificationCopy(deps.t, ctx.sessionTitle),
+      `kimi-complete-${sid}-${ctx.promptId ?? Date.now()}`,
+    );
+  }
 
-/** Fire a notification when a session asks a question, but only when the user
-    isn't already looking. */
-function maybeNotifyQuestion(ctx: NotifyQuestionCtx): void {
-  maybeNotify(
-    ctx,
-    questionNotificationCopy(ctx.sessionTitle, ctx.questionPreview),
-    `kimi-question-${ctx.questionId}`,
-  );
-}
+  /** Fire a notification when a session asks a question, but only when the user
+      isn't already looking. */
+  function maybeNotifyQuestion(ctx: NotifyQuestionCtx): void {
+    maybeNotify(
+      ctx,
+      questionNotificationCopy(deps.t, ctx.sessionTitle, ctx.questionPreview),
+      `kimi-question-${ctx.questionId}`,
+    );
+  }
 
-/** Fire a notification when a tool needs approval, but only when the user
-    isn't already looking. */
-function maybeNotifyApproval(ctx: NotifyApprovalCtx): void {
-  maybeNotify(
-    ctx,
-    approvalNotificationCopy(ctx.sessionTitle, ctx.toolName),
-    `kimi-approval-${ctx.approvalId}`,
-  );
-}
+  /** Fire a notification when a tool needs approval, but only when the user
+      isn't already looking. */
+  function maybeNotifyApproval(ctx: NotifyApprovalCtx): void {
+    maybeNotify(
+      ctx,
+      approvalNotificationCopy(deps.t, ctx.sessionTitle, ctx.toolName),
+      `kimi-approval-${ctx.approvalId}`,
+    );
+  }
 
-export function useNotification() {
   return {
     notifyEnabled,
     notifySound,

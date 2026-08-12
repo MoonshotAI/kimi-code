@@ -8,7 +8,7 @@ import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import {
   useOAuthLoginFlow,
   type OAuthLoginStartResult,
-} from '../../composables/useOAuthLoginFlow';
+} from '@moonshot-ai/app-client/composables';
 import { AuthStateIcon, Button, Dialog, Icon, Spinner } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();

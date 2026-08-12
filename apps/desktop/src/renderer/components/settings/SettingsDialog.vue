@@ -21,7 +21,7 @@ import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { useVibrancy } from '../../composables/useVibrancy';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
-import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUpdateStatus';
+import { useUpdateStatus, type UpdateCheckResult } from '@moonshot-ai/app-client/composables';
 import type { ColorScheme, FontScale } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel, ManagedUserInfo, ManagedUsageResult } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';

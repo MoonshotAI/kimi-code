@@ -21,7 +21,7 @@ import { useI18n } from 'vue-i18n';
 import { Button, Checkbox, Dialog, Icon } from '@moonshot-ai/app-ui';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import type { IconName } from '@moonshot-ai/app-client/icons';
-import { useUpdateStatus } from '../composables/useUpdateStatus';
+import { useUpdateStatus } from '@moonshot-ai/app-client/composables';
 
 const { t, locale } = useI18n();
 const { status, visible, skipVersion, download, install, autoDownload, setAutoDownload, canToggleAutoDownload } =
@@ -171,7 +171,7 @@ function onRestartNow(): void {
             v-if="canToggleAutoDownload"
             class="upd-auto"
             :model-value="autoDownload"
-            @update:model-value="setAutoDownload($event)"
+            @update:model-value="setAutoDownload($event, 'update_prompt')"
           >
             {{ t('sidebar.updateAutoDownload') }}
           </Checkbox>

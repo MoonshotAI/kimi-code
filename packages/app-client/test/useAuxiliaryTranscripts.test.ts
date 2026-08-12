@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { KimiEventConnection, KimiWebApi } from '@moonshot-ai/app-core/api';
 
-import { createAuxiliaryTranscriptPool } from '../../src/renderer/composables/client/useAuxiliaryTranscripts';
+import { createAuxiliaryTranscriptPool } from '../src/composables/useAuxiliaryTranscripts';
 
 describe('createAuxiliaryTranscriptPool', () => {
   it('loads the cold baseline before subscribing and switches agents with one replacement', async () => {

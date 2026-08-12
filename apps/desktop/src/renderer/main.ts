@@ -9,12 +9,19 @@ import { initVibrancy } from './composables/useVibrancy';
 import { isDesktop, isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
 import { installClientErrorCapture } from './debug/trace';
+import { setProductTracker } from '@moonshot-ai/app-client/contracts';
+import { productTracker } from './lib/track';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import './style.css';
 
 // Always retain bounded metadata for uncaught failures. With ?debug=1 / the
 // debug flag, console output is included too; HMR restores listeners/wrappers.
 installClientErrorCapture();
+
+// Desktop bridges its renderer telemetry into app-client's ProductTracker so
+// the shared composables' events reach the main process; web keeps the
+// default no-op (it does not emit these events).
+setProductTracker(productTracker);
 
 const app = createApp(App).use(i18n);
 // Hand packages (e.g. app-markdown) a translator without forcing them to import

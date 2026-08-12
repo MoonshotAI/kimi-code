@@ -4,7 +4,8 @@ import {
   useOAuthLoginFlow,
   type OAuthLoginFlowCallbacks,
   type OAuthLoginStartResult,
-} from '../../src/renderer/composables/useOAuthLoginFlow';
+} from '../src/composables/useOAuthLoginFlow';
+import { noopProductTracker, setProductTracker } from '../src/contracts';
 
 const pendingStart: OAuthLoginStartResult = {
   flowId: 'oauth_1',
@@ -233,9 +234,6 @@ describe('useOAuthLoginFlow', () => {
 });
 
 describe('oauth_login_step tracking', () => {
-  const globalRef = globalThis as { window?: unknown };
-  const originalWindow = globalRef.window;
-
   let scope: EffectScope;
   let spy: ReturnType<typeof vi.fn>;
 
@@ -243,14 +241,13 @@ describe('oauth_login_step tracking', () => {
     vi.useFakeTimers();
     scope = effectScope();
     spy = vi.fn();
-    globalRef.window = { kimiDesktop: { track: spy } };
+    setProductTracker({ track: spy });
   });
 
   afterEach(() => {
     scope.stop();
     vi.useRealTimers();
-    if (originalWindow === undefined) delete globalRef.window;
-    else globalRef.window = originalWindow;
+    setProductTracker(noopProductTracker);
   });
 
   /** The properties bags of every emitted event, in order. */

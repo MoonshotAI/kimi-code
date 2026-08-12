@@ -23,7 +23,7 @@ import { useInputHistory } from '@moonshot-ai/app-client/composables';
 import { useSlashMenu } from '@moonshot-ai/app-client/composables';
 import { useMentionMenu } from '@moonshot-ai/app-client/composables';
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
-import { useAttachmentUpload, type Attachment } from '../../composables/useAttachmentUpload';
+import { useAttachmentUpload, type Attachment } from '@moonshot-ai/app-client/composables';
 import { matchBinding } from '../../lib/keymap';
 import { resolvedBinding } from '../../composables/useShortcuts';
 import { openFileAttachment } from '@moonshot-ai/app-client/lib';
@@ -314,6 +314,7 @@ const {
   clearAttachments,
   loadAttachments,
 } = useAttachmentUpload({
+  api: getKimiWebApi(),
   uploadImage: () => props.uploadImage,
   sessionId: () => props.sessionId,
   insertFolderPaths,

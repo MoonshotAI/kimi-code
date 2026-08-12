@@ -1,10 +1,18 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 
-const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
+import { createUpdateTracker, type UpdateStatus } from '../src/composables/useUpdateStatus';
+import { noopProductTracker, setProductTracker } from '../src/contracts';
 
-vi.mock('../../src/renderer/lib/track', () => ({ track: trackMock }));
+const trackMock = vi.fn();
 
-import { createUpdateTracker, type UpdateStatus } from '../../src/renderer/composables/useUpdateStatus';
+beforeEach(() => {
+  trackMock.mockClear();
+  setProductTracker({ track: trackMock });
+});
+
+afterEach(() => {
+  setProductTracker(noopProductTracker);
+});
 
 // Two microtask flushes: the tracker's .then runs after the bridge promise
 // resolves, so a single await can race depending on the mock's resolution path.
@@ -37,9 +45,6 @@ function fakeBridge(initial: UpdateStatus) {
 }
 
 describe('createUpdateTracker', () => {
-  beforeEach(() => {
-    trackMock.mockClear();
-  });
   it('stays idle with no desktop bridge (web / no-bridge fallback)', async () => {
     const tracker = createUpdateTracker(undefined);
     await flush();

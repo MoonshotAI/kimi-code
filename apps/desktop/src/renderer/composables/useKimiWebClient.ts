@@ -49,11 +49,11 @@ import {
 } from '@moonshot-ai/app-core/client';
 import { applyRecordDiff } from '@moonshot-ai/app-core/client';
 import { useAppearance } from '@moonshot-ai/app-core';
-import { useNotification, shouldNotifyCompletion } from './client/useNotification';
+import { useNotification, shouldNotifyCompletion } from '@moonshot-ai/app-client/composables';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
-import { createAuxiliaryTranscriptPool } from './client/useAuxiliaryTranscripts';
+import { createAuxiliaryTranscriptPool } from '@moonshot-ai/app-client/composables';
 import {
   FLAT_SESSIONS_PAGE_SIZE,
   forgetLocalTurnState,
@@ -62,7 +62,7 @@ import {
 } from './client/useWorkspaceState';
 
 const appearance = useAppearance();
-const notification = useNotification();
+const notification = useNotification({ t: (k, p) => (p === undefined ? i18n.global.t(k) : i18n.global.t(k, p)) });
 import type {
   AppEvent,
   AppApprovalRequest,

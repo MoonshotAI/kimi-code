@@ -10,7 +10,7 @@ import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import {
   useOAuthLoginFlow,
   type OAuthLoginStartResult,
-} from '../../composables/useOAuthLoginFlow';
+} from '@moonshot-ai/app-client/composables';
 // Desktop divergence (not synced to apps/web): marks the verification URL as
 // desktop-originated so the auth page can offer "open the desktop app".
 import { withDesktopLoginSource } from '../../lib/loginSource';
