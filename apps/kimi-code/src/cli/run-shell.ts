@@ -231,7 +231,7 @@ export async function runShell(
     const sessionId = tui.getCurrentSessionId();
     const hasContent = tui.hasSessionContent();
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
+    trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     const gutter = ' '.repeat(CHROME_GUTTER);
     process.stdout.write(`${gutter}Bye!\n`);
@@ -269,11 +269,12 @@ export async function runShell(
       config_ms: configMs,
       init_ms: initMs,
       mcp_ms: mcpMs,
+      tui_mode: tui.state.ui.mode,
     });
   } catch (error) {
     removeCrashHandlers();
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
+    trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     await harness.close();
     throw error;

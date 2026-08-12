@@ -134,6 +134,8 @@ vi.mock('../../src/tui/index', () => ({
   KimiTUI: class {
     onExit?: () => Promise<void>;
 
+    readonly state = { ui: { mode: 'regular' as const } };
+
     constructor(...args: unknown[]) {
       mocks.kimiTuiConstructor(this, ...args);
     }
@@ -353,6 +355,7 @@ describe('runShell', () => {
       config_ms: expect.any(Number),
       init_ms: expect.any(Number),
       mcp_ms: 47,
+      tui_mode: 'regular',
     });
   });
 
@@ -560,6 +563,7 @@ describe('runShell', () => {
       config_ms: expect.any(Number),
       init_ms: expect.any(Number),
       mcp_ms: 47,
+      tui_mode: 'regular',
     });
   });
 
@@ -817,7 +821,10 @@ describe('runShell', () => {
     ).rejects.toThrow('boom');
 
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('shutdown');
-    expect(mocks.harnessTrack).toHaveBeenCalledWith('exit', { duration_ms: expect.any(Number) });
+    expect(mocks.harnessTrack).toHaveBeenCalledWith('exit', {
+      duration_ms: expect.any(Number),
+      tui_mode: 'regular',
+    });
     expect(mocks.shutdownTelemetry).toHaveBeenCalledOnce();
     expect(mocks.harnessClose).toHaveBeenCalledOnce();
   });
@@ -866,6 +873,7 @@ describe('runShell', () => {
       expect(mocks.withTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses-1' });
       expect(mocks.lifecycleTrack).toHaveBeenCalledWith('exit', {
         duration_ms: expect.any(Number),
+        tui_mode: 'regular',
       });
       expect(mocks.harnessTrack).not.toHaveBeenCalledWith('exit', expect.anything());
       expect(mocks.shutdownTelemetry).toHaveBeenCalledOnce();
