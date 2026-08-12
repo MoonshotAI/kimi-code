@@ -1854,10 +1854,13 @@ describe('subagent config section', () => {
       '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\n',
     );
 
-    // Recipe patch fields have no pool counterpart and are stripped by the
-    // schema; the lone legacy key forms the implicit single-entry pool.
+    // Recipe patch fields have no pool counterpart: the schema keeps them
+    // (so config writes round-trip losslessly for the v1 engine) but pool
+    // resolution ignores them; the lone legacy key forms the implicit
+    // single-entry pool.
     expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
       model: 'provider/fast',
+      defaultEffort: 'low',
     });
     expect(resolveSubagentModelPool(config)).toEqual({
       defaultModel: 'provider/fast',
@@ -1917,6 +1920,31 @@ describe('subagent config section', () => {
     expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toThrow(
       /Invalid model "primary": \[secondary_model\]\.force is set/,
     );
+
+    disposables.dispose();
+  });
+
+  it('round-trips legacy recipe patch fields the pool resolution ignores', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\nmax_output_size = 8192\n',
+    );
+
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/fast',
+      defaultEffort: 'low',
+      maxOutputSize: 8192,
+    });
+    expect(resolveSubagentModelPool(config)).toEqual({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': '' },
+    });
+
+    // A v2 write validates before persisting — the patch fields must survive.
+    await config.set(SECONDARY_MODEL_SECTION, { defaultModel: 'provider/fast' });
+    const after = config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
+    expect(after?.defaultEffort).toBe('low');
+    expect(after?.maxOutputSize).toBe(8192);
 
     disposables.dispose();
   });

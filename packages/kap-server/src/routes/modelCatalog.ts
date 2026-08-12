@@ -42,10 +42,11 @@
  * transform's `setDefined` drops those). The kosong
  * persistence bridge then pushes the change into the registries, which is
  * also what invalidates the catalog cache. Multi-step sequences are
- * serialized through `enqueueProviderWrite`. Delete additionally cascades
- * into the `[secondary_model]` subagent pool (filtering entries whose model
- * alias disappeared, clearing the section when its default dangles) so the
- * engine's create/resume pool validation never meets a dangling pool.
+ * serialized through `enqueueProviderWrite`. Replace and delete additionally
+ * cascade into the `[secondary_model]` subagent pool (repointing renamed
+ * aliases, filtering entries whose model alias disappeared, clearing the
+ * section when its default dangles) so the engine's create/resume pool
+ * validation never meets a dangling pool.
  */
 
 import {
@@ -184,26 +185,49 @@ async function loadConfig(core: Scope): Promise<IConfigService> {
 }
 
 /**
- * Provider-deletion cascade for the `[secondary_model]` subagent pool,
- * mirroring the SDK's `planProviderRemoval`: pool entries naming a removed
- * model alias are filtered out, and the whole section is cleared (`null` →
- * `replace` drops it) when its effective default (`default_model`, or the
- * legacy recipe's `model` fallback) dangles — a surviving pool table without
- * its default would fail pool validation on every session create.
+ * Provider-write cascade for the `[secondary_model]` subagent pool, mirroring
+ * the SDK's `planProviderRemoval`: pool entries naming a removed model alias
+ * are filtered out (aliases renamed by a provider rename are repointed via
+ * `renamedAliases` first, the same way the route migrates the global default
+ * pointers), and the whole section is cleared (`null` → `replace` drops it)
+ * when its effective default (`default_model`, or the legacy recipe's
+ * `model` fallback) dangles — a surviving pool table without its default
+ * would fail pool validation on every session create.
  */
 function cascadeSecondaryModelPool(
   section: SecondaryModelConfig | undefined,
   survivingModels: Record<string, unknown>,
+  renamedAliases: ReadonlyMap<string, string> = new Map(),
 ): SecondaryModelConfig | null | undefined {
   if (section === undefined) return undefined;
-  const defaultAlias = section.defaultModel ?? section.model;
-  if (defaultAlias !== undefined && !(defaultAlias in survivingModels)) return null;
-  const pool = section.models;
-  if (pool === undefined) return undefined;
-  const entries = Object.entries(pool);
-  const surviving = entries.filter(([alias]) => alias in survivingModels);
-  if (surviving.length === entries.length) return undefined;
-  return { ...section, models: Object.fromEntries(surviving) };
+  const remap = (alias: string): string => renamedAliases.get(alias) ?? alias;
+  const nextDefault = section.defaultModel === undefined ? undefined : remap(section.defaultModel);
+  const nextLegacyDefault = section.model === undefined ? undefined : remap(section.model);
+  const effectiveDefault = nextDefault ?? nextLegacyDefault;
+  if (effectiveDefault !== undefined && !(effectiveDefault in survivingModels)) return null;
+
+  let changed = nextDefault !== section.defaultModel || nextLegacyDefault !== section.model;
+  let nextPool: Record<string, string> | undefined;
+  if (section.models !== undefined) {
+    nextPool = {};
+    for (const [alias, description] of Object.entries(section.models)) {
+      const key = remap(alias);
+      if (!(key in survivingModels)) {
+        changed = true;
+        continue;
+      }
+      if (key !== alias) changed = true;
+      nextPool[key] = description;
+    }
+    // An emptied table folds into the implicit single-entry pool form — a
+    // default naming no pool key would fail validation.
+    if (Object.keys(nextPool).length === 0) {
+      nextPool = undefined;
+      changed = true;
+    }
+  }
+  if (!changed) return undefined;
+  return { ...section, defaultModel: nextDefault, model: nextLegacyDefault, models: nextPool };
 }
 
 async function loadDiscovery(core: Scope): Promise<IProviderDiscoveryService> {
@@ -584,6 +608,24 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
               await config.replace(DEFAULT_MODEL_SECTION, renamedAlias);
             }
           }
+        }
+
+        const renamedAliases = new Map<string, string>();
+        if (newId !== provider_id) {
+          for (const oldAlias of previousAliasIds) {
+            const bare = models[oldAlias]?.model;
+            const renamed = bare === undefined ? undefined : `${newId}/${bare}`;
+            if (renamed !== undefined && nextModels[renamed] !== undefined) {
+              renamedAliases.set(oldAlias, renamed);
+            }
+          }
+        }
+        const secondaryModel = config.inspect<SecondaryModelConfig>(
+          SECONDARY_MODEL_SECTION,
+        ).userValue;
+        const cascadedPool = cascadeSecondaryModelPool(secondaryModel, nextModels, renamedAliases);
+        if (cascadedPool !== undefined) {
+          await config.replace(SECONDARY_MODEL_SECTION, cascadedPool);
         }
 
         const saved = await core.accessor.get(IModelCatalog).getProvider(newId);

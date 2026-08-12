@@ -753,6 +753,43 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(onDisk['default_model']).toBe('gpt4o');
   });
 
+  it('repoints secondary_model pool entries on provider rename', async () => {
+    await boot(POOL_TOML);
+    const { status } = await putJson<unknown>('/api/v1/providers/openai', {
+      type: 'openai',
+      new_id: 'my-openai',
+      models: [{ model: 'gpt-4o', max_context_size: 128000 }],
+    });
+    expect(status).toBe(200);
+
+    const onDisk = await readConfigToml();
+    expect(onDisk['secondary_model']).toEqual({
+      default_model: 'k2',
+      models: { k2: 'fast', 'my-openai/gpt-4o': 'smart' },
+    });
+  });
+
+  it('filters secondary_model pool entries dropped by a provider edit', async () => {
+    await boot(POOL_TOML);
+    const { status } = await putJson<unknown>('/api/v1/providers/openai', REPLACE_BODY);
+    expect(status).toBe(200);
+
+    const onDisk = await readConfigToml();
+    expect(onDisk['secondary_model']).toEqual({
+      default_model: 'k2',
+      models: { k2: 'fast' },
+    });
+  });
+
+  it('drops the secondary_model section when a provider edit orphans its default', async () => {
+    await boot(POOL_DANGLING_DEFAULT_TOML);
+    const { status } = await putJson<unknown>('/api/v1/providers/openai', REPLACE_BODY);
+    expect(status).toBe(200);
+
+    const onDisk = await readConfigToml();
+    expect(onDisk['secondary_model']).toBeUndefined();
+  });
+
   it('rejects a rename to an existing provider id with 40921', async () => {
     await boot(KEEP_DEFAULT_TOML);
     const { status, body } = await putJson<unknown>('/api/v1/providers/openai', {

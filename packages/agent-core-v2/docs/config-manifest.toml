@@ -326,6 +326,16 @@ merge_all_available_skills = true
 # models: record<string, string>
 # force: boolean
 # model: string
+# max_context_size: integer
+# max_input_size: integer
+# max_output_size: integer
+# capabilities: string[]
+# display_name: string
+# reasoning_key: string
+# adaptive_thinking: boolean
+# support_efforts: string[]
+# default_effort: string
+# off_effort: string
 
 # ##########################################################################
 # services

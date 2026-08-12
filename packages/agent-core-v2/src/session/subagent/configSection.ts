@@ -21,7 +21,10 @@
  *   for the v1 engine's recipe, a lone legacy `model` key (likewise without a
  *   pool table) forms the same implicit single-entry pool, ranked below
  *   `default_model`; the recipe's patch fields (`default_effort`, ...) have
- *   no pool counterpart and are ignored, and `model` never substitutes for
+ *   no pool counterpart and are ignored by pool resolution — but the schema
+ *   still declares them so validation never strips them and config
+ *   reads/writes round-trip losslessly for the v1 engine, and `model` never
+ *   substitutes for
  *   the pool table's required `default_model`. `force = true` instead
  *   removes the choice entirely: every spawn binds the resolved default
  *   (`default_model` ?? `model`), the tools hide the `model` parameter
@@ -119,6 +122,16 @@ export const SecondaryModelConfigSchema = z.object({
   models: z.record(z.string(), z.string()).optional(),
   force: z.boolean().optional(),
   model: z.string().min(1).optional(),
+  maxContextSize: z.number().int().min(1).optional(),
+  maxInputSize: z.number().int().min(1).optional(),
+  maxOutputSize: z.number().int().min(1).optional(),
+  capabilities: z.array(z.string()).optional(),
+  displayName: z.string().optional(),
+  reasoningKey: z.string().optional(),
+  adaptiveThinking: z.boolean().optional(),
+  supportEfforts: z.array(z.string()).optional(),
+  defaultEffort: z.string().optional(),
+  offEffort: z.string().optional(),
 });
 
 export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
