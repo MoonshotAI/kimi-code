@@ -172,7 +172,6 @@ describe('default agent profiles', () => {
         'Write',
         'Edit',
         'Bash',
-        'Agent',
         'Skill',
         'TaskList',
         'TaskOutput',
@@ -180,8 +179,6 @@ describe('default agent profiles', () => {
       ]),
     );
     expect(DEFAULT_AGENT_PROFILES['coder']?.tools).toEqual([
-      'Agent',
-      'AgentSwarm',
       'Bash',
       'CronCreate',
       'CronDelete',

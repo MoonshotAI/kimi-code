@@ -418,9 +418,14 @@ function projectResumedAgents(
  *   DESCRIPTIONS are engine-owned constants that legitimately drift between
  *   the engines (the subagent/cron docs embed engine-specific facts), and
  *   v1 additionally registers the `select_tools` meta tool v2 has no
- *   counterpart for — both are engine design, not resume data. A model-less
- *   agent's roster is not compared at all (v1 initializes builtin tools
- *   only on a profiled agent; v2 exposes them unbound).
+ *   counterpart for — both are engine design, not resume data. `Agent` /
+ *   `AgentSwarm` are a registration-semantics gap: v1 always registers them
+ *   and reports them as inactive when the profile does not opt in, while v2
+ *   only registers the tools a profile lists, so an INACTIVE entry has no
+ *   v2 counterpart and is dropped; active entries (a profile that
+ *   explicitly opts in on both engines) still compare in full. A
+ *   model-less agent's roster is not compared at all (v1 initializes
+ *   builtin tools only on a profiled agent; v2 exposes them unbound).
  */
 function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown {
   const projected = scrubHomePrefixes(agent, home) as Record<string, unknown>;
@@ -436,6 +441,10 @@ function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown 
     const tools = projected['tools'] as readonly Record<string, unknown>[];
     projected['tools'] = tools
       .filter((tool) => tool['name'] !== 'select_tools')
+      .filter(
+        (tool) =>
+          tool['active'] === true || (tool['name'] !== 'Agent' && tool['name'] !== 'AgentSwarm'),
+      )
       .map((tool) => ({ name: tool['name'], active: tool['active'], source: tool['source'] }))
       .toSorted((a, b) => String(a.name).localeCompare(String(b.name)));
   }
