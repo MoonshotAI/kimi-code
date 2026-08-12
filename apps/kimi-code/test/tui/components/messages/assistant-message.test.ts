@@ -17,7 +17,9 @@ vi.mock('cli-highlight', async () => {
 });
 
 function strip(text: string): string {
-  return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
+  return text
+    .replaceAll(/\u001B\[[0-9;]*m/g, '')
+    .replaceAll(/\u001B\]133;[ABC]\u0007/g, '');
 }
 
 describe('AssistantMessageComponent', () => {
@@ -124,5 +126,17 @@ describe('AssistantMessageComponent', () => {
 
     finalTheme.highlightCode?.(code, 'typescript');
     expect(highlightSpy).toHaveBeenCalled();
+  });
+
+  it('marks the rendered zone with OSC 133 markers, once across cache hits', () => {
+    const component = new AssistantMessageComponent();
+    component.updateContent('hello');
+
+    const lines = component.render(80);
+    expect(lines[0]).toMatch(/^\u001B\]133;A\u0007/);
+    expect(lines[lines.length - 1]).toMatch(/^\u001B\]133;B\u0007\u001B\]133;C\u0007/);
+
+    const cached = component.render(80);
+    expect(cached[0]).toBe(lines[0]);
   });
 });

@@ -126,4 +126,42 @@ describe('fullscreen layout', () => {
 
     state.ui.stop();
   });
+
+  it('jumps between prompts with Ctrl-Shift-Up/Down (OSC 133 zones survive the chain)', async () => {
+    const { state, vt } = await mountFullscreen();
+
+    state.transcriptContainer.addChild(new UserMessageComponent('第一轮提问'));
+    const first = new AssistantMessageComponent();
+    state.transcriptContainer.addChild(first);
+    first.updateContent(`回答一\n\n${LONG_MARKDOWN}`);
+    state.transcriptContainer.addChild(new UserMessageComponent('第二轮提问'));
+    const second = new AssistantMessageComponent();
+    state.transcriptContainer.addChild(second);
+    second.updateContent(`回答二\n\n${LONG_MARKDOWN}`);
+    state.ui.requestRender(true);
+    await vt.waitForRender();
+
+    const alt = state.ui as TuiAltScreen;
+    expect(alt.isFollowingOutput).toBe(true);
+
+    const topRows = (): string[] =>
+      Array.from({ length: 6 }, (_, i) => stripAnsi(vt.getViewport()[i] ?? '').trimEnd());
+
+    // Zones anchor every user/assistant message, so the nearest previous zone
+    // below the fold is the current turn's assistant message, then the user
+    // message that started the turn.
+    vt.sendInput('\x1b[1;6A'); // ctrl+shift+up = previous prompt
+    await vt.waitForRender();
+    expect(topRows()[1]).toContain('回答二');
+
+    vt.sendInput('\x1b[1;6A');
+    await vt.waitForRender();
+    expect(topRows()[1]).toContain('第二轮提问');
+
+    vt.sendInput('\x1b[1;6B'); // ctrl+shift+down = next prompt
+    await vt.waitForRender();
+    expect(topRows()[1]).toContain('回答二');
+
+    state.ui.stop();
+  });
 });

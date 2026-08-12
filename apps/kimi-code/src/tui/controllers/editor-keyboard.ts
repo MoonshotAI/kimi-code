@@ -57,6 +57,7 @@ export interface EditorKeyboardHost {
   handleInputModeChange(mode: 'prompt' | 'bash'): void;
   clearQueuedMessages(): void;
   setExternalEditorRunning(running: boolean): void;
+  updateActivityPane(): void;
 }
 
 export class EditorKeyboardController {
@@ -547,6 +548,11 @@ export class EditorKeyboardController {
       state.ui.start();
       state.ui.setFocus(state.editor);
       state.ui.requestRender(true);
+      // terminal.stop() cleared the OSC 9;4 progress indicator while the
+      // app-side progressActive flag still reads true; resync so a turn that
+      // was streaming while the editor was open gets its progress back.
+      state.terminalState.progressActive = false;
+      this.host.updateActivityPane();
       this.host.setExternalEditorRunning(false);
     }
   }

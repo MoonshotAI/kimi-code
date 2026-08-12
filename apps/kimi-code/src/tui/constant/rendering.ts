@@ -1,6 +1,15 @@
 // Continuation indent for transcript rows that use a two-cell leading marker.
 export const MESSAGE_INDENT = '  ';
 
+// OSC 133 semantic-zone markers (FinalTerm/shell-integration protocol):
+// zero-width escape sequences prefixed onto the first/last rendered line of
+// transcript messages. The fullscreen renderer strips them at paint and uses
+// the A marker for previous/next-prompt navigation (Ctrl-Shift-Up/Down); in
+// regular mode they pass through to native scrollback invisibly.
+export const OSC133_ZONE_START = '\x1b]133;A\x07';
+export const OSC133_ZONE_END = '\x1b]133;B\x07';
+export const OSC133_ZONE_FINAL = '\x1b]133;C\x07';
+
 // Outer left/right padding applied to the transcript, panels, and the
 // statusline so the chrome's left edge lines up with the input box's
 // interior (the `>` prompt). The editor itself stays at column 0 — its
