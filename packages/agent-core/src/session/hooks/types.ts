@@ -21,11 +21,15 @@ export const HOOK_EVENT_TYPES = [
 
 export type HookEventType = (typeof HOOK_EVENT_TYPES)[number];
 
+export type HookFailMode = 'open' | 'closed';
+
 export interface HookDef {
   readonly event: HookEventType;
   readonly matcher?: string;
   readonly command: string;
   readonly timeout?: number;
+  // snake_case to match the untransformed TOML config shape (see HookDefSchema)
+  readonly fail_mode?: HookFailMode;
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string>>;
 }

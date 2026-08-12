@@ -419,7 +419,7 @@ Plugin MCP servers 会在 `/reload` 后或新会话中启动。启用或禁用�
 
 ## 插件中的 Hooks
 
-plugin 可以在其 manifest 中声明 hook 规则，在 plugin 启用期间于生命周期事件上运行。每一项使用与 [`config.toml` 中的 `[[hooks]]` 规则](./hooks.md#配置)相同的字段（`event`、`matcher`、`command`、`timeout`）：
+plugin 可以在其 manifest 中声明 hook 规则，在 plugin 启用期间于生命周期事件上运行。每一项使用与 [`config.toml` 中的 `[[hooks]]` 规则](./hooks.md#配置)相同的字段（`event`、`matcher`、`command`、`timeout`、`fail_mode`）：
 
 ```json
 {
