@@ -343,6 +343,47 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
     }
   });
 
+  it('cascades removeProvider into the secondary_model pool', async () => {
+    const { harness } = await makeHarness();
+    try {
+      await harness.setConfig({
+        providers: {
+          a: { type: 'openai', baseUrl: 'https://a.example.test/v1', apiKey: 'sk-a' },
+          b: { type: 'openai', baseUrl: 'https://b.example.test/v1', apiKey: 'sk-b' },
+        },
+        models: {
+          'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
+          'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
+        },
+        secondaryModel: {
+          defaultModel: 'a/m1',
+          models: { 'a/m1': 'fast', 'b/m1': 'smart' },
+        },
+      });
+
+      // Pool entries naming a removed model alias are filtered out; the
+      // surviving default keeps the section valid.
+      const filtered = await harness.removeProvider('b');
+      expect(filtered.secondaryModel).toEqual({
+        defaultModel: 'a/m1',
+        models: { 'a/m1': 'fast' },
+      });
+
+      // When the pool's default dangles the whole section is dropped — a
+      // leftover models table without its default would fail pool validation
+      // on every session create.
+      await harness.setConfig({
+        secondaryModel: { defaultModel: 'a/m1', models: { 'a/m1': 'fast' } },
+      });
+      const cleared = await harness.removeProvider('a');
+      expect(cleared.secondaryModel).toBeUndefined();
+      const reread = await harness.getConfig({ reload: true });
+      expect(reread.secondaryModel).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('replaces config sections atomically and clears undefined sections', async () => {
     const { harness } = await makeHarness();
     try {
@@ -648,6 +689,66 @@ describe('removeProviderFromConfig', () => {
     expect(Object.keys(next.models ?? {})).toEqual(['a/m1']);
     expect(next.defaultModel).toBe('a/m1');
     expect(next.defaultProvider).toBe('a');
+  });
+
+  it('filters secondary_model pool entries whose model alias was removed', () => {
+    const config = {
+      providers: { a: { type: 'openai' }, b: { type: 'openai' } },
+      models: {
+        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
+        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
+      },
+      secondaryModel: {
+        defaultModel: 'a/m1',
+        models: { 'a/m1': 'fast', 'b/m1': 'smart' },
+      },
+    } as unknown as KimiConfig;
+
+    const next = removeProviderFromConfig(config, 'b');
+
+    expect(next.secondaryModel).toEqual({
+      defaultModel: 'a/m1',
+      models: { 'a/m1': 'fast' },
+    });
+  });
+
+  it('drops the secondary_model section when its default model dangles', () => {
+    const config = {
+      providers: { a: { type: 'openai' }, b: { type: 'openai' } },
+      models: {
+        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
+        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
+      },
+      secondaryModel: {
+        defaultModel: 'b/m1',
+        models: { 'a/m1': 'fast', 'b/m1': 'smart' },
+      },
+    } as unknown as KimiConfig;
+
+    expect(removeProviderFromConfig(config, 'b').secondaryModel).toBeUndefined();
+
+    // The legacy recipe's `model` key acts as the default fallback and
+    // cascades the same way.
+    const legacy = {
+      ...config,
+      secondaryModel: { model: 'b/m1', default_effort: 'low' },
+    } as unknown as KimiConfig;
+    expect(removeProviderFromConfig(legacy, 'b').secondaryModel).toBeUndefined();
+  });
+
+  it('leaves the secondary_model section untouched when nothing dangles', () => {
+    const config = {
+      providers: { a: { type: 'openai' }, b: { type: 'openai' } },
+      models: {
+        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
+        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
+      },
+      secondaryModel: { defaultModel: 'a/m1' },
+    } as unknown as KimiConfig;
+
+    const next = removeProviderFromConfig(config, 'b');
+
+    expect(next.secondaryModel).toEqual({ defaultModel: 'a/m1' });
   });
 });
 
