@@ -454,7 +454,7 @@ export interface QuestionResponse {
 // ---------------------------------------------------------------------------
 
 export type AppTaskStatus = 'running' | 'completed' | 'failed' | 'cancelled';
-export type AppSubagentPhase = 'queued' | 'working' | 'suspended' | 'completed' | 'failed';
+export type AppSubagentPhase = 'queued' | 'working' | 'suspended' | 'completed' | 'failed' | 'cancelled';
 
 export interface AppTask {
   id: string;
@@ -469,6 +469,9 @@ export interface AppTask {
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
+  /** Set when completedAt was stamped by the client observing the terminal
+      transition (old daemons omit it) — sort-only, never a duration input. */
+  completedAtEstimated?: boolean;
   outputPreview?: string;
   outputBytes?: number;
   outputLines?: string[]; // accumulated by eventReducer from task.progress chunks

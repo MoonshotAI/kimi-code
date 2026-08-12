@@ -23,11 +23,13 @@ export default {
     progress: '{done} / {total}',
     runningSub: '{count} 个进行中',
     doneSub: '完成 {completed} · 失败 {failed}',
+    doneSubWithCancelled: '完成 {completed} · 失败 {failed} · 已取消 {cancelled}',
     phaseQueued: '排队',
     phaseWorking: '运行中',
     phaseSuspended: '暂停',
     phaseCompleted: '完成',
     phaseFailed: '失败',
+    phaseCancelled: '已取消',
     waiting: '等待子任务加入…',
   },
   chip: {

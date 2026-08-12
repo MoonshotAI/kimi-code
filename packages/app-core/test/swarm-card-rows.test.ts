@@ -119,7 +119,7 @@ describe('buildSwarmCardRows', () => {
     );
     expect(rows.map((r) => r.id)).toEqual(['a1', 'a2', 'C']);
     expect(rows.map((r) => r.agentId)).toEqual(['a1', 'a2', undefined]);
-    expect(rows[2]?.phase).toBe('failed');
+    expect(rows[2]?.phase).toBe('cancelled');
     expect(rows[2]?.body).toBe('C never started');
   });
 

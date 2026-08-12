@@ -116,7 +116,7 @@ const title = computed(() => {
   align-items: center;
   gap: 6px;
   max-width: 220px;
-  padding: 4px 9px 4px 5px;
+  padding: 4px 9px 4px var(--att-chip-pad-left, 5px);
   background: var(--color-well);
   border: 0.5px solid var(--color-line);
   border-radius: 999px;

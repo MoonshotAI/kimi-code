@@ -61,6 +61,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect());
       :ref="(el) => setItemRef(el, index)"
       class="ui-seg__item"
       :class="{ 'is-on': opt.value === modelValue }"
+      :data-icon="opt.icon"
       type="button"
       role="tab"
       :aria-selected="opt.value === modelValue"

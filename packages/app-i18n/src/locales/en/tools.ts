@@ -23,11 +23,13 @@ export default {
     progress: '{done} / {total}',
     runningSub: '{count} in progress',
     doneSub: '{completed} completed · {failed} failed',
+    doneSubWithCancelled: '{completed} completed · {failed} failed · {cancelled} cancelled',
     phaseQueued: 'Queued',
     phaseWorking: 'Working',
     phaseSuspended: 'Suspended',
     phaseCompleted: 'Completed',
     phaseFailed: 'Failed',
+    phaseCancelled: 'Cancelled',
     waiting: 'Waiting for subagents…',
   },
   chip: {

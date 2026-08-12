@@ -27,6 +27,7 @@ describe('useDetailPanel agent transcript state', () => {
     const entry = { channel, version: ref(0) };
     const client = {
       activeSessionId: ref('session-1'),
+      findBashCommandForTask: () => undefined,
       activeAppTasks: ref([
         {
           id: 'agent-99',

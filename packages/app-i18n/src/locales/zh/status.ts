@@ -19,6 +19,9 @@ export default {
   // 模式选择器（计划 / 目标 / Swarm）
   modesLabel: '模式',
   goalLabel: '目标',
+  timeUnitHour: '小时',
+  timeUnitMinute: '分',
+  timeUnitSecond: '秒',
   goalDesc: '持续跟踪一个目标，直到任务完成',
   swarmLabel: 'Swarm',
   swarmDesc: '并行运行多个智能体，适合大范围探索',

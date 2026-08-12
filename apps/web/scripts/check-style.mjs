@@ -56,12 +56,17 @@ const FILE_EXEMPT = new Set(['views/DesignSystemView.vue']);
 
 // The §03 floating menu surfaces allowed to use the frosted-glass token pair
 // (--color-menu-bg + --p-menu-backdrop). Any other file using backdrop-filter
-// (and any ad-hoc blur value, even in these files) is flagged. ChatDock is
-// deliberately absent: its work panel stays open over the scrolling
-// transcript, where a live backdrop blur re-samples every frame and janks.
+// (and any ad-hoc blur value, even in these files) is flagged. ChatDock's
+// work panel and pills are deliberately on this list: the canonical
+// design-system spec (DesignSystemView, "Dock · work pills & panels")
+// declares the dock's work surfaces first-class menu surfaces with the same
+// frosted recipe — the live-blur cost on a small (≤360px) panel or a chip is
+// accepted by design, while full-height seams over the transcript keep the
+// cheaper gradient veil.
 const GLASS_MENU_EXEMPT = new Set([
   'app-ui/components/ui/Menu.vue',
   'app-ui/components/ui/Select.vue',
+  'components/chat/ChatDock.vue',
   'components/chat/Composer.vue',
   'components/chat/SlashMenu.vue',
   'components/chat/MentionMenu.vue',

@@ -11,14 +11,18 @@ import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } fro
 import type { FileItem } from './MentionMenu.vue';
 import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
 import Composer from './Composer.vue';
-import GoalPanel from './GoalPanel.vue';
+import GoalPanel from './dock/GoalPanel.vue';
 import QuestionCard from './QuestionCard.vue';
 import ApprovalCard from './ApprovalCard.vue';
-import TasksPane from './TasksPane.vue';
-import TodoCard from './TodoCard.vue';
-import { Button, Icon, Pill } from '@moonshot-ai/app-ui';
+import TasksPane from './dock/TasksPane.vue';
+import SubagentGrid from './dock/SubagentGrid.vue';
+import TodoCard from './dock/TodoCard.vue';
+import WorkPill from './dock/WorkPill.vue';
+import WorkPanelHead from './dock/WorkPanelHead.vue';
+import FilterControl from './dock/FilterControl.vue';
+import { Icon, IconButton, StatusDot } from '@moonshot-ai/app-ui';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
-import { formatTokens } from '@moonshot-ai/app-core/lib';
+import { installImeCompositionLatch, isImeKeyEvent } from '@moonshot-ai/app-client/lib';
 import { formatDuration } from '../chatTurnRendering';
 
 const props = defineProps<{
@@ -53,6 +57,10 @@ const props = defineProps<{
   skills?: AppSkill[];
   goal?: AppGoal | null;
   dockPanel: 'bash' | 'subagent' | 'todos' | 'goal' | null;
+  /** A modal/overlay layer is open above the dock (any dialog, sheet, or
+      picker tracked by App's anyOverlayOpen) — it owns Escape, so the work
+      panel's document capture stays quiet while it is open. */
+  overlayOpen?: boolean;
   bashTasks: TaskItem[];
   subagentTasks: TaskItem[];
   bashRunning: number;
@@ -102,10 +110,9 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { confirm } = useConfirmDialog();
+const { confirm, isConfirmOpen } = useConfirmDialog();
 
-// The goal rides the dock as one more workbar pill; the label it carries (and
-// the panel head's) is its live status.
+// The goal rides the dock as one more workbar pill, carrying its live status.
 const goalStatusLabel = computed(() => {
   switch (props.goal?.status) {
     case 'active': return t('status.goalStatusActive');
@@ -116,16 +123,16 @@ const goalStatusLabel = computed(() => {
   }
 });
 
-// Goal panel chrome: the actions ride the panel head, the budget percentage
-// feeds the footer's stats row.
-const goalTokenPct = computed(() => {
-  const budget = props.goal?.budget.tokenBudget;
-  if (!props.goal || !budget || budget <= 0) return 0;
-  return Math.max(0, Math.min(100, Math.round((props.goal.tokensUsed / budget) * 100)));
-});
-
-/** Wall-clock stat in the goal footer ('' hides a sub-second span). */
-const goalWallClockLabel = computed(() => (props.goal ? formatDuration(props.goal.wallClockMs) : ''));
+/** Wall-clock stat in the goal head ('' hides a sub-second span). */
+const goalWallClockLabel = computed(() =>
+  props.goal
+    ? formatDuration(props.goal.wallClockMs, {
+        h: t('status.timeUnitHour'),
+        m: t('status.timeUnitMinute'),
+        s: t('status.timeUnitSecond'),
+      })
+    : '',
+);
 
 async function onGoalCancel(): Promise<void> {
   const confirmed = await confirm({
@@ -137,6 +144,97 @@ async function onGoalCancel(): Promise<void> {
   });
   if (confirmed) emit('controlGoal', 'cancel');
 }
+// Task status filter for the bash and subagent panels: default "active" =
+// running + the 5 most recently finished; the chips ride the panel head.
+const TASK_FILTERS = [
+  { id: 'active', labelKey: 'tasks.filterRecent', icon: 'clock' },
+  { id: 'running', labelKey: 'tasks.filterRunning', icon: 'play' },
+  { id: 'done', labelKey: 'tasks.filterDone', icon: 'circle-check' },
+  { id: 'all', labelKey: 'tasks.filterAll', icon: 'list' },
+] as const;
+type TaskFilterId = (typeof TASK_FILTERS)[number]['id'];
+
+/** Recency order for finished tasks: completion stamp first — an
+    early-created task that just ended must not drop out of the default view.
+    Falls back to creation time (an all-historical session, old daemon, never
+    gets a poll merge to stamp anything, and '' would sort oldest-first);
+    batched events (reconnect replay) can share the same millisecond, so ties
+    break by creation stamp or genuinely newer finishes hide behind creation
+    order. */
+function compareFinished(a: TaskItem, b: TaskItem): number {
+  return (
+    (b.completedAt ?? b.createdAt ?? '').localeCompare(a.completedAt ?? a.createdAt ?? '')
+    || (b.createdAt ?? '').localeCompare(a.createdAt ?? '')
+  );
+}
+
+function filterTasks(tasks: TaskItem[], mode: TaskFilterId): TaskItem[] {
+  if (mode === 'all') return tasks;
+  if (mode === 'running') return tasks.filter((t) => t.state === 'run');
+  // Done = every terminal state (done / failed / cancelled).
+  if (mode === 'done') return tasks.filter((t) => t.state !== 'run');
+  // Keep the five most recently finished. The tasks array is rebuilt on every
+  // running-clock tick while any task runs, so select linearly — a full
+  // O(n log n) sort of all historical tasks would run once a second.
+  const top: TaskItem[] = [];
+  for (const t of tasks) {
+    if (t.state === 'run') continue;
+    let i = top.length;
+    while (i > 0 && compareFinished(top[i - 1]!, t) > 0) i--;
+    top.splice(i, 0, t);
+    if (top.length > 5) top.length = 5;
+  }
+  // Running first (array order), then the five most recently finished in
+  // that recency order — not the raw array order.
+  return [...tasks.filter((t) => t.state === 'run'), ...top];
+}
+
+const bashFilter = ref<TaskFilterId>('active');
+const subagentFilter = ref<TaskFilterId>('active');
+const filteredBashTasks = computed(() => filterTasks(props.bashTasks, bashFilter.value));
+const filteredSubagentTasks = computed(() => filterTasks(props.subagentTasks, subagentFilter.value));
+
+// The filters are the design system's SegmentedControl semantics (2-5
+// mutually exclusive options); v-model bridges keep the TaskFilterId type.
+const filterOptions = computed(() => TASK_FILTERS.map((f) => ({ value: f.id as string, label: t(f.labelKey), icon: f.icon })));
+const bashFilterModel = computed({
+  get: () => bashFilter.value as string,
+  set: (v: string) => { bashFilter.value = v as TaskFilterId; },
+});
+const subagentFilterModel = computed({
+  get: () => subagentFilter.value as string,
+  set: (v: string) => { subagentFilter.value = v as TaskFilterId; },
+});
+
+// Progress icon mirrors completion: the all-checked list once every task is
+// done, a plain list while anything is still open.
+const todoAllDone = computed(
+  () => (props.todos?.length ?? 0) > 0 && props.todoDoneCount === (props.todos?.length ?? 0),
+);
+
+// A background TOOL task in the list (a genuine tool call with content, not
+// a question flow — those stay in the message stream) makes the "Bash"
+// title a mislabel; switch to the generic tasks label while one is present.
+const hasToolTasks = computed(() => props.bashTasks.some((t) => t.kind === 'tool'));
+const bashPanelLabelKey = computed(() => (hasToolTasks.value ? 'tasks.dockTasks' : 'tasks.dockBash'));
+
+// Accessible names for the work pills — required once they collapse to
+// icon-only below the 620px dock width.
+const goalPillLabel = computed(() => `${t('status.goalLabel')} ${goalStatusLabel.value}`.trim());
+const bashPillLabel = computed(() =>
+  props.bashRunning > 0
+    ? `${t(bashPanelLabelKey.value)} ${props.bashRunning} ${t('tasks.running')}`
+    : t(bashPanelLabelKey.value),
+);
+const subagentPillLabel = computed(() =>
+  props.subagentRunning > 0
+    ? `${t('tasks.dockSubagent')} ${props.subagentRunning} ${t('tasks.running')}`
+    : t('tasks.dockSubagent'),
+);
+const todosPillLabel = computed(
+  () => `${t('tasks.todoProgressTitle')} ${props.todoDoneCount}/${props.todos?.length ?? 0}`,
+);
+
 const composerRef = ref<{
   loadForEdit: (value: string) => boolean;
   loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
@@ -145,8 +243,31 @@ const composerRef = ref<{
   isEmpty?: () => boolean;
 } | null>(null);
 const anyPopupOpen = computed(() => composerRef.value?.anyPopupOpen === true);
+// Stacking only: the dock's own work panel must also clear the transcript's
+// new-message pill (z-sticky), so it raises the dock exactly like a composer
+// popup. Kept separate from the exposed anyPopupOpen — the panel consumes
+// Escape on its own capture handler (see onDocumentKeydown), so
+// ConversationPane's interrupt gate does not need it here.
+const raisedForPanel = computed(() => anyPopupOpen.value || props.dockPanel != null);
 const workPanelRef = ref<HTMLElement | null>(null);
 const dockRef = ref<HTMLElement | null>(null);
+// Below the design system's --p-bp-sm breakpoint the work pills collapse
+// to icon-only (the threshold is read from the token at measure time).
+const compactPills = ref(false);
+
+// The work panel pops from the triggering pill (the menus' trigger-corner
+// motion) — remember its x so the panel can scale from there.
+const panelOriginX = ref('50%');
+
+function onPillClick(panel: 'bash' | 'subagent' | 'todos' | 'goal', e: MouseEvent): void {
+  const pillEl = e.currentTarget as HTMLElement | null;
+  if (pillEl && dockRef.value) {
+    const pr = pillEl.getBoundingClientRect();
+    const dr = dockRef.value.getBoundingClientRect();
+    panelOriginX.value = `${pr.left + pr.width / 2 - dr.left}px`;
+  }
+  emit('toggle-dock-panel', panel);
+}
 
 function loadForEdit(value: string): boolean {
   // The nested Composer is only rendered in ChatDock's v-else — when a pending
@@ -179,28 +300,40 @@ function onDocumentMouseDown(event: MouseEvent): void {
   emit('close-dock-panel');
 }
 
-// Scroll-linked edge fades on the work panel (the session list's vocabulary):
-// the pinned head — and the goal footer — cast a soft ramp only while more
-// content exists beyond that edge.
+// The work panel owns Escape while open: close it and consume the key in the
+// capture phase, so ConversationPane's interrupt/undo handler (bubble, gated
+// on defaultPrevented) never fires for the same keypress. A composer popup,
+// an IME candidate, or a top overlay layer (overlayOpen — any dialog, sheet,
+// or picker) owns the key first — each closes on its own handler. The IME
+// test is the Composer's own (shared latch + keyCode 229): some browsers
+// emit a trailing Escape with isComposing === false right after a candidate
+// is cancelled, and a bare isComposing check would swallow it.
+function onDocumentKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape' || event.repeat || isImeKeyEvent(event)) return;
+  // An earlier capture listener on this same element already consumed the
+  // key (App's side-panel handler) — that topmost layer owns this Escape.
+  if (event.defaultPrevented) return;
+  if (anyPopupOpen.value || isConfirmOpen.value) return;
+  if (props.overlayOpen) return;
+  event.preventDefault();
+  // Immediate: App's global handler listens on the SAME element, and a plain
+  // stopPropagation would not keep it from also firing.
+  event.stopImmediatePropagation();
+  emit('close-dock-panel');
+}
+
+// Scroll-linked top mask on the work panel's body: once scrolled, content
+// dissolves toward the head instead of hard-clipping at it.
 const workBodyRef = ref<HTMLElement | null>(null);
 const bodyScrolledUp = ref(false);
-const bodyScrolledDown = ref(false);
 
 function updateWorkBodyScrollState(): void {
   const el = workBodyRef.value;
-  if (!el) {
-    bodyScrolledUp.value = false;
-    bodyScrolledDown.value = false;
-    return;
-  }
-  bodyScrolledUp.value = el.scrollTop > 0;
-  bodyScrolledDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+  bodyScrolledUp.value = el ? el.scrollTop > 0 : false;
 }
 
 function onWorkBodyScroll(e: Event): void {
-  const el = e.target as HTMLElement;
-  bodyScrolledUp.value = el.scrollTop > 0;
-  bodyScrolledDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+  bodyScrolledUp.value = (e.target as HTMLElement).scrollTop > 0;
 }
 
 let workBodyResizeObserver: ResizeObserver | null = null;
@@ -210,7 +343,11 @@ watch(
   async (panel) => {
     if (typeof document !== 'undefined') {
       document.removeEventListener('mousedown', onDocumentMouseDown, true);
-      if (panel) document.addEventListener('mousedown', onDocumentMouseDown, true);
+      document.removeEventListener('keydown', onDocumentKeydown, true);
+      if (panel) {
+        document.addEventListener('mousedown', onDocumentMouseDown, true);
+        document.addEventListener('keydown', onDocumentKeydown, true);
+      }
     }
     workBodyResizeObserver?.disconnect();
     workBodyResizeObserver = null;
@@ -223,7 +360,6 @@ watch(
       }
     } else {
       bodyScrolledUp.value = false;
-      bodyScrolledDown.value = false;
     }
   },
   { immediate: true },
@@ -237,9 +373,14 @@ function publishDockHeight(): void {
   // safe-area padding, so consumers don't need to add safe-bottom again.
   const height = dockRef.value?.offsetHeight ?? 0;
   document.documentElement.style.setProperty('--dock-h', `${height}px`);
+  const bp = Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--p-bp-sm'),
+  );
+  compactPills.value = (dockRef.value?.offsetWidth ?? 0) < (Number.isFinite(bp) ? bp : 640);
 }
 
 onMounted(() => {
+  installImeCompositionLatch();
   if (typeof ResizeObserver !== 'function' || !dockRef.value) return;
   dockResizeObserver = new ResizeObserver(publishDockHeight);
   dockResizeObserver.observe(dockRef.value);
@@ -249,6 +390,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('mousedown', onDocumentMouseDown, true);
+    document.removeEventListener('keydown', onDocumentKeydown, true);
   }
   dockResizeObserver?.disconnect();
   dockResizeObserver = null;
@@ -265,7 +407,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
     class="chat-dock"
     :class="[
       mobile ? 'align-mobile' : 'align-center',
-      { 'has-popup': anyPopupOpen, 'has-approval': !!pendingApproval && !pendingQuestion },
+      { 'has-popup': raisedForPanel, 'has-approval': !!pendingApproval && !pendingQuestion, 'pills-compact': compactPills },
     ]"
     @click.stop
   >
@@ -273,79 +415,97 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
       <div
         ref="workPanelRef"
         v-if="dockPanel"
+        :key="dockPanel"
         class="dock-work-panel"
-        :class="{ 'body-scrolled-up': bodyScrolledUp, 'body-scrolled-down': bodyScrolledDown }"
+        :class="[`panel-${dockPanel}`, { 'body-scrolled-up': bodyScrolledUp }]"
+        :style="{ transformOrigin: `${panelOriginX} 100%` }"
         @click.stop
       >
         <div class="dock-work-head">
-          <span
+          <WorkPanelHead
             v-if="dockPanel === 'bash'"
-            class="dock-work-tab static"
+            icon="terminal"
+            :title="t(bashPanelLabelKey)"
+            :meta="`${bashRunning} ${t('tasks.running')}`"
           >
-            {{ t('tasks.dockBash') }} · {{ bashRunning }} {{ t('tasks.running') }}
-          </span>
-          <span
+            <template #actions>
+              <FilterControl v-model="bashFilterModel" :options="filterOptions" />
+            </template>
+          </WorkPanelHead>
+          <WorkPanelHead
             v-else-if="dockPanel === 'subagent'"
-            class="dock-work-tab static"
+            icon="sparkles"
+            :title="t('tasks.dockSubagent')"
+            :meta="`${subagentRunning} ${t('tasks.running')}`"
           >
-            {{ t('tasks.dockSubagent') }} · {{ subagentRunning }} {{ t('tasks.running') }}
-          </span>
-          <span
+            <template #actions>
+              <FilterControl v-model="subagentFilterModel" :options="filterOptions" />
+            </template>
+          </WorkPanelHead>
+          <WorkPanelHead
             v-else-if="dockPanel === 'todos'"
-            class="dock-work-tab static"
-          >
-            {{ t('tasks.dockTodos') }} · {{ todoDoneCount }}/{{ todos?.length ?? 0 }}
-          </span>
-          <span
+            :icon="todoAllDone ? 'check-list' : 'list'"
+            :title="t('tasks.todoProgressTitle')"
+            :meta="`${todoDoneCount}/${todos?.length ?? 0}`"
+          />
+          <WorkPanelHead
             v-else-if="dockPanel === 'goal'"
-            class="dock-work-tab static"
+            icon="target"
+            :title="t('status.goalLabel')"
+            :meta="goalWallClockLabel"
           >
-            {{ t('status.goalLabel') }} · {{ goalStatusLabel }}
-          </span>
-          <!-- The goal's controls ride the panel head — the decision cards'
-               action vocabulary: exactly one accent primary (resume while
-               paused), the rest quiet semantic variants. -->
-          <span v-if="dockPanel === 'goal' && goal" class="dock-work-head-actions">
-            <Button
-              v-if="goal.status === 'active'"
-              size="sm"
-              variant="secondary"
-              class="dock-goal-action"
-              @click.stop="emit('controlGoal', 'pause')"
-            >
-              <Icon name="pause" size="md" />
-              <span>{{ t('status.goalPause') }}</span>
-            </Button>
-            <Button
-              v-if="goal.status === 'paused' || goal.status === 'blocked'"
-              size="sm"
-              variant="primary"
-              class="dock-goal-action"
-              @click.stop="emit('controlGoal', 'resume')"
-            >
-              <Icon name="play" size="md" />
-              <span>{{ t('status.goalResume') }}</span>
-            </Button>
-            <Button
-              size="sm"
-              variant="danger-soft"
-              class="dock-goal-action"
-              @click.stop="onGoalCancel"
-            >
-              <Icon name="close" size="md" />
-              <span>{{ t('status.goalCancel') }}</span>
-            </Button>
-          </span>
+            <template #actions>
+              <template v-if="goal">
+                <IconButton
+                  v-if="goal.status === 'active'"
+                  size="sm"
+                  :label="t('status.goalPause')"
+                  :tooltip="t('status.goalPause')"
+                  @click.stop="emit('controlGoal', 'pause')"
+                >
+                  <Icon name="pause" size="md" />
+                </IconButton>
+                <IconButton
+                  v-if="goal.status === 'paused' || goal.status === 'blocked'"
+                  size="sm"
+                  :label="t('status.goalResume')"
+                  :tooltip="t('status.goalResume')"
+                  @click.stop="emit('controlGoal', 'resume')"
+                >
+                  <Icon name="play" size="md" />
+                </IconButton>
+                <IconButton
+                  size="sm"
+                  :label="t('status.goalCancel')"
+                  :tooltip="t('status.goalCancel')"
+                  @click.stop="onGoalCancel"
+                >
+                  <Icon name="power" size="md" />
+                </IconButton>
+                <IconButton
+                  size="sm"
+                  :label="t('tasks.closePanel')"
+                  :tooltip="t('tasks.closePanel')"
+                  @click.stop="emit('close-dock-panel')"
+                >
+                  <Icon name="close" size="md" />
+                </IconButton>
+              </template>
+            </template>
+          </WorkPanelHead>
         </div>
         <div ref="workBodyRef" class="dock-work-body" @scroll="onWorkBodyScroll">
           <TasksPane
             v-if="dockPanel === 'bash'"
-            :tasks="bashTasks"
+            :tasks="filteredBashTasks"
+            :filter="bashFilter"
             @cancel="emit('cancelTask', $event)"
+            @open="emit('openAgent', $event)"
           />
-          <TasksPane
+          <SubagentGrid
             v-else-if="dockPanel === 'subagent'"
-            :tasks="subagentTasks"
+            :tasks="filteredSubagentTasks"
+            :filter="subagentFilter"
             @cancel="emit('cancelTask', $event)"
             @open="emit('openAgent', $event)"
           />
@@ -356,60 +516,61 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
           <GoalPanel
             v-else-if="dockPanel === 'goal' && goal"
             :goal="goal"
+            :open-file="openFile"
           />
-        </div>
-        <!-- Goal-only footer: the stats row (turns / tokens / wall time /
-             budget) at the panel's bottom-left. -->
-        <div v-if="dockPanel === 'goal' && goal" class="dock-work-foot">
-          <span>{{ goal.turnsUsed }} turns</span>
-          <span>{{ formatTokens(goal.tokensUsed) }} tokens</span>
-          <span v-if="goalWallClockLabel">{{ goalWallClockLabel }}</span>
-          <span v-if="goal.budget.tokenBudget !== null">{{ goalTokenPct }}% token budget</span>
         </div>
       </div>
     </Transition>
 
     <div v-if="hasDockWork" class="dock-workbar">
-      <Pill
+      <WorkPill
         v-if="goal"
+        icon="target"
+        :label="goalPillLabel"
         :active="dockPanel === 'goal'"
-        :aria-pressed="dockPanel === 'goal'"
-        @click="emit('toggle-dock-panel', 'goal')"
+        @click="onPillClick('goal', $event)"
       >
-        <Icon name="target" size="md" />
-        <span>{{ t('status.goalLabel') }}</span>
-        <span class="dw-goal-status" :class="`dw-goal-status--${goal.status}`">{{ goalStatusLabel }}</span>
-      </Pill>
-      <Pill
+        {{ t('status.goalLabel') }}
+        <template #meta>
+          <span class="dw-goal-status" :class="`dw-goal-status--${goal.status}`">{{ goalStatusLabel }}</span>
+        </template>
+      </WorkPill>
+      <WorkPill
         v-if="bashTasks.length > 0"
+        icon="terminal"
+        :label="bashPillLabel"
         :active="dockPanel === 'bash'"
-        :aria-pressed="dockPanel === 'bash'"
-        @click="emit('toggle-dock-panel', 'bash')"
+        @click="onPillClick('bash', $event)"
       >
-        <Icon name="clock" size="md" />
-        <span>{{ t('tasks.dockBash') }}</span>
-        <span class="dw-count">(<b>{{ bashTasks.length }}</b>)</span>
-      </Pill>
-      <Pill
+        {{ t(bashPanelLabelKey) }}
+        <template #meta>
+          <span v-if="bashRunning > 0" class="dw-running"><StatusDot status="running" />{{ bashRunning }}</span>
+        </template>
+      </WorkPill>
+      <WorkPill
         v-if="subagentTasks.length > 0"
+        icon="sparkles"
+        :label="subagentPillLabel"
         :active="dockPanel === 'subagent'"
-        :aria-pressed="dockPanel === 'subagent'"
-        @click="emit('toggle-dock-panel', 'subagent')"
+        @click="onPillClick('subagent', $event)"
       >
-        <Icon name="sparkles" size="md" />
-        <span>{{ t('tasks.dockSubagent') }}</span>
-        <span class="dw-count">(<b>{{ subagentTasks.length }}</b>)</span>
-      </Pill>
-      <Pill
+        {{ t('tasks.dockSubagent') }}
+        <template #meta>
+          <span v-if="subagentRunning > 0" class="dw-running"><StatusDot status="running" />{{ subagentRunning }}</span>
+        </template>
+      </WorkPill>
+      <WorkPill
         v-if="(todos?.length ?? 0) > 0"
+        :icon="todoAllDone ? 'check-list' : 'list'"
+        :label="todosPillLabel"
         :active="dockPanel === 'todos'"
-        :aria-pressed="dockPanel === 'todos'"
-        @click="emit('toggle-dock-panel', 'todos')"
+        @click="onPillClick('todos', $event)"
       >
-        <Icon name="check-list" size="md" />
-        <span>{{ t('tasks.dockTodos') }}</span>
-        <span class="dw-count">(<b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b>)</span>
-      </Pill>
+        {{ t('tasks.todoProgressTitle') }}
+        <template #meta>
+          <span class="dw-count">{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</span>
+        </template>
+      </WorkPill>
     </div>
     <QuestionCard
       v-if="pendingQuestion"
@@ -493,17 +654,11 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
 .chat-dock.align-left { margin-left: 0; margin-right: auto; }
 .chat-dock.align-mobile { max-width: none; }
 
-/* Bottom veil — the dock floats over the scrolling transcript, so without a
-   backdrop the text underneath bleeds through around the composer card, the
-   toolbar, and the workbar pills. The layer extends --fade
-   above the dock (its top edge is anchored there) and reaches full opacity
-   --veil below its own top edge — deliberately past the dock's top edge, so
-   the ramp stays long and soft instead of snapping to solid at the content
-   boundary; from there down everything sits on an opaque veil. The fade is a
-   plain eased opacity ramp, deliberately WITHOUT a live backdrop blur: one
-   re-samples the scrolling transcript every frame, which flickers and janks
-   in Chromium mid-scroll — and where the veil is fully opaque the blur would
-   be painted over and invisible anyway.
+/* Bottom veil — the dock floats over the scrolling transcript, so text would
+   otherwise bleed through around the composer card and workbar pills. An
+   eased opacity ramp (--fade above, full opacity at --veil); deliberately no
+   live backdrop blur — re-sampling the transcript mid-scroll janks in
+   Chromium, and under full opacity it would be invisible anyway.
    Keep --fade in sync with DOCK_VEIL_FADE_PX in ConversationPane.vue, which
    reserves this band in the transcript's scroll padding. */
 .chat-dock::before {
@@ -539,102 +694,75 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
   left: 16px;
   right: calc(16px + var(--panes-scrollbar-width, 0px));
   bottom: 100%;
-  background: var(--color-surface);
-  border: 0.5px solid var(--color-line-strong);
-  border-radius: var(--radius-xl);
-  /* The dropdown family surface: menu-panel shadow token (Menu.vue). */
+  /* The menu family material (Menu.vue): 70% page bg over the shared blur. */
+  background: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
+  border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-menu);
-  margin-bottom: 7px;
+  margin-bottom: var(--space-2);
   max-height: min(360px, 50vh);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* The panel is chrome (the menu family): nothing inside is selectable,
+     head filter chips included. */
+  user-select: none;
+}
+/* Todos, goal, subagent, and bash panels per the redesign: uniform 16px
+   inset (the head tab carries no padding of its own — see
+   dock/WorkPanelHead.vue — so its content lands exactly on it), no head
+   hairline. */
+.dock-work-panel.panel-todos .dock-work-head,
+.dock-work-panel.panel-goal .dock-work-head,
+.dock-work-panel.panel-subagent .dock-work-head,
+.dock-work-panel.panel-bash .dock-work-head {
+  padding: var(--space-4) var(--space-4) 0;
+  border-bottom: none;
+}
+.dock-work-panel.panel-todos .dock-work-body,
+.dock-work-panel.panel-goal .dock-work-body,
+.dock-work-panel.panel-subagent .dock-work-body,
+.dock-work-panel.panel-bash .dock-work-body {
+  /* margin, not padding: the 12px gap below the head stays put when the
+     body scrolls — top padding would scroll away with the content. */
+  margin-top: var(--space-3);
+  padding: 0 var(--space-4) var(--space-4);
+}
+/* Filtered panels change height with the filter — pin them (two card rows
+   / a dozen rows plus a sliver) so the panel never resizes; the body
+   scrolls inside. */
+.dock-work-panel.panel-subagent,
+.dock-work-panel.panel-bash {
+  height: min(var(--p-dock-panel-h), 50vh);
 }
 .dock-work-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-bottom: 0.5px solid var(--color-line);
   position: relative;
   z-index: 1;
 }
-.dock-work-tab {
-  font-size: var(--text-base);
-  font-weight: 500;
-  color: var(--color-text);
-  padding: 3px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-sunken);
-  border: 0.5px solid var(--color-line);
-}
-.dock-work-tab.static {
-  background: transparent;
-  border-color: transparent;
-  padding-left: 2px;
-}
 .dock-work-body {
   padding: var(--space-2) var(--space-3);
   overflow-y: auto;
   min-height: 0;
-}
-/* The goal panel's head actions and footer stats — chrome shared by no other
-   panel, so it stays here next to the work-panel rules. */
-.dock-work-head-actions {
-  margin-left: auto;
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: none;
+  flex-direction: column;
 }
-.dock-goal-action :deep(.ui-button__content) {
-  gap: var(--space-1);
+/* Narrow widths: let the head wrap so the filter row never clips — a 320px
+   touch viewport at a large font scale can't fit title + segmented control
+   on one line. (The actions' full-row rule lives in dock/WorkPanelHead.) */
+@media (max-width: 480px) {
+  .dock-work-head { flex-wrap: wrap; }
 }
-.dock-work-foot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-top: 0.5px solid var(--color-line);
-  color: var(--color-text-muted);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-option-label);
-  font-variant-numeric: tabular-nums;
-  position: relative;
-  z-index: 1;
-}
-/* Scroll-linked edge fades (the session list's vocabulary): the pinned head
-   — and the goal footer — cast a soft 18px ramp over the scrolling body,
-   shown only while more content exists beyond that edge. */
-.dock-work-head::after,
-.dock-work-foot::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 18px;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--duration-slow) var(--ease-out);
-}
-.dock-work-head::after {
-  top: 100%;
-  background:
-    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 2.5%, transparent), transparent 35%),
-    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.75%, transparent), transparent 65%),
-    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.25%, transparent), transparent);
-}
-.dock-work-foot::before {
-  bottom: 100%;
-  background:
-    linear-gradient(to top, color-mix(in srgb, var(--color-text) 2.5%, transparent), transparent 35%),
-    linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.75%, transparent), transparent 65%),
-    linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.25%, transparent), transparent);
-}
-.dock-work-panel.body-scrolled-up .dock-work-head::after,
-.dock-work-panel.body-scrolled-down .dock-work-foot::before {
-  opacity: 1;
+/* Scrolled-up: the body's top dissolves through an alpha mask (the
+   transcript clamp's vocabulary) instead of hard-clipping at the head. */
+.dock-work-panel.body-scrolled-up .dock-work-body {
+  mask-image: linear-gradient(to bottom, transparent, black var(--menu-scroll-fade));
 }
 .dock-work-body :deep(.taskspane) {
   border: none;
@@ -651,50 +779,75 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
   /* With the goal pill aboard, narrow panes can overflow one row — wrap
      instead of clipping (pills stay reachable, the dock height observes). */
   flex-wrap: wrap;
-  gap: var(--space-1) 6px;
-  padding: 4px var(--dock-inline-right) 2px var(--dock-inline-left);
+  gap: var(--space-1) var(--space-1-5);
+  /* The row aligns with the composer's text column, not the card edge:
+     dock inline inset + the card's hairline border + .cin-wrap's --space-4
+     inline padding (Composer.vue) — computed from the tokens so a token
+     change cannot drift the alignment. The vertical offsets ride the same
+     scale (--space-1 / --space-05). */
+  padding: var(--space-1) calc(var(--dock-inline-right) + var(--space-4) + var(--p-hairline)) var(--space-05) calc(var(--dock-inline-left) + var(--space-4) + var(--p-hairline));
 }
-/* Work pills ride the Composer's 32px control rhythm. Their roomier inline
-   padding gives icon + label + status the same visual breathing room as the
-   full-round controls below, while retaining the raised fill and hairline. */
+/* Work pills: a borderless neutral chip with --radius-lg corners. Height
+   is font-driven — 8px block padding around the label's line box and the
+   1.5em icon; height: auto lifts the Pill primitive's 28px pin. */
 .dock-workbar :deep(.ui-pill) {
   position: relative;
-  height: var(--space-8);
-  padding: 0 var(--space-4);
-  border: 0.5px solid var(--color-line-strong);
-  border-radius: var(--radius-full);
-  /* One rung above the page in BOTH schemes: --color-surface-sunken is
-     degenerate in dark mode (it equals --color-bg), so the pill vanished
-     there; --color-surface lifts off the page in dark and stays a quiet
-     chip in light — the same material as the popover it opens. */
-  background: var(--color-surface);
-  /* Fill already carries its own tone — keep the label at full text
-     colour (the composer toolbar pills' rung) or the pair reads washed. */
+  gap: var(--space-1-5);
+  height: auto;
+  /* Trailing side gets a +2px optical compensation: with a leading
+     glyph, even inline padding reads tighter on the label side. */
+  padding: var(--space-2) calc(var(--space-3) + var(--space-05)) var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-lg);
+  /* Canonical fill: the fills ladder's --color-selected rung at rest, over
+     the shared menu blur — the work panel's frosted recipe scaled to a chip,
+     so transcript text never reads through the 5% fill. */
+  background: var(--color-selected);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
   color: var(--color-text);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
 }
-/* The hover wash floats over the fill as its own layer so it can fade in
-   and out (background gradients don't interpolate — they'd snap). */
+.dock-workbar :deep(.ui-pill svg) {
+  width: 1.5em;
+  height: 1.5em;
+  color: inherit;
+}
+/* The neutral hover wash layers ON TOP of the selected base (one layer —
+   two identical washes would composite the tint twice). The active pill
+   keeps the wash on permanently: one fills-ladder step deeper, neutral. */
 .dock-workbar :deep(.ui-pill)::after {
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-lg);
   background: var(--color-hover);
   opacity: 0;
   transition: opacity var(--duration-base) var(--ease-out);
   pointer-events: none;
 }
-.dock-workbar :deep(.ui-pill:hover:not(:disabled))::after {
+.dock-workbar :deep(.ui-pill:hover:not(:disabled))::after,
+.dock-workbar :deep(.ui-pill.is-active)::after {
   opacity: 1;
 }
-/* The base fill/color above must not swallow the open-panel state — restate
-   the primitive's active styling at higher precedence. */
-.dock-workbar :deep(.ui-pill.is-active) {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
+/* Narrow dock: the pills collapse to their icons — label and meta hide and
+   the padding squares up (no trailing optical compensation to balance). */
+.chat-dock.pills-compact .dock-workbar :deep(.ui-pill) {
+  padding: var(--space-2);
 }
-.dock-workbar .dw-count { margin-left: 1px; }
-.dock-workbar .dw-count b { font-weight: 500; }
+.chat-dock.pills-compact .dock-workbar :deep(.ui-pill) > span {
+  display: none;
+}
+
+.dock-workbar .dw-count { color: var(--color-text-muted); }
+/* Live-status meta: a pulsing dot + the running count, only while work runs. */
+.dock-workbar .dw-running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-muted);
+}
 /* The goal pill carries its live status (the same label the panel head
    repeats), coloured by state. */
 .dock-workbar .dw-goal-status { font-weight: var(--weight-medium); }
@@ -734,18 +887,21 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
     right: calc(10px + var(--panes-scrollbar-width, 0px));
   }
 }
-
 .chat-dock:not(.align-mobile) :deep(.composer) {
   padding-bottom: 14px;
 }
 
-.dock-panel-enter-active,
+.dock-panel-enter-active {
+  transition: opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
 .dock-panel-leave-active {
-  transition: opacity 0.16s ease, transform 0.16s ease;
+  transition: opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 .dock-panel-enter-from,
 .dock-panel-leave-to {
   opacity: 0;
-  transform: translateY(8px);
+  transform: translateY(var(--motion-panel-shift)) scale(var(--motion-panel-scale));
 }
 </style>

@@ -841,6 +841,13 @@ export function reduceAppEvent(
         return {
           ...t,
           status: event.status,
+          // The wire event carries no completion stamp (the cancel path
+          // especially) — record when the terminal state was observed so
+          // "recently finished" sorting keeps the row.
+          completedAt: t.completedAt ?? new Date().toISOString(),
+          // The fallback stamps observation time, not real completion —
+          // mark it sort-only so durations never derive from it.
+          completedAtEstimated: t.completedAt === undefined ? true : t.completedAtEstimated,
           outputPreview: event.outputPreview,
           outputBytes: event.outputBytes,
         };

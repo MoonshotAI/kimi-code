@@ -381,8 +381,13 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   // A modal dialog open on top of the side panel owns Escape — leave the event
   // alone so the dialog can close itself instead of the panel behind it.
   if (anyOverlayOpen.value) return;
+  // Another capture listener on this same element may already have consumed
+  // the key (e.g. the dock work panel) — one Escape closes one layer.
+  if (e.defaultPrevented) return;
   if (closeOpenSidePanel()) {
-    e.stopPropagation();
+    // Immediate: ChatDock's work-panel handler hangs off the SAME element —
+    // stopPropagation alone would still let it run and close both layers.
+    e.stopImmediatePropagation();
     e.preventDefault();
   }
 }

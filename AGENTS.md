@@ -14,7 +14,7 @@
 - **不改包名**：`kimi-code-web`、`kimi-code-app`。
 - **两端逐步分叉是既定方向**：desktop 的原生功能（`window.kimiDesktop` 桥接）只在 `apps/desktop` 实现，web 保留原 daemon 实现、不回填；原生路径必须带无桥降级（探测不到桥时回退旧实现）。分叉清单在 `apps/desktop/docs/native-todos.md`——改两端共有的文件前先查它，手动同步副本时保留 desktop 侧的分叉块。
 - **开发顺序**：两端共有的 UI 改动优先在 `apps/desktop` 开发，完成后再同步到 `apps/web`（desktop 专属原生功能除外，见上条）。
-- **UI 改动必须遵循设计系统**：改组件 / 样式 / 布局 / 主题前，先读 canonical 设计规范 `apps/desktop/src/renderer/views/DesignSystemView.vue`（与 `apps/web` 同步；应用内长按侧栏 logo 打开）。新增 / 修改的 UI 必须与之匹配；涉及结构、约束或新组件模式时，同步更新该文档。
+- **UI 改动必须遵循设计系统**：改组件 / 样式 / 布局 / 主题前，先读 canonical 设计规范 `apps/desktop/src/renderer/views/DesignSystemView.vue`（与 `apps/web` 同步；应用内长按侧栏 logo 打开）。新增 / 修改的 UI 必须与之匹配；涉及结构、约束或新组件模式时，同步更新该文档。组件原语（`@moonshot-ai/app-ui`）的唯一结构性例外：dock 工作面板行/卡片上的全覆盖隐形打开层（`TasksPane` 的 `.tp-open`、`SubagentGrid` 的 `.sg-open`）用原生 `<button>` 而非 Button 原语——它是无标签、无尺寸、无变体外观的纯交互层，Button 的 chrome 与 `:active` scale 不适用。
 - **样式只用 token，且必须视觉验证**：颜色 / 字体 / 圆角 / 间距 / 阴影 / z-index / 动效一律取 `style.css` 的 CSS 变量（`--color-*` / `--radius-*` / `--space-*` / `--text-*` / `--font-*` / `--z-*` / `--shadow-*` / `--ease-*` / `--duration-*` 等），禁止手写 ad-hoc 值。UI 改动必须在亮色 + 暗色下验证 hover/focus 等状态，构建 / typecheck / lint 通过不算完成；`pnpm --filter kimi-code-web run check:style` 守 §06 反模式，改动文件不得新增 findings。
 - **主进程原生界面的文案必须双语（en/zh）**：主进程没有 i18n runtime，新增用户可见字符串（托盘 / 通知 / 对话框等）禁止单语言硬编码——走 `apps/desktop/src/main/tray.ts` 的字符串表模式（措辞与计数无关，规避复数规则）；语言由 renderer 经 `kimi:locale` 通道推送（应用内语言优先，未推送前按 OS 语言兜底），切换语言要带当前状态重渲染。
 - **不在本仓直接改 `kimi-code/` submodule 的内容**；kimi-code 侧改动在你的工作克隆里做（见"双仓工作流"），本仓只 bump submodule 指针。

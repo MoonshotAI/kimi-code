@@ -1246,7 +1246,10 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
         const task = patchSubagent(t, s, sessionId, p?.subagentId, {
           subagentPhase: 'completed',
           status: 'completed',
+          // Client-observed stamp (replays included) — sort-only until REST
+          // delivers the daemon's real completed_at.
           completedAt: new Date().toISOString(),
+          completedAtEstimated: true,
           outputPreview,
         });
         if (task) out.push({ type: 'taskCreated', sessionId, task });
@@ -1265,7 +1268,9 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjector {
         const task = patchSubagent(t, s, sessionId, p?.subagentId, {
           subagentPhase: 'failed',
           status: 'failed',
+          // Same observed-stamp rule as the completed path above.
           completedAt: new Date().toISOString(),
+          completedAtEstimated: true,
           outputPreview,
         });
         if (task) out.push({ type: 'taskCreated', sessionId, task });

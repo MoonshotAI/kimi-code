@@ -6,7 +6,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { useKimiI18n } from '@moonshot-ai/app-i18n';
 
 withDefaults(defineProps<{
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
   label?: string;
 }>(), {
   size: 'md',
@@ -79,6 +79,22 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ui-spinner { display: inline-flex; flex: none; color: var(--color-accent); }
+/* xs — the status ring for glyph rows (e.g. Todo's in-progress): the ring's
+   outer edge lands exactly on the --p-ic-md circle and the stroke reads the
+   shared 1.5px, so it matches sibling pending/done rings without any
+   caller-side :deep() calibration. (r + stroke/2 = 12 fills the 24 viewBox;
+   dash values are the md arc's proportions at the new radius.) */
+.ui-spinner--xs { width: var(--p-ic-md); height: var(--p-ic-md); }
+.ui-spinner--xs .ui-spinner__track,
+.ui-spinner--xs .ui-spinner__arc {
+  r: 10.875px;
+  /* ×1.5: the 24-grid source of the shared rendered ring stroke. */
+  stroke-width: calc(var(--p-ring-stroke) * 1.5);
+}
+.ui-spinner--xs .ui-spinner__arc {
+  stroke-dasharray: 67.7 67.7;
+  stroke-dashoffset: 45.9;
+}
 .ui-spinner--sm { width: 14px; height: 14px; }
 .ui-spinner--md { width: 18px; height: 18px; }
 .ui-spinner--lg { width: 28px; height: 28px; }

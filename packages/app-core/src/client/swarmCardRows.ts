@@ -43,7 +43,9 @@ function swarmMemberBody(member: SwarmMember): string {
 
 function outcomeToPhase(outcome: string): AppSubagentPhase {
   if (outcome === 'completed') return 'completed';
-  if (outcome === 'failed' || outcome === 'aborted') return 'failed';
+  if (outcome === 'failed') return 'failed';
+  // A user stop persists as 'aborted' — the neutral phase, never 'failed'.
+  if (outcome === 'aborted') return 'cancelled';
   return 'working';
 }
 

@@ -1,27 +1,32 @@
-<!-- apps/web/src/components/chat/GoalPanel.vue -->
+<!-- apps/web/src/components/chat/dock/GoalPanel.vue -->
 <!-- The goal's detail inside the dock's shared work panel (opened from the
-     goal pill): the full objective + completion criterion. The pause /
-     resume / cancel controls ride the panel's head and the meta counts its
-     footer (both in ChatDock.vue). -->
+     goal pill): the full objective + completion criterion, rendered with the
+     app's full chat Markdown renderer. The pause / resume / cancel controls
+     ride the panel's head (in ChatDock.vue). -->
 <script setup lang="ts">
-import type { AppGoal } from '../../api/types';
+import type { AppGoal } from '../../../api/types';
+import type { FilePreviewRequest } from '../../../types';
 import { Icon } from '@moonshot-ai/app-ui';
+import { Markdown } from '@moonshot-ai/app-markdown';
 import { useI18n } from 'vue-i18n';
 
-defineProps<{ goal: AppGoal }>();
+defineProps<{
+  goal: AppGoal;
+  openFile?: (target: FilePreviewRequest) => void;
+}>();
 
 const { t } = useI18n();
 </script>
 
 <template>
   <div class="goal-panel">
-    <div class="goal-full">{{ goal.objective }}</div>
+    <Markdown :text="goal.objective" :open-file="openFile" />
     <div v-if="goal.completionCriterion" class="goal-criterion">
       <span class="goal-criterion-label">
         <Icon name="check-list" size="sm" />
         {{ t('status.goalDoneWhen') }}
       </span>
-      <p>{{ goal.completionCriterion }}</p>
+      <Markdown :text="goal.completionCriterion" :open-file="openFile" />
     </div>
   </div>
 </template>
@@ -31,18 +36,11 @@ const { t } = useI18n();
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-}
-.goal-full {
-  color: var(--color-text);
-  font-size: var(--text-base);
-  line-height: var(--leading-prose);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .goal-criterion {
   padding-top: var(--space-2);
   border-top: 0.5px solid var(--color-line);
-  color: var(--color-text-muted);
 }
 .goal-criterion-label {
   display: flex;
@@ -53,10 +51,6 @@ const { t } = useI18n();
   font-size: var(--text-base);
   font-weight: var(--weight-section-label);
   line-height: var(--leading-normal);
-}
-.goal-criterion p {
-  margin: var(--space-1) 0 0;
-  color: var(--color-text-muted);
-  font: var(--text-base)/var(--leading-prose) var(--font-ui);
+  margin-bottom: var(--space-1);
 }
 </style>

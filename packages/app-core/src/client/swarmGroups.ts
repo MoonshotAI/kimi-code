@@ -25,14 +25,16 @@ export interface SwarmGroup {
   counts: Record<AppSubagentPhase, number>;
 }
 
-const PHASES: readonly AppSubagentPhase[] = ['queued', 'working', 'suspended', 'completed', 'failed'];
+const PHASES: readonly AppSubagentPhase[] = ['queued', 'working', 'suspended', 'completed', 'failed', 'cancelled'];
 
 export function phaseForTask(task: AppTask): AppSubagentPhase {
   // Terminal statuses are authoritative over a possibly-stale subagentPhase: a
   // cancelled task keeps whatever phase it last had (e.g. 'working'), which
   // would otherwise keep it "live" and suppress the finished swarm card forever.
+  // A user stop maps to the neutral 'cancelled', never to 'failed'.
   if (task.status === 'completed') return 'completed';
-  if (task.status === 'failed' || task.status === 'cancelled') return 'failed';
+  if (task.status === 'failed') return 'failed';
+  if (task.status === 'cancelled') return 'cancelled';
   if (task.subagentPhase) return task.subagentPhase;
   return 'working';
 }
@@ -44,6 +46,7 @@ function emptyCounts(): Record<AppSubagentPhase, number> {
     suspended: 0,
     completed: 0,
     failed: 0,
+    cancelled: 0,
   };
 }
 
@@ -93,7 +96,7 @@ export function countSwarmMembers(groups: SwarmGroup[]): { done: number; total: 
   for (const group of groups) {
     total += group.members.length;
     for (const phase of PHASES) {
-      if (phase === 'completed' || phase === 'failed') done += group.counts[phase];
+      if (phase === 'completed' || phase === 'failed' || phase === 'cancelled') done += group.counts[phase];
     }
   }
   return { done, total };

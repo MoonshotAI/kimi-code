@@ -19,6 +19,9 @@ export default {
   // Mode selector (Plan / Goal / Swarm)
   modesLabel: 'Mode',
   goalLabel: 'Goal',
+  timeUnitHour: 'h',
+  timeUnitMinute: 'm',
+  timeUnitSecond: 's',
   goalDesc: 'Track one objective until it is complete',
   swarmLabel: 'Swarm',
   swarmDesc: 'Run parallel agents for broader exploration',

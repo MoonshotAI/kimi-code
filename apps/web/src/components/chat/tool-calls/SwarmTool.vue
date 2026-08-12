@@ -86,8 +86,8 @@ const swarmModelLabel = computed(() => {
 const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
 const aggregateStatus = computed<'running' | 'ok' | 'error'>(() => {
   if (status.value === 'running') return 'running';
-  if (status.value === 'error' || (result.value?.failed ?? 0) > 0 || (result.value?.aborted ?? 0) > 0)
-    return 'error';
+  // Aborted is a user stop (cancelled rows) — it never makes the card an error.
+  if (status.value === 'error' || (result.value?.failed ?? 0) > 0) return 'error';
   return 'ok';
 });
 
@@ -97,6 +97,7 @@ interface PhaseCounts {
   suspended: number;
   queued: number;
   failed: number;
+  cancelled: number;
 }
 
 // Rows are the single source of truth: phase counts and totals derive from the
@@ -107,13 +108,22 @@ interface PhaseCounts {
 const rows = computed<SwarmCardRow[]>(() => buildSwarmCardRows(members.value, result.value));
 
 const counts = computed<PhaseCounts>(() => {
-  const c: PhaseCounts = { completed: 0, working: 0, suspended: 0, queued: 0, failed: 0 };
+  const c: PhaseCounts = { completed: 0, working: 0, suspended: 0, queued: 0, failed: 0, cancelled: 0 };
   for (const r of rows.value) c[r.phase]++;
   return c;
 });
 
 const total = computed(() => rows.value.length || input.value.itemCount || 0);
-const done = computed(() => counts.value.completed + counts.value.failed);
+const done = computed(() => counts.value.completed + counts.value.failed + counts.value.cancelled);
+// A user stop gets its own count in the summary instead of inflating failures.
+const doneSubLabel = computed(() => {
+  const r = result.value;
+  if (!r) return '';
+  const cancelled = r.aborted ?? 0;
+  return cancelled > 0
+    ? t('tools.swarm.doneSubWithCancelled', { completed: r.completed, failed: r.failed, cancelled })
+    : t('tools.swarm.doneSub', { completed: r.completed, failed: r.failed });
+});
 const inProgress = computed(() => counts.value.working + counts.value.suspended + counts.value.queued);
 
 const PHASE_ORDER: readonly { phase: AppSubagentPhase; cls: string }[] = [
@@ -121,6 +131,8 @@ const PHASE_ORDER: readonly { phase: AppSubagentPhase; cls: string }[] = [
   { phase: 'working', cls: 's-run' },
   { phase: 'suspended', cls: 's-warn' },
   { phase: 'failed', cls: 's-fail' },
+  // A user stop is neutral — the muted queued styling, never the danger one.
+  { phase: 'cancelled', cls: 's-queue' },
   { phase: 'queued', cls: 's-queue' },
 ];
 
@@ -180,7 +192,7 @@ function hasSavedBody(row: SwarmCardRow): boolean {
   return (
     row.agentId !== undefined &&
     row.body.length > 0 &&
-    (row.phase === 'completed' || row.phase === 'failed')
+    (row.phase === 'completed' || row.phase === 'failed' || row.phase === 'cancelled')
   );
 }
 
@@ -217,7 +229,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
             {{ t('tools.swarm.runningSub', { count: inProgress }) }}
           </span>
           <span v-else-if="result" class="lbl">
-            {{ t('tools.swarm.doneSub', { completed: result.completed, failed: result.failed + result.aborted }) }}
+            {{ doneSubLabel }}
           </span>
           <span v-else class="lbl">{{ t('tools.swarm.waiting') }}</span>
         </div>

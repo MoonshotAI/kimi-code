@@ -18,9 +18,11 @@ function normalize(s?: string): DotKind {
       return 'ok';
     case 'error':
     case 'failed':
+    case 'fail':
     case 'danger':
       return 'error';
     case 'running':
+    case 'run':
     case 'working':
     case 'in_progress':
     case 'active':

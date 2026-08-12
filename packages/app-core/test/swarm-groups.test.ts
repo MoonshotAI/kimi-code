@@ -84,6 +84,15 @@ describe('countSwarmMembers', () => {
     ]);
     expect(countSwarmMembers(groups)).toEqual({ done: 2, total: 4 });
   });
+
+  it('maps a user-cancelled member to the neutral cancelled phase, counted done', () => {
+    const groups = buildSwarmGroups([
+      subagentTask('a', 'swarm-1', { swarmIndex: 1, status: 'cancelled', subagentPhase: 'working' }),
+      subagentTask('b', 'swarm-1', { swarmIndex: 2, subagentPhase: 'working' }),
+    ]);
+    expect(groups[0]?.members[0]?.phase).toBe('cancelled');
+    expect(countSwarmMembers(groups)).toEqual({ done: 1, total: 2 });
+  });
 });
 
 describe('swarmMembersByToolCall', () => {

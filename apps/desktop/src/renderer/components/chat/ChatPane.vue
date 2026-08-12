@@ -2047,7 +2047,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   border-radius: var(--radius-full);
   font-size: var(--ui-font-size-xs);
   font-weight: var(--weight-medium);
-  line-height: 1.4;
+  line-height: var(--leading-caption);
   white-space: nowrap;
 }
 .q-tag-next {

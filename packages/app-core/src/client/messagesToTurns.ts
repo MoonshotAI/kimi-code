@@ -249,17 +249,31 @@ function agentIdFromOutput(toolName: string, output: readonly string[] | undefin
   return undefined;
 }
 
-export function toAgentMember(task: AppTask): AgentMember {
+export function toAgentMember(task: AppTask, recoveredCommand?: string): AgentMember {
   return {
     id: task.agentId ?? task.id,
     toolCallId: task.parentToolCallId,
     name: task.description,
     subagentType: task.subagentType,
+    // Bash tasks reuse this member shape for the right-side detail panel;
+    // their verbatim command rides the prompt field. When the task itself
+    // doesn't carry it, the caller passes the command recovered from the
+    // tool messages (findBashCommandForTask).
+    prompt: task.command ?? recoveredCommand,
     model: task.model,
     thinkingEffort: task.thinkingEffort,
     phase:
-      task.subagentPhase ??
-      (task.status === 'completed' ? 'completed' : task.status === 'failed' ? 'failed' : 'working'),
+      task.status === 'completed'
+        ? 'completed'
+        : task.status === 'failed'
+          ? 'failed'
+          : task.status === 'cancelled'
+            ? // A user stop is not a failure — the cards/rows say 已取消 and
+              // the detail badge must agree.
+              'cancelled'
+            : // Terminal status wins over a stale phase: a locally cancelled
+              // task keeps subagentPhase 'working' on old daemons.
+              (task.subagentPhase ?? 'working'),
     status: task.status,
     summary: task.outputPreview,
     outputLines: task.outputLines,

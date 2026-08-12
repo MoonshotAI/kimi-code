@@ -31,10 +31,50 @@ export function useTaskPoller(
     try {
       const api = deps.api;
       const taskList = await api.listTasks(sessionId);
+      const existing = rawState.tasksBySession[sessionId] ?? [];
+      const existingById = new Map(existing.map((t) => [t.id, t] as const));
+      // A background subagent's live WS row is keyed by its agent id while
+      // REST lists it under the background-task id (backgroundTaskId links
+      // the two) — match by both, or folded rows never merge anything.
+      const existingByBackgroundId = new Map(
+        existing
+          .filter((t) => t.backgroundTaskId !== undefined)
+          .map((t) => [t.backgroundTaskId!, t] as const),
+      );
+      // Preserve the locally observed completion stamp across the reload — an
+      // old daemon can omit completed_at on terminal rows, and dropping the
+      // stamp here re-sorts a just-cancelled task back by createdAt, hiding
+      // it from the default view. Same transition stamping as the poll path:
+      // a task that finished while the user was away (old daemon also drops
+      // the end event) shows as running → terminal here and must not fall
+      // back to its much older createdAt either.
+      const merged = taskList.map((fresh) => {
+        const old = existingById.get(fresh.id) ?? existingByBackgroundId.get(fresh.id);
+        const estimated =
+          fresh.completedAt === undefined &&
+          old?.completedAt === undefined &&
+          old?.status === 'running' &&
+          fresh.status !== 'running';
+        return {
+          ...fresh,
+          completedAt:
+            fresh.completedAt ?? old?.completedAt ?? (estimated ? new Date().toISOString() : undefined),
+          // The marker follows whichever stamp won: a real daemon time clears
+          // it; only the synthetic observed stamp sets it.
+          completedAtEstimated:
+            fresh.completedAt !== undefined
+              ? undefined
+              : old?.completedAt !== undefined
+                ? old.completedAtEstimated
+                : estimated
+                  ? true
+                  : undefined,
+        };
+      });
       rawState.tasksBySession = {
         ...rawState.tasksBySession,
         // Keep WS-delivered swarm subagents that REST /tasks omits (see keepLiveSubagents).
-        [sessionId]: keepLiveSubagents(taskList, rawState.tasksBySession[sessionId] ?? []),
+        [sessionId]: keepLiveSubagents(merged, existing),
       };
       // Completed tasks may have real terminal output that never streamed over
       // WS. Fetch it once now so the rows are expandable when the session opens.
@@ -167,15 +207,46 @@ export function useTaskPoller(
 
     const existing = rawState.tasksBySession[sessionId] ?? [];
     const existingById = new Map(existing.map((t) => [t.id, t] as const));
+    // A background subagent's live WS row is keyed by its agent id while REST
+    // lists it under the background-task id (backgroundTaskId links the two)
+    // — match by both, or the running → terminal stamping below never fires
+    // for folded rows on old daemons that also drop the end event.
+    const existingByBackgroundId = new Map(
+      existing
+        .filter((t) => t.backgroundTaskId !== undefined)
+        .map((t) => [t.backgroundTaskId!, t] as const),
+    );
 
     const refreshed: AppTask[] = taskList.map((fresh) => {
-      const old = existingById.get(fresh.id);
+      const old = existingById.get(fresh.id) ?? existingByBackgroundId.get(fresh.id);
       const polled = outputByTaskId.get(fresh.id);
+      const estimated =
+        fresh.completedAt === undefined &&
+        old?.completedAt === undefined &&
+        old?.status === 'running' &&
+        fresh.status !== 'running';
       return {
         ...fresh,
         // Preserve any WS-driven outputLines / streamed text (future taskProgress events).
         outputLines: old?.outputLines,
         text: old?.text,
+        // Preserve the observed completion stamp too — an old daemon can omit
+        // completed_at on terminal rows. Stamp only an observed transition
+        // (running → terminal): blanketing every historical terminal row with
+        // the same "now" would degenerate the recency sort back to creation
+        // order, and those rows fall back to createdAt on their own.
+        completedAt:
+          fresh.completedAt ?? old?.completedAt ?? (estimated ? new Date().toISOString() : undefined),
+        // The marker follows whichever stamp won: a real daemon time clears
+        // it; only the synthetic observed stamp sets it.
+        completedAtEstimated:
+          fresh.completedAt !== undefined
+            ? undefined
+            : old?.completedAt !== undefined
+              ? old.completedAtEstimated
+              : estimated
+                ? true
+                : undefined,
         outputPreview: polled?.preview ?? old?.outputPreview,
         outputBytes: polled?.bytes ?? old?.outputBytes,
       };

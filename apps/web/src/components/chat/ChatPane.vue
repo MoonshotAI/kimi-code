@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/ChatPane.vue -->
+<!-- apps/web/src/components/chat/ChatPane.vue -->
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -2047,7 +2047,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   border-radius: var(--radius-full);
   font-size: var(--ui-font-size-xs);
   font-weight: var(--weight-medium);
-  line-height: 1.4;
+  line-height: var(--leading-caption);
   white-space: nowrap;
 }
 .q-tag-next {

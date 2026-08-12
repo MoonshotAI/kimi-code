@@ -9,7 +9,8 @@ withDefaults(defineProps<{
   /** md (desktop) · lg (touch / mobile, ≥44px row). */
   size?: 'md' | 'lg';
   /** `menuitem` inside a Menu (default); `button` in non-menu popovers (e.g. dialogs). */
-  role?: 'menuitem' | 'button';
+  /** `menuitemradio` for a mutually exclusive set (pair with aria-checked). */
+  role?: 'menuitem' | 'menuitemradio' | 'button';
 }>(), { size: 'md', role: 'menuitem' });
 
 defineEmits<{ click: [event: MouseEvent] }>();

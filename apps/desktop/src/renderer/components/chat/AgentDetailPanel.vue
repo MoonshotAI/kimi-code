@@ -2,8 +2,9 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Badge, PanelHeader } from '@moonshot-ai/app-ui';
+import { Badge, Icon, IconButton, PanelHeader, Tooltip } from '@moonshot-ai/app-ui';
 
+import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { useFollowScroll } from '@moonshot-ai/app-client/composables';
 import type { AgentMember, ChatTurn, FilePreviewRequest, OpenMediaRequest } from '../../types';
 import type { TurnFileChange } from '../chatTurnRendering';
@@ -31,8 +32,53 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+// Bash details carry their verbatim command on member.prompt and the terminal
+// output on outputLines — both stay one click away, as the old inline detail
+// had it.
+const copied = ref<'command' | 'output' | null>(null);
+// The clipboard's "output": the detail body's real output blocks — answer
+// text, tool lines, result — but NOT the prompt or its `$ <command>`
+// placeholder preview: a bash task's command has its own copy button next
+// door, so the clipboard must not mix command into output. Also gates the
+// button: a placeholder-only preview is not output.
+const copyableOutput = computed(() => {
+  const command = props.member.prompt?.trim();
+  const placeholder = command ? `$ ${command}` : null;
+  return fallbackOutput.value.filter((block) => block !== command && block !== placeholder).join('\n');
+});
+// A second successful copy (the other button, or a fast re-click) retires the
+// previous hide timer — otherwise the older timeout still fires and clears
+// the newer check early.
+let copyTimer: ReturnType<typeof setTimeout> | null = null;
+// Bumped on task switch, so a late clipboard resolve from the previous task
+// never lands its copied check on the new one.
+let copySerial = 0;
+function copyMember(what: 'command' | 'output'): void {
+  const text = what === 'command' ? props.member.prompt : copyableOutput.value;
+  if (!text) return;
+  const serial = copySerial;
+  void copyTextToClipboard(text).then((ok) => {
+    if (!ok || serial !== copySerial) return;
+    if (copyTimer !== null) clearTimeout(copyTimer);
+    copied.value = what;
+    copyTimer = setTimeout(() => {
+      copyTimer = null;
+      copied.value = null;
+    }, 1400);
+  });
+}
+
 const identity = computed(() => props.member.id);
 const { scroller, following, onScroll, pinScroll } = useFollowScroll(identity);
+
+// A task switch retires the previous task's copied check and its hide timer.
+watch(identity, () => {
+  copySerial++;
+  if (copyTimer !== null) clearTimeout(copyTimer);
+  copyTimer = null;
+  copied.value = null;
+});
 
 // Mounting the transcript (with its Markdown renders) while the panel's width
 // change has not been laid out yet makes mount-time width measurements force
@@ -70,7 +116,14 @@ onBeforeUnmount(cancelReadySchedule);
 const fallbackOutput = computed(() => {
   const seen = new Set<string>();
   const output: string[] = [];
+  // A `$ <command>` placeholder preview is not output — the verbatim command
+  // already leads this list, so the placeholder form is skipped entirely.
+  const command = props.member.prompt?.trim();
+  const placeholder = command ? `$ ${command}` : null;
   for (const value of [
+    // The task's own brief first — a bash task's verbatim command rides this
+    // field, and without it the fallback loses the command entirely.
+    props.member.prompt,
     props.member.suspendedReason,
     props.member.text,
     props.member.outputLines?.join('\n'),
@@ -78,6 +131,7 @@ const fallbackOutput = computed(() => {
   ]) {
     const block = value?.trim();
     if (!block || seen.has(block)) continue;
+    if (placeholder !== null && block === placeholder) continue;
     seen.add(block);
     output.push(block);
   }
@@ -95,6 +149,7 @@ function phaseLabel(phase: AgentMember['phase']): string {
     case 'suspended': return t('tools.swarm.phaseSuspended');
     case 'completed': return t('tools.swarm.phaseCompleted');
     case 'failed': return t('tools.swarm.phaseFailed');
+    case 'cancelled': return t('tools.swarm.phaseCancelled');
   }
 }
 
@@ -120,6 +175,16 @@ const subtitle = computed(() => {
       @close="emit('close')"
     >
       <Badge variant="neutral" size="sm">{{ phaseLabel(member.phase) }}</Badge>
+      <Tooltip v-if="member.prompt" :text="t('tasks.copyCommand')">
+        <IconButton size="sm" :label="t('tasks.copyCommand')" @click="copyMember('command')">
+          <Icon :name="copied === 'command' ? 'check' : 'copy'" size="sm" />
+        </IconButton>
+      </Tooltip>
+      <Tooltip v-if="copyableOutput" :text="t('tasks.copyOutput')">
+        <IconButton size="sm" :label="t('tasks.copyOutput')" @click="copyMember('output')">
+          <Icon :name="copied === 'output' ? 'check' : 'copy'" size="sm" />
+        </IconButton>
+      </Tooltip>
     </PanelHeader>
     <div ref="scroller" class="agent-transcript" @scroll.passive="onScroll">
       <template v-if="contentReady">

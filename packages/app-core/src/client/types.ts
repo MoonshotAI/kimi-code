@@ -143,7 +143,7 @@ export interface OpenMediaRequest {
   originImg?: HTMLImageElement | null;
 }
 
-export type AgentPhase = 'queued' | 'working' | 'suspended' | 'completed' | 'failed';
+export type AgentPhase = 'queued' | 'working' | 'suspended' | 'completed' | 'failed' | 'cancelled';
 
 export interface AgentMember {
   id: string;
@@ -336,16 +336,21 @@ export interface TodoView {
   status: 'pending' | 'in_progress' | 'done';
 }
 
-export type TaskState = 'run' | 'done' | 'fail';
+export type TaskState = 'run' | 'done' | 'fail' | 'cancelled';
 
 export interface TaskItem {
   id: string;
   /** Stable child-agent id. Unlike `id`, this is never a REST background-task id. */
   agentId?: string;
+  /** The REST background-task id this row folded from — lets the card
+      numbering carry a shown serial across the rekey to `agentId`. */
+  backgroundTaskId?: string;
   name: string;
   kind: string; // 'subagent' | 'task'
   state: TaskState;
   timing: string;
+  /** Elapsed run time in ms (start→now while running, start→end once finished). */
+  durationMs?: number;
   meta?: string;
   output?: string[];
   /** Background subagents only — the dock lists these; foreground subagents
@@ -355,6 +360,14 @@ export interface TaskItem {
    *  to its inline tool card, so the card's "Open detail" button can be hidden
    *  when the task is no longer available. */
   parentToolCallId?: string;
+  /** The server's stable per-swarm index — drives the card grid's numbering so
+   *  an agent keeps its number across filter changes. */
+  swarmIndex?: number;
+  /** ISO completion stamp — the "recently finished" filter sorts by it. */
+  completedAt?: string;
+  /** ISO creation stamp — the recency sort's fallback when completedAt is
+      missing (all-historical sessions on old daemons). */
+  createdAt?: string;
   /** Subagent tasks only: the bound model alias (display-mapped at render). */
   model?: string;
   /** Subagent tasks only: the effective thinking effort (concrete levels shown). */

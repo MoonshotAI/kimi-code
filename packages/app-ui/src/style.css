@@ -230,6 +230,9 @@ html[data-color-scheme="dark"] {
   /* Neutral selected fill (sidebar rows, list pickers) — deliberately NOT
      accent-tinted, so selection reads as "where I am", not as an action. */
   --color-selected: rgba(0, 0, 0, 0.05);    /* fills.f2 */
+  /* Hover of a control RESTING at the selected fill (work cards): one rung
+     above f2, still below f3 — hover deepens, never lightens. */
+  --color-selected-hover: rgba(0, 0, 0, 0.08);
   /* Row hover wash — lighter than the selected fill (hover < selected); both
      are translucent black so they sit naturally on any light surface. */
   --color-hover: rgba(0, 0, 0, 0.03);       /* fills.f1 */
@@ -275,6 +278,7 @@ html[data-color-scheme="dark"] {
   /* -- spacing (4px grid) -------------------------------------------------- */
   --space-05: 2px; /* segmented-group inner padding/gap (DockIconPicker) */
   --space-1: 4px;
+  --space-1-5: 6px; /* workbar pill icon ↔ label gap (1.5 档；CSS ident 不允许小数点) */
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
@@ -296,6 +300,16 @@ html[data-color-scheme="dark"] {
   --radius-composer: 32px;
   --corner-shape-composer: superellipse(1.5);
   --radius-full: 999px;
+
+  /* Scroll-edge mask fade distance — referenced from JS-built gradients via
+     var(), so the dock panels (and later the composer menus) track the
+     spacing scale. */
+  --menu-scroll-fade: var(--space-5);
+
+  /* Attachment chip's left padding — the composer's concentric-chip override
+     pulls the icon tile left by this + --space-05 (a 2px bleed past the chip's
+     left edge), so the offset tracks the chip instead of hardcoding a sum. */
+  --att-chip-pad-left: 5px;
 
   /* -- elevation / z-index ------------------------------------------------- */
   --z-base: 0;
@@ -339,6 +353,9 @@ html[data-color-scheme="dark"] {
   --duration-base: 160ms;
   --duration-slow: 260ms;
   --duration-hover-intent: 250ms;
+  /* Dock work panel enter/leave geometry (the panel pops above the composer). */
+  --motion-panel-shift: 2px;
+  --motion-panel-scale: 0.97;
 
   /* Composer card, per the production recipe (kimiwork .chat-input__shell):
      fill = groupedBackground.secondary, rest border = separator.s1 hairline,
@@ -391,7 +408,11 @@ html[data-color-scheme="dark"] {
   --text-lg: var(--ui-t2);
   --text-xl: var(--ui-t1);
   --text-2xl: var(--ui-t0);
+  --leading-solid: 1; /* tight single-line headings (dock panel titles) */
   --leading-tight: 1.25;
+  /* Two-line clamped descriptions (cards/tool rows) — between tight and
+     normal on purpose. */
+  --leading-caption: 1.4;
   --leading-normal: 1.5;
   /* Chat prose (Markdown message bodies). */
   --leading-prose: 1.6;
@@ -445,7 +466,13 @@ html[data-color-scheme="dark"] {
   /* -- icon sizes (design-system §02) -------------------------------------- */
   --p-ic-sm: 14px;
   --p-ic-md: 16px;
+  /* Rendered stroke shared by the todo pending ring and the xs Spinner's
+     arc (the ring family's glyph-row status rings). */
+  --p-ring-stroke: 1.5px;
   --p-ic-lg: 20px;
+  /* Decorative empty-state glyph (plan/todo panels) — larger than any inline
+     icon rung on purpose. */
+  --p-empty-ico: 28px;
 
   /* -- the single hairline width (design-system §02 borders) ----------------- */
   --p-hairline: 0.5px;
@@ -454,6 +481,10 @@ html[data-color-scheme="dark"] {
 
   /* -- IconButton box sizes (design-system §03) ----------------------------- */
   --icon-button-sm: 26px;
+  /* -- minimum touch hit area (WCAG 2.5.5 / Apple HIG 44×44) ----------------
+     Every (hover: none) enlargement derives from this, so the touch baseline
+     moves in one place. */
+  --touch-target-min: 44px;
 
   /* -- decision-card number chip (design-system §04) ------------------------ */
   --p-chip-num: 20px;
@@ -465,6 +496,12 @@ html[data-color-scheme="dark"] {
   --p-table-max: 1040px;
   --p-table-cell-max: 700px;
   --p-findbar-w: 340px;
+  /* Pinned height of the dock's filtered work panels (bash/subagent) — two
+     card rows / a dozen rows plus a sliver, so the panel never resizes with
+     the filter. */
+  --p-dock-panel-h: 320px;
+  /* Subagent grid's minimum card column width. */
+  --p-subagent-card-min: 180px;
   --p-bp-sm: 640px;
   --p-bp-md: 980px;
 }
@@ -518,6 +555,9 @@ html[data-color-scheme="dark"] {
   --color-scrim: rgba(0, 0, 0, 0.6);          /* mask.base (dark) */
   --color-scrim-strong: rgba(0, 0, 0, 0.75);  /* mask.strong (dark) */
   --color-selected: rgba(255, 255, 255, 0.1);     /* fills.f2 */
+  /* Hover of a control RESTING at the selected fill — one rung above f2,
+     below f3 (18%): hover brightens a step, never drops below the rest. */
+  --color-selected-hover: rgba(255, 255, 255, 0.14);
   --color-hover: rgba(255, 255, 255, 0.05);       /* fills.f1 */
   --color-sidebar-bg: #0d0d0d;
   /* Sent chat bubble fill (kimiwork BubbleGray: neutral gray, no border). */
@@ -599,6 +639,7 @@ html[data-color-scheme="dark"] {
     --color-scrim: rgba(0, 0, 0, 0.6);
     --color-scrim-strong: rgba(0, 0, 0, 0.75);
     --color-selected: rgba(255, 255, 255, 0.1);
+    --color-selected-hover: rgba(255, 255, 255, 0.14);
     --color-hover: rgba(255, 255, 255, 0.05);
     --color-sidebar-bg: #0d0d0d;
     --color-user-bubble-bg: #292929;

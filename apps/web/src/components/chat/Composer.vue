@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/Composer.vue -->
+<!-- apps/web/src/components/chat/Composer.vue -->
 <script setup lang="ts">
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
@@ -1256,7 +1256,7 @@ function selectModel(modelId: string): void {
             @keydown.enter="togglePermDropdown"
             @keydown.space.prevent="togglePermDropdown"
           >
-            <Icon class="perm-pill-icon" :name="permIcon" size="sm" />
+            <Icon class="perm-pill-icon" :name="permIcon" size="md" />
             <span class="perm-pill-label">{{ permLabel }}</span>
           </span>
 
@@ -1277,7 +1277,7 @@ function selectModel(modelId: string): void {
                 role="menuitem"
                 @click="choosePermission(opt.mode)"
               >
-                <span class="pd-icon" :style="{ color: opt.color }"><Icon :name="opt.icon" size="sm" /></span>
+                <span class="pd-icon" :style="{ color: opt.color }"><Icon :name="opt.icon" size="md" /></span>
                 <span class="pd-info">
                   <span class="pd-name" :style="{ color: opt.color }">{{ t(opt.labelKey) }}</span>
                   <span class="pd-desc">{{ t(opt.descKey) }}</span>
@@ -1643,7 +1643,10 @@ function selectModel(modelId: string): void {
    pinned clear-all button never overlaps it. */
 .att-strip {
   position: relative;
-  padding: var(--space-3) var(--space-4) 0;
+  /* Top/left --space-4 + --space-05: the chip's corner lands exactly
+     concentric with the card's (chip radius 14 + 18 = the card corner's
+     32px center). */
+  padding: calc(var(--space-4) + var(--space-05)) var(--space-4) 0 calc(var(--space-4) + var(--space-05));
 }
 .att-scroll {
   max-height: calc(128px + var(--space-2));
@@ -1687,10 +1690,21 @@ function selectModel(modelId: string): void {
 .att-row-media {
   gap: var(--space-2);
 }
+/* Concentric attachment chips (composer only — the same component stays a
+   plain stadium in message bubbles): the chip's top-left corner shares the
+   card's superellipse shape, and the icon tile bleeds 2px (--space-05) past
+   the chip's left edge so the icon lands on the 16px text column — the pull
+   is the chip's own left padding plus that bleed, never a frozen sum. */
+.att-scroll-content :deep(.att-chip) {
+  corner-shape: superellipse(1.5);
+}
+.att-scroll-content :deep(.att-tile) {
+  margin-left: calc(-1 * (var(--att-chip-pad-left, 5px) + var(--space-05)));
+}
 /* Clear-all: the shared IconButton, pinned to the strip's top corner. */
 .att-clear {
   position: absolute;
-  top: var(--space-3);
+  top: calc(var(--space-4) + var(--space-05));
   right: var(--space-4);
   z-index: 1;
 }
@@ -2284,7 +2298,7 @@ function selectModel(modelId: string): void {
 
 .pd-row {
   display: grid;
-  grid-template-columns: var(--p-ic-sm) var(--composer-menu-desc-width, max-content) var(--p-ic-sm);
+  grid-template-columns: var(--p-ic-md) var(--composer-menu-desc-width, max-content) var(--p-ic-sm);
   column-gap: 7px;
   row-gap: 2px;
   align-items: start;
@@ -2302,7 +2316,7 @@ function selectModel(modelId: string): void {
 .pd-icon {
   grid-column: 1;
   grid-row: 1;
-  width: var(--p-ic-sm);
+  width: var(--p-ic-md);
   min-height: 1lh;
   display: flex;
   align-items: center;

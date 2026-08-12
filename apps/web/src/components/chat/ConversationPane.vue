@@ -272,7 +272,18 @@ function handleCopyConversationCopied(): void {
   }, 2000);
 }
 
-const bashTasks = computed(() => props.tasks.filter((t) => t.kind !== 'subagent'));
+// The daemon maps engine QUESTION tasks to the wire kind 'tool' (the schema
+// has no 'question' literal) — those are the AskUserQuestion flows, which
+// already have their own entry point in the message stream's QuestionCard.
+// Identify them by the engine's idPrefix (`question-XXXXXXXX`), not by output
+// presence: a genuine background tool task must stay listed — with its
+// cancel — from the moment taskCreated lands, before any progress chunk
+// exists (a long-silent task would otherwise never surface at all).
+const bashTasks = computed(() =>
+  props.tasks.filter(
+    (t) => t.kind === 'bash' || (t.kind === 'tool' && !t.id.startsWith('question-')),
+  ),
+);
 // The dock lists only BACKGROUND subagents. Foreground subagents render inline
 // in the message flow as the `Agent` tool card, so showing them here too would
 // duplicate them (and foreground ones can't be cancelled from the dock anyway).
@@ -2390,6 +2401,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
         :skills="skills"
         :goal="goal"
         :dock-panel="dockPanel"
+        :overlay-open="overlayOpen"
         :bash-tasks="bashTasks"
         :subagent-tasks="subagentTasks"
         :bash-running="bashRunning"
@@ -2891,7 +2903,8 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
   /* Sits just above the dock, which owns a veil over the transcript. The pill
      joins the dock's sticky layer and, coming after the dock in DOM order,
      paints above the veil. ChatDock temporarily moves to --z-dropdown while
-     a composer popup is open, so menus still paint above this pill. */
+     a composer popup or a dock work panel is open, so those still paint
+     above this pill. */
   z-index: var(--z-sticky);
 }
 .pill-chevron {

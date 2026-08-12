@@ -3,6 +3,7 @@
 
 import { computed, reactive, ref, watch } from 'vue';
 import { i18n } from '../i18n';
+import { formatDuration as formatTaskDuration } from '../components/chatTurnRendering';
 import { traceClientEvent, traceKeyEvent } from '../debug/trace';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
@@ -54,6 +55,7 @@ import {
   coalesceAppRenderEvents,
   createEventBatcher,
   isRenderEvent,
+  normalizeToolOutput,
   splitOversizedAppRenderEvent,
   type PendingAppEvent,
 } from '@moonshot-ai/app-core/client';
@@ -574,6 +576,7 @@ function forgetSession(sessionId: string): void {
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
   auxiliaryTranscripts.forgetSession(sessionId);
+  subagentCardSerials.delete(sessionId);
   dropWsSubscription(sessionId);
   // Drop this session's queued render AND control events. Flushing them here is
   // unsafe: a delayed idle event can drain a queued prompt into the session
@@ -2237,11 +2240,14 @@ function toUiQuestion(q: AppQuestionRequest): UIQuestion {
  * task object itself does not carry it. The command lives in the matching
  * `Bash` tool_use message whose tool_result mentions this task's id.
  */
-function findBashCommandForTask(task: AppTask): string | undefined {
-  const messages = rawState.messagesBySession[task.sessionId];
-  if (!messages || messages.length === 0) return undefined;
-
-  const bashCommandsByToolCallId = new Map<string, string>();
+// One-shot bash-command index for the active session (task_id → command).
+// The old findBashCommandForTask scanned the whole transcript twice PER task,
+// and the tasks computed re-ran it every taskClock second while anything was
+// running. This recomputes only when the session's messages change.
+const bashCommandIndex = computed<Map<string, string>>(() => {
+  const sid = rawState.activeSessionId;
+  const messages = sid ? (rawState.messagesBySession[sid] ?? []) : [];
+  const commandsByToolCallId = new Map<string, string>();
   for (const msg of messages) {
     if (msg.role !== 'assistant') continue;
     for (const part of msg.content) {
@@ -2249,31 +2255,77 @@ function findBashCommandForTask(task: AppTask): string | undefined {
       if (part.toolName !== 'Bash' && part.toolName !== 'bash') continue;
       const input = part.input as { command?: unknown } | undefined;
       const command = input && typeof input.command === 'string' ? input.command : undefined;
-      if (command) {
-        bashCommandsByToolCallId.set(part.toolCallId, command);
-      }
+      if (command) commandsByToolCallId.set(part.toolCallId, command);
     }
   }
-  if (bashCommandsByToolCallId.size === 0) return undefined;
-
-  const taskIdMarker = `task_id: ${task.id}`;
+  const index = new Map<string, string>();
+  if (commandsByToolCallId.size === 0) return index;
   for (const msg of messages) {
     if (msg.role !== 'tool') continue;
     for (const part of msg.content) {
       if (part.type !== 'toolResult') continue;
-      const outputText =
-        typeof part.output === 'string'
-          ? part.output
-          : part.output !== undefined
-            ? JSON.stringify(part.output)
-            : '';
-      if (outputText.includes(taskIdMarker)) {
-        const command = bashCommandsByToolCallId.get(part.toolCallId);
-        if (command) return command;
+      // Flatten before matching (the transcript's normalizeToolOutput):
+      // JSON.stringify on a ContentPart[] encodes newlines as literal "\n",
+      // and \S+ would swallow them into the captured task id.
+      const outputLines = normalizeToolOutput(part.output);
+      if (!outputLines) continue;
+      let taskId: string | undefined;
+      for (const line of outputLines) {
+        const match = /task_id:\s*(\S+)/.exec(line);
+        if (match?.[1]) {
+          taskId = match[1];
+          break;
+        }
+      }
+      if (!taskId) continue;
+      const command = commandsByToolCallId.get(part.toolCallId);
+      if (command) index.set(taskId, command);
+    }
+  }
+  return index;
+});
+
+function findBashCommandForTask(task: AppTask): string | undefined {
+  return bashCommandIndex.value.get(task.id);
+}
+
+// One-shot Agent-prompt index for the active session (parentToolCallId →
+// prompt), same deal as the bash index: the old per-task traversal rescanning
+// the transcript every taskClock second.
+const agentPromptIndex = computed<Map<string, string | string[]>>(() => {
+  const sid = rawState.activeSessionId;
+  const messages = sid ? (rawState.messagesBySession[sid] ?? []) : [];
+  const index = new Map<string, string | string[]>();
+  for (const msg of messages) {
+    if (msg.role !== 'assistant') continue;
+    for (const part of msg.content) {
+      if (part.type !== 'toolUse') continue;
+      const input = part.input as { prompt?: unknown; items?: unknown } | undefined;
+      const prompt = input && typeof input.prompt === 'string' ? input.prompt : undefined;
+      if (prompt && !index.has(part.toolCallId)) index.set(part.toolCallId, prompt);
+      // AgentSwarm: one tool call spawns every member; each member's own task
+      // text lives in input.items, addressed by the zero-based swarmIndex.
+      const items = input?.items;
+      if (!prompt && Array.isArray(items) && !index.has(part.toolCallId)) {
+        const texts = items.filter((item): item is string => typeof item === 'string');
+        if (texts.length > 0) index.set(part.toolCallId, texts);
       }
     }
   }
-  return undefined;
+  return index;
+});
+
+/** The subagent's task prompt from its Agent tool call (linked through
+    parentToolCallId) — the card grid's description line. */
+function findSubagentPromptForTask(task: AppTask): string | undefined {
+  if (!task.parentToolCallId) return undefined;
+  const entry = agentPromptIndex.value.get(task.parentToolCallId);
+  // A swarm's entry is the member list: pick this member's own task text.
+  if (Array.isArray(entry)) {
+    // swarmIndex is zero-based (see the session snapshot fixtures).
+    return task.swarmIndex !== undefined ? entry[task.swarmIndex] : undefined;
+  }
+  return entry;
 }
 
 /** Map AppTask to UI TaskItem */
@@ -2283,20 +2335,31 @@ function toUiTask(task: AppTask): TaskItem {
     state = 'run';
   } else if (task.status === 'completed') {
     state = 'done';
+  } else if (task.status === 'cancelled') {
+    // A user stop is not a failure — keep it distinct so cards/rows say so.
+    state = 'cancelled';
   } else {
     state = 'fail';
   }
 
   // Compute timing string
   let timing = '';
+  let durationMs: number | undefined;
   if (task.status === 'running' && task.startedAt) {
-    const elapsed = Math.round((Date.now() - new Date(task.startedAt).getTime()) / 1000);
+    durationMs = Date.now() - new Date(task.startedAt).getTime();
+    const elapsed = Math.round(durationMs / 1000);
     const m = Math.floor(elapsed / 60);
     const s = elapsed % 60;
     timing = i18n.global.t('tasks.timingRunning', { time: `${m}:${String(s).padStart(2, '0')}` });
-  } else if (task.completedAt && task.startedAt) {
-    const elapsed = Math.round((new Date(task.completedAt).getTime() - new Date(task.startedAt).getTime()) / 1000);
-    timing = i18n.global.t('tasks.timingDone', { sec: elapsed });
+  } else if (task.completedAt && task.startedAt && !task.completedAtEstimated) {
+    durationMs = new Date(task.completedAt).getTime() - new Date(task.startedAt).getTime();
+    timing = i18n.global.t('tasks.timingDone', {
+      time: formatTaskDuration(durationMs, {
+        h: i18n.global.t('status.timeUnitHour'),
+        m: i18n.global.t('status.timeUnitMinute'),
+        s: i18n.global.t('status.timeUnitSecond'),
+      }),
+    });
   } else {
     timing = task.status;
   }
@@ -2310,21 +2373,32 @@ function toUiTask(task: AppTask): TaskItem {
 
   // Show the real terminal command for bash tasks so users can see what is
   // running without expanding the row. Fall back to the matching Bash tool_use
-  // message when the task itself does not carry the command field.
+  // message when the task itself does not carry the command field. Subagent
+  // cards show their task prompt (or type) the same way.
   const command = task.command ?? findBashCommandForTask(task);
-  const meta = task.kind === 'bash' && command ? `$ ${command}` : undefined;
+  const meta =
+    task.kind === 'bash' && command
+      ? `$ ${command}`
+      : task.kind === 'subagent'
+        ? (findSubagentPromptForTask(task) ?? task.subagentType)
+        : undefined;
 
   return {
     id: task.id,
     agentId: task.agentId,
+    backgroundTaskId: task.backgroundTaskId,
     name: task.description,
     kind: task.kind,
     state,
     timing,
+    durationMs,
     meta,
     output,
     runInBackground: task.runInBackground,
     parentToolCallId: task.parentToolCallId,
+    swarmIndex: task.swarmIndex,
+    completedAt: task.completedAt,
+    createdAt: task.createdAt,
     model: task.model,
     thinkingEffort: task.thinkingEffort,
   };
@@ -2468,10 +2542,57 @@ const turns = computed<ChatTurn[]>(() => {
  *  (`turnActive`). */
 const working = computed<boolean>(() => inFlight.value || turnActive.value);
 
+// Stable per-session card numbers for background subagents (identity to
+// serial); entries are dropped with the rest of the session's state.
+const subagentCardSerials = new Map<string, Map<string, number>>();
+
 const tasks = computed<TaskItem[]>(() => {
   // Touch the clock so a running task's elapsed time recomputes each tick.
   void taskPoller.taskClock.value;
-  return activeAppTasks.value.map(toUiTask);
+  const items = activeAppTasks.value.map(toUiTask);
+  // Card numbers live inside the background-subagent set only (the grid's
+  // actual population), and must be unique ACROSS the session: the server's
+  // swarmIndex is scoped PER SWARM, so two swarms would each show a member
+  // 01 in one grid. Assign session-wide serials in creation order instead —
+  // filtering can't renumber, and bash/tool/foreground rows never consume
+  // one. Number in CREATION order, not array order: keepLiveSubagents
+  // returns REST rows before live-only rows, so array order is not creation
+  // order and a later poll or WS fold would otherwise renumber a card. (The
+  // sort is stable, so a row missing createdAt keeps its relative slot; the
+  // swarm card in the message stream keeps the per-swarm swarmIndex from
+  // activeAppTasks, where the group makes the scope explicit.)
+  const sid = rawState.activeSessionId;
+  if (sid) {
+    // Numbers stick to a task once shown: they live in a per-session
+    // identity-to-serial map, so a late-arriving historical row takes the
+    // next tail number instead of renumbering every card already on screen.
+    // (New rows are numbered in creation order.)
+    let serials = subagentCardSerials.get(sid);
+    if (!serials) {
+      serials = new Map();
+      subagentCardSerials.set(sid, serials);
+    }
+    const cards = items.filter((item) => item.kind === 'subagent' && item.runInBackground);
+    // A REST row first shows under its background-task id and later folds to
+    // the agent id — carry an already-shown number across that rekey.
+    for (const item of cards) {
+      const key = item.agentId ?? item.id;
+      if (item.agentId !== undefined && item.backgroundTaskId !== undefined && !serials.has(key)) {
+        const carried = serials.get(item.backgroundTaskId);
+        if (carried !== undefined) {
+          serials.delete(item.backgroundTaskId);
+          serials.set(key, carried);
+        }
+      }
+    }
+    const unnumbered = cards
+      .filter((item) => !serials.has(item.agentId ?? item.id))
+      .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
+    let next = serials.size === 0 ? 0 : Math.max(...serials.values()) + 1;
+    for (const item of unnumbered) serials.set(item.agentId ?? item.id, next++);
+    for (const item of cards) item.swarmIndex = serials.get(item.agentId ?? item.id);
+  }
+  return items;
 });
 
 const swarms = computed<SwarmGroup[]>(() => buildSwarmGroups(activeAppTasks.value));
@@ -3557,6 +3678,7 @@ export function useKimiWebClient() {
     /** Live `AppTask[]` for the active session — the subagent detail panel
      *  sources a subagent's streaming `outputLines` from here. */
     activeAppTasks,
+    findBashCommandForTask,
     auxiliaryTranscripts,
     getFileUrl: getFileUrlById,
     todos,

@@ -207,7 +207,7 @@ function onClick(): void {
 }
 .task {
   font-size: var(--ui-font-size);
-  line-height: 1.4;
+  line-height: var(--leading-caption);
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -215,7 +215,7 @@ function onClick(): void {
 }
 .type {
   font-size: var(--text-xs);
-  line-height: 1.4;
+  line-height: var(--leading-caption);
   color: var(--color-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;

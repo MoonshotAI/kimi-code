@@ -32,6 +32,9 @@ export interface DetailPanelClient {
   sideChatVisible: Ref<boolean>;
   auxiliaryTranscripts: DetailPanelAuxiliaryTranscripts;
   getFileUrl: (fileId: string) => string;
+  /** Recover a background Bash task's verbatim command from the tool
+   *  messages when the task itself doesn't carry it. */
+  findBashCommandForTask(task: AppTask): string | undefined;
   loadGitStatus(sessionId: string): Promise<void>;
   loadFileDiff(path: string): Promise<void>;
   clearFileDiff(): void;
@@ -160,10 +163,16 @@ export function useDetailPanel({
   const agentPanelMember = computed<AgentMember | null>(() => {
     const target = agentTarget.value;
     if (!target) return null;
+    // backgroundTaskId too: a REST-output background subagent opened under
+    // its task-store id keeps resolving after the WS fold rekeys the row to
+    // the agent id (the redirect watcher below upgrades the target).
     const task = client.activeAppTasks.value.find(
-      (tk) => tk.agentId === target.subagentId || tk.id === target.subagentId,
+      (tk) =>
+        tk.agentId === target.subagentId ||
+        tk.id === target.subagentId ||
+        tk.backgroundTaskId === target.subagentId,
     );
-    if (task) return toAgentMember(task);
+    if (task) return toAgentMember(task, client.findBashCommandForTask(task));
 
     const channel = agentTranscriptState.value.entry?.channel;
     const descriptor = channel?.agents.find((agent) => agent.agentId === target.subagentId);
@@ -178,13 +187,16 @@ export function useDetailPanel({
       toolMetadata.status === 'error';
     const phase = running
       ? 'working'
-      : terminalFailed || cancelled
-        ? 'failed'
-        : loading
-          ? 'queued'
-          : failed && toolMetadata.status === undefined
-            ? 'failed'
-            : 'completed';
+      : cancelled
+        ? // A user stop is not a failure — the detail badge must say so too.
+          'cancelled'
+        : terminalFailed
+          ? 'failed'
+          : loading
+            ? 'queued'
+            : failed && toolMetadata.status === undefined
+              ? 'failed'
+              : 'completed';
     const status = running
       ? 'running'
       : cancelled
@@ -242,21 +254,84 @@ export function useDetailPanel({
 
   const agentPanelVisible = computed(() => agentPanelMember.value !== null);
 
+
+/** Only a real subagent (or an unknown task) has a transcript worth
+    activating; bash/tool task ids would just fail the request. */
+function shouldActivateTranscript(target: string): boolean {
+  const task = client.activeAppTasks.value.find(
+    (tk) => tk.agentId === target || tk.id === target || tk.backgroundTaskId === target,
+  );
+  // A known subagent whose agentId is missing (REST-only background task)
+  // would make us activate a transcript under the task-store id — guaranteed
+  // to fail. Render its task data directly instead.
+  return !task || (task.kind === 'subagent' && task.agentId === target);
+}
+
+/** A stale task-store target (the row has since folded to its agent id — e.g.
+ *  after a session switch, where the redirect watcher never fires) resolves
+ *  to the real agent id before any activation. */
+function resolveAgentTarget(target: string): string {
+  const task = client.activeAppTasks.value.find(
+    (tk) => tk.agentId === target || tk.id === target || tk.backgroundTaskId === target,
+  );
+  return task?.agentId ?? target;
+}
+
   function openAgentPanel(target: string): void {
     const sessionId = client.activeSessionId.value;
     if (!target || !sessionId) return;
+    const resolved = resolveAgentTarget(target);
     if (
       detailTarget.value === 'agent' &&
       agentTarget.value?.sessionId === sessionId &&
-      agentTarget.value.subagentId === target
+      agentTarget.value.subagentId === resolved
     ) {
       closeAgentPanel();
       return;
     }
-    agentTarget.value = { sessionId, subagentId: target };
+    // Retire the previous target's subscription first — skipping this when
+    // moving from a subagent to a bash/tool detail would leak the old
+    // transcript (deactivate later only knows the new id).
+    const previous = agentTarget.value;
+    if (previous && previous.subagentId !== resolved) {
+      client.auxiliaryTranscripts.deactivate(previous.sessionId, previous.subagentId);
+    }
+    agentTarget.value = { sessionId, subagentId: resolved };
     detailTarget.value = 'agent';
-    client.auxiliaryTranscripts.activate(sessionId, target);
+    // Bash rows open here too, but a bash/tool task id is not an agent
+    // transcript id — skip the activation that would only fail with a load
+    // error; the member's own command and output render directly.
+    if (shouldActivateTranscript(resolved)) {
+      client.auxiliaryTranscripts.activate(sessionId, resolved);
+    }
   }
+
+  // A REST-output background subagent can open under its task-store id before
+  // the WS fold gives the row a stable agentId (see SubagentGrid.canOpen);
+  // the transcript was deliberately not activated at open. Once the fold
+  // lands, upgrade the target to the agent id and activate the real
+  // transcript — otherwise the panel keeps rendering the bare task row and
+  // never gains the live stream.
+  watch(
+    () => client.activeAppTasks.value,
+    (tasks) => {
+      const target = agentTarget.value;
+      if (!target) return;
+      const folded = tasks.find(
+        (tk) => tk.backgroundTaskId === target.subagentId && tk.agentId !== undefined,
+      );
+      if (!folded || folded.agentId === target.subagentId) return;
+      agentTarget.value = { sessionId: target.sessionId, subagentId: folded.agentId! };
+      // Only activate while the agent panel is actually showing: after the
+      // user moved on to another detail, an invisible panel must not keep
+      // requesting and subscribing to the live stream — and closing that
+      // other panel would never deactivate it. Re-opening the agent goes
+      // through openAgentPanel's own activation either way.
+      if (detailTarget.value === 'agent') {
+        client.auxiliaryTranscripts.activate(target.sessionId, folded.agentId!);
+      }
+    },
+  );
 
   function closeAgentPanel(): void {
     const target = agentTarget.value;
@@ -426,15 +501,24 @@ export function useDetailPanel({
         break;
       case 'agent':
         if (client.activeSessionId.value) {
+          // Resolve the snapshot's target FIRST — the row may have folded to
+          // its agent id while the panel was away, and the raw task-store id
+          // would both fail activation and pin the panel on the task summary
+          // (the redirect watcher never fires for an already-folded row).
+          const resolved = resolveAgentTarget(snap.subagentId);
           agentTarget.value = {
             sessionId: client.activeSessionId.value,
-            subagentId: snap.subagentId,
+            subagentId: resolved,
           };
           detailTarget.value = 'agent';
-          client.auxiliaryTranscripts.activate(
-            client.activeSessionId.value,
-            snap.subagentId,
-          );
+          // Same gate as the direct open path — restored bash/tool details
+          // render from the task data, no transcript request.
+          if (shouldActivateTranscript(resolved)) {
+            client.auxiliaryTranscripts.activate(
+              client.activeSessionId.value,
+              resolved,
+            );
+          }
         }
         break;
       case 'btw':

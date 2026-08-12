@@ -45,6 +45,7 @@ import KimiCheck from '~icons/kimi/check';
 import KimiChevronDown from '~icons/kimi/chevron-down';
 import KimiChevronRight from '~icons/kimi/chevron-right';
 import KimiChevronUp from '~icons/kimi/chevron-up';
+import KimiCircleCheck from '~icons/kimi/circle-check';
 import KimiClock from '~icons/kimi/clock';
 import KimiClose from '~icons/kimi/close';
 import KimiCollapse from '~icons/kimi/collapse';
@@ -82,6 +83,7 @@ import KimiMusic from '~icons/kimi/music';
 import KimiPause from '~icons/kimi/pause';
 import KimiPencil from '~icons/kimi/pencil';
 import KimiPlay from '~icons/kimi/play';
+import KimiPower from '~icons/kimi/power';
 import KimiQuestion from '~icons/kimi/question';
 import KimiRobot from '~icons/kimi/robot';
 import KimiSearch from '~icons/kimi/search';
@@ -143,6 +145,7 @@ import RawKimiCheck from '~icons/kimi/check?raw';
 import RawKimiChevronDown from '~icons/kimi/chevron-down?raw';
 import RawKimiChevronRight from '~icons/kimi/chevron-right?raw';
 import RawKimiChevronUp from '~icons/kimi/chevron-up?raw';
+import RawKimiCircleCheck from '~icons/kimi/circle-check?raw';
 import RawKimiClock from '~icons/kimi/clock?raw';
 import RawKimiClose from '~icons/kimi/close?raw';
 import RawKimiCollapse from '~icons/kimi/collapse?raw';
@@ -180,6 +183,7 @@ import RawKimiMusic from '~icons/kimi/music?raw';
 import RawKimiPause from '~icons/kimi/pause?raw';
 import RawKimiPencil from '~icons/kimi/pencil?raw';
 import RawKimiPlay from '~icons/kimi/play?raw';
+import RawKimiPower from '~icons/kimi/power?raw';
 import RawKimiQuestion from '~icons/kimi/question?raw';
 import RawKimiRobot from '~icons/kimi/robot?raw';
 import RawKimiSearch from '~icons/kimi/search?raw';
@@ -238,6 +242,7 @@ export type IconName =
   | 'calendar-todo'
   | 'close'
   | 'check'
+  | 'circle-check'
   | 'archive'
   | 'search'
   | 'copy'
@@ -317,6 +322,7 @@ export type IconName =
   | 'target'
   | 'pause'
   | 'play'
+  | 'power'
   | 'pin'
   | 'stop'
   | 'star'
@@ -348,6 +354,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   'calendar-todo': entry(RiCalendarTodoLine, RawCalendarTodoLine),
   close: entry(KimiClose, RawKimiClose),
   check: entry(KimiCheck, RawKimiCheck),
+  'circle-check': entry(KimiCircleCheck, RawKimiCircleCheck),
   archive: entry(KimiArchive, RawKimiArchive),
   search: entry(KimiSearch, RawKimiSearch),
   copy: entry(KimiCopy, RawKimiCopy),
@@ -427,6 +434,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   target: entry(KimiTarget, RawKimiTarget),
   pause: entry(KimiPause, RawKimiPause),
   play: entry(KimiPlay, RawKimiPlay),
+  power: entry(KimiPower, RawKimiPower),
   pin: entry(RiPushpinLine, RawPushpinLine),
   stop: entry(KimiStop, RawKimiStop),
   star: entry(RiStarFill, RawStarFill),

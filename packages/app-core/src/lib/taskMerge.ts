@@ -42,14 +42,17 @@ export function keepLiveSubagents(restBased: AppTask[], existing: AppTask[]): Ap
       status: live.status === 'running' ? rest.status : live.status,
       // toAgentMember prefers subagentPhase over status, so sync it too —
       // otherwise the detail panel badge keeps showing a stale Working/Queued.
-      // The phase enum has no 'cancelled'; the dock already styles cancelled
-      // rows as failed.
+      // The wire phase enum has no 'cancelled'; the UI still renders 已取消
+      // from the terminal status (it wins over the phase in toAgentMember).
       subagentPhase: restCompletesLiveRow
         ? rest.status === 'completed'
           ? 'completed'
           : 'failed'
         : live.subagentPhase,
-      completedAt: live.completedAt ?? rest.completedAt,
+      // REST's daemon-stamped time beats a locally estimated one (and
+      // clears the marker); the live stamp is the fallback only.
+      completedAt: rest.completedAt ?? live.completedAt,
+      completedAtEstimated: rest.completedAt !== undefined ? undefined : live.completedAtEstimated,
       // REST output is authoritative once present: agent tasks persist their
       // result at completion, and a previously folded preview would otherwise
       // freeze the detail panel's Result.
@@ -68,9 +71,11 @@ export function keepLiveSubagents(restBased: AppTask[], existing: AppTask[]): Ap
 /**
  * Seed the task store from the snapshot's subagent roster. The roster is
  * authoritative for identity/status/phase; keep reducer-owned accumulated
- * output (outputLines/text) from any already-live task, and keep tasks the
- * roster does not know about (background bash tasks from REST). Display
- * metadata merges the same way, in case either side lacks it.
+ * output (outputLines/text) and the locally observed completion stamp from
+ * any already-live task (an old daemon's roster omits completed_at, and
+ * dropping it re-sorts a just-finished row back by createdAt), and keep
+ * tasks the roster does not know about (background bash tasks from REST).
+ * Display metadata merges the same way, in case either side lacks it.
  */
 export function mergeSnapshotSubagents(roster: AppTask[], existing: AppTask[]): AppTask[] {
   if (roster.length === 0) return existing;
@@ -79,10 +84,31 @@ export function mergeSnapshotSubagents(roster: AppTask[], existing: AppTask[]): 
   const merged = roster.map((task) => {
     const live = existingById.get(task.id);
     if (!live) return task;
+    const estimated =
+      task.completedAt === undefined &&
+      live.completedAt === undefined &&
+      live.status === 'running' &&
+      task.status !== 'running';
     return {
       ...task,
       outputLines: live.outputLines,
       text: live.text,
+      // Same transition stamping as the REST poll path: a snapshot that first
+      // turns a locally running row terminal (old daemons omit completed_at)
+      // records when the finish was observed, or the row falls back to its
+      // much older createdAt in the recency sort and drops out of the
+      // default view.
+      completedAt:
+        task.completedAt ?? live.completedAt ?? (estimated ? new Date().toISOString() : undefined),
+      // The marker follows whichever stamp won: a real stamp clears it.
+      completedAtEstimated:
+        task.completedAt !== undefined
+          ? undefined
+          : live.completedAt !== undefined
+            ? live.completedAtEstimated
+            : estimated
+              ? true
+              : undefined,
       model: task.model ?? live.model,
       thinkingEffort: task.thinkingEffort ?? live.thinkingEffort,
     };

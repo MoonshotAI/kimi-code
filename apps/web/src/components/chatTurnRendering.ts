@@ -1,4 +1,4 @@
-// apps/kimi-web/src/components/chatTurnRendering.ts
+// apps/web/src/components/chatTurnRendering.ts
 // Pure turn-rendering helpers: pure functions of their arguments (no Vue
 // reactivity, no component state). Shared by ChatPane.vue's template and its
 // stateful copy/edit helpers.
