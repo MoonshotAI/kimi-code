@@ -336,6 +336,7 @@ export class TUI extends Container {
 	private clearOnShrink = process.env['PI_CLEAR_ON_SHRINK'] === "1"; // Clear empty rows when content shrinks (default: off)
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
+	private aboveViewportStaleTop: number | null = null; // Lowest row whose repaint was skipped above the viewport
 	private fullRedrawCount = 0;
 	private stopped = false;
 	private pendingOsc11BackgroundReplies = 0;
@@ -1171,6 +1172,19 @@ export class TUI extends Container {
 		return { firstChanged: expandedFirstChanged, lastChanged: expandedLastChanged };
 	}
 
+	/** Whether either frame carries kitty image ids inside [start, end]. */
+	private rangeHasKittyImages(
+		start: number,
+		end: number,
+		newLineImageIds: ReadonlyArray<ReadonlyArray<number>>,
+	): boolean {
+		for (let i = start; i <= end; i++) {
+			if ((newLineImageIds[i] ?? EMPTY_IMAGE_IDS).length > 0) return true;
+			if ((this.previousLineImageIds[i] ?? EMPTY_IMAGE_IDS).length > 0) return true;
+		}
+		return false;
+	}
+
 	private deleteChangedKittyImages(firstChanged: number, lastChanged: number): string {
 		if (firstChanged < 0 || lastChanged < firstChanged) return "";
 
@@ -1274,6 +1288,24 @@ export class TUI extends Container {
 		let prevViewportTop = heightChanged ? Math.max(0, previousBufferLength - height) : this.previousViewportTop;
 		let viewportTop = prevViewportTop;
 		let hardwareCursorRow = this.hardwareCursorRow;
+
+		// A height increase can pull rows whose repaint was skipped (the
+		// above-viewport in-place path below) back into the viewport. On the
+		// Termux path, which deliberately avoids the destructive height-change
+		// redraw, invalidate the exposed rows in the caches so the diff
+		// repaints them; every other height change full-renders anyway.
+		if (heightChanged && this.aboveViewportStaleTop !== null && prevViewportTop < this.previousViewportTop) {
+			const exposedEnd = Math.min(this.previousViewportTop, this.previousLines.length);
+			for (let i = prevViewportTop; i < exposedEnd; i++) {
+				// NUL can never equal a rendered raw line or processed output, so
+				// both the reuse fast path and the diff see these rows as changed.
+				this.previousLines[i] = "\u0000";
+				this.previousRawLines[i] = "\u0000";
+			}
+			if (prevViewportTop <= this.aboveViewportStaleTop) {
+				this.aboveViewportStaleTop = null;
+			}
+		}
 		const computeLineDiff = (targetRow: number): number => {
 			const currentScreenRow = hardwareCursorRow - prevViewportTop;
 			const targetScreenRow = targetRow - viewportTop;
@@ -1333,6 +1365,7 @@ export class TUI extends Container {
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
+			this.aboveViewportStaleTop = null;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
 			if (clear) {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
@@ -1515,11 +1548,49 @@ export class TUI extends Container {
 		}
 
 		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// If the first changed line is above the previous viewport, a full
+		// redraw is normally needed — but an in-place mutation (same line
+		// count, no kitty images in the above-viewport range) of rows already
+		// committed to scrollback cannot change what the terminal shows, so
+		// repainting the whole buffer would only produce a destructive
+		// ESC[2J/ESC[3J clear per tick (e.g. an agent-status spinner pushed
+		// above the viewport, #2039). Skip the paint, or clamp the range to
+		// the viewport when it spans the boundary; any layout shift or image
+		// involvement keeps the full redraw (the post-#1367 baseline).
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
+			const aboveEnd = Math.min(lastChanged, prevViewportTop - 1);
+			const inPlaceAboveViewport =
+				newLines.length === this.previousLines.length &&
+				!this.rangeHasKittyImages(firstChanged, aboveEnd, lineImageIds);
+			if (!inPlaceAboveViewport) {
+				logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
+				fullRender(true);
+				return;
+			}
+			// Remember the lowest skipped row: a later Termux height increase
+			// re-exposes such rows and must invalidate them (see doRender top).
+			this.aboveViewportStaleTop =
+				this.aboveViewportStaleTop === null
+					? firstChanged
+					: Math.min(this.aboveViewportStaleTop, firstChanged);
+			if (lastChanged < prevViewportTop) {
+				// Entirely above the viewport: scrollback keeps a stale frame
+				// of those rows (invisible from the live viewport), so only
+				// commit the caches and reposition the hardware cursor,
+				// mirroring the no-change path above.
+				this.positionHardwareCursor(cursorPos, newLines.length);
+				this.previousViewportTop = prevViewportTop;
+				this.previousLines = newLines;
+				this.previousRawLines = rawLines;
+				this.previousLineImageIds = lineImageIds;
+				this.previousKittyImageIds = this.unionKittyImageIds(lineImageIds);
+				this.previousWidth = width;
+				this.previousHeight = height;
+				return;
+			}
+			// The change spans the viewport boundary: repaint only the
+			// visible part on the regular differential path.
+			firstChanged = prevViewportTop;
 		}
 
 		// Render from first changed line to end
