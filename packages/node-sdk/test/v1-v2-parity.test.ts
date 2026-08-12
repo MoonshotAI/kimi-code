@@ -3550,8 +3550,12 @@ describe('v1↔v2 global MCP parity', () => {
     const statusServer = await startMcpAuthStatusServer();
     const pair = await makeGlobalMcpParityPair({
       mcpServers: {
-        stdio: { command: 'local-command' },
-        plain: { transport: 'http', url: statusServer.plainUrl },
+        stdio: { command: 'local-command', env: { MCP_SECRET: 'stdio-secret' } },
+        plain: {
+          transport: 'http',
+          url: statusServer.plainUrl,
+          headers: { Authorization: 'remote-secret' },
+        },
         detected: { transport: 'http', url: statusServer.oauthUrl },
         bearer: {
           transport: 'http',
@@ -3610,6 +3614,16 @@ describe('v1↔v2 global MCP parity', () => {
       const v1Statuses = projectStatuses(v1Servers);
       const v2Statuses = projectStatuses(v2Servers);
       expect(v2Statuses).toEqual(v1Statuses);
+      expect(v1Servers.find((server) => server.runtimeName === 'stdio')?.config).toEqual({
+        transport: 'stdio',
+        command: 'local-command',
+        envKeys: ['MCP_SECRET'],
+      });
+      expect(v1Servers.find((server) => server.runtimeName === 'plain')?.config).toEqual({
+        transport: 'http',
+        url: statusServer.plainUrl,
+        headerKeys: ['Authorization'],
+      });
       expect(v1Statuses).toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },

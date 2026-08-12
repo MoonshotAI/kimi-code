@@ -81,6 +81,7 @@ import type {
   ActivatePluginCommandPayload,
   AddAdditionalDirPayload,
   AddAdditionalDirResult,
+  AppMcpServerConfig,
   AppMcpServerDescriptor,
   AppMcpServerInspection,
   ArchiveSessionPayload,
@@ -815,7 +816,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }: InspectAppMcpServersPayload): Promise<readonly AppMcpServerInspection[]> {
     const catalog = await this.appMcpServerDescriptors();
     const descriptors = selectAppMcpServerDescriptors(catalog, targets);
-    return this.inspectAppMcpServerDescriptors(descriptors, catalog);
+    const inspections = await this.inspectAppMcpServerDescriptors(descriptors, catalog);
+    return inspections.map(sanitizeAppMcpServerInspection);
   }
 
   async addGlobalMcpServer(
@@ -941,7 +943,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
   }
 
-  private async appMcpServerDescriptors(): Promise<readonly AppMcpServerDescriptor[]> {
+  private async appMcpServerDescriptors(): Promise<readonly AppMcpServerRuntimeDescriptor[]> {
     await this.pluginsReady;
     const globals = (await this.globalMcpConfig.list()).map((server) => {
       const locator = { source: 'global', name: server.name } as const;
@@ -987,15 +989,17 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return [...globals, ...plugins];
   }
 
-  private async resolveAppMcpServer(locator: McpServerLocator): Promise<AppMcpServerDescriptor> {
+  private async resolveAppMcpServer(
+    locator: McpServerLocator,
+  ): Promise<AppMcpServerRuntimeDescriptor> {
     const catalog = await this.appMcpServerDescriptors();
     return selectAppMcpServerDescriptors(catalog, [locator])[0]!;
   }
 
   private async inspectAppMcpServerDescriptors(
-    descriptors: readonly AppMcpServerDescriptor[],
-    catalog: readonly AppMcpServerDescriptor[],
-  ): Promise<readonly AppMcpServerInspection[]> {
+    descriptors: readonly AppMcpServerRuntimeDescriptor[],
+    catalog: readonly AppMcpServerRuntimeDescriptor[],
+  ): Promise<readonly AppMcpServerRuntimeInspection[]> {
     const oauth = new McpOAuthService({ kimiHomeDir: this.homeDir });
     const runtimeNameCounts = new Map<string, number>();
     for (const server of new Map(catalog.map((item) => [item.serverId, item])).values()) {
@@ -1660,9 +1664,9 @@ function describeMcpServerLocator(locator: McpServerLocator): string {
 }
 
 function selectAppMcpServerDescriptors(
-  catalog: readonly AppMcpServerDescriptor[],
+  catalog: readonly AppMcpServerRuntimeDescriptor[],
   targets?: readonly McpServerLocator[],
-): readonly AppMcpServerDescriptor[] {
+): readonly AppMcpServerRuntimeDescriptor[] {
   if (targets === undefined) return catalog;
   const byId = new Map(catalog.map((server) => [server.serverId, server]));
   return targets.map((target) => {
@@ -1676,7 +1680,7 @@ function selectAppMcpServerDescriptors(
 }
 
 function configuredMcpAuthState(
-  server: AppMcpServerDescriptor,
+  server: AppMcpServerRuntimeDescriptor,
 ): GlobalMcpServerAuthState | undefined {
   if (!server.enabled || server.config.enabled === false) return 'not-applicable';
   if (server.config.transport === 'stdio') return 'not-applicable';
@@ -1698,8 +1702,30 @@ function legacyGlobalMcpAuthState(
     : 'not-applicable';
 }
 
-function isOAuthProbeCandidate(server: AppMcpServerDescriptor): boolean {
+function isOAuthProbeCandidate(server: AppMcpServerRuntimeDescriptor): boolean {
   return configuredMcpAuthState(server) === undefined;
+}
+
+type AppMcpServerRuntimeDescriptor = Omit<AppMcpServerDescriptor, 'config'> & {
+  readonly config: McpServerConfig;
+};
+
+type AppMcpServerRuntimeInspection = AppMcpServerRuntimeDescriptor &
+  Pick<AppMcpServerInspection, 'authStatus' | 'checkedAt' | 'error'>;
+
+function sanitizeAppMcpServerInspection(
+  server: AppMcpServerRuntimeInspection,
+): AppMcpServerInspection {
+  return { ...server, config: sanitizeAppMcpServerConfig(server.config) };
+}
+
+function sanitizeAppMcpServerConfig(config: McpServerConfig): AppMcpServerConfig {
+  if (config.transport === 'stdio') {
+    const { env, ...safe } = config;
+    return env === undefined ? safe : { ...safe, envKeys: Object.keys(env).toSorted() };
+  }
+  const { headers, ...safe } = config;
+  return headers === undefined ? safe : { ...safe, headerKeys: Object.keys(headers).toSorted() };
 }
 
 function mcpConfigWithoutName(server: GlobalMcpServerConfig): McpServerConfig {

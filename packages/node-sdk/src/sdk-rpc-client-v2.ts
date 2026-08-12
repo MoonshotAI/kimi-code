@@ -269,6 +269,7 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
+  AppMcpServerConfig,
   AppMcpServerDescriptor,
   AppMcpServerInspection,
   BackgroundTaskInfo,
@@ -2214,7 +2215,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   ): Promise<readonly AppMcpServerInspection[]> {
     const catalog = await this.appMcpServerDescriptors();
     const descriptors = selectAppMcpServerDescriptors(catalog, targets);
-    return this.inspectAppMcpServerDescriptors(descriptors, catalog);
+    const inspections = await this.inspectAppMcpServerDescriptors(descriptors, catalog);
+    return inspections.map(sanitizeAppMcpServerInspection);
   }
 
   override async addGlobalMcpServer(
@@ -2359,7 +2361,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
   }
 
-  private async appMcpServerDescriptors(): Promise<readonly AppMcpServerDescriptor[]> {
+  private async appMcpServerDescriptors(): Promise<readonly AppMcpServerRuntimeDescriptor[]> {
     const globals = (await this.globalMcpConfig.list()).map((server) => {
       const locator = { source: 'global', name: server.name } as const;
       const config = mcpConfigWithoutName(server);
@@ -2399,7 +2401,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return [...globals, ...plugins];
   }
 
-  private async resolveAppMcpServer(locator: McpServerLocator): Promise<AppMcpServerDescriptor> {
+  private async resolveAppMcpServer(
+    locator: McpServerLocator,
+  ): Promise<AppMcpServerRuntimeDescriptor> {
     const catalog = await this.appMcpServerDescriptors();
     return selectAppMcpServerDescriptors(catalog, [locator])[0]!;
   }
@@ -2413,9 +2417,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   private async inspectAppMcpServerDescriptors(
-    descriptors: readonly AppMcpServerDescriptor[],
-    catalog: readonly AppMcpServerDescriptor[],
-  ): Promise<readonly AppMcpServerInspection[]> {
+    descriptors: readonly AppMcpServerRuntimeDescriptor[],
+    catalog: readonly AppMcpServerRuntimeDescriptor[],
+  ): Promise<readonly AppMcpServerRuntimeInspection[]> {
     await this.configReady;
     const oauth = await this.freshMcpOAuthService();
     const section = this.engineAccessor.get(IConfigService).get<McpSection | undefined>(MCP_SECTION);
@@ -2591,9 +2595,9 @@ function describeMcpServerLocator(locator: McpServerLocator): string {
 }
 
 function selectAppMcpServerDescriptors(
-  catalog: readonly AppMcpServerDescriptor[],
+  catalog: readonly AppMcpServerRuntimeDescriptor[],
   targets?: readonly McpServerLocator[],
-): readonly AppMcpServerDescriptor[] {
+): readonly AppMcpServerRuntimeDescriptor[] {
   if (targets === undefined) return catalog;
   const byId = new Map(catalog.map((server) => [server.serverId, server]));
   return targets.map((target) => {
@@ -2607,7 +2611,7 @@ function selectAppMcpServerDescriptors(
 }
 
 function configuredMcpAuthState(
-  server: AppMcpServerDescriptor,
+  server: AppMcpServerRuntimeDescriptor,
 ): GlobalMcpServerAuthState | undefined {
   if (!server.enabled || server.config.enabled === false) return 'not-applicable';
   if (server.config.transport === 'stdio') return 'not-applicable';
@@ -2629,8 +2633,30 @@ function legacyGlobalMcpAuthState(
     : 'not-applicable';
 }
 
-function isOAuthProbeCandidate(server: AppMcpServerDescriptor): boolean {
+function isOAuthProbeCandidate(server: AppMcpServerRuntimeDescriptor): boolean {
   return configuredMcpAuthState(server) === undefined;
+}
+
+type AppMcpServerRuntimeDescriptor = Omit<AppMcpServerDescriptor, 'config'> & {
+  readonly config: WorkspaceMcpServerConfig;
+};
+
+type AppMcpServerRuntimeInspection = AppMcpServerRuntimeDescriptor &
+  Pick<AppMcpServerInspection, 'authStatus' | 'checkedAt' | 'error'>;
+
+function sanitizeAppMcpServerInspection(
+  server: AppMcpServerRuntimeInspection,
+): AppMcpServerInspection {
+  return { ...server, config: sanitizeAppMcpServerConfig(server.config) };
+}
+
+function sanitizeAppMcpServerConfig(config: WorkspaceMcpServerConfig): AppMcpServerConfig {
+  if (config.transport === 'stdio') {
+    const { env, ...safe } = config;
+    return env === undefined ? safe : { ...safe, envKeys: Object.keys(env).toSorted() };
+  }
+  const { headers, ...safe } = config;
+  return headers === undefined ? safe : { ...safe, headerKeys: Object.keys(headers).toSorted() };
 }
 
 /** v1's `requiredWorkDir`: reject blank and normalize to the canonical spelling. */

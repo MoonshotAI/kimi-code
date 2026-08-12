@@ -7,12 +7,12 @@
  * tokens, the registered DCR client info, and discovery state under
  * `<homeDir>/credentials/mcp/<key>-*.json` via the store; captures the
  * authorization URL when the SDK calls `redirectToAuthorization`; and keeps
- * the PKCE verifier and OAuth `state` in-memory. Persisted values are
- * mirrored into in-memory caches loaded eagerly on construction (`ready`) so
- * the SDK's synchronous `redirectUrl` / `clientMetadata` getters read without
- * blocking, while the data methods `await ready` before reading or writing.
- * The provider does not open browsers or run servers — it is the
- * persistence + flow-state shim.
+ * the PKCE verifier and OAuth `state` in-memory. Client registration and
+ * discovery state are cached after the eager `ready` load, while token reads
+ * stay durable. Token refresh persistence and guarded invalidation are
+ * serialized through the process-local transaction helper from `oauth`.
+ * The provider does not open browsers or run servers — it is the persistence
+ * + flow-state shim.
  *
  * `invalidateStaleRegistration` guards interactive flows: the callback
  * listener binds a random port per flow while a DCR registration pins the

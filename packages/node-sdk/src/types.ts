@@ -22,6 +22,7 @@ export type {
   AgentReplayRecord,
   AgentBackgroundTaskInfo,
   AppMcpServerAuthState,
+  AppMcpServerConfig,
   AppMcpServerDescriptor,
   AppMcpServerInspection,
   BackgroundConfig,

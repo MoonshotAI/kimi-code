@@ -381,13 +381,21 @@ export interface GlobalMcpServerAuthStatus {
 
 export type AppMcpServerAuthState = GlobalMcpServerAuthState | 'unavailable';
 
+export type AppMcpServerConfig =
+  | (Omit<Extract<McpServerConfig, { readonly transport: 'stdio' }>, 'env'> & {
+      readonly envKeys?: readonly string[];
+    })
+  | (Omit<Exclude<McpServerConfig, { readonly transport: 'stdio' }>, 'headers'> & {
+      readonly headerKeys?: readonly string[];
+    });
+
 export interface AppMcpServerDescriptor {
   readonly serverId: string;
   readonly locator: McpServerLocator;
   readonly runtimeName: string;
   readonly canonicalUrl: string | undefined;
   readonly origin: McpServerLocator['source'];
-  readonly config: McpServerConfig;
+  readonly config: AppMcpServerConfig;
   readonly enabled: boolean;
   readonly editable: boolean;
 }
