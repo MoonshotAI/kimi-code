@@ -279,6 +279,141 @@ describe('derefJsonSchema', () => {
 });
 
 describe('normalizeKimiToolSchema', () => {
+  it('adds empty required arrays to object schemas without mutating the input', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        nested: {
+          properties: {
+            value: { type: 'string' },
+          },
+        },
+        list: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'integer' },
+            },
+          },
+        },
+        choice: {
+          allOf: [
+            {
+              type: 'object',
+              properties: {
+                count: { type: 'integer' },
+              },
+            },
+          ],
+          anyOf: [
+            {
+              type: 'object',
+              properties: {
+                label: { type: 'string' },
+              },
+            },
+          ],
+          oneOf: [
+            {
+              type: 'object',
+              properties: {
+                enabled: { type: 'boolean' },
+              },
+            },
+          ],
+        },
+        retained: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+          },
+          required: ['name'],
+        },
+      },
+    };
+    const original = structuredClone(schema);
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        nested: {
+          type: 'object',
+          properties: {
+            value: { type: 'string' },
+          },
+          required: [],
+        },
+        list: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'integer' },
+            },
+            required: [],
+          },
+        },
+        choice: {
+          allOf: [
+            {
+              type: 'object',
+              properties: {
+                count: { type: 'integer' },
+              },
+              required: [],
+            },
+          ],
+          anyOf: [
+            {
+              type: 'object',
+              properties: {
+                label: { type: 'string' },
+              },
+              required: [],
+            },
+          ],
+          oneOf: [
+            {
+              type: 'object',
+              properties: {
+                enabled: { type: 'boolean' },
+              },
+              required: [],
+            },
+          ],
+        },
+        retained: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+          },
+          required: ['name'],
+        },
+      },
+      required: [],
+    });
+    expect(schema).toEqual(original);
+  });
+
+  it.each(['name', null, { name: true }])('preserves invalid required value %j', (required) => {
+    expect(normalizeKimiToolSchema({ type: 'object', properties: {}, required })).toEqual({
+      type: 'object',
+      properties: {},
+      required,
+    });
+  });
+
+  it('leaves non-object schemas unchanged', () => {
+    expect(normalizeKimiToolSchema({ type: 'string' })).toEqual({ type: 'string' });
+    expect(normalizeKimiToolSchema({ type: 'array' })).toEqual({ type: 'array' });
+    expect(normalizeKimiToolSchema({ oneOf: [{ type: 'string' }] })).toEqual({
+      oneOf: [{ type: 'string' }],
+    });
+  });
+
   it.each([
     {
       name: 'string enum',
@@ -348,6 +483,7 @@ describe('normalizeKimiToolSchema', () => {
         properties: {
           target: { ...property, type: expectedType },
         },
+        required: [],
       });
       expect(schema).toEqual(original);
       expect(result).not.toBe(schema);
@@ -369,6 +505,7 @@ describe('normalizeKimiToolSchema', () => {
       properties: {
         explicit: { type: 'string', enum: ['already-typed'] },
       },
+      required: [],
     });
   });
 
@@ -403,6 +540,7 @@ describe('normalizeKimiToolSchema', () => {
             enum: ['move', 'copy'],
           },
         },
+        required: [],
       });
       expect(warnSpy).not.toHaveBeenCalled();
     } finally {
@@ -425,6 +563,7 @@ describe('normalizeKimiToolSchema', () => {
       properties: {
         mode: { type: 'string', const: 'fast' },
       },
+      required: [],
     });
   });
 
@@ -443,8 +582,9 @@ describe('normalizeKimiToolSchema', () => {
     expect(result).toEqual({
       type: 'object',
       properties: {
-        bad: { type: 'object', enum: ['move', 1] },
+        bad: { type: 'object', enum: ['move', 1], required: [] },
       },
+      required: [],
     });
   });
 
@@ -464,11 +604,12 @@ describe('normalizeKimiToolSchema', () => {
     expect(result).toEqual({
       type: 'object',
       properties: {
-        object_enum: { enum: [{ a: 1 }, { a: 2 }], type: 'object' },
+        object_enum: { enum: [{ a: 1 }, { a: 2 }], type: 'object', required: [] },
         array_enum: { enum: [[1, 2], [3]], type: 'array' },
-        object_const: { const: { kind: 'default' }, type: 'object' },
+        object_const: { const: { kind: 'default' }, type: 'object', required: [] },
         array_const: { const: [], type: 'array' },
       },
+      required: [],
     });
   });
 
@@ -538,6 +679,7 @@ describe('normalizeKimiToolSchema', () => {
                 items: { const: 42, type: 'integer' },
               },
             },
+            required: [],
           },
         },
       },
@@ -593,6 +735,7 @@ describe('normalizeKimiToolSchema', () => {
         mode: { enum: ['fast', 'safe'], type: 'string' },
         retryCount: { const: 3, type: 'integer' },
       },
+      required: [],
     });
   });
 
@@ -631,6 +774,7 @@ describe('normalizeKimiToolSchema', () => {
           },
           propertyNames: { pattern: '^x-', type: 'string' },
           additionalProperties: { const: false, type: 'boolean' },
+          required: [],
         },
         tuple: {
           type: 'array',
@@ -644,18 +788,22 @@ describe('normalizeKimiToolSchema', () => {
           if: {
             type: 'object',
             properties: { kind: { const: 'file', type: 'string' } },
+            required: [],
           },
           [thenKeyword]: {
             type: 'object',
             properties: { path: { pattern: '^src/', type: 'string' } },
+            required: [],
           },
           else: {
             type: 'object',
             properties: { url: { format: 'uri', type: 'string' } },
+            required: [],
           },
           not: {
             type: 'object',
             properties: { blocked: { const: true, type: 'boolean' } },
+            required: [],
           },
         },
       },
@@ -714,8 +862,10 @@ describe('normalizeKimiToolSchema', () => {
               properties: {
                 value: { enum: ['file', 'url'], type: 'string' },
               },
+              required: [],
             },
           },
+          required: [],
         },
         dependenciesOnly: {
           type: 'object',
@@ -725,12 +875,15 @@ describe('normalizeKimiToolSchema', () => {
               properties: {
                 enabled: { const: true, type: 'boolean' },
               },
+              required: [],
             },
           },
+          required: [],
         },
         unevaluatedPropertiesOnly: {
           type: 'object',
           unevaluatedProperties: { enum: ['allowed'], type: 'string' },
+          required: [],
         },
         additionalItemsOnly: {
           type: 'array',
@@ -747,6 +900,7 @@ describe('normalizeKimiToolSchema', () => {
             properties: {
               decoded: { enum: ['payload'], type: 'string' },
             },
+            required: [],
           },
         },
       },
@@ -783,6 +937,7 @@ describe('normalizeKimiToolSchema', () => {
           properties: {
             strategy: { enum: ['replace', 'insert'], type: 'string' },
           },
+          required: [],
         },
       ],
       allOf: [
