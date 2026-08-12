@@ -22,6 +22,11 @@
  *    tool-result `extract_text` fallback and tool-declaration-only skip are
  *    handed over to the trait wholesale: every history message is
  *    base-converted, post-processed by the hook, and dropped on `null`.
+ *
+ * The SDK client is built with `maxRetries: 0`: the SDK's internal backoff
+ * sleep never observes the turn's AbortSignal, so rate-limit / server /
+ * connection retry is owned by the engine's step-retry layer (observable and
+ * cancellable), never by the SDK.
  */
 
 import OpenAI from 'openai';
@@ -751,6 +756,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     const clientOpts: Record<string, unknown> = {
       apiKey,
       baseURL: this._baseUrl,
+      maxRetries: 0,
     };
     const defaultHeaders = mergeRequestHeaders(this._defaultHeaders, auth?.headers);
     if (defaultHeaders !== undefined) {
