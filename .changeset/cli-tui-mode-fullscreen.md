@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add an experimental fullscreen alternate-screen UI: the transcript becomes a scrollable viewport with mouse wheel scrolling, text selection, clickable links, a scrollbar, and transcript search (Ctrl-Shift-F), while the editor and chrome stay docked at the bottom. Launch with `KIMI_CODE_TUI_FULL_SCREEN=1` to try it.
+Add an experimental fullscreen TUI mode: scrollable transcript viewport, mouse text selection, clickable links, scrollbar, and transcript search. Set the `KIMI_CODE_TUI_FULL_SCREEN=1` environment variable to enable it.
