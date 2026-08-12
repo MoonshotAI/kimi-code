@@ -994,6 +994,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const oauth = new McpOAuthService({ kimiHomeDir: this.homeDir });
     const runtimeNameCounts = new Map<string, number>();
     for (const server of new Map(catalog.map((item) => [item.serverId, item])).values()) {
+      if (!server.enabled || server.config.enabled === false) continue;
       runtimeNameCounts.set(server.runtimeName, (runtimeNameCounts.get(server.runtimeName) ?? 0) + 1);
     }
     const credentialPresent = new Map<string, boolean>();
