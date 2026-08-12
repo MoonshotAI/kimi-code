@@ -259,6 +259,25 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
         mcpServers: { global: { transport: 'http', url: statusServer.plainUrl } },
       });
 
+      const collidingName = 'plugin-status-plugin:remote';
+      await harness.addMcpServer({
+        name: collidingName,
+        transport: 'http',
+        url: statusServer.oauthUrl,
+        auth: 'oauth',
+      });
+      await expect(
+        harness.inspectAppMcpServers([
+          { source: 'plugin', pluginId: 'status-plugin', serverName: 'remote' },
+        ]),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          runtimeName: collidingName,
+          authStatus: 'unavailable',
+          error: `MCP runtime name "${collidingName}" is not unique`,
+        }),
+      ]);
+
       await harness.setPluginMcpServerEnabled('status-plugin', 'remote', false);
       await expect(
         harness.inspectAppMcpServers([

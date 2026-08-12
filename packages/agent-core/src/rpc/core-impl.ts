@@ -808,8 +808,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async inspectAppMcpServers({
     targets,
   }: InspectAppMcpServersPayload): Promise<readonly AppMcpServerInspection[]> {
-    const descriptors = await this.appMcpServerDescriptors(targets);
-    return this.inspectAppMcpServerDescriptors(descriptors);
+    const catalog = await this.appMcpServerDescriptors();
+    const descriptors = selectAppMcpServerDescriptors(catalog, targets);
+    return this.inspectAppMcpServerDescriptors(descriptors, catalog);
   }
 
   async addGlobalMcpServer(
@@ -935,9 +936,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
   }
 
-  private async appMcpServerDescriptors(
-    targets?: readonly McpServerLocator[],
-  ): Promise<readonly AppMcpServerDescriptor[]> {
+  private async appMcpServerDescriptors(): Promise<readonly AppMcpServerDescriptor[]> {
     await this.pluginsReady;
     const globals = (await this.globalMcpConfig.list()).map((server) => {
       const locator = { source: 'global', name: server.name } as const;
@@ -980,29 +979,21 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         editable: false,
       };
     });
-    const descriptors = [...globals, ...plugins];
-    if (targets === undefined) return descriptors;
-    const byId = new Map(descriptors.map((server) => [server.serverId, server]));
-    return targets.map((target) => {
-      const server = byId.get(mcpServerId(target));
-      if (server !== undefined) return server;
-      throw new KimiError(
-        ErrorCodes.MCP_SERVER_NOT_FOUND,
-        `MCP server "${describeMcpServerLocator(target)}" was not found`,
-      );
-    });
+    return [...globals, ...plugins];
   }
 
   private async resolveAppMcpServer(locator: McpServerLocator): Promise<AppMcpServerDescriptor> {
-    return (await this.appMcpServerDescriptors([locator]))[0]!;
+    const catalog = await this.appMcpServerDescriptors();
+    return selectAppMcpServerDescriptors(catalog, [locator])[0]!;
   }
 
   private async inspectAppMcpServerDescriptors(
     descriptors: readonly AppMcpServerDescriptor[],
+    catalog: readonly AppMcpServerDescriptor[],
   ): Promise<readonly AppMcpServerInspection[]> {
     const oauth = new McpOAuthService({ kimiHomeDir: this.homeDir });
     const runtimeNameCounts = new Map<string, number>();
-    for (const server of descriptors) {
+    for (const server of new Map(catalog.map((item) => [item.serverId, item])).values()) {
       runtimeNameCounts.set(server.runtimeName, (runtimeNameCounts.get(server.runtimeName) ?? 0) + 1);
     }
     const credentialPresent = new Map<string, boolean>();
@@ -1660,6 +1651,22 @@ function mcpServerId(locator: McpServerLocator): string {
 function describeMcpServerLocator(locator: McpServerLocator): string {
   if (locator.source === 'global') return locator.name;
   return `${locator.pluginId}/${locator.serverName}`;
+}
+
+function selectAppMcpServerDescriptors(
+  catalog: readonly AppMcpServerDescriptor[],
+  targets?: readonly McpServerLocator[],
+): readonly AppMcpServerDescriptor[] {
+  if (targets === undefined) return catalog;
+  const byId = new Map(catalog.map((server) => [server.serverId, server]));
+  return targets.map((target) => {
+    const server = byId.get(mcpServerId(target));
+    if (server !== undefined) return server;
+    throw new KimiError(
+      ErrorCodes.MCP_SERVER_NOT_FOUND,
+      `MCP server "${describeMcpServerLocator(target)}" was not found`,
+    );
+  });
 }
 
 function configuredMcpAuthState(

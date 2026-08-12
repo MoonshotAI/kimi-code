@@ -3616,6 +3616,17 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'unavailable-dynamic', authStatus: 'unavailable' },
       ]);
 
+      const duplicateTarget = { source: 'global', name: 'oauth-required' } as const;
+      const [v1Duplicates, v2Duplicates] = await Promise.all([
+        pair.v1.inspectAppMcpServers([duplicateTarget, duplicateTarget]),
+        pair.v2.inspectAppMcpServers([duplicateTarget, duplicateTarget]),
+      ]);
+      expect(projectStatuses(v2Duplicates)).toEqual(projectStatuses(v1Duplicates));
+      expect(projectStatuses(v1Duplicates)).toEqual([
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+      ]);
+
       const [v1LegacyStatuses, v2LegacyStatuses] = await Promise.all([
         pair.v1.listGlobalMcpServerAuthStatuses(),
         pair.v2.listGlobalMcpServerAuthStatuses(),
