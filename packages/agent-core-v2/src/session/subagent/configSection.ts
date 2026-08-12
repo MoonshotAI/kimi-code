@@ -273,6 +273,11 @@ export function resolveSubagentBinding(
   const enabled = flags.enabled(SECONDARY_MODEL_FLAG_ID);
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   if (enabled && section?.force === true) {
+    if (section.models !== undefined) {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_EXCLUDES_MODELS_MESSAGE, {
+        details: { section: SECONDARY_MODEL_SECTION, field: 'force' },
+      });
+    }
     const forcedModel = section.defaultModel ?? section.model;
     if (forcedModel === undefined) {
       throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_REQUIRES_DEFAULT_MESSAGE, {

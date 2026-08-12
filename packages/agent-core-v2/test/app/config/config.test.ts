@@ -1945,6 +1945,23 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
+  it('rejects force combined with a models table at spawn resolution, matching startup validation', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+
+    // A live session can reach this state through a deep-merged config patch
+    // that adds force without clearing the pool table; spawn resolution must
+    // fail the same way the startup pre-flight does.
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own)).toThrow(
+      /\[secondary_model\]\.force cannot be combined with \[secondary_model\.models\]/,
+    );
+
+    disposables.dispose();
+  });
+
   it('rejects an alias outside the pool, listing the available models', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig(

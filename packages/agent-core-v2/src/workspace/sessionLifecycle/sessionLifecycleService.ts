@@ -68,7 +68,7 @@
  * The session-level services whose subscriptions
  * must exist before the first agent / turn (external hooks, cron, the
  * subagent model-pool startup validation) opt into `OnScopeCreated` activation.
- * The subagent model pool itself is validated even earlier — synchronously at
+ * The subagent model pool itself is validated even earlier — at
  * the top of `materializeSession`, before the MCP overlay, the session scope,
  * and any persisted artifact come into existence, and again at the top of
  * `fork` before the source session's files are copied — so a broken pool
@@ -77,6 +77,11 @@
  * overlay connections behind; the Session-scope validation service
  * (`session/subagent/subagentModelsValidationService.ts`) repeats the same
  * check at scope activation as a backstop for paths that bypass this service.
+ * That pre-flight awaits the kosong model/provider registries' `ready`
+ * alongside `config.ready` first: the catalog resolves aliases through those
+ * registries rather than the config document, so a cold bootstrap that
+ * creates a session before hydration completes must not fail a valid pool
+ * with `CONFIG_INVALID`.
  * The pool is gated behind the `secondary-model` experiment, so with the
  * experiment off these validations are no-ops and the section stays inert.
  */
@@ -141,6 +146,8 @@ import {
   type WireRecord,
 } from '#/wire/record';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
 import { IFlagService } from '#/app/flag/flag';
 import { assertValidSubagentModelConfig } from '#/session/subagent/configSection';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -222,6 +229,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IModelService private readonly models: IModelService,
+    @IProviderService private readonly providers: IProviderService,
     @IFlagService private readonly flags: IFlagService,
   ) {
     super();
@@ -264,7 +273,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async assertSubagentModelPoolPreFlight(): Promise<void> {
-    await this.config.ready;
+    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
     assertValidSubagentModelConfig(this.config, this.flags, this.modelCatalog);
   }
 

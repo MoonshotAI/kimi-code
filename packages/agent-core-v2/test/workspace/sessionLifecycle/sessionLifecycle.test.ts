@@ -45,6 +45,9 @@ import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidation';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
+import { stubProviderService } from '../../app/provider/stubs';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
@@ -448,6 +451,13 @@ function modelCatalogStub(knownIds: readonly string[] = []): IModelCatalog {
   } as unknown as IModelCatalog;
 }
 
+function modelServiceStub(ready: Promise<void> = Promise.resolve()): IModelService {
+  return {
+    _serviceBrand: undefined,
+    ready,
+  } as unknown as IModelService;
+}
+
 function secondaryModelFlagStub(enabled: boolean): IFlagService {
   return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
 }
@@ -624,6 +634,8 @@ describe('SessionLifecycleService', () => {
       stubPair(IWorkspaceMcpService, workspaceMcpServiceStub()),
       stubPair(IConfigService, configStub()),
       stubPair(IModelCatalog, modelCatalogStub()),
+      stubPair(IModelService, modelServiceStub()),
+      stubPair(IProviderService, stubProviderService()),
       stubPair(IFlagService, secondaryModelFlagStub(false)),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
       stubPair(ISessionSubagentModelsValidationService, {
@@ -728,6 +740,58 @@ describe('SessionLifecycleService', () => {
 
     const h = await svc.create({ sessionId: 's-pool', workDir: '/tmp/proj' });
     expect(svc.get('s-pool')).toBe(h);
+  });
+
+  it('waits for the model/provider registries before validating the subagent model pool', async () => {
+    let releaseRegistries!: () => void;
+    const registriesReady = new Promise<void>((resolve) => {
+      releaseRegistries = resolve;
+    });
+    let registriesReleased = false;
+    const coldRegistryCatalog = {
+      _serviceBrand: undefined,
+      get: (id: string) => {
+        if (!registriesReleased) {
+          throw new Error2(
+            ErrorCodes.CONFIG_INVALID,
+            `Model "${id}" is not configured in config.toml.`,
+            { details: { model: id } },
+          );
+        }
+        return { id };
+      },
+    } as unknown as IModelCatalog;
+    const svc = await build([
+      stubPair(
+        IConfigService,
+        configStub({
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast and cheap' },
+          },
+        }),
+      ),
+      stubPair(IModelCatalog, coldRegistryCatalog),
+      stubPair(IModelService, modelServiceStub(registriesReady)),
+      stubPair(IProviderService, stubProviderService({}, registriesReady)),
+      stubPair(IFlagService, secondaryModelFlagStub(true)),
+    ]);
+
+    // A cold bootstrap can reach create before the kosong registries finish
+    // hydrating: the pre-flight must hold, not fail the valid pool against an
+    // empty registry.
+    let settled = false;
+    const pending = svc.create({ sessionId: 's-race', workDir: '/tmp/proj' }).then((created) => {
+      settled = true;
+      return created;
+    });
+    await tick();
+    expect(settled).toBe(false);
+
+    registriesReleased = true;
+    releaseRegistries();
+    const h = await pending;
+    expect(svc.get('s-race')).toBe(h);
   });
 
   it('rejects create with CONFIG_INVALID when force is set without default_model', async () => {
