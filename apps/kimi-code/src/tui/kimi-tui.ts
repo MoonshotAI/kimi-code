@@ -178,6 +178,10 @@ import {
   groupTurns,
   turnsToTrim,
 } from './utils/transcript-window';
+import {
+  readWireTurnBoundaryTime,
+  wireTailAheadOfTranscript,
+} from './utils/wire-staleness';
 
 export type { TUIState } from './tui-state';
 export { createTUIState } from './tui-state';
@@ -360,6 +364,16 @@ export class KimiTUI {
   private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =
     undefined;
   private lastHistoryContent: string | undefined;
+  /**
+   * The newest user-turn timestamp this TUI has observed on the active
+   * session's wire journal (seeded at session switch, advanced after each turn
+   * ends). The send guard compares the live journal against this to detect
+   * turns appended by external clients. `undefined` until a session exposes a
+   * readable journal (fresh sessions start undefined and stay fail-open).
+   */
+  private wireTipTime: number | undefined;
+  /** In-flight {@link refreshWireTipFromDisk} read, awaited by the send guard. */
+  private wireTipRefresh: Promise<void> | null = null;
   // Live `!` shell output entries, keyed by commandId so concurrent commands
   // each update their own card and stale events are dropped. Mutated in place
   // as `shell.output` events arrive; removed when the command completes.
@@ -1275,6 +1289,56 @@ export class KimiTUI {
     this.updateQueueDisplay();
   }
 
+  /**
+   * Re-read the active session's newest wire user-turn into {@link wireTipTime}.
+   * Failures keep the last observed tip so the guard stays fail-open.
+   */
+  refreshWireTipFromDisk(): void {
+    const sessionDir = this.session?.summary?.sessionDir;
+    if (sessionDir === undefined) return;
+    const task = readWireTurnBoundaryTime(sessionDir, MAIN_AGENT_ID)
+      .then((time) => {
+        this.wireTipTime = time;
+      })
+      .catch(() => {
+        // Keep the last observed tip; the guard fails open when unreadable.
+      });
+    this.wireTipRefresh = task;
+    void task.finally(() => {
+      if (this.wireTipRefresh === task) this.wireTipRefresh = null;
+    });
+  }
+
+  /**
+   * Block a prompt when an external client has appended a turn to the session's
+   * wire journal after this TUI last rendered one. Sending anyway would fork
+   * the session into two divergent histories, so the user is told to resume
+   * fresh instead. Only meaningful while the session is idle — in-flight input
+   * is queued by the caller and must not be gated on the live journal.
+   */
+  private async assertWireFresh(session: Session): Promise<boolean> {
+    if (this.state.appState.streamingPhase !== 'idle') return false;
+    // A tip refresh kicked off by the last turn may still be in flight; await
+    // it so the comparison never sees a stale baseline and false-positives.
+    if (this.wireTipRefresh !== null) {
+      await this.wireTipRefresh.catch(() => undefined);
+    }
+    const sessionDir = session.summary?.sessionDir;
+    if (sessionDir === undefined) return false;
+    const wireTailTime = await readWireTurnBoundaryTime(sessionDir, MAIN_AGENT_ID).catch(
+      () => undefined,
+    );
+    if (!wireTailAheadOfTranscript({ transcriptTipTime: this.wireTipTime, wireTailTime })) {
+      return false;
+    }
+    this.showStatus(
+      'Session was modified outside this terminal; your transcript is out of date.\n' +
+        `Resume with: kimi -S ${quoteShellArg(session.id)} to reload the latest history before continuing.`,
+      'warning',
+    );
+    return true;
+  }
+
   async sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void> {
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
@@ -1310,6 +1374,14 @@ export class KimiTUI {
       }
       session = await this.ensureSession();
       if (session === undefined) return;
+    }
+    // An external client may have appended turns to the session's wire journal
+    // while this TUI was idle. Sending now would continue from a stale context
+    // and silently fork the session, so refuse until the user resumes fresh.
+    if (await this.assertWireFresh(session)) {
+      this.updateQueueDisplay();
+      this.state.ui.requestRender();
+      return;
     }
     if (extraction.hasMedia) {
       this.sendMessage(session, text, {
@@ -1882,6 +1954,9 @@ export class KimiTUI {
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);
     this.syncAdditionalDirs(session);
+    // Seed the wire staleness baseline for the newly active session (fresh
+    // sessions yield `undefined` and stay fail-open until their first turn).
+    this.refreshWireTipFromDisk();
   }
 
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
