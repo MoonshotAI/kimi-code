@@ -797,16 +797,23 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     _input?: EmptyPayload,
   ): Promise<readonly GlobalMcpServerAuthStatus[]> {
     const servers = await this.globalMcpConfig.list();
+    const authStatuses = new Map<string, GlobalMcpServerAuthState>();
+    const targets: McpServerLocator[] = [];
+    for (const server of servers) {
+      const credentialPresent =
+        server.transport !== 'stdio' &&
+        this.globalMcpOAuth.hasTokens(server.name, server.url);
+      const authStatus = legacyGlobalMcpAuthStateWithoutProbe(server, credentialPresent);
+      if (authStatus === undefined) targets.push({ source: 'global', name: server.name });
+      else authStatuses.set(server.name, authStatus);
+    }
     const inspections = await this.inspectAppMcpServers({
-      targets: servers
-        .filter((server) => !isLegacyNonOAuthSse(server))
-        .map((server) => ({ source: 'global', name: server.name })),
+      targets,
     });
     const inspectionsByName = new Map(inspections.map((server) => [server.runtimeName, server]));
     return servers.map((server) => {
-      if (isLegacyNonOAuthSse(server)) {
-        return { name: server.name, authStatus: 'not-applicable' };
-      }
+      const knownAuthStatus = authStatuses.get(server.name);
+      if (knownAuthStatus !== undefined) return { name: server.name, authStatus: knownAuthStatus };
       const inspection = inspectionsByName.get(server.name)!;
       return {
         name: server.name,
@@ -1718,9 +1725,6 @@ function legacyGlobalMcpAuthState(
   server: AppMcpServerInspection,
   credentialPresent: boolean,
 ): GlobalMcpServerAuthState {
-  if (server.config.transport === 'sse' && server.config.auth !== 'oauth') {
-    return 'not-applicable';
-  }
   if (server.authStatus !== 'unavailable') return server.authStatus;
   if (credentialPresent) return 'oauth-authorized';
   return server.config.transport !== 'stdio' && server.config.auth === 'oauth'
@@ -1728,8 +1732,16 @@ function legacyGlobalMcpAuthState(
     : 'not-applicable';
 }
 
-function isLegacyNonOAuthSse(config: McpServerConfig): boolean {
-  return config.transport === 'sse' && config.auth !== 'oauth';
+function legacyGlobalMcpAuthStateWithoutProbe(
+  server: GlobalMcpServerConfig,
+  credentialPresent: boolean,
+): GlobalMcpServerAuthState | undefined {
+  if (server.enabled === false || server.transport === 'stdio') return 'not-applicable';
+  if (server.bearerTokenEnvVar !== undefined) return 'bearer-token';
+  if (server.headers !== undefined && server.auth !== 'oauth') return 'not-applicable';
+  if (server.transport !== 'http' && server.auth !== 'oauth') return 'not-applicable';
+  if (server.auth === 'oauth' && !credentialPresent) return 'oauth-required';
+  return undefined;
 }
 
 function isOAuthProbeCandidate(server: AppMcpServerRuntimeDescriptor): boolean {

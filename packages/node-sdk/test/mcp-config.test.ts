@@ -226,7 +226,7 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
       .getProvider('oauth-stale', statusServer.oauthUrl)
       .saveTokens({ access_token: 'stale-test-access-token', token_type: 'Bearer' });
     await externalOAuth
-      .getProvider('sse', statusServer.oauthUrl)
+      .getProvider('sse', statusServer.unavailableUrl)
       .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
     await writeMcpConfig(homeDir, {
       mcpServers: {
@@ -234,6 +234,11 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
         plain: { transport: 'http', url: statusServer.plainUrl },
         detected: { transport: 'http', url: statusServer.oauthUrl },
         sse: { transport: 'sse', url: statusServer.unavailableUrl },
+        'sse-bearer': {
+          transport: 'sse',
+          url: statusServer.unavailableUrl,
+          bearerTokenEnvVar: 'EXAMPLE_SSE_TOKEN',
+        },
         'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
         bearer: {
           transport: 'http',
@@ -242,7 +247,7 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
         },
         'oauth-required': {
           transport: 'http',
-          url: statusServer.oauthUrl,
+          url: statusServer.unavailableUrl,
           auth: 'oauth',
         },
         'oauth-authorized': {
@@ -265,6 +270,7 @@ describe('MCP OAuth facade (host-controlled browser flow)', () => {
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'oauth-required' },
         { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'sse-bearer', authStatus: 'bearer-token' },
         { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-required' },
