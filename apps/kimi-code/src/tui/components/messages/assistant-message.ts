@@ -11,6 +11,7 @@ import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
+import { createMarkdownOptions } from '#/tui/utils/markdown-options';
 import { markOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
@@ -62,9 +63,14 @@ export class AssistantMessageComponent implements Component {
 
     if (this.markdown === undefined || this.markdownTransient !== transient) {
       this.contentContainer.clear();
-      this.markdown = new Markdown(displayText, 0, 0, createMarkdownTheme({ transient }), undefined, {
-        renderLatex: false,
-      });
+      this.markdown = new Markdown(
+        displayText,
+        0,
+        0,
+        createMarkdownTheme({ transient }),
+        undefined,
+        createMarkdownOptions(),
+      );
       this.markdownTransient = transient;
       this.contentContainer.addChild(this.markdown);
       return;
@@ -88,7 +94,7 @@ export class AssistantMessageComponent implements Component {
         0,
         createMarkdownTheme({ transient: this.lastTransient }),
         undefined,
-        { renderLatex: false },
+        createMarkdownOptions(),
       );
       this.markdownTransient = this.lastTransient;
       this.contentContainer.addChild(this.markdown);

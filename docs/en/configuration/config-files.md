@@ -429,6 +429,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | Color theme: `auto` (follow the terminal), `dark`, `light`, or the name of a [custom theme](../customization/themes.md) |
 | `tui_mode` | `string` | `regular` | UI renderer: `regular` (inline viewport) or `fullscreen` (alternate-screen UI with a scrollable transcript viewport, mouse text selection, a scrollbar, and Ctrl-Shift-F transcript search; applies on next start) |
+| `render_latex` | `boolean` | `true` | Render LaTeX math expressions (`$…$`, `$$…$$`) in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | Show a dialog when resuming a long-idle session or submitting after a long idle stretch, warning that the context cache has likely expired and offering to compact or start a new session (v2 engine only) |
 | `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
@@ -442,6 +443,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
 tui_mode = "regular" # "regular" | "fullscreen" (alternate-screen UI; applies on next start)
+render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = true # false disables the "cache expired" dialog on resume / idle submit
 

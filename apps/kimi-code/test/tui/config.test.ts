@@ -61,6 +61,7 @@ auto_install = false
     expect(config).toEqual({
       theme: 'light',
       tuiMode: 'regular',
+      renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
       editorCommand: 'code --wait',
@@ -89,6 +90,16 @@ tui_mode = "fullscreen"
     expect(config.tuiMode).toBe('fullscreen');
   });
 
+  it('defaults render_latex to true and parses false', () => {
+    expect(parseTuiConfig('').renderLatex).toBe(true);
+
+    const config = parseTuiConfig(`
+render_latex = false
+`);
+
+    expect(config.renderLatex).toBe(false);
+  });
+
   it('parses cache_expiry_hint', () => {
     const config = parseTuiConfig(`
 theme = "dark"
@@ -107,6 +118,7 @@ command = "   "
     expect(config).toEqual({
       theme: 'auto',
       tuiMode: 'regular',
+      renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
       editorCommand: null,
@@ -154,6 +166,7 @@ command = "   "
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
       tuiMode: 'regular',
+      renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
       editorCommand: 'vim',

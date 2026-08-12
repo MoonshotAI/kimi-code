@@ -2,6 +2,7 @@ import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
 import { currentTheme, lightColors } from '#/tui/theme';
 import { loadTuiConfig, type TuiConfig } from '../config';
+import { setMarkdownRenderLatex } from '../utils/markdown-options';
 import type { SlashCommandHost } from './dispatch';
 import { setExperimentalFeatures } from './experimental-flags';
 
@@ -63,12 +64,14 @@ export async function applyReloadedTuiConfig(
   host.setAppState({
     editorCommand: config.editorCommand,
     disablePasteBurst: config.disablePasteBurst,
+    renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
     notifications: config.notifications,
     upgrade: config.upgrade,
     statusLine: config.statusLine,
   });
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
+  setMarkdownRenderLatex(config.renderLatex ?? true);
 }
 
 function applyRuntimeConfig(host: SlashCommandHost, config: KimiConfig): void {

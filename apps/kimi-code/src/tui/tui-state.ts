@@ -11,8 +11,7 @@ import {
 import { clipboard } from '#/utils/clipboard/clipboard-native';
 import { openUrl } from '#/utils/open-url';
 
-import { FooterComponent } from './components/chrome/footer';
-import { GutterContainer } from './components/chrome/gutter-container';
+import { FooterComponent } from './components/chrome/footer';import { GutterContainer } from './components/chrome/gutter-container';
 import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
 import { TodoPanelComponent } from './components/chrome/todo-panel';
 import type { SessionRow } from './components/dialogs/session-picker';
@@ -21,6 +20,7 @@ import { DEFAULT_TUI_CONFIG } from './config';
 import { CHROME_GUTTER } from './constant/rendering';
 import type { TasksBrowserState } from './controllers/tasks-browser';
 import { currentTheme, type Theme } from './theme';
+import { setMarkdownRenderLatex } from './utils/markdown-options';
 import { createTerminalState, type TerminalState } from './utils/terminal-state';
 import {
   INITIAL_LIVE_PANE,
@@ -81,6 +81,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
 
   const terminal = new ProcessTerminal();
   const tuiMode = initialAppState.tuiMode ?? DEFAULT_TUI_CONFIG.tuiMode ?? 'regular';
+  setMarkdownRenderLatex(initialAppState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true);
   const ui =
     tuiMode === 'fullscreen'
       ? new TuiAltScreen(terminal, undefined, undefined, {

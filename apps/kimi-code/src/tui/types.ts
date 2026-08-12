@@ -71,6 +71,8 @@ export interface AppState {
   disablePasteBurst?: boolean;
   /** Renderer selection from tui.toml; defaults to 'regular' when absent from older fixtures. */
   tuiMode?: TuiMode;
+  /** LaTeX math rendering in Markdown; defaults to true when absent from older fixtures. */
+  renderLatex?: boolean;
   /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
   cacheExpiryHint?: boolean;
   notifications: NotificationsConfig;

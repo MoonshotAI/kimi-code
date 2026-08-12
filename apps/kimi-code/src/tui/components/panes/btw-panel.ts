@@ -9,6 +9,7 @@ import chalk from 'chalk';
 
 import { THINKING_PREVIEW_LINES } from '../../constant/rendering';
 import { currentTheme } from '../../theme';
+import { createMarkdownOptions } from '../../utils/markdown-options';
 
 type BtwPanelPhase = 'running' | 'done' | 'failed';
 
@@ -196,9 +197,7 @@ export class BtwPanelComponent implements Component {
     const thinking = turn.thinking.trim();
     if (answer.length > 0) {
       lines.push(
-        ...new Markdown(answer, 0, 0, this.options.markdownTheme, undefined, {
-          renderLatex: false,
-        }).render(width),
+        ...new Markdown(answer, 0, 0, this.options.markdownTheme, undefined, createMarkdownOptions()).render(width),
       );
     } else if (thinking.length > 0) {
       const thinkingLines = new Text(chalk.hex(currentTheme.palette.textDim)(thinking), 0, 0).render(
