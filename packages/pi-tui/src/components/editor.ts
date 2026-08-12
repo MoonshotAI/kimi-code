@@ -19,15 +19,33 @@ import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "
 const graphemeSegmenter = getGraphemeSegmenter();
 const wordSegmenter = getWordSegmenter();
 
-/** Regex matching paste markers like `[paste #1 +123 lines]` or `[paste #2 1234 chars]`. */
-const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
+/** Regex matching paste markers: Claude-style `[Pasted text #N …]` and legacy `[paste #N …]`. */
+const PASTE_MARKER_REGEX =
+	/\[(?:Pasted text|paste) #(\d+)( (?:\+\d+ lines|\d+ chars))?\]/g;
 
 /** Non-global version for single-segment testing. */
-const PASTE_MARKER_SINGLE = /^\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]$/;
+const PASTE_MARKER_SINGLE = /^\[(?:Pasted text|paste) #(\d+)( (?:\+\d+ lines|\d+ chars))?\]$/;
+
+/** Collapse pasted text into a marker above this character count (Claude Code uses 800). */
+const PASTE_FOLD_CHAR_THRESHOLD = 800;
+/** Collapse when newline count exceeds this (≈11+ lines of pasted text). */
+const PASTE_FOLD_NEWLINE_THRESHOLD = 10;
 
 /** Check if a segment is a paste marker (i.e. was merged by segmentWithMarkers). */
 function isPasteMarker(segment: string): boolean {
 	return segment.length >= 10 && PASTE_MARKER_SINGLE.test(segment);
+}
+
+/** Newline count for paste refs — `a\nb\nc` is 2 (Claude Code semantics). */
+function getPastedTextRefNumLines(text: string): number {
+	return (text.match(/\r\n|\r|\n/g) || []).length;
+}
+
+function formatPastedTextRef(id: number, numLines: number): string {
+	if (numLines === 0) {
+		return `[Pasted text #${id}]`;
+	}
+	return `[Pasted text #${id} +${numLines} lines]`;
 }
 
 /**
@@ -43,7 +61,10 @@ function segmentWithMarkers(
 	validIds: Set<number>,
 ): Iterable<Intl.SegmentData> {
 	// Fast path: no paste markers in the text or no valid IDs.
-	if (validIds.size === 0 || !text.includes("[paste #")) {
+	if (
+		validIds.size === 0 ||
+		(!text.includes("[paste #") && !text.includes("[Pasted text #"))
+	) {
 		return baseSegmenter.segment(text);
 	}
 
@@ -1081,7 +1102,10 @@ export class Editor implements Component, Focusable {
 	private expandPasteMarkers(text: string): string {
 		let result = text;
 		for (const [pasteId, pasteContent] of this.pastes) {
-			const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
+			const markerRegex = new RegExp(
+				`\\[(?:Pasted text|paste) #${pasteId}( (?:\\+\\d+ lines|\\d+ chars))?\\]`,
+				"g",
+			);
 			result = result.replace(markerRegex, () => pasteContent);
 		}
 		return result;
@@ -1288,20 +1312,15 @@ export class Editor implements Component, Focusable {
 		// Split into lines to check for large paste
 		const pastedLines = filteredText.split("\n");
 
-		// Check if this is a large paste (> 10 lines or > 1000 characters)
+		// Fold large pastes into a marker so the input box stays one line
+		// (>800 chars, or 11+ lines — keep short multi-line pastes visible).
 		const totalChars = filteredText.length;
-		if (pastedLines.length > 10 || totalChars > 1000) {
-			// Store the paste and insert a marker
+		const numLines = getPastedTextRefNumLines(filteredText);
+		if (totalChars > PASTE_FOLD_CHAR_THRESHOLD || numLines > PASTE_FOLD_NEWLINE_THRESHOLD) {
 			this.pasteCounter++;
 			const pasteId = this.pasteCounter;
 			this.pastes.set(pasteId, filteredText);
-
-			// Insert marker like "[paste #1 +123 lines]" or "[paste #1 1234 chars]"
-			const marker =
-				pastedLines.length > 10
-					? `[paste #${pasteId} +${pastedLines.length} lines]`
-					: `[paste #${pasteId} ${totalChars} chars]`;
-			this.insertTextAtCursorInternal(marker);
+			this.insertTextAtCursorInternal(formatPastedTextRef(pasteId, numLines));
 			return;
 		}
 

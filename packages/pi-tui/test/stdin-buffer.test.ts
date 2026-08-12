@@ -435,6 +435,104 @@ describe("StdinBuffer", () => {
 		});
 	});
 
+	describe("Non-bracketed large paste coalescing", () => {
+		let emittedPaste: string[] = [];
+
+		beforeEach(() => {
+			buffer = new StdinBuffer({ timeout: 10 });
+			emittedSequences = [];
+			emittedPaste = [];
+			buffer.on("data", (sequence) => {
+				emittedSequences.push(sequence);
+			});
+			buffer.on("paste", (data) => {
+				emittedPaste.push(data);
+			});
+		});
+
+		it("emits a paste event for a plain chunk over 800 characters", async () => {
+			const content = "a".repeat(801);
+			processInput(content);
+			assert.deepStrictEqual(emittedSequences, []);
+			assert.deepStrictEqual(emittedPaste, []);
+
+			await wait(120);
+			assert.deepStrictEqual(emittedPaste, [content]);
+			assert.deepStrictEqual(emittedSequences, []);
+		});
+
+		it("merges continuation chunks within 100ms into one paste", async () => {
+			// First chunk exceeds PASTE_CHUNK_THRESHOLD (800); the second joins the window.
+			// (Node often splits a long paste into e.g. 500+500 — once the running
+			// total crosses 800 we coalesce; here the first read is already >800.)
+			const first = "a".repeat(500) + "b".repeat(301); // 801
+			const second = "c".repeat(200);
+			processInput(first);
+			assert.deepStrictEqual(emittedPaste, []);
+			assert.deepStrictEqual(emittedSequences, []);
+
+			processInput(second);
+			assert.deepStrictEqual(emittedPaste, []);
+
+			await wait(120);
+			assert.deepStrictEqual(emittedPaste, [first + second]);
+			assert.deepStrictEqual(emittedSequences, []);
+		});
+
+		it("still emits short plain input as data sequences", () => {
+			processInput("hello");
+			assert.deepStrictEqual(emittedSequences, ["h", "e", "l", "l", "o"]);
+			assert.deepStrictEqual(emittedPaste, []);
+		});
+
+		it("flushes the pending paste and dispatches a following arrow key", () => {
+			const content = "a".repeat(801);
+			processInput(content);
+			assert.deepStrictEqual(emittedPaste, []);
+			assert.deepStrictEqual(emittedSequences, []);
+
+			// Left arrow right after the paste must be dispatched, not swallowed.
+			processInput("\x1b[D");
+			assert.deepStrictEqual(emittedPaste, [content]);
+			assert.deepStrictEqual(emittedSequences, ["\x1b[D"]);
+		});
+
+		it("flushes the pending paste and dispatches a following backspace", () => {
+			const content = "a".repeat(801);
+			processInput(content);
+
+			processInput("\x7f");
+			assert.deepStrictEqual(emittedPaste, [content]);
+			assert.deepStrictEqual(emittedSequences, ["\x7f"]);
+		});
+
+		it("coalesces a plain prefix, then dispatches the trailing interactive key", () => {
+			const content = "a".repeat(801);
+			processInput(content);
+
+			// A chunk carrying more paste text AND an interactive key: the plain
+			// prefix joins the paste, the key is dispatched separately.
+			processInput("moretext\x1b[C");
+			assert.deepStrictEqual(emittedPaste, [content + "moretext"]);
+			assert.deepStrictEqual(emittedSequences, ["\x1b[C"]);
+		});
+
+		it("coalesces continuation chunks that only add newlines/CR/tab", async () => {
+			// \r / \n / \t are paste content, not interactive keys: a multi-line
+			// paste split across reads must not be flushed mid-stream.
+			const content = "a".repeat(801);
+			processInput(content);
+			processInput("\r\nmore\t");
+
+			assert.deepStrictEqual(emittedPaste, []);
+			assert.deepStrictEqual(emittedSequences, []);
+
+			await wait(120);
+			assert.deepStrictEqual(emittedPaste, [content + "\r\nmore\t"]);
+			assert.deepStrictEqual(emittedSequences, []);
+		});
+	});
+
 	describe("Destroy", () => {
 		it("should clear buffer on destroy", () => {
 			processInput("\x1b[<35");
