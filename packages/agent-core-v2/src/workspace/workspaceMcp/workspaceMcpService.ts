@@ -130,9 +130,15 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
         }
         this.oauthService.forgetProvider(event.serverName, event.serverUrl);
         if (entry.status === 'disabled' || entry.status === 'removed') return;
-        const reconnect = () => {
+        const reconnect = (afterCurrent = false) => {
           void this.ready
-            .then(() => this.mutate(() => this.manager.reconnectAndJoin(event.serverName)))
+            .then(() =>
+              this.mutate(() =>
+                afterCurrent
+                  ? this.manager.reconnectAfterCurrent(event.serverName)
+                  : this.manager.reconnectAndJoin(event.serverName),
+              ),
+            )
             .catch((error: unknown) => {
               this.log.warn(`mcp reconnect after credentials change failed: ${String(error)}`);
             });
@@ -141,7 +147,7 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
           const unsubscribe = this.manager.onStatusChange((next) => {
             if (next.name !== event.serverName || next.status === 'pending') return;
             unsubscribe();
-            if (next.status !== 'disabled' && next.status !== 'removed') reconnect();
+            if (next.status !== 'disabled' && next.status !== 'removed') reconnect(true);
           });
           this._register({ dispose: unsubscribe });
           return;

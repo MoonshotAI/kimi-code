@@ -357,6 +357,22 @@ describe('McpConnectionManager', () => {
     }
   }, 20000);
 
+  it('reconnectAfterCurrent queues one reconnect after the in-flight attempt', async () => {
+    const cm = new McpConnectionManager();
+    let finishCurrent!: () => void;
+    const current = new Promise<void>((resolve) => {
+      finishCurrent = resolve;
+    });
+    const reconnect = vi.spyOn(cm, 'reconnect').mockReturnValueOnce(current).mockResolvedValueOnce();
+
+    const first = cm.reconnectAndJoin('server');
+    const trailing = cm.reconnectAfterCurrent('server');
+    expect(reconnect).toHaveBeenCalledTimes(1);
+    finishCurrent();
+    await Promise.all([first, trailing]);
+    expect(reconnect).toHaveBeenCalledTimes(2);
+  });
+
   it('reconnectAndJoin rejects for unknown servers', async () => {
     const cm = new McpConnectionManager();
     try {

@@ -352,7 +352,7 @@ export class Session {
             resolve();
             return;
           }
-          void this.mcp.reconnectAndJoin(event.serverName).then(resolve, reject);
+          void this.mcp.reconnectAfterCurrent(event.serverName).then(resolve, reject);
         });
       });
       return;

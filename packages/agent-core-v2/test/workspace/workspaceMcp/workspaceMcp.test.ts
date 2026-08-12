@@ -157,7 +157,7 @@ describe('WorkspaceMcpService', () => {
       toolCount: 0,
     });
     vi.spyOn(manager, 'getRemoteServerUrl').mockReturnValue('https://mcp.example.test/mcp');
-    const reconnect = vi.spyOn(manager, 'reconnectAndJoin').mockResolvedValue(undefined);
+    const reconnect = vi.spyOn(manager, 'reconnectAfterCurrent').mockResolvedValue(undefined);
     let statusListener: Parameters<McpConnectionManager['onStatusChange']>[0] | undefined;
     vi.spyOn(manager, 'onStatusChange').mockImplementation((listener) => {
       statusListener = listener;
