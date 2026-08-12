@@ -41,6 +41,22 @@ describe('OAuthTokenTransaction', () => {
     expect(stored).toEqual(tokens('access-1', 'refresh-1'));
   });
 
+  it('preserves an access-only winner when an older refresh is queued', async () => {
+    let stored: TestTokens | undefined = { access_token: 'access-from-login' };
+    const stale = transaction('same-server', () => stored, (value) => (stored = value));
+    const tokenEndpoint = vi.fn<typeof fetch>();
+
+    const response = await stale.createFetch(tokenEndpoint)(
+      'https://issuer.example.test/token',
+      refreshRequest('stale-refresh'),
+    );
+
+    expect(response.status).toBe(400);
+    expect(tokenEndpoint).not.toHaveBeenCalled();
+    await stale.invalidateFromSdk('tokens');
+    expect(stored).toEqual({ access_token: 'access-from-login' });
+  });
+
   it('does not let a late save revive credentials after an explicit reset', async () => {
     let stored: TestTokens | undefined = tokens('access-0', 'refresh-0');
     const subject = transaction('same-server', () => stored, (value) => (stored = value));

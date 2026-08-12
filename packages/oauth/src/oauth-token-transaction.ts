@@ -11,6 +11,7 @@ type Effect<T> =
       readonly error: string;
       readonly tokensAtFailure: T | undefined;
       readonly alreadyRemoved: boolean;
+      readonly preserveCurrent: boolean;
     };
 
 export interface OAuthTokenTransactionOptions<T extends object> {
@@ -66,6 +67,10 @@ export class OAuthTokenTransaction<T extends object> {
       const effect = this.takeInvalidate(scope);
       if (effect === undefined) return false;
       const current = await this.options.read();
+      if (effect.preserveCurrent) {
+        this.adopt(current);
+        return false;
+      }
       if (effect.grantType === 'authorization_code' && effect.error === 'invalid_grant') {
         this.adopt(current);
         return false;
@@ -135,6 +140,7 @@ export class OAuthTokenTransaction<T extends object> {
           error,
           tokensAtFailure: current,
           alreadyRemoved,
+          preserveCurrent: false,
         });
       }
       return response;
@@ -165,6 +171,7 @@ export class OAuthTokenTransaction<T extends object> {
         error: 'invalid_grant',
         tokensAtFailure: current,
         alreadyRemoved: current === undefined,
+        preserveCurrent: current !== undefined,
       });
       return jsonResponse({ error: 'invalid_grant' }, 400);
     }
