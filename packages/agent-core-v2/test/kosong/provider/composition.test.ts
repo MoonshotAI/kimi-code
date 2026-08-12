@@ -33,10 +33,18 @@
  *     profile, and the OpenAI `reasoning_effort` auto-enable with its
  *     load-bearing kill switch (a `withThinking` hook disables it).
  *
+ * Plus one construction invariant: every wire base builds its SDK client
+ * with `maxRetries: 0` — retry is owned by the engine's step-retry layer,
+ * never by the SDK (whose backoff sleep ignores the turn's AbortSignal). The
+ * closing section proves it over a real HTTP 429: the first response reaches
+ * the caller after exactly one request, carrying the server-directed delay.
+ *
  * Note: base/definition registries are module-level state shared across this
  * file, so the contribs and test-vendor definitions are imported/registered
  * exactly once here.
  */
+
+import { createServer } from 'node:http';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -47,6 +55,7 @@ import {
   APIConnectionError,
   APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
+  APIStatusError,
   isRetryableGenerateError,
 } from '#/kosong/contract/errors';
 import type { Message } from '#/kosong/contract/message';
@@ -341,6 +350,17 @@ describe('createChatProvider', () => {
     const provider = registry.createChatProvider({ protocol: 'openai', modelName: 'gpt-4o' });
     expect(provider.name).toBe('openai');
     expect(provider.uploadVideo).toBeUndefined();
+  });
+});
+
+describe('SDK-internal retry disabled (engine-owned step retry)', () => {
+  it.each([
+    { protocol: 'openai', modelName: 'gpt-4o' },
+    { protocol: 'openai_responses', modelName: 'gpt-5' },
+    { protocol: 'anthropic', modelName: 'claude-opus-4-6' },
+  ] as const)('builds the $protocol SDK client with maxRetries 0', ({ protocol, modelName }) => {
+    const provider = registry.createChatProvider({ protocol, modelName, apiKey: 'sk-probe' });
+    expect((sdkClient(provider) as { maxRetries?: number }).maxRetries).toBe(0);
   });
 });
 
@@ -1233,4 +1253,89 @@ describe('OpenAI reasoning_effort path (issue #1616)', () => {
     const explicit = await captureOpenAIBody(provider, { thinking: { effort: 'low' } });
     expect(explicit['reasoning_effort']).toBe('low');
   });
+});
+
+describe('429 wire behavior over real HTTP (no hidden SDK retry)', () => {
+  async function with429Server(
+    body: Record<string, unknown>,
+    run: (port: number, requestCount: () => number) => Promise<void>,
+  ): Promise<void> {
+    let count = 0;
+    const server = createServer((_req, res) => {
+      count += 1;
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '5' });
+      res.end(JSON.stringify(body));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string') {
+        throw new Error('server has no address');
+      }
+      await run(address.port, () => count);
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    }
+  }
+
+  it.each([
+    {
+      protocol: 'openai',
+      modelName: 'gpt-4o',
+      baseUrlPath: '/v1',
+      body: { error: { message: 'slow down', type: 'rate_limit_error' } },
+    },
+    {
+      protocol: 'openai_responses',
+      modelName: 'gpt-5',
+      baseUrlPath: '/v1',
+      body: { error: { message: 'slow down', type: 'rate_limit_error' } },
+    },
+    {
+      protocol: 'anthropic',
+      modelName: 'claude-opus-4-6',
+      baseUrlPath: '',
+      body: { type: 'error', error: { type: 'rate_limit_error', message: 'slow down' } },
+    },
+    {
+      protocol: 'google-genai',
+      modelName: 'gemini-2.5-flash',
+      baseUrlPath: '',
+      body: {
+        error: {
+          code: 429,
+          message: 'Resource exhausted',
+          status: 'RESOURCE_EXHAUSTED',
+          details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '5s' }],
+        },
+      },
+    },
+  ] as const)(
+    'the first 429 reaches the caller after exactly one request with the 5s server delay ($protocol)',
+    async ({ protocol, modelName, baseUrlPath, body }) => {
+      await with429Server(body, async (port, requestCount) => {
+        const provider = registry.createChatProvider({
+          protocol,
+          modelName,
+          apiKey: 'sk-probe',
+          baseUrl: `http://127.0.0.1:${String(port)}${baseUrlPath}`,
+        });
+        const rejected: unknown = await provider.generate('sys', [], PROBE_HISTORY).then(
+          () => {
+            throw new Error('expected generate to reject');
+          },
+          (error: unknown) => error,
+        );
+        expect(rejected).toBeInstanceOf(APIProviderRateLimitError);
+        expect((rejected as APIStatusError).retryAfterMs).toBe(5000);
+        expect(requestCount()).toBe(1);
+      });
+    },
+  );
 });
