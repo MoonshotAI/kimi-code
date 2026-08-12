@@ -131,5 +131,14 @@ describe('createTUIState', () => {
     // The layout root is mounted and the root children list stays empty.
     expect((state.ui as TuiAltScreen).getLayoutRoot()).toBeDefined();
     expect(state.ui.children).toHaveLength(0);
+
+    // Mouse capture replaces native terminal link activation / right-click
+    // paste, so both must be routed through renderer callbacks.
+    const internals = state.ui as unknown as {
+      openUrl?: (url: string) => void;
+      onRightClickPaste?: () => void;
+    };
+    expect(typeof internals.openUrl).toBe('function');
+    expect(typeof internals.onRightClickPaste).toBe('function');
   });
 });

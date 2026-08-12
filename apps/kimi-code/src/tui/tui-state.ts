@@ -8,6 +8,9 @@ import {
   type TUI,
 } from '@moonshot-ai/pi-tui';
 
+import { clipboard } from '#/utils/clipboard/clipboard-native';
+import { openUrl } from '#/utils/open-url';
+
 import { FooterComponent } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';
 import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
@@ -78,7 +81,29 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
 
   const terminal = new ProcessTerminal();
   const tuiMode = initialAppState.tuiMode ?? DEFAULT_TUI_CONFIG.tuiMode ?? 'regular';
-  const ui = tuiMode === 'fullscreen' ? new TuiAltScreen(terminal) : new TuiMainScreen(terminal);
+  const ui =
+    tuiMode === 'fullscreen'
+      ? new TuiAltScreen(terminal, undefined, undefined, {
+          // Mouse capture takes over the terminal's native link activation, so
+          // route OSC 8 clicks through our own opener.
+          openUrl,
+          // Likewise, on Windows the terminal's native right-click paste is
+          // intercepted; feed the clipboard to the focused component as a
+          // bracketed paste instead (renderer only calls this on win32).
+          onRightClickPaste: () => {
+            const target = ui.getFocusedComponent();
+            if (!target?.handleInput || clipboard?.getText === undefined) return;
+            void clipboard
+              .getText()
+              .then((text) => {
+                if (!text || ui.getFocusedComponent() !== target) return;
+                target.handleInput?.(`\x1b[200~${text}\x1b[201~`);
+                ui.requestRender();
+              })
+              .catch(() => {});
+          },
+        })
+      : new TuiMainScreen(terminal);
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
