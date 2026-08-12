@@ -297,6 +297,39 @@ describe('McpConnectionManager', () => {
     }
   });
 
+  it('reconnectAndJoin joins an in-flight reconnect instead of starting a second one', async () => {
+    const cm = new McpConnectionManager();
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((entry) => {
+      seen.push({ name: entry.name, status: entry.status });
+    });
+    const delayedMockServer = `setTimeout(() => import(${JSON.stringify(
+      pathToFileURL(stdioFixture).href,
+    )}), 250)`;
+
+    try {
+      await cm.connectAll({
+        slow: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: ['-e', delayedMockServer],
+          startupTimeoutMs: 5_000,
+        },
+      });
+      seen.length = 0;
+
+      await Promise.all([cm.reconnectAndJoin('slow'), cm.reconnectAndJoin('slow')]);
+
+      expect(cm.get('slow')?.status).toBe('connected');
+      expect(seen.filter((event) => event.name === 'slow').map((event) => event.status)).toEqual([
+        'pending',
+        'connected',
+      ]);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20_000);
+
   it('shutdown clears entries and is idempotent', async () => {
     const cm = new McpConnectionManager();
     await cm.connectAll({ alpha: stdioConfig() });

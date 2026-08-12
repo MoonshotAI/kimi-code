@@ -216,6 +216,8 @@ export * from '#/app/plugin/archive';
 export * from '#/app/plugin/manager';
 export * from '#/app/plugin/plugin';
 export * from '#/app/plugin/pluginService';
+export * from '#/app/mcpAuthCoordinator/mcpAuthCoordinator';
+import '#/app/mcpAuthCoordinator/mcpAuthCoordinatorService';
 export * from '#/app/capability/capability';
 export * from '#/app/capability/capabilityService';
 export * from '#/app/capability/errors';

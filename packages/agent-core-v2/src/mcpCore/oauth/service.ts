@@ -31,6 +31,7 @@ import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 
 import { startCallbackServer, type CallbackServer } from './callback-server';
+import type { McpOAuthCredentialsCoordinator } from './coordinator';
 import { McpOAuthClientProvider } from './provider';
 import { mcpOAuthStoreKey, type McpOAuthStore } from './store';
 
@@ -38,6 +39,7 @@ export interface McpOAuthServiceOptions {
   readonly store: McpOAuthStore;
   readonly clientLabel?: string;
   readonly resolveClientName?: () => string | undefined;
+  readonly coordinator?: McpOAuthCredentialsCoordinator;
 }
 
 export interface BeginAuthorizationOptions {
@@ -54,12 +56,14 @@ export class McpOAuthService {
   private readonly store: McpOAuthStore;
   private readonly clientLabel: string | undefined;
   private readonly resolveClientName: (() => string | undefined) | undefined;
+  private readonly coordinator: McpOAuthCredentialsCoordinator | undefined;
   private readonly providers = new Map<string, McpOAuthClientProvider>();
 
   constructor(options: McpOAuthServiceOptions) {
     this.store = options.store;
     this.clientLabel = options.clientLabel;
     this.resolveClientName = options.resolveClientName;
+    this.coordinator = options.coordinator;
   }
 
   getProvider(serverName: string, serverUrl: string | URL): McpOAuthClientProvider {
@@ -118,6 +122,7 @@ export class McpOAuthService {
       const result = await auth(provider as OAuthClientProvider, { serverUrl });
       if (result !== 'REDIRECT') {
         await callbackServer.close();
+        this.coordinator?.notifyCredentialsChanged(serverName, serverUrl);
         throw new AlreadyAuthorizedError(serverName);
       }
       authorizationUrl = provider.takeAuthorizationUrl();
@@ -176,6 +181,7 @@ export class McpOAuthService {
       settled = true;
       await callbackServer.close().catch(() => undefined);
       provider.resetFlow();
+      this.coordinator?.notifyCredentialsChanged(serverName, serverUrl);
     };
 
     return { authorizationUrl, complete, cancel };
@@ -187,6 +193,10 @@ export class McpOAuthService {
     scope: 'all' | 'client' | 'tokens' | 'discovery' = 'all',
   ): Promise<void> {
     return this.getProvider(serverName, serverUrl).invalidateCredentials(scope);
+  }
+
+  forgetProvider(serverName: string, serverUrl: string | URL): void {
+    this.providers.delete(mcpOAuthStoreKey(serverName, serverUrl));
   }
 }
 

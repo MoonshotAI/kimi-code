@@ -12,7 +12,6 @@ import path from 'node:path';
 import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
 import type { HookDef } from '#/agent/externalHooks/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
-import type { PluginAgentRoot } from './types';
 import { discoverFileSkills } from '#/app/skillCatalog/fileSkillDiscovery';
 import type { SkillDiscoveryResult } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
@@ -31,7 +30,9 @@ import {
   type PluginCommandDef,
   type PluginGithubMetadata,
   type PluginInfo,
+  type PluginAgentRoot,
   type PluginMcpServerInfo,
+  type PluginMcpServerRuntimeConfig,
   type PluginRecord,
   type PluginSource,
   type PluginSummary,
@@ -362,15 +363,31 @@ export class PluginManager {
 
   enabledMcpServers(): Record<string, McpServerConfig> {
     const out: Record<string, McpServerConfig> = {};
+    for (const server of this.mcpServers()) {
+      if (!server.enabled) continue;
+      out[server.runtimeName] = server.config;
+    }
+    return out;
+  }
+
+  mcpServers(): readonly PluginMcpServerRuntimeConfig[] {
+    const out: PluginMcpServerRuntimeConfig[] = [];
     for (const record of this.records.values()) {
-      if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
-      for (const [name, config] of Object.entries(record.manifest.mcpServers ?? {})) {
-        if (!isMcpServerEnabled(record, name, config)) continue;
-        out[pluginMcpRuntimeName(record.id, name)] = withPluginMcpRuntime(
-          withMcpServerEnabled(config, true),
-          record.root,
-          this.kimiHomeDir,
-        );
+      if (record.state !== 'ok' || record.manifest === undefined) continue;
+      for (const [serverName, config] of Object.entries(record.manifest.mcpServers ?? {})) {
+        const enabled = record.enabled && isMcpServerEnabled(record, serverName, config);
+        const runtimeName = pluginMcpRuntimeName(record.id, serverName);
+        out.push({
+          pluginId: record.id,
+          serverName,
+          runtimeName,
+          enabled,
+          config: withPluginMcpRuntime(
+            withMcpServerEnabled(config, enabled),
+            record.root,
+            this.kimiHomeDir,
+          ),
+        });
       }
     }
     return out;

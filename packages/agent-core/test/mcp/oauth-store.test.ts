@@ -5,7 +5,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { McpOAuthClientProvider, McpOAuthService } from '../../src/mcp/oauth';
+import { McpOAuthClientProvider, McpOAuthCoordinator, McpOAuthService } from '../../src/mcp/oauth';
 import { JsonFileStore, sanitizeStoreKey } from '../../src/mcp/oauth/store';
 
 describe('sanitizeStoreKey', () => {
@@ -155,6 +155,29 @@ describe('MCP OAuth credential identity', () => {
 
     expect(provider.redirectUrl).toBe('http://127.0.0.1:45678/callback');
     expect(provider.clientMetadata.redirect_uris).toEqual(['http://127.0.0.1:45678/callback']);
+  });
+});
+
+describe('McpOAuthCoordinator', () => {
+  it('broadcasts credential changes without owning OAuth flows', () => {
+    const coordinator = new McpOAuthCoordinator();
+    const events: unknown[] = [];
+    coordinator.onCredentialsChanged((event) => events.push(event));
+
+    coordinator.notifyCredentialsChanged('notion', 'https://mcp.example.test/mcp#fragment');
+    coordinator.notifyCredentialsInvalidated('notion', 'https://mcp.example.test/mcp');
+    expect(events).toEqual([
+      {
+        serverName: 'notion',
+        serverUrl: 'https://mcp.example.test/mcp',
+        kind: 'updated',
+      },
+      {
+        serverName: 'notion',
+        serverUrl: 'https://mcp.example.test/mcp',
+        kind: 'invalidated',
+      },
+    ]);
   });
 });
 

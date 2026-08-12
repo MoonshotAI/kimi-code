@@ -29,9 +29,12 @@ import { makeErrorPayload } from '../errors';
 import {
   McpConnectionManager,
   McpOAuthService,
+  canonicalMcpOAuthResource,
   resolveMcpStartupTimeoutMs,
   resolveMcpToolTimeoutMs,
   type McpServerEntry,
+  type McpOAuthCredentialsChangedEvent,
+  type McpOAuthCredentialsCoordinator,
   type SessionMcpConfig,
 } from '../mcp';
 import type { EnabledPluginSessionStart, EnabledPluginSystemPrompt, PluginCommandDef } from '../plugin';
@@ -89,6 +92,7 @@ export interface SessionOptions {
   readonly skills?: SessionSkillConfig;
   readonly agents?: SessionAgentCatalogConfig;
   readonly mcpConfig?: SessionMcpConfig;
+  readonly mcpOAuthCoordinator?: McpOAuthCredentialsCoordinator;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly pluginCommands?: readonly PluginCommandDef[];
@@ -288,7 +292,10 @@ export class Session {
       sessionId: options.id,
     });
     this.mcp = new McpConnectionManager({
-      oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
+      oauthService: new McpOAuthService({
+        kimiHomeDir: options.kimiHomeDir,
+        coordinator: options.mcpOAuthCoordinator,
+      }),
       log: this.log,
       stdioCwd: options.kaos.getcwd(),
       defaultStartupTimeoutMs: resolveMcpStartupTimeoutMs(options.config?.mcp?.startupTimeoutMs),
@@ -325,6 +332,19 @@ export class Session {
     void this.loadMcpServers().catch((error: unknown) => {
       this.emitInitialMcpLoadError(error);
     });
+  }
+
+  async reconnectMcpAfterCredentialsChanged(
+    event: McpOAuthCredentialsChangedEvent,
+  ): Promise<void> {
+    const entry = this.mcp.get(event.serverName);
+    if (entry === undefined) return;
+    const serverUrl = this.mcp.getRemoteServerUrl(event.serverName);
+    if (serverUrl === undefined || canonicalMcpOAuthResource(serverUrl) !== event.serverUrl) return;
+    this.mcp.oauthService?.forgetProvider(event.serverName, event.serverUrl);
+    if (entry.status === 'disabled') return;
+    if (event.kind !== 'invalidated' && entry.status !== 'needs-auth') return;
+    await this.mcp.reconnectAndJoin(event.serverName);
   }
 
 

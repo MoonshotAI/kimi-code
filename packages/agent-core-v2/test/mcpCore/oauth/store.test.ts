@@ -1,6 +1,7 @@
 import type { OAuthClientInformationFull, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { describe, expect, it } from 'vitest';
 
+import { McpOAuthCoordinator } from '#/mcpCore/oauth/coordinator';
 import { McpOAuthClientProvider } from '#/mcpCore/oauth/provider';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { mcpOAuthStoreKey, sanitizeStoreKey } from '#/mcpCore/oauth/store';
@@ -81,6 +82,22 @@ describe('MCP OAuth credential identity', () => {
     await expect(service.hasTokens('linear', 'https://second.example.com/mcp')).resolves.toBe(false);
   });
 
+  it('reloads credentials written by another service after forgetting its cached provider', async () => {
+    const store = createMemoryMcpOAuthStore();
+    const workspaceService = new McpOAuthService({ store });
+    const globalService = new McpOAuthService({ store });
+    const serverUrl = 'https://mcp.example.com/mcp';
+
+    await expect(workspaceService.hasTokens('notion', serverUrl)).resolves.toBe(false);
+    const externalProvider = globalService.getProvider('notion', serverUrl);
+    await externalProvider.ready;
+    await externalProvider.saveTokens(token('new-token'));
+    await expect(workspaceService.hasTokens('notion', serverUrl)).resolves.toBe(false);
+
+    workspaceService.forgetProvider('notion', serverUrl);
+    await expect(workspaceService.hasTokens('notion', serverUrl)).resolves.toBe(true);
+  });
+
   it('uses stored client redirect URI when no active OAuth callback is running', async () => {
     const provider = new McpOAuthClientProvider({
       serverName: 'notion',
@@ -104,6 +121,29 @@ describe('MCP OAuth credential identity', () => {
     expect(mcpOAuthStoreKey('s', 'https://example.com/mcp#frag')).toBe(
       mcpOAuthStoreKey('s', 'https://example.com/mcp'),
     );
+  });
+});
+
+describe('McpOAuthCoordinator', () => {
+  it('broadcasts credential changes without owning OAuth flows', () => {
+    const coordinator = new McpOAuthCoordinator();
+    const events: unknown[] = [];
+    coordinator.onCredentialsChanged((event) => events.push(event));
+
+    coordinator.notifyCredentialsChanged('notion', 'https://mcp.example.test/mcp#fragment');
+    coordinator.notifyCredentialsInvalidated('notion', 'https://mcp.example.test/mcp');
+    expect(events).toEqual([
+      {
+        serverName: 'notion',
+        serverUrl: 'https://mcp.example.test/mcp',
+        kind: 'updated',
+      },
+      {
+        serverName: 'notion',
+        serverUrl: 'https://mcp.example.test/mcp',
+        kind: 'invalidated',
+      },
+    ]);
   });
 });
 

@@ -37,6 +37,7 @@ export function stubPluginService(options: StubPluginServiceOptions): IPluginSer
     enabledSessionStarts: async () => options.sessionStarts,
     enabledSystemPrompts: async () => [],
     enabledMcpServers: async () => ({}),
+    mcpServers: async () => [],
     enabledHooks: async () => [],
     hasLoadedSnapshot: () => true,
   };

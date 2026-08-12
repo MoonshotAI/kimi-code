@@ -3546,16 +3546,13 @@ async function expectSameMcpRejection(
 }
 
 describe('v1↔v2 global MCP parity', () => {
-  it('classifies global MCP authorization identically from persisted credentials', async () => {
+  it('classifies global MCP authorization identically from real connection results', async () => {
     const statusServer = await startMcpAuthStatusServer();
-    const authorizedUrl = 'https://authorized.example.test/mcp';
     const pair = await makeGlobalMcpParityPair({
       mcpServers: {
         stdio: { command: 'local-command' },
         plain: { transport: 'http', url: statusServer.plainUrl },
         detected: { transport: 'http', url: statusServer.oauthUrl },
-        sse: { transport: 'sse', url: statusServer.oauthUrl },
-        'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
         bearer: {
           transport: 'http',
           url: 'https://bearer.example.test/mcp',
@@ -3563,41 +3560,77 @@ describe('v1↔v2 global MCP parity', () => {
         },
         'oauth-required': {
           transport: 'http',
-          url: 'https://required.example.test/mcp',
+          url: statusServer.oauthUrl,
           auth: 'oauth',
         },
         'oauth-authorized': {
           transport: 'http',
-          url: authorizedUrl,
+          url: statusServer.oauthUrl,
           auth: 'oauth',
+        },
+        'oauth-stale': {
+          transport: 'http',
+          url: statusServer.oauthUrl,
+          auth: 'oauth',
+        },
+        'unavailable-explicit': {
+          transport: 'http',
+          url: statusServer.unavailableUrl,
+          auth: 'oauth',
+        },
+        'unavailable-dynamic': {
+          transport: 'http',
+          url: statusServer.unavailableUrl,
         },
       },
     });
     for (const homeDir of [pair.v1HomeDir, pair.v2HomeDir]) {
       const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
       externalOAuth
-        .getProvider('oauth-authorized', authorizedUrl)
-        .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
+        .getProvider('oauth-authorized', statusServer.oauthUrl)
+        .saveTokens({ access_token: statusServer.authToken, token_type: 'Bearer' });
       externalOAuth
-        .getProvider('sse', statusServer.oauthUrl)
-        .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
+        .getProvider('oauth-stale', statusServer.oauthUrl)
+        .saveTokens({ access_token: 'stale-test-access-token', token_type: 'Bearer' });
     }
 
     try {
-      const [v1Statuses, v2Statuses] = await Promise.all([
-        pair.v1.listGlobalMcpServerAuthStatuses(),
-        pair.v2.listGlobalMcpServerAuthStatuses(),
+      const [v1Servers, v2Servers] = await Promise.all([
+        pair.v1.inspectAppMcpServers(),
+        pair.v2.inspectAppMcpServers(),
       ]);
+      const projectStatuses = (servers: typeof v1Servers) =>
+        servers.map(({ runtimeName: name, authStatus }) => ({ name, authStatus }));
+      const v1Statuses = projectStatuses(v1Servers);
+      const v2Statuses = projectStatuses(v2Servers);
       expect(v2Statuses).toEqual(v1Statuses);
       expect(v1Statuses).toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
         { name: 'detected', authStatus: 'oauth-required' },
-        { name: 'sse', authStatus: 'not-applicable' },
-        { name: 'sse-oauth', authStatus: 'oauth-required' },
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-required' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+        { name: 'oauth-stale', authStatus: 'oauth-required' },
+        { name: 'unavailable-explicit', authStatus: 'unavailable' },
+        { name: 'unavailable-dynamic', authStatus: 'unavailable' },
+      ]);
+
+      const [v1LegacyStatuses, v2LegacyStatuses] = await Promise.all([
+        pair.v1.listGlobalMcpServerAuthStatuses(),
+        pair.v2.listGlobalMcpServerAuthStatuses(),
+      ]);
+      expect(v2LegacyStatuses).toEqual(v1LegacyStatuses);
+      expect(v1LegacyStatuses).toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+        { name: 'oauth-stale', authStatus: 'oauth-required' },
+        { name: 'unavailable-explicit', authStatus: 'oauth-required' },
+        { name: 'unavailable-dynamic', authStatus: 'not-applicable' },
       ]);
     } finally {
       await closeGlobalMcpPair(pair);

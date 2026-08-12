@@ -20,6 +20,7 @@ import type {
   PluginCommandDef,
   PluginInfo,
   PluginMutationSummary,
+  PluginMcpServerRuntimeConfig,
   PluginSummary,
   PluginUpdateStatus,
   ReloadSummary,
@@ -65,6 +66,7 @@ export interface IPluginService {
   enabledSessionStarts(): Promise<readonly EnabledPluginSessionStart[]>;
   enabledSystemPrompts(): Promise<readonly EnabledPluginSystemPrompt[]>;
   enabledMcpServers(): Promise<Record<string, McpServerConfig>>;
+  mcpServers(): Promise<readonly PluginMcpServerRuntimeConfig[]>;
   enabledHooks(): Promise<readonly HookDef[]>;
   // Consumption reads resolve to a per-method fallback (never reject) while
   // no snapshot has loaded; consumers pinning a read use this to tell a real

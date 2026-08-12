@@ -56,8 +56,10 @@ import { ILogService } from '#/_base/log/log';
 import { McpConnectionManager, type McpConnectionView } from '#/mcpCore/connection-manager';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
+import { canonicalMcpOAuthResource } from '#/mcpCore/oauth/store';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
+import { IMcpAuthCoordinator } from '#/app/mcpAuthCoordinator/mcpAuthCoordinator';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
@@ -90,6 +92,7 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
     @IWorkspaceContext workspace: IWorkspaceContext,
     @IWorkspaceMcpConfigService private readonly mcpConfig: IWorkspaceMcpConfigService,
     @IMcpOAuthStore oauthStore: IMcpOAuthStore,
+    @IMcpAuthCoordinator mcpAuthCoordinator: IMcpAuthCoordinator,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
@@ -100,6 +103,7 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
     this.oauthService = new McpOAuthService({
       store: oauthStore,
       resolveClientName: this.resolveClientName,
+      coordinator: mcpAuthCoordinator,
     });
     this.manager = new McpConnectionManager({
       log: this.log,
@@ -114,6 +118,24 @@ export class WorkspaceMcpService extends Service implements IWorkspaceMcpService
         this.scheduleApply(change);
       }),
     );
+    this._register({
+      dispose: mcpAuthCoordinator.onCredentialsChanged((event) => {
+        const entry = this.manager.get(event.serverName);
+        if (entry === undefined) return;
+        const serverUrl = this.manager.getRemoteServerUrl(event.serverName);
+        if (serverUrl === undefined || canonicalMcpOAuthResource(serverUrl) !== event.serverUrl) {
+          return;
+        }
+        this.oauthService.forgetProvider(event.serverName, event.serverUrl);
+        if (entry.status === 'disabled') return;
+        if (event.kind !== 'invalidated' && entry.status !== 'needs-auth') return;
+        void this.ready
+          .then(() => this.mutate(() => this.manager.reconnectAndJoin(event.serverName)))
+          .catch((error: unknown) => {
+            this.log.warn(`mcp reconnect after credentials change failed: ${String(error)}`);
+          });
+      }),
+    });
     this._register(
       sessionLifecycle.onWillCreateSession((event) => {
         const servers = event.readSeed(ISessionEphemeralMcpServers);

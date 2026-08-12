@@ -352,6 +352,22 @@ export interface GlobalMcpServerNamePayload {
   readonly name: string;
 }
 
+export type McpServerLocator =
+  | { readonly source: 'global'; readonly name: string }
+  | {
+      readonly source: 'plugin';
+      readonly pluginId: string;
+      readonly serverName: string;
+    };
+
+export interface McpServerLocatorPayload {
+  readonly locator: McpServerLocator;
+}
+
+export interface InspectAppMcpServersPayload {
+  readonly targets?: readonly McpServerLocator[];
+}
+
 export type GlobalMcpServerAuthState =
   | 'not-applicable'
   | 'bearer-token'
@@ -361,6 +377,25 @@ export type GlobalMcpServerAuthState =
 export interface GlobalMcpServerAuthStatus {
   readonly name: string;
   readonly authStatus: GlobalMcpServerAuthState;
+}
+
+export type AppMcpServerAuthState = GlobalMcpServerAuthState | 'unavailable';
+
+export interface AppMcpServerDescriptor {
+  readonly serverId: string;
+  readonly locator: McpServerLocator;
+  readonly runtimeName: string;
+  readonly canonicalUrl: string | undefined;
+  readonly origin: McpServerLocator['source'];
+  readonly config: McpServerConfig;
+  readonly enabled: boolean;
+  readonly editable: boolean;
+}
+
+export interface AppMcpServerInspection extends AppMcpServerDescriptor {
+  readonly authStatus: AppMcpServerAuthState;
+  readonly checkedAt?: number;
+  readonly error?: string;
 }
 
 export type BeginGlobalMcpServerAuthResult =
@@ -551,15 +586,22 @@ export interface CoreAPI extends SessionAPIWithId {
   listGlobalMcpServerAuthStatuses: (
     payload: EmptyPayload,
   ) => readonly GlobalMcpServerAuthStatus[];
+  inspectAppMcpServers: (
+    payload: InspectAppMcpServersPayload,
+  ) => readonly AppMcpServerInspection[];
   addGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   updateGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   removeGlobalMcpServer: (payload: GlobalMcpServerNamePayload) => readonly GlobalMcpServerConfig[];
   beginGlobalMcpServerAuth: (
     payload: GlobalMcpServerNamePayload,
   ) => BeginGlobalMcpServerAuthResult;
+  beginMcpServerAuth: (payload: McpServerLocatorPayload) => BeginGlobalMcpServerAuthResult;
   completeGlobalMcpServerAuth: (payload: CompleteGlobalMcpServerAuthPayload) => void;
+  completeMcpServerAuth: (payload: CompleteGlobalMcpServerAuthPayload) => void;
   cancelGlobalMcpServerAuth: (payload: CancelGlobalMcpServerAuthPayload) => void;
+  cancelMcpServerAuth: (payload: CancelGlobalMcpServerAuthPayload) => void;
   resetGlobalMcpServerAuth: (payload: GlobalMcpServerNamePayload) => void;
+  resetMcpServerAuth: (payload: McpServerLocatorPayload) => void;
   testGlobalMcpServer: (payload: TestGlobalMcpServerPayload) => GlobalMcpServerTestResult;
   createSession: (payload: CreateSessionPayload) => SessionSummary;
   closeSession: (payload: CloseSessionPayload) => void;
