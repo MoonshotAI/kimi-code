@@ -47,6 +47,7 @@ import { ProtocolErrors } from '#/kosong/protocol/errors';
 import {
   convertOpenAIError,
   hasModelPrefix,
+  isGenericQuotaExhaustedMessage,
   isMediaPart,
   isOpenAIInsufficientQuotaCode,
   isOpenAIReasoningModel,
@@ -273,7 +274,11 @@ function errorFromOpenAIResponsesEvent(
   if (isContextOverflowErrorCode(code)) {
     return new APIContextOverflowError(400, fullMessage);
   }
-  if (isOpenAIInsufficientQuotaCode(code)) {
+  if (
+    isOpenAIInsufficientQuotaCode(code) ||
+    isGenericQuotaExhaustedMessage(message) ||
+    isGenericQuotaExhaustedMessage(code ?? '')
+  ) {
     return new APIProviderQuotaExhaustedError(fullMessage);
   }
   if (code === 'rate_limit_exceeded' || readEmbeddedStatusCode(message) === 429) {

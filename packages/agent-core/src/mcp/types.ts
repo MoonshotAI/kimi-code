@@ -101,7 +101,28 @@ export function assertMcpInputSchema(
   inputSchema: unknown,
 ): Record<string, unknown> {
   if (typeof inputSchema === 'object' && inputSchema !== null && !Array.isArray(inputSchema)) {
-    return inputSchema as Record<string, unknown>;
+    const schema = inputSchema as Record<string, unknown>;
+    sanitizeMcpSchemaRegex(schema);
+    return schema;
   }
   throw new Error(`Invalid inputSchema for MCP tool "${toolName}": schema must be a JSON object`);
+}
+
+function sanitizeMcpSchemaRegex(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const item of node) sanitizeMcpSchemaRegex(item);
+    return;
+  }
+  if (typeof node !== 'object' || node === null) return;
+  const obj = node as Record<string, unknown>;
+  if ('regex' in obj) {
+    const regexValue = obj['regex'];
+    if (typeof regexValue === 'string' && !('pattern' in obj)) {
+      obj['pattern'] = regexValue;
+    }
+    delete obj['regex'];
+  }
+  for (const value of Object.values(obj)) {
+    sanitizeMcpSchemaRegex(value);
+  }
 }

@@ -23,6 +23,7 @@ import OpenAI from 'openai';
 import { usesOpenAIResponsesDeveloperRole } from './capability-registry';
 import {
   convertOpenAIError,
+  isGenericQuotaExhaustedMessage,
   isMediaPart,
   isOpenAIInsufficientQuotaCode,
   TOOL_RESULT_MEDIA_PLACEHOLDER,
@@ -253,12 +254,11 @@ function errorFromOpenAIResponsesEvent(
   if (isContextOverflowErrorCode(code)) {
     return new APIContextOverflowError(400, fullMessage);
   }
-  // Quota/balance exhaustion first — otherwise an `insufficient_quota` event
-  // falls through to the base ChatProviderError (whose unclassified fallback
-  // is retryable), and a quota message with an embedded status_code=429 would
-  // classify as a retryable rate limit. Only OpenAI's own documented code is
-  // recognized here; vendor-specific quota signals live with their vendor.
-  if (isOpenAIInsufficientQuotaCode(code)) {
+  if (
+    isOpenAIInsufficientQuotaCode(code) ||
+    isGenericQuotaExhaustedMessage(message) ||
+    isGenericQuotaExhaustedMessage(code ?? '')
+  ) {
     return new APIProviderQuotaExhaustedError(fullMessage);
   }
   if (code === 'rate_limit_exceeded' || readEmbeddedStatusCode(message) === 429) {
