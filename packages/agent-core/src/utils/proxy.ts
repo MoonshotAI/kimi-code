@@ -144,6 +144,30 @@ export function resolveNoProxy(env: Env = process.env): string {
   return hosts.join(',');
 }
 
+function resolveChildNoProxy(
+  env: Env,
+  includeBracketedIpv6Loopback: boolean,
+  preserveExplicitBracketedIpv6Loopback = false,
+): string {
+  const noProxy = resolveNoProxy(env);
+  if (
+    noProxy === '*' ||
+    includeBracketedIpv6Loopback ||
+    (preserveExplicitBracketedIpv6Loopback && hasExplicitBracketedIpv6Loopback(env))
+  ) {
+    return noProxy;
+  }
+  return noProxy
+    .split(',')
+    .filter((entry) => entry !== '[::1]')
+    .join(',');
+}
+
+function hasExplicitBracketedIpv6Loopback(env: Env): boolean {
+  const raw = firstNonBlank(env, ['no_proxy', 'NO_PROXY']);
+  return raw?.split(',').some((entry) => entry.trim() === '[::1]') === true;
+}
+
 /**
  * Build a predicate that returns true when a host (and optional port) should
  * bypass the proxy, given a `NO_PROXY` string. Matches `*` (all), exact hosts,
@@ -318,10 +342,10 @@ export function installGlobalProxyDispatcher(
 }
 
 /**
- * Environment additions for spawned child node processes (e.g. stdio MCP
- * servers) so they honor the proxy natively via Node's `--use-env-proxy`
- * without bundling undici. An in-process global dispatcher is NOT inherited
- * across a process boundary — only env vars are — so children rely on this.
+ * Environment additions for spawned child processes (e.g. stdio MCP servers)
+ * so Node-based children honor the proxy natively via `--use-env-proxy`. An
+ * in-process global dispatcher is NOT inherited across a process boundary —
+ * only env vars are — so children rely on this.
  *
  * Only applies to HTTP/HTTPS proxies: Node's `--use-env-proxy` does not support
  * SOCKS, so a SOCKS-only proxy yields `{}` (child SOCKS proxying is out of
@@ -331,11 +355,16 @@ export function installGlobalProxyDispatcher(
  *
  * Because `--use-env-proxy` reads `HTTP_PROXY`/`HTTPS_PROXY` (not `ALL_PROXY`),
  * an http-scheme `ALL_PROXY` is synthesized into the scheme-specific variables
- * so an `ALL_PROXY`-only parent still proxies the child.
+ * so an `ALL_PROXY`-only parent still proxies the child. The bracketed IPv6
+ * loopback form is opt-in because Node requires it while Python httpx rejects
+ * it; the portable bare form remains present for every child.
  */
-export function proxyEnvForChild(env: Env = process.env): Record<string, string> {
+export function proxyEnvForChild(
+  env: Env = process.env,
+  includeBracketedIpv6Loopback = false,
+): Record<string, string> {
   if (!hasHttpProxy(env)) return {};
-  const noProxy = resolveNoProxy(env);
+  const noProxy = resolveChildNoProxy(env, includeBracketedIpv6Loopback);
   const result: Record<string, string> = {
     NODE_USE_ENV_PROXY: '1',
     NO_PROXY: noProxy,
@@ -361,18 +390,25 @@ export function proxyEnvForChild(env: Env = process.env): Record<string, string>
  *
  * Uses the first NON-blank casing (a blank `no_proxy=''` must not mask a
  * populated `NO_PROXY`, mirroring {@link resolveNoProxy}) and runs the value
- * back through {@link resolveNoProxy} so the loopback bypass is preserved and
- * `*` passes through verbatim. No-op when config sets no usable `NO_PROXY`.
+ * back through the child-safe resolver so the loopback bypass is preserved and
+ * `*` passes through verbatim. An explicitly configured `[::1]` is preserved
+ * for wrapper commands whose runtime cannot be inferred. No-op when config
+ * sets no usable `NO_PROXY`.
  */
 export function reconcileChildNoProxy(
   childEnv: Record<string, string>,
   configEnv?: Record<string, string>,
+  includeBracketedIpv6Loopback = false,
 ): void {
   const override = [configEnv?.['no_proxy'], configEnv?.['NO_PROXY']].find(
     (value) => (value?.trim() ?? '').length > 0,
   );
   if (override === undefined) return;
-  const noProxy = resolveNoProxy({ no_proxy: override, NO_PROXY: override });
+  const noProxy = resolveChildNoProxy(
+    { no_proxy: override, NO_PROXY: override },
+    includeBracketedIpv6Loopback,
+    true,
+  );
   childEnv['NO_PROXY'] = noProxy;
   childEnv['no_proxy'] = noProxy;
 }
