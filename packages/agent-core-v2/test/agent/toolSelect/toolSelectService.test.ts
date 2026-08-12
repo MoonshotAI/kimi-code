@@ -214,6 +214,8 @@ class FakeLoopService implements IAgentLoopService {
     onDidFinishStep: new OrderedHookSlot<AfterStepContext>(),
   };
 
+  cancelFromUser(): void {}
+
   enqueue(_request: StepRequest, _options?: StepEnqueueOptions): EnqueueReceipt {
     throw new Error('unused in this suite');
   }

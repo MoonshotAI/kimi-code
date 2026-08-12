@@ -8,14 +8,20 @@
 
 import type { KlientContract } from './types.js';
 import { agentActivityViewContract } from './agent/activity.js';
-import { agentRpcContract } from './agent/rpc.js';
 import {
+  agentCommandContract,
+  agentContextMemoryContract,
   agentFullCompactionContract,
+  agentLoopContract,
   agentMcpContract,
+  agentPermissionModeContract,
   agentPlanContract,
   agentProfileContract,
+  agentPromptContract,
   agentShellCommandContract,
+  agentSkillContract,
   agentTaskContract,
+  agentTokenCountingContract,
   agentUsageContract,
 } from './agent/services.js';
 import { authContract, authSummaryContract } from './global/auth.js';
@@ -67,7 +73,13 @@ export const globalContract: KlientContract = {
   sessionQuestionService: sessionQuestionContract,
   sessionSkillCatalog: sessionSkillCatalogContract,
   // agent scope
-  agentRPCService: agentRpcContract,
+  agentPromptService: agentPromptContract,
+  agentSkillService: agentSkillContract,
+  agentLoopService: agentLoopContract,
+  agentPermissionModeService: agentPermissionModeContract,
+  agentCommandService: agentCommandContract,
+  agentContextMemoryService: agentContextMemoryContract,
+  agentTokenCountingService: agentTokenCountingContract,
   agentActivityView: agentActivityViewContract,
   agentShellCommandService: agentShellCommandContract,
   agentProfileService: agentProfileContract,

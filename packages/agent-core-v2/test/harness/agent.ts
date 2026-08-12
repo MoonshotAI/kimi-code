@@ -41,30 +41,51 @@ import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/prof
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import type {
-  AgentAPI,
-  BeginCompactionPayload,
-  CancelPlanPayload,
-  CancelShellCommandPayload,
-  CreateGoalPayload,
-  DetachTaskPayload,
-  EmptyPayload,
-  EnterSwarmPayload,
-  GetTaskOutputPayload,
-  GetTasksPayload,
-  GoalSnapshot,
-  GoalToolResult,
-  RegisterToolPayload,
-  RunShellCommandPayload,
-  SetActiveToolsPayload,
-  SetModelPayload,
-  SetModelResult,
-  SetThinkingPayload,
-  ShellCommandResult,
-  StopTaskPayload,
-  UnregisterToolPayload,
-} from '#/agent/rpc/core-api';
+  PromptLaunchResult,
+  PromptPayload,
+  SteerPayload,
+} from '#/agent/prompt/prompt';
+import type { AgentCommandInfo } from '#/agent/command/agentCommand';
+import { IAgentCommandService } from '#/agent/command/agentCommand';
+import type { AgentContextData } from '#/agent/contextMemory/types';
+import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/agent/goal/types';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
+import type { ProfileSetModelResult } from '#/agent/profile/profile';
+import type { SwarmModeTrigger } from '#/agent/swarm/swarm';
+import type { UserToolRegistration } from '#/agent/userTool/userTool';
+import type { ActivatePluginCommandPayload } from '#/agent/pluginCommand/pluginCommand';
+import { IAgentPluginCommandService } from '#/agent/pluginCommand/pluginCommand';
+import type { ToolInfo } from '#/tool/toolContract';
+
+// Test-facing wire vocabulary, formerly imported from the deleted RPC
+// aggregation layer; payloads with an owner-domain type are aliased above,
+// the rest are local to the harness.
+type EmptyPayload = {};
+type CreateGoalPayload = CreateGoalInput;
+type RegisterToolPayload = UserToolRegistration;
+type RunShellCommandPayload = RunShellCommandInput;
+type ShellCommandResult = RunShellCommandResult;
+type SetModelResult = ProfileSetModelResult;
+interface BeginCompactionPayload { readonly instruction?: string }
+interface CancelPayload { readonly turnId?: number }
+interface CancelPlanPayload { readonly id?: string }
+interface CancelShellCommandPayload { readonly commandId: string }
+interface DetachTaskPayload { readonly taskId: string }
+interface EnterSwarmPayload { readonly trigger: SwarmModeTrigger }
+interface GetTaskOutputPayload { readonly taskId: string; readonly tail?: number }
+interface GetTasksPayload { readonly activeOnly?: boolean; readonly limit?: number }
+interface RunCommandPayload { readonly name: string; readonly args?: string }
+interface SetActiveToolsPayload { readonly names: readonly string[] }
+interface SetModelPayload { readonly model: string }
+interface SetPermissionPayload { readonly mode: PermissionMode }
+interface SetThinkingPayload { readonly level: string }
+interface StopTaskPayload { readonly taskId: string; readonly reason?: string }
+interface UndoHistoryPayload { readonly count: number }
+interface UnregisterToolPayload { readonly name: string }
 import { type UsageStatus } from '#/agent/usage/usage';
-import { IAgentSkillService } from '#/agent/skill/skill';
+import { IAgentSkillService, type SkillActivationInput } from '#/agent/skill/skill';
 import { AgentSkillService } from '#/agent/skill/skillService';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import type {
@@ -94,7 +115,6 @@ import {
   InMemoryStorageService,
   AgentFullCompactionService,
   IAgentActivityView,
-  IAgentRPCService,
   IAppendLogStore,
   IFileSystemStorageService,
   ISessionApprovalService,
@@ -309,6 +329,18 @@ type RpcPromise<T> = Promise<T> & {
 };
 
 interface AgentRpcPassthroughAPI {
+  prompt: (payload: PromptPayload) => Promisable<PromptLaunchResult | undefined>;
+  steer: (payload: SteerPayload) => Promisable<PromptLaunchResult | undefined>;
+  cancel: (payload: CancelPayload) => void;
+  undoHistory: (payload: UndoHistoryPayload) => Promisable<number>;
+  setPermission: (payload: SetPermissionPayload) => void;
+  cancelCompaction: (payload: EmptyPayload) => void;
+  activateSkill: (payload: SkillActivationInput) => Promisable<PromptLaunchResult>;
+  activatePluginCommand: (payload: ActivatePluginCommandPayload) => Promisable<void>;
+  listCommands: (payload: EmptyPayload) => readonly AgentCommandInfo[];
+  runCommand: (payload: RunCommandPayload) => Promisable<void>;
+  getContext: (payload: EmptyPayload) => AgentContextData;
+  getTools: (payload: EmptyPayload) => readonly ToolInfo[];
   runShellCommand: (payload: RunShellCommandPayload) => Promisable<ShellCommandResult>;
   cancelShellCommand: (payload: CancelShellCommandPayload) => void;
   setThinking: (payload: SetThinkingPayload) => void;
@@ -341,7 +373,7 @@ interface AgentRpcPassthroughAPI {
   getTasks: (payload: GetTasksPayload) => readonly AgentTaskInfo[];
 }
 
-type PromiseAgentAPI = PromisifyMethods<AgentAPI & AgentRpcPassthroughAPI>;
+type PromiseAgentAPI = PromisifyMethods<AgentRpcPassthroughAPI>;
 type GenerateFn = typeof kosongGenerate;
 
 type TestToolResult = ExecutableToolResult & {
@@ -1297,8 +1329,7 @@ export class AgentTestContext {
       }),
     );
 
-    const rpcMethods = this.get(IAgentRPCService);
-    this.rpc = this.createPromiseAgentApi(rpcMethods);
+    this.rpc = this.createPromiseAgentApi();
 
     if (options.autoConfigure !== false) {
       this.configure();
@@ -1522,8 +1553,7 @@ export class AgentTestContext {
   }
 
   async undoHistory(count: number): Promise<number> {
-    const rpcMethods = this.get(IAgentRPCService);
-    return rpcMethods.undoHistory({ count });
+    return this.get(IAgentConversationUndoService).undo(count);
   }
 
   newEvents(): EventSnapshot {
@@ -2024,16 +2054,15 @@ export class AgentTestContext {
     this.recordWire(cloned);
   }
 
-  private createPromiseAgentApi(agent: IAgentRPCService): PromiseAgentAPI {
-    const passthrough = this.createRpcPassthroughAdapters();
-    return new Proxy(agent, {
+  private createPromiseAgentApi(): PromiseAgentAPI {
+    const adapters = this.createRpcPassthroughAdapters();
+    return new Proxy(adapters, {
       get(proxyTarget, property, receiver) {
-        const override = Reflect.get(passthrough, property) as unknown;
-        const value = override ?? Reflect.get(proxyTarget, property, receiver);
+        const value = Reflect.get(proxyTarget, property, receiver) as unknown;
         if (typeof value !== 'function') return value;
         return (payload: unknown) => {
           try {
-            return Promise.resolve(value.call(proxyTarget, payload));
+            return Promise.resolve(value(payload));
           } catch (error) {
             return Promise.reject(error);
           }
@@ -2044,6 +2073,23 @@ export class AgentTestContext {
 
   private createRpcPassthroughAdapters(): AgentRpcPassthroughAPI {
     return {
+      prompt: (payload) => this.get(IAgentPromptService).submit(payload),
+      steer: (payload) => this.get(IAgentPromptService).submitSteer(payload),
+      cancel: (payload) => this.get(IAgentLoopService).cancelFromUser(payload.turnId),
+      undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
+      setPermission: (payload) =>
+        this.get(IAgentPermissionModeService).setModeAndBroadcast(payload.mode),
+      cancelCompaction: () => this.get(IAgentFullCompactionService).cancel(),
+      activateSkill: (payload) => this.get(IAgentSkillService).activate(payload),
+      activatePluginCommand: (payload) =>
+        this.get(IAgentPluginCommandService).activate(payload),
+      listCommands: () => this.get(IAgentCommandService).list(),
+      runCommand: (payload) => this.get(IAgentCommandService).run(payload.name, payload.args),
+      getContext: () => ({
+        history: this.get(IAgentContextMemoryService).get(),
+        tokenCount: this.get(IAgentTokenCountingService).statusSize(),
+      }),
+      getTools: () => this.toolsData(),
       runShellCommand: (payload) => this.get(IAgentShellCommandService).run(payload),
       cancelShellCommand: (payload) =>
         this.get(IAgentShellCommandService).cancel(payload.commandId),
@@ -2175,7 +2221,7 @@ function createWorkspaceContextStub(
 
 function createPermissionModeService(initialMode: PermissionMode): IAgentPermissionModeService {
   let mode = initialMode;
-  return {
+  const service: IAgentPermissionModeService = {
     _serviceBrand: undefined,
     get mode() {
       return mode;
@@ -2183,8 +2229,12 @@ function createPermissionModeService(initialMode: PermissionMode): IAgentPermiss
     setMode: (nextMode) => {
       mode = nextMode;
     },
+    setModeAndBroadcast: (nextMode) => {
+      service.setMode(nextMode);
+    },
     onDidChangeMode: Event.None as IAgentPermissionModeService['onDidChangeMode'],
   };
+  return service;
 }
 
 function createPermissionRulesStub(

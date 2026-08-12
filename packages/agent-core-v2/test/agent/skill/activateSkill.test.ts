@@ -1,12 +1,11 @@
 /**
- * Scenario: `AgentRPCService.activateSkill` is the wire-facing skill
- * activation entry — awaited, returning the launched turn id.
+ * Scenario: `IAgentSkillService.activate` is the wire-facing skill activation
+ * entry — awaited, returning the launched turn id.
  *
- * Unlike `IAgentSkillService.activate` (in-process, returns the live `Turn`
- * handle), the RPC variant must settle only once the turn has launched and
- * must surface activation failures (unknown skill, busy agent) to the caller
- * instead of fire-and-forget. Run: `pnpm --filter @moonshot-ai/agent-core-v2
- * exec vitest run test/agent/rpc/activateSkill.test.ts`.
+ * The activation settles only once the turn has launched, and activation
+ * failures (unknown skill, busy agent) surface to the caller instead of
+ * fire-and-forget. Run: `pnpm --filter @moonshot-ai/agent-core-v2
+ * exec vitest run test/agent/skill/activateSkill.test.ts`.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -16,7 +15,7 @@ import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { stubSkill } from '../../app/skillCatalog/stubs';
 import { createTestAgent, skillServices, type TestAgentContext } from '../../harness';
 
-describe('activateSkill RPC', () => {
+describe('activateSkill', () => {
   let ctx: TestAgentContext;
 
   afterEach(async () => {

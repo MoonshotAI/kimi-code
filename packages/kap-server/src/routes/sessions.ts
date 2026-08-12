@@ -21,7 +21,7 @@
  * the native v2 services directly (the workspace handler's
  * `ISessionLifecycleService.fork` / `archive` / `restore`, reached through the
  * `sessionIndex` → `IWorkspaceLifecycleService.handlerFor` composition,
- * `IAgentFullCompactionService.begin`, `IAgentRPCService.cancel`); there is no
+ * `IAgentFullCompactionService.begin`, `IAgentLoopService.cancelFromUser`); there is no
  * v1-only projection to centralize, so no adapter is involved. `undo` likewise
  * calls `IAgentConversationUndoService.undo` directly (it throws
  * `session.undo_unavailable` with a structured reason) and only borrows
@@ -81,7 +81,7 @@ import {
   IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
-  IAgentRPCService,
+  IAgentLoopService,
   IAuthSummaryService,
   ISessionActivityView,
   ISessionBtwService,
@@ -773,7 +773,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           const agent = await resolveMainAgent(core, parsed.id);
           // No turnId → cancel whatever turn is active; a safe no-op when idle.
           // v1 always reports success once the session exists.
-          await agent.accessor.get(IAgentRPCService).cancel({});
+          agent.accessor.get(IAgentLoopService).cancelFromUser();
           requestLog(req)?.info({ session_id: parsed.id, action: 'abort' }, 'session action completed');
           reply.send(okEnvelope({ aborted: true }, req.id));
           return;

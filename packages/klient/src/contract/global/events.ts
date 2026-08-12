@@ -22,7 +22,7 @@ export interface SessionArchivedPayload {
   readonly sessionId: string;
 }
 
-/** Payload of `session.meta.updated` on the global bus (`agent/rpc/prompt-metadata.ts`). */
+/** Payload of `session.meta.updated` on the global bus (`session/sessionMetadata/promptMetadata.ts`). */
 export interface SessionMetaUpdatedPayload {
   readonly agentId: string;
   readonly sessionId: string;

@@ -30,7 +30,13 @@ import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/i
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { ISessionSkillCatalog } from '@moonshot-ai/agent-core-v2/session/sessionSkillCatalog/skillCatalog';
-import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
+import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
+import { IAgentSkillService } from '@moonshot-ai/agent-core-v2/agent/skill/skill';
+import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
+import { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
+import { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
+import { IAgentTokenCountingService } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
@@ -63,7 +69,13 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   sessionApprovalService: ISessionApprovalService,
   sessionQuestionService: ISessionQuestionService,
   sessionSkillCatalog: ISessionSkillCatalog,
-  agentRPCService: IAgentRPCService,
+  agentPromptService: IAgentPromptService,
+  agentSkillService: IAgentSkillService,
+  agentLoopService: IAgentLoopService,
+  agentPermissionModeService: IAgentPermissionModeService,
+  agentCommandService: IAgentCommandService,
+  agentContextMemoryService: IAgentContextMemoryService,
+  agentTokenCountingService: IAgentTokenCountingService,
   agentActivityView: IAgentActivityView,
   agentShellCommandService: IAgentShellCommandService,
   agentProfileService: IAgentProfileService,

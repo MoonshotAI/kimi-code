@@ -1429,6 +1429,7 @@ function agentHandle(
     _serviceBrand: undefined,
     mode: 'auto',
     setMode: () => {},
+    setModeAndBroadcast: () => {},
     onDidChangeMode: Event.None,
   } as IAgentPermissionModeService;
   return {

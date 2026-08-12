@@ -124,6 +124,7 @@ export * from '#/app/sessionIndex/sessionIndexService';
 export * from '#/app/sessionIndex/sessionIndexMirrorService';
 export * from '#/session/sessionMetadata/sessionMetadata';
 export * from '#/session/sessionMetadata/sessionMetadataService';
+export * from '#/session/sessionMetadata/promptMetadata';
 export * from '#/session/sessionActivity/sessionActivity';
 export * from '#/session/sessionActivity/sessionActivityService';
 export * from '#/session/sessionActivity/sessionOutcomeMirror';
@@ -615,19 +616,23 @@ import '#/agent/permissionRules/configSection';
 export * from '#/agent/permissionRules/permissionRules';
 export * from '#/agent/permissionRules/matchesRule';
 export * from '#/agent/permissionRules/permissionRulesService';
+export * from '#/agent/pluginCommand/pluginCommand';
+export * from '#/agent/pluginCommand/pluginCommandService';
 export * from '#/agent/profile/profile';
 export * from '#/agent/profile/profileService';
 export * from '#/agent/profile/context';
 export * from '#/agent/prompt/prompt';
 export * from '#/agent/prompt/promptService';
+export * from '#/agent/prompt/promptMetadataText';
 export * from '#/agent/replayBuilder/types';
+// `replayBuilder/types` inlines its own `SessionSummary`; keep the barrel's
+// `SessionSummary` pinned to the session-index one (explicit re-export wins
+// over the ambiguous `export *` pair).
+export { type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 export * from '#/agent/undo/undo';
 export * from '#/agent/undo/undoService';
 export * from '#/agent/shellCommand/shellCommand';
 export * from '#/agent/shellCommand/shellCommandService';
-export * from '#/agent/rpc/rpc';
-export * from '#/agent/rpc/rpcService';
-export * from '#/agent/rpc/prompt-metadata';
 export * from '#/agent/scopeContext/scopeContext';
 export * from '#/agent/stepRetry/stepRetry';
 export * from '#/agent/stepRetry/stepRetryService';

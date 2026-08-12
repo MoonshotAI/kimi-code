@@ -57,10 +57,10 @@
  *   too (default-profile bind + permission mode).
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
- *   `IAgentRPCService` through the agent scope; `activateSkill` →
- *   `IAgentSkillService` through the agent scope (the RPC service's
- *   fire-and-forget variant would swallow v1's synchronous rejections) plus
- *   v1's main-only metadata update; `generateAgentsMd` →
+ *   `IAgentPluginCommandService` through the agent scope; `activateSkill` →
+ *   `IAgentSkillService` through the agent scope (the engine settles
+ *   `{turn_id}` and applies v1's main-only metadata update itself);
+ *   `generateAgentsMd` →
  *   `ISessionInitService` through the session scope; `getSessionWarnings` →
  *   rebuilt over the profile's cached AGENTS.md warning plus the engine's
  *   `prepareSystemPromptContext` (no v2 aggregate service exists).
@@ -157,7 +157,6 @@ import { wrapSubagentModelError } from '@moonshot-ai/agent-core-v2/session/subag
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/workspace/workspaceMcpConfig/internal/config-loader';
 import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
-  applyPromptMetadataUpdate,
   bootstrap,
   DEFAULT_AGENT_PROFILE_NAME,
   drainQueryStoreDisposals,
@@ -166,18 +165,21 @@ import {
   ensureMainAgent,
   IAgentActivityView,
   IAgentContextMemoryService,
+  IAgentConversationUndoService,
   IAgentFullCompactionService,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
+  IAgentPluginCommandService,
   IAgentProfileService,
-  IAgentRPCService,
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
   IAgentTokenCountingService,
+  IAgentToolPolicyService,
+  IAgentToolRegistryService,
   IBootstrapService,
   IConfigService,
   IEventService,
@@ -221,7 +223,6 @@ import {
   PRINT_WAIT_CEILING_S_DEFAULT,
   ProfileError,
   ProfileErrors,
-  promptMetadataTextFromSkill,
   resolveAgentTaskConfig,
   resolveConfigPath,
   resolveKimiHome,
@@ -961,6 +962,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       foldAgentWireReplay(join(ctx.sessionDir, 'agents', agent.id, 'wire.jsonl')),
     ]);
     const profile = agent.accessor.get(IAgentProfileService).data();
+    const toolPolicy = agent.accessor.get(IAgentToolPolicyService);
+    const tools = agent.accessor.get(IAgentToolRegistryService).list().map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      active: toolPolicy.isToolActive(tool.name, tool.source),
+      source: tool.source,
+    }));
     return {
       type,
       config: {
@@ -981,7 +989,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       plan: plan as ResumedAgentState['plan'],
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,
       usage: usage as ResumedAgentState['usage'],
-      tools: agent.accessor.get(IAgentRPCService).getTools({}) as ResumedAgentState['tools'],
+      tools: tools as ResumedAgentState['tools'],
       toolStore: folded.toolStore,
       background: background as readonly BackgroundTaskInfo[],
     };
@@ -1500,20 +1508,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return agent.clearPlan();
   }
 
-  /** Facade (`agentRPCService.listCommands`) — the v2-only contributed-command seam. */
+  /** Facade (`agentCommandService.list`) — the v2-only contributed-command seam. */
   override async listCommands(input: SessionIdRpcInput): Promise<readonly AgentCommandInfo[]> {
     const agent = await this.agentFacade(input.sessionId);
     return agent.listCommands();
   }
 
-  /** Facade (`agentRPCService.runCommand`) — runs the contribution engine-side. */
+  /** Facade (`agentCommandService.run`) — runs the contribution engine-side. */
   override async runCommand(input: RunCommandRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
     return agent.runCommand({ name: input.name, args: input.args });
   }
 
   /**
-   * Facade (`agentRPCService.getContext`). The v2 `AgentContextData` is the
+   * Facade (`getContext`, merged client-side from `agentContextMemoryService.get`
+   * and `agentTokenCountingService.statusSize`). The v2 `AgentContextData` is the
    * same wire shape as v1's — the cast only bridges the two packages' type
    * declarations (v2's origin union carries kinds a v1 client never sees in
    * practice); the data itself crossed the same JSON boundary on both sides.
@@ -1590,18 +1599,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the agent scope (`IAgentRPCService.cancelCompaction`, the v2 RPC
-   * surface's own cancel) — no klient facade exists. Aborts the in-flight
-   * compaction; a no-op when idle, like v1.
+   * Through the agent scope (`IAgentFullCompactionService.cancel`) — no
+   * klient facade exists. Aborts the in-flight compaction; a no-op when idle,
+   * like v1.
    */
   override async cancelCompaction(input: SessionIdRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentRPCService).cancelCompaction({});
+    agent.accessor.get(IAgentFullCompactionService).cancel();
   }
 
   /**
-   * Through the agent scope (`IAgentRPCService.undoHistory`, the v2 RPC
-   * surface's own undo) — no klient facade exists; the returned count is
+   * Through the agent scope (`IAgentConversationUndoService.undo`) — no
+   * klient facade exists; the returned count is
    * dropped (v1 returns void). Failure semantics differ by design: v2
    * prechecks and rejects atomically with `session.undo_unavailable`, while
    * v1 splices a partial suffix out of the live history and then throws
@@ -1609,7 +1618,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentRPCService).undoHistory({ count: input.count });
+    await agent.accessor.get(IAgentConversationUndoService).undo(input.count);
   }
 
   /**
@@ -1657,7 +1666,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Facade (`agentRPCService.prompt`). The launch result (`{turn_id}`, or
+   * Facade (`agentPromptService.submit`). The launch result (`{turn_id}`, or
    * `undefined` when the prompt queued behind a running turn) is dropped —
    * v1's RPC returns void. The pre-provider surface matches v1: the metadata
    * update (title/lastPrompt) runs through the same shared helpers before the
@@ -1674,7 +1683,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Facade (`agentRPCService.steer`). Matches v1 on both paths: mid-turn
+   * Facade (`agentPromptService.submitSteer`). Matches v1 on both paths: mid-turn
    * steers join the running turn, and an idle-session steer degrades to
    * launching a fresh turn (the enqueue launches it directly) while
    * title/lastPrompt are updated like a prompt's.
@@ -1713,40 +1722,32 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the agent scope (`IAgentSkillService.activate`) — deliberately
-   * NOT `IAgentRPCService.activateSkill`, whose `void this.skills.activate(...)`
-   * fire-and-forget turns v1's synchronous rejections (`skill.not_found` /
-   * `skill.type_unsupported`) into unhandled rejections. The direct call keeps
-   * v1's semantics: validate first, then render the skill prompt and launch a
-   * turn with it. v1's session layer then updates title/lastPrompt for the
-   * MAIN agent only; replicated here over the engine's shared metadata
-   * helpers. Busy-turn gap vs v1, pinned in the migration tracker: v1 drops
+   * Through the agent scope (`IAgentSkillService.activate`) — the direct call
+   * keeps v1's semantics: validate first (`skill.not_found` /
+   * `skill.type_unsupported` reject synchronously), then render the skill
+   * prompt and launch a turn with it. The engine updates title/lastPrompt for
+   * the MAIN agent only, matching v1's session layer. Busy-turn gap vs v1,
+   * pinned in the migration tracker: v1 drops
    * the activation into an error event while a turn runs; v2's activate
    * awaits the queued prompt's launch.
    */
   override async activateSkill(input: ActivateSkillRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
     await agent.accessor.get(IAgentSkillService).activate({ name: input.name, args: input.args });
-    if (this.interactiveAgentId === MAIN_AGENT_ID) {
-      await this.updatePromptMetadata(input.sessionId, promptMetadataTextFromSkill(input));
-    }
   }
 
   /**
-   * Through the agent scope (`IAgentRPCService.activatePluginCommand`) — the
-   * v2 RPC surface's own implementation: the same `request.invalid` rejection
-   * text for an unknown command, the same argument expansion, the activation
-   * event, the prompt enqueue, and the metadata update. Two gaps vs v1,
+   * Through the agent scope (`IAgentPluginCommandService.activate`): the same
+   * `request.invalid` rejection text for an unknown command, the same
+   * argument expansion, the activation event, the prompt enqueue, and the
+   * main-agent-only metadata update. Two gaps vs v1,
    * pinned in the migration tracker: v1 resolves the command against the
    * session's creation-time snapshot (v2 uses the app-global live view), and
-   * v1 drops the activation while a turn runs where v2 queues it. v1 also
-   * updates title/lastPrompt for the main agent only, where the v2 RPC does
-   * it unconditionally — only observable through a non-main
-   * `interactiveAgentId`.
+   * v1 drops the activation while a turn runs where v2 queues it.
    */
   override async activatePluginCommand(input: ActivatePluginCommandRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentRPCService).activatePluginCommand({
+    await agent.accessor.get(IAgentPluginCommandService).activate({
       pluginId: input.pluginId,
       commandName: input.commandName,
       args: input.args,
@@ -1771,8 +1772,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * No v2 service implements the session-warnings aggregate (`ISessionRPCService`
-   * is an interface without an implementation), so the SDK rebuilds v1's
+   * No v2 service implements the session-warnings aggregate, so the SDK rebuilds v1's
    * `Session.getSessionWarnings` over v2 primitives: the profile's cached
    * `agentsMdWarning` (computed on every bind, v1's bootstrap-time cache),
    * recomputed through the engine's own `prepareSystemPromptContext` when the
@@ -1815,23 +1815,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       warnings.push({ code: secondary.code, message: secondary.message, severity: 'warning' });
     }
     return warnings;
-  }
-
-  /**
-   * v1's session-layer prompt-metadata update (title/lastPrompt), rebuilt
-   * over the engine's shared helper so skill/plugin-command activations land
-   * on the same metadata the native v2 prompt path writes.
-   */
-  private async updatePromptMetadata(sessionId: string, text: string | undefined): Promise<void> {
-    const session = this.requireLiveSession(sessionId);
-    await applyPromptMetadataUpdate(
-      {
-        metadata: session.accessor.get(ISessionMetadata),
-        eventService: this.engineAccessor.get(IEventService),
-        sessionId,
-      },
-      text,
-    );
   }
 
   /**

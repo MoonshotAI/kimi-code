@@ -5,7 +5,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { createTestAgent, telemetryServices, type TestAgentContext } from '../../harness';
 
-describe('setPermission RPC', () => {
+describe('setModeAndBroadcast', () => {
   let ctx: TestAgentContext;
   let records: TelemetryRecord[];
 

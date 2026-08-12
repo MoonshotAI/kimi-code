@@ -1,19 +1,13 @@
 /**
- * `agentRPCService` — the per-agent RPC surface. Mirrors the `AgentAPI`
- * subset of `agent-core-v2/agent/rpc/core-api.ts`; every method takes one
- * payload object. Only the methods still implemented by the engine's RPC
- * facade live here — the domain services the facade calls directly
- * (shellCommand / profile / usage / plan / task) have their own contracts in
- * `agent/services.ts`, reusing the payload/result schemas below.
- * `PromptPayload.input` mirrors the `PromptPart` subset of `ContentPart`
- * (text / image_url / video_url) from `agent-core-v2/kosong/contract/message.ts`.
- * Task wire shapes mirror the `TaskInfo` union in `protocol/src/events.ts`.
+ * Shared agent-scope wire schemas — the payload/result vocabulary reused by
+ * the per-domain contracts in `agent/services.ts` and pinned against the
+ * engine types by `test/contract-parity.ts`. `PromptPayload.input` mirrors the
+ * `PromptPart` subset of `ContentPart` (text / image_url / video_url) from
+ * `agent-core-v2/kosong/contract/message.ts`. Task wire shapes mirror the
+ * `TaskInfo` union in `protocol/src/events.ts`.
  */
 
 import { z } from 'zod';
-
-import { maybe, noResult } from '../helpers.js';
-import type { ServiceContract } from '../types.js';
 
 // ── prompt parts ────────────────────────────────────────────────────────────
 
@@ -55,7 +49,7 @@ export const steerPayloadSchema = z.object({
   input: z.array(promptPartSchema),
 });
 
-/** Same shape as `ActivateSkillPayload` in the engine. */
+/** Same shape as `SkillActivationInput`'s wire subset in the engine. */
 export const activateSkillPayloadSchema = z.object({
   name: z.string(),
   args: z.string().optional(),
@@ -129,7 +123,7 @@ export const agentCommandInfoSchema = z.object({
   source: z.string(),
 });
 
-/** Same shape as `RunCommandPayload` in the engine. */
+/** The facade's `runCommand` input shape. */
 export const runCommandPayloadSchema = z.object({
   name: z.string(),
   args: z.string().optional(),
@@ -209,22 +203,3 @@ export const getTaskOutputPayloadSchema = z.object({
   taskId: z.string(),
   tail: z.number().optional(),
 });
-
-// ── contract ────────────────────────────────────────────────────────────────
-
-export const agentRpcContract = {
-  prompt: { input: z.tuple([promptPayloadSchema]), output: maybe(promptLaunchResultSchema) },
-  steer: { input: z.tuple([steerPayloadSchema]), output: maybe(promptLaunchResultSchema) },
-  activateSkill: {
-    input: z.tuple([activateSkillPayloadSchema]),
-    output: maybe(promptLaunchResultSchema),
-  },
-  cancel: { input: z.tuple([cancelPayloadSchema]), output: noResult },
-  setPermission: { input: z.tuple([setPermissionPayloadSchema]), output: noResult },
-  getContext: { input: z.tuple([emptyPayloadSchema]), output: agentContextDataSchema },
-  listCommands: {
-    input: z.tuple([emptyPayloadSchema]),
-    output: z.array(agentCommandInfoSchema),
-  },
-  runCommand: { input: z.tuple([runCommandPayloadSchema]), output: noResult },
-} satisfies ServiceContract;

@@ -1,6 +1,6 @@
 /**
- * prompt-metadata — the session title / lastPrompt text derived from a
- * prompt payload.
+ * promptMetadataText — the session title / lastPrompt text derived from
+ * prompt content parts.
  *
  * Tests pin:
  *   - media parts render as `[image]` / `[video]` / `[audio]` placeholders
@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { promptMetadataTextFromPayload } from '#/agent/rpc/prompt-metadata';
+import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { buildImageCompressionCaption } from '#/agent/media/image-compress';
 
 const CAPTION = buildImageCompressionCaption({
@@ -20,34 +20,28 @@ const CAPTION = buildImageCompressionCaption({
   originalPath: '/tmp/originals/shot.png',
 });
 
-describe('promptMetadataTextFromPayload', () => {
+describe('promptMetadataTextFromContentParts', () => {
   it('renders text and media placeholders', () => {
-    const text = promptMetadataTextFromPayload({
-      input: [
-        { type: 'text', text: 'look at this' },
-        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
-      ],
-    });
+    const text = promptMetadataTextFromContentParts([
+      { type: 'text', text: 'look at this' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
     expect(text).toBe('look at this [image]');
   });
 
   it('keeps a standalone image-compression caption out of the metadata text', () => {
-    const text = promptMetadataTextFromPayload({
-      input: [
-        { type: 'text', text: CAPTION },
-        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
-      ],
-    });
+    const text = promptMetadataTextFromContentParts([
+      { type: 'text', text: CAPTION },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
     expect(text).toBe('[image]');
   });
 
   it('strips a caption merged into the user text and keeps the rest', () => {
-    const text = promptMetadataTextFromPayload({
-      input: [
-        { type: 'text', text: `能展示但是没有快捷键提示${CAPTION}` },
-        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
-      ],
-    });
+    const text = promptMetadataTextFromContentParts([
+      { type: 'text', text: `能展示但是没有快捷键提示${CAPTION}` },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
     expect(text).toBe('能展示但是没有快捷键提示 [image]');
     expect(text).not.toContain('<system>');
     expect(text).not.toContain('Image compressed');

@@ -23,7 +23,6 @@ import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/pe
 import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
-import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/agent/swarm/swarm';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
 import { IAgentTokenCountingService } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
@@ -267,19 +266,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     actions: [
       { label: 'enter (manual)', run: (svc) => call(svc, 'enter', 'manual') },
       { label: 'exit', run: (svc) => call(svc, 'exit') },
-    ],
-  },
-  {
-    id: String(IAgentRPCService),
-    label: 'AgentRPCService',
-    scope: 'agent',
-    actions: [
-      { label: 'cancel turn', run: (svc) => call(svc, 'cancel', {}) },
-      {
-        label: 'undoHistory',
-        input: 'Steps',
-        run: (svc, n) => call(svc, 'undoHistory', { count: Number(n) }),
-      },
     ],
   },
 ];
