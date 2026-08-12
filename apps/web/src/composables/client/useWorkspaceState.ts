@@ -42,7 +42,7 @@ import { buildFullDiffTexts, type DiffFullTexts } from '@moonshot-ai/app-core/cl
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '@moonshot-ai/app-core/lib';
 import { ackThinkingPending, markThinkingPending } from '@moonshot-ai/app-core/lib';
-import { attachmentsToContent } from '../../lib/attachmentsToContent';
+import { attachmentsToContent } from '@moonshot-ai/app-client/client';
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import type {
   ActivityState,
@@ -52,9 +52,9 @@ import type {
   WorkspaceView,
 } from '../../types';
 import type { ExtendedState, PromptAttachment } from '../useKimiWebClient';
-import type { UseModelProviderState } from './useModelProviderState';
-import type { UseSideChat } from './useSideChat';
-import type { UseTaskPoller } from './useTaskPoller';
+import type { UseModelProviderState } from '@moonshot-ai/app-client/client';
+import type { UseSideChat } from '@moonshot-ai/app-client/client';
+import type { UseTaskPoller } from '@moonshot-ai/app-client/client';
 
 const MESSAGES_PAGE_SIZE = 50;
 // Sessions fetched per workspace on first load — keeps the initial request

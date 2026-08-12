@@ -1,4 +1,4 @@
-// apps/web/src/composables/client/useSideChat.ts
+// packages/app-client/src/client/useSideChat.ts
 // Side chat ("BTW") — a TUI-style forked agent rendered as a session tab.
 // It is not a child session and never appears in the sidebar. Each session can
 // have its own side chat; state is keyed by session id, while messages are
@@ -8,14 +8,14 @@
 // connection) are injected by the facade.
 
 import { computed, ref } from 'vue';
-import { getKimiWebApi } from '../../api';
-import type { AppApprovalRequest, AppMessage, KimiEventConnection, ThinkingLevel } from '../../api/types';
+import type { AppApprovalRequest, AppMessage, KimiEventConnection, KimiWebApi, ThinkingLevel } from '@moonshot-ai/app-core/api';
 import { createTurnsProjector } from '@moonshot-ai/app-core/client';
 import { ackThinkingPending } from '@moonshot-ai/app-core/lib';
-import type { ChatTurn } from '../../types';
-import type { ExtendedState } from '../useKimiWebClient';
+import type { ChatTurn } from '@moonshot-ai/app-core/client/types';
+import type { ExtendedState } from './types';
 
 export interface UseSideChatDeps {
+  api: KimiWebApi;
   pushOperationFailure: (
     operation: string,
     err: unknown,
@@ -37,6 +37,7 @@ export interface UseSideChatDeps {
 
 export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
   const {
+    api,
     pushOperationFailure,
     nextOptimisticMsgId,
     connectEventsIfNeeded,
@@ -78,7 +79,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
   // stateful, so a plain computed keeps the old synchronous pull semantics.
   // The approvals list and getFileUrl are hoisted to stable refs so the
   // projector's reuse gate holds.
-  const getSideChatFileUrl = (fileId: string): string => getKimiWebApi().getFileUrl(fileId);
+  const getSideChatFileUrl = (fileId: string): string => api.getFileUrl(fileId);
   const SIDE_CHAT_NO_APPROVALS: AppApprovalRequest[] = [];
   const sideChatTurnsProjector = createTurnsProjector();
   const sideChatTurns = computed<ChatTurn[]>(() => {
@@ -231,7 +232,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     if (!sideChatTargetBySession.value[parent]) {
       let agentId: string;
       try {
-        ({ agentId } = await getKimiWebApi().startBtw(parent));
+        ({ agentId } = await api.startBtw(parent));
       } catch (err) {
         pushOperationFailure('openSideChat', err, { sessionId: parent });
         return;
@@ -292,7 +293,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
           : rawState.defaultModel) ?? undefined;
       const thinking = (await resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
       thinkingToken = rawState.pendingThinkingBySession[sid];
-      const result = await getKimiWebApi().submitPrompt(sid, {
+      const result = await api.submitPrompt(sid, {
         content: [{ type: 'text', text: trimmed }],
         agentId,
         model,

@@ -1,11 +1,11 @@
 import { computed, nextTick, reactive } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppModel, AppSession, ThinkingLevel } from '../api/types';
+import type { AppModel, AppSession, KimiWebApi, ThinkingLevel } from '@moonshot-ai/app-core/api';
 import {
   useModelProviderState,
   type UseModelProviderStateDeps,
-} from '../composables/client/useModelProviderState';
-import type { ExtendedState } from '../composables/useKimiWebClient';
+} from '../src/client/useModelProviderState';
+import type { ExtendedState } from '../src/client/types';
 import {
   ackThinkingPending,
   commitLevel,
@@ -23,16 +23,14 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import type { ModelThinkingInfo } from '@moonshot-ai/app-core/lib';
 
-const apiMock = vi.hoisted(() => ({
+// The api is injected; stub the endpoints the model/provider module calls.
+const apiMock = {
   updateSession: vi.fn(),
   listModels: vi.fn(),
   setConfig: vi.fn(),
   activateSkill: vi.fn(),
-}));
-
-vi.mock('../api', () => ({
-  getKimiWebApi: () => apiMock,
-}));
+};
+const api = apiMock as unknown as KimiWebApi;
 
 function model(partial: ModelThinkingInfo): ModelThinkingInfo {
   return partial;
@@ -331,6 +329,9 @@ describe('useModelProviderState thinking on model selection', () => {
 
   function createModelProvider(state: ExtendedState, depOverrides: Partial<UseModelProviderStateDeps> = {}) {
     const deps: UseModelProviderStateDeps = {
+      api,
+      beginLocalTurn: () => 0,
+      settleLocalTurn: vi.fn(),
       pushOperationFailure: vi.fn(),
       refreshSessionStatus: vi.fn().mockResolvedValue(undefined),
       persistSessionProfile: persistSessionProfileMock,

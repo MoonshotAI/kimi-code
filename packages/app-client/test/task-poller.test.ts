@@ -3,23 +3,21 @@
 // fetched under their REST task id, and a transient getTask failure must not
 // permanently suppress later backfills.
 // Wiring: the composable is real; daemon requests are stubbed.
-// Run: pnpm --filter kimi-code-web exec vitest run test/task-poller.test.ts
+// Run: pnpm --filter @moonshot-ai/app-client exec vitest run test/task-poller.test.ts
 
 import { computed } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppTask } from '../src/api/types';
+import type { AppTask, KimiWebApi } from '@moonshot-ai/app-core/api';
 import { createInitialState } from '@moonshot-ai/app-core/api';
-import { useTaskPoller } from '../src/composables/client/useTaskPoller';
-import type { ExtendedState } from '../src/composables/useKimiWebClient';
+import { useTaskPoller } from '../src/client/useTaskPoller';
+import type { ExtendedState } from '../src/client/types';
 
-const apiMock = vi.hoisted(() => ({
+// The api is injected; stub the task endpoints.
+const apiMock = {
   listTasks: vi.fn(),
   getTask: vi.fn(),
-}));
-
-vi.mock('../src/api', () => ({
-  getKimiWebApi: () => apiMock,
-}));
+};
+const api = apiMock as unknown as KimiWebApi;
 
 function createState(tasks: AppTask[]): ExtendedState {
   return {
@@ -74,7 +72,7 @@ describe('useTaskPoller terminal-output backfill', () => {
       restRow({ outputPreview: 'final result', outputBytes: 2048 }),
     );
 
-    const poller = useTaskPoller(state, computed(() => []));
+    const poller = useTaskPoller(state, computed(() => []), { api });
     await poller.loadTasksForSession('sess_1');
 
     expect(apiMock.getTask).toHaveBeenCalledWith(
@@ -96,7 +94,7 @@ describe('useTaskPoller terminal-output backfill', () => {
       restRow({ outputPreview: 'final result', outputBytes: 2048 }),
     );
 
-    const poller = useTaskPoller(state, computed(() => []));
+    const poller = useTaskPoller(state, computed(() => []), { api });
     await poller.loadTasksForSession('sess_1');
     await poller.loadTasksForSession('sess_1');
 
@@ -110,7 +108,7 @@ describe('useTaskPoller terminal-output backfill', () => {
       .mockRejectedValueOnce(new Error('network blip'))
       .mockResolvedValue(restRow({ outputPreview: 'final result', outputBytes: 2048 }));
 
-    const poller = useTaskPoller(state, computed(() => []));
+    const poller = useTaskPoller(state, computed(() => []), { api });
     await poller.loadTasksForSession('sess_1');
     expect(state.tasksBySession['sess_1']?.[0]?.outputPreview).toBeUndefined();
 

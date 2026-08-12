@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/client/useModelProviderState.ts
+// packages/app-client/src/client/useModelProviderState.ts
 // Models, providers, starred/favorite models, the active-session thinking
 // level, session-scoped slash skills, and the managed OAuth device flow.
 // Owns the lazy-loaded model/provider caches plus the new-session "draft"
@@ -6,11 +6,10 @@
 // in-flight set, thinking storage) are injected by the facade.
 
 import { ref, watch, type ComputedRef } from 'vue';
-import { getKimiWebApi } from '../../api';
-import { DaemonApiError } from '../../api/errors';
-import type { AddProviderInput, AppCatalogProvider, AppMessage, AppModel, AppProvider, AppProviderDetail, AppSession, AppSkill, DeleteProviderResult, ImportCatalogProviderInput, ImportCustomRegistryInput, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel, UpdateProviderInput } from '../../api/types';
+import { DaemonApiError } from '@moonshot-ai/app-core/api';
+import type { AddProviderInput, AppCatalogProvider, AppMessage, AppModel, AppProvider, AppProviderDetail, AppSession, AppSkill, DeleteProviderResult, ImportCatalogProviderInput, ImportCustomRegistryInput, KimiWebApi, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel, UpdateProviderInput } from '@moonshot-ai/app-core/api';
 import { logError, logWarn } from '@moonshot-ai/app-core/lib';
-import { attachmentsToContent } from '../../lib/attachmentsToContent';
+import { attachmentsToContent } from './attachmentsToContent';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import {
   ackThinkingPending,
@@ -20,9 +19,8 @@ import {
   thinkingLevelForModelSwitch,
   thinkingLevelToConfig,
 } from '@moonshot-ai/app-core/lib';
-import { beginLocalTurn, settleLocalTurn } from './useWorkspaceState';
-import type { ActivityState } from '../../types';
-import type { ExtendedState, PromptAttachment } from '../useKimiWebClient';
+import type { ActivityState } from '@moonshot-ai/app-core/client/types';
+import type { ExtendedState, PromptAttachment } from './types';
 
 const STARRED_MODELS_STORAGE_KEY = STORAGE_KEYS.starredModels;
 
@@ -65,6 +63,7 @@ export interface PersistSessionProfilePatch {
 }
 
 export interface UseModelProviderStateDeps {
+  api: KimiWebApi;
   pushOperationFailure: (
     operation: string,
     err: unknown,
@@ -92,6 +91,11 @@ export interface UseModelProviderStateDeps {
    *  gate, so every provider mutation (add/delete/import) must refresh it —
    *  adding the first provider unblocks sending, deleting the last re-arms it. */
   checkAuth: () => Promise<unknown>;
+  /** Local-turn lifecycle (owned by the workspace-state module in the app):
+   *  begin marks a locally-started turn so a racing terminal snapshot can't
+   *  clear it; settle releases the token when the daemon answered. */
+  beginLocalTurn: (sid: string) => number;
+  settleLocalTurn: (sid: string, token: number) => void;
 }
 
 export function useModelProviderState(
@@ -99,6 +103,7 @@ export function useModelProviderState(
   deps: UseModelProviderStateDeps,
 ) {
   const {
+    api,
     pushOperationFailure,
     refreshSessionStatus,
     persistSessionProfile,
@@ -107,6 +112,8 @@ export function useModelProviderState(
     updateSessionMessages,
     loadConfig,
     checkAuth,
+    beginLocalTurn,
+    settleLocalTurn,
   } = deps;
 
   // Models + Providers reactive state (lazy-loaded, cached)
@@ -258,7 +265,7 @@ export function useModelProviderState(
    *  and local values have already been applied. Never called for derived
    *  values (e.g. the loadModels default pin) — only for user actions. */
   function persistGlobalThinking(level: ThinkingLevel): void {
-    void getKimiWebApi()
+    void api
       .setConfig({
         thinking: thinkingLevelToConfig(level, modelById(currentModelId())?.supportEfforts),
       })
@@ -267,7 +274,6 @@ export function useModelProviderState(
 
   async function loadSkillsForSession(sessionId: string): Promise<void> {
     try {
-      const api = getKimiWebApi();
       const list = await api.listSkills(sessionId);
       skillsBySession.value = { ...skillsBySession.value, [sessionId]: list };
     } catch {
@@ -278,7 +284,6 @@ export function useModelProviderState(
 
   async function loadSkillsForWorkspace(workspaceId: string): Promise<void> {
     try {
-      const api = getKimiWebApi();
       const list = await api.listSkillsForWorkspace(workspaceId);
       skillsByWorkspace.value = { ...skillsByWorkspace.value, [workspaceId]: list };
     } catch {
@@ -290,7 +295,6 @@ export function useModelProviderState(
   /** Load models (cached — call again to force refresh) */
   async function loadModels(): Promise<void> {
     try {
-      const api = getKimiWebApi();
       models.value = await api.listModels();
       // Resolve the active session's level: its own daemon-reported level when
       // still declared, else the model's catalog default. Always re-resolved
@@ -308,7 +312,6 @@ export function useModelProviderState(
   /** Load providers */
   async function loadProviders(): Promise<void> {
     try {
-      const api = getKimiWebApi();
       providers.value = await api.listProviders();
     } catch (err) {
       pushOperationFailure('loadProviders', err);
@@ -364,7 +367,7 @@ export function useModelProviderState(
       }
     }
     try {
-      await getKimiWebApi().updateSession(sid, {
+      await api.updateSession(sid, {
         model: modelId,
         thinking: nextThinking !== prevThinking ? nextThinking : undefined,
       });
@@ -487,7 +490,7 @@ export function useModelProviderState(
         );
         if (!persisted) throw PROFILE_PERSIST_FAILED;
       }
-      await getKimiWebApi().activateSkill(sid, skillName, args, attachmentsToContent(attachments));
+      await api.activateSkill(sid, skillName, args, attachmentsToContent(attachments));
     } catch (err) {
       if (guarded) {
         rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
@@ -508,7 +511,7 @@ export function useModelProviderState(
    * the caller (the form degrades to the redacted placeholder on failure).
    */
   async function getProvider(id: string): Promise<AppProviderDetail> {
-    return getKimiWebApi().getProvider(id);
+    return api.getProvider(id);
   }
 
   /**
@@ -519,13 +522,12 @@ export function useModelProviderState(
    */
   async function addProvider(input: AddProviderInput): Promise<string | null> {
     try {
-      const api = getKimiWebApi();
       await api.addProvider(input);
       await Promise.all([loadProviders(), loadModels(), loadConfig()]);
       await checkAuth();
       return null;
     } catch (err) {
-      logError('[kimi-web] operation failed: addProvider', err);
+      logError('[kimi-code] operation failed: addProvider', err);
       return err instanceof Error ? err.message : String(err);
     }
   }
@@ -538,12 +540,11 @@ export function useModelProviderState(
    */
   async function updateProvider(id: string, input: UpdateProviderInput): Promise<string | null> {
     try {
-      const api = getKimiWebApi();
       await api.updateProvider(id, input);
       await Promise.all([loadProviders(), loadModels(), loadConfig()]);
       return null;
     } catch (err) {
-      logError('[kimi-web] operation failed: updateProvider', err);
+      logError('[kimi-code] operation failed: updateProvider', err);
       return err instanceof Error ? err.message : String(err);
     }
   }
@@ -555,7 +556,6 @@ export function useModelProviderState(
    */
   async function deleteProvider(id: string): Promise<DeleteProviderResult | null> {
     try {
-      const api = getKimiWebApi();
       const result = await api.deleteProvider(id);
       await Promise.all([loadProviders(), loadModels(), loadConfig()]);
       await checkAuth();
@@ -569,7 +569,7 @@ export function useModelProviderState(
   /** Refresh a single provider's remote model metadata, then reload caches. */
   async function refreshProvider(id: string): Promise<void> {
     try {
-      const result = await getKimiWebApi().refreshProvider(id);
+      const result = await api.refreshProvider(id);
       for (const failure of result.failed) {
         pushOperationFailure('refreshProvider', new Error(failure.reason), {
           message: failure.provider,
@@ -584,7 +584,7 @@ export function useModelProviderState(
   /** Refresh every refreshable provider's remote model metadata, then reload caches. */
   async function refreshAllProviders(): Promise<void> {
     try {
-      const result = await getKimiWebApi().refreshAllProviders();
+      const result = await api.refreshAllProviders();
       for (const failure of result.failed) {
         pushOperationFailure('refreshAllProviders', new Error(failure.reason), {
           message: failure.provider,
@@ -610,13 +610,13 @@ export function useModelProviderState(
     | { kind: 'error' }
   > {
     try {
-      const items = await getKimiWebApi().listCatalogProviders();
+      const items = await api.listCatalogProviders();
       return { kind: 'ok', items };
     } catch (err) {
       if (err instanceof DaemonApiError && err.code === undefined) {
         return { kind: 'unsupported' };
       }
-      logError('[kimi-web] operation failed: loadCatalogProviders', err);
+      logError('[kimi-code] operation failed: loadCatalogProviders', err);
       return { kind: 'error' };
     }
   }
@@ -630,13 +630,12 @@ export function useModelProviderState(
     input: ImportCatalogProviderInput,
   ): Promise<string | null> {
     try {
-      const api = getKimiWebApi();
       await api.importCatalogProvider(input);
       await Promise.all([loadProviders(), loadModels(), loadConfig()]);
       await checkAuth();
       return null;
     } catch (err) {
-      logError('[kimi-web] operation failed: importCatalogProvider', err);
+      logError('[kimi-code] operation failed: importCatalogProvider', err);
       return err instanceof Error ? err.message : String(err);
     }
   }
@@ -651,13 +650,12 @@ export function useModelProviderState(
     input: ImportCustomRegistryInput,
   ): Promise<{ providers: AppProvider[]; modelsImported: number } | string> {
     try {
-      const api = getKimiWebApi();
       const result = await api.importCustomRegistry(input);
       await Promise.all([loadProviders(), loadModels(), loadConfig()]);
       await checkAuth();
       return result;
     } catch (err) {
-      logError('[kimi-web] operation failed: importCustomRegistry', err);
+      logError('[kimi-code] operation failed: importCustomRegistry', err);
       return err instanceof Error ? err.message : String(err);
     }
   }
@@ -665,7 +663,6 @@ export function useModelProviderState(
   /** Start managed Kimi OAuth device flow. Returns flow data or null on error. */
   async function startOAuthLogin(): Promise<OAuthLoginStartResult | null> {
     try {
-      const api = getKimiWebApi();
       return await api.startOAuthLogin();
     } catch {
       return null;
@@ -679,12 +676,11 @@ export function useModelProviderState(
     resolvedAt?: string;
   } | null> {
     try {
-      const api = getKimiWebApi();
       return await api.pollOAuthLogin();
     } catch (err) {
       // The dialog counts consecutive nulls and gives up after a few; keep the
       // cause in the log so a dead daemon is diagnosable.
-      logWarn('[kimi-web] pollOAuthLogin failed', err);
+      logWarn('[kimi-code] pollOAuthLogin failed', err);
       return null;
     }
   }
@@ -692,7 +688,6 @@ export function useModelProviderState(
   /** Cancel the current OAuth flow (best-effort). */
   async function cancelOAuthLogin(): Promise<void> {
     try {
-      const api = getKimiWebApi();
       await api.cancelOAuthLogin();
     } catch {
       // Best-effort
@@ -704,7 +699,6 @@ export function useModelProviderState(
    *  settings UI can render an inline state instead of a toast. */
   async function getUsage(): Promise<ManagedUsageResult> {
     try {
-      const api = getKimiWebApi();
       return await api.getUsage();
     } catch (err) {
       return { kind: 'error', message: err instanceof Error ? err.message : String(err) };

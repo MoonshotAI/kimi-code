@@ -1,17 +1,15 @@
-// apps/kimi-web/test/side-chat.test.ts
 import { describe, expect, it, vi } from 'vitest';
 import { createInitialState } from '@moonshot-ai/app-core/api';
-import { useSideChat } from '../src/composables/client/useSideChat';
-import type { ExtendedState } from '../src/composables/useKimiWebClient';
+import type { KimiWebApi } from '@moonshot-ai/app-core/api';
+import { useSideChat } from '../src/client/useSideChat';
+import type { ExtendedState } from '../src/client/types';
 
-const apiMock = vi.hoisted(() => ({
+// The api is injected; stub the BTW endpoints.
+const apiMock = {
   startBtw: vi.fn(),
   submitPrompt: vi.fn(),
-}));
-
-vi.mock('../src/api', () => ({
-  getKimiWebApi: () => apiMock,
-}));
+};
+const api = apiMock as unknown as KimiWebApi;
 
 function createState(): ExtendedState {
   return {
@@ -63,6 +61,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
     const state = createState();
     const pushOperationFailure = vi.fn();
     const sideChat = useSideChat(state, {
+      api,
       pushOperationFailure,
       nextOptimisticMsgId: () => 'msg_opt_btw',
       connectEventsIfNeeded: vi.fn(),
@@ -100,6 +99,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
     const state = createState();
     state.thinking = 'max';
     const sideChat = useSideChat(state, {
+      api,
       pushOperationFailure: vi.fn(),
       nextOptimisticMsgId: () => 'msg_opt_btw',
       connectEventsIfNeeded: vi.fn(),
@@ -128,6 +128,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
     const state = createState();
     state.thinking = 'max'; // the user is now viewing a max-only session elsewhere
     const sideChat = useSideChat(state, {
+      api,
       pushOperationFailure: vi.fn(),
       nextOptimisticMsgId: () => 'msg_opt_btw',
       connectEventsIfNeeded: vi.fn(),
@@ -157,6 +158,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
     );
     const state = createState();
     const sideChat = useSideChat(state, {
+      api,
       pushOperationFailure: vi.fn(),
       nextOptimisticMsgId: () => 'msg_opt_btw',
       connectEventsIfNeeded: vi.fn(),
@@ -211,6 +213,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
     const state = createState();
     let optimisticId = 0;
     const sideChat = useSideChat(state, {
+      api,
       pushOperationFailure: vi.fn(),
       nextOptimisticMsgId: () => `msg_opt_btw_${++optimisticId}`,
       connectEventsIfNeeded: vi.fn(),

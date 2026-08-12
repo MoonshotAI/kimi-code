@@ -1,12 +1,11 @@
-// apps/web/src/composables/client/useTaskPoller.ts
+// packages/app-client/src/client/useTaskPoller.ts
 // Background task output polling and the 1-second task clock used to keep
 // running-task elapsed timers live in the UI.
 
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue';
-import { getKimiWebApi } from '../../api';
-import type { AppTask } from '../../api/types';
+import type { AppTask, KimiWebApi } from '@moonshot-ai/app-core/api';
 import { keepLiveSubagents } from '@moonshot-ai/app-core/lib';
-import type { ExtendedState } from '../useKimiWebClient';
+import type { ExtendedState } from './types';
 
 const TASK_OUTPUT_POLL_INTERVAL_MS = 1000;
 const TASK_OUTPUT_POLL_BYTES = 4096;
@@ -22,6 +21,7 @@ export interface UseTaskPoller {
 export function useTaskPoller(
   rawState: ExtendedState,
   activeAppTasks: ComputedRef<AppTask[]>,
+  deps: { api: KimiWebApi },
 ): UseTaskPoller {
   let taskOutputPollTimer: ReturnType<typeof setInterval> | null = null;
   let lastPolledSessionId: string | undefined;
@@ -29,7 +29,7 @@ export function useTaskPoller(
 
   async function loadTasksForSession(sessionId: string): Promise<void> {
     try {
-      const api = getKimiWebApi();
+      const api = deps.api;
       const taskList = await api.listTasks(sessionId);
       rawState.tasksBySession = {
         ...rawState.tasksBySession,
@@ -56,7 +56,7 @@ export function useTaskPoller(
     if (rawState.activeSessionId !== sessionId) return;
 
     const tasks = taskList ?? rawState.tasksBySession[sessionId] ?? [];
-    const api = getKimiWebApi();
+    const api = deps.api;
     const outputByTaskId = new Map<string, { preview: string; bytes?: number }>();
 
     await Promise.all(
@@ -116,7 +116,7 @@ export function useTaskPoller(
   async function pollTaskOutputForSession(sessionId: string): Promise<void> {
     if (rawState.activeSessionId !== sessionId) return;
 
-    const api = getKimiWebApi();
+    const api = deps.api;
     let taskList: AppTask[];
     try {
       taskList = await api.listTasks(sessionId);

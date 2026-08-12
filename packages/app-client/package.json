@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./client": "./src/client/index.ts",
     "./composables": "./src/composables/index.ts",
     "./contracts": "./src/contracts.ts",
     "./icons": "./src/icons/icons.ts",

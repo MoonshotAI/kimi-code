@@ -1,8 +1,8 @@
-// apps/web/src/lib/attachmentsToContent.ts
+// packages/app-client/src/client/attachmentsToContent.ts
 // Pure TS — no Vue, no side effects.
 
-import type { AppSkillAttachment } from '../api/types';
-import type { PromptAttachment } from '../composables/useKimiWebClient';
+import type { AppSkillAttachment } from '@moonshot-ai/app-core/api';
+import type { PromptAttachment } from './types';
 
 /**
  * Build the wire-bound content parts for uploaded attachments: images/videos

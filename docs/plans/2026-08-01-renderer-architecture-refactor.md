@@ -495,7 +495,7 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - 验收：`pnpm test` 2366 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 29 findings 与 main 基线相同 ✅；**全量图标视觉验证**（DesignSystemView §02 图标目录页逐排核对）+ 双端冒烟待人工补。
 - 无 changeset（纯重构）。
 
-### P6 — 🚧 进行中（2026-08-12 本地实施 + 验收完成；待提交 PR，合并后本条转「已完成」）
+### P6 — 已完成（2026-08-12；PR #207 合入 main squash 6646cf97）
 
 - 完成：`ProductTracker` 接线落地 + 5 个 telemetry/平台分叉 composable 收编 `packages/app-client/src/composables/`，两端副本（10 个文件）删除。
 - **注入缝形态（计划只写「app-client 接线」，实测定为模块级 registry）**：`contracts.ts` 追加 `setProductTracker` / `track` 委托（no-op 默认）；desktop 在 `main.ts`（`installClientErrorCapture` 后）`setProductTracker(productTracker)`——适配器放 `lib/track.ts`（`track(event as RendererEventName, payload as never)`，包内事件绕开 desktop 编译期契约，主进程 zod schema 仍是运行时边界）；web 不动（no-op 默认即「注入 no-op」，行为与现状一致）。参数透传方案被否：track 调用点散在 4 个 composable 深层，registry 让迁移 diff 只剩 import 行。
@@ -507,4 +507,16 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - **基线偏差**：P5 台账记的 2366 已过时——P5 后 main 前进（#200–#204），HEAD 实测 2383；本次净 -27 → 2356，全部来自 web 两个子集测试文件删除（oauth -13 / updateStatus -14），其余删除均在包内 1:1 重建。
 - **环境坑**：`pnpm build` 首跑挂在 kimi-code submodule 的 node-sdk（缺 `@microsoft/api-extractor`，submodule 根 manifest 有声明但未装）——`kimi-code/` 内补跑一次 `pnpm install` 即可，tracked 内容不受影响。
 - 验收：`pnpm test` 2356 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 29 findings 与基线同 ✅；**desktop 侧埋点冒烟**（notification_shown / attachment_added / oauth_login_step 各触发一次，主进程日志可见）**+ 双端发消息冒烟待人工补**。
+- 无 changeset（纯重构）。
+
+### P7a — 🚧 进行中（2026-08-12 本地实施 + 验收完成；待提交 PR，合并后本条转「已完成」）
+
+- 完成：三个 client 状态模块（`useTaskPoller` / `useSideChat` / `useModelProviderState`）+ `attachmentsToContent` 收编 `packages/app-client/src/client/`（新 `./client` 出口，归属矩阵指定位置），两端 8 个副本文件删除。
+- **实测与计划的大幅偏差（有利）**：§1.1 登记的 184 行 `useModelProviderState` 分叉（web toast vs desktop inline banner 错误处理）在 main 上已自行收敛——三模块实测仅头注释 + 6 处日志前缀差异（`useSideChat` 字节一致、`useTaskPoller` 仅头注释）。**R4 产品确认不再必要**，web 侧表单组件无需适配。
+- **迁移障碍与对策**：三模块都依赖 app 侧 `getKimiWebApi()` 单例与 god object 类型——① `ExtendedState` / `PromptAttachment`（连同被引用的 `ManagedMembership` / `GitStatusEntry` / `QueuedPrompt`）抽到 `client/types.ts`，两端 `useKimiWebClient` 删 165 行定义块、原位 re-export（消费者 App.vue / ConversationPane / ChatDock / Composer 零改动）；② api 以全量 `KimiWebApi` 注入（`useTaskPoller` 追加第三参 deps；另两个加 deps 首字段），调用点传 `getKimiWebApi()`；③ `beginLocalTurn` / `settleLocalTurn`（`useWorkspaceState` 模块级函数，P7b 才动）作 deps 函数字段注入。
+- **`attachmentsToContent` 落 `client/` 而非 lib/**：依赖 `PromptAttachment`（client/types），包内保持 client → lib 单向不倒挂（沿用 P2 分层纪律）。P1/P2 台账登记的「P7+ 再收」至此收编。
+- **行为对齐点**：6 处日志前缀 `[kimi-web]` → `[kimi-code]`（§3 品牌统一既定决策）。
+- **`useTaskPoller` 的 tasksBySession 整体替换按计划保留原样**（P9+ 拆解期修复清单）。
+- **测试**：task-poller（3 例）/ side-chat（5 例）随迁（`vi.mock` api 单例 → deps 注入 apiMock）；两端字节相同的 `modelThinking.test.ts`（各 61 例）确认对 useKimiWebClient 仅 type import，迁入包内一份、删两端——P1 台账登记的「P7 后清理」完成。总数 2356→2295（净 -61 即此），文件 154→153。
+- 验收：`pnpm test` 2295 ✅ / `typecheck` ✅ / `lint` 0 error（4 warning 均存量）✅ / `build` ✅ / `check:style` 29 findings 与基线同 ✅；**provider 增删改全流程冒烟（两端）+ 双端发消息冒烟待人工补**。
 - 无 changeset（纯重构）。
