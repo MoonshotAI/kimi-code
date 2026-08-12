@@ -14,6 +14,10 @@ import {
   isExperimentalFlagEnabled,
   setExperimentalFeatures,
 } from '#/tui/commands/experimental-flags';
+import {
+  createMarkdownOptions,
+  setMarkdownRenderLatex,
+} from '#/tui/utils/markdown-options';
 
 const tempDirs: string[] = [];
 const originalKimiCodeHome = process.env['KIMI_CODE_HOME'];
@@ -114,6 +118,27 @@ auto_install = false
     await handleReloadTuiCommand(host);
 
     expect(themeWhenTracked).toBe('auto');
+  });
+
+  it('applies the render_latex toggle before theme application rebuilds Markdown', async () => {
+    await writeTuiConfig('render_latex = false\n');
+    const host = makeHost();
+
+    // applyTheme invalidates transcript components, which rebuild their
+    // Markdown children by copying the shared options — the reloaded value
+    // must already be live at that point.
+    let latexWhenThemeApplied: boolean | undefined;
+    const mutable = host as unknown as { applyTheme: unknown };
+    mutable.applyTheme = vi.fn(() => {
+      latexWhenThemeApplied = createMarkdownOptions().renderLatex;
+    });
+
+    try {
+      await handleReloadTuiCommand(host);
+      expect(latexWhenThemeApplied).toBe(false);
+    } finally {
+      setMarkdownRenderLatex(true);
+    }
   });
 
   it('refreshes workspace commands and lazy defaults on a session-less v2 reload', async () => {

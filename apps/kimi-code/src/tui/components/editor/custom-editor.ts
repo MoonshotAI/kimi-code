@@ -235,7 +235,9 @@ export class CustomEditor extends Editor {
       const text = this.getText();
       const offset = lines.slice(0, line).reduce((sum, l) => sum + l.length + 1, 0) + start;
       const newText = text.slice(0, offset) + content + text.slice(offset + match[0].length);
-      this.setText(newText);
+      // Keep the paste registry intact: the text still holds other live markers
+      // whose entries a plain setText would drop (upstream resets the registry).
+      this.setText(newText, { preservePasteRegistry: true });
       return true;
     }
     return false;

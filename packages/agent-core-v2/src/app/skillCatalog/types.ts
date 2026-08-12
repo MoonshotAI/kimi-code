@@ -5,7 +5,11 @@
  * marked `productSpecific` documents this CLI itself — its configuration,
  * themes, MCP setup — rather than a capability the agent applies to the user's
  * work, which is what the `builtin_product_skills` switch excludes; those
- * names and descriptions otherwise sit in the system prompt every turn.
+ * names and descriptions otherwise sit in the system prompt every turn. A
+ * root's `scanMode` defaults to `directory` (full directory scan);
+ * `root-skill-only` marks the plugin manifest root SKILL.md fallback, where
+ * the root is a single skill bundle and sibling docs like CHANGELOG.md must
+ * not be mistaken for flat skills.
  */
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
@@ -50,6 +54,7 @@ export interface SkillRoot {
   readonly path: string;
   readonly source: SkillSource;
   readonly plugin?: SkillPluginContext;
+  readonly scanMode?: 'directory' | 'root-skill-only';
 }
 
 export interface SkillPluginContext {

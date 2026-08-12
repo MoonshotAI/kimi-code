@@ -1,5 +1,17 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.16.0
+
+### Minor Changes
+
+- [#2826](https://github.com/MoonshotAI/kimi-code/pull/2826) [`3c9e3b2`](https://github.com/MoonshotAI/kimi-code/commit/3c9e3b297cf5286c761159c1b4d642c478fd394d) Thanks [@liruifengv](https://github.com/liruifengv)! - Add `listSessionsPage` for keyset-paged session listing (`limit` / `before`, returns `nextCursor`). The v2 engine pages through the session index; the v1 engine keeps answering with a single full page.
+
+### Patch Changes
+
+- [#2731](https://github.com/MoonshotAI/kimi-code/pull/2731) [`437a1b8`](https://github.com/MoonshotAI/kimi-code/commit/437a1b8ba1b7e0f6662bdadc669564fdc58c3f5a) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Detect MCP servers that require OAuth without needing `auth: "oauth"` in the config.
+
+- [#2706](https://github.com/MoonshotAI/kimi-code/pull/2706) [`0b2e803`](https://github.com/MoonshotAI/kimi-code/commit/0b2e803d5e71afaab45212bb2ee6117ecbf8bbc9) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Expose persisted MCP authorization status without starting an OAuth flow.
+
 ## 0.15.3
 
 ### Patch Changes

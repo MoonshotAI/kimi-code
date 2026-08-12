@@ -2,62 +2,12 @@
  * `agentsMdReminder` domain — `IAgentAgentsMdReminderService`
  * implementation.
  *
- * Self-wiring plugin: registers an `onDidExecuteTool` hook on `toolExecutor`
- * that probes the directories a tool call touches for AGENTS.md files the
- * system prompt did not inject, and prepends a once-per-agent
- * `<system-reminder>` to the result suggesting the model read them (head
- * insertion on purpose: oversized results are truncated to a short head
- * preview later in the execution pipeline, and a tail reminder would be
- * silently dropped after the file was already counted as reminded).
- * `Read`/`Edit`/`Write` consume the canonical file access declared by their
- * resolved execution (a successful touch landing on an AGENTS.md itself marks
- * just that file known), `Glob`/`Grep` consume their canonical search root,
- * and `Bash` contributes its explicit `cwd` plus the literal directory
- * operands extracted from the command's syntax tree (see `./bashTargets`),
- * resolved against the frozen
- * `sessionContext.cwd` exactly like the Bash tool itself (`args.cwd ??
- * sessionContext.cwd` — a base that deliberately differs from the live agent
- * cwd after a chdir). Only calls whose `ToolDidExecuteContext.outcome` is
- * `executed` are probed: preflight rejects, resolution failures, aborts,
- * permission vetoes, and synthetic/duplicate results have not touched the
- * requested resource and are left unchanged. The hook is ordered before
- * `toolDedupe` so an executed original carries the reminder into the
- * deferred result returned for a duplicate; no dedupe implementation state is
- * needed here. The ordered registration throws when its target is absent, so
- * scopes without `toolDedupe` fall back to plain append-order registration,
- * which still lands ahead of a `toolDedupe` hook constructed later.
- *
- * Known-set discipline: candidates are claimed synchronously per discovered
- * file into an in-memory `claimed` set (parallel calls can never duplicate a
- * reminder and a failed attempt releases the claim), while `agentState`
- * (`agentsMdReminder.known`) is only ever whole-value replaced after the
- * reminder text is attached and the telemetry emitted — never mutated in
- * place, and never ahead of the reminder it records. Probing anchors at the
- * nearest existing ancestor (so `Write` into a not-yet-created directory
- * still resolves), walks `findProjectRoot → touched dir`, skips chain
- * directories whose candidates are all known, and applies the same
- * per-directory candidate rules as the init-time load (shared through
- * `profile/context`'s `findAgentsMdInDir`; blank files are included in
- * neither). Directories with unknown candidates are re-statted on every
- * qualifying call — deliberate, so an AGENTS.md created mid-session is
- * picked up on the next touch; there is no negative cache. Probing is
- * lexical like the tools' own path policy: a symlinked directory's AGENTS.md
- * is discovered through the link at its lexical address, never by realpath.
- * The hook never throws — a probe failure yields the untouched result.
- *
- * Seeding: `profile` reports the injected paths after every successful
- * bind/apply/refresh and `sessionInit` re-seeds after `/init`. A prompt can
- * also commit without any of those entry points — session resume and forks
- * restore the already-rendered system prompt (AGENTS.md content included)
- * from the wire journal or a binding snapshot. The wire restore hook seeds
- * the exact persisted paths (legacy prompts recover their source annotations),
- * so the first qualifying call of a never-seeded agent does not confuse the
- * current filesystem with the restored prompt. The seeded cwd lives in
- * `agentState` as well; restored provenance comes from `wire`/`profile`; fs
- * probes go through the os `IHostFileSystem`, the home directory through
- * `IHostEnvironment`, the brand home through `bootstrap`, syntax
- * trees through `bashParser`, and the shown-event
- * through `telemetry`. Bound at Agent scope.
+ * Discovers AGENTS.md files reached through `toolExecutor` and the tool path
+ * policy, parsing Bash targets through `bashParser` and probing through the os
+ * services. Restores prompt provenance through `wire` and `profile`, resolves
+ * roots through `sessionContext` and `bootstrap`, stores discovery state in
+ * `agentState`, appends through `systemReminder`, and reports through
+ * `telemetry`. Bound at Agent scope.
  */
 
 import { basename, dirname, isAbsolute, join, normalize } from 'pathe';
@@ -70,11 +20,9 @@ import { IBashParserService } from '#/app/bashParser/bashParser';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ContentPart } from '#/kosong/contract/message';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ExecutableToolOutput, ExecutableToolResult } from '#/tool/toolContract';
 import { normalizeUserPath } from '#/tool/path-access';
 import {
   AGENTS_MD_PLAIN_NAMES,
@@ -87,6 +35,7 @@ import {
 } from '#/agent/profile/context';
 import { ProfileModel } from '#/agent/profile/profileOps';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IWireService } from '#/wire/wire';
@@ -119,6 +68,7 @@ export class AgentAgentsMdReminderService
 
   constructor(
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IHostFileSystem private readonly fs: IHostFileSystem,
@@ -142,14 +92,10 @@ export class AgentAgentsMdReminderService
       }),
     );
     const handler = async (ctx: ToolDidExecuteContext, next: () => Promise<void>): Promise<void> => {
-      ctx.result = await this.augmentWithReminder(ctx);
+      await this.probeAndRemind(ctx);
       await next();
     };
-    try {
-      this._register(toolExecutor.hooks.onDidExecuteTool.register('agentsMdReminder', handler, { before: 'toolDedupe' }));
-    } catch {
-      this._register(toolExecutor.hooks.onDidExecuteTool.register('agentsMdReminder', handler));
-    }
+    this._register(toolExecutor.hooks.onDidExecuteTool.register('agentsMdReminder', handler));
   }
 
   seedInjected(paths: readonly string[], cwd: string): void {
@@ -180,8 +126,8 @@ export class AgentAgentsMdReminderService
     this.seedInjected(paths, this.agentCwd);
   }
 
-  private async augmentWithReminder(ctx: ToolDidExecuteContext): Promise<ExecutableToolResult> {
-    if (ctx.outcome !== 'executed') return ctx.result;
+  private async probeAndRemind(ctx: ToolDidExecuteContext): Promise<void> {
+    if (ctx.outcome !== 'executed') return;
     const discovered: string[] = [];
     try {
       await this.ensureSeeded();
@@ -196,9 +142,8 @@ export class AgentAgentsMdReminderService
       }
       if (discovered.length === 0) {
         this.publishKnown(selfKnown);
-        return ctx.result;
+        return;
       }
-      const result = prependReminder(ctx.result, reminderText(discovered));
       const properties: AgentsMdReminderShownEvent = {
         turn_id: ctx.turnId,
         tool_name: ctx.toolCall.name,
@@ -206,11 +151,12 @@ export class AgentAgentsMdReminderService
         trace_id: ctx.trace?.traceId,
       };
       this.telemetry.track2('agents_md_reminder_shown', properties);
+      this.reminders.appendSystemReminder(reminderText(discovered), {
+        kind: 'injection',
+        variant: 'agents_md',
+      });
       this.publishKnown([...selfKnown, ...discovered]);
-      return result;
-    } catch {
-      return ctx.result;
-    } finally {
+    } catch {} finally {
       for (const path of discovered) this.claimed.delete(path);
     }
   }
@@ -333,32 +279,10 @@ function stringArg(args: unknown, key: string): string | undefined {
 
 function reminderText(paths: readonly string[]): string {
   return (
-    '<system-reminder>\n' +
-    'The path(s) touched by this call are covered by AGENTS.md instruction file(s) that were not part of the injected instructions:\n' +
+    'The path(s) touched by a recent tool call are covered by AGENTS.md instruction file(s) that were not part of the injected instructions:\n' +
     paths.map((path) => `- ${path}`).join('\n') +
-    '\nRead them before making changes in those directories. Each file is suggested at most once per agent.' +
-    '\n</system-reminder>\n\n'
+    '\nRead them before making changes in those directories. Each file is suggested at most once per agent.'
   );
-}
-
-function prependReminder(result: ExecutableToolResult, text: string): ExecutableToolResult {
-  const output = result.output;
-  let newOutput: ExecutableToolOutput;
-  if (typeof output === 'string') {
-    newOutput = text + output;
-  } else {
-    const parts: ContentPart[] = [...output];
-    const first = parts[0];
-    if (first !== undefined && first.type === 'text') {
-      parts[0] = { type: 'text', text: text + first.text };
-    } else {
-      parts.unshift({ type: 'text', text });
-    }
-    newOutput = parts;
-  }
-  return result.isError === true
-    ? { ...result, output: newOutput, isError: true }
-    : { ...result, output: newOutput };
 }
 
 registerScopedService(

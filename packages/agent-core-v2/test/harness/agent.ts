@@ -10,7 +10,6 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { Emitter, Event } from '#/_base/event';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
-import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
@@ -85,7 +84,6 @@ import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import type { ChatProvider, GenerateOptions, StreamedMessage } from '#/kosong/contract/provider';
 import type { ILogger, LogContext, LogLevel } from '#/_base/log/log';
 import { ILogOptions } from '#/_base/log/logConfig';
-import type { EnabledPluginSessionStart } from '#/app/plugin/types';
 import {
   WIRE_PROTOCOL_VERSION,
   AgentTaskService,
@@ -969,30 +967,6 @@ class ConfigBackedModelCatalog extends ModelCatalog {
   }
 }
 
-function renderPluginSessionStartReminder(
-  sessionStarts: readonly EnabledPluginSessionStart[],
-  catalog: SkillCatalog,
-  log?: { warn(message: string, payload?: unknown): void },
-): string | undefined {
-  if (sessionStarts.length === 0) return undefined;
-  const blocks: string[] = [];
-  for (const sessionStart of sessionStarts) {
-    const skill = catalog.getPluginSkill(sessionStart.pluginId, sessionStart.skillName);
-    if (skill === undefined) {
-      log?.warn('plugin sessionStart skill not found', {
-        pluginId: sessionStart.pluginId,
-        skillName: sessionStart.skillName,
-      });
-      continue;
-    }
-    blocks.push(
-      `<plugin_session_start plugin="${escapeXmlAttr(sessionStart.pluginId)}" ` +
-      `skill="${escapeXmlAttr(skill.name)}">\n${catalog.renderSkillPrompt(skill, '')}\n</plugin_session_start>`,
-    );
-  }
-  return blocks.length > 0 ? blocks.join('\n') : undefined;
-}
-
 export class AgentTestContext {
   private readonly serviceOverrides: readonly TestAgentScopedServiceOverride[];
   private readonly options: TestAgentOptions;
@@ -1002,7 +976,6 @@ export class AgentTestContext {
   private readonly agent: Scope;
   private readonly disposables: IDisposable[] = [];
   private suppressWireSnapshot = false;
-  private pluginSessionStartRegistered = false;
   kimiConfig: KimiConfig;
   private cwd = process.cwd();
   private closed = false;
@@ -1402,29 +1375,6 @@ export class AgentTestContext {
 
     if (tools.length > 0) {
       profile.update({ activeToolNames: [...tools] });
-    }
-
-    const sessionStarts = this.options['pluginSessionStarts'] as
-      | readonly EnabledPluginSessionStart[]
-      | undefined;
-    const skillCatalog = this.options['skills'] as SkillCatalog | undefined;
-    if (
-      !this.pluginSessionStartRegistered &&
-      sessionStarts !== undefined &&
-      skillCatalog !== undefined
-    ) {
-      this.pluginSessionStartRegistered = true;
-      this.get(IAgentContextInjectorService).register(
-        'plugin_session_start',
-        async ({ injectedPositions }) => {
-          if (injectedPositions.length > 0) return undefined;
-          return renderPluginSessionStartReminder(
-            sessionStarts,
-            skillCatalog,
-            this.options['log'] as { warn(message: string, payload?: unknown): void } | undefined,
-          );
-        },
-      );
     }
 
     this.snapshots.drain();

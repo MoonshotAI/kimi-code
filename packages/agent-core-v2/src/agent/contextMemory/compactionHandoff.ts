@@ -13,6 +13,7 @@
 
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/kosong/contract/tokens';
 import type { ContentPart } from '#/kosong/contract/message';
+import { wrapSystemReminder } from '#/agent/systemReminder/systemReminder';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 import type { ContextMessage, PromptOrigin } from './types';
 
@@ -162,11 +163,9 @@ export function createCompactionElisionMessage(omittedTokens: number): ContextMe
 }
 
 export function buildCompactionElisionText(omittedTokens: number): string {
-  return [
-    '<system-reminder>',
+  return wrapSystemReminder(
     `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`,
-    '</system-reminder>',
-  ].join('\n');
+  );
 }
 
 export function collectCompactableUserMessages<T extends MessageLike>(messages: readonly T[]): T[] {

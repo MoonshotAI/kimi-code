@@ -21,14 +21,16 @@ describe('SessionBtwService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let fork: ReturnType<typeof vi.fn>;
-  let appendSystemReminder: ReturnType<typeof vi.fn>;
+  let appendReminder: ReturnType<typeof vi.fn>;
   let formatDenyMessage: ReturnType<typeof vi.fn>;
   let executorEvents: ToolExecutorEventStubs;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    appendSystemReminder = vi.fn();
+    appendReminder = vi.fn(() => 'reminder-id');
+    // The suffix mimics the worker-rejection guidance formatDenyMessage appends
+    // for forked sub agents, so the assertion proves the reason went through it.
     formatDenyMessage = vi.fn((message: string) => `${message} [worker guidance]`);
     executorEvents = stubToolExecutorEvents();
 
@@ -36,7 +38,7 @@ describe('SessionBtwService', () => {
       id: 'agent-btw-1',
       accessor: {
         get: (id: unknown) => {
-          if (id === IAgentSystemReminderService) return { appendSystemReminder };
+          if (id === IAgentSystemReminderService) return { appendSystemReminder: appendReminder };
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
           if (id === IAgentToolExecutorService) return executorEvents.executor;
           return undefined;
@@ -58,9 +60,9 @@ describe('SessionBtwService', () => {
 
     expect(id).toBe('agent-btw-1');
     expect(fork).toHaveBeenCalledWith('main');
-    expect(appendSystemReminder).toHaveBeenCalledWith(SIDE_QUESTION_SYSTEM_REMINDER, {
-      kind: 'system_trigger',
-      name: 'btw',
+    expect(appendReminder).toHaveBeenCalledWith(SIDE_QUESTION_SYSTEM_REMINDER, {
+      kind: 'injection',
+      variant: 'btw',
     });
   });
 
