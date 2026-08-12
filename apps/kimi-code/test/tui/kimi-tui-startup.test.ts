@@ -2085,7 +2085,7 @@ describe('KimiTUI startup', () => {
     // later startup steps spawned child processes in an untrusted directory.
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: true,
-      gatedMcpServers: [] as string[],
+      gatedMcpServers: [],
     }));
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo });
     const driver = makeDriver(harness, {
@@ -2115,7 +2115,7 @@ describe('KimiTUI startup', () => {
   it('prompts for workspace trust before migrating an untrusted workspace', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
-      gatedMcpServers: [] as string[],
+      gatedMcpServers: [],
     }));
     const trustWorkspace = vi.fn(async () => {});
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo, trustWorkspace });
@@ -2141,7 +2141,8 @@ describe('KimiTUI startup', () => {
     await vi.waitFor(() => {
       expect(mountSpy).toHaveBeenCalled();
     });
-    // Choose the default "Trust this folder" option with Enter.
+    // Move from the safe default to the explicit trust choice, then confirm.
+    mountSpy.mock.calls[0]![0].handleInput('\u001B[A');
     mountSpy.mock.calls[0]![0].handleInput('\r');
     await startPromise;
 

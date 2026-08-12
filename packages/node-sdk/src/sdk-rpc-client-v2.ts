@@ -155,6 +155,7 @@ import { SECONDARY_MODEL_SECTION } from '@moonshot-ai/agent-core-v2/app/kosongCo
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { wrapSubagentModelError } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/workspace/workspaceMcpConfig/internal/config-loader';
+import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
   applyPromptMetadataUpdate,
   bootstrap,
@@ -597,9 +598,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: true }),
         loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: false }),
       ]);
-      const gatedMcpServers = Object.keys(withProject)
-        .filter((name) => !(name in userOnly))
-        .toSorted();
+      const gatedMcpServers = Object.entries(withProject)
+        .filter(([name]) => !(name in userOnly))
+        .map(([name, config]) => describeWorkspaceMcpServer(name, config))
+        .toSorted((a, b) => a.name.localeCompare(b.name));
       return { trusted: false, gatedMcpServers };
     } catch {
       return { trusted: false, gatedMcpServers: [] };
@@ -2377,4 +2379,20 @@ function normalizeRequiredWorkDir(operation: string, workDir: string): string {
     throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, `${operation} requires workDir`);
   }
   return normalizeWorkDir(workDir);
+}
+
+function describeWorkspaceMcpServer(
+  name: string,
+  config: WorkspaceMcpServerConfig,
+): WorkspaceTrustInfo['gatedMcpServers'][number] {
+  if (config.transport === 'stdio') {
+    return {
+      name,
+      transport: config.transport,
+      command: config.command,
+      args: config.args,
+      cwd: config.cwd,
+    };
+  }
+  return { name, transport: config.transport, url: config.url };
 }

@@ -386,7 +386,22 @@ describe('SDKRpcClientV2 workspace trust', () => {
     tempDirs.push(workDir);
     await writeFile(
       join(workDir, '.mcp.json'),
-      JSON.stringify({ mcpServers: { 'root-server': { command: 'root-cmd' } } }),
+      JSON.stringify({
+        mcpServers: {
+          'root-server': {
+            command: 'root-cmd',
+            args: ['--safe'],
+            cwd: '/tmp/root',
+            env: { SECRET: 'hidden' },
+          },
+          'http-server': {
+            transport: 'http',
+            url: 'https://example.test/mcp',
+            headers: { Authorization: 'Bearer hidden' },
+            bearerTokenEnvVar: 'TOKEN',
+          },
+        },
+      }),
       'utf-8',
     );
     await mkdir(join(workDir, '.kimi-code'), { recursive: true });
@@ -398,7 +413,15 @@ describe('SDKRpcClientV2 workspace trust', () => {
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
-      expect(info.gatedMcpServers).toEqual(['nested-server', 'root-server']);
+      expect(info.gatedMcpServers).toEqual([
+        { name: 'http-server', transport: 'http', url: 'https://example.test/mcp' },
+        { name: 'nested-server', transport: 'stdio', command: 'nested-cmd' },
+        { name: 'root-server', transport: 'stdio', command: 'root-cmd', args: ['--safe'], cwd: '/tmp/root' },
+      ]);
+      const serialized = JSON.stringify(info);
+      expect(serialized).not.toContain('hidden');
+      expect(serialized).not.toContain('SECRET');
+      expect(serialized).not.toContain('TOKEN');
     } finally {
       await harness.close();
     }
