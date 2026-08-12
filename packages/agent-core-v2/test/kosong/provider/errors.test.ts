@@ -362,4 +362,23 @@ describe('convertGoogleGenAIError RetryInfo recovery', () => {
     expect(error).toBeInstanceOf(APIProviderRateLimitError);
     expect((error as APIStatusError).retryAfterMs).toBeNull();
   });
+
+  it('recovers the delay from a mid-stream error chunk carrying the "got status" prefix', () => {
+    const chunk = {
+      error: {
+        code: 429,
+        message: 'Resource exhausted',
+        status: 'RESOURCE_EXHAUSTED',
+        details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '5s' }],
+      },
+    };
+    const error = convertGoogleGenAIError(
+      new GoogleApiError({
+        message: `got status: RESOURCE_EXHAUSTED. ${JSON.stringify(chunk)}`,
+        status: 429,
+      }),
+    );
+    expect(error).toBeInstanceOf(APIProviderRateLimitError);
+    expect((error as APIStatusError).retryAfterMs).toBe(5000);
+  });
 });

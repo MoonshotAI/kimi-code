@@ -656,8 +656,10 @@ export function convertGoogleGenAIError(error: unknown): ChatProviderError {
 }
 
 function parseRetryInfoDelayMs(message: string): number | null {
+  const jsonStart = message.indexOf('{');
+  if (jsonStart < 0) return null;
   try {
-    const body: unknown = JSON.parse(message);
+    const body: unknown = JSON.parse(message.slice(jsonStart));
     if (typeof body !== 'object' || body === null) return null;
     const details = (body as { error?: { details?: unknown } }).error?.details;
     if (!Array.isArray(details)) return null;
