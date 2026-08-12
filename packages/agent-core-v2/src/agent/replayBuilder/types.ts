@@ -14,7 +14,12 @@ import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 type AgentType = 'main' | 'sub';
 
 export type AgentReplayRecordPayload =
-  | { type: 'message'; message: ContextMessage }
+  | {
+      type: 'message';
+      message: ContextMessage;
+      createdAt?: number;
+      completedAt?: number;
+    }
   | { type: 'compaction'; result?: CompactionResult | 'cancelled'; instruction?: string }
   | {
       type: 'goal_updated';

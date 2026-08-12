@@ -424,9 +424,10 @@ function projectResumedAgents(
  *   not translate. Runtime config changes (`config.update`) still fold and
  *   compare — only the bind-time entries exist in these fixtures, so the
  *   type is dropped from both sides.
- * - replay `time`: per-run wall clock. A goal snapshot's `goalId` /
- *   `wallClockMs`: the KNOWN_DIFFS goal rule (per-engine random uuid /
- *   accruing clock).
+ * - replay `time` / `createdAt` / `completedAt`: per-run wall clock. Message
+ *   timing is replay/display metadata; content and ordering still compare in
+ *   full. A goal snapshot's `goalId` / `wallClockMs`: the
+ *   KNOWN_DIFFS goal rule (per-engine random uuid / accruing clock).
  * - `plan`: the KNOWN_DIFFS.getPlan rule (random hero-slug id, scrubbed out
  *   of the path after the home scrub).
  * - `tools`: compared as sorted {name, active, source} triples. Tool
@@ -460,7 +461,12 @@ function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown 
   const replay = (projected['replay'] as readonly Record<string, unknown>[])
     .filter((record) => record['type'] !== 'config_updated')
     .map((record) => {
-      const { time: _time, ...rest } = record;
+      const {
+        time: _time,
+        createdAt: _createdAt,
+        completedAt: _completedAt,
+        ...rest
+      } = record;
       if (rest['type'] === 'goal_updated') {
         rest['snapshot'] = projectGoalSnapshot(rest['snapshot'] as GoalSnapshot);
       }

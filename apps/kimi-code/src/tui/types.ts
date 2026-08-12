@@ -73,6 +73,7 @@ export interface AppState {
   disablePasteBurst?: boolean;
   /** LaTeX math rendering in Markdown; defaults to true when absent from older fixtures. */
   renderLatex?: boolean;
+  showTimestamp?: boolean;
   /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
   cacheExpiryHint?: boolean;
   notifications: NotificationsConfig;
@@ -237,6 +238,8 @@ export interface TranscriptEntry {
   skillArgs?: string;
   skillTrigger?: SkillActivationTrigger;
   pluginCommandData?: PluginCommandTranscriptData;
+  createdAt?: number;
+  endedAt?: number;
 }
 
 export type LivePaneMode =

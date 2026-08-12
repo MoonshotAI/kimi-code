@@ -1,5 +1,5 @@
 import { resetCapabilitiesCache, setCapabilities, visibleWidth } from '@moonshot-ai/pi-tui';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
@@ -12,6 +12,7 @@ function stripAnsi(text: string): string {
 
 describe('UserMessageComponent', () => {
   afterEach(() => {
+    vi.useRealTimers();
     resetCapabilitiesCache();
   });
 
@@ -117,5 +118,36 @@ describe('UserMessageComponent', () => {
 
     const cached = component.render(80);
     expect(cached[0]).toBe(lines[0]);
+  });
+
+  it('renders timestamp in dim format when timestamp is provided', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+
+    const timestamp = new Date(2026, 7, 5, 14, 23, 45).getTime();
+    const component = new UserMessageComponent('hello world', [], undefined, timestamp);
+
+    const out = stripAnsi(component.render(80).join('\n'));
+    expect(out).toContain('✨ 2026-08-05 14:23:45');
+    expect(out).toContain('hello world');
+  });
+
+  it('invalidates the cached timestamp header after local midnight', () => {
+    vi.useFakeTimers();
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+    const messageTime = new Date(2026, 7, 5, 14, 23, 45).getTime();
+    vi.setSystemTime(new Date(2026, 7, 5, 23, 59, 59));
+    const component = new UserMessageComponent(
+      'hello world',
+      [],
+      undefined,
+      messageTime,
+    );
+
+    expect(stripAnsi(component.render(80).join('\n'))).toContain('✨ 14:23:45');
+
+    vi.setSystemTime(new Date(2026, 7, 6, 0, 0, 1));
+    expect(stripAnsi(component.render(80).join('\n'))).toContain(
+      '✨ 2026-08-05 14:23:45',
+    );
   });
 });

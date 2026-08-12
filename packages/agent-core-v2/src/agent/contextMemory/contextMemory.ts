@@ -42,7 +42,7 @@ export interface IAgentContextMemoryService {
 
   append(...messages: readonly ContextMessage[]): void;
 
-  appendLoopEvent(event: LoopRecordedEvent): void;
+  appendLoopEvent(event: LoopRecordedEvent, time?: number): void;
 
   publishTrailingRemoval(previous: readonly ContextMessage[]): boolean;
 

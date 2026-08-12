@@ -169,6 +169,16 @@ describe('WireService', () => {
     ]);
   });
 
+  it('persists explicit journal time outside the op payload', async () => {
+    const op = counterAdd({ by: 3 }, { time: 1_234 });
+    wire.dispatch(op);
+
+    expect(op.payload).toEqual({ by: 3 });
+    expect(await readRecords()).toEqual([
+      { type: 'store.counter.add', by: 3, time: 1_234 },
+    ]);
+  });
+
   it('applies a multi-op group across its models in order', () => {
     wire.dispatch(counterAdd({ by: 1 }), otherSet({ value: 42 }));
 

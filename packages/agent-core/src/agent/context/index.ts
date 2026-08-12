@@ -648,10 +648,15 @@ export class ContextMemory {
     return this.closePendingToolResults(output).length;
   }
 
-  appendLoopEvent(event: LoopRecordedEvent): void {
+  appendLoopEvent(event: LoopRecordedEvent, recordedAt?: number): number | undefined {
+    const eventTime =
+      this.agent.records.restoring === null
+        ? (recordedAt ?? Date.now())
+        : this.agent.records.restoring.time;
     this.agent.records.logRecord({
       type: 'context.append_loop_event',
       event,
+      time: eventTime,
     });
     switch (event.type) {
       case 'step.begin': {
@@ -674,13 +679,17 @@ export class ContextMemory {
           content: [],
           toolCalls: [],
         };
+        this.agent.replayBuilder.setMessageTiming(message, { createdAt: eventTime });
         this.pushHistory(message);
         this.openSteps.set(event.uuid, message);
-        return;
+        return eventTime;
       }
       case 'step.end': {
         const openStep = this.openSteps.get(event.uuid);
         this.openSteps.delete(event.uuid);
+        if (openStep !== undefined) {
+          this.agent.replayBuilder.setMessageTiming(openStep, { completedAt: eventTime });
+        }
         if (event.usage !== undefined) {
           const openStepIndex = openStep === undefined ? -1 : this._history.indexOf(openStep);
           const coveredCount =
@@ -705,7 +714,7 @@ export class ContextMemory {
           this.tokenCountCoveredMessageCount = coveredCount;
         }
         this.flushDeferredMessagesIfToolExchangeClosed();
-        return;
+        return eventTime;
       }
       case 'content.part': {
         const openStep = this.openSteps.get(event.stepUuid);
@@ -715,7 +724,7 @@ export class ContextMemory {
           );
         }
         openStep.content.push(event.part);
-        return;
+        return eventTime;
       }
       case 'tool.call': {
         const openStep = this.openSteps.get(event.stepUuid);
@@ -736,7 +745,7 @@ export class ContextMemory {
           openStep.toolCallDisplays[event.toolCallId] = event.display;
         }
         this.pendingToolResultIds.add(event.toolCallId);
-        return;
+        return eventTime;
       }
       case 'tool.result': {
         // Drop a result for an id that is not awaiting one: it was already
@@ -756,16 +765,20 @@ export class ContextMemory {
         });
         this.pendingToolResultIds.delete(event.toolCallId);
         this.flushDeferredMessagesIfToolExchangeClosed();
-        return;
+        return eventTime;
       }
     }
   }
 
   appendMessage(message: ContextMessage): void {
+    const messageTime =
+      this.agent.records.restoring === null ? Date.now() : this.agent.records.restoring.time;
     this.agent.records.logRecord({
       type: 'context.append_message',
       message,
+      time: messageTime,
     });
+    this.agent.replayBuilder.setMessageTiming(message, { createdAt: messageTime });
     if (this.hasOpenToolExchange()) {
       this.deferredMessages.push(message);
       return;

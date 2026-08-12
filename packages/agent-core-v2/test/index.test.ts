@@ -213,6 +213,39 @@ describe('AgentRecords persistence metadata', () => {
     }
   });
 
+  it('persists caller-supplied loop boundary times without restamping them', async () => {
+    context.appendLoopEvent(
+      { type: 'step.begin', uuid: 'step-1', turnId: '1', step: 1 },
+      1_234,
+    );
+    context.appendLoopEvent(
+      { type: 'step.end', uuid: 'step-1', turnId: '1', step: 1 },
+      5_678,
+    );
+
+    const records = await ctx.persistedWireRecords();
+    const stepBegin = records.find(
+      (record) =>
+        record.type === 'context.append_loop_event' &&
+        (record['event'] as { type?: string } | undefined)?.type === 'step.begin',
+    );
+    const stepEnd = records.find(
+      (record) =>
+        record.type === 'context.append_loop_event' &&
+        (record['event'] as { type?: string } | undefined)?.type === 'step.end',
+    );
+    expect(stepBegin).toEqual({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 'step-1', turnId: '1', step: 1 },
+      time: 1_234,
+    });
+    expect(stepEnd).toEqual({
+      type: 'context.append_loop_event',
+      event: { type: 'step.end', uuid: 'step-1', turnId: '1', step: 1 },
+      time: 5_678,
+    });
+  });
+
   it('heals an envelope-less stream on restore instead of rejecting it', async () => {
     persistence.records.push(
       {

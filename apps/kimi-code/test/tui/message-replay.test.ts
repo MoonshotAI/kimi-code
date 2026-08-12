@@ -1,9 +1,16 @@
+/**
+ * Scenario: replaying persisted session records into the CLI transcript.
+ * Responsibilities: preserve live rendering behavior, grouping, and compatibility for historical records.
+ * Wiring: real KimiTUI controllers with an in-memory resumed Session and stubbed SDK boundaries.
+ * Run: pnpm --filter @moonshot-ai/kimi-code test -- test/tui/message-replay.test.ts
+ */
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
   ContentPart,
+  Event,
   GoalSnapshot,
   PromptOrigin,
   ResumedAgentState,
@@ -82,11 +89,15 @@ function message(
     readonly toolCallId?: string;
     readonly origin?: PromptOrigin | TaskNotificationOrigin;
     readonly isError?: boolean;
+    readonly createdAt?: number;
+    readonly completedAt?: number;
   } = {},
 ): AgentReplayRecord {
   return {
     time: REPLAY_TIME,
     type: 'message',
+    createdAt: extra.createdAt,
+    completedAt: extra.completedAt,
     message: {
       role,
       content: [...content],
@@ -301,6 +312,148 @@ function backgroundTask(
 }
 
 describe('KimiTUI resume message replay', () => {
+  it('renders persisted timing fields for replayed user and assistant messages', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'timed prompt' }], { createdAt: 1_700_000_000_000 }),
+      message('assistant', [{ type: 'text', text: 'timed response' }], {
+        createdAt: 1_700_000_001_000,
+        completedAt: 1_700_000_005_000,
+      }),
+    ]);
+
+    const user = driver.state.transcriptEntries.find((entry) => entry.content === 'timed prompt');
+    const assistant = driver.state.transcriptEntries.find(
+      (entry) => entry.content === 'timed response',
+    );
+    expect(user).toMatchObject({ kind: 'user', createdAt: 1_700_000_000_000 });
+    expect(assistant).toMatchObject({
+      kind: 'assistant',
+      createdAt: 1_700_000_001_000,
+      endedAt: 1_700_000_005_000,
+    });
+    expect(stripAnsi(driver.state.transcriptContainer.render(140).join('\n'))).toContain(
+      '(took 4s)',
+    );
+  });
+
+  it('omits timing when replayed legacy messages do not carry timing fields', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'legacy prompt' }]),
+      message('assistant', [{ type: 'text', text: 'legacy response' }]),
+    ]);
+
+    const user = driver.state.transcriptEntries.find((entry) => entry.content === 'legacy prompt');
+    const assistant = driver.state.transcriptEntries.find(
+      (entry) => entry.content === 'legacy response',
+    );
+    expect(user?.createdAt).toBeUndefined();
+    expect(assistant?.createdAt).toBeUndefined();
+    expect(assistant?.endedAt).toBeUndefined();
+    expect(stripAnsi(driver.state.transcriptContainer.render(140).join('\n'))).not.toContain(
+      '(took ',
+    );
+  });
+
+  it('keeps tool-using assistant timing consistent between live rendering and replay', async () => {
+    const driver = await makeDriver(makeSession([]));
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.started',
+          agentId: 'main',
+          sessionId: 'ses-live',
+          turnId: 1,
+          step: 1,
+          stepId: 'step-1',
+        } as Event,
+        vi.fn(),
+      );
+      now.mockReturnValue(2_000);
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-live',
+          turnId: 1,
+          delta: 'checking the workspace',
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.started',
+          agentId: 'main',
+          sessionId: 'ses-live',
+          turnId: 1,
+          toolCallId: 'call-1',
+          name: 'Bash',
+          args: { command: 'echo ok' },
+        } as Event,
+        vi.fn(),
+      );
+
+      const liveBeforeToolResult = driver.state.transcriptEntries.find(
+        (entry) => entry.content === 'checking the workspace',
+      );
+      expect(liveBeforeToolResult?.endedAt).toBeUndefined();
+
+      now.mockReturnValue(5_000);
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.result',
+          agentId: 'main',
+          sessionId: 'ses-live',
+          turnId: 1,
+          toolCallId: 'call-1',
+          output: 'ok',
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.completed',
+          agentId: 'main',
+          sessionId: 'ses-live',
+          turnId: 1,
+          step: 1,
+        } as Event,
+        vi.fn(),
+      );
+
+      const live = driver.state.transcriptEntries.find(
+        (entry) => entry.content === 'checking the workspace',
+      );
+      expect(live).toMatchObject({ createdAt: 1_000, endedAt: 5_000 });
+
+      await driver.switchToSession(
+        makeSession([
+          message(
+            'assistant',
+            [{ type: 'text', text: 'checking the workspace' }],
+            {
+              toolCalls: [toolCall('call-1', 'Bash', { command: 'echo ok' })],
+              createdAt: 1_000,
+              completedAt: 5_000,
+            },
+          ),
+          message('tool', [{ type: 'text', text: 'ok' }], { toolCallId: 'call-1' }),
+        ]),
+        'Resumed session (ses-replay).',
+      );
+
+      const replayed = driver.state.transcriptEntries.find(
+        (entry) => entry.content === 'checking the workspace',
+      );
+      expect(replayed).toMatchObject({ createdAt: live?.createdAt, endedAt: live?.endedAt });
+      expect(stripAnsi(driver.state.transcriptContainer.render(140).join('\n'))).toContain(
+        '(took 4s)',
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('does not render legacy goal completion context reminders as transcript messages', async () => {
     const driver = await replayIntoDriver([
       message(
@@ -336,6 +489,22 @@ describe('KimiTUI resume message replay', () => {
 
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
     expect(transcript).toContain('pre</bash-stdout>post');
+  });
+
+  it('restores the recorded timestamp for replayed shell input', async () => {
+    const createdAt = new Date(2000, 0, 2, 10, 0, 0).getTime();
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: '<bash-input>echo ok</bash-input>' }], {
+        origin: { kind: 'shell_command', phase: 'input' },
+        createdAt,
+      }),
+    ]);
+
+    const shellInput = driver.state.transcriptEntries.find((entry) => entry.content.includes('$'));
+    expect(shellInput).toMatchObject({ kind: 'user', createdAt });
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('2000-01-02 10:00:00');
+    expect(transcript).toContain('$ echo ok');
   });
 
   it('does not render neutral goal completion context reminders as transcript messages', async () => {

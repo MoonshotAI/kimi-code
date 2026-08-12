@@ -1,6 +1,6 @@
 import { Markdown, visibleWidth } from '@moonshot-ai/pi-tui';
 import * as cliHighlight from 'cli-highlight';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
@@ -24,6 +24,10 @@ function strip(text: string): string {
 }
 
 describe('AssistantMessageComponent', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('defines the shared status bullet as a stable non-emoji glyph', () => {
     expect(STATUS_BULLET).toBe('● ');
     expect(visibleWidth(STATUS_BULLET)).toBe(2);
@@ -35,8 +39,9 @@ describe('AssistantMessageComponent', () => {
     component.updateContent('abcdef');
 
     const lines = component.render(8).map(strip);
-    expect(lines).toEqual(['', `${STATUS_BULLET}abcdef`]);
-    expect(visibleWidth(lines[1] ?? '')).toBe(8);
+    expect(lines).toContain(`${STATUS_BULLET}`);
+    expect(lines.some((l) => l.includes('abcdef'))).toBe(true);
+    expect(visibleWidth(lines[1] ?? '')).toBe(2);
   });
 
   it('keeps assistant lines within very narrow widths', () => {
@@ -153,6 +158,49 @@ describe('AssistantMessageComponent', () => {
       expect(strip(component.render(80).join('\n'))).toContain('$E = mc^2$');
     } finally {
       setMarkdownRenderLatex(true);
+    }
+  });
+
+  it('renders timestamp tag when timestamp is provided', () => {
+    const timestamp = new Date(2026, 7, 5, 14, 23, 45).getTime();
+    const component = new AssistantMessageComponent(true, timestamp);
+    component.updateContent('hello assistant');
+
+    const lines = component.render(80).map(strip);
+    expect(lines.some((l) => l.startsWith(`${STATUS_BULLET}2026-08-05 14:23:45`))).toBe(true);
+    expect(lines.some((l) => l.includes('hello assistant'))).toBe(true);
+  });
+
+  it('invalidates the cached timestamp header after local midnight', () => {
+    vi.useFakeTimers();
+    const messageTime = new Date(2026, 7, 5, 14, 23, 45).getTime();
+    vi.setSystemTime(new Date(2026, 7, 5, 23, 59, 59));
+    const component = new AssistantMessageComponent(true, messageTime);
+    component.updateContent('hello assistant');
+
+    expect(strip(component.render(80).join('\n'))).toContain(`${STATUS_BULLET}14:23:45`);
+
+    vi.setSystemTime(new Date(2026, 7, 6, 0, 0, 1));
+    expect(strip(component.render(80).join('\n'))).toContain(
+      `${STATUS_BULLET}2026-08-05 14:23:45`,
+    );
+  });
+
+  it('invalidates the cached header when the message timezone offset changes', () => {
+    const messageTime = new Date(2025, 6, 5, 14, 23, 45).getTime();
+    const component = new AssistantMessageComponent(true, messageTime);
+    component.updateContent('hello assistant');
+    const offset = vi.spyOn(Date.prototype, 'getTimezoneOffset');
+    try {
+      offset.mockReturnValue(0);
+      const before = component.render(80);
+      offset.mockImplementation(function (this: Date) {
+        return this.getTime() === messageTime ? 60 : 0;
+      });
+
+      expect(component.render(80)).not.toBe(before);
+    } finally {
+      offset.mockRestore();
     }
   });
 });

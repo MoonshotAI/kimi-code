@@ -11,12 +11,18 @@ export interface ReplayBuilderOptions {
   readonly range?: ReplayRangeOptions;
 }
 
+interface ReplayMessageTiming {
+  readonly createdAt?: number;
+  readonly completedAt?: number;
+}
+
 const UNDO_BOUNDARY_RECORD_TYPES = new Set(['context.clear', 'context.apply_compaction']);
 
 export class ReplayBuilder {
   postRestoring = false;
   captureLiveRecords = false;
   protected readonly records: AgentReplayRecord[] = [];
+  private readonly messageTiming = new WeakMap<ContextMessage, ReplayMessageTiming>();
   private frozen = false;
   private segmentStart = 0;
 
@@ -49,6 +55,14 @@ export class ReplayBuilder {
     }
   }
 
+  setMessageTiming(message: ContextMessage, timing: ReplayMessageTiming): void {
+    const current = this.messageTiming.get(message);
+    const createdAt = timing.createdAt ?? current?.createdAt;
+    const completedAt = timing.completedAt ?? current?.completedAt;
+    if (createdAt === undefined && completedAt === undefined) return;
+    this.messageTiming.set(message, { createdAt, completedAt });
+  }
+
   removeLastMessages(removedMessages: ReadonlySet<ContextMessage>): void {
     if (this.frozen) return;
     if (removedMessages.size === 0) return;
@@ -75,19 +89,30 @@ export class ReplayBuilder {
   }
 
   buildResult(): readonly AgentReplayRecord[] {
+    let result: readonly AgentReplayRecord[];
     const range = this.options.range;
     if (range !== undefined) {
       if (range.start === undefined && range.count !== undefined) {
         const offset = Math.max(0, this.records.length - range.count);
-        return this.records.slice(offset);
+        result = this.records.slice(offset);
+      } else {
+        const start = range.start ?? 0;
+        const offset = Math.max(0, start - this.segmentStart);
+        const count = range.count;
+        const end = count === undefined ? undefined : offset + count;
+        result = this.records.slice(offset, end);
       }
-      const start = range.start ?? 0;
-      const offset = Math.max(0, start - this.segmentStart);
-      const count = range.count;
-      const end = count === undefined ? undefined : offset + count;
-      return this.records.slice(offset, end);
+    } else {
+      result = this.records;
     }
-    return this.records;
+    return result.map((record) => this.withMessageTiming(record));
+  }
+
+  private withMessageTiming(record: AgentReplayRecord): AgentReplayRecord {
+    if (record.type !== 'message') return record;
+    const timing = this.messageTiming.get(record.message);
+    if (timing === undefined) return record;
+    return { ...record, ...timing };
   }
 
   private removeMessagesFrom(

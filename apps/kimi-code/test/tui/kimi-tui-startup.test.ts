@@ -260,6 +260,13 @@ function captureInputListeners(driver: StartupDriver) {
 }
 
 describe('KimiTUI startup', () => {
+  it('disables timestamps at startup when configured off', () => {
+    const harness = makeHarness();
+    const driver = makeDriver(harness, makeStartupInput({}, { showTimestamp: false }));
+
+    expect(driver.state.appState.showTimestamp).toBe(false);
+  });
+
   it('creates a fresh session from startup flags and syncs runtime state', async () => {
     const session = makeSession({
       getStatus: vi.fn(async () => ({

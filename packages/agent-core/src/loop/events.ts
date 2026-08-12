@@ -150,7 +150,7 @@ export type LoopLiveOnlyEvent =
   | LoopToolProgressEvent;
 
 export type LoopEvent = LoopRecordedEvent | LoopLiveOnlyEvent;
-export type LoopLiveEventEmitter = (event: LoopEvent) => void;
+export type LoopLiveEventEmitter = (event: LoopEvent, recordedAt?: number) => void;
 
 export type LoopEventDispatcher = {
   (event: LoopRecordedEvent): Promise<void>;
@@ -158,7 +158,9 @@ export type LoopEventDispatcher = {
 };
 
 export interface CreateLoopEventDispatcherInput {
-  readonly appendTranscriptRecord: (record: LoopRecordedEvent) => Promise<void>;
+  readonly appendTranscriptRecord: (
+    record: LoopRecordedEvent,
+  ) => Promise<number | undefined | void>;
   readonly emitLiveEvent?: LoopLiveEventEmitter | undefined;
 }
 
@@ -190,15 +192,19 @@ async function recordEvent(
   input: CreateLoopEventDispatcherInput,
   event: LoopRecordedEvent,
 ): Promise<void> {
-  await input.appendTranscriptRecord(event);
-  safeEmitLive(input.emitLiveEvent, event);
+  const recordedAt = await input.appendTranscriptRecord(event);
+  safeEmitLive(input.emitLiveEvent, event, typeof recordedAt === 'number' ? recordedAt : undefined);
 }
 
-function safeEmitLive(emit: LoopLiveEventEmitter | undefined, event: LoopEvent): void {
+function safeEmitLive(
+  emit: LoopLiveEventEmitter | undefined,
+  event: LoopEvent,
+  recordedAt?: number,
+): void {
   if (emit === undefined) return;
   let maybePromise: unknown;
   try {
-    maybePromise = (emit as (event: LoopEvent) => unknown)(event);
+    maybePromise = (emit as (event: LoopEvent, recordedAt?: number) => unknown)(event, recordedAt);
   } catch {
     return;
   }

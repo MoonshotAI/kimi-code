@@ -202,7 +202,7 @@ export class SessionReplayRenderer {
   private renderRecord(context: ReplayRenderContext, record: AgentReplayRecord): void {
     switch (record.type) {
       case 'message':
-        this.renderMessage(context, record.message);
+        this.renderMessage(context, record);
         return;
       case 'compaction':
         this.renderCompaction(context, record);
@@ -234,21 +234,32 @@ export class SessionReplayRenderer {
     }
   }
 
-  private renderMessage(context: ReplayRenderContext, message: ContextMessage): void {
+  private renderMessage(
+    context: ReplayRenderContext,
+    record: Extract<AgentReplayRecord, { type: 'message' }>,
+  ): void {
+    const { message, createdAt, completedAt } = record;
     switch (message.role) {
       case 'user':
-        this.renderUserMessage(context, message);
+        this.renderUserMessage(context, message, createdAt);
         return;
-      case 'assistant':
+      case 'assistant': {
         if (message.origin?.kind === 'hook_result') {
           this.renderHookResult(context, message);
           this.renderToolCalls(context, message.toolCalls);
           return;
         }
+        if (createdAt !== undefined && context.assistant.createdAt === undefined) {
+          context.assistant.createdAt = createdAt;
+        }
+        if (completedAt !== undefined) {
+          context.assistant.completedAt = completedAt;
+        }
         collectReplayMessageContent(context.assistant, message.content);
         this.flushAssistant(context);
         this.renderToolCalls(context, message.toolCalls);
         return;
+      }
       case 'tool':
         this.flushAssistant(context);
         this.renderToolResult(context, message);
@@ -260,7 +271,11 @@ export class SessionReplayRenderer {
     }
   }
 
-  private renderUserMessage(context: ReplayRenderContext, message: ContextMessage): void {
+  private renderUserMessage(
+    context: ReplayRenderContext,
+    message: ContextMessage,
+    createdAt?: number,
+  ): void {
     const origin = backgroundOrigin(message);
     if (origin !== undefined) {
       this.flushAssistant(context);
@@ -286,6 +301,7 @@ export class SessionReplayRenderer {
         this.host.appendTranscriptEntry(
           replayEntry(context, 'user', currentTheme.fg('shellMode', `$ ${cmd}`), 'plain', {
             bullet: '',
+            createdAt,
           }),
         );
       } else {
@@ -341,7 +357,9 @@ export class SessionReplayRenderer {
 
     this.advanceTurn(context);
     this.host.appendTranscriptEntry(
-      replayEntry(context, 'user', contentPartsToText(message.content), 'plain'),
+      replayEntry(context, 'user', contentPartsToText(message.content), 'plain', {
+        createdAt,
+      }),
     );
   }
 
@@ -393,7 +411,9 @@ export class SessionReplayRenderer {
     const { streamingUI } = this.host;
     const thinking = context.assistant.thinking.join('');
     const text = context.assistant.text.join('');
-    context.assistant = { thinking: [], text: [] };
+    const createdAt = context.assistant.createdAt;
+    const completedAt = context.assistant.completedAt;
+    context.assistant = { thinking: [], text: [], createdAt: undefined, completedAt: undefined };
     this.applyStepContext(context);
 
     if (thinking.length > 0) {
@@ -401,9 +421,9 @@ export class SessionReplayRenderer {
       streamingUI.onThinkingEnd();
     }
     if (text.length > 0) {
-      streamingUI.onStreamingTextStart();
+      streamingUI.onStreamingTextStart(createdAt);
       streamingUI.onStreamingTextUpdate(text);
-      streamingUI.onStreamingTextEnd();
+      streamingUI.onStreamingTextEnd(completedAt);
       streamingUI.clearAssistantDraft();
     }
   }

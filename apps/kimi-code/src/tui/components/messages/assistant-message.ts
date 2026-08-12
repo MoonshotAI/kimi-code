@@ -5,14 +5,14 @@
  * to align after the bullet.
  */
 
-import { Container, Markdown, truncateToWidth, visibleWidth, type Component } from '@moonshot-ai/pi-tui';
+import { Container, Markdown, truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 
-import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
 import { markOsc133Zone } from '#/tui/utils/osc133';
+import { formatTimestamp, timestampDisplayContextKey } from '#/tui/utils/format-time';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 type AssistantMarkdownOptions = {
@@ -26,11 +26,24 @@ export class AssistantMessageComponent implements Component {
   private lastText = '';
   private lastTransient = false;
   private showBullet: boolean;
+  private timestamp?: number;
+  private endedAt?: number;
+  private showTimestamp = true;
 
-  private renderCache: { width: number; lines: string[] } | undefined;
+  private renderCache:
+    | { width: number; timestampContextKey: string; lines: string[] }
+    | undefined;
 
-  constructor(showBullet: boolean = true) {
+  constructor(
+    showBullet: boolean = true,
+    timestamp?: number,
+    endedAt?: number,
+    showTimestamp = true,
+  ) {
     this.showBullet = showBullet;
+    this.timestamp = timestamp;
+    this.endedAt = endedAt;
+    this.showTimestamp = showTimestamp;
     this.contentContainer = new Container();
   }
 
@@ -41,6 +54,18 @@ export class AssistantMessageComponent implements Component {
   setShowBullet(show: boolean): void {
     if (this.showBullet === show) return;
     this.showBullet = show;
+    this.markRenderDirty();
+  }
+
+  setEndedAt(endedAt?: number): void {
+    if (this.endedAt === endedAt) return;
+    this.endedAt = endedAt;
+    this.markRenderDirty();
+  }
+
+  setShowTimestamp(show: boolean): void {
+    if (this.showTimestamp === show) return;
+    this.showTimestamp = show;
     this.markRenderDirty();
   }
 
@@ -106,28 +131,40 @@ export class AssistantMessageComponent implements Component {
 
     const safeWidth = Math.max(0, width);
     if (safeWidth <= 0) return [''];
+    const now = Date.now();
+    const timestampContextKey = this.showTimestamp
+      ? timestampDisplayContextKey(this.timestamp, now)
+      : '';
 
     if (
       isRenderCacheEnabled() &&
       this.renderCache !== undefined &&
-      this.renderCache.width === safeWidth
+      this.renderCache.width === safeWidth &&
+      this.renderCache.timestampContextKey === timestampContextKey
     ) {
       return this.renderCache.lines;
     }
 
-    const prefix = this.showBullet ? STATUS_BULLET : MESSAGE_INDENT;
-    const contentWidth = Math.max(1, safeWidth - visibleWidth(prefix));
-    const contentLines = this.contentContainer.render(contentWidth);
-
     const lines: string[] = [''];
-    for (let i = 0; i < contentLines.length; i++) {
-      const p =
-        i === 0 && this.showBullet ? currentTheme.fg('text', STATUS_BULLET) : MESSAGE_INDENT;
-      lines.push(p + contentLines[i]);
+    const formattedTime = this.showTimestamp
+      ? formatTimestamp(this.timestamp, this.endedAt, now)
+      : '';
+
+    if (this.showBullet) {
+      const bulletText = currentTheme.boldFg('textStrong', STATUS_BULLET);
+      const headerText = formattedTime.length > 0 ? `${bulletText}${currentTheme.dim(formattedTime)}` : bulletText;
+      lines.push(headerText);
+    } else if (formattedTime.length > 0) {
+      lines.push(currentTheme.dim(formattedTime));
+    }
+
+    const contentLines = this.contentContainer.render(safeWidth);
+    for (const line of contentLines) {
+      lines.push(line);
     }
     const rendered = markOsc133Zone(lines.map((line) => truncateToWidth(line, safeWidth, '…')));
     if (isRenderCacheEnabled()) {
-      this.renderCache = { width: safeWidth, lines: rendered };
+      this.renderCache = { width: safeWidth, timestampContextKey, lines: rendered };
     }
     return rendered;
   }

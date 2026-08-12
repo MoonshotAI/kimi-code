@@ -1,5 +1,7 @@
 import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
+import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
+import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import { currentTheme, lightColors } from '#/tui/theme';
 import { loadTuiConfig, type TuiConfig } from '../config';
 import { setMarkdownRenderLatex } from '../utils/markdown-options';
@@ -60,6 +62,7 @@ export async function applyReloadedTuiConfig(
   // transcript components, which rebuild their Markdown children and copy the
   // options at construction — so the new value must be live by then.
   setMarkdownRenderLatex(config.renderLatex ?? true);
+  const showTimestamp = config.showTimestamp ?? true;
   const resolved = config.theme === 'auto'
     ? (currentTheme.palette === lightColors ? 'light' : 'dark')
     : undefined;
@@ -69,12 +72,21 @@ export async function applyReloadedTuiConfig(
     editorCommand: config.editorCommand,
     disablePasteBurst: config.disablePasteBurst,
     renderLatex: config.renderLatex,
+    showTimestamp,
     cacheExpiryHint: config.cacheExpiryHint,
     notifications: config.notifications,
     upgrade: config.upgrade,
     statusLine: config.statusLine,
   });
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
+  for (const component of host.state.transcriptContainer.children) {
+    if (
+      component instanceof UserMessageComponent ||
+      component instanceof AssistantMessageComponent
+    ) {
+      component.setShowTimestamp(showTimestamp);
+    }
+  }
 }
 
 function applyRuntimeConfig(host: SlashCommandHost, config: KimiConfig): void {

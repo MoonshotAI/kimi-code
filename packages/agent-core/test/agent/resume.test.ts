@@ -1,3 +1,9 @@
+/**
+ * Scenario: restoring an agent from persisted wire records.
+ * Responsibilities: rebuild runtime state and replay data without live side effects while preserving recorded facts.
+ * Wiring: real Agent test harness with in-memory record persistence and stubbed external boundaries.
+ * Run: pnpm --filter @moonshot-ai/agent-core test -- test/agent/resume.test.ts
+ */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
@@ -24,6 +30,104 @@ const MOCK_PROVIDER = {
 } as const;
 
 describe('Agent resume', () => {
+  it('restores message timing from the timestamps on persisted records', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'timed prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        time: 1_000,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'timed-step', turnId: '0', step: 1 },
+        time: 2_000,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'timed-part',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'timed-step',
+          part: { type: 'text', text: 'timed response' },
+        },
+        time: 2_500,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: 'timed-step', turnId: '0', step: 1 },
+        time: 5_000,
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.replayBuilder.buildResult()).toEqual([
+      expect.objectContaining({
+        type: 'message',
+        createdAt: 1_000,
+        message: expect.objectContaining({ role: 'user' }),
+      }),
+      expect.objectContaining({
+        type: 'message',
+        createdAt: 2_000,
+        completedAt: 5_000,
+        message: expect.objectContaining({ role: 'assistant' }),
+      }),
+    ]);
+  });
+
+  it('leaves message timing absent when legacy records have no timestamps', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'legacy prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'legacy-step', turnId: '0', step: 1 },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'legacy-part',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'legacy-step',
+          part: { type: 'text', text: 'legacy response' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: 'legacy-step', turnId: '0', step: 1 },
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    const messages = ctx.agent.replayBuilder
+      .buildResult()
+      .filter((record) => record.type === 'message');
+    expect(messages).toHaveLength(2);
+    expect(messages[0]?.createdAt).toBeUndefined();
+    expect(messages[1]?.createdAt).toBeUndefined();
+    expect(messages[1]?.completedAt).toBeUndefined();
+  });
+
   it('does not append metadata when resuming records that include legacy app version', async () => {
     const persistence = new RecordingAgentPersistence([
       {

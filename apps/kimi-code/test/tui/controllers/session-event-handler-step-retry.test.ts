@@ -29,6 +29,8 @@ function makeHost() {
       setTurnId: vi.fn(),
       setStep: vi.fn(),
       flushNow: vi.fn(),
+      completeStep: vi.fn(),
+      discardStep: vi.fn(),
       resetToolUi: vi.fn(),
       finalizeTurn: vi.fn(),
       finalizeLiveTextBuffers: vi.fn(),

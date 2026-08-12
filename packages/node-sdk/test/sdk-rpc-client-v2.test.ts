@@ -493,13 +493,78 @@ describe('foldAgentWireReplay', () => {
     expect(folded.replay).toEqual([
       {
         type: 'message',
-        message: { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+        createdAt: 1001,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'hello' }],
+          toolCalls: [],
+        },
         time: 1001,
       },
       { type: 'permission_updated', mode: 'auto', time: 1002 },
     ]);
     // Last write wins per store key.
     expect(folded.toolStore).toEqual({ todo: [{ title: 'new', status: 'pending' }] });
+  });
+
+  it('folds persisted step timestamps into assistant timing fields', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
+    tempDirs.push(dir);
+    const wirePath = join(dir, 'wire.jsonl');
+    const records = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1000 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'step-1', turnId: '0', step: 1 },
+        time: 2000,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          stepUuid: 'step-1',
+          part: { type: 'text', text: 'answer' },
+        },
+        time: 2500,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: 'step-1', turnId: '0', step: 1 },
+        time: 5000,
+      },
+    ];
+    await writeFile(wirePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+
+    const folded = await foldAgentWireReplay(wirePath);
+
+    expect(folded.replay[0]).toMatchObject({
+      type: 'message',
+      createdAt: 2000,
+      completedAt: 5000,
+      message: { role: 'assistant' },
+    });
+  });
+
+  it('keeps message timing absent when legacy journal records have no timestamps', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
+    tempDirs.push(dir);
+    const wirePath = join(dir, 'wire.jsonl');
+    const records = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1000 },
+      {
+        type: 'context.append_message',
+        message: { role: 'user', content: [{ type: 'text', text: 'legacy' }], toolCalls: [] },
+      },
+    ];
+    await writeFile(wirePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+
+    const folded = await foldAgentWireReplay(wirePath);
+    const record = folded.replay[0];
+
+    expect(record?.type).toBe('message');
+    if (record?.type !== 'message') throw new Error('Expected a replayed message');
+    expect(record.createdAt).toBeUndefined();
+    expect(record.completedAt).toBeUndefined();
   });
 
   it('degrades to an empty fold on a missing or corrupt journal', async () => {

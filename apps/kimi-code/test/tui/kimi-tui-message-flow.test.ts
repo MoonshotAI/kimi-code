@@ -480,6 +480,110 @@ afterEach(async () => {
 });
 
 describe('KimiTUI message flow', () => {
+  it('uses persisted step times even when live event handling is delayed', async () => {
+    const { driver } = await makeDriver();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(9_000);
+    try {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+          stepId: 'step-1',
+          startedAt: 1_000,
+        } as Event,
+        vi.fn(),
+      );
+      now.mockReturnValue(12_000);
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'response after model latency',
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.completed',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+          completedAt: 5_000,
+        } as Event,
+        vi.fn(),
+      );
+
+      expect(driver.state.transcriptEntries.at(-1)).toMatchObject({
+        kind: 'assistant',
+        createdAt: 1_000,
+        endedAt: 5_000,
+      });
+      expect(stripSgr(renderTranscript(driver))).toContain('(took 4s)');
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('does not fabricate an assistant completion time when a step is interrupted', async () => {
+    const { driver } = await makeDriver();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+          stepId: 'step-1',
+        } as Event,
+        vi.fn(),
+      );
+      now.mockReturnValue(2_000);
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'partial response',
+        } as Event,
+        vi.fn(),
+      );
+      now.mockReturnValue(5_000);
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.interrupted',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+          reason: 'aborted',
+        } as Event,
+        vi.fn(),
+      );
+
+      const interrupted = driver.state.transcriptEntries.find(
+        (entry) => entry.content === 'partial response',
+      );
+      expect(interrupted).toMatchObject({
+        kind: 'assistant',
+        content: 'partial response',
+        createdAt: 1_000,
+      });
+      expect(interrupted?.endedAt).toBeUndefined();
+      expect(stripSgr(renderTranscript(driver))).not.toContain('(took ');
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('tracks editor shortcut and paste hooks', async () => {
     const { driver, harness } = await makeDriver();
     harness.track.mockClear();

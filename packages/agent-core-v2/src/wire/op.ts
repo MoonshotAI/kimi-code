@@ -18,7 +18,9 @@
  * covariant in `P` — a heterogeneous batch of Ops, each with a different
  * payload type, stays assignable to the single `dispatch(...ops: Op[])` rest
  * parameter, while the precise payload type survives on `Op.payload` for the
- * Op's own caller. Registering a duplicate `type` throws `DuplicateOpError` so
+ * Op's own caller. Factories also accept optional journal metadata (`time`),
+ * which is kept outside the schema-validated business payload. Registering a
+ * duplicate `type` throws `DuplicateOpError` so
  * the global Op-type namespace stays unique. `OP_REGISTRY` is never consulted
  * at runtime directly: it is the static built-in channel ("import = register")
  * that the `WireModelContribution` fold drains into the built-in layer (see
@@ -54,6 +56,7 @@ export interface OpDescriptor<K extends string, S, P> {
 export interface Op<K extends string = string, P = unknown> {
   readonly type: K;
   readonly payload: P;
+  readonly time?: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly descriptor: OpDescriptor<any, any, any>;
 }
@@ -78,7 +81,7 @@ type DefineOpOptions<K extends string, S, P> = OpBehaviorOptions<S, P> & {
 } & RegisteredOpConstraint<K>;
 
 type DefinedOp<K extends string, S, P> = OpDescriptor<K, S, P> &
-  ((payload: P) => Op<K, P>);
+  ((payload: P, metadata?: { readonly time?: number }) => Op<K, P>);
 
 export interface DefineOpFn<S> {
   <const K extends string, P>(
@@ -121,6 +124,11 @@ export function defineOp<const K extends string, S, P>(
     persist: behavior.persist,
   };
   OP_REGISTRY.set(type, descriptor);
-  const factory = (payload: P): Op<K, P> => ({ type, payload, descriptor });
+  const factory = (payload: P, metadata?: { readonly time?: number }): Op<K, P> => ({
+    type,
+    payload,
+    descriptor,
+    time: metadata?.time,
+  });
   return Object.assign(factory, descriptor);
 }

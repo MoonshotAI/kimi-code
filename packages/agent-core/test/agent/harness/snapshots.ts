@@ -269,7 +269,10 @@ function normalizeValue(value: unknown, uuidLabels: Map<string, string>): unknow
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value)
-        .filter(([key]) => !isVolatileDurationKey(key))
+        .filter(
+          ([key]) =>
+            !isVolatileDurationKey(key) && key !== 'startedAt' && key !== 'completedAt',
+        )
         .map(([key, nested]) => [
           key,
           normalizeObjectField(key, nested, uuidLabels),

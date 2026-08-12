@@ -257,6 +257,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     editorCommand: input.tuiConfig.editorCommand,
     disablePasteBurst: input.tuiConfig.disablePasteBurst,
     renderLatex: input.tuiConfig.renderLatex,
+    showTimestamp: input.tuiConfig.showTimestamp,
     cacheExpiryHint: input.tuiConfig.cacheExpiryHint,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
@@ -1217,6 +1218,7 @@ export class KimiTUI {
       renderMode: 'plain',
       content: currentTheme.fg('shellMode', `$ ${command}`),
       bullet: '',
+      createdAt: Date.now(),
     });
     // Create the live output entry up front. ShellRunComponent owns its own
     // rendering (running card → final view) and is mutated in place as output
@@ -1505,6 +1507,7 @@ export class KimiTUI {
       renderMode: 'plain',
       content: input,
       imageAttachmentIds,
+      createdAt: Date.now(),
     });
 
     this.beginSessionRequest();
@@ -1617,6 +1620,7 @@ export class KimiTUI {
           item.imageAttachmentIds !== undefined && item.imageAttachmentIds.length > 0
             ? item.imageAttachmentIds
             : undefined,
+        createdAt: Date.now(),
       });
     }
 
@@ -2325,12 +2329,19 @@ export class KimiTUI {
       return block;
     }
 
+    const showTimestamp = this.state.appState.showTimestamp ?? true;
     switch (entry.kind) {
       case 'user': {
         const images = entry.imageAttachmentIds
           ?.map((id) => this.imageStore.get(id))
           .filter((a): a is ImageAttachment => a?.kind === 'image');
-        return new UserMessageComponent(entry.content, images, entry.bullet);
+        return new UserMessageComponent(
+          entry.content,
+          images,
+          entry.bullet,
+          entry.createdAt,
+          showTimestamp,
+        );
       }
       case 'skill_activation':
         return new SkillActivationComponent(
@@ -2357,7 +2368,12 @@ export class KimiTUI {
         if (entry.content.trimStart().startsWith('✓ Goal complete')) {
           return new GoalCompletionMessageComponent(entry.content);
         }
-        const component = new AssistantMessageComponent();
+        const component = new AssistantMessageComponent(
+          true,
+          entry.createdAt,
+          entry.endedAt,
+          showTimestamp,
+        );
         component.updateContent(entry.content);
         return component;
       }
