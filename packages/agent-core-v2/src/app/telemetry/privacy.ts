@@ -6,6 +6,18 @@
  * paths become labeled `<REDACTED: ...>` placeholders, while `node_modules/`
  * path tails are kept because they carry diagnostic value without user data.
  * App-scoped, no collaborators.
+ *
+ * Path segments are matched by exclusion rather than with `\w`, which is
+ * ASCII-only and so left the tail of any path under a `李明`, `иван` or `josé`
+ * home directory in the payload. A segment may contain interior spaces
+ * (`Program Files`, `alice chen`); the final segment may too, but only when it
+ * ends in a file extension, so a path followed by prose is redacted without
+ * swallowing the sentence. A POSIX path must not start right after an
+ * alphanumeric, or chained fractions such as `read 1/2 then 3/4` would read as
+ * one. Absolute paths match as a single alternation in one pass, because
+ * running the branches separately let a later branch re-scan an earlier one's
+ * replacement. The behaviour these rules produce is pinned case by case in
+ * `test/app/telemetry/privacy.test.ts`.
  */
 
 const REDACTED_PATH = '<REDACTED: user-file-path>';
@@ -21,20 +33,32 @@ const LABELED_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b(?:sk|pk|ak)-[A-Za-z0-9_-]{16,}\b/g, '<REDACTED: API Key>'],
 ];
 
-const POSIX_PATH = /(?:\/[\w.~+-]+){2,}\/?/g;
-const WINDOWS_PATH = /\b[A-Za-z]:\\(?:[\w.~ -]+\\?){2,}/g;
+const SEGMENT = String.raw`(?:[^\\/\s"<>|:*?]+)`;
+const SEGMENT_WITH_SPACES = String.raw`(?:${SEGMENT}(?: +${SEGMENT})*)`;
+const INTERIOR = String.raw`(?:${SEGMENT_WITH_SPACES}[\\/])`;
+const FINAL_SEGMENT = String.raw`(?:${SEGMENT_WITH_SPACES}\.[A-Za-z][A-Za-z0-9]{0,9}(?![^\s"'<>])|${SEGMENT})`;
+
+const ABSOLUTE_PATH = new RegExp(
+  [
+    String.raw`(?:\\\\[?.]\\)?[A-Za-z]:[\\/]${INTERIOR}*${FINAL_SEGMENT}?`,
+    String.raw`\\\\${INTERIOR}+${FINAL_SEGMENT}?`,
+    String.raw`(?<![A-Za-z0-9])(?:\/${SEGMENT_WITH_SPACES}(?=\/))+\/${FINAL_SEGMENT}\/?`,
+  ].join('|'),
+  'g',
+);
+
+function redactPath(match: string): string {
+  const normalized = match.replaceAll('\\', '/');
+  const index = normalized.indexOf(NODE_MODULES_MARKER);
+  return index === -1 ? REDACTED_PATH : normalized.slice(index);
+}
 
 export function cleanTelemetryString(value: string): string {
   let out = value;
   for (const [pattern, label] of LABELED_PATTERNS) {
     out = out.replace(pattern, label);
   }
-  out = out.replace(WINDOWS_PATH, REDACTED_PATH);
-  out = out.replace(POSIX_PATH, (match) => {
-    const index = match.indexOf(NODE_MODULES_MARKER);
-    return index === -1 ? REDACTED_PATH : match.slice(index);
-  });
-  return out;
+  return out.replace(ABSOLUTE_PATH, redactPath);
 }
 
 export function cleanTelemetryProperties<P extends Record<string, unknown>>(properties: P): P {
