@@ -76,11 +76,16 @@ describe('FileSkillDiscovery', () => {
     return { path: join(root, rel), source };
   }
 
-  function pluginSkillRoot(rel: string, pluginId: string): SkillRoot {
+  function pluginSkillRoot(
+    rel: string,
+    pluginId: string,
+    scanMode?: SkillRoot['scanMode'],
+  ): SkillRoot {
     return {
       path: join(root, rel),
       source: 'extra',
       plugin: { id: pluginId },
+      scanMode,
     };
   }
 
@@ -106,6 +111,17 @@ describe('FileSkillDiscovery', () => {
     const result = await discover([skillRoot('skills')]);
 
     expect(result.skills.map((s) => s.name)).toEqual(['summarize']);
+  });
+
+  it('discovers only the root SKILL.md for a root-skill-only plugin root', async () => {
+    await writeSkill('plugin/SKILL.md', 'name: root-skill\ndescription: at plugin root');
+    await writeFile(join(root, 'plugin', 'CHANGELOG.md'), '# Changelog\n');
+    await writeSkill('plugin/nested/SKILL.md', 'name: nested\ndescription: nested bundle');
+
+    const result = await discover([pluginSkillRoot('plugin', 'demo', 'root-skill-only')]);
+
+    expect(result.skills.map((s) => s.name)).toEqual(['root-skill']);
+    expect(result.skills[0]?.plugin).toEqual({ id: 'demo' });
   });
 
   it('lets the first root win over a later sibling root on name collision', async () => {
