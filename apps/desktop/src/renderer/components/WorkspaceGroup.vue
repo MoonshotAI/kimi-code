@@ -26,6 +26,9 @@ const props = defineProps<{
   wsMenuOpenId: string | null;
   /** True while this group is the active drag source (drag-to-reorder). */
   dragging: boolean;
+  /** False while the sidebar sorts groups by recency: the order is computed,
+   *  so the header drag handle is suspended (a drop could not stick). */
+  sortable?: boolean;
   isCollapsed: (id: string) => boolean;
   /** Rows-per-group display cap (undefined = the first page,
    *  `group.initialCount`). Drives the in-group expand / collapse controls. */
@@ -161,7 +164,10 @@ function onHeaderContextMenu(e: MouseEvent): void {
 // Drag-to-reorder: the group header is the drag handle. We stash the workspace
 // id on the dataTransfer (so drop targets elsewhere could read it) and tell the
 // sidebar which group is being dragged so it can compute the new order on drop.
+// Suspended while the sidebar is in recency sort (sortable === false) — the
+// order is computed there, a drop could not stick.
 function onHeaderDragStart(event: DragEvent): void {
+  if (props.sortable === false) return;
   if (!event.dataTransfer) return;
   event.dataTransfer.effectAllowed = 'move';
   event.dataTransfer.setData('text/plain', props.group.workspace.id);
@@ -196,7 +202,7 @@ function onSessionDragStart(id: string, event: DragEvent): void {
     <div
       class="gh"
       :class="{ on: group.workspace.id === activeWorkspaceId && activeId === '', collapsed: isCollapsed(group.workspace.id) }"
-      :draggable="renamingId !== group.workspace.id"
+      :draggable="sortable !== false && renamingId !== group.workspace.id"
       @click.stop="emit('groupClick', group.workspace.id, $event)"
       @contextmenu="onHeaderContextMenu"
       @dragstart="onHeaderDragStart"

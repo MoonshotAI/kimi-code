@@ -4,10 +4,14 @@ import {
   loadPinnedSessions,
   loadUnread,
   loadWorkspaceOrder,
+  loadWorkspaceRecencyFloor,
+  loadWorkspaceSort,
   saveCollapsedWorkspaces,
   savePinnedSessions,
   saveUnread,
   saveWorkspaceOrder,
+  saveWorkspaceRecencyFloor,
+  saveWorkspaceSort,
   STORAGE_KEYS,
   draftStorageKey,
   safeGetJson,
@@ -249,5 +253,43 @@ describe('loadPinnedSessions / savePinnedSessions', () => {
 
     safeSetString(STORAGE_KEYS.pinnedSessions, '{not json');
     expect(loadPinnedSessions()).toEqual([]);
+  });
+});
+
+describe('loadWorkspaceSort / saveWorkspaceSort', () => {
+  it("defaults to 'manual' when the key is missing", () => {
+    expect(loadWorkspaceSort()).toBe('manual');
+  });
+
+  it("round-trips 'recent'", () => {
+    saveWorkspaceSort('recent');
+    expect(loadWorkspaceSort()).toBe('recent');
+  });
+
+  it("falls back to 'manual' for an unknown stored value", () => {
+    safeSetString(STORAGE_KEYS.workspaceSort, 'alphabetical');
+    expect(loadWorkspaceSort()).toBe('manual');
+  });
+});
+
+describe('loadWorkspaceRecencyFloor / saveWorkspaceRecencyFloor', () => {
+  it('returns an empty table when the key is missing', () => {
+    expect(loadWorkspaceRecencyFloor()).toEqual({});
+  });
+
+  it('round-trips the per-workspace floor', () => {
+    saveWorkspaceRecencyFloor({ 'ws-1': 100, 'ws-2': 200 });
+    expect(loadWorkspaceRecencyFloor()).toEqual({ 'ws-1': 100, 'ws-2': 200 });
+  });
+
+  it('drops non-finite or non-number entries and returns {} for malformed values', () => {
+    safeSetString(
+      STORAGE_KEYS.workspaceRecencyFloor,
+      JSON.stringify({ 'ws-1': 100, bad: 'x', worse: null }),
+    );
+    expect(loadWorkspaceRecencyFloor()).toEqual({ 'ws-1': 100 });
+
+    safeSetString(STORAGE_KEYS.workspaceRecencyFloor, '{not json');
+    expect(loadWorkspaceRecencyFloor()).toEqual({});
   });
 });

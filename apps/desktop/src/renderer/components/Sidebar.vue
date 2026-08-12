@@ -25,7 +25,7 @@ import {
   type SidebarViewMode,
 } from '@moonshot-ai/app-core/lib';
 import { SESSION_ROW_DRAG_MIME } from '@moonshot-ai/app-core/lib';
-import { moveInOrder, type DropPosition } from '@moonshot-ai/app-core/lib';
+import { moveInOrder, type DropPosition, type WorkspaceSortMode } from '@moonshot-ai/app-core/lib';
 import {
   canDropWorkspaceFolders,
   extractDroppedFolderPaths,
@@ -88,6 +88,11 @@ const props = withDefaults(
     activeWorkspaceId: string | null;
     sessions: Session[];
     groups: WorkspaceGroupType[];
+    /** Workspace sort mode for the grouped view: 'manual' (the user's dragged
+     *  order, the default) or 'recent' (groups follow their latest activity).
+     *  Drives the view menu's sort section; group dragging is suspended while
+     *  'recent' (a drop would have no effect on a computed order). */
+    workspaceSortMode?: WorkspaceSortMode;
     /** Pinned sessions (across workspaces, recency order) — rendered in the
      *  pinned section above all workspace groups; empty hides the section. */
     pinnedSessions?: Session[];
@@ -120,6 +125,7 @@ const props = withDefaults(
   {
     activeWorkspace: null,
     activeWorkspaceId: null,
+    workspaceSortMode: 'manual',
     pinnedSessions: () => [],
     flatSessions: () => [],
     flatHasMore: false,
@@ -157,6 +163,7 @@ const emit = defineEmits<{
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
   reorderWorkspaces: [ids: string[]];
+  setWorkspaceSortMode: [mode: WorkspaceSortMode];
   loadMoreSessions: [workspaceId: string];
   loadAllSessions: [];
   /** Flat mode: seed the first page (idempotent) / fetch the next page. */
@@ -472,6 +479,11 @@ function closeViewMenu(): void {
 
 function chooseViewMode(mode: SidebarViewMode): void {
   setViewMode(mode);
+  closeViewMenu();
+}
+
+function chooseSortMode(mode: WorkspaceSortMode): void {
+  emit('setWorkspaceSortMode', mode);
   closeViewMenu();
 }
 
@@ -1135,6 +1147,7 @@ onBeforeUnmount(() => {
                 :unread-by-session="unreadBySession"
                 :ws-menu-open-id="wsMenuOpenId"
                 :dragging="draggingWsId === g.workspace.id"
+                :sortable="workspaceSortMode === 'manual'"
                 :is-collapsed="isCollapsed"
                 :visible-limit="visibleLimit"
                 :pinned-drag-session="pinnedDragSession"
@@ -1302,6 +1315,25 @@ onBeforeUnmount(() => {
             <Icon v-if="viewMode === 'grouped'" name="check" size="sm" />
           </span>
         </MenuItem>
+        <!-- Group-order section: only meaningful in the grouped view (the flat
+             list has no groups to order). -->
+        <template v-if="viewMode === 'grouped'">
+          <div class="view-menu-label">{{ t('sidebar.sortGroup') }}</div>
+          <MenuItem @click="chooseSortMode('manual')">
+            <Icon name="grip" size="sm" />
+            {{ t('sidebar.sortManual') }}
+            <span class="view-menu-check">
+              <Icon v-if="workspaceSortMode === 'manual'" name="check" size="sm" />
+            </span>
+          </MenuItem>
+          <MenuItem @click="chooseSortMode('recent')">
+            <Icon name="clock" size="sm" />
+            {{ t('sidebar.sortRecent') }}
+            <span class="view-menu-check">
+              <Icon v-if="workspaceSortMode === 'recent'" name="check" size="sm" />
+            </span>
+          </MenuItem>
+        </template>
       </Menu>
     </Transition>
     <!-- Dev backend switcher menu (position:fixed, anchored to the brand pill) -->

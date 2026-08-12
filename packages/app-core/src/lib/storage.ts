@@ -6,6 +6,8 @@
 // fallback. Centralizes the persisted key strings so each key has a single
 // source of truth.
 
+import type { WorkspaceSortMode } from './workspaceOrder';
+
 export const STORAGE_KEYS = {
   // useKimiWebClient
   permission: 'kimi-web.permission',
@@ -21,6 +23,8 @@ export const STORAGE_KEYS = {
   hiddenWorkspaces: 'kimi-web.hidden-workspaces',
   collapsedWorkspaces: 'kimi-web.collapsed-workspaces',
   workspaceOrder: 'kimi-web.workspace-order',
+  workspaceSort: 'kimi-web.workspace-sort',
+  workspaceRecencyFloor: 'kimi-web.workspace-recency-floor',
   pinnedSessions: 'kimi-web.pinned-sessions',
   pinnedCollapsed: 'kimi-web.pinned-collapsed',
   workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
@@ -201,6 +205,42 @@ export function loadWorkspaceOrder(): string[] {
 
 export function saveWorkspaceOrder(ids: Iterable<string>): void {
   safeSetJson(STORAGE_KEYS.workspaceOrder, Array.from(ids));
+}
+
+/**
+ * Sidebar workspace sort mode: 'manual' (the user's dragged order — the
+ * default) or 'recent' (groups follow their latest session activity). UI-only,
+ * no server-side source of truth — same rationale as workspaceOrder. The key
+ * string predates the mode's 2026-07 removal; reviving it restores the old
+ * preference for anyone who still has it stored.
+ */
+export function loadWorkspaceSort(): WorkspaceSortMode {
+  return safeGetString(STORAGE_KEYS.workspaceSort) === 'recent' ? 'recent' : 'manual';
+}
+
+export function saveWorkspaceSort(mode: WorkspaceSortMode): void {
+  safeSetString(STORAGE_KEYS.workspaceSort, mode);
+}
+
+/**
+ * Per-workspace recency floor (id → epoch ms) backing the 'recent' sort mode.
+ * Monotonic — only ever advances while a workspace lives — so archiving or
+ * deleting a group's anchor session does not reshuffle the sidebar; another
+ * group still overtakes it on real new activity. Persisted so the ordering
+ * survives a refresh; entries are dropped when the workspace is removed.
+ */
+export function loadWorkspaceRecencyFloor(): Record<string, number> {
+  const parsed = safeGetJson<unknown>(STORAGE_KEYS.workspaceRecencyFloor);
+  if (!parsed || typeof parsed !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [id, at] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof at === 'number' && Number.isFinite(at)) out[id] = at;
+  }
+  return out;
+}
+
+export function saveWorkspaceRecencyFloor(floor: Record<string, number>): void {
+  safeSetJson(STORAGE_KEYS.workspaceRecencyFloor, floor);
 }
 
 /**

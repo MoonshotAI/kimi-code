@@ -12,7 +12,7 @@ session 没有单一状态字段，侧栏看到的一切状态都是**多个字�
 3. fork 出来的新会话顶到最上；
 4. ~~置顶区是纯手动序，有动静的会话不浮上来~~ → **最终决策（2026-08-11 晚，推翻"两者并存"方案）：全部按时间序，不做注意力分层**——平铺列表撤掉既有 attention 分层，置顶区从手动序改为时间序（拖入置顶/拖出取消保留，区内手动排序随之取消）；
 
-明确**不做**的（已拍板）：待授权/待回答两个 pill 不二合一（枚举里仍是两个独立状态值）；Aborted 标记不加「已查看消失」；分组视图组间手动序不动。
+明确**不做**的（已拍板）：待授权/待回答两个 pill 不二合一（枚举里仍是两个独立状态值）；Aborted 标记不加「已查看消失」。~~分组视图组间手动序不动~~ → **2026-08-12 推翻**：组间恢复「手动 / 按最近活动」可选排序（manual 默认），见 `docs/plans/2026-08-12-workspace-recency-sort.md`。
 
 ---
 
@@ -57,7 +57,7 @@ v2 列表契约的 activity 枚举（`types.ts:150`）：`'running' | 'approval'
 
 - **server 契约**：`GET /api/v2/sessions` 默认 `meta.updated_at_desc`（`types.ts:188`）；平铺列表不在客户端重排，靠 `flatSessionsFrontier` 保证全局序可信。
 - **平铺视图**（`useKimiWebClient.ts` `flatSessionsAll`）：**纯 `updatedAt` 倒序，无注意力分层**（2026-08-11 产品决策，取代 2026-08-05 的"注意力优先"分层）——状态只作为行内标记（pill/spinner/未读点）呈现，永不改变位置。frontier 仍约束哪些池内行可渲染，但有状态的行豁免 frontier（可见性豁免，位置仍由时间戳决定——刚跑起来的会话不能因为页还没翻到就消失）。
-- **分组视图**：组内 `updatedAt` 倒序；组间 = 工作区手动拖拽序（`sortByWorkspaceOrder`）。
+- **分组视图**：组内 `updatedAt` 倒序；组间 = 工作区手动拖拽序（`sortByWorkspaceOrder`）。**2026-08-12 更新**：组间新增可选的 recency 序（`sortWorkspacesByRecent`，键 = max(持久化 floor, wire `last_opened_at`)；floor 单调不减，归档/删除锚 session 不重排），manual 仍为默认，见 `docs/plans/2026-08-12-workspace-recency-sort.md`。
 - **置顶区**：**纯 `updatedAt` 倒序**（同上决策，取代手动拖拽序）。`pinnedSessionIds` 退化为纯成员集合（localStorage 持久化）；拖拽收窄为「拖入置顶 / 拖出取消」，落点不再携带位置语义。
 - **客户端本地 bump 白名单**（`eventReducer.ts:216` `bumpSessionRecency`）：仅 主 turn 开始 / 主 turn 结束 / 新待授权 / 新待回答 / prompt 被 block / 队列 prompt 被 abort；per-step、per-tool-call 不 bump。只前进不后退。
 - **快照合并保护**（`useKimiWebClient.ts:1976`）：snapshot 同步时仅当 `!mainTurnActive && server.updatedAt > local.updatedAt` 才采纳 server 值——点开会话不重排侧栏。同理保留的本地字段还有 `model` / `usage`；**`pullRequest` 目前漏了**——它是 v2 `include=git` 列表页专属字段，v1 snapshot 路径恒为 `undefined`，整体铺开 `snap.session` 会把它覆盖丢失（列表路径 `setSessionsPreservingLiveUsage` 已保留，snapshot 路径遗漏），即「点开会话 PR chip 消失」的现行 bug，本次修复（4.2-B）。

@@ -7,8 +7,14 @@ import { traceClientEvent, traceKeyEvent } from '../debug/trace';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import {
+  buildWorkspaceRecencyKeys,
+  currentActivityKeys,
+  pruneRecencyFloor,
+  reconcileRecencyFloor,
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
+  sortWorkspacesByRecent,
+  type WorkspaceSortMode,
 } from '@moonshot-ai/app-core/lib';
 import { logError, logWarn } from '@moonshot-ai/app-core/lib';
 import { track } from '../lib/track';
@@ -27,12 +33,16 @@ import {
   loadPinnedSessions,
   loadUnread,
   loadWorkspaceOrder,
+  loadWorkspaceRecencyFloor,
+  loadWorkspaceSort,
   safeGetString,
   safeRemove,
   safeSetString,
   savePinnedSessions,
   saveUnread,
   saveWorkspaceOrder,
+  saveWorkspaceRecencyFloor,
+  saveWorkspaceSort,
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
 import {
@@ -2805,6 +2815,45 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() =>
  */
 const workspaceOrder = ref<string[]>(loadWorkspaceOrder());
 
+/** Sidebar workspace sort mode: the persisted manual order (default) or the
+ *  recency ordering below. */
+const workspaceSortMode = ref<WorkspaceSortMode>(loadWorkspaceSort());
+
+function setWorkspaceSortMode(mode: WorkspaceSortMode): void {
+  if (workspaceSortMode.value === mode) return;
+  workspaceSortMode.value = mode;
+  saveWorkspaceSort(mode);
+}
+
+/** Monotonic per-workspace recency floor (id → epoch ms), persisted. Folded
+ *  from the session pool below; it only ever advances, so archiving or
+ *  deleting a group's anchor session does not reshuffle the sidebar, while
+ *  another group still overtakes it on real new activity. */
+const workspaceRecencyFloor = ref<Record<string, number>>(loadWorkspaceRecencyFloor());
+
+// Fold the pool's per-workspace max(updatedAt) into the floor. The pool only
+// bumps updatedAt on real activity (the eventReducer's whitelist), so every
+// fold is a durable signal. Session-array writes are always replace-style, so
+// watching the reference is sufficient.
+watch(
+  () => rawState.sessions,
+  (sessions) => {
+    const current = currentActivityKeys(sessions, workspaceIdForSession);
+    const { next, changed } = reconcileRecencyFloor(workspaceRecencyFloor.value, current);
+    if (!changed) return;
+    workspaceRecencyFloor.value = next;
+    saveWorkspaceRecencyFloor(next);
+  },
+);
+
+/** Recency key per workspace for the 'recent' sort: max(floor, last_opened_at)
+ *  — both monotonic while a workspace lives, so a group only ever floats up,
+ *  never sinks mid-session (e.g. on refresh while its first session page is
+ *  still loading). */
+const workspaceRecencyKeys = computed<ReadonlyMap<string, number>>(() =>
+  buildWorkspaceRecencyKeys(mergedWorkspaces.value, workspaceRecencyFloor.value),
+);
+
 // Reconcile the persisted order with the set of currently-known workspaces:
 // drop ids that no longer exist, and prepend newly-seen ids (newest first,
 // matching "createdAt desc" — the closest signal we have without a real
@@ -2825,10 +2874,29 @@ watch(
   ([idsKey, loading]) => {
     if (loading) return;
     const current = idsKey ? idsKey.split('\0') : [];
-    const next = reconcileWorkspaceOrder(current, workspaceOrder.value);
-    if (next === null) return;
-    workspaceOrder.value = next;
-    saveWorkspaceOrder(next);
+    // First launch (nothing stored): seed by recency (floor ∪ last_opened_at)
+    // instead of the wire's append order. Once anything is stored the rank is
+    // ignored and new ids keep prepending.
+    const next = reconcileWorkspaceOrder(
+      current,
+      workspaceOrder.value,
+      workspaceRecencyKeys.value,
+    );
+    if (next !== null) {
+      workspaceOrder.value = next;
+      saveWorkspaceOrder(next);
+    }
+    // GC recency-floor entries for workspaces that are gone (covers every
+    // removal path: local delete, remote WS event, hide). Under the same
+    // loading guard as the reconciler — a partial set must never prune.
+    const { next: prunedFloor, changed: floorChanged } = pruneRecencyFloor(
+      workspaceRecencyFloor.value,
+      new Set(current),
+    );
+    if (floorChanged) {
+      workspaceRecencyFloor.value = prunedFloor;
+      saveWorkspaceRecencyFloor(prunedFloor);
+    }
   },
 );
 
@@ -2871,8 +2939,10 @@ function togglePinSession(id: string): void {
   else pinSession(id);
 }
 
-/** Sidebar-facing workspace list, in the user's manual (dragged/persisted)
- *  order, reconciled against the daemon's workspace set by the watcher above. */
+/** Sidebar-facing workspace list. 'manual' mode follows the user's dragged /
+ *  persisted order (reconciled against the daemon's workspace set by the
+ *  watcher above); 'recent' mode sorts by the recency keys — monotonic, so a
+ *  group never sinks while its workspace lives. */
 const workspacesView = computed<WorkspaceView[]>(() => {
   const views = mergedWorkspaces.value.map((w) => ({
     id: w.id,
@@ -2881,6 +2951,9 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     shortPath: shortenHome(w.root, rawState.fsHome),
     sessionCount: w.sessionCount,
   }));
+  if (workspaceSortMode.value === 'recent') {
+    return sortWorkspacesByRecent(views, workspaceRecencyKeys.value);
+  }
   return sortByWorkspaceOrder(views, workspaceOrder.value);
 });
 
@@ -3459,6 +3532,7 @@ export function useKimiWebClient() {
 
     // Workspace view props
     workspacesView,
+    workspaceSortMode,
     visibleWorkspace,
     activeWorkspaceId,
     sessionsForView,
@@ -3611,6 +3685,7 @@ export function useKimiWebClient() {
     renameWorkspace: workspaceState.renameWorkspace,
     deleteWorkspace: workspaceState.deleteWorkspace,
     reorderWorkspaces,
+    setWorkspaceSortMode,
     pinSession,
     unpinSession,
     togglePinSession,
