@@ -374,9 +374,6 @@ merge_all_available_skills = true
 #   owner: src/session/subagent/configSection.ts
 #   scope: core
 #   hooks: stripEnv
-#   deprecations (old key is ignored + warns; rename manually):
-#     default_model -> secondary_model.default_model
-#     models -> secondary_model.models
 #   env:
 #     timeout_ms <- KIMI_SUBAGENT_TIMEOUT_MS (custom parse)
 # ##########################################################################

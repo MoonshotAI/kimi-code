@@ -1208,31 +1208,6 @@ describe('config deprecations', () => {
     disposables.dispose();
   });
 
-  it('warns and ignores the legacy [subagent] pool keys, which moved to [secondary_model]', async () => {
-    const { config, disposables } = await createConfig(
-      {},
-      '[subagent]\ndefault_model = "provider/fast"\n\n[subagent.models]\n"provider/fast" = "fast and cheap"\n',
-    );
-
-    // The old values no longer apply — the pool only resolves from
-    // [secondary_model] now.
-    expect(resolveSubagentModelPool(config)).toBeUndefined();
-    expect(config.diagnostics()).toContainEqual({
-      domain: SUBAGENT_SECTION,
-      severity: 'warning',
-      message:
-        "[subagent] 'default_model' is deprecated and no longer used; rename it to 'secondary_model.default_model'. Run /update-config to fix it.",
-    });
-    expect(config.diagnostics()).toContainEqual({
-      domain: SUBAGENT_SECTION,
-      severity: 'warning',
-      message:
-        "[subagent] 'models' is deprecated and no longer used; rename it to 'secondary_model.models'. Run /update-config to fix it.",
-    });
-
-    disposables.dispose();
-  });
-
   it('lets the replacement key win when both are present, still warning', async () => {
     const { config, disposables } = await createConfig(
       {},

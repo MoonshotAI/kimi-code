@@ -9,9 +9,7 @@
  *   var is set, `stripEnvBoundFields` restores the env-free raw value before
  *   persistence, so the override never leaks into `config.toml`. Per-run
  *   timeouts resolve through `resolveSubagentTimeoutMs`, and the timeout
- *   message renders with `formatSubagentTimeoutDescription`. The pool keys
- *   `default_model` / `models` are declared as deprecations on this section:
- *   they moved to `[secondary_model]` and their values here no longer apply.
+ *   message renders with `formatSubagentTimeoutDescription`.
  *
  * - `[secondary_model]` — the subagent model pool: `default_model` names the
  *   fallback model and the `[secondary_model.models]` table maps alias →
@@ -165,10 +163,6 @@ registerConfigSection(SUBAGENT_SECTION, SubagentConfigSchema, {
   defaultValue: { timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS },
   env: subagentEnvBindings,
   stripEnv: stripSubagentEnv,
-  deprecations: [
-    { key: 'default_model', replacement: 'secondary_model.default_model' },
-    { key: 'models', replacement: 'secondary_model.models' },
-  ],
 });
 
 registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema);

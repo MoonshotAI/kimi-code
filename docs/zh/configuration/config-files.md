@@ -263,8 +263,6 @@ kimi-for-coding-highspeed-deep = "同一模型的高 Thinking 档位。适合较
 
 配置错误一律直接报错，不做静默回退：`default_model` 缺失、不是池中 key，或池中 key 无法解析到已配置的 `[models]` 条目时，会话的创建、恢复（resume）与 fork 都会在启动时直接失败；`force` 未搭配 `default_model` 或与 `[secondary_model.models]` 表同用时亦然。别名 `primary` 是保留字——它始终绑定调用方自己的模型——不能作为池中 key。工具调用传入的 `model` 既不是池中别名也不是 `"primary"` 时，本次派生报错并列出可选值。
 
-模型池键之前位于 `[subagent]` 下；遗留的 `[subagent] default_model` 或 `[subagent.models]` 表不再生效，并会以弃用警告的形式报告——按上文示例移入 `[secondary_model]` 即可。
-
 只写了配方键 `model`（没有 `default_model`，也没有 `[secondary_model.models]` 表）时，v2 引擎会兼容读取它，把该别名当作池的默认模型——等价于只含它一个条目的隐式模型池，优先级低于 `default_model`，所以从配方迁移过来不改配置也能工作。注意兼容只取模型别名：补丁字段（`default_effort`、`max_output_size` 等）不会随之生效——请把这些设置写到别名指向的 `[models]` 条目上，例如通过 [`[models."<alias>".overrides]`](#模型覆盖项)。一旦配置了 `[secondary_model.models]` 表，`default_model` 依旧必填，`model` 不能顶替。
 
 要显式迁移，把模型别名改为池的默认模型即可：
@@ -381,8 +379,6 @@ max_output_size = 8192
 | `timeout_ms` | `integer` | `7200000`（2 小时） | 单个子代理（`Agent` / `AgentSwarm`）允许运行的最长时间（毫秒）。超时后子代理以 `timed_out` 收尾。`0` 表示无超时——子代理一直运行到自行结束或被模型手动停止。该值是后台任务管理器对每个子代理任务的 per-task timeout，因此对前台与后台子代理同时生效。在 print 模式（`kimi -p`）下未显式设置时默认为 `0`。注意：超过 `2147483647`（约 24.8 天）的值会被运行时钳到约 24.8 天 |
 
 `timeout_ms` 可被环境变量 `KIMI_SUBAGENT_TIMEOUT_MS` 覆盖，优先级高于配置文件。
-
-之前在此配置的模型池（`default_model`、`[subagent.models]`）已移至 `[secondary_model]` 下的[子 Agent 模型池](#子-agent-模型池)；旧键不再生效，并会以弃用警告的形式报告。
 
 ## `mcp`
 

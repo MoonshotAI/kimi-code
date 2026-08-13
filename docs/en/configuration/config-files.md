@@ -264,8 +264,6 @@ Note that `default_effort` stays a model-level default: once a global `[thinking
 
 Configuration errors fail loudly instead of falling back silently: session creation, resume, and fork all fail at startup when `default_model` is missing, is not a pool key, or a pool key does not resolve to a configured `[models]` entry — and likewise when `force` is set without `default_model` or combined with a `[secondary_model.models]` table. The alias `primary` is reserved — it always binds the caller's own model — and is rejected as a pool key. A spawn whose `model` is neither a pool alias nor `"primary"` fails with an error listing the available choices.
 
-The pool keys used to live under `[subagent]`; a leftover `[subagent] default_model` or `[subagent.models]` table no longer applies and is reported as a deprecation warning — move them into `[secondary_model]` as shown above.
-
 When only the recipe `model` key is set — no `default_model`, no `[secondary_model.models]` table — the v2 engine reads it compatibly as the pool default: an implicit single-entry pool ranked below `default_model`, so a recipe setup keeps working unchanged. The compatibility only takes the model alias, though: the recipe patch fields (`default_effort`, `max_output_size`, …) do not carry over — write those settings onto the `[models]` entry the alias points to, for example via [`[models."<alias>".overrides]`](#model-overrides). Once a `[secondary_model.models]` table is configured, `default_model` stays required and `model` does not substitute for it.
 
 To migrate explicitly, point the pool default at the same alias:
@@ -382,8 +380,6 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 | `timeout_ms` | `integer` | `7200000` (2 hours) | Maximum wall-clock time (milliseconds) a single subagent (`Agent` / `AgentSwarm`) is allowed to run before it is settled as `timed_out`. `0` means no timeout — the subagent runs until it finishes or the model stops it. This is the background-task manager's per-task timeout for each subagent task, so it applies to both foreground and background subagents. In print mode (`kimi -p`) the default is `0` unless explicitly set. Note: any value above `2147483647` (about 24.8 days) is clamped to roughly 24.8 days by the runtime |
 
 `timeout_ms` can be overridden by the `KIMI_SUBAGENT_TIMEOUT_MS` environment variable, which takes higher priority than `config.toml`.
-
-The model pool that used to be configured here (`default_model`, `[subagent.models]`) moved to the [subagent model pool](#subagent-model-pool) under `[secondary_model]`; the old keys no longer apply and are reported as deprecation warnings.
 
 ## `mcp`
 
