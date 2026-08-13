@@ -6,6 +6,8 @@
  * are hardcoded in a closed registry — install sources are fixed official
  * CDN URLs, never client-supplied. Install progress transitions are published
  * through `onDidChangeInstall` (start / step / settle / error).
+ * `describeCapabilities` answers the static registry without running any
+ * detection probes.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -18,7 +20,6 @@ export interface ICapabilityService {
 
   readonly onDidChangeInstall: Event<CapabilityInstallChange>;
 
-  /** Static registry descriptors — no detection probes run. */
   describeCapabilities(): readonly CapabilityDescriptor[];
 
   listCapabilities(): Promise<readonly CapabilityStatus[]>;

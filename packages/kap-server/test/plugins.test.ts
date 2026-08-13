@@ -539,10 +539,15 @@ describe('server-v2 /api/v1 plugins', () => {
     });
     base = `http://127.0.0.1:${server.port}`;
 
-    const { body } = await call<{ entries: { id: string; source: string; capabilityId?: string }[] }>(
-      'GET',
-      '/api/v1/plugins/marketplace',
-    );
+    const { body } = await call<{
+      entries: {
+        id: string;
+        source: string;
+        tier?: string;
+        displayName?: string;
+        capabilityId?: string;
+      }[];
+    }>('GET', '/api/v1/plugins/marketplace');
     expect(body.code).toBe(0);
     const datasource = body.data.entries.find((e) => e.id === 'kimi-datasource');
     // Relative sources resolve against the fallback file, not the failed URL.
@@ -559,6 +564,17 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(cu?.capabilityId).toBe('kimi-cu');
     expect(cu?.source).toBe('capability:kimi-cu');
     expect(cu?.displayName).toBe('Kimi Computer Use');
+
+    // Injected rows join install state like catalog rows.
+    const cuSource = await makePluginDir('kimi-cu', '0.5.8');
+    await call('POST', '/api/v1/plugins', { source: cuSource });
+    const after = await call<{
+      entries: { id: string; installed?: { version?: string; enabled: boolean } }[];
+    }>('GET', '/api/v1/plugins/marketplace');
+    expect(after.body.data.entries.find((e) => e.id === 'kimi-cu')?.installed).toEqual({
+      version: '0.5.8',
+      enabled: true,
+    });
   });
 
   it('expands ~ in local catalog paths like the CLI loader', async () => {
