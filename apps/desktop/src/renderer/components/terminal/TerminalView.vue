@@ -113,10 +113,8 @@ function scheduleFit(): void {
 
 async function initTerminal(): Promise<void> {
   if (!hostRef.value || term) return;
-  const [{ Terminal: XTermCtor }, { FitAddon: FitAddonCtor }] = await Promise.all([
-    import('@xterm/xterm'),
-    import('@xterm/addon-fit'),
-  ]);
+  const [{ Terminal: XTermCtor }, { FitAddon: FitAddonCtor }, { WebLinksAddon: WebLinksAddonCtor }] =
+    await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit'), import('@xterm/addon-web-links')]);
   // Wait for the variable font before xterm measures the cell.
   if (typeof document !== 'undefined' && document.fonts?.ready) {
     try {
@@ -141,6 +139,14 @@ async function initTerminal(): Promise<void> {
   });
   const fit = new FitAddonCtor();
   next.loadAddon(fit);
+  // Plain-text URLs (no OSC 8 wrap) need the web-links linkifier to become
+  // clickable; window.open is routed to the system browser by the main
+  // process's setWindowOpenHandler (main/external-links.ts).
+  next.loadAddon(
+    new WebLinksAddonCtor((_event, uri) => {
+      window.open(uri, '_blank', 'noopener');
+    }),
+  );
   next.open(hostRef.value);
   next.onData((data) => store.write(tabId.value, data));
   next.onResize(({ cols, rows }) => store.resize(tabId.value, cols, rows));
@@ -276,8 +282,15 @@ defineExpose({ fit: fitAndResize, focus: focusTerm });
 .terminal-host {
   position: absolute;
   inset: 0;
-  padding: var(--space-2);
   background: var(--term-bg);
+}
+/* The padding must live on .xterm, not the host: FitAddon measures the host's
+   computed height/width and only subtracts the xterm element's own padding —
+   with border-box a padded host over-counts rows/cols and pushes the last
+   line (and rightmost column) out of view. */
+.terminal-host :deep(.xterm) {
+  padding: var(--space-2);
+  height: 100%;
 }
 /* xterm 6 keeps the viewport layer at the stylesheet default (#000) instead
    of following the theme — the canvas covers only the rows area, so the
@@ -286,8 +299,5 @@ defineExpose({ fit: fitAndResize, focus: focusTerm });
 .terminal-host :deep(.xterm),
 .terminal-host :deep(.xterm-viewport) {
   background-color: var(--term-bg);
-}
-.terminal-host :deep(.xterm) {
-  height: 100%;
 }
 </style>
