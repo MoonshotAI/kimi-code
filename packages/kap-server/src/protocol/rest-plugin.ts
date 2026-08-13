@@ -7,6 +7,17 @@
 
 import { z } from 'zod';
 
+/** GitHub provenance for github-sourced plugins (domain PluginGithubMetadata). */
+export const pluginGithubMetadataSchema = z.object({
+  owner: z.string(),
+  repo: z.string(),
+  ref: z.object({
+    kind: z.enum(['branch', 'tag', 'sha']),
+    value: z.string(),
+  }),
+  installedSha: z.string().optional(),
+});
+
 export const pluginSummarySchema = z.object({
   id: z.string(),
   displayName: z.string(),
@@ -21,6 +32,7 @@ export const pluginSummarySchema = z.object({
   hasErrors: z.boolean(),
   source: z.enum(['local-path', 'zip-url', 'github']),
   originalSource: z.string().optional(),
+  github: pluginGithubMetadataSchema.optional(),
 });
 export type PluginSummaryWire = z.infer<typeof pluginSummarySchema>;
 
