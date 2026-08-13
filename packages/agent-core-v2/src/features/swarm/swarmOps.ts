@@ -13,7 +13,7 @@ import { z } from 'zod';
 
 import { defineModel } from '#/wire/model';
 
-import type { SwarmModeTrigger } from './swarm';
+import type { SwarmModeTrigger } from './agent/swarm';
 
 export const SwarmModel = defineModel<SwarmModeTrigger | null>('swarm', () => null);
 

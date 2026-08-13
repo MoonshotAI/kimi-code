@@ -28,7 +28,7 @@ import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTo
 import {
   AgentSwarmToolInputSchema,
   type AgentSwarmToolInput,
-} from '#/agent/tools/agent-swarm/agent-swarm';
+} from '#/features/swarm/tools/agent-swarm/agent-swarm';
 import {
   SubagentToolInputSchema,
   type SubagentToolInput,
@@ -58,7 +58,7 @@ import type {
   ISessionSwarmService,
   SessionSwarmRunArgs,
   SessionSwarmRunResult,
-} from '#/session/swarm/sessionSwarm';
+} from '#/features/swarm/session/sessionSwarm';
 import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
 import { IWireService } from '#/wire/wire';
 import { createFakeProcessRunner } from '../tools/fixtures/fake-exec';

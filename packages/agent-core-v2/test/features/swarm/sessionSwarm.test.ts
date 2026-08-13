@@ -48,11 +48,11 @@ import {
   type AgentRunSuspendedEvent,
   type AgentSpawnAttemptOptions,
   type QueuedAgentRunTask,
-} from '#/session/swarm/agentRunBatch';
-import { ISessionSwarmService, type SessionSwarmSpawnTask, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
+} from '#/features/swarm/session/agentRunBatch';
+import { ISessionSwarmService, type SessionSwarmSpawnTask, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
 import { Error2 } from '#/_base/errors/errors';
 import { ConfigErrors } from '#/app/config/errors';
-import { SessionSwarmService } from '#/session/swarm/sessionSwarmService';
+import { SessionSwarmService } from '#/features/swarm/session/sessionSwarmService';
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';

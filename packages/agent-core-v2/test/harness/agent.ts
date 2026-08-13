@@ -6,7 +6,9 @@ import { createControlledPromise } from '@antfu/utils';
 import { expect, vi } from 'vitest';
 
 import { toDisposable } from '#/_base/di/lifecycle';
+import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
+import { getContributedServices } from '#/features/featureRegistry';
 import { Emitter, Event } from '#/_base/event';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
@@ -52,7 +54,7 @@ import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
 import type { ProfileSetModelResult } from '#/agent/profile/profile';
-import type { SwarmModeTrigger } from '#/agent/swarm/swarm';
+import type { SwarmModeTrigger } from '#/features/swarm/agent/swarm';
 import type { UserToolRegistration } from '#/agent/userTool/userTool';
 import type { ActivatePluginCommandPayload } from '#/agent/pluginCommand/pluginCommand';
 import { IAgentPluginCommandService } from '#/agent/pluginCommand/pluginCommand';
@@ -207,7 +209,7 @@ import {
 import type { IProcess } from '#/session/process/processRunner';
 import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { ISessionSwarmService } from '#/session/swarm/sessionSwarm';
+import { ISessionSwarmService } from '#/features/swarm/session/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
 
 import { stubAgentIdentity } from '../app/agentIdentity/stubs';
@@ -897,6 +899,45 @@ function collectScopeSeed(
   return seed;
 }
 
+// Feature contributions (`ScopeUnits` fold) provide into a scope through the
+// cascade and would replace a same-token seed instance installed at creation;
+// re-asserting overrides of feature-contributed tokens through the live
+// container right after scope creation keeps test stubs winning, as they did
+// over static registrations (which `provideScopeServices` skips when seeded).
+function reassertServiceOverrides(
+  overrides: readonly TestAgentScopedServiceOverride[],
+  scope: TestAgentServiceScope,
+  instantiation: IInstantiationService,
+): void {
+  const contributed = new Set(
+    getContributedServices()
+      .filter((entry) => entry.scope === scope)
+      .map((entry) => entry.id),
+  );
+  if (contributed.size === 0) {
+    return;
+  }
+  const reg: TestAgentServiceRegistration = {
+    define: (id, ctor) => {
+      if (contributed.has(id)) instantiation.provide(id, new SyncDescriptor(ctor));
+    },
+    defineDescriptor: (id, descriptor) => {
+      if (contributed.has(id)) instantiation.provide(id, descriptor);
+    },
+    defineInstance: (id, instance) => {
+      if (contributed.has(id)) instantiation.provide(id, instance);
+    },
+    definePartialInstance: (id, instance) => {
+      if (contributed.has(id)) instantiation.provide(id, instance as never);
+    },
+  };
+  for (const override of overrides) {
+    if (override.scope === scope) {
+      override.register(reg);
+    }
+  }
+}
+
 class PersistenceAppendLogStore implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
   private readonly history: WireRecord[] = [];
@@ -1236,6 +1277,7 @@ export class AgentTestContext {
         'session',
       ),
     });
+    reassertServiceOverrides(this.serviceOverrides, 'session', this.session.instantiation);
     const workspace = this.session.accessor.get(ISessionWorkspaceContext);
 
     this.agent = this.session.createChild(LifecycleScope.Agent, agentId, {
@@ -1289,6 +1331,7 @@ export class AgentTestContext {
         'agent',
       ),
     });
+    reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
     this.initializeRestorableServices();
     this.get(IAgentActivityView);

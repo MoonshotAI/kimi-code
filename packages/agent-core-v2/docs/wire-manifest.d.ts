@@ -54,8 +54,8 @@
 //   plugin.session_start               pluginSessionStartSnapshot  persisted  src/agent/plugin/agentPluginOps.ts
 //   profile.bind                       profile                     persisted  src/agent/profile/profileOps.ts
 //   skill.activate                     skill                       transient  src/agent/skill/skillOps.ts
-//   swarm_mode.enter                   swarm                       persisted  src/agent/swarm/swarmOps.ts
-//   swarm_mode.exit                    swarm                       persisted  src/agent/swarm/swarmOps.ts
+//   swarm_mode.enter                   swarm                       persisted  src/features/swarm/swarmOps.ts
+//   swarm_mode.exit                    swarm                       persisted  src/features/swarm/swarmOps.ts
 //   task.started                       task                        persisted  src/agent/task/taskOps.ts
 //   task.terminated                    task                        persisted  src/agent/task/taskOps.ts
 //   token_counting.measured            tokenCounting               transient  src/agent/tokenCounting/tokenCountingOps.ts
@@ -502,7 +502,7 @@ interface SkillActivatePayload {
 
 /**
  * model: swarm · persisted · toEvent
- * owner: src/agent/swarm/swarmOps.ts
+ * owner: src/features/swarm/swarmOps.ts
  */
 interface SwarmModeEnterPayload {
   _name: 'swarm_mode.enter';
@@ -512,7 +512,7 @@ interface SwarmModeEnterPayload {
 
 /**
  * model: swarm · persisted · toEvent · cross-reducers: contextMemory
- * owner: src/agent/swarm/swarmOps.ts
+ * owner: src/features/swarm/swarmOps.ts
  */
 interface SwarmModeExitPayload {
   _name: 'swarm_mode.exit';
