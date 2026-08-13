@@ -147,13 +147,16 @@ function isPathLike(match: string, offset: number, source: string): boolean {
   if (!isWordShapedSegment(base)) return false;
   if (segments.length < 3 || !segments.every((segment) => segment.length <= 24)) return false;
   if (offset === 0 || source[offset - 1] !== '/') return false;
-  return PATH_ROOT_SEGMENTS.has(segments[0].toLowerCase()) || source[offset - 2] === '~';
+  return PATH_ROOT_SEGMENTS.has(segments[0]) || source[offset - 2] === '~';
 }
 
-// Well-known filesystem roots that anchor an extensionless absolute path.
+// Case-sensitive filesystem roots that anchor an extensionless absolute path.
+// macOS roots keep their capital (`Users`, `Volumes`); lowercase lookalikes
+// that double as API route segments (`/users/...`, `/data/...`) do not
+// qualify, so API-shaped slash-delimited IDs fail closed.
 const PATH_ROOT_SEGMENTS = new Set([
-  'users', 'home', 'tmp', 'var', 'opt', 'usr', 'etc', 'root', 'mnt', 'media',
-  'volumes', 'data', 'srv',
+  'Users', 'Volumes', 'home', 'tmp', 'var', 'opt', 'usr', 'etc', 'root', 'mnt',
+  'media', 'srv',
 ]);
 
 function isWordShapedSegment(segment: string): boolean {

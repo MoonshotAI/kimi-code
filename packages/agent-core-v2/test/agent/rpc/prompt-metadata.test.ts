@@ -120,6 +120,9 @@ describe('prompt metadata sanitization', () => {
     expect(sanitize(`token ${'a'.repeat(20)}/${'b'.repeat(20)}/${'c'.repeat(20)}`)).toBe(
       'token [redacted]',
     );
+    expect(sanitize(`token /users/${'a'.repeat(20)}/${'b'.repeat(20)}/${'c'.repeat(20)}`)).toBe(
+      'token /[redacted]',
+    );
     expect(sanitize('open ~/Projects/kimi-code-workspace/external-hooks-feature')).toBe(
       'open ~/Projects/kimi-code-workspace/external-hooks-feature',
     );
