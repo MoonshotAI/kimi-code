@@ -35,7 +35,7 @@ import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/pro
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
-import { ISessionInitService } from '@moonshot-ai/agent-core-v2/session/sessionInit/sessionInit';
+import { ISessionInitService } from '@moonshot-ai/agent-core-v2/features/sessionInit/sessionInit';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceContext';
 
