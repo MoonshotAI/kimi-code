@@ -11,8 +11,6 @@
  */
 
 import type { ServiceClassRecipe } from '#/_base/di/fiber';
-import type { ServiceIdentifier } from '#/_base/di/instantiation';
-import { type IDisposable, toDisposable } from '#/_base/di/lifecycle';
 
 const _featureRecipes: ServiceClassRecipe[] = [];
 
@@ -26,30 +24,4 @@ export function getFeatureRecipes(): readonly ServiceClassRecipe[] {
 
 export function _clearFeatureRecipesForTests(): void {
   _featureRecipes.length = 0;
-}
-
-interface ContributedServiceRecord {
-  readonly scope: string;
-  readonly id: ServiceIdentifier<unknown>;
-}
-
-const _contributedServices: ContributedServiceRecord[] = [];
-
-export function recordContributedService(
-  scope: string,
-  id: ServiceIdentifier<unknown>,
-): IDisposable {
-  if (_contributedServices.some((entry) => entry.scope === scope && entry.id === id)) {
-    throw new Error(`Service ${String(id)} is already contributed at scope ${scope}`);
-  }
-  const record = { scope, id };
-  _contributedServices.push(record);
-  return toDisposable(() => {
-    const index = _contributedServices.indexOf(record);
-    if (index !== -1) _contributedServices.splice(index, 1);
-  });
-}
-
-export function getContributedServices(): ReadonlyArray<ContributedServiceRecord> {
-  return _contributedServices;
 }

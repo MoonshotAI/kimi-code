@@ -8,7 +8,7 @@ import { expect, vi } from 'vitest';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { getContributedServices } from '#/features/featureRegistry';
+import { IFeatureManager } from '#/app/feature/featureManager';
 import { Emitter, Event } from '#/_base/event';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
@@ -910,7 +910,9 @@ function reassertServiceOverrides(
   instantiation: IInstantiationService,
 ): void {
   const contributed = new Set(
-    getContributedServices()
+    instantiation
+      .invokeFunction((accessor) => accessor.get(IFeatureManager))
+      .contributedServices()
       .filter((entry) => entry.scope === scope)
       .map((entry) => entry.id),
   );

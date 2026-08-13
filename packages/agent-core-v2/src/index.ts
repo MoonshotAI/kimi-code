@@ -215,6 +215,7 @@ export * from '#/app/capability/capabilityService';
 export * from '#/app/capability/errors';
 export * from '#/app/capability/types';
 export * from '#/app/feature/featureManager';
+export * from '#/app/feature/featureServiceContribution';
 import '#/app/feature/featureManagerService';
 export * from '#/features/feature';
 export * from '#/features/featureAssembly';
