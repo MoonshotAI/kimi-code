@@ -7,6 +7,9 @@
  *   - an inline image-compression caption (harness metadata placed next to
  *     the image by prompt ingestion) never leaks into titles/lastPrompt,
  *     whether it is a standalone text part or merged into the user's text
+ *   - sanitization keeps slug-shaped text/code file names readable while
+ *     bare tokens, `sk-` keys (even with a file extension), git SHAs, and
+ *     JWT segments stay redacted
  */
 
 import { describe, expect, it } from 'vitest';
@@ -51,5 +54,48 @@ describe('promptMetadataTextFromPayload', () => {
     expect(text).toBe('能展示但是没有快捷键提示 [image]');
     expect(text).not.toContain('<system>');
     expect(text).not.toContain('Image compressed');
+  });
+});
+
+describe('prompt metadata sanitization', () => {
+  const sanitize = (text: string) =>
+    promptMetadataTextFromPayload({ input: [{ type: 'text', text }] });
+
+  it('keeps slug-shaped stems of text/code files readable', () => {
+    expect(sanitize('帮我看看 refact-000-08-12-external-hooks-feature-scopes.ts 这个文件')).toBe(
+      '帮我看看 refact-000-08-12-external-hooks-feature-scopes.ts 这个文件',
+    );
+    expect(sanitize('打开 src/refact-000-08-12-external-hooks-feature-scopes.md')).toBe(
+      '打开 src/refact-000-08-12-external-hooks-feature-scopes.md',
+    );
+    expect(sanitize('跑下 refact-000-08-12-external-hooks-feature-scopes.test.ts')).toBe(
+      '跑下 refact-000-08-12-external-hooks-feature-scopes.test.ts',
+    );
+  });
+
+  it('still redacts bare long tokens, sk- keys, and git SHAs', () => {
+    expect(sanitize(`token ${'A1b2'.repeat(13)}`)).toBe('token [redacted]');
+    expect(sanitize('key sk-abcdefghijklmnop1234')).toBe('key [redacted]');
+    expect(sanitize(`看下 commit ${'9f8e7d6c5b'.repeat(4)}`)).toBe('看下 commit [redacted]');
+  });
+
+  it('redacts token-shaped strings even when a file extension follows', () => {
+    expect(sanitize('cat sk-abcdefghijklmnop1234.env')).toBe('cat [redacted].env');
+    expect(sanitize(`cat ${'A1b2'.repeat(13)}.json`)).toBe('cat [redacted].json');
+    expect(sanitize('检查 sk-project-notes-2024.md')).toBe('检查 [redacted].md');
+    expect(sanitize('refact-000-08-12-external-hooks-feature-scopes.json')).toBe('[redacted].json');
+    expect(sanitize('refact-000-08-12-external-hooks-feature-scopes.ts.json')).toBe(
+      '[redacted].ts.json',
+    );
+    expect(sanitize(`${'A1b2'.repeat(10)}_.ts-${'Z9y8'.repeat(12)}`)).toBe('[redacted].[redacted]');
+    expect(sanitize(`${'Ab1c'.repeat(10)}-.ts`)).toBe('[redacted]-.ts');
+    expect(sanitize(`https://example.com/${'Ab1c'.repeat(10)}_.ts?download=1`)).toBe(
+      'https://example.[redacted].ts?download=1',
+    );
+  });
+
+  it('still redacts JWT segments joined by dots', () => {
+    const jwt = `eyJhbGciOiJIUzI1NiJ9.${'a'.repeat(45)}.${'b'.repeat(43)}`;
+    expect(sanitize(`jwt ${jwt}`)).toBe('jwt eyJhbGciOiJIUzI1NiJ9.[redacted].[redacted]');
   });
 });

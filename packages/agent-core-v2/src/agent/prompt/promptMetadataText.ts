@@ -39,13 +39,32 @@ export function promptMetadataTextFromText(text: string): string | undefined {
       '$1=[redacted]',
     )
     .replaceAll(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[redacted]')
-    .replaceAll(/\b[A-Za-z0-9][A-Za-z0-9+/=_-]{39,}\b/g, '[redacted]')
+    .replaceAll(
+      /\b[A-Za-z0-9][A-Za-z0-9+/=_-]{39,}\b/g,
+      (match: string, offset: number, source: string) =>
+        isFileNameStem(match, source.slice(offset + match.length)) ? match : '[redacted]',
+    )
     .replaceAll(/\p{Cc}+/gu, ' ')
     .replaceAll(/\s+/g, ' ')
     .trim();
 
   if (sanitized.length === 0) return undefined;
   return sanitized.slice(0, MAX_LAST_PROMPT_LENGTH);
+}
+
+const SAFE_FILENAME_EXTENSIONS = new Set([
+  'md', 'markdown', 'txt', 'ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs',
+  'py', 'rb', 'go', 'rs', 'java', 'kt', 'swift', 'c', 'h', 'cc', 'cpp', 'hpp',
+  'cs', 'css', 'scss', 'less', 'html', 'vue', 'svelte', 'php', 'sh', 'sql',
+  'graphql', 'proto', 'lua', 'dart',
+]);
+
+function isFileNameStem(stem: string, following: string): boolean {
+  if (!/^(?=.*[-_])[a-z0-9_/-]+$/.test(stem)) return false;
+  const suffix = /^((?:\.[A-Za-z0-9]{1,8})+)(?![.A-Za-z0-9+/=_-])/.exec(following)?.[1];
+  if (suffix === undefined) return false;
+  const extension = suffix.slice(suffix.lastIndexOf('.') + 1);
+  return SAFE_FILENAME_EXTENSIONS.has(extension.toLowerCase());
 }
 
 function promptPartText(part: ContentPart): string | undefined {
