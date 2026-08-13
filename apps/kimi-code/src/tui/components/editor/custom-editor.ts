@@ -23,6 +23,14 @@ import { WrappingSelectList } from './wrapping-select-list';
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
 
+/**
+ * pi-tui's symmetric editor padding. Column 0 carries the `>` prompt token
+ * and column 1 separates it from the content, so the input starts flush at
+ * the terminal's first column — no border, no leading gap. The mirrored
+ * right-hand padding is trimmed off again in `paintHorizontalRules`.
+ */
+const EDITOR_PADDING_X = 2;
+
 const PASTE_MARKER_RE = /\[paste #(\d+)(?: (?:\+\d+ lines|\d+ chars))?\]/g;
 const BRACKET_PASTE_START = '\u001B[200~';
 const BRACKET_PASTE_END = '\u001B[201~';
@@ -147,8 +155,6 @@ export class CustomEditor extends Editor {
    *  text buffer — it is a separate mode + prompt symbol (see handleInput). */
   public inputMode: 'prompt' | 'bash' = 'prompt';
   public onInputModeChange?: (mode: 'prompt' | 'bash') => void;
-  public connectedAbove = false;
-  public borderHighlighted = false;
   /**
    * Called when the user triggers "paste image" (Ctrl-V on Unix,
    * Alt-V on Windows — Ctrl-V is terminal-reserved there). Return
@@ -168,13 +174,13 @@ export class CustomEditor extends Editor {
   }
 
   constructor(tui: TUI, options: CustomEditorOptions = {}) {
-    // paddingX: 4 reserves column 0 for the left vertical border (│),
-    // column 1 as a single space between border and prompt, column 2 for
-    // the `>` prompt token, and column 3 as the space between prompt and
-    // content. The right side mirrors with 3 padding columns and the right
-    // border at the last column.
+    // See EDITOR_PADDING_X: the left padding is where the `> ` prompt token
+    // goes, the right padding is trimmed away at render time.
     const theme = createEditorTheme();
-    super(tui, theme, { paddingX: 4, disablePasteBurst: options.disablePasteBurst });
+    super(tui, theme, {
+      paddingX: EDITOR_PADDING_X,
+      disablePasteBurst: options.disablePasteBurst,
+    });
 
     // pi-tui keeps `createAutocompleteList` private; shadow it with an
     // instance property so slash command menus render descriptions wrapped
@@ -295,12 +301,16 @@ export class CustomEditor extends Editor {
     }
     // `this.borderColor` is pi-tui's per-render paint function. The host may
     // overwrite it (e.g. plan-mode / slash-context highlight via
-    // `editor.borderColor = chalk.hex(primary)`), so we route corners and
-    // side bars through the same hook to stay in sync.
-    return wrapWithSideBorders(lines, (s) => this.borderColor(s), {
-      connectedAbove: this.connectedAbove && !this.borderHighlighted,
+    // `editor.borderColor = chalk.hex(primary)`), so we route the rules
+    // through the same hook to stay in sync.
+    // pi-tui pads every content row out to the full width; with no right
+    // border left to align, that padding is pure copy noise — drop it so a
+    // drag-select yields the typed text with no leading gap and no trailing
+    // spaces. Rules and the inverse-video cursor block end in an SGR reset,
+    // so trimming never eats into them.
+    return paintHorizontalRules(lines, (s) => this.borderColor(s), {
       label: isBash ? ` ${currentTheme.boldFg('shellMode', '! shell mode')} ` : undefined,
-    });
+    }).map((line) => line.trimEnd());
   }
 
   private computeArgumentHint(): string | undefined {
@@ -640,9 +650,6 @@ function highlightVisibleRanges(
   return out + line.slice(rawCursor);
 }
 
-// Mirrors the editor's paddingX (see constructor). The hint is spliced into
-// the first content line, which starts with this many spaces of left padding.
-const EDITOR_LEFT_PADDING = 4;
 // pi-tui renders the end-of-input cursor as an inverse-video space.
 const CURSOR_BLOCK = '\u001B[7m \u001B[0m';
 
@@ -663,7 +670,7 @@ function injectArgumentHint(
 ): string {
   const cursorIdx = line.indexOf(CURSOR_BLOCK);
   const cursorPresent = cursorIdx !== -1;
-  const contentWidth = Math.max(1, width - EDITOR_LEFT_PADDING * 2);
+  const contentWidth = Math.max(1, width - EDITOR_PADDING_X * 2);
   // Room left in the content area after the typed text (and cursor). The hint
   // must fit within this so the rendered line keeps its width.
   const available = contentWidth - realTextLength - (cursorPresent ? 1 : 0);
@@ -672,7 +679,7 @@ function injectArgumentHint(
   const colored = currentTheme.fg('textDim', trimmed);
   const insertAt = cursorPresent
     ? cursorIdx + CURSOR_BLOCK.length
-    : mapVisibleIdxToRaw(line, EDITOR_LEFT_PADDING + realTextLength);
+    : mapVisibleIdxToRaw(line, EDITOR_PADDING_X + realTextLength);
   // Everything after the insertion point is trailing padding + right padding
   // (plain spaces). Replace it with the hint followed by the remaining spaces
   // so the visible line width is preserved.
@@ -689,11 +696,10 @@ function truncateHint(hint: string, maxLen: number): string {
 
 /**
  * Overlay a terminal-style `> ` prompt symbol on the first content line.
- * Column 0 is reserved for the left vertical border (overlaid later by
- * wrapWithSideBorders); column 1 is a single-space gap, so the `>` token
- * lives at column 2 with column 3 separating it from content.
- * Relies on the editor being configured with `paddingX >= 4` so the line
- * starts with at least four literal spaces. Emits no SGR so the terminal's
+ * The token takes column 0 and column 1 separates it from the content, so
+ * the prompt sits flush against the left edge with nothing to its left.
+ * Relies on the editor being configured with `paddingX >= 2` so the line
+ * starts with at least two literal spaces. Emits no SGR so the terminal's
  * default foreground colour renders the symbol. Returns `undefined` if the
  * line is too short or doesn't begin with the expected padding.
  */
@@ -702,64 +708,48 @@ export function injectPromptSymbol(
   symbol = '>',
   paint?: (s: string) => string,
 ): string | undefined {
-  if (line.length < 4) return undefined;
-  for (let i = 0; i < 4; i++) {
+  if (line.length < EDITOR_PADDING_X) return undefined;
+  for (let i = 0; i < EDITOR_PADDING_X; i++) {
     if (line[i] !== ' ') return undefined;
   }
   const rendered = paint ? paint(symbol) : symbol;
-  return '  ' + rendered + ' ' + line.slice(4);
+  return rendered + ' ' + line.slice(EDITOR_PADDING_X);
 }
 
 /**
- * Post-process pi-tui's editor output to draw a full box around it.
+ * Post-process pi-tui's editor output so the input area is delimited by
+ * edge-to-edge horizontal rules instead of a box.
  *
- * pi-tui only renders horizontal top/bottom borders; we wrap them with
- * `╭╮╰╯` corners and add vertical `│` bars on each row's outer columns.
  * Horizontal-border rows (those whose first visible char is `─`, including
  * scroll indicators like `── ↑ N more ──`) are stripped of their existing
- * SGR and repainted as a single box-drawn span. Content rows keep their
- * inner SGR intact; only column 0 and the last column are overlaid, and
- * only if they're literal spaces — that protects the cursor-overflow
- * case where the rightmost column is an SGR-tagged inverse cursor.
+ * SGR and repainted as a single box-drawn span across every column — the two
+ * outer columns that used to carry `╭╮╰╯` corners are part of the rule now.
+ * Content rows are returned untouched: no vertical `│` bars are drawn, so a
+ * terminal drag-select over the input copies the text without border glyphs.
  *
- * When `options.label` is set, it is overlaid on the left of the top border
- * (e.g. the `! shell mode` badge), replacing the leading dashes. It is only
+ * When `options.label` is set, it is overlaid near the left of the top rule
+ * (e.g. the `! shell mode` badge), replacing the dashes it covers. It is only
  * applied to a plain dash run, never to a `↑/↓ N more` scroll indicator.
  */
-export function wrapWithSideBorders(
+export function paintHorizontalRules(
   lines: string[],
   paint: (s: string) => string,
-  options: { readonly connectedAbove?: boolean; readonly label?: string } = {},
+  options: { readonly label?: string } = {},
 ): string[] {
   let seenTop = false;
   return lines.map((line) => {
     const plain = stripSgr(line);
-    if (plain.length > 0 && plain[0] === '─') {
-      const isTop = !seenTop;
-      const leftCorner = seenTop ? '╰' : options.connectedAbove === true ? '├' : '╭';
-      const rightCorner = seenTop ? '╯' : options.connectedAbove === true ? '┤' : '╮';
-      seenTop = true;
-      if (plain.length === 1) return paint(leftCorner);
-      const middle = plain.slice(1, -1);
-      if (isTop && options.label !== undefined && /^─+$/.test(middle)) {
-        const labelWidth = visibleWidth(options.label);
-        if (labelWidth <= middle.length) {
-          return (
-            paint(leftCorner) +
-            options.label +
-            paint('─'.repeat(middle.length - labelWidth)) +
-            paint(rightCorner)
-          );
-        }
+    if (plain.length === 0 || plain[0] !== '─') return line;
+    const isTop = !seenTop;
+    seenTop = true;
+    if (isTop && options.label !== undefined && /^─+$/.test(plain)) {
+      // One leading dash keeps the label off the very first column, so the
+      // rule still reads as a rule rather than as an indented caption.
+      const remaining = plain.length - 1 - visibleWidth(options.label);
+      if (remaining >= 0) {
+        return paint('─') + options.label + paint('─'.repeat(remaining));
       }
-      return paint(leftCorner + middle + rightCorner);
     }
-    if (line.length === 0) return line;
-    const firstCh = line[0];
-    const lastCh = line.at(-1);
-    const head = firstCh === ' ' ? paint('│') : (firstCh ?? '');
-    const tail = line.length > 1 && lastCh === ' ' ? paint('│') : (lastCh ?? '');
-    if (line.length === 1) return head;
-    return head + line.slice(1, -1) + tail;
+    return paint(plain);
   });
 }

@@ -123,9 +123,11 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
 
     const rows = screenRows();
-    const promptRow = rows.findIndex((line) => /│\s*>/.test(line));
+    const promptRow = rows.findIndex((line) => /^\s*>/.test(line));
     expect(promptRow).toBeGreaterThan(0);
-    expect(rows[promptRow + 1]).toContain('╰');
+    // The composer is closed by a horizontal rule, not by a box corner.
+    expect(rows[promptRow + 1]?.trim().startsWith('─')).toBe(true);
+    expect(rows[promptRow]).not.toContain('│');
 
     state.ui.stop();
   });
