@@ -591,6 +591,30 @@ export interface ModelCatalogChangedEvent {
   readonly failed: readonly ProviderRefreshFailure[];
 }
 
+/**
+ * Plugin set mutation (install / enable / disable / remove from any client).
+ * Bare global fan-out — clients re-read the plugins REST surface.
+ */
+export interface PluginChangedEvent {
+  readonly type: 'event.plugin.changed';
+}
+
+/**
+ * Capability install progress transition, fanned out globally. Clients update
+ * the row live and re-read the capability once it settles (`running: false`).
+ */
+export interface CapabilityChangedEvent {
+  readonly type: 'event.capability.changed';
+  readonly capability_id: string;
+  readonly install: {
+    readonly running: boolean;
+    readonly step?: string;
+    readonly percent?: number;
+    readonly error?: string;
+    readonly note?: string;
+  };
+}
+
 export interface GoalUpdatedEvent {
   readonly type: 'goal.updated';
   readonly snapshot: GoalSnapshot | null;
@@ -948,6 +972,8 @@ export type AgentEvent =
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | ModelCatalogChangedEvent
+  | PluginChangedEvent
+  | CapabilityChangedEvent
   | GoalUpdatedEvent
   | SkillActivatedEvent
   | PluginCommandActivatedEvent
@@ -1522,6 +1548,22 @@ export const modelCatalogChangedEventSchema = z.object({
   failed: z.array(providerRefreshFailureSchema),
 }) satisfies z.ZodType<ModelCatalogChangedEvent>;
 
+export const pluginChangedEventSchema = z.object({
+  type: z.literal('event.plugin.changed'),
+}) satisfies z.ZodType<PluginChangedEvent>;
+
+export const capabilityChangedEventSchema = z.object({
+  type: z.literal('event.capability.changed'),
+  capability_id: z.string().min(1),
+  install: z.object({
+    running: z.boolean(),
+    step: z.string().optional(),
+    percent: z.number().optional(),
+    error: z.string().optional(),
+    note: z.string().optional(),
+  }),
+}) satisfies z.ZodType<CapabilityChangedEvent>;
+
 export const goalUpdatedEventSchema = z.object({
   type: z.literal('goal.updated'),
   snapshot: goalSnapshotSchema.nullable(),
@@ -1846,6 +1888,8 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
   modelCatalogChangedEventSchema,
+  pluginChangedEventSchema,
+  capabilityChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
   pluginCommandActivatedEventSchema,
