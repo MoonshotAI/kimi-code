@@ -20,7 +20,12 @@ import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { Feature } from '#/features/feature';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
-import { _clearFeatureRecipesForTests, registerFeature } from '#/features/featureRegistry';
+import {
+  _clearContributedServicesForTests,
+  _clearFeatureRecipesForTests,
+  getContributedServices,
+  registerFeature,
+} from '#/features/featureRegistry';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
 
 interface IGreeter {
@@ -67,6 +72,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
     _clearFeatureRecipesForTests();
+    _clearContributedServicesForTests();
     registerScopedService(
       LifecycleScope.App,
       IFeatureManager,
@@ -134,6 +140,43 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     expect(toolView.items).toHaveLength(0);
     expect(() => agentOne.accessor.get(IGreeter)).toThrow();
     expect(() => agentOne.accessor.get(ITestTool)).toThrow();
+
+    host.dispose();
+  });
+
+  it('rejects duplicate service contributions until the provider unloads', async () => {
+    class FirstFeature extends Feature {
+      static override readonly name = 'first-feature';
+
+      constructor() {
+        super();
+        this.contributeAgentService(IGreeter, GreeterService);
+      }
+    }
+    class SecondFeature extends Feature {
+      static override readonly name = 'second-feature';
+
+      constructor() {
+        super();
+        this.contributeAgentService(IGreeter, GreeterService);
+      }
+    }
+    registerFeature(FirstFeature);
+
+    const host = createScopedTestHost();
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(() => manager.provideUnit(SecondFeature)).toThrow(
+      /Service test-feature-greeter is already contributed at scope agent/,
+    );
+    expect(
+      getContributedServices().filter(
+        (entry) => entry.scope === LifecycleScope.Agent && entry.id === IGreeter,
+      ),
+    ).toHaveLength(1);
+
+    await manager.unprovideUnit('first-feature');
+    await host.app.instantiation.cascade.whenIdle();
+    expect(() => manager.provideUnit(SecondFeature)).not.toThrow();
 
     host.dispose();
   });

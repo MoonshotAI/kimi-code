@@ -13,6 +13,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
 import {
+  _clearContributedServicesForTests,
   _clearFeatureRecipesForTests,
   getContributedServices,
   registerFeature,
@@ -25,6 +26,7 @@ describe('DebugEventsFeature — App-scope introspection service', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
     _clearFeatureRecipesForTests();
+    _clearContributedServicesForTests();
     registerScopedService(
       LifecycleScope.App,
       IFeatureManager,
@@ -68,6 +70,11 @@ describe('DebugEventsFeature — App-scope introspection service', () => {
     await host.app.instantiation.cascade.whenIdle();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(() => host.app.accessor.get(IDebugEventsService)).toThrow();
+    expect(
+      getContributedServices().some(
+        (entry) => entry.scope === LifecycleScope.App && entry.id === IDebugEventsService,
+      ),
+    ).toBe(false);
     host.dispose();
   });
 });

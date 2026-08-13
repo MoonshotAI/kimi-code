@@ -68,7 +68,7 @@ export abstract class Feature extends Service {
     ctor: ServiceClassRecipe,
     opts?: FiberProvideOptions,
   ): FiberHandle {
-    recordContributedService(scope, id);
+    this._register(recordContributedService(scope, id));
     return this.provide(ScopeUnits(scope), {
       name: `${this.name}:${String(id)}`,
       apply(fiber: Fiber): void {
