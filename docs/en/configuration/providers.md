@@ -70,7 +70,7 @@ After publishing that file, import it with a neutral placeholder API key:
 kimi provider add https://registry.example.com/api.json --api-key YOUR_API_KEY
 ```
 
-The key is sent to the registry as `Authorization: Bearer YOUR_API_KEY` and is also saved as the API key for every provider imported from the file. The top-level `example` key identifies the registry record, while the nested `id` becomes the provider ID. Likewise, the model object key creates the Kimi Code alias `example/example-model`, and the nested model `id` is sent to the upstream API.
+The key is sent to the registry as `Authorization: Bearer YOUR_API_KEY` and is also saved as the API key for every provider imported from the file. The top-level `example` key identifies the registry record, while the nested `id` becomes the provider ID. Likewise, the model object key creates the model alias `example/example-model` (the model name users select or reference in Kimi Code), and the nested model `id` is sent to the upstream API.
 
 ### Provider fields
 

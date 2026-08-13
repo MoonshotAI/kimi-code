@@ -70,7 +70,7 @@ Kimi Code CLI 支持同时接入多家 LLM 平台——用 Kimi Code 托管服�
 kimi provider add https://registry.example.com/api.json --api-key YOUR_API_KEY
 ```
 
-该密钥会以 `Authorization: Bearer YOUR_API_KEY` 发给 registry，并保存为该文件所导入每个供应商的 API 密钥。顶层的 `example` 键用于标识 registry 记录，内部的 `id` 则成为供应商 ID。同样，模型对象的键会生成 Kimi Code 别名 `example/example-model`，内部的模型 `id` 会发送给上游 API。
+该密钥会以 `Authorization: Bearer YOUR_API_KEY` 发给 registry，并保存为该文件所导入每个供应商的 API 密钥。顶层的 `example` 键用于标识 registry 记录，内部的 `id` 则成为供应商 ID。同样，模型对象的键会生成模型别名 `example/example-model`（用户在 Kimi Code 中选择或引用模型时使用的名称），内部的模型 `id` 会发送给上游 API。
 
 ### 供应商字段
 
