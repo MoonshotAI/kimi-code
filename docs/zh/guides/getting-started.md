@@ -62,6 +62,16 @@ git clone https://github.com/MoonshotAI/kimi-code.git
 cd kimi-code
 ```
 
+源码构建支持以下操作系统和架构组合：
+
+| 操作系统 | 架构 | 构建目标 |
+| --- | --- | --- |
+| macOS | `arm64`、`x64` | `darwin-arm64`、`darwin-x64` |
+| GNU/Linux（包括 WSL） | `arm64`、`x64` | `linux-arm64`、`linux-x64` |
+| Windows | `arm64`、`x64` | `win32-arm64`、`win32-x64` |
+
+原生构建不支持其他操作系统或架构。
+
 在 macOS、Linux 或 WSL 上，使用 [nvm](https://github.com/nvm-sh/nvm) 安装 `.nvmrc` 中锁定的 Node.js 版本，再通过 Corepack 启用 pnpm：
 
 ```sh
