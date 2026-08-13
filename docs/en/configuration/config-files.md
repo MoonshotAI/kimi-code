@@ -224,9 +224,9 @@ A configured pool — an explicit `[secondary_model.models]` table or a lone `de
 [secondary_model]
 default_model = "kimi-code/kimi-for-coding-highspeed"
 [secondary_model.models]
-"kimi-code/k3" = "难题选它。擅长复杂推理、算法设计、深度调试、数学和系统性难题。"
-"kimi-code/kimi-for-coding-highspeed" = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
-"kimi-code/kimi-for-coding" = "均衡的编码主力。适合大多数功能开发和代码修改任务。"
+"kimi-code/k3" = "Pick this for hard problems. Strong at complex reasoning, algorithm design, deep debugging, math, and systematic challenges."
+"kimi-code/kimi-for-coding-highspeed" = "Fast and cheap. Good for daily refactoring, code explanation, small edits, summaries, and simple batch tasks."
+"kimi-code/kimi-for-coding" = "A balanced coding workhorse. Good for most feature development and code-change tasks."
 ```
 
 A spawn resolves the subagent's model in this order: an explicit tool-call `model` → `default_model`. The `model` parameter accepts any pool alias, or `"primary"` — the model the caller itself is running, always valid even when that model is not in the pool. When neither `default_model` nor `[secondary_model.models]` is configured, the parameter is not advertised and subagents inherit the caller's model. Binding a pool alias carries no explicit thinking effort — the subagent resolves it naturally (global `[thinking]` config → the bound model's default effort) instead of inheriting the caller's level, while `"primary"` inherits both the model and the level from the caller.
@@ -256,8 +256,8 @@ default_effort = "high"
 [secondary_model]
 default_model = "kimi-code/kimi-for-coding-highspeed"
 [secondary_model.models]
-"kimi-code/kimi-for-coding-highspeed" = "又快又便宜。适合日常重构、代码解释、小改动、总结和批量简单任务。"
-kimi-for-coding-highspeed-deep = "同一模型的高 Thinking 档位。适合较难的子任务。"
+"kimi-code/kimi-for-coding-highspeed" = "Fast and cheap. Good for daily refactoring, code explanation, small edits, summaries, and simple batch tasks."
+kimi-for-coding-highspeed-deep = "The same model at a high thinking level. Good for harder subtasks."
 ```
 
 Note that `default_effort` stays a model-level default: once a global `[thinking].effort` is set, it wins for the main agent and subagents alike, and the variant's default only applies when no global effort is set. Value and fallback rules follow the [`[models]` entry's `default_effort`](#models).

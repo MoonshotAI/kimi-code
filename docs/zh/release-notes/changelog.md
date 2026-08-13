@@ -6,6 +6,38 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.36.0（2026-08-13）
+
+### 新功能
+
+- 实验性的子 Agent 模型配置升级为模型池：现在可以在 `[secondary_model]` 中配置一组带描述的候选模型，由主 Agent 每次派生时按任务挑选。
+
+  启动前设置 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`（或实验总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=1`）即可启用。
+
+  推荐用法：
+
+  - 极简用法：在 TUI 中运行 `/secondary-model` 选择，或在 `config.toml` 中写一行 `default_model`，让所有子 Agent 默认跑同一个模型；再加 `force = true` 可彻底固定该选择，主 Agent 无法改选。
+  - 配置命名模型池，并为每个别名写一句适用场景的描述——描述会展示给主 Agent 作为挑选依据：
+
+    ```toml
+    [secondary_model]
+    default_model = "kimi-code/kimi-for-coding-highspeed"
+    [secondary_model.models]
+    "kimi-code/kimi-for-coding-highspeed" = "快速、便宜，适合日常重构、代码解释和小改动。"
+    "kimi-code/k3" = "擅长复杂推理与深度调试，难题选它。"
+    ```
+
+  详见 [子 Agent 模型池文档](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#子-agent-模型池)。
+- 新增实验性全屏 TUI 模式，设置 `KIMI_CODE_TUI_FULL_SCREEN=1` 环境变量即可启用。
+- TUI 支持渲染 LaTeX 数学公式（`$…$` 与 `$$…$$`），消息中的公式会显示为 Unicode 公式。
+
+### 修复
+
+- 修复未信任工作区可在信任确认前植入同名 `fd`/`stty` 可执行文件的风险；信任提示现在展示项目 MCP 的启动目标，并默认拒绝信任。
+- 修复在严格的 OpenAI 兼容供应商（如 DeepSeek）下，模型思考阶段打断轮次后，后续每轮请求都报 400 错误的问题。
+- 修复 API 请求失败自动重试期间按 Ctrl+C 无反应的问题。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 0.35.0（2026-08-12）
 
 ### 新功能
