@@ -50,6 +50,13 @@ export class TodoListTool implements ITodoListTool {
           : 'Updating todo list';
     return {
       description,
+      display: {
+        kind: 'todo_list',
+        items: (args.todos ?? this.todo.getTodos()).map((todo) => ({
+          title: todo.title,
+          status: todo.status,
+        })),
+      },
       approvalRule: this.name,
       execute: async () => {
         if (args.todos === undefined) {
