@@ -541,6 +541,24 @@ describe('matchInlineMath', () => {
     expect(extractMath('用 `$x$` 表示')).toEqual([]);
   });
 
+  it('ignores dollars in template literals split open by inner backticks', () => {
+    // CommonMark closes a code span at an inner backtick (escapes don't apply
+    // inside code), so `` `…`${A}/${B}`…` `` and its escaped-backtick variant
+    // both split and leak the `$…$` out of the intended span. A backtick-
+    // delimited segment whose dollars all belong to balanced `${…}`
+    // placeholders reads as template code and keeps them literal.
+    expect(extractMath('`kimiCdnContentUrl(\\`${BINARY_CDN_PATH}/${asset}\\`)`')).toEqual([]);
+    expect(extractMath('`kimiCdnContentUrl(`${BINARY_CDN_PATH}/${asset}`)`')).toEqual([]);
+    expect(extractMath('`fn(`${A}/${B}`)`')).toEqual([]);
+    expect(extractMath('用 `\\`${foo}/${bar}\\`` 拼路径')).toEqual([]);
+    // Math outside the split segments still renders.
+    expect(extractMath('`\\`${foo}/${bar}\\``，然后 $x$')).toEqual(['x']);
+    // …and prose between two spans is not template code.
+    expect(extractMath('`C:\\` then $x$ then `tail`')).toEqual(['x']);
+    expect(extractMath('路径 `C:\\` 与 $x$ 以及 `tail`')).toEqual(['x']);
+    expect(extractMath('`C:\\` then ${x}$ then `tail`')).toEqual(['{x}']);
+  });
+
   it('ignores dollar query params in bare URLs', () => {
     expect(extractMath('https://graph.microsoft.com/users?$filter=x&$select=id')).toEqual([]);
     expect(extractMath('见 https://a.b/c?$top=10&$skip=5 后计算 $x$ 的值')).toEqual(['x']);

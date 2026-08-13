@@ -486,10 +486,54 @@ export function createInlineMathMatcher(src: string): InlineMathMatcher {
     return false;
   };
 
+  // Template-literal segments exposed by a split code span: the tokenizer
+  // closes the intended span at any inner backtick (escaped or not — escapes
+  // don't apply inside code), leaking the template's `$…$` into plain text.
+  // A backtick-delimited segment whose dollars all belong to balanced `${…}`
+  // placeholders reads as template code (`fn(`${A}/${B}`)`, the escaped
+  // variant alike), so those dollars stay literal. Anything else — prose
+  // between two spans, shell paths, display backticks — falls through to the
+  // normal heuristics; this deliberately does not lex JavaScript.
+  const templateShield = new Uint8Array(n);
+  {
+    let segStart = -1; // backtick opening the current segment
+    let bareDollar = false; // a dollar outside any `${…}` placeholder
+    let sawPlaceholder = false; // an unescaped `${` opener appeared
+    let braceDepth = 0;
+    for (let j = 0; j <= n; j++) {
+      const atBacktick = j < n && src[j] === '`';
+      if (j === n || atBacktick) {
+        if (atBacktick && segStart !== -1 && sawPlaceholder && !bareDollar && braceDepth === 0) {
+          for (let k = segStart + 1; k < j; k++) templateShield[k] = 1;
+        }
+        segStart = j;
+        bareDollar = false;
+        sawPlaceholder = false;
+        braceDepth = 0;
+        continue;
+      }
+      if (segStart === -1) continue;
+      const c = src[j] as string;
+      if (c === '$') {
+        if (isEscapedAt(src, j)) {
+          // \$ is literal text — neither an opener nor a bare dollar.
+        } else if (src[j + 1] === '{') {
+          sawPlaceholder = true;
+          braceDepth++;
+          j++; // the opening brace itself
+        } else if (braceDepth === 0) {
+          bareDollar = true;
+        }
+      } else if (braceDepth > 0) {
+        if (c === '{') braceDepth++;
+        else if (c === '}') braceDepth--;
+      }
+    }
+  }
   for (let j = 0; j < n; j++) {
     backtickPrefix[j + 1] = (backtickPrefix[j] ?? 0) + (src[j] === '`' && !isEscapedAt(src, j) ? 1 : 0);
     if (src[j] === '$') {
-      if (isEscapedAt(src, j) || inBareUrl(j)) {
+      if (isEscapedAt(src, j) || inBareUrl(j) || templateShield[j] === 1) {
         flags[j] = FLAG_INVISIBLE;
       } else if (isWhitespace(src[j - 1]) || isDigit(charAtCodePoint(src, j + 1)) || isSignedAmountCloser(src, j)) {
         flags[j] = FLAG_POISON;
