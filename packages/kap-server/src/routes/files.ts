@@ -22,6 +22,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
+import { parseRangeHeader, pickHeader } from '../lib/httpRange';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
@@ -167,13 +168,10 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
         // Browsers load <video>/<audio> via byte-range requests (Range: bytes=…).
         // Without 206 Partial Content + Content-Range the media stalls at 0:00
         // and refuses to play or seek, so honor Range when the client sends one.
-        const range = parseRange(
-          readRangeHeader((req as unknown as FastifyRequestLike).headers['range']),
-          size,
-        );
-        if (range) {
+        const range = parseRangeHeader(pickHeader(req.headers, 'range'), size);
+        if (range !== null) {
           r.header('content-range', `bytes ${range.start}-${range.end}/${size}`)
-            .header('content-length', range.end - range.start + 1)
+            .header('content-length', range.length)
             .code(206);
           return r.send(file.stream(range)) as unknown as void;
         }
@@ -259,48 +257,10 @@ function readFieldNumber(field: unknown): number | undefined {
   return undefined;
 }
 
-function readRangeHeader(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
 function buildContentDisposition(name: string, mediaType?: string): string {
   const disposition = /^(image|video|audio)\//.test(mediaType ?? '') ? 'inline' : 'attachment';
   if (/^[\w. ()+[\]-]+$/.test(name)) {
     return `${disposition}; filename="${name}"`;
   }
   return disposition;
-}
-
-interface ByteRange {
-  start: number;
-  end: number;
-}
-
-/** Parse a `Range: bytes=start-end` header against the file size. Returns
- *  undefined for a missing / malformed / unsatisfiable range, in which case the
- *  caller serves the whole file with 200 (browsers accept that response). */
-function parseRange(header: string | undefined, size: number): ByteRange | undefined {
-  if (!header || size <= 0) return undefined;
-  const m = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
-  if (!m) return undefined;
-  const startStr = m[1]!;
-  const endStr = m[2]!;
-  if (startStr === '' && endStr === '') return undefined;
-
-  let start: number;
-  let end: number;
-  if (startStr === '') {
-    // Suffix range: `bytes=-N` -> the last N bytes.
-    const suffix = Number(endStr);
-    if (!Number.isFinite(suffix) || suffix <= 0) return undefined;
-    start = Math.max(size - suffix, 0);
-    end = size - 1;
-  } else {
-    start = Number(startStr);
-    if (!Number.isFinite(start) || start < 0 || start >= size) return undefined;
-    end = endStr === '' ? size - 1 : Number(endStr);
-    if (!Number.isFinite(end) || end < 0) return undefined;
-  }
-  if (start > end) return undefined;
-  return { start, end: Math.min(end, size - 1) };
 }
