@@ -34,7 +34,6 @@ import {
   drainSessionIndexMirror,
   HostProcessError,
   IHostRequestHeaders,
-  ISessionLifecycleHooks,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
   OsProcessErrors,
@@ -442,13 +441,11 @@ key = "${titleOAuthRef.key}"
       const closeGate = new Promise<void>((resolve) => {
         openCloseGate = resolve;
       });
-      tempHandle!.accessor
-        .get(ISessionLifecycleHooks)
-        .onWillCloseSession.register('test-block', async (_event, next) => {
-          markCloseStarted();
-          await closeGate;
-          await next();
-        });
+      handler.accessor.get(ISessionLifecycleService).onWillCloseSession((event) => {
+        if (event.sessionId !== 'ses_title_race') return;
+        markCloseStarted();
+        event.waitUntil(closeGate);
+      });
 
       resolveFetch(
         new Response(JSON.stringify({ title: 'Generated title' }), {

@@ -101,7 +101,7 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
-import { Emitter, type Event } from '#/_base/event';
+import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -118,7 +118,6 @@ import {
 } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
-import { createHooks } from '#/hooks';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -130,11 +129,6 @@ import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/se
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { installSessionSeedAdapters } from '#/session/sessionSeed/sessionSeedAdapters';
-import {
-  ISessionLifecycleHooks,
-  sessionLifecycleHooksSeed,
-  type SessionLifecycleHookSlots,
-} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { drainSessionMetadataWrites, toEpochMs } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -183,6 +177,8 @@ type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly sessionId: string;
 };
 
+const NO_ABORT = new AbortController().signal;
+
 // NOTE: stays Disposable — its own 'get' and 'config' collide with the Fiber
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
@@ -192,8 +188,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   );
   readonly onWillCreateSession: Event<SessionWillCreateEvent> =
     this._onWillCreateSession.event;
-  private readonly _onDidCreateSession = this._register(new Emitter<SessionCreatedEvent>());
-  readonly onDidCreateSession: Event<SessionCreatedEvent> = this._onDidCreateSession.event;
+  private readonly _onDidCreateSession = this._register(
+    new AsyncEmitter<SessionCreatedEvent & IWaitUntil>(),
+  );
+  readonly onDidCreateSession: Event<SessionCreatedEvent & IWaitUntil> =
+    this._onDidCreateSession.event;
+  private readonly _onWillCloseSession = this._register(
+    new AsyncEmitter<SessionWillCloseEvent & IWaitUntil>(),
+  );
+  readonly onWillCloseSession: Event<SessionWillCloseEvent & IWaitUntil> =
+    this._onWillCloseSession.event;
   private readonly _onDidCloseSession = this._register(new Emitter<SessionClosedEvent>());
   readonly onDidCloseSession: Event<SessionClosedEvent> = this._onDidCloseSession.event;
   private readonly _onDidArchiveSession = this._register(new Emitter<SessionArchivedEvent>());
@@ -295,10 +299,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
-    const hooks = createHooks<SessionLifecycleHookSlots, keyof SessionLifecycleHookSlots>([
-      'onDidCreateSession',
-      'onWillCloseSession',
-    ]);
     await this.hostEnv.ready;
     const handle = createScopedChildHandle(
       this.instantiation,
@@ -307,7 +307,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       {
         seeds: [
           ...sessionContextSeed(ctx),
-          ...sessionLifecycleHooksSeed(hooks),
           [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
           ...sessionAgentProfileCatalogSeed({
             _serviceBrand: undefined,
@@ -364,10 +363,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
-    await event.handle.accessor
-      .get(ISessionLifecycleHooks)
-      .onDidCreateSession.run({ source: event.source });
-    this._onDidCreateSession.fire(event);
+    await this._onDidCreateSession.fireAsync(event, NO_ABORT);
     event.handle.accessor
       .get(ITelemetryService)
       .track2('session_started', { resumed: event.source === 'resume' });
@@ -491,9 +487,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async announceWillClose(event: SessionWillCloseEvent): Promise<void> {
-    await event.handle.accessor
-      .get(ISessionLifecycleHooks)
-      .onWillCloseSession.run({ reason: event.reason });
+    await this._onWillCloseSession.fireAsync(event, NO_ABORT);
   }
 
   private async drainAgents(handle: ISessionScopeHandle): Promise<void> {

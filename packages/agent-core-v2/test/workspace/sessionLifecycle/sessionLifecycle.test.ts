@@ -15,7 +15,6 @@ import {
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import type { Hooks } from '#/hooks';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
@@ -59,10 +58,6 @@ import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceT
 import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
-import {
-  ISessionLifecycleHooks,
-  type SessionLifecycleHookSlots,
-} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import {
   ISessionMetadata,
@@ -521,19 +516,19 @@ class RecordingSessionExternalHooksService
 
   constructor(
     @ISessionContext private readonly context: ISessionContext,
-    @ISessionLifecycleHooks hooks: Hooks<SessionLifecycleHookSlots>,
+    @ISessionLifecycleService lifecycle: ISessionLifecycleService,
   ) {
     super();
     this._register(
-      hooks.onDidCreateSession.register('test', async (event, next) => {
+      lifecycle.onDidCreateSession((event) => {
+        if (event.sessionId !== this.context.sessionId) return;
         recordedSessionHookEvents.push(`create:${event.source}:${this.context.sessionId}`);
-        await next();
       }),
     );
     this._register(
-      hooks.onWillCloseSession.register('test', async (event, next) => {
+      lifecycle.onWillCloseSession((event) => {
+        if (event.sessionId !== this.context.sessionId) return;
         recordedSessionHookEvents.push(`close:${event.reason}:${this.context.sessionId}`);
-        await next();
       }),
     );
   }

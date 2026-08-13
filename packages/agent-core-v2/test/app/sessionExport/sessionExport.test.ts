@@ -918,6 +918,7 @@ function registerSessionExportServices(
                 _serviceBrand: undefined,
                 onWillCreateSession: noopEvent,
                 onDidCreateSession: noopEvent,
+                onWillCloseSession: noopEvent,
                 onDidCloseSession: noopEvent,
                 onDidArchiveSession: noopEvent,
                 onDidForkSession: noopEvent,
