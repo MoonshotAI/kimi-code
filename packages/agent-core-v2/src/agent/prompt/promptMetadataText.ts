@@ -77,8 +77,9 @@ function isPathLike(match: string, following: string): boolean {
   const directories = segments.slice(0, -1);
   const base = segments[segments.length - 1];
   if (!directories.every(isWordShapedSegment)) return false;
-  if (isWordShapedSegment(base)) return true;
-  return isFileNameStem(base, following);
+  if (isFileNameStem(base, following)) return true;
+  if (!isWordShapedSegment(base)) return false;
+  return segments.length >= 3 && segments.every((segment) => segment.length <= 24);
 }
 
 function isWordShapedSegment(segment: string): boolean {

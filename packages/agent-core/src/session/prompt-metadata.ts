@@ -118,18 +118,20 @@ function isFileNameStem(stem: string, following: string): boolean {
 // Every directory segment must stay below the 40-char token threshold and
 // look like a human-named word (lowercase, Capitalized, or ALL-CAPS like
 // `README`); the basename may additionally be a long slug passing the
-// file-name rule above. A base64/base64url token pasted with slashes has
-// mixed-case random segments, and a token-length segment like
-// `<44 lowercase chars>/refact-...-scopes.ts` exceeds the threshold — both
-// fail closed.
+// file-name rule above. An extensionless match needs stronger context — at
+// least three segments, each no longer than a natural directory name — so
+// slash-joined token material like `<32 lowercase chars>/<32 lowercase
+// chars>` fails closed, as do mixed-case random segments and token-length
+// basenames (e.g. `/tmp/<48-char token>`).
 function isPathLike(match: string, following: string): boolean {
   if (!match.includes('/')) return false;
   const segments = match.split('/');
   const directories = segments.slice(0, -1);
   const base = segments[segments.length - 1];
   if (!directories.every(isWordShapedSegment)) return false;
-  if (isWordShapedSegment(base)) return true;
-  return isFileNameStem(base, following);
+  if (isFileNameStem(base, following)) return true;
+  if (!isWordShapedSegment(base)) return false;
+  return segments.length >= 3 && segments.every((segment) => segment.length <= 24);
 }
 
 function isWordShapedSegment(segment: string): boolean {
