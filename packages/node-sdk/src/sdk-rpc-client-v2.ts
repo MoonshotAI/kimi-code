@@ -1374,25 +1374,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       } else if ((await this.engineAccessor.get(ISessionIndex).get(sessionId)) === undefined) {
         throw SDKRpcClientV2.sessionNotFound(sessionId);
       }
-    } else if ((await this.engineAccessor.get(ISessionIndex).get(sessionId)) === undefined) {
-      throw SDKRpcClientV2.sessionNotFound(sessionId);
-    }
-    await this.configReady;
-    await this.klient.global.config.reload();
-    await this.klient.global.plugins.reload();
-    await this.refreshPluginSessionStarts(sessionId);
-    if (live !== undefined) {
-      await closeSessionById(this.engineAccessor, sessionId);
-    }
-    // Same print-steer reset as closeSession: v1's reload rebuilds the
-    // Session, and with it the counters.
-    this.printSteerStates.delete(sessionId);
-    const handle = await resumeSessionById(this.engineAccessor, sessionId);
-    if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
-    const main = handle.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
-    await main?.accessor.get(IAgentPluginService).refreshSessionStart();
-    this.wireSession(handle);
-    return this.resumedSessionSummary(handle);
+      await this.configReady;
+      await this.klient.global.config.reload();
+      await this.klient.global.plugins.reload();
+      await this.refreshPluginSessionStarts(sessionId);
+      if (live !== undefined) {
+        await closeSessionById(this.engineAccessor, sessionId);
+      }
+      // Same print-steer reset as closeSession: v1's reload rebuilds the
+      // Session, and with it the counters.
+      this.printSteerStates.delete(sessionId);
+      const handle = await resumeSessionById(this.engineAccessor, sessionId);
+      if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
+      const main = handle.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+      await main?.accessor.get(IAgentPluginService).refreshSessionStart();
+      this.wireSession(handle);
+      return this.resumedSessionSummary(handle);
+    });
   }
 
   private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {

@@ -187,7 +187,10 @@ export class SessionMetadata extends Service implements ISessionMetadata {
 
   private enqueueUpdate<T>(work: () => Promise<T>): Promise<T> {
     const run = this.updateQueue.then(work, work);
-    const tracked = run.catch(() => {});
+    const tracked: Promise<void> = run.then(
+      () => undefined,
+      () => undefined,
+    );
     this.updateQueue = tracked;
     pendingWrites.add(tracked);
     void tracked.finally(() => pendingWrites.delete(tracked));
