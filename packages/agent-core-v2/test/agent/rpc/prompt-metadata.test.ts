@@ -117,6 +117,12 @@ describe('prompt metadata sanitization', () => {
     expect(sanitize(`cat /tmp/${'Ab1c'.repeat(12)}`)).toBe('cat /[redacted]');
     expect(sanitize(`token ${'Ab1c'.repeat(10)}/${'Z9x8'.repeat(10)}`)).toBe('token [redacted]');
     expect(sanitize(`token ${'a'.repeat(32)}/${'b'.repeat(32)}`)).toBe('token [redacted]');
+    expect(sanitize(`token ${'a'.repeat(20)}/${'b'.repeat(20)}/${'c'.repeat(20)}`)).toBe(
+      'token [redacted]',
+    );
+    expect(sanitize('open ~/Projects/kimi-code-workspace/external-hooks-feature')).toBe(
+      'open ~/Projects/kimi-code-workspace/external-hooks-feature',
+    );
     expect(sanitize(`secret /${'Ab1c'.repeat(8)}/${'Z9x8'.repeat(8)}`)).toBe('secret /[redacted]');
   });
 

@@ -73,7 +73,7 @@ function sanitizeAndTruncatePromptText(text: string, maxLength: number): string 
       /\b[A-Za-z0-9][A-Za-z0-9+/=_-]{39,}\b/g,
       (match: string, offset: number, source: string) => {
         const following = source.slice(offset + match.length);
-        return isFileNameStem(match, following) || isPathLike(match, following)
+        return isFileNameStem(match, following) || isPathLike(match, offset, source)
           ? match
           : '[redacted]';
       },
@@ -127,24 +127,34 @@ function safeSuffixFollows(following: string): boolean {
 // file-name rule above, but below the token threshold it cannot be a
 // catch-all secret on its own, so normal code-file casing (camelCase /
 // PascalCase / kebab / snake) with a safe suffix stays readable. An
-// extensionless match needs stronger context — at least three segments, each
-// no longer than a natural directory name — so slash-joined token material
-// like `<32 lowercase chars>/<32 lowercase chars>` fails closed, as do
-// mixed-case random segments and token-length basenames (e.g.
+// extensionless match needs stronger local-path context — rooted at a
+// well-known filesystem root (or `~/`) with at least three segments, each no
+// longer than a natural directory name — so slash-joined token material like
+// `<20 lowercase chars>/<20 lowercase chars>/<20 lowercase chars>` fails
+// closed, as do mixed-case random segments and token-length basenames (e.g.
 // `/tmp/<48-char token>`).
-function isPathLike(match: string, following: string): boolean {
+function isPathLike(match: string, offset: number, source: string): boolean {
   if (!match.includes('/')) return false;
   const segments = match.split('/');
   const directories = segments.slice(0, -1);
   const base = segments[segments.length - 1];
   if (!directories.every(isWordShapedSegment)) return false;
+  const following = source.slice(offset + match.length);
   if (isFileNameStem(base, following)) return true;
   if (base.length < 40 && /^[A-Za-z][A-Za-z0-9_-]*$/.test(base) && safeSuffixFollows(following)) {
     return true;
   }
   if (!isWordShapedSegment(base)) return false;
-  return segments.length >= 3 && segments.every((segment) => segment.length <= 24);
+  if (segments.length < 3 || !segments.every((segment) => segment.length <= 24)) return false;
+  if (offset === 0 || source[offset - 1] !== '/') return false;
+  return PATH_ROOT_SEGMENTS.has(segments[0].toLowerCase()) || source[offset - 2] === '~';
 }
+
+// Well-known filesystem roots that anchor an extensionless absolute path.
+const PATH_ROOT_SEGMENTS = new Set([
+  'users', 'home', 'tmp', 'var', 'opt', 'usr', 'etc', 'root', 'mnt', 'media',
+  'volumes', 'data', 'srv',
+]);
 
 function isWordShapedSegment(segment: string): boolean {
   return segment.length < 40 && /^([A-Z]?[a-z0-9_-]*|[A-Z0-9_-]+)$/.test(segment);

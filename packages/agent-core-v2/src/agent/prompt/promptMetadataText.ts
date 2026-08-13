@@ -43,7 +43,7 @@ export function promptMetadataTextFromText(text: string): string | undefined {
       /\b[A-Za-z0-9][A-Za-z0-9+/=_-]{39,}\b/g,
       (match: string, offset: number, source: string) => {
         const following = source.slice(offset + match.length);
-        return isFileNameStem(match, following) || isPathLike(match, following)
+        return isFileNameStem(match, following) || isPathLike(match, offset, source)
           ? match
           : '[redacted]';
       },
@@ -75,19 +75,27 @@ function safeSuffixFollows(following: string): boolean {
   return SAFE_FILENAME_EXTENSIONS.has(extension.toLowerCase());
 }
 
-function isPathLike(match: string, following: string): boolean {
+function isPathLike(match: string, offset: number, source: string): boolean {
   if (!match.includes('/')) return false;
   const segments = match.split('/');
   const directories = segments.slice(0, -1);
   const base = segments[segments.length - 1];
   if (!directories.every(isWordShapedSegment)) return false;
+  const following = source.slice(offset + match.length);
   if (isFileNameStem(base, following)) return true;
   if (base.length < 40 && /^[A-Za-z][A-Za-z0-9_-]*$/.test(base) && safeSuffixFollows(following)) {
     return true;
   }
   if (!isWordShapedSegment(base)) return false;
-  return segments.length >= 3 && segments.every((segment) => segment.length <= 24);
+  if (segments.length < 3 || !segments.every((segment) => segment.length <= 24)) return false;
+  if (offset === 0 || source[offset - 1] !== '/') return false;
+  return PATH_ROOT_SEGMENTS.has(segments[0].toLowerCase()) || source[offset - 2] === '~';
 }
+
+const PATH_ROOT_SEGMENTS = new Set([
+  'users', 'home', 'tmp', 'var', 'opt', 'usr', 'etc', 'root', 'mnt', 'media',
+  'volumes', 'data', 'srv',
+]);
 
 function isWordShapedSegment(segment: string): boolean {
   return segment.length < 40 && /^([A-Z]?[a-z0-9_-]*|[A-Z0-9_-]+)$/.test(segment);
