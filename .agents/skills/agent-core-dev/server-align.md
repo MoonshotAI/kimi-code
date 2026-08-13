@@ -165,7 +165,7 @@ const route = defineRoute(
 app.post(route.path, route.options, route.handler);
 ```
 
-**For `/api/v2` (native):** add a `resource:action` entry to `actionMap` ([edge-exposure.md](edge-exposure.md) §3). If the method fails the direct-exposure rules (returns a handle / stream / bytes, takes a live object), wrap it in a wire-shaped facade first (`IAgentRPCService` / `ISessionRPCService`) and map to the facade — as `prompts:*` does via `IAgentRPCService`.
+**For `/api/v2` (native):** add a `resource:action` entry to `actionMap` ([edge-exposure.md](edge-exposure.md) §3). If the method fails the direct-exposure rules (returns a handle / stream / bytes, takes a live object), add a wire-safe orchestration method to the owning domain Service first — as `prompts:submit` maps to `IAgentPromptService.submit`, which settles `{turn_id}` engine-side instead of returning the live `PromptHandle`.
 
 ### 5. Map errors
 
@@ -218,7 +218,7 @@ This is the reference alignment (commits `feat(server-v2): port v1 /sessions/:si
 
 **The split.**
 
-- `/api/v2` keeps the native shape — `prompts:submit` / `steer` / `undo` / `clear` / `cancel` map to `IAgentRPCService` (a wire facade over the v2 turn driver) in `actionMap`. The native `IAgentPromptService` is untouched.
+- `/api/v2` keeps the native shape — `prompts:submit` / `steer` / `undo` / `clear` / `cancel` map to the domain Services (`IAgentPromptService.submit` / `submitSteer`, `IAgentConversationUndoService.undo`, `IAgentLoopService.cancelFromUser`) in `actionMap`.
 - `/api/v1` gets an `AgentPromptLegacyService` (`prompt/`, `LifecycleScope.Agent`) that re-implements the v1 scheduler — queue, `prompt_id`, steer/abort, auto-start-next — **on top of** the native `IAgentPromptService`. The `/api/v1` routes consume the LegacyService.
 
 **The schema.** Both surfaces import `promptSubmissionSchema` / `promptSubmitResultSchema` / `promptListResponseSchema` / `promptSteerRequestSchema` / `promptSteerResultSchema` / `promptAbortResponseSchema` from the shared v1 wire schemas (see `packages/kap-server/src/protocol`). The `/api/v1` and `/api/v2` routes are therefore compatible with released clients by construction; the LegacyService projects v2 turn results back into those protocol shapes.

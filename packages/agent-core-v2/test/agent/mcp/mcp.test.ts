@@ -276,7 +276,7 @@ describe('AgentMcpService', () => {
     const loop = ix.get(IAgentLoopService);
     let settled = false;
     const step = loop.hooks.onWillBeginStep
-      .run({ turnId: 1, step: 1, signal: new AbortController().signal })
+      .run({ turnId: 1, step: 1, firstStepOfTurn: true, signal: new AbortController().signal })
       .then(() => {
         settled = true;
       });

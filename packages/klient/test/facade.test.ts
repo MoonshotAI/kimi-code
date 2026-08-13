@@ -222,7 +222,7 @@ describe('session skills routing', () => {
     expect(seen).toEqual(['workspace']);
   });
 
-  it('activateSkill routes to agentRPCService with the agent scope', async () => {
+  it('activateSkill routes to agentSkillService with the agent scope', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
     const agent = klient.session('s1').agent('main');
@@ -233,10 +233,68 @@ describe('session skills routing', () => {
     });
     expect(channel.calls[0]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
-      service: 'agentRPCService',
-      method: 'activateSkill',
+      service: 'agentSkillService',
+      method: 'activate',
       args: [{ name: 'review', args: 'src/app.ts' }],
     });
+  });
+
+  it('turn-driving calls route to their domain services with the agent scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+    const scope = { sessionId: 's1', agentId: 'main' };
+
+    channel.results.set('agentPromptService.submit', { turn_id: 1 });
+    channel.results.set('agentPromptService.submitSteer', { turn_id: 1 });
+    channel.results.set('agentCommandService.list', []);
+    await agent.prompt({ input: [{ type: 'text', text: 'hi' }] });
+    await agent.steer({ input: [{ type: 'text', text: 'steer' }] });
+    await agent.cancel({ turnId: 2 });
+    await agent.cancel();
+    await agent.setPermission('yolo');
+    await agent.listCommands();
+    await agent.runCommand({ name: 'cmd', args: 'a b' });
+    await agent.runCommand({ name: 'plain' });
+
+    expect(channel.calls).toEqual([
+      {
+        scope,
+        service: 'agentPromptService',
+        method: 'submit',
+        args: [{ input: [{ type: 'text', text: 'hi' }] }],
+      },
+      {
+        scope,
+        service: 'agentPromptService',
+        method: 'submitSteer',
+        args: [{ input: [{ type: 'text', text: 'steer' }] }],
+      },
+      { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [2] },
+      { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [] },
+      { scope, service: 'agentPermissionModeService', method: 'setModeAndBroadcast', args: ['yolo'] },
+      { scope, service: 'agentCommandService', method: 'list', args: [] },
+      { scope, service: 'agentCommandService', method: 'run', args: ['cmd', 'a b'] },
+      { scope, service: 'agentCommandService', method: 'run', args: ['plain'] },
+    ]);
+  });
+
+  it('getContext merges the contextMemory and tokenCounting reads', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+    const scope = { sessionId: 's1', agentId: 'main' };
+
+    channel.results.set('agentContextMemoryService.get', [{ role: 'user' }]);
+    channel.results.set('agentTokenCountingService.statusSize', 42);
+    await expect(agent.getContext()).resolves.toEqual({
+      history: [{ role: 'user' }],
+      tokenCount: 42,
+    });
+    expect(channel.calls).toEqual([
+      { scope, service: 'agentContextMemoryService', method: 'get', args: [] },
+      { scope, service: 'agentTokenCountingService', method: 'statusSize', args: [] },
+    ]);
   });
 });
 
@@ -455,6 +513,37 @@ describe('event hub', () => {
     expect(channel.subscriptions[0]?.dispose).not.toHaveBeenCalled();
     subB.dispose();
     expect(channel.subscriptions[0]?.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('delivers session.metaUpdated when the patch carries no lastPrompt', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const seen: unknown[] = [];
+    const errors: Error[] = [];
+    klient.events.onError((error) => {
+      errors.push(error);
+    });
+
+    klient.events.on('session.metaUpdated', (event) => seen.push(event));
+    channel.emit(0, {
+      type: 'session.meta.updated',
+      payload: {
+        agentId: 'main',
+        sessionId: 's1',
+        title: 'generated title',
+        patch: { title: 'generated title', isCustomTitle: false },
+      },
+    });
+    await tick();
+    expect(seen).toEqual([
+      {
+        agentId: 'main',
+        sessionId: 's1',
+        title: 'generated title',
+        patch: { title: 'generated title', isCustomTitle: false },
+      },
+    ]);
+    expect(errors).toHaveLength(0);
   });
 
   it('disposes the emitter subscription when the last listener detaches', async () => {

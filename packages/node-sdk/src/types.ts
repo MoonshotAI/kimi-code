@@ -86,10 +86,19 @@ export type PermissionMode = 'yolo' | 'manual' | 'auto';
  * engine; the v1 engine has no workspace-trust concept and reports
  * `{ trusted: true, gatedMcpServers: [] }`.
  */
+export interface WorkspaceTrustMcpServerInfo {
+  readonly name: string;
+  readonly transport: 'stdio' | 'http' | 'sse';
+  readonly command?: string;
+  readonly args?: readonly string[];
+  readonly cwd?: string;
+  readonly url?: string;
+}
+
 export interface WorkspaceTrustInfo {
   readonly trusted: boolean;
-  /** Names of project-level MCP servers that trusting the workspace would enable. */
-  readonly gatedMcpServers: readonly string[];
+  /** Safe descriptions of project-level MCP servers that trusting would enable. */
+  readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
 }
 
 export interface CreateGoalInput {
@@ -149,6 +158,14 @@ export interface CreateSessionOptions {
 export interface RenameSessionInput {
   readonly id: string;
   readonly title: string;
+}
+
+export interface GenerateSessionTitleInput {
+  readonly id: string;
+  /** Regenerate even when the session already has a generated/custom title. */
+  readonly force?: boolean;
+  /** Conversation excerpt to generate from (default `user_prompts`). */
+  readonly source?: 'user_prompts' | 'first_turn' | 'digest';
 }
 
 export interface ResumeSessionInput {
@@ -218,6 +235,20 @@ export interface ExportSessionResult {
 export interface ListSessionsOptions {
   readonly workDir?: string;
   readonly sessionId?: string;
+  /**
+   * Maximum number of summaries in one page. Only consulted by
+   * `listSessionsPage`; plain `listSessions` always returns the whole
+   * filtered set.
+   */
+  readonly limit?: number;
+  /** Keyset cursor: return the page strictly older than this session id. */
+  readonly before?: string;
+}
+
+export interface SessionSummaryPage {
+  readonly items: readonly SessionSummary[];
+  /** Pass as `before` for the next older page; absent when the listing is exhausted. */
+  readonly nextCursor?: string;
 }
 
 export interface GetConfigOptions {
@@ -277,9 +308,20 @@ export interface SessionStatus {
   readonly usage?: SessionUsage;
 }
 
+/**
+ * The engine's canonical title state: `replaceable` (a prompt-derived easy
+ * title auto generation may overwrite), `generated` (an auto-generated title
+ * already landed), `custom` (a user-set title that is never overwritten).
+ * Only populated by the v2 engine on live / resumed sessions (read off the
+ * metadata document); v1 backends leave it undefined, and the v2 list path
+ * does not project it.
+ */
+export type SessionTitleKind = 'replaceable' | 'generated' | 'custom';
+
 export interface SessionSummary {
   readonly id: string;
   readonly title?: string | undefined;
+  readonly titleKind?: SessionTitleKind;
   readonly lastPrompt?: string;
   readonly workDir: string;
   readonly sessionDir: string;

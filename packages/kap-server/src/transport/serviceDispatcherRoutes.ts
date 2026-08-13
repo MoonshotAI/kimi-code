@@ -3,8 +3,9 @@
  *
  * Mounts the reflection dispatcher under `basePath`: the routes mirror the
  * scope tree; all share one handler. `:service` is a decorator id (channel
- * name) resolved against the scoped DI registry; `:method` is invoked by
- * reflection. Reads use `GET`, writes use `POST`.
+ * name) resolved against the scoped DI registry, then the Feature
+ * contributed-service table (runtime-contributed Services); `:method` is
+ * invoked by reflection. Reads use `GET`, writes use `POST`.
  *
  *   GET|POST {basePath}/:service/:method
  *   GET|POST {basePath}/workspace/:workspace_id/:service/:method
@@ -73,7 +74,7 @@ export function registerServiceDispatcherRoutes(
   basePath: string,
   opts: ServiceDispatcherRouteOptions = {},
 ): void {
-  const lookup = opts.lookup ?? resolveAnyScopedServiceId;
+  const lookup = opts.lookup ?? ((name) => resolveAnyScopedServiceId(core, name));
   const scopeRoutes: { path: string; scopeKind: ScopeKind }[] = [
     { path: `${basePath}/:service/:method`, scopeKind: 'core' },
     { path: `${basePath}/workspace/:workspace_id/:service/:method`, scopeKind: 'workspace' },

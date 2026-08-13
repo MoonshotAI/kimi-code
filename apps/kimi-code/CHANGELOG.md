@@ -1,5 +1,83 @@
 # @moonshot-ai/kimi-code
 
+## 0.36.0
+
+### Minor Changes
+
+- [#2830](https://github.com/MoonshotAI/kimi-code/pull/2830) [`ec84a6f`](https://github.com/MoonshotAI/kimi-code/commit/ec84a6f9a3eb35e1118f8a327f7a11b3978a899c) Thanks [@liruifengv](https://github.com/liruifengv)! - Add an experimental fullscreen TUI mode. Set the `KIMI_CODE_TUI_FULL_SCREEN=1` environment variable to enable it.
+
+- [#2700](https://github.com/MoonshotAI/kimi-code/pull/2700) [`c9bfe8b`](https://github.com/MoonshotAI/kimi-code/commit/c9bfe8b2c8314ba4ef8806fb3b92ac654c1d1860) Thanks [@7Sageer](https://github.com/7Sageer)! - Add a configurable model pool for spawned subagents behind the `secondary-model` experiment (`KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`, or the master flag): with the experiment on, the `/secondary-model` command or the `[secondary_model]` section in config.toml sets a default model or a small named pool that the main agent picks from per spawn. A lone legacy `model` key in the same section keeps working as the fallback default.
+
+### Patch Changes
+
+- [#2830](https://github.com/MoonshotAI/kimi-code/pull/2830) [`ec84a6f`](https://github.com/MoonshotAI/kimi-code/commit/ec84a6f9a3eb35e1118f8a327f7a11b3978a899c) Thanks [@liruifengv](https://github.com/liruifengv)! - Render LaTeX math formulas (`$…$` / `$$…$$`) in messages as Unicode formulas.
+
+- [#2855](https://github.com/MoonshotAI/kimi-code/pull/2855) [`30f56a2`](https://github.com/MoonshotAI/kimi-code/commit/30f56a2d2da332cbf0c36a13cbe01aac5d319c7b) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix Ctrl+C being ignored during automatic retries of failed API requests.
+
+- [#2819](https://github.com/MoonshotAI/kimi-code/pull/2819) [`fe3cdae`](https://github.com/MoonshotAI/kimi-code/commit/fe3cdae5f8ab40be71b65eff32319eb94a53c17d) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix sessions failing with a provider 400 error on every follow-up request after a turn is interrupted while the model is still thinking, on strict OpenAI-compatible providers.
+
+- [#2847](https://github.com/MoonshotAI/kimi-code/pull/2847) [`3b0936d`](https://github.com/MoonshotAI/kimi-code/commit/3b0936d8e025c5a944759c40593d5f21bfb3e621) Thanks [@sailist](https://github.com/sailist)! - Fix plain Markdown files (such as CHANGELOG.md) in an installed plugin's root directory being misidentified as skills when the plugin relies on the root SKILL.md fallback.
+
+- [#2843](https://github.com/MoonshotAI/kimi-code/pull/2843) [`c212ae9`](https://github.com/MoonshotAI/kimi-code/commit/c212ae9715371c0d7939c15e664acbe0d7cf7fc3) Thanks [@sailist](https://github.com/sailist)! - Show project MCP launch targets in the workspace trust prompt, default to declining trust, and resolve fd and stty binaries to absolute paths so untrusted workspaces cannot plant bare-name executables before confirmation.
+
+  `@moonshot-ai/kimi-code-sdk` contract change: `WorkspaceTrustInfo.gatedMcpServers` now carries structured `WorkspaceTrustMcpServerInfo` records (`name`, `transport`, and `command`/`args`/`cwd` or `url`) instead of plain strings, so SDK consumers rendering a trust prompt can show the full launch target.
+
+- [#2856](https://github.com/MoonshotAI/kimi-code/pull/2856) [`504e629`](https://github.com/MoonshotAI/kimi-code/commit/504e6292ede448367d1341751f9f98b24cc2994f) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Refresh active MCP connections after OAuth credentials are added or reset.
+
+## 0.35.0
+
+### Minor Changes
+
+- [#2816](https://github.com/MoonshotAI/kimi-code/pull/2816) [`ad12ad8`](https://github.com/MoonshotAI/kimi-code/commit/ad12ad8a140d24051d93ec98a4a6921ab33723ff) Thanks [@liruifengv](https://github.com/liruifengv)! - Show the live work progress of background subagents in the `/tasks` panel.
+
+- [#2840](https://github.com/MoonshotAI/kimi-code/pull/2840) [`68ce3c7`](https://github.com/MoonshotAI/kimi-code/commit/68ce3c7a0ccffe32b51d4fdb57cdeced3931ddcc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Image and video tool results now open in a fullscreen preview on click, with zoom support for images.
+
+### Patch Changes
+
+- [#2731](https://github.com/MoonshotAI/kimi-code/pull/2731) [`437a1b8`](https://github.com/MoonshotAI/kimi-code/commit/437a1b8ba1b7e0f6662bdadc669564fdc58c3f5a) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Detect MCP servers that require OAuth without needing `auth: "oauth"` in the config.
+
+- [#2840](https://github.com/MoonshotAI/kimi-code/pull/2840) [`68ce3c7`](https://github.com/MoonshotAI/kimi-code/commit/68ce3c7a0ccffe32b51d4fdb57cdeced3931ddcc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Reduce UI stutter while AI responses stream in long sessions.
+
+- [#2699](https://github.com/MoonshotAI/kimi-code/pull/2699) [`c0b61c6`](https://github.com/MoonshotAI/kimi-code/commit/c0b61c6e558521fd003de786cad150a3aeb01667) Thanks [@sailist](https://github.com/sailist)! - Fix the token counts reported after compaction reading far below the real context size; they now match the numbers shown while the session runs.
+
+- [#2810](https://github.com/MoonshotAI/kimi-code/pull/2810) [`64abebc`](https://github.com/MoonshotAI/kimi-code/commit/64abebc95a13b066fefc4f96b062824ea5ec996b) Thanks [@huangzheng2016](https://github.com/huangzheng2016)! - Fix multi-select "Other" options so they can be deselected after being committed.
+
+- [#2701](https://github.com/MoonshotAI/kimi-code/pull/2701) [`7cd6476`](https://github.com/MoonshotAI/kimi-code/commit/7cd64766c8eeff30f3de4bd6467870555d9440db) Thanks [@sailist](https://github.com/sailist)! - Fix multi-second freezes at startup or while idle when a large search index loads, replays, or rebuilds.
+
+- [#2814](https://github.com/MoonshotAI/kimi-code/pull/2814) [`158c81d`](https://github.com/MoonshotAI/kimi-code/commit/158c81d7055587d582ca424f9b913426fca42559) Thanks [@huangzheng2016](https://github.com/huangzheng2016)! - Show a clear error message on Windows when Git for Windows is not installed, instead of exiting silently.
+
+- [#2838](https://github.com/MoonshotAI/kimi-code/pull/2838) [`e5be391`](https://github.com/MoonshotAI/kimi-code/commit/e5be39164b1b47d0b721aad49c41fdf4ec61a7c5) Thanks [@sailist](https://github.com/sailist)! - Close a Windows binary-planting gap in the footer git status: the git and gh commands used for the branch/dirty badge are now resolved to an absolute PATH location, so an executable planted in an untrusted workspace can no longer run before the workspace trust prompt.
+
+- [#2840](https://github.com/MoonshotAI/kimi-code/pull/2840) [`68ce3c7`](https://github.com/MoonshotAI/kimi-code/commit/68ce3c7a0ccffe32b51d4fdb57cdeced3931ddcc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Add hover tooltips to icon-only buttons.
+
+- [#2840](https://github.com/MoonshotAI/kimi-code/pull/2840) [`68ce3c7`](https://github.com/MoonshotAI/kimi-code/commit/68ce3c7a0ccffe32b51d4fdb57cdeced3931ddcc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Add breathing room around the fullscreen image preview so images no longer touch the screen edges.
+
+- [#2740](https://github.com/MoonshotAI/kimi-code/pull/2740) [`01c74e9`](https://github.com/MoonshotAI/kimi-code/commit/01c74e9372fcbbbe99614e859b53b505ed1664a8) Thanks [@oocz](https://github.com/oocz)! - Fix subagent tool changes in one session leaking into builtin profiles in later sessions.
+
+- [#2840](https://github.com/MoonshotAI/kimi-code/pull/2840) [`68ce3c7`](https://github.com/MoonshotAI/kimi-code/commit/68ce3c7a0ccffe32b51d4fdb57cdeced3931ddcc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Unify the fullscreen image and video previews with a shared circular close button and the same background overlay.
+
+- [#2826](https://github.com/MoonshotAI/kimi-code/pull/2826) [`3c9e3b2`](https://github.com/MoonshotAI/kimi-code/commit/3c9e3b297cf5286c761159c1b4d642c478fd394d) Thanks [@liruifengv](https://github.com/liruifengv)! - Page the /sessions picker list so it opens fast with large session counts.
+
+- [#2840](https://github.com/MoonshotAI/kimi-code/pull/2840) [`68ce3c7`](https://github.com/MoonshotAI/kimi-code/commit/68ce3c7a0ccffe32b51d4fdb57cdeced3931ddcc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Widen the sidebar's minimum draggable width.
+
+- [#2723](https://github.com/MoonshotAI/kimi-code/pull/2723) [`e702817`](https://github.com/MoonshotAI/kimi-code/commit/e7028171244789aff58f93da80d477ce3afc939a) Thanks [@sailist](https://github.com/sailist)! - Fix a spurious "Failed to steer" error when sending a message while a goal run is between turns.
+
+- [#2840](https://github.com/MoonshotAI/kimi-code/pull/2840) [`68ce3c7`](https://github.com/MoonshotAI/kimi-code/commit/68ce3c7a0ccffe32b51d4fdb57cdeced3931ddcc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Reduce memory and CPU usage when the app stays open for a long time.
+
+- [#2825](https://github.com/MoonshotAI/kimi-code/pull/2825) [`df8ce73`](https://github.com/MoonshotAI/kimi-code/commit/df8ce73e45e3c473cb58e69311c1213e327f0c01) Thanks [@liruifengv](https://github.com/liruifengv)! - Show retry progress in the loading indicator when a model request fails and is retried, with the attempt count and a detail line for the provider error.
+
+- [#2840](https://github.com/MoonshotAI/kimi-code/pull/2840) [`68ce3c7`](https://github.com/MoonshotAI/kimi-code/commit/68ce3c7a0ccffe32b51d4fdb57cdeced3931ddcc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Reduce memory usage and stutter during long sessions.
+
+- [#2837](https://github.com/MoonshotAI/kimi-code/pull/2837) [`101c4d1`](https://github.com/MoonshotAI/kimi-code/commit/101c4d199746bf2ed4f26375b65a6fcb6cba2a60) Thanks [@sailist](https://github.com/sailist)! - Remove the Agent and AgentSwarm tools from the built-in coder subagent profile, so coder subagents no longer delegate further by default. Custom profiles that list these tools explicitly can still opt in.
+
+- [#2695](https://github.com/MoonshotAI/kimi-code/pull/2695) [`71ff2a0`](https://github.com/MoonshotAI/kimi-code/commit/71ff2a0fffb2ebf399194436ef2d4b599c9988ad) Thanks [@sailist](https://github.com/sailist)! - Fix a Windows security risk where commands launched before the workspace trust prompt could run a malicious executable placed in the current folder.
+
+- [#2813](https://github.com/MoonshotAI/kimi-code/pull/2813) [`619564d`](https://github.com/MoonshotAI/kimi-code/commit/619564dcf9ee10a3cfbf7ecbc764c6b9b63fc91b) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix the web UI repeatedly losing its realtime connection every ~30 seconds when the server runs behind a reverse proxy or gateway with an idle connection timeout; the server now sends a WebSocket heartbeat and only closes connections that stop responding entirely.
+
+- [#2842](https://github.com/MoonshotAI/kimi-code/pull/2842) [`e476c5a`](https://github.com/MoonshotAI/kimi-code/commit/e476c5a8bbe68fb0b6eb0096aa1efcb893b1a8fc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Add the Modern Web Guidance plugin to the bundled plugin marketplace. Run /plugins and select Modern Web Guidance to install it.
+
+- Thanks [@Leakless](https://github.com/Leakless) and [@winmin](https://github.com/winmin) for reporting the Windows binary-planting issues fixed in this release.
+
 ## 0.34.0
 
 ### Minor Changes

@@ -24,6 +24,8 @@ import {
   type Focusable,
   getCapabilities,
   Spacer,
+  TuiAltScreen,
+  TuiMainScreen,
 } from '@moonshot-ai/pi-tui';
 import { resolve } from 'pathe';
 
@@ -105,6 +107,7 @@ import {
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
+  SESSION_LIST_PAGE_SIZE,
   SESSIONLESS_STARTUP_NOTICE,
 } from './constant/kimi-tui';
 import { CHROME_GUTTER } from './constant/rendering';
@@ -136,6 +139,7 @@ import {
   type LoginProgressSpinnerHandle,
   type QueuedMessage,
   type SteerInputItem,
+  type StepRetryState,
   type TranscriptEntry,
   type TUIStartupOptions,
   type TUIStartupState,
@@ -151,7 +155,9 @@ import { installInputLatencyProbe } from './utils/input-latency';
 import { startupTrace } from '#/utils/startup-trace';
 import { REPLAY_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
+import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
+import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
 import { thinkingEffortFromConfig } from './utils/thinking-config';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
@@ -210,6 +216,10 @@ function loadingTipKind(mode: EffectiveActivityPaneMode): LoadingTipKind | undef
   return undefined;
 }
 
+function waitingSpinnerLabel(retry: StepRetryState | null): string {
+  return retry === null ? '' : formatStepRetryLabel(retry);
+}
+
 function sameStringArrays(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
@@ -241,10 +251,12 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     isReplaying: false,
     streamingPhase: 'idle',
     streamingStartTime: 0,
+    stepRetry: null,
     theme: input.tuiConfig.theme,
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     disablePasteBurst: input.tuiConfig.disablePasteBurst,
+    renderLatex: input.tuiConfig.renderLatex,
     cacheExpiryHint: input.tuiConfig.cacheExpiryHint,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
@@ -327,7 +339,10 @@ export class KimiTUI {
   private pluginCommands: readonly KimiSlashCommand[] = [];
   readonly pluginCommandMap = new Map<string, string>();
   private readonly imageStore = new ImageAttachmentStore();
-  private fdPath: string | null = detectFdPath();
+  // Detected lazily in startBackgroundFdAutocomplete() — detection spawns
+  // `fd --version`, which must not happen before the workspace trust gate:
+  // on Windows a bare command name resolves into the (untrusted) cwd first.
+  private fdPath: string | null = null;
   private fdDownloadStarted = false;
   sessionEventUnsubscribe: (() => void) | undefined;
   cancelInFlight: (() => void) | undefined;
@@ -372,12 +387,13 @@ export class KimiTUI {
   // preview viewer can restore focus to the exact same instance (and its
   // selection / feedback state) when it closes.
   private activeApprovalPanel: ApprovalPanelComponent | undefined;
-  // Active full-screen approval preview. While set, the root UI's normal
-  // children are stashed in `savedChildren`; closing restores them.
+  // Active full-screen approval preview. While set, the previous screen is
+  // stashed in `takeover` (root children in regular mode, the layout root in
+  // fullscreen); closing restores it.
   private approvalPreview:
     | {
         component: ApprovalPreviewViewer;
-        savedChildren: readonly Component[];
+        takeover: ScreenTakeover;
         panel: ApprovalPanelComponent;
       }
     | undefined;
@@ -586,9 +602,19 @@ export class KimiTUI {
     this.registerSignalHandlers();
     // Outer try rolls back signal listeners on startup failure.
     try {
+      // The workspace trust gate must run before anything else in startup —
+      // including the migration branch: a workspace that needs migration is
+      // not implicitly trusted, and later startup steps spawn child processes.
+      startupTrace('trustPrompt:begin');
+      const trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
+      startupTrace('trustPrompt:end');
+
       if (this.migrationPlan !== null) {
         // Migration needs the event loop running first (pi-tui component).
-        this.startEventLoop();
+        // When the trust prompt already started it, starting it again would
+        // re-run pi-tui's terminal.start() — stacking a second Kitty
+        // keyboard-protocol push and duplicate stdin listeners.
+        if (!trustPromptStartedLoop) this.startEventLoop();
         try {
           const migrationResult = await this.runMigrationScreen(this.migrationPlan);
           if (this.migrateOnly) {
@@ -609,9 +635,6 @@ export class KimiTUI {
         return;
       }
 
-      startupTrace('trustPrompt:begin');
-      const trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
-      startupTrace('trustPrompt:end');
       startupTrace('initMainTui:begin');
       const shouldReplayHistory = await this.initMainTui();
       startupTrace('initMainTui:end');
@@ -724,8 +747,14 @@ export class KimiTUI {
   }
 
   private startBackgroundFdAutocomplete(): void {
-    if (this.fdPath !== null || this.fdDownloadStarted) return;
+    if (this.fdDownloadStarted) return;
     this.fdDownloadStarted = true;
+
+    this.fdPath = detectFdPath();
+    if (this.fdPath !== null) {
+      this.setupAutocomplete();
+      return;
+    }
 
     void ensureFdPath()
       .then((fdPath) => {
@@ -869,8 +898,10 @@ export class KimiTUI {
           });
           shouldReplayHistory = true;
         } else {
-          const sessions = await this.harness.listSessions({ workDir });
-          const target = sessions[0];
+          // Only the most recent session matters here — fetch a one-item page
+          // instead of materializing the whole listing.
+          const page = await this.harness.listSessionsPage({ workDir, limit: 1 });
+          const target = page.items[0];
           if (target !== undefined) {
             session = await this.harness.resumeSession({
               id: target.id,
@@ -961,6 +992,7 @@ export class KimiTUI {
       await this.harness.close();
     } finally {
       this.sessionEventHandler.stopAllMcpServerStatusSpinners();
+      this.sessionEventHandler.clearStepRetryAttemptTimer();
       this.uninstallRainbowDance();
       try {
         await this.state.terminal.drainInput();
@@ -968,7 +1000,7 @@ export class KimiTUI {
         // best effort — the terminal may already be dead (SIGHUP / EIO).
       }
       try {
-        this.state.ui.stop();
+        this.stopUiForExit();
       } catch {
         // best effort terminal restore.
       }
@@ -1053,6 +1085,9 @@ export class KimiTUI {
 
   private buildLayout(): void {
     const { ui } = this.state;
+    // Fullscreen mounts its layout root (transcript ScrollView + bottom dock)
+    // in createTUIState; the root children list stays empty there.
+    if (ui instanceof TuiAltScreen) return;
     ui.clear();
     ui.addChild(this.state.transcriptContainer);
     ui.addChild(this.state.activityContainer);
@@ -1071,7 +1106,41 @@ export class KimiTUI {
   private mountFooter(): void {
     const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
     footerWrap.addChild(this.state.footer);
+    const dock = this.state.dockContainer;
+    if (dock !== undefined) {
+      // Dock sizing contract: the footer may shrink to 1 row under extreme
+      // height pressure, but never disappears (see createTUIState).
+      dock.addChild(footerWrap, { shrink: 1, minSize: 1 });
+      return;
+    }
     this.state.ui.addChild(footerWrap);
+  }
+
+  // Fullscreen exit: leave the alternate screen with the frame preserved,
+  // then replay the transcript through a main-screen renderer so native
+  // scrollback ends up with the same inline layout a regular session would
+  // have produced (pi's "transcript" exit form).
+  private stopUiForExit(): void {
+    const ui = this.state.ui;
+    if (!(ui instanceof TuiAltScreen)) {
+      ui.stop();
+      return;
+    }
+    ui.stop({ preserveScreen: true });
+    const main = new TuiMainScreen(ui.terminal);
+    main.addChild(this.state.transcriptContainer);
+    main.addChild(this.state.activityContainer);
+    main.addChild(this.state.todoPanelContainer);
+    main.addChild(this.state.queueContainer);
+    main.addChild(this.state.btwPanelContainer);
+    main.addChild(this.state.editorContainer);
+    const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+    footerWrap.addChild(this.state.footer);
+    main.addChild(footerWrap);
+    // First paint of a main-screen renderer writes every line sequentially,
+    // landing the whole transcript in native scrollback.
+    main.renderNow();
+    main.stop();
   }
 
   // =========================================================================
@@ -1956,13 +2025,16 @@ export class KimiTUI {
   async fetchSessions(scope: 'cwd' | 'all' = this.state.sessionsScope): Promise<void> {
     this.state.loadingSessions = true;
     this.state.sessionsScope = scope;
+    this.state.sessionsNextCursor = undefined;
+    this.state.sessionsLoadingMore = false;
     try {
-      const sessions =
-        scope === 'all'
-          ? await this.harness.listSessions({})
-          : await this.harness.listSessions({ workDir: this.state.appState.workDir });
+      const page = await this.harness.listSessionsPage({
+        workDir: scope === 'all' ? undefined : this.state.appState.workDir,
+        limit: SESSION_LIST_PAGE_SIZE,
+      });
+      this.state.sessionsNextCursor = page.nextCursor;
       this.state.sessions = sessionRowsForPicker(
-        sessions,
+        page.items,
         this.state.appState.sessionId,
         this.hasSessionContent(),
       );
@@ -1973,6 +2045,81 @@ export class KimiTUI {
       log.warn('failed to fetch sessions for picker', { error: String(error) });
     } finally {
       this.state.loadingSessions = false;
+    }
+  }
+
+  /**
+   * Pulls the next keyset page into the session picker (scroll-bottom paging).
+   * A scope switch or picker close bumps `sessionPickerScopeRequestToken`,
+   * which makes an in-flight append discard its result. Returns whether a page
+   * was appended — callers draining pages stop on the first `false`.
+   * Scroll triggers pass no argument and are dropped while a fetch is running;
+   * the search drain passes `waitForInFlight` to join the running fetch and
+   * continue with the next page, so a query typed mid-fetch still ends up
+   * covering every session.
+   */
+  private async fetchMoreSessions(waitForInFlight = false): Promise<boolean> {
+    while (this.sessionsPageFetchInFlight !== undefined) {
+      if (!waitForInFlight) return false;
+      await this.sessionsPageFetchInFlight;
+    }
+    const cursor = this.state.sessionsNextCursor;
+    if (cursor === undefined) return false;
+    const requestToken = this.sessionPickerScopeRequestToken;
+    this.state.sessionsLoadingMore = true;
+    this.sessionPickerComponent?.setPaging(true, true);
+    this.state.ui.requestRender();
+    const run = this.appendNextSessionPage(cursor, requestToken);
+    this.sessionsPageFetchInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (this.sessionsPageFetchInFlight === run) this.sessionsPageFetchInFlight = undefined;
+    }
+  }
+
+  private async appendNextSessionPage(cursor: string, requestToken: number): Promise<boolean> {
+    try {
+      const page = await this.harness.listSessionsPage({
+        workDir: this.state.sessionsScope === 'all' ? undefined : this.state.appState.workDir,
+        limit: SESSION_LIST_PAGE_SIZE,
+        before: cursor,
+      });
+      if (requestToken !== this.sessionPickerScopeRequestToken) return false;
+      this.state.sessionsNextCursor = page.nextCursor;
+      const rows = sessionRowsForPicker(
+        page.items,
+        this.state.appState.sessionId,
+        this.hasSessionContent(),
+      );
+      this.state.sessions = [...this.state.sessions, ...rows];
+      this.sessionPickerComponent?.appendSessions(rows);
+      this.sessionPickerComponent?.setPaging(page.nextCursor !== undefined, false);
+      return true;
+    } catch (error) {
+      log.warn('failed to fetch more sessions for picker', { error: String(error) });
+      return false;
+    } finally {
+      if (requestToken === this.sessionPickerScopeRequestToken) {
+        this.state.sessionsLoadingMore = false;
+        this.sessionPickerComponent?.setPaging(this.state.sessionsNextCursor !== undefined, false);
+        this.state.ui.requestRender();
+      }
+    }
+  }
+
+  /**
+   * Search covers every session: while a query is active the picker asks for
+   * all remaining pages, drained one at a time in the background. A failed or
+   * superseded fetch stops the drain (the next fresh query re-triggers it).
+   */
+  private async drainSessionsForSearch(): Promise<void> {
+    const requestToken = this.sessionPickerScopeRequestToken;
+    while (
+      this.state.sessionsNextCursor !== undefined &&
+      requestToken === this.sessionPickerScopeRequestToken
+    ) {
+      if (!(await this.fetchMoreSessions(true))) return;
     }
   }
 
@@ -2696,7 +2843,13 @@ export class KimiTUI {
     }
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
     const placeSpinnerInAgentSwarm = this.shouldPlaceActivitySpinnerInAgentSwarm(effectiveMode);
-    const activityModeKey = `${effectiveMode}:${placeSpinnerInAgentSwarm ? 'swarm' : 'pane'}`;
+    // Carry the retry state in the mode key so an incoming/cleared
+    // `turn.step.retrying` rebuilds the waiting pane with fresh label and
+    // detail instead of hitting the cached-pane early return below.
+    const retry = effectiveMode === 'waiting' ? this.state.appState.stepRetry : null;
+    const retryKey =
+      retry === null ? '' : `${formatStepRetryLabel(retry)}|${formatStepRetryDetail(retry)}`;
+    const activityModeKey = `${effectiveMode}:${placeSpinnerInAgentSwarm ? 'swarm' : 'pane'}:${retryKey}`;
 
     if (
       activityModeKey === this.lastActivityMode &&
@@ -2718,14 +2871,16 @@ export class KimiTUI {
         this.state.ui.requestRender();
         return;
       case 'waiting': {
-        const spinner = this.ensureActivitySpinner('moon');
+        const stepRetry = this.state.appState.stepRetry;
+        const spinner = this.ensureActivitySpinner('moon', waitingSpinnerLabel(stepRetry));
         this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
         if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'waiting',
             spinner,
-            tip: this.currentLoadingTip?.tip,
+            tip: stepRetry === null ? this.currentLoadingTip?.tip : undefined,
+            detail: stepRetry === null ? undefined : formatStepRetryDetail(stepRetry),
           }),
         );
         break;
@@ -3217,6 +3372,8 @@ export class KimiTUI {
     forwardEditorExit: false,
   };
   private sessionPickerScopeRequestToken = 0;
+  private sessionPickerComponent: SessionPickerComponent | undefined;
+  private sessionsPageFetchInFlight: Promise<boolean> | undefined;
 
   async showSessionPicker(): Promise<void> {
     await this.openSessionPicker({
@@ -3288,6 +3445,7 @@ export class KimiTUI {
 
   hideSessionPicker(): void {
     this.sessionPickerScopeRequestToken += 1;
+    this.sessionPickerComponent = undefined;
     this.editorKeyboard.clearPendingExit();
     this.state.activeDialog = null;
     this.restoreEditor();
@@ -3308,29 +3466,37 @@ export class KimiTUI {
     readonly applyStartupModes?: boolean;
   }): void {
     this.state.activeDialog = 'session-picker';
-    this.mountEditorReplacement(
-      new SessionPickerComponent({
-        sessions: this.state.sessions,
-        loading: this.state.loadingSessions,
-        currentSessionId: this.state.appState.sessionId,
-        scope: this.state.sessionsScope,
-        initialSelectedSessionId: options.initialSelectedSessionId,
-        pageSize: 50,
-        onSelect: (session: SessionRow) => {
-          void this.handleSessionPickerSelect(session, options.applyStartupModes === true).catch(
-            (error) => {
-              this.showError(`Failed to apply startup flags: ${formatErrorMessage(error)}`);
-            },
-          );
-        },
-        onCancel: options.onCancel,
-        onCtrlC: options.onCtrlC,
-        onCtrlD: options.onCtrlD,
-        onToggleScope: (selectedSessionId: string) => {
-          void this.toggleSessionPickerScope(selectedSessionId);
-        },
-      }),
-    );
+    const picker = new SessionPickerComponent({
+      sessions: this.state.sessions,
+      loading: this.state.loadingSessions,
+      currentSessionId: this.state.appState.sessionId,
+      scope: this.state.sessionsScope,
+      initialSelectedSessionId: options.initialSelectedSessionId,
+      pageSize: SESSION_LIST_PAGE_SIZE,
+      hasMore: this.state.sessionsNextCursor !== undefined,
+      loadingMore: this.state.sessionsLoadingMore,
+      onLoadMore: () => {
+        void this.fetchMoreSessions();
+      },
+      onSearchDrain: () => {
+        void this.drainSessionsForSearch();
+      },
+      onSelect: (session: SessionRow) => {
+        void this.handleSessionPickerSelect(session, options.applyStartupModes === true).catch(
+          (error) => {
+            this.showError(`Failed to apply startup flags: ${formatErrorMessage(error)}`);
+          },
+        );
+      },
+      onCancel: options.onCancel,
+      onCtrlC: options.onCtrlC,
+      onCtrlD: options.onCtrlD,
+      onToggleScope: (selectedSessionId: string) => {
+        void this.toggleSessionPickerScope(selectedSessionId);
+      },
+    });
+    this.sessionPickerComponent = picker;
+    this.mountEditorReplacement(picker);
   }
 
   private async handleSessionPickerSelect(
@@ -3385,12 +3551,12 @@ export class KimiTUI {
 
   // Mounts the full-screen approval preview viewer on top of the current
   // approval panel. Uses the same nested-takeover pattern as
-  // openTaskOutputViewer: we snapshot the root container's children, swap
-  // in the viewer, and restore on close. The approval panel instance is
+  // openTaskOutputViewer: beginScreenTakeover swaps the viewer in (root
+  // children in regular mode, layout root in fullscreen) and closing restores
+  // it. The approval panel instance is
   // kept around in `activeApprovalPanel` so its selection state survives.
   private openApprovalPreview(panel: ApprovalPanelComponent, block: ApprovalPreviewBlock): void {
     if (this.approvalPreview !== undefined) return;
-    const savedChildren = [...this.state.ui.children];
     const viewer = new ApprovalPreviewViewer(
       {
         block,
@@ -3400,21 +3566,17 @@ export class KimiTUI {
       },
       this.state.terminal,
     );
-    this.state.ui.clear();
-    this.state.ui.addChild(viewer);
+    const takeover = beginScreenTakeover(this.state.ui, viewer);
     this.state.ui.setFocus(viewer);
     this.state.ui.requestRender(true);
-    this.approvalPreview = { component: viewer, savedChildren, panel };
+    this.approvalPreview = { component: viewer, takeover, panel };
   }
 
   private closeApprovalPreview(): void {
     const preview = this.approvalPreview;
     if (preview === undefined) return;
     this.approvalPreview = undefined;
-    this.state.ui.clear();
-    for (const child of preview.savedChildren) {
-      this.state.ui.addChild(child);
-    }
+    endScreenTakeover(this.state.ui, preview.takeover);
     this.state.ui.setFocus(preview.panel);
     this.state.ui.requestRender(true);
   }

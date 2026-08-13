@@ -94,6 +94,11 @@ export class Session {
     this.onClose = options.onClose;
   }
 
+  /** True once {@link close} began — the session may still be closing in the engine. */
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
   getResumeState(): ResumedSessionState | undefined {
     this.ensureOpen();
     return this.resumeState;
@@ -231,18 +236,6 @@ export class Session {
       ErrorCodes.SESSION_THINKING_EMPTY,
     );
     await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
-  }
-
-  /**
-   * Live-apply the persisted `[secondary_model]` recipe to this session
-   * (subagent model binding). Persist the recipe via `KimiHarness.setConfig`
-   * first; this reloads the complete recipe and its synthesized derived entry
-   * before updating the session snapshot — mirroring the `/secondary_model`
-   * flow.
-   */
-  async applyPersistedSecondaryModel(): Promise<void> {
-    this.ensureOpen();
-    await this.rpc.applyPersistedSecondaryModel({ sessionId: this.id });
   }
 
   async setPermission(mode: PermissionMode): Promise<void> {
@@ -672,7 +665,7 @@ export class Session {
   }
 
   /** @internal */
-  emitMetaUpdated(patch: { readonly title?: string | undefined }): void {
+  emitMetaUpdated(patch: { readonly title?: string; readonly isCustomTitle?: boolean }): void {
     this.emit({
       type: 'session.meta.updated',
       sessionId: this.id,

@@ -17,9 +17,15 @@
  * last-declarer-wins semantics and consulted — after the abort guard — with
  * the raw failure at every catch seam, including the Responses in-stream
  * error-event path.
+ *
+ * The Google GenAI converter coverage checks the recovery of the
+ * server-directed retry delay from the wire body's `google.rpc.RetryInfo`
+ * detail — the SDK's `ApiError` drops response headers, so the body detail
+ * is the only carrier of that wait time.
  */
 
 import { APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
+import { ApiError as GoogleApiError } from '@google/genai';
 import { APIError as OpenAIAPIError } from 'openai';
 import { describe, expect, it } from 'vitest';
 
@@ -34,6 +40,7 @@ import {
 import type { ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { traitConvertError, type TraitContext } from '#/kosong/protocol/protocolTrait';
 import { convertAnthropicError } from '#/kosong/provider/bases/anthropic/anthropic';
+import { convertGoogleGenAIError } from '#/kosong/provider/bases/google-genai/google-genai';
 import { convertOpenAIError } from '#/kosong/provider/bases/openai/openai-common';
 import { OpenAIResponsesStreamedMessage } from '#/kosong/provider/bases/openai/openai-responses';
 import { composeOpenAIChatHooks } from '#/kosong/provider/bases/openai/openaiHooks';
@@ -299,5 +306,79 @@ describe('OpenAI Responses quota-exhausted conversion', () => {
     expect((caught as APIProviderQuotaExhaustedError).message).toBe('vendor quota exhausted');
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ type: 'error', code: 'vendor_quota_gone' });
+  });
+});
+
+describe('convertGoogleGenAIError RetryInfo recovery', () => {
+  function googleApiError(status: number, body: unknown): GoogleApiError {
+    return new GoogleApiError({ message: JSON.stringify(body), status });
+  }
+
+  it('recovers the server-directed retry delay from the RetryInfo detail', () => {
+    const error = convertGoogleGenAIError(
+      googleApiError(429, {
+        error: {
+          code: 429,
+          message: 'Resource exhausted',
+          status: 'RESOURCE_EXHAUSTED',
+          details: [
+            { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [] },
+            { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '5s' },
+          ],
+        },
+      }),
+    );
+    expect(error).toBeInstanceOf(APIProviderRateLimitError);
+    expect((error as APIStatusError).retryAfterMs).toBe(5000);
+    expect(isRetryableGenerateError(error)).toBe(true);
+  });
+
+  it('parses fractional proto Duration delays', () => {
+    const error = convertGoogleGenAIError(
+      googleApiError(429, {
+        error: {
+          details: [
+            { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '5.5s' },
+          ],
+        },
+      }),
+    );
+    expect((error as APIStatusError).retryAfterMs).toBe(5500);
+  });
+
+  it('keeps a 429 without RetryInfo a retryable rate limit with no server delay', () => {
+    const error = convertGoogleGenAIError(
+      googleApiError(429, { error: { code: 429, message: 'Too many requests' } }),
+    );
+    expect(error).toBeInstanceOf(APIProviderRateLimitError);
+    expect((error as APIStatusError).retryAfterMs).toBeNull();
+    expect(isRetryableGenerateError(error)).toBe(true);
+  });
+
+  it('tolerates a non-JSON ApiError message', () => {
+    const error = convertGoogleGenAIError(
+      new GoogleApiError({ message: 'Too many requests', status: 429 }),
+    );
+    expect(error).toBeInstanceOf(APIProviderRateLimitError);
+    expect((error as APIStatusError).retryAfterMs).toBeNull();
+  });
+
+  it('recovers the delay from a mid-stream error chunk carrying the "got status" prefix', () => {
+    const chunk = {
+      error: {
+        code: 429,
+        message: 'Resource exhausted',
+        status: 'RESOURCE_EXHAUSTED',
+        details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '5s' }],
+      },
+    };
+    const error = convertGoogleGenAIError(
+      new GoogleApiError({
+        message: `got status: RESOURCE_EXHAUSTED. ${JSON.stringify(chunk)}`,
+        status: 429,
+      }),
+    );
+    expect(error).toBeInstanceOf(APIProviderRateLimitError);
+    expect((error as APIStatusError).retryAfterMs).toBe(5000);
   });
 });

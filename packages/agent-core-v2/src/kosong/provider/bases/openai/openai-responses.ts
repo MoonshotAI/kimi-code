@@ -11,6 +11,11 @@
  * classification (already-converted errors crossing an outer catch pass
  * through without re-consulting). The developer-role model detection lives
  * here.
+ *
+ * The SDK client is built with `maxRetries: 0`: the SDK's internal backoff
+ * sleep never observes the turn's AbortSignal, so rate-limit / server /
+ * connection retry is owned by the engine's step-retry layer (observable and
+ * cancellable), never by the SDK.
  */
 
 import OpenAI from 'openai';
@@ -1203,6 +1208,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     const clientOpts: Record<string, unknown> = {
       apiKey,
       baseURL: this._baseUrl,
+      maxRetries: 0,
     };
     const defaultHeaders = mergeRequestHeaders(this._defaultHeaders, auth?.headers);
     if (defaultHeaders !== undefined) {

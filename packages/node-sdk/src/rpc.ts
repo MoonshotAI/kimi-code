@@ -34,6 +34,7 @@ import type {
   ExportSessionResult,
   CreateGoalInput,
   ForkSessionInput,
+  GenerateSessionTitleInput,
   GetConfigOptions,
   GlobalMcpServerAuthStatus,
   McpServerConfig,
@@ -59,6 +60,7 @@ import type {
   ResumeSessionInput,
   ResumedSessionSummary,
   SessionSummary,
+  SessionSummaryPage,
   SkillSummary,
   PluginCommandDef,
   Unsubscribe,
@@ -70,12 +72,6 @@ const MAIN_AGENT_ID = 'main';
 export interface SessionPromptRpcInput {
   readonly sessionId: string;
   readonly input: PromptInput;
-  /**
-   * Client-managed session tool denylist (full-replace semantics), forwarded
-   * to engines with profile tool gating. Omit to keep the persisted value;
-   * `[]` clears the client portion.
-   */
-  readonly disabledTools?: readonly string[];
 }
 
 export interface SessionIdRpcInput {
@@ -224,6 +220,17 @@ export abstract class SDKRpcClientBase {
     return rpc.listSessions(input);
   }
 
+  /**
+   * One keyset page of the session listing (`limit` / `before` in
+   * `ListSessionsOptions`). The base implementation serves the whole filtered
+   * set as a single terminal page — the v1 engine has no paged listing;
+   * `SDKRpcClientV2` overrides this with real index paging.
+   */
+  async listSessionsPage(input: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
+    const items = await this.listSessions(input);
+    return { items, nextCursor: undefined };
+  }
+
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listWorkspaceSkills({ workDir });
@@ -249,6 +256,18 @@ export abstract class SDKRpcClientBase {
       sessionId: input.id,
       title: input.title,
     });
+  }
+
+  /**
+   * v2-only capability (`ISessionTitleService`); the v1 engine has no title
+   * generation, so the base fails loudly and `SDKRpcClientV2` overrides it.
+   */
+  async generateSessionTitle(input: GenerateSessionTitleInput): Promise<string | undefined> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'generateSessionTitle is only available on the agent-core-v2 engine.',
+    );
   }
 
   async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {
@@ -374,7 +393,6 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
       input: input.input,
-      disabledTools: input.disabledTools,
     });
   }
 
@@ -480,11 +498,6 @@ export abstract class SDKRpcClientBase {
       agentId: this.interactiveAgentId,
       effort: input.effort,
     });
-  }
-
-  async applyPersistedSecondaryModel(input: SessionIdRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.applyPersistedSecondaryModel({ sessionId: input.sessionId });
   }
 
   async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {

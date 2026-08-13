@@ -21,7 +21,6 @@ import {
   IAgentUsageService,
   IModelCatalog,
   IModelService,
-  SECONDARY_DERIVED_MODEL_ID,
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
@@ -132,7 +131,7 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
     // (`ISessionLegacyService.status`), so the push and REST agree.
     maxContextTokens = defaultModelContextTokens(agent) ?? 0;
   }
-  const model = displayModelAlias(agent, profile.getModel());
+  const model = profile.getModel();
   return {
     usage,
     contextTokens,
@@ -157,25 +156,6 @@ function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined
     return capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   } catch {
     return undefined;
-  }
-}
-
-/**
- * The wire `model` is normally the bound alias, which clients resolve against
- * the model listing into a display name. The secondary-model derived entry is
- * synthesized runtime state hidden from that listing, so resolve it here to
- * the pointed entry's display string (the client's own
- * `displayName ?? wireName` priority) instead of leaking the reserved id.
- */
-function displayModelAlias(agent: IAgentScopeHandle, alias: string): string {
-  if (alias !== SECONDARY_DERIVED_MODEL_ID) return alias;
-  const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
-  if (catalog === undefined) return alias;
-  try {
-    const model = catalog.get(alias);
-    return model.displayName ?? model.name;
-  } catch {
-    return alias;
   }
 }
 

@@ -7,11 +7,21 @@ import { InstantiationService } from '#/_base/di/instantiationService';
 import { Service } from '#/_base/di/service';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { Emitter } from '#/_base/event';
-import type { DomainEvent, IEventService } from '#/app/event/event';
+import { type DomainEvent, IEventService } from '#/app/event/event';
+import { EventService } from '#/app/event/eventService';
+import { IEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
 import { DI_UNIT_CHANGED_EVENT } from '#/debug/debugCascade';
 import { DebugCascadeService } from '#/debug/debugCascadeService';
 import { DebugGraphService } from '#/debug/debugGraphService';
 import { DebugLedgerService } from '#/debug/debugLedgerService';
+import { DebugEventsService } from '#/features/debugEvents/debugEventsService';
+
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'debug.test': { v: number };
+  }
+}
 
 
 interface IRoot {
@@ -73,6 +83,14 @@ class FakeEventService implements IEventService {
     return this.emitter.event(handler);
   }
 }
+
+class BusSubscriber extends Service {
+  constructor(@IEventBus bus: IEventBus) {
+    super();
+    this._register(bus.subscribe('debug.test', () => undefined));
+  }
+}
+const IBusSubscriber = createDecorator<BusSubscriber>('debug-bus-subscriber');
 
 function makeTree(): { app: InstantiationService; ws: InstantiationService } {
   const app = new InstantiationService(new ServiceCollection(), true);
@@ -269,6 +287,47 @@ describe('debug domain — IDebugCascadeService', () => {
     service.dispose();
     app.provide(IBoom, new SyncDescriptor(Boom));
     expect(events.published.length).toBe(publishedBefore);
+    app.dispose();
+  });
+});
+
+describe('debug domain — IDebugEventsService', () => {
+  it('subscriptions() merges unit-book labels and bus listener counts, deduped across containers', () => {
+    const { app } = makeTree();
+    app.provide(IEventBus, new SyncDescriptor(EventBusService));
+    app.provide(IBusSubscriber, new SyncDescriptor(BusSubscriber));
+    app.invokeFunction((a) => a.get(IBusSubscriber));
+    const bus = app.invokeFunction((a) => a.get(IEventBus));
+    bus.subscribe('debug.test', () => undefined);
+    bus.subscribe(() => undefined);
+
+    const result = new DebugEventsService(app).subscriptions();
+
+    const entry = result.subscriptions.find((s) => s.unit === 'debug-bus-subscriber');
+    expect(entry).toMatchObject({
+      scopePath: 'app',
+      label: 'on:debug.test',
+      kind: 'disposer',
+      uid: expect.any(Number),
+    });
+    expect(result.buses).toEqual([
+      { scopePath: 'app', all: 1, perType: { 'debug.test': 2 } },
+    ]);
+    expect(() => JSON.stringify(result)).not.toThrow();
+    app.dispose();
+  });
+
+  it('skips unmaterialized units and reports the global event service listener count', () => {
+    const { app } = makeTree();
+    app.provide(IBusSubscriber, new SyncDescriptor(BusSubscriber));
+    app.provide(IEventService, new SyncDescriptor(EventService));
+    const events = app.invokeFunction((a) => a.get(IEventService));
+    events.subscribe(() => undefined);
+
+    const result = new DebugEventsService(app).subscriptions();
+
+    expect(result.subscriptions.find((s) => s.unit === 'debug-bus-subscriber')).toBeUndefined();
+    expect(result.globalListeners).toBe(1);
     app.dispose();
   });
 });

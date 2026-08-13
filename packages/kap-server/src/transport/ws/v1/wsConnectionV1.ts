@@ -12,10 +12,16 @@
  * them to the same shared attach path (`attachSession`). Transcript grade
  * subscriptions are a separate concern carried ONLY by `subscribe_v2`.
  *
- * The server never initiates a disconnect: unlike v1's `WsConnection`
- * (`packages/server/src/ws/connection.ts`) there is no ping/pong heartbeat —
- * a connection stays open until the client closes it or the process shuts
- * down.
+ * Heartbeat: the server sends an application-level `ping` frame every
+ * {@link DEFAULT_HEARTBEAT_INTERVAL_MS} (advertised as `heartbeat_ms` in
+ * `server_hello`). Protocol-level WS ping/pong is NOT used because browser
+ * clients cannot observe it from JS — an application-level frame is what
+ * feeds the client's stale-socket detector. Any inbound frame (a `pong`,
+ * but also ordinary control traffic) proves the peer is alive; after two
+ * full silent cycles the connection is presumed half-open (laptop asleep,
+ * network silently gone) and closed with 1001. Besides liveness this keeps
+ * intermediaries (reverse proxies with ~30s idle timeouts) from dropping
+ * idle connections.
  */
 
 import {
@@ -39,6 +45,7 @@ import {
 } from './sessionEventJournal';
 import {
   buildAck,
+  buildPing,
   buildResyncRequired,
   buildServerHello,
 } from './protocol';
@@ -53,6 +60,15 @@ import {
 import { FsWatchBridge } from './fsWatchBridge';
 
 const DEFAULT_MAX_BUFFER_SIZE = 1000;
+
+/**
+ * Application-level heartbeat cadence. 10s keeps connections alive through
+ * intermediaries with ~30s idle timeouts (3x headroom) and bounds how long a
+ * half-open connection goes unnoticed.
+ */
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
+/** Close the connection once no inbound frame has arrived for this many cycles. */
+const HEARTBEAT_MISS_LIMIT = 2;
 
 /** Per-session subscription state held by the connection (see `TargetSubscription`). */
 type SessionSubscription = TargetSubscription;
@@ -96,6 +112,8 @@ export interface WsConnectionV1Options {
   readonly maxBatchSize?: number;
   /** `socket.bufferedAmount` above which flushing is deferred (backpressure). */
   readonly highWaterMarkBytes?: number;
+  /** Heartbeat ping cadence; advertised as `heartbeat_ms` in `server_hello`. */
+  readonly heartbeatIntervalMs?: number;
 }
 
 export class WsConnectionV1 implements BroadcastTarget {
@@ -112,6 +130,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private readonly flushIntervalMs: number;
   private readonly maxBatchSize: number;
   private readonly highWaterMarkBytes: number;
+  private readonly heartbeatIntervalMs: number;
   private readonly logger?: JournalLogger;
 
   private closed = false;
@@ -134,6 +153,10 @@ export class WsConnectionV1 implements BroadcastTarget {
   /** Epoch ms when the current backpressure deferral started; caps the wait. */
   private backpressureSince?: number;
 
+  private heartbeatTimer?: ReturnType<typeof setInterval>;
+  /** Epoch ms of the most recent inbound frame — any frame proves the peer is alive. */
+  private lastInboundAt = Date.now();
+
   constructor(opts: WsConnectionV1Options) {
     this.id = `conn_${ulid()}`;
     this.connectedAt = new Date().toISOString();
@@ -148,6 +171,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.flushIntervalMs = opts.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.maxBatchSize = opts.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
     this.highWaterMarkBytes = opts.highWaterMarkBytes ?? DEFAULT_HIGH_WATER_MARK_BYTES;
+    this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
 
     this.socket.on('message', (data: RawData) => this.onMessage(data));
     this.socket.on('close', () => this.onClose());
@@ -162,10 +186,15 @@ export class WsConnectionV1 implements BroadcastTarget {
       buildServerHello({
         ws_connection_id: this.id,
         protocol_version: WS_PROTOCOL_VERSION,
+        heartbeat_ms: this.heartbeatIntervalMs,
         max_event_buffer_size: this.maxBufferSize,
         capabilities: { event_batching: false, compression: false },
       }),
     );
+    this.heartbeatTimer = setInterval(() => {
+      this.onHeartbeat();
+    }, this.heartbeatIntervalMs);
+    this.heartbeatTimer.unref?.();
   }
 
   get hasClientHello(): boolean {
@@ -191,8 +220,13 @@ export class WsConnectionV1 implements BroadcastTarget {
       return; // non-JSON frame — drop
     }
     if (typeof frame?.type !== 'string') return;
+    // Any well-formed inbound frame — pongs included — proves the peer is alive.
+    this.lastInboundAt = Date.now();
 
     switch (frame.type) {
+      case 'pong':
+        // Heartbeat reply; the liveness timestamp above is all it needs to do.
+        return;
       case 'client_hello':
         this.enqueueControl(() => this.onClientHello(frame));
         return;
@@ -225,6 +259,19 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.controlQueue = this.controlQueue.then(task).catch(() => {
       // A failed control frame must not wedge the queue behind it.
     });
+  }
+
+  /**
+   * Heartbeat tick: reap first, ping second. A peer silent for two full cycles
+   * (no pong, no control traffic at all) is half-open — close it rather than
+   * ping a dead pipe. The close also fires the client's reconnect path.
+   */
+  private onHeartbeat(): void {
+    if (Date.now() - this.lastInboundAt >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
+      this.close(1001, 'heartbeat timeout');
+      return;
+    }
+    this.sendImmediateFrame(buildPing(ulid()));
   }
 
   private async onClientHello(frame: InboundFrame): Promise<void> {
@@ -616,6 +663,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.closed = true;
     if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
     if (this.backpressureRetryTimer !== undefined) clearTimeout(this.backpressureRetryTimer);
+    if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     this.outbound = [];
     this.broadcaster.removeGlobalTarget(this);
     for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);

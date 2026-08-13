@@ -7,6 +7,8 @@ import {
   type Focusable,
 } from '@moonshot-ai/pi-tui';
 
+import type { WorkspaceTrustMcpServerInfo } from '@moonshot-ai/kimi-code-sdk';
+
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 
@@ -15,7 +17,7 @@ export type TrustPromptChoice = 'trust' | 'distrust';
 export interface TrustPromptOptions {
   readonly workDir: string;
   /** Project-level MCP servers that trusting would enable; may be empty. */
-  readonly gatedMcpServers: readonly string[];
+  readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
   /** Esc resolves to 'distrust' as well. */
   readonly onSelect: (choice: TrustPromptChoice) => void;
 }
@@ -41,7 +43,7 @@ const OPTIONS: readonly TrustPromptOption[] = [
 
 export class TrustPromptComponent implements Component, Focusable {
   focused = false;
-  private selectedIndex = 0;
+  private selectedIndex = 1;
 
   constructor(private readonly opts: TrustPromptOptions) {}
 
@@ -79,11 +81,18 @@ export class TrustPromptComponent implements Component, Focusable {
     ];
 
     const notice =
-      this.opts.gatedMcpServers.length > 0
-        ? `Kimi Code loads project-level MCP servers (.mcp.json, .kimi-code/mcp.json) only in trusted folders. They run as local processes on your machine. This folder defines: ${this.opts.gatedMcpServers.join(', ')}.`
-        : 'Kimi Code loads project-level MCP servers (.mcp.json, .kimi-code/mcp.json) only in trusted folders. They run as local processes on your machine.';
+      'Project-level MCP servers are disabled until you explicitly choose Trust. Trust starts the listed project MCP targets and remembers this folder.';
     for (const line of wrapTextWithAnsi(notice, Math.max(20, width - 2))) {
       lines.push(` ${currentTheme.fg('textMuted', line)}`);
+    }
+    if (this.opts.gatedMcpServers.length > 0) {
+      lines.push(` ${currentTheme.fg('warning', 'Project MCP targets:')}`);
+      for (const server of this.opts.gatedMcpServers) {
+        const details = formatMcpTarget(server);
+        for (const line of wrapTextWithAnsi(details, Math.max(20, width - 4))) {
+          lines.push(`   ${currentTheme.fg('warning', line)}`);
+        }
+      }
     }
     lines.push('');
 
@@ -104,4 +113,28 @@ export class TrustPromptComponent implements Component, Focusable {
     lines.push(rule);
     return lines.map((line) => truncateToWidth(line, width));
   }
+}
+
+function formatMcpTarget(server: WorkspaceTrustMcpServerInfo): string {
+  if (server.transport === 'stdio') {
+    const args = server.args === undefined ? '' : ` args=${JSON.stringify(server.args)}`;
+    const cwd = server.cwd === undefined ? '' : ` cwd=${server.cwd}`;
+    return sanitizeForDisplay(`${server.name} (stdio): command=${server.command ?? ''}${args}${cwd}`);
+  }
+  return sanitizeForDisplay(`${server.name} (${server.transport}): url=${server.url ?? ''}`);
+}
+
+/**
+ * Drops C0/C1 control characters (including ESC) from workspace-supplied text:
+ * the trust prompt renders before the workspace is trusted, so a planted
+ * `.mcp.json` must not inject terminal control sequences into it.
+ */
+function sanitizeForDisplay(value: string): string {
+  let result = '';
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) continue;
+    result += char;
+  }
+  return result;
 }

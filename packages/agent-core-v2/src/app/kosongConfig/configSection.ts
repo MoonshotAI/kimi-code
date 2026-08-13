@@ -2,13 +2,13 @@
  * `kosongConfig` domain — config-section declarations for kosong.
  *
  * The persistence wrapper for kosong's provider/model registries and the
- * thinking / model-catalog / secondary-model preferences: declares every
+ * thinking / model-catalog preferences: declares every
  * kosong-owned section constant and its zod schema, plus the env bindings /
  * write-path strips and the snake_case ↔ camelCase TOML transforms. Where
  * kosong owns a pure type (`providers` / `models` / `thinking`), the schema
  * is re-derived from it and pinned by an `AssertExact` assertion (schema ≡
- * type at compile time); `modelCatalog` and `secondaryModel` have no
- * kosong-side type — theirs derive from the local schemas. Self-registered
+ * type at compile time); `modelCatalog` has no
+ * kosong-side type — its derives from the local schema. Self-registered
  * at module load via `registerConfigSection`.
  *
  * `ProviderTypeSchema` is deliberately free-form text: vendor identity is
@@ -25,7 +25,6 @@ import { z } from 'zod';
 import {
   type ConfigStripEnv,
   envBindings,
-  stripEnvBoundFields,
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import {

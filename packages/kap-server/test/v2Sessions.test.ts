@@ -234,6 +234,7 @@ describe('server /api/v2/sessions', () => {
       created_at: 3_000,
       updated_at: 5_000,
       archived: false,
+      archived_at: null,
     });
     // Stubbed sessions are cold → always idle.
     expect(first.activity).toEqual({ status: 'idle' });

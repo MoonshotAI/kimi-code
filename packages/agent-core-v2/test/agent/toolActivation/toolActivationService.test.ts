@@ -33,7 +33,6 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
-import '#/agent/tools/agent-swarm/agentSwarmTool';
 import '#/agent/tools/agent/agentTool';
 import '#/agent/tools/ask-user-question/askUserQuestionTool';
 import '#/agent/tools/edit/editTool';
@@ -351,7 +350,7 @@ describe('AgentToolActivationService', () => {
     function createScopeTree(agentExtra: ScopeSeed = []) {
       const app = createAppScope();
       const session = app.createChild(LifecycleScope.Session, 'session', {
-        extra: [
+        seeds: [
           [
             ISessionToolPolicyGate,
             {
@@ -365,7 +364,7 @@ describe('AgentToolActivationService', () => {
         ],
       });
       const agent = session.createChild(LifecycleScope.Agent, 'agent', {
-        extra: agentSeeds(agentExtra),
+        seeds: agentSeeds(agentExtra),
       });
       return { app, session, agent };
     }
@@ -382,7 +381,7 @@ describe('AgentToolActivationService', () => {
       expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
 
       const agent2 = session.createChild(LifecycleScope.Agent, 'agent-2', {
-        extra: agentSeeds(),
+        seeds: agentSeeds(),
       });
       await agent2.accessor.get(IAgentToolActivationService).activate();
       expect(agent2.accessor.get(IAgentToolRegistryService).resolve('Alpha')).toBeInstanceOf(
@@ -412,7 +411,7 @@ describe('AgentToolActivationService', () => {
     });
 
     it('feeds every built-in contribution through the App-scope assembly unchanged', async () => {
-      expect(savedContributions).toHaveLength(21);
+      expect(savedContributions).toHaveLength(20);
       for (const contribution of savedContributions) {
         registerAgentToolService(contribution.id, contribution.ctor, contribution.options);
       }

@@ -1,5 +1,29 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.17.0
+
+### Minor Changes
+
+- [#2700](https://github.com/MoonshotAI/kimi-code/pull/2700) [`c9bfe8b`](https://github.com/MoonshotAI/kimi-code/commit/c9bfe8b2c8314ba4ef8806fb3b92ac654c1d1860) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the secondary-model session API `Session.applyPersistedSecondaryModel`; subagent model selection is configured via `[secondary_model]` in config.toml instead. The `SECONDARY_DERIVED_MODEL_ALIAS` export stays (the v1 engine still synthesizes the entry at runtime, so hosts keep filtering it out of model pickers), and the SDK now also exports `PRIMARY_SUBAGENT_MODEL_CHOICE`, the v2 subagent model pool's reserved `primary` key.
+
+### Patch Changes
+
+- [#2843](https://github.com/MoonshotAI/kimi-code/pull/2843) [`c212ae9`](https://github.com/MoonshotAI/kimi-code/commit/c212ae9715371c0d7939c15e664acbe0d7cf7fc3) Thanks [@sailist](https://github.com/sailist)! - Show project MCP launch targets in the workspace trust prompt, default to declining trust, and resolve fd and stty binaries to absolute paths so untrusted workspaces cannot plant bare-name executables before confirmation.
+
+  `@moonshot-ai/kimi-code-sdk` contract change: `WorkspaceTrustInfo.gatedMcpServers` now carries structured `WorkspaceTrustMcpServerInfo` records (`name`, `transport`, and `command`/`args`/`cwd` or `url`) instead of plain strings, so SDK consumers rendering a trust prompt can show the full launch target.
+
+## 0.16.0
+
+### Minor Changes
+
+- [#2826](https://github.com/MoonshotAI/kimi-code/pull/2826) [`3c9e3b2`](https://github.com/MoonshotAI/kimi-code/commit/3c9e3b297cf5286c761159c1b4d642c478fd394d) Thanks [@liruifengv](https://github.com/liruifengv)! - Add `listSessionsPage` for keyset-paged session listing (`limit` / `before`, returns `nextCursor`). The v2 engine pages through the session index; the v1 engine keeps answering with a single full page.
+
+### Patch Changes
+
+- [#2731](https://github.com/MoonshotAI/kimi-code/pull/2731) [`437a1b8`](https://github.com/MoonshotAI/kimi-code/commit/437a1b8ba1b7e0f6662bdadc669564fdc58c3f5a) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Detect MCP servers that require OAuth without needing `auth: "oauth"` in the config.
+
+- [#2706](https://github.com/MoonshotAI/kimi-code/pull/2706) [`0b2e803`](https://github.com/MoonshotAI/kimi-code/commit/0b2e803d5e71afaab45212bb2ee6117ecbf8bbc9) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Expose persisted MCP authorization status without starting an OAuth flow.
+
 ## 0.15.3
 
 ### Patch Changes

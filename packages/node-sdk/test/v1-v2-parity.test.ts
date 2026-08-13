@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  IAgentLifecycleService,
   ISessionApprovalService,
   ISessionQuestionService,
   getLiveSessionById,
@@ -171,6 +172,16 @@ function scrubHomePrefixes(value: unknown, home: HomePair): unknown {
  * the comparison still covers everything not listed here. Keep empty unless a
  * gap is genuinely accepted; remove entries as gaps close.
  */
+function stripOriginDisclosure(history: readonly unknown[]): readonly unknown[] {
+  return history.map((message) => {
+    const record = message as { readonly origin?: { readonly disclosure?: unknown } };
+    if (record.origin?.disclosure === undefined) return message;
+    const origin = { ...record.origin };
+    delete origin.disclosure;
+    return { ...record, origin };
+  });
+}
+
 const KNOWN_DIFFS = {
   // v2's flag registry is per-domain and already carries flags v1 does not
   // have (minidb backend, subagent); v1-only flags would be the symmetric
@@ -222,7 +233,9 @@ const KNOWN_DIFFS = {
   // default title 'New Session' into state.json and reports it for
   // never-titled sessions where v2 leaves the title unset; only that
   // materialized default is projected away (explicit titles compare in
-  // full). Per-home paths (sessionDir, agent homedirs) compare after the
+  // full). `titleKind` is v2-only (the v1 wire has no canonical title-state
+  // field, only the `isCustomTitle` boolean inside `sessionMetadata`) —
+  // deleted. Per-home paths (sessionDir, agent homedirs) compare after the
   // home-prefix scrub — both engines lay sessions out as
   // `<home>/sessions/<workdir-key>/<id>` with the same key derivation.
   listSessions: (summaries: readonly SessionSummary[], home: HomePair): unknown =>
@@ -249,10 +262,14 @@ const KNOWN_DIFFS = {
   // provider-MEASURED prefix. In-memory appends (e.g. importContext) count
   // identically on both engines via the shared `estimateTokensForMessages`,
   // but once the provider reports measured usage the counts diverge by
-  // design. Histories compare in full; the count compares only in the
-  // pre-LLM state where both sides still estimate.
+  // design. Histories compare in full except for `origin.disclosure` — v2
+  // records typed reminder-render state there (swarm mode, once-reminder
+  // ids) and v1 has no such field; the count compares only in the pre-LLM
+  // state where both sides still estimate.
   getContext: (context: { readonly history: readonly unknown[] }): unknown =>
-    context.history.length === 0 ? context : { history: context.history },
+    context.history.length === 0
+      ? context
+      : { history: stripOriginDisclosure(context.history) },
   // Plan ids are random per engine (hero slugs) and the plan path embeds
   // both the per-home session dir and the id, so the comparison covers the
   // content and the path LAYOUT (id scrubbed); the id itself is asserted
@@ -347,6 +364,7 @@ function projectSessionSummary(summary: SessionSummary, home: HomePair): unknown
   const projected = scrubHomePrefixes(summary, home) as Record<string, unknown>;
   delete projected['createdAt'];
   delete projected['updatedAt'];
+  delete projected['titleKind'];
   // `lastTurnReason` is v2-only: the v1 engine never records a turn outcome,
   // so the field cannot compare across engines.
   delete projected['lastTurnReason'];
@@ -500,7 +518,7 @@ async function closeAll(...harnesses: readonly KimiHarness[]): Promise<void> {
  * and skew the comparison; the original values are restored on cleanup.
  */
 const CONFIG_ENV_PATTERN =
-  /^(KIMI_MODEL_|KIMI_LOOP_|KIMI_MCP_|KIMI_WEB_|KIMI_SECONDARY_|KIMI_IMAGE_|KIMI_CODE_BACKGROUND_|KIMI_CODE_MODEL_CATALOG_)/;
+  /^(KIMI_MODEL_|KIMI_LOOP_|KIMI_MCP_|KIMI_WEB_|KIMI_IMAGE_|KIMI_CODE_BACKGROUND_|KIMI_CODE_MODEL_CATALOG_)/;
 
 function scrubConfigEnv(): () => void {
   const saved: Record<string, string> = {};
@@ -616,35 +634,6 @@ api_key = "fixture-api-key"
 
 [thinking]
 enabled = "not-a-boolean"
-`;
-
-/**
- * Secondary-model parity fixture: one resolvable model and the experiment
- * enabled, no `[secondary_model]` recipe — the apply cases persist the recipe
- * through `setConfig` mid-test.
- */
-const SECONDARY_MODEL_CONFIG_TOML = `
-default_provider = "fixture-provider"
-default_model = "fixture-model"
-
-[providers.fixture-provider]
-type = "kimi"
-api_key = "fixture-api-key"
-base_url = "https://example.com/v1"
-
-[models.fixture-model]
-provider = "fixture-provider"
-model = "kimi-for-coding"
-max_context_size = 262144
-
-[experimental]
-secondary-model = true
-`;
-
-/** Same fixture with a dangling `[secondary_model]` pointer baked in. */
-const SECONDARY_MODEL_BROKEN_CONFIG_TOML = `${SECONDARY_MODEL_CONFIG_TOML}
-[secondary_model]
-model = "missing-model"
 `;
 
 function expectConfigParity(v1Config: KimiConfig, v2Config: KimiConfig): void {
@@ -896,10 +885,30 @@ async function writeFixturePlugin(dir: string): Promise<void> {
   );
 }
 
-async function makePluginParityPair(): Promise<PluginParityPair> {
+async function writeManagedFixtureSkill(home: HomePair, body: string): Promise<void> {
+  await writeFile(
+    join(
+      home.real,
+      'plugins',
+      'managed',
+      FIXTURE_PLUGIN_ID,
+      'skills',
+      'parity-skill',
+      'SKILL.md',
+    ),
+    `---\nname: parity-skill\ndescription: Skill from the parity fixture plugin\n---\n\n${body}\n`,
+    'utf-8',
+  );
+}
+
+async function makePluginParityPair(configToml?: string): Promise<PluginParityPair> {
   const v1HomeDir = await makeTempDir('kimi-sdk-parity-v1-home-');
   const v2HomeDir = await makeTempDir('kimi-sdk-parity-v2-home-');
   const sourceDir = await makeTempDir('kimi-sdk-parity-plugin-src-');
+  if (configToml !== undefined) {
+    await writeFile(join(v1HomeDir, 'config.toml'), configToml, 'utf-8');
+    await writeFile(join(v2HomeDir, 'config.toml'), configToml, 'utf-8');
+  }
   await writeFixturePlugin(sourceDir);
   return {
     v1: new SDKRpcClient({ homeDir: v1HomeDir, identity: TEST_IDENTITY }),
@@ -1089,6 +1098,54 @@ describe('v1↔v2 plugin parity', () => {
       ]);
       expect(normalize(v2Plugins, 'id')).toEqual(normalize(v1Plugins, 'id'));
       expect(v1Plugins[0]?.version).toBe('2.0.0');
+    } finally {
+      await closePluginPair(pair);
+    }
+  });
+
+  it('reloadPlugins refreshes frozen session-start guidance in a live v2 session', async () => {
+    const pair = await makePluginParityPair(AGENT_CONFIG_TOML);
+    const workDir = await makeTempDir('kimi-sdk-parity-work-');
+    try {
+      await pair.v2.installPlugin(pair.sourceDir);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-stdio', false);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false);
+      const session = await pair.v2.createSession({ workDir, permission: 'yolo' });
+
+      await pair.v2.reloadPlugins();
+      expect(JSON.stringify((await pair.v2.getContext({ sessionId: session.id })).history)).toContain(
+        'Parity skill body.',
+      );
+
+      await writeManagedFixtureSkill(pair.v2Home, 'Live reload skill body.');
+      await pair.v2.reloadPlugins();
+
+      const history = (await pair.v2.getContext({ sessionId: session.id })).history;
+      expect(JSON.stringify(history.at(-1))).toContain('Live reload skill body.');
+    } finally {
+      await closePluginPair(pair);
+    }
+  });
+
+  it('reloadSession refreshes frozen session-start guidance for a cold v2 session', async () => {
+    const pair = await makePluginParityPair(AGENT_CONFIG_TOML);
+    const workDir = await makeTempDir('kimi-sdk-parity-work-');
+    try {
+      await pair.v2.installPlugin(pair.sourceDir);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-stdio', false);
+      await pair.v2.setPluginMcpServerEnabled(FIXTURE_PLUGIN_ID, 'parity-http', false);
+      const session = await pair.v2.createSession({ workDir, permission: 'yolo' });
+      await pair.v2.reloadPlugins();
+      await pair.v2.closeSession({ sessionId: session.id });
+
+      await writeManagedFixtureSkill(pair.v2Home, 'Cold reload skill body.');
+      await pair.v2.reloadSession({
+        sessionId: session.id,
+        forcePluginSessionStartReminder: true,
+      });
+
+      const history = (await pair.v2.getContext({ sessionId: session.id })).history;
+      expect(JSON.stringify(history.at(-1))).toContain('Cold reload skill body.');
     } finally {
       await closePluginPair(pair);
     }
@@ -2393,8 +2450,8 @@ describe('v1↔v2 agent interaction parity', () => {
     // Model-less on purpose: parity covers the pre-provider surface — the
     // call returns without throwing and the metadata update (same shared
     // helpers on both engines) lands before the turn fails asynchronously.
-    // The enqueue-semantics gaps (v1 drops a mid-turn prompt, v2 queues it;
-    // v1 ignores disabledTools, v2 applies it) are pinned in the tracker.
+    // The enqueue-semantics gap (v1 drops a mid-turn prompt, v2 queues it) is
+    // pinned in the tracker.
     const pair = await makeSessionParityPair();
     try {
       await createOnBoth(pair, { id: 'session_parity_agent_prompt' });
@@ -2427,28 +2484,26 @@ describe('v1↔v2 agent interaction parity', () => {
     }
   });
 
-  it('steer on an idle session: v1 launches a turn, v2 rejects prompt.not_found (pinned)', async () => {
+  it('steer on an idle session: both engines launch a turn and update metadata', async () => {
     const restoreEnv = scrubConfigEnv();
     const pair = await makeSessionParityPair();
     try {
       await createOnBoth(pair, { id: 'session_parity_agent_steer' });
       const input = { sessionId: 'session_parity_agent_steer' } as const;
-      // Pinned divergence: v1 treats an idle steer like a prompt — it
-      // launches a fresh turn and updates title/lastPrompt. v2's steer RPC
-      // enqueues first (which itself launches the turn), so the follow-up
-      // steer step finds no pending prompt and rejects with prompt.not_found;
-      // the v2 path never touches the metadata.
+      // v1 treats an idle steer like a prompt — it launches a fresh turn and
+      // updates title/lastPrompt. v2's steer RPC enqueues first (which itself
+      // launches the turn) and converges on the same end state: the launched
+      // turn is returned instead of rejecting, and the metadata is updated.
       await pair.v1.steer({ ...input, input: [{ type: 'text', text: 'steer text' }] });
-      await expect(
-        pair.v2.steer({ ...input, input: [{ type: 'text', text: 'steer text' }] }),
-      ).rejects.toMatchObject({ code: 'prompt.not_found' });
+      await pair.v2.steer({ ...input, input: [{ type: 'text', text: 'steer text' }] });
       const [v1List, v2List] = await Promise.all([
         pair.v1.listSessions(),
         pair.v2.listSessions(),
       ]);
       expect(v1List[0]?.title).toBe('steer text');
       expect(v1List[0]?.lastPrompt).toBe('steer text');
-      expect(v2List[0]?.lastPrompt).not.toBe('steer text');
+      expect(v2List[0]?.title).toBe('steer text');
+      expect(v2List[0]?.lastPrompt).toBe('steer text');
       await settleTurns();
     } finally {
       await closeSessionPair(pair);
@@ -2624,96 +2679,6 @@ describe('v1↔v2 agent interaction parity', () => {
       await expect(pair.v2.getSessionWarnings({ sessionId: 'session_missing' })).rejects.toMatchObject(
         { code: ErrorCodes.SESSION_NOT_FOUND },
       );
-    } finally {
-      await closeSessionPair(pair);
-      restoreEnv();
-    }
-  });
-
-  it('applyPersistedSecondaryModel validates, applies, and refreshes warnings identically', async () => {
-    const restoreEnv = scrubConfigEnv();
-    const pair = await makeSessionParityPair(SECONDARY_MODEL_CONFIG_TOML);
-    try {
-      await createOnBoth(pair, { id: 'session_parity_secondary_apply' });
-      const input = { sessionId: 'session_parity_secondary_apply' } as const;
-      const applyError = (client: SDKRpcClient | SDKRpcClientV2) =>
-        client.applyPersistedSecondaryModel(input).then(
-          () => undefined,
-          (error: unknown) => error as Error,
-        );
-
-      // No recipe persisted yet: both reject with v1's persist-first error.
-      const [v1NoRecipe, v2NoRecipe] = await Promise.all([
-        applyError(pair.v1),
-        applyError(pair.v2),
-      ]);
-      expect(v1NoRecipe).toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
-      expect(v2NoRecipe).toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
-      expect(v2NoRecipe?.message).toBe(v1NoRecipe?.message);
-
-      // A dangling recipe: both reject, pointing at [secondary_model].
-      await Promise.all([
-        pair.v1.setConfig({ secondaryModel: { model: 'missing-model' } }),
-        pair.v2.setConfig({ secondaryModel: { model: 'missing-model' } }),
-      ]);
-      const [v1Broken, v2Broken] = await Promise.all([
-        applyError(pair.v1),
-        applyError(pair.v2),
-      ]);
-      expect(v1Broken).toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
-      expect(v2Broken).toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
-      expect(v1Broken?.message).toContain('[secondary_model].model');
-      expect(v2Broken?.message).toContain('[secondary_model].model');
-
-      // A valid recipe: both apply cleanly. The warnings pull converges on
-      // empty — v1's snapshot never held the broken recipe (its apply
-      // validates before mutating), v2's live-config warning cache is
-      // refreshed by the successful apply.
-      await Promise.all([
-        pair.v1.setConfig({ secondaryModel: { model: 'fixture-model' } }),
-        pair.v2.setConfig({ secondaryModel: { model: 'fixture-model' } }),
-      ]);
-      await Promise.all([
-        pair.v1.applyPersistedSecondaryModel(input),
-        pair.v2.applyPersistedSecondaryModel(input),
-      ]);
-      const [v1Warnings, v2Warnings] = await Promise.all([
-        pair.v1.getSessionWarnings(input),
-        pair.v2.getSessionWarnings(input),
-      ]);
-      expect(v2Warnings).toEqual(v1Warnings);
-      expect(v1Warnings).toEqual([]);
-
-      await expect(
-        pair.v1.applyPersistedSecondaryModel({ sessionId: 'session_missing' }),
-      ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
-      await expect(
-        pair.v2.applyPersistedSecondaryModel({ sessionId: 'session_missing' }),
-      ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
-    } finally {
-      await closeSessionPair(pair);
-      restoreEnv();
-    }
-  });
-
-  it('getSessionWarnings flags a creation-time broken secondary recipe on both engines', async () => {
-    const restoreEnv = scrubConfigEnv();
-    const pair = await makeSessionParityPair(SECONDARY_MODEL_BROKEN_CONFIG_TOML);
-    try {
-      await createOnBoth(pair, { id: 'session_parity_secondary_broken' });
-      const input = { sessionId: 'session_parity_secondary_broken' } as const;
-      const [v1Warnings, v2Warnings] = await Promise.all([
-        pair.v1.getSessionWarnings(input),
-        pair.v2.getSessionWarnings(input),
-      ]);
-      // The message wording is engine-specific; the code + severity are the
-      // shared contract.
-      const codes = (warnings: readonly { code: string; severity: string }[]) =>
-        warnings.map(({ code, severity }) => ({ code, severity }));
-      expect(codes(v2Warnings)).toEqual(codes(v1Warnings));
-      expect(codes(v1Warnings)).toEqual([
-        { code: 'secondary-model-invalid', severity: 'warning' },
-      ]);
     } finally {
       await closeSessionPair(pair);
       restoreEnv();
@@ -3494,10 +3459,10 @@ describe('v1↔v2 global MCP parity', () => {
     });
     for (const homeDir of [pair.v1HomeDir, pair.v2HomeDir]) {
       const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
-      externalOAuth
+      await externalOAuth
         .getProvider('oauth-authorized', authorizedUrl)
         .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
-      externalOAuth
+      await externalOAuth
         .getProvider('sse', statusServer.oauthUrl)
         .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
     }
@@ -4301,10 +4266,9 @@ describe('v1↔v2 event & interaction parity', () => {
 // Residual surface parity (exportSession / startBtw / swarm mode / listSkills)
 //
 // The last migrated methods, driven through `SDKRpcClient` / `SDKRpcClientV2`
-// directly like the other session batches. No provider calls: export reads
-// persisted state, btw/swarm are context-only, and the `swarm()` case uses the
-// model-less prompt failure path (its turn start/end is what drives the
-// task-trigger auto-exit on both engines).
+// directly like the other session batches. Reminder assertions force the v2
+// context-injection boundary explicitly, so they test model-facing
+// materialization without contacting a provider.
 // ---------------------------------------------------------------------------
 
 /** Poll a condition until it holds or the budget runs out (engine-async settle). */
@@ -4443,6 +4407,11 @@ describe('v1↔v2 residual surface parity', () => {
             key === 'origin' ? undefined : value,
           ),
         );
+      // Both engines materialize the side-question reminder while forking:
+      // v2 appends it at the fork event point (a past-tense one-off fact),
+      // so the inherited contexts are already identical right after fork.
+      expect(v1Context.history).toHaveLength(2);
+      expect(v2Context.history).toHaveLength(2);
       expect(stripOrigins(v2Context)).toEqual(stripOrigins(v1Context));
       // Non-vacuous: the inherited import plus the side-question reminder
       // (byte-identical template on both engines).
@@ -4498,8 +4467,8 @@ describe('v1↔v2 residual surface parity', () => {
       expect(v1Inactive.swarmMode).toBe(false);
       expect(v2Inactive.swarmMode).toBe(false);
       const [v1Exited, v2Exited] = await historyOnBoth();
-      expect(project(v2Exited)).toEqual(project(v1Exited));
       expect(v1Exited.history).toHaveLength(0);
+      expect(project(v2Exited)).toEqual(project(v1Exited));
 
       // Exit is idempotent too: a second exit is a silent no-op on both.
       await Promise.all([
@@ -4508,7 +4477,7 @@ describe('v1↔v2 residual surface parity', () => {
       ]);
       const [v1Idle, v2Idle] = await historyOnBoth();
       expect(v1Idle.history).toHaveLength(0);
-      expect(v2Idle.history).toHaveLength(0);
+      expect(project(v2Idle)).toEqual(project(v1Idle));
 
       // The `tool` trigger injects no reminder on either engine.
       await Promise.all([
@@ -4520,7 +4489,7 @@ describe('v1↔v2 residual surface parity', () => {
       expect(v2Tool.swarmMode).toBe(true);
       const [v1ToolHistory, v2ToolHistory] = await historyOnBoth();
       expect(v1ToolHistory.history).toHaveLength(0);
-      expect(v2ToolHistory.history).toHaveLength(0);
+      expect(project(v2ToolHistory)).toEqual(project(v1ToolHistory));
       await Promise.all([
         pair.v1.setSwarmMode({ ...input, enabled: false }),
         pair.v2.setSwarmMode({ ...input, enabled: false }),

@@ -12,10 +12,12 @@ import { describe, expect, it } from 'vitest';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { LogContext, LogPayload } from '#/_base/log/log';
+import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import type { SkillDefinition } from '#/app/skillCatalog/types';
-import { testAgent } from '../../harness';
+import { appService, logServices, skillServices, testAgent } from '../../harness';
+import { stubPluginService } from '../plugin/stubs';
 import { stubSkill } from './stubs';
 
 type InjectableDynamicInjector = {
@@ -34,6 +36,12 @@ interface RecordingLogger {
   error(message: string, payload?: LogPayload): void;
   createChild(ctx: LogContext): RecordingLogger;
 }
+
+const CURRENT_PLUGIN_SESSION_START_REMINDER = `<system-reminder>
+<plugin_session_start plugin="superpowers" skill="using-superpowers">
+body
+</plugin_session_start>
+</system-reminder>`;
 
 function skill(
   name: string,
@@ -76,12 +84,11 @@ function sessionStartRuntime(input: {
   for (const skill of input.skills) {
     skills.register(skill);
   }
-  const ctx = testAgent({
-    skills,
-    pluginSessionStarts: input.sessionStarts,
-    log: recordingLogger(warnings),
-  });
-  ctx.configure();
+  const ctx = testAgent(
+    appService(IPluginService, stubPluginService({ sessionStarts: input.sessionStarts })),
+    skillServices(skills),
+    logServices(recordingLogger(warnings)),
+  );
   if (input.history !== undefined) {
     ctx.context.append(...input.history);
   }
@@ -158,14 +165,14 @@ describe('plugin session-start dynamic injection', () => {
     expect(pluginSessionStartMessages(ctx)).toHaveLength(1);
   });
 
-  it('does not re-inject when a live-spliced history already contains plugin sessionStart', async () => {
+  it('does not re-inject when live-spliced history contains the current plugin sessionStart', async () => {
     const { ctx } = sessionStartRuntime({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
       history: [
         {
           role: 'user',
-          content: [{ type: 'text', text: '<system-reminder>old</system-reminder>' }],
+          content: [{ type: 'text', text: CURRENT_PLUGIN_SESSION_START_REMINDER }],
           toolCalls: [],
           origin: { kind: 'injection', variant: 'plugin_session_start' },
         },
@@ -177,7 +184,7 @@ describe('plugin session-start dynamic injection', () => {
     expect(pluginSessionStartMessages(ctx)).toHaveLength(1);
   });
 
-  it('does not re-inject after a silent wire replay restored a plugin sessionStart (cold resume)', async () => {
+  it('does not re-inject after wire replay restores the current plugin sessionStart', async () => {
     const { ctx } = sessionStartRuntime({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
@@ -188,7 +195,7 @@ describe('plugin session-start dynamic injection', () => {
       time: 1,
       message: {
         role: 'user',
-        content: [{ type: 'text', text: '<system-reminder>old</system-reminder>' }],
+        content: [{ type: 'text', text: CURRENT_PLUGIN_SESSION_START_REMINDER }],
         toolCalls: [],
         origin: { kind: 'injection', variant: 'plugin_session_start' },
       },
@@ -219,6 +226,21 @@ describe('plugin session-start dynamic injection', () => {
         payload: expect.objectContaining({ pluginId: 'demo', skillName: 'missing' }),
       }),
     );
+  });
+
+  it('warns only once for a missing skill across repeated reconciliations', async () => {
+    const { ctx, warnings } = sessionStartRuntime({
+      sessionStarts: [{ pluginId: 'demo', skillName: 'missing' }],
+      skills: [],
+    });
+
+    await injectDynamic(ctx);
+    await injectDynamic(ctx);
+    await injectDynamic(ctx);
+
+    expect(
+      warnings.filter((warning) => warning.message === 'plugin sessionStart skill not found'),
+    ).toHaveLength(1);
   });
 
   it('emits nothing when no sessionStart declarations are present', async () => {

@@ -66,6 +66,7 @@ export function buildSessionSummary(fields: {
   createdAt: number;
   updatedAt: number;
   archived: boolean;
+  archivedAt?: number;
   custom?: Record<string, unknown>;
   lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }): SessionSummary {
@@ -78,6 +79,7 @@ export function buildSessionSummary(fields: {
     createdAt: fields.createdAt,
     updatedAt: fields.updatedAt,
     archived: fields.archived,
+    archivedAt: fields.archivedAt,
     custom: fields.custom,
     lastTurnReason: fields.lastTurnReason,
   };
@@ -108,6 +110,7 @@ export function summaryEquals(a: SessionSummary, b: SessionSummary): boolean {
     a.createdAt === b.createdAt &&
     a.updatedAt === b.updatedAt &&
     a.archived === b.archived &&
+    a.archivedAt === b.archivedAt &&
     a.lastTurnReason === b.lastTurnReason &&
     JSON.stringify(a.custom) === JSON.stringify(b.custom)
   );
@@ -159,6 +162,7 @@ export async function readSessionSummary(
     createdAt: parseTime(meta['createdAt']),
     updatedAt: parseTime(meta['updatedAt']),
     archived: meta['archived'] === true,
+    archivedAt: meta['archivedAt'] === undefined ? undefined : parseTime(meta['archivedAt']),
     custom,
     lastTurnReason: parseTurnOutcome(meta['lastTurnReason']),
   });

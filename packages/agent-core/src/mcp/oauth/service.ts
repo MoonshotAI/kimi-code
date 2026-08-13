@@ -25,6 +25,7 @@
 import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 
 import { startCallbackServer, type CallbackServer } from './callback-server';
+import type { McpOAuthCredentialsCoordinator } from './coordinator';
 import { McpOAuthClientProvider } from './provider';
 import { JsonFileStore, mcpCredentialsDir, mcpOAuthStoreKey } from './store';
 
@@ -35,6 +36,7 @@ export interface McpOAuthServiceOptions {
   readonly kimiHomeDir?: string;
   /** Override for the label embedded in DCR `client_name`. */
   readonly clientLabel?: string;
+  readonly coordinator?: McpOAuthCredentialsCoordinator;
 }
 
 export interface BeginAuthorizationOptions {
@@ -61,6 +63,7 @@ export interface BeginAuthorizationResult {
 export class McpOAuthService {
   private readonly store: JsonFileStore;
   private readonly clientLabel: string | undefined;
+  private readonly coordinator: McpOAuthCredentialsCoordinator | undefined;
   private readonly providers = new Map<string, McpOAuthClientProvider>();
 
   constructor(options: McpOAuthServiceOptions = {}) {
@@ -70,6 +73,7 @@ export class McpOAuthService {
         options.kimiHomeDir === undefined ? undefined : mcpCredentialsDir(options.kimiHomeDir),
       );
     this.clientLabel = options.clientLabel;
+    this.coordinator = options.coordinator;
   }
 
   /** Returns the cached provider for `serverName` + `serverUrl`, constructing it on first use. */
@@ -129,14 +133,18 @@ export class McpOAuthService {
     // See invalidateStaleRegistration: a reused registration whose redirect
     // URIs no longer cover this flow's random-port callback would be rejected
     // at the authorization endpoint with an error only the browser ever sees.
-    provider.invalidateStaleRegistration(callbackServer.redirectUri);
+    await provider.invalidateStaleRegistration(callbackServer.redirectUri);
 
     let authorizationUrl: URL | undefined;
     try {
-      const result = await auth(provider as OAuthClientProvider, { serverUrl });
+      const result = await auth(provider as OAuthClientProvider, {
+        serverUrl,
+        fetchFn: provider.createOAuthFetch(),
+      });
       if (result !== 'REDIRECT') {
         // Tokens already valid (e.g. unexpired refresh). Nothing to do.
         await callbackServer.close();
+        this.coordinator?.notifyCredentialsChanged(serverName, serverUrl);
         throw new AlreadyAuthorizedError(serverName);
       }
       authorizationUrl = provider.takeAuthorizationUrl();
@@ -174,6 +182,7 @@ export class McpOAuthService {
         const finalResult = await auth(provider as OAuthClientProvider, {
           serverUrl,
           authorizationCode: code,
+          fetchFn: provider.createOAuthFetch(),
         });
         if (finalResult !== 'AUTHORIZED') {
           throw new Error(`OAuth code exchange returned "${finalResult}" instead of AUTHORIZED`);
@@ -185,6 +194,7 @@ export class McpOAuthService {
       settled = true;
       await callbackServer.close().catch(() => undefined);
       provider.resetFlow();
+      this.coordinator?.notifyCredentialsChanged(serverName, serverUrl);
     };
 
     return { authorizationUrl, complete, cancel };
@@ -199,8 +209,12 @@ export class McpOAuthService {
     serverName: string,
     serverUrl: string | URL,
     scope: 'all' | 'client' | 'tokens' | 'discovery' = 'all',
-  ): void {
-    this.getProvider(serverName, serverUrl).invalidateCredentials(scope);
+  ): Promise<void> {
+    return this.getProvider(serverName, serverUrl).clearCredentials(scope);
+  }
+
+  forgetProvider(serverName: string, serverUrl: string | URL): void {
+    this.providers.delete(mcpOAuthStoreKey(serverName, serverUrl));
   }
 }
 

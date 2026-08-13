@@ -58,9 +58,9 @@
  * `DomainEventMap` augmentations in `packages/agent-core-v2/src`, e.g.
  * `agent/loop/loopService.ts`, `agent/toolExecutor/toolExecutorService.ts`,
  * `agent/task/taskOps.ts`, `agent/shellCommand/shellCommandService.ts`,
- * `session/agentLifecycle/mirrorAgentRun.ts`, `session/swarm/sessionSwarmService.ts`,
+ * `session/agentLifecycle/mirrorAgentRun.ts`, `features/swarm/session/sessionSwarmService.ts`,
  * `agent/goal/goalOps.ts`, `agent/usage/usageOps.ts`, `agent/skill/skillOps.ts`,
- * `agent/rpc/rpcService.ts`, `session/cron/cronOps.ts`,
+ * `agent/pluginCommand/pluginCommandService.ts`, `session/cron/cronOps.ts`,
  * `agent/fullCompaction/compactionOps.ts`, `agent/mcp/mcpService.ts`,
  * `agent/profile/profileService.ts`, `agent/contextMemory/contextMemoryService.ts`).
  */

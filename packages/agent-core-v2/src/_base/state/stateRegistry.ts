@@ -30,7 +30,7 @@
  * Persistence and replay are out of scope here. Scope-agnostic.
  */
 
-import { Disposable } from '../di/lifecycle';
+import { Disposable, type IDisposable, toDisposable } from '../di/lifecycle';
 import { BugIndicatingError } from '../errors/errors';
 import { Emitter, type Event } from '../event';
 
@@ -55,7 +55,7 @@ export interface StateInspection {
 }
 
 export interface IStateRegistry {
-  register<T>(key: StateKey<T>): void;
+  register<T>(key: StateKey<T>): IDisposable;
   has(key: StateKey<unknown>): boolean;
   get<T>(key: StateKey<T>): T;
   set<T>(key: StateKey<T>, value: T): void;
@@ -69,6 +69,7 @@ export interface IStateRegistry {
 // NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class StateRegistry extends Disposable implements IStateRegistry {
   private readonly values = new Map<string, unknown>();
+  private readonly registrations = new Map<string, object>();
   private readonly keyEmitters = new Map<string, Emitter<unknown>>();
   private readonly anyEmitter = this._register(new Emitter<StateChange>());
   readonly onDidChangeAny: Event<StateChange> = this.anyEmitter.event;
@@ -76,11 +77,20 @@ export class StateRegistry extends Disposable implements IStateRegistry {
   protected readonly inspectScope: string = 'unknown';
   protected inspectParent?: IStateRegistry;
 
-  register<T>(key: StateKey<T>): void {
+  register<T>(key: StateKey<T>): IDisposable {
     if (this.values.has(key.name)) {
       throw new BugIndicatingError(`state key '${key.name}' is already registered`);
     }
+    const registration = {};
+    this.registrations.set(key.name, registration);
     this.values.set(key.name, key.initial());
+    return toDisposable(() => {
+      if (this.registrations.get(key.name) !== registration) return;
+      this.registrations.delete(key.name);
+      this.values.delete(key.name);
+      this.keyEmitters.get(key.name)?.dispose();
+      this.keyEmitters.delete(key.name);
+    });
   }
 
   has(key: StateKey<unknown>): boolean {

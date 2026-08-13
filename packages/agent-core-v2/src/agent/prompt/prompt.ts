@@ -1,6 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { Turn, TurnResult } from '#/agent/loop/loop';
+import type { ContentPart } from '#/kosong/contract/message';
 import type { Hooks } from '#/hooks';
 
 export interface PromptSubmitContext {
@@ -47,9 +48,23 @@ export interface PromptQueueSnapshot {
   readonly pending: readonly PromptSnapshot[];
 }
 
+export interface PromptPayload {
+  readonly input: readonly ContentPart[];
+}
+
+export interface SteerPayload {
+  readonly input: readonly ContentPart[];
+}
+
+export interface PromptLaunchResult {
+  readonly turn_id: number;
+}
+
 export interface IAgentPromptService {
   readonly _serviceBrand: undefined;
   enqueue(input: PromptInput): Promise<PromptHandle>;
+  submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined>;
+  submitSteer(payload: SteerPayload): Promise<PromptLaunchResult | undefined>;
   list(): PromptQueueSnapshot;
   steer(promptIds: readonly string[]): Promise<readonly PromptHandle[]>;
   abort(promptId: string, reason?: Error): boolean;

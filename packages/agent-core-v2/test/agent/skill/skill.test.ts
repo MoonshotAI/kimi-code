@@ -11,6 +11,8 @@ import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { summarizeSkill } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { IEventService } from '#/app/event/event';
 import { AgentSkillService } from '#/agent/skill/skillService';
 import {
   MAX_SKILL_QUERY_DEPTH,
@@ -77,6 +79,11 @@ describe('AgentSkillService', () => {
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),
         });
+        reg.definePartialInstance(ISessionMetadata, {
+          read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
+          update: async () => {},
+        });
+        reg.definePartialInstance(IEventService, { publish: () => {} });
         reg.defineInstance(ISessionContext, stubSessionContext());
         reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
@@ -171,6 +178,11 @@ describe('SkillTool', () => {
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),
         });
+        reg.definePartialInstance(ISessionMetadata, {
+          read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
+          update: async () => {},
+        });
+        reg.definePartialInstance(IEventService, { publish: () => {} });
         reg.defineInstance(ISessionContext, stubSessionContext());
         reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
