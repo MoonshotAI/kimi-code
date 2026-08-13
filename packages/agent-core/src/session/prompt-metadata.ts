@@ -116,10 +116,14 @@ function isFileNameStem(stem: string, following: string): boolean {
 // A long token-shaped word also stays readable as an absolute path, e.g.
 // `/Users/.../kimi-code-workspace/`. The match must be rooted (preceded by
 // `/`) and every `/`-separated segment must stay below the 40-char token
-// threshold — a path containing a token-length segment (e.g.
-// `/tmp/<48-char token>`) is redacted as a whole instead.
+// threshold and look like a human-named word (lowercase, Capitalized, or
+// ALL-CAPS like `README`) — a base64/base64url token pasted with slashes has
+// mixed-case random segments and fails closed, as does a path containing a
+// token-length segment (e.g. `/tmp/<48-char token>`).
 function isAbsolutePath(match: string, offset: number, source: string): boolean {
   if (offset === 0 || source[offset - 1] !== '/') return false;
   if (!match.includes('/')) return false;
-  return match.split('/').every((segment) => segment.length < 40);
+  return match
+    .split('/')
+    .every((segment) => segment.length < 40 && /^([A-Z]?[a-z0-9_-]*|[A-Z0-9_-]+)$/.test(segment));
 }

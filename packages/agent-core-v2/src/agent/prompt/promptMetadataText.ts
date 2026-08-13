@@ -73,7 +73,9 @@ function isFileNameStem(stem: string, following: string): boolean {
 function isAbsolutePath(match: string, offset: number, source: string): boolean {
   if (offset === 0 || source[offset - 1] !== '/') return false;
   if (!match.includes('/')) return false;
-  return match.split('/').every((segment) => segment.length < 40);
+  return match
+    .split('/')
+    .every((segment) => segment.length < 40 && /^([A-Z]?[a-z0-9_-]*|[A-Z0-9_-]+)$/.test(segment));
 }
 
 function promptPartText(part: ContentPart): string | undefined {
