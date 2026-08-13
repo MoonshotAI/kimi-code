@@ -311,7 +311,7 @@ PTY 终端接口，仅 loopback 绑定时挂载。
 | 流式文本 | `assistant.delta`、`thinking.delta`（带 `offset` 用于对齐） |
 | 工具调用 | `tool.call.started`、`tool.call.delta`、`tool.progress`、`tool.result` |
 | 交互 | `event.approval.requested` / `resolved`、`event.question.requested` / `answered` / `dismissed` |
-| 子 Agent | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
+| subagent | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
 | 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
 | 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
 
