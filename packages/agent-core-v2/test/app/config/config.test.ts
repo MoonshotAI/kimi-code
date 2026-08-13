@@ -19,6 +19,7 @@ import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCat
 import {
   Error2,
   ErrorCodes,
+  isError2,
   resetUnexpectedErrorHandler,
   setUnexpectedErrorHandler,
   toErrorPayload,
@@ -42,7 +43,6 @@ import {
 } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
-import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import '#/app/cron/configSection';
 import type { CronConfig } from '#/app/cron/configSection';
 import '#/app/skillCatalog/configSection';
@@ -73,9 +73,6 @@ import {
   DEFAULT_MODEL_SECTION,
   MODELS_SECTION,
   PROVIDERS_SECTION,
-  SECONDARY_MODEL_EFFORT_ENV,
-  SECONDARY_MODEL_ENV,
-  SECONDARY_MODEL_SECTION,
   THINKING_SECTION,
 } from '#/app/kosongConfig/configSection';
 import { type ThinkingConfig } from '#/kosong/model/thinking';
@@ -90,15 +87,17 @@ import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
 import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
-  resolveSecondaryModel,
   resolveSubagentBinding,
+  resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
+  SECONDARY_MODEL_SECTION,
   SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
-  subagentDisplayModel,
+  type SecondaryModelConfig,
   type SubagentConfig,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
+import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import {
   SERVICES_SECTION,
   WEB_FETCH_API_KEY_ENV,
@@ -107,8 +106,6 @@ import {
   WEB_SEARCH_BASE_URL_ENV,
   type ServicesConfig,
 } from '#/app/auth/configSection';
-import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
-import { type SecondaryModelConfig } from '#/app/kosongConfig/configSection';
 import '#/app/mcpConfig/configSection';
 import {
   MCP_SECTION,
@@ -123,8 +120,12 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { stubBootstrap } from '../bootstrap/stubs';
-import { stubFlag } from '../flag/stubs';
 import { stubLog } from '../../_base/log/stubs';
+import { stubFlag } from '../flag/stubs';
+
+function secondaryModelFlags(enabled = true) {
+  return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
+}
 
 const TEST_OS_ENV = {
   osKind: 'Linux',
@@ -133,10 +134,6 @@ const TEST_OS_ENV = {
   shellName: 'bash',
   shellPath: '/bin/bash',
 } as const;
-
-function secondaryModelFlags(enabled = true) {
-  return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
-}
 
 describe('Agent config', () => {
   let ctx: TestAgentContext;
@@ -1729,109 +1726,279 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
-  it('resolves the spawn binding: secondary by default, primary on request, inherit otherwise', async () => {
-    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
-
-    const noModel = await createConfig({});
-    expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own)).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      displayModel: 'provider/main',
-    });
-    expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own, 'secondary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      displayModel: 'provider/main',
-    });
-    noModel.disposables.dispose();
-
-    const withModel = await createConfig({}, '[secondary_model]\nmodel = "provider/secondary"\n');
-    expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own)).toEqual({
-      model: 'provider/secondary',
-      thinking: undefined,
-      displayModel: 'provider/secondary',
-    });
-    expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      displayModel: 'provider/main',
-    });
-    withModel.disposables.dispose();
-
-    const withEffort = await createConfig(
-      {},
-      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
-    );
-    expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own)).toEqual({
-      model: SECONDARY_DERIVED_MODEL_ID,
-      thinking: 'low',
-      displayModel: 'provider/secondary',
-    });
-    expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      displayModel: 'provider/main',
-    });
-    withEffort.disposables.dispose();
-
-    const withFactPatch = await createConfig(
-      {},
-      '[secondary_model]\nmodel = "provider/secondary"\nmax_output_size = 8192\n',
-    );
-    expect(resolveSubagentBinding(withFactPatch.config, secondaryModelFlags(), own)).toEqual({
-      model: SECONDARY_DERIVED_MODEL_ID,
-      thinking: undefined,
-      displayModel: 'provider/secondary',
-    });
-    withFactPatch.disposables.dispose();
-  });
-
-  it('inherits the caller binding when the secondary-model experiment is disabled', async () => {
-    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+  it('reads default_model and [secondary_model.models] from config.toml', async () => {
     const { config, disposables } = await createConfig(
       {},
-      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
+      '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = ""\n',
     );
 
-    expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      displayModel: 'provider/main',
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': 'fast and cheap', 'provider/smart': '' },
     });
 
     disposables.dispose();
   });
 
-  it('normalizes the derived entry to the recipe base alias regardless of the flag', async () => {
-    const withRecipe = await createConfig(
-      {},
-      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
-    );
-    expect(subagentDisplayModel(withRecipe.config, SECONDARY_DERIVED_MODEL_ID)).toBe(
-      'provider/secondary',
-    );
-    expect(subagentDisplayModel(withRecipe.config, 'provider/main')).toBe('provider/main');
-    withRecipe.disposables.dispose();
+  it('resolves the spawn binding: pool default, explicit alias, primary opt-in, inherit without pool', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
 
-    const bare = await createConfig({});
-    expect(subagentDisplayModel(bare.config, SECONDARY_DERIVED_MODEL_ID)).toBe(
-      SECONDARY_DERIVED_MODEL_ID,
-    );
-    bare.disposables.dispose();
-  });
-
-  it('normalizes an inherited derived alias on the caller-fallback branch', async () => {
-    const withRecipe = await createConfig({}, '[secondary_model]\nmodel = "provider/secondary"\n');
-    const own = { modelAlias: SECONDARY_DERIVED_MODEL_ID, thinkingLevel: 'medium' };
-    expect(resolveSubagentBinding(withRecipe.config, secondaryModelFlags(false), own)).toEqual({
-      model: SECONDARY_DERIVED_MODEL_ID,
+    const noPool = await createConfig({});
+    expect(resolveSubagentBinding(noPool.config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/main',
       thinking: 'medium',
-      displayModel: 'provider/secondary',
     });
-    withRecipe.disposables.dispose();
+    expect(resolveSubagentBinding(noPool.config, secondaryModelFlags(), own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    noPool.disposables.dispose();
+
+    const pool = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = "hard tasks"\n',
+    );
+    // An omitted model falls back to the pool default; pool bindings carry no
+    // explicit thinking (the subagent resolves thinking naturally).
+    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    // A pool alias binds directly.
+    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'provider/smart')).toEqual({
+      model: 'provider/smart',
+      thinking: undefined,
+    });
+    // "primary" always inherits the caller.
+    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    pool.disposables.dispose();
   });
 
-  it('preserves the coded error contract when adding secondary-model guidance', () => {
+  it('keeps the pool inert while the secondary-model experiment is off', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+
+    // Flag off: the pool (and force) are ignored — spawns inherit the caller,
+    // and an explicit choice fails like the no-pool case.
+    expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    expect(() =>
+      resolveSubagentBinding(config, secondaryModelFlags(false), own, 'provider/fast'),
+    ).toThrow(/no \[secondary_model\.models\] pool is configured/);
+
+    disposables.dispose();
+  });
+
+  it('treats a pool-less default_model as an implicit single-entry pool', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\n',
+    );
+
+    // An omitted model falls back to the default; pool bindings carry no
+    // explicit thinking.
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    // The only other choice is "primary".
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart')).toThrow(
+      /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
+    );
+
+    disposables.dispose();
+  });
+
+  it('falls back to the legacy model key when no pool keys are set', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\n',
+    );
+
+    // Recipe patch fields have no pool counterpart: the schema keeps them
+    // (so config writes round-trip losslessly for the v1 engine) but pool
+    // resolution ignores them; the lone legacy key forms the implicit
+    // single-entry pool.
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/fast',
+      defaultEffort: 'low',
+    });
+    expect(resolveSubagentModelPool(config)).toEqual({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': '' },
+    });
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart')).toThrow(
+      /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
+    );
+
+    disposables.dispose();
+  });
+
+  it('lets default_model win over the legacy model key', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/slow"\ndefault_model = "provider/fast"\n',
+    );
+
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+
+    disposables.dispose();
+  });
+
+  it('does not let the legacy model key substitute for a pool table default_model', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own)).toThrow(
+      '[secondary_model].default_model is required when [secondary_model.models] is configured',
+    );
+
+    disposables.dispose();
+  });
+
+  it('lets force pin the legacy model fallback when no default_model is set', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\nforce = true\n',
+    );
+
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toThrow(
+      /Invalid model "primary": \[secondary_model\]\.force is set/,
+    );
+
+    disposables.dispose();
+  });
+
+  it('round-trips legacy recipe patch fields the pool resolution ignores', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\nmax_output_size = 8192\n',
+    );
+
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/fast',
+      defaultEffort: 'low',
+      maxOutputSize: 8192,
+    });
+    expect(resolveSubagentModelPool(config)).toEqual({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': '' },
+    });
+
+    // A v2 write validates before persisting — the patch fields must survive.
+    await config.set(SECONDARY_MODEL_SECTION, { defaultModel: 'provider/fast' });
+    const after = config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
+    expect(after?.defaultEffort).toBe('low');
+    expect(after?.maxOutputSize).toBe(8192);
+
+    disposables.dispose();
+  });
+
+  it('binds every spawn to the forced default_model, rejecting even "primary"', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n',
+    );
+
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      defaultModel: 'provider/fast',
+      force: true,
+    });
+    // An omitted model binds the forced default, with no thinking inheritance.
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    // Any explicit choice — "primary" included — is rejected.
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toThrow(
+      /Invalid model "primary": \[secondary_model\]\.force is set/,
+    );
+
+    disposables.dispose();
+  });
+
+  it('rejects force combined with a models table at spawn resolution, matching startup validation', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+
+    // A live session can reach this state through a deep-merged config patch
+    // that adds force without clearing the pool table; spawn resolution must
+    // fail the same way the startup pre-flight does.
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own)).toThrow(
+      /\[secondary_model\]\.force cannot be combined with \[secondary_model\.models\]/,
+    );
+
+    disposables.dispose();
+  });
+
+  it('rejects an alias outside the pool, listing the available models', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = "hard tasks"\n',
+    );
+
+    let caught: unknown;
+    try {
+      resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/typo');
+    } catch (error) {
+      caught = error;
+    }
+    expect(isError2(caught)).toBe(true);
+    expect((caught as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((caught as Error2).message).toBe(
+      'Invalid model "provider/typo". Available models: provider/fast, provider/smart, primary.',
+    );
+
+    disposables.dispose();
+  });
+
+  it('rejects a stray model choice when no pool is configured', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig({});
+
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/fast')).toThrow(
+      /Invalid model "provider\/fast": no \[secondary_model\.models\] pool is configured/,
+    );
+
+    disposables.dispose();
+  });
+
+  it('preserves the coded error contract when adding subagent-model guidance', () => {
     const cause = new Error2(
       ErrorCodes.CONFIG_INVALID,
       'Model "provider/bad" is not configured in config.toml.',
@@ -1842,13 +2009,12 @@ describe('subagent config section', () => {
 
     expect(toErrorPayload(result)).toMatchObject({
       code: ErrorCodes.CONFIG_INVALID,
-      message: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
+      message: expect.stringContaining('comes from [secondary_model.models]'),
       details: {
         model: 'provider/bad',
-        secondaryModel: 'provider/bad',
-        secondaryModelConfig: {
-          section: 'secondaryModel.model',
-          environment: SECONDARY_MODEL_ENV,
+        subagentModel: 'provider/bad',
+        subagentModelConfig: {
+          section: 'secondary_model.models',
         },
       },
       cause: {
@@ -1861,96 +2027,16 @@ describe('subagent config section', () => {
   it('passes through config-invalid failures that are not a missing bound alias', () => {
     const malformed = new Error2(
       ErrorCodes.CONFIG_INVALID,
-      'Model "provider/secondary" must declare a wire protocol (config: models.<id>.protocol).',
+      'Model "provider/pool" must declare a wire protocol (config: models.<id>.protocol).',
     );
-    expect(wrapSubagentModelError(malformed, 'provider/secondary', 'provider/main')).toBe(malformed);
+    expect(wrapSubagentModelError(malformed, 'provider/pool', 'provider/main')).toBe(malformed);
 
     const unrelated = new Error2(
       ErrorCodes.CONFIG_INVALID,
       'Model "provider/other" is not configured in config.toml.',
       { details: { model: 'provider/other' } },
     );
-    expect(wrapSubagentModelError(unrelated, 'provider/secondary', 'provider/main')).toBe(unrelated);
-  });
-});
-
-describe('secondaryModel config section', () => {
-  async function createConfig(env: Record<string, string>, toml?: string) {
-    const disposables = new DisposableStore();
-    const ix = disposables.add(new TestInstantiationService());
-    const storage = new InMemoryStorageService();
-    if (toml !== undefined) {
-      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
-    }
-    ix.stub(ILogService, stubLog());
-    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
-    ix.stub(IFileSystemStorageService, storage);
-    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
-    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
-    ix.set(IConfigService, new SyncDescriptor(ConfigService));
-    const config = ix.get(IConfigService);
-    await config.ready;
-    return { config, disposables };
-  }
-
-  it('reads model/default_effort from config.toml and lets the env vars win', async () => {
-    const env: Record<string, string> = {};
-    const { config, disposables } = await createConfig(
-      env,
-      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
-    );
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/secondary');
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.defaultEffort).toBe('low');
-
-    env[SECONDARY_MODEL_ENV] = 'provider/env-secondary';
-    env[SECONDARY_MODEL_EFFORT_ENV] = 'high';
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/env-secondary');
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.defaultEffort).toBe('high');
-
-    env[SECONDARY_MODEL_ENV] = '  ';
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/secondary');
-
-    disposables.dispose();
-  });
-
-  it('restores the env-owned model to the raw value on set() while the env var is set', async () => {
-    const env: Record<string, string> = { [SECONDARY_MODEL_ENV]: 'provider/env-secondary' };
-    const { config, disposables } = await createConfig(
-      env,
-      '[secondary_model]\nmodel = "provider/raw-secondary"\n',
-    );
-
-    await config.set(SECONDARY_MODEL_SECTION, { model: 'provider/env-secondary' });
-
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/env-secondary');
-    expect(config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue).toEqual({
-      model: 'provider/raw-secondary',
-    });
-
-    disposables.dispose();
-  });
-
-  it('propagates overlay-induced models changes to section events on runtime set', async () => {
-    const { config, disposables } = await createConfig(
-      {},
-      '[models.k2]\nprovider = "kimi"\nmodel = "kimi-k2"\n',
-    );
-    const domains: string[] = [];
-    config.onDidSectionChange((e) => domains.push(e.domain));
-
-    await config.set(SECONDARY_MODEL_SECTION, { model: 'k2', maxOutputSize: 8192 });
-    const models = config.get<Record<string, unknown>>(MODELS_SECTION) ?? {};
-    expect(models[SECONDARY_DERIVED_MODEL_ID]).toBeDefined();
-    expect(domains).toContain(SECONDARY_MODEL_SECTION);
-    expect(domains).toContain(MODELS_SECTION);
-
-    domains.length = 0;
-    await config.replace(SECONDARY_MODEL_SECTION, { model: 'k2' });
-    const after = config.get<Record<string, unknown>>(MODELS_SECTION) ?? {};
-    expect(after[SECONDARY_DERIVED_MODEL_ID]).toBeUndefined();
-    expect(domains).toContain(MODELS_SECTION);
-
-    disposables.dispose();
+    expect(wrapSubagentModelError(unrelated, 'provider/pool', 'provider/main')).toBe(unrelated);
   });
 });
 

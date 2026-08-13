@@ -1191,6 +1191,10 @@ describe('GlobalSearchService', () => {
       const service = track(makeService(home!, index));
       await service.reindex();
       expect((await service.search({ query: '苹果' })).items.length).toBe(1);
+      // The search above kicked a fire-and-forget background pass whose
+      // session enumeration already ran with block=false: drain it before the
+      // append, or a CI-slow pass reads the delta below and publishes it early.
+      await settleSync(service);
 
       // New bytes arrive, then the next background pass is blocked inside the
       // session enumeration. The search must return promptly with the OLD

@@ -33,7 +33,6 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
-import '#/agent/tools/agent-swarm/agentSwarmTool';
 import '#/agent/tools/agent/agentTool';
 import '#/agent/tools/ask-user-question/askUserQuestionTool';
 import '#/agent/tools/edit/editTool';
@@ -412,7 +411,7 @@ describe('AgentToolActivationService', () => {
     });
 
     it('feeds every built-in contribution through the App-scope assembly unchanged', async () => {
-      expect(savedContributions).toHaveLength(21);
+      expect(savedContributions).toHaveLength(20);
       for (const contribution of savedContributions) {
         registerAgentToolService(contribution.id, contribution.ctor, contribution.options);
       }

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
 import {
+  IAgentTitlePromptSource,
   IAgentContextMemoryService,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -213,6 +214,25 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(list.body.data.active.prompt_id).toBe(submitted.body.data.prompt_id);
     }
     expect(Array.isArray(list.body.data.queued)).toBe(true);
+  });
+
+  it('makes the first three REST prompts available to title generation', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const prompts = ['先搭一个 Vite 项目', '加上路由', '现在配一下 ESLint'];
+    for (const text of prompts) {
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text }],
+      });
+      expect(submitted.body.code).toBe(0);
+    }
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const agent = session?.accessor.get(IAgentLifecycleService).get('main');
+    const source = agent?.accessor.get(IAgentTitlePromptSource);
+    expect(source).toBeDefined();
+    await expect(source!.firstUserPrompts(3)).resolves.toEqual(prompts);
   });
 
   it('rejects a stale file reference without creating the agent or mutating the model', async () => {

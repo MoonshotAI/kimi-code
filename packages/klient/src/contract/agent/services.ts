@@ -1,8 +1,9 @@
 /**
- * Agent-scope domain service contracts. These mirror the positional-arg
- * signatures of the engine's domain Services (shellCommand / profile / usage /
- * plan / task) that the agent facade calls directly; payload and result
- * schemas are shared with `agent/rpc.ts` (they mirror the same wire shapes).
+ * Agent-scope domain service contracts. These mirror the signatures of the
+ * engine's domain Services (prompt / skill / loop / permissionMode / command /
+ * contextMemory / tokenCounting / shellCommand / profile / usage / plan /
+ * task) that the agent facade calls directly; payload and result schemas are
+ * shared in `agent/schemas.ts` (they mirror the same wire shapes).
  */
 
 import { z } from 'zod';
@@ -10,13 +11,56 @@ import { z } from 'zod';
 import { maybe, noResult } from '../helpers.js';
 import type { ServiceContract } from '../types.js';
 import {
+  activateSkillPayloadSchema,
+  agentCommandInfoSchema,
   agentTaskInfoSchema,
+  permissionModeSchema,
   planDataSchema,
+  promptLaunchResultSchema,
+  promptPayloadSchema,
   runShellCommandPayloadSchema,
   setModelResultSchema,
   shellCommandResultSchema,
+  steerPayloadSchema,
   usageStatusSchema,
-} from './rpc.js';
+} from './schemas.js';
+
+export const agentPromptContract = {
+  submit: {
+    input: z.tuple([promptPayloadSchema]),
+    output: maybe(promptLaunchResultSchema),
+  },
+  submitSteer: {
+    input: z.tuple([steerPayloadSchema]),
+    output: maybe(promptLaunchResultSchema),
+  },
+} satisfies ServiceContract;
+
+export const agentSkillContract = {
+  activate: { input: z.tuple([activateSkillPayloadSchema]), output: promptLaunchResultSchema },
+} satisfies ServiceContract;
+
+export const agentLoopContract = {
+  cancelFromUser: { input: z.tuple([z.number().optional()]), output: noResult },
+} satisfies ServiceContract;
+
+export const agentPermissionModeContract = {
+  setModeAndBroadcast: { input: z.tuple([permissionModeSchema]), output: noResult },
+} satisfies ServiceContract;
+
+export const agentCommandContract = {
+  list: { input: z.tuple([]), output: z.array(agentCommandInfoSchema) },
+  run: { input: z.tuple([z.string(), z.string().optional()]), output: noResult },
+} satisfies ServiceContract;
+
+/** `history` items are full `ContextMessage`s, mirrored as `unknown`. */
+export const agentContextMemoryContract = {
+  get: { input: z.tuple([]), output: z.array(z.unknown()) },
+} satisfies ServiceContract;
+
+export const agentTokenCountingContract = {
+  statusSize: { input: z.tuple([]), output: z.number() },
+} satisfies ServiceContract;
 
 export const agentShellCommandContract = {
   run: {

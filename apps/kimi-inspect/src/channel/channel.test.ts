@@ -31,14 +31,14 @@ describe('ProxyChannel.call', () => {
   it('POSTs the command to the service base URL; no body and no header without args/token', async () => {
     const { calls, fetchImpl } = fakeFetch(ok({ id: 's1' }));
     const channel = new ProxyChannel({
-      baseUrl: 'http://h:1/api/v1/debug/session/s%201/agent/main/agentRPCService',
+      baseUrl: 'http://h:1/api/v1/debug/session/s%201/agent/main/agentLoopService',
       fetch: fetchImpl,
     });
     const result = await channel.call('getModel', []);
     expect(result).toEqual({ id: 's1' });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(
-      'http://h:1/api/v1/debug/session/s%201/agent/main/agentRPCService/getModel',
+      'http://h:1/api/v1/debug/session/s%201/agent/main/agentLoopService/getModel',
     );
     expect(calls[0]!.init?.method).toBe('POST');
     expect(calls[0]!.init?.body).toBeUndefined();

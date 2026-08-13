@@ -16,7 +16,9 @@ import {
   Error2,
   ErrorCodes,
   IBootstrapService,
+  IOAuthService,
   type DomainEvent,
+  type IOAuthService as IOAuthServiceType,
   IAgentConversationUndoService,
   IAgentGoalService,
   IAgentLifecycleService,
@@ -27,6 +29,7 @@ import {
   getLiveSessionById,
   sessionDirOf,
   type ServiceIdentifier,
+  type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
@@ -104,6 +107,8 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -511,6 +516,165 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body.data.title).toBe('renamed');
+  });
+
+  it('returns title-unavailable when generation cannot run', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+
+    const generated = await postJson<null>(
+      `/api/v1/sessions/${created.body.data.id}/title/generate`,
+    );
+
+    expect(generated.body.code).toBe(40923);
+  });
+
+  it('generates and persists a title through the public REST path', async () => {
+    await server?.close();
+    server = undefined;
+    await writeFile(
+      join(home as string, 'config.toml'),
+      [
+        'default_model = "stub"',
+        '',
+        '[providers.stub]',
+        'type = "openai"',
+        'base_url = "http://127.0.0.1:9999"',
+        'api_key = "stub"',
+        '',
+        '[models.stub]',
+        'provider = "stub"',
+        'model = "stub"',
+        'max_context_size = 1000',
+        '',
+        '[providers."managed:kimi-code"]',
+        'type = "kimi"',
+        'base_url = "https://api.example.test/coding/v1"',
+        '',
+        '[providers."managed:kimi-code".oauth]',
+        'storage = "file"',
+        'key = "kimi-code"',
+        '',
+        '[experimental]',
+        'auto_session_title = true',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const oauth: IOAuthServiceType = {
+      _serviceBrand: undefined,
+      startLogin: async () => {
+        throw new Error('unused');
+      },
+      getFlow: () => undefined,
+      cancelLogin: async () => {
+        throw new Error('unused');
+      },
+      logout: async () => {
+        throw new Error('unused');
+      },
+      status: async () => ({ loggedIn: true, provider: 'managed:kimi-code' }),
+      refreshOAuthProviderModels: async () => ({ changed: [], unchanged: [], failed: [] }),
+      getManagedUsage: async () => ({ kind: 'error', message: 'unused' }),
+      getManagedUserInfo: async () => ({ kind: 'error', message: 'unused' }),
+      resolveTokenProvider: () => ({ getAccessToken: async () => 'test-token' }),
+      getCachedAccessToken: async () => 'test-token',
+    };
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds: [[IOAuthService, oauth]] as ScopeSeed,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    let toolsRequest: { method: string; params: { chat_content: string } } | undefined;
+    const actualFetch = globalThis.fetch.bind(globalThis);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url === 'https://api.example.test/coding/v1/tools') {
+        const body = init?.body;
+        if (typeof body !== 'string') {
+          throw new TypeError('expected a string request body');
+        }
+        toolsRequest = JSON.parse(body) as typeof toolsRequest;
+        return new Response(JSON.stringify({ title: 'generated from REST' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return actualFetch(input, init);
+    });
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    for (const text of ['first REST prompt', 'second REST prompt', 'third REST prompt']) {
+      const submitted = await postJson<{ prompt_id: string }>(
+        `/api/v1/sessions/${id}/prompts`,
+        { content: [{ type: 'text', text }] },
+      );
+      expect(submitted.body.code).toBe(0);
+    }
+
+    const generated = await postJson<{ title: string }>(
+      `/api/v1/sessions/${id}/title/generate`,
+    );
+    expect(generated.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+    expect(toolsRequest).toEqual({
+      method: 'chat_title',
+      params: {
+        chat_content:
+          'user: first REST prompt\nuser: second REST prompt\nuser: third REST prompt',
+      },
+    });
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(got.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+
+    // A second non-force call refuses: the title is already generated.
+    const again = await postJson<null>(`/api/v1/sessions/${id}/title/generate`);
+    expect(again.body.code).toBe(40923);
+
+    // `force: true` regenerates an already-generated title …
+    const forced = await postJson<{ title: string }>(`/api/v1/sessions/${id}/title/generate`, {
+      force: true,
+    });
+    expect(forced.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+
+    // … and overwrites a user-customized title.
+    await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, { title: 'custom title' });
+    const forcedCustom = await postJson<{ title: string }>(
+      `/api/v1/sessions/${id}/title/generate`,
+      { force: true },
+    );
+    expect(forcedCustom.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+    const afterCustom = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(afterCustom.body.data.title).toBe('generated from REST');
+
+    // `source: 'digest'` composes the head+tail user segments server-side
+    // (this session's turns produced no assistant reply to draw from).
+    const digested = await postJson<{ title: string }>(`/api/v1/sessions/${id}/title/generate`, {
+      force: true,
+      source: 'digest',
+    });
+    expect(digested.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+    expect(toolsRequest?.params.chat_content).toBe(
+      'user: first REST prompt\nuser: third REST prompt',
+    );
+  });
+
+  it('returns session-not-found when generating a title for a missing session', async () => {
+    const generated = await postJson<null>(
+      '/api/v1/sessions/sess_missing_title/title/generate',
+    );
+
+    expect(generated.body.code).toBe(40401);
   });
 
   it('returns best-effort status for a live session', async () => {
@@ -1431,24 +1595,38 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     expect(status.body.code).toBe(0);
     expect(status.body.data.state).toBe('ready');
 
-    // A freshly created session lists, counts, and pages immediately — the
-    // mutation path never waited for the read model, the read path folds the
-    // mirror queue back in.
+    // A freshly created session lists, counts, and pages without waiting for
+    // the read model — the mutation path never awaited the read model, the
+    // read path folds the mirror queue back in. That fold is best-effort
+    // while a mirror flush is in flight: the flush's batch is only per-shard
+    // atomic and its pending-queue cleanup is not linearized with reads, so a
+    // read landing exactly inside that window can transiently miss (or
+    // double-count) the session — poll instead of sampling once.
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
     });
     const id = created.body.data.id;
 
-    const listed = await getJson<PageWire>('/api/v1/sessions');
-    expect(listed.body.data.items.some((s) => s.id === id)).toBe(true);
+    await vi.waitFor(
+      async () => {
+        const listed = await getJson<PageWire>('/api/v1/sessions');
+        expect(listed.body.data.items.some((s) => s.id === id)).toBe(true);
 
-    const workspaces = await getJson<{ items: { session_count: number }[] }>('/api/v1/workspaces');
-    expect(workspaces.body.data.items[0]?.session_count).toBe(1);
+        const workspaces = await getJson<{ items: { session_count: number }[] }>(
+          '/api/v1/workspaces',
+        );
+        expect(workspaces.body.data.items[0]?.session_count).toBe(1);
 
-    const paged = await getJson<PageWire>(`/api/v1/sessions?page_size=1&before_id=${id}`);
-    expect(paged.body.data.items).toEqual([]);
-    expect(paged.body.data.has_more).toBe(false);
+        const paged = await getJson<PageWire>(`/api/v1/sessions?page_size=1&before_id=${id}`);
+        expect(paged.body.data.items).toEqual([]);
+        expect(paged.body.data.has_more).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
 
+    // Archiving drains the mirror queue before responding, and the restart's
+    // boot prepare re-projects (or reuses) a fully settled generation — both
+    // of these reads are deterministic again.
     await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
     const archivedOnly = await getJson<PageWire>('/api/v1/sessions?archived_only=true');
     expect(archivedOnly.body.data.items.map((s) => s.id)).toEqual([id]);

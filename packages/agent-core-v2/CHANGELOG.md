@@ -1,5 +1,11 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.3.2
+
+### Patch Changes
+
+- [#2815](https://github.com/MoonshotAI/kimi-code/pull/2815) [`43c68f5`](https://github.com/MoonshotAI/kimi-code/commit/43c68f58f578c88d9f503afb72f12d343c2aa5c7) Thanks [@liruifengv](https://github.com/liruifengv)! - Keep session updatedAt stable across metadata management writes: rename and archive/restore no longer bump it, fork inherits the source session's recency, and agent registration is non-touching; add SessionMeta.archivedAt (set on archive, cleared on restore) and surface it as archived_at through the session index and the v1/v2 session routes.
+
 ## 0.3.1
 
 ### Patch Changes

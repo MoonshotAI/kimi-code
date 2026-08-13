@@ -10,7 +10,7 @@
 
 import { createDecorator } from "#/_base/di/instantiation";
 import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
-import type { Turn } from '#/agent/loop/loop';
+import type { PromptLaunchResult } from '#/agent/prompt/prompt';
 import type { ContentPart } from '#/kosong/contract/message';
 
 export interface SkillActivationInput {
@@ -22,7 +22,7 @@ export interface SkillActivationInput {
 export interface IAgentSkillService {
   readonly _serviceBrand: undefined;
 
-  activate(input: SkillActivationInput): Promise<Turn>;
+  activate(input: SkillActivationInput): Promise<PromptLaunchResult>;
   recordModelToolActivation(origin: SkillActivationOrigin): void;
 }
 

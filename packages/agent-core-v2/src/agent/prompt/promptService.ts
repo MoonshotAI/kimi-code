@@ -4,7 +4,14 @@
  * Assigns prompt and message identities, serializes user prompts through an
  * active slot and FIFO, converts selected pending prompts into active-turn
  * steers, settles lifecycle handles, and keeps system input outside the prompt
- * resource model. The pure-data `launching` flag is registered into
+ * resource model. `submit` / `submitSteer` are the wire-facing user entry
+ * points: they track `input_steer` through `telemetry`, persist the derived
+ * title/lastPrompt through `sessionMetadata` for the main agent only
+ * (publishing the live update through `event`), enqueue, and settle
+ * `{turn_id}` from the launch handle. Session tool gating is an edge
+ * concern: callers apply `IAgentToolPolicyService.setSessionDisabledTools`
+ * before submitting, the way kap-server's prompt route composes it.
+ * The pure-data `launching` flag is registered into
  * `agentState` (`IAgentStateService`) and read/written through it; the
  * `active` / `pending` / `steered` records stay plain fields because their
  * `Record` values carry Deferred promise handles (the container only holds
@@ -31,20 +38,31 @@ import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IEventBus } from '#/app/event/eventBus';
-import { ErrorCodes, Error2 } from '#/errors';
+import { IEventService } from '#/app/event/event';
+import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 import { IWireService } from '#/wire/wire';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
 
 import {
   IAgentPromptService,
   type PromptCompletion,
   type PromptHandle,
   type PromptInput,
+  type PromptLaunchResult,
+  type PromptPayload,
   type PromptQueueSnapshot,
   type PromptSnapshot,
   type PromptState,
   type PromptSubmitContext,
+  type SteerPayload,
 } from './prompt';
+import { promptMetadataTextFromContentParts } from './promptMetadataText';
 import { PromptStepRequest, RetryStepRequest, SteerStepRequest } from './promptStepRequests';
 
 declare module '#/app/event/eventBus' {
@@ -83,6 +101,11 @@ export class AgentPromptService implements IAgentPromptService {
     @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentStateService private readonly states: IAgentStateService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
+    @ISessionMetadata private readonly metadata: ISessionMetadata,
+    @IEventService private readonly eventService: IEventService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     this.states.register(promptLaunchingKey);
     toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
@@ -127,6 +150,64 @@ export class AgentPromptService implements IAgentPromptService {
       this.publishQueued(record);
     }
     return record.handle;
+  }
+
+  async submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
+    await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
+    const handle = await this.enqueue({ message: {
+      role: 'user',
+      content: [...payload.input],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    } });
+    if (handle.state === 'pending') return undefined;
+    const turn = await handle.launched;
+    return turn === undefined ? undefined : { turn_id: turn.id };
+  }
+
+  async submitSteer(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {
+    this.telemetry.track2('input_steer', { parts: payload.input.length });
+    // A steer is user input like a prompt — and can even launch the session's
+    // first turn (e.g. goal mode) — so keep title/lastPrompt in sync the same
+    // way, matching v1.
+    await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
+    const queued = await this.enqueue({ message: {
+      role: 'user',
+      content: [...payload.input],
+      toolCalls: [],
+    } });
+    if (queued.state !== 'pending') {
+      // No active prompt at enqueue time, so the enqueue itself already
+      // launched this input as its own turn (idle session, or a goal-turn
+      // boundary where the previous turn just ended) — v1's
+      // steer-degrades-to-launch end state. Return that turn instead of
+      // rejecting on a steer-by-id that can never find the record pending.
+      const turn = await queued.launched;
+      return turn === undefined ? undefined : { turn_id: turn.id };
+    }
+    try {
+      const [steered] = await this.steer([queued.id]);
+      const turn = await steered?.launched;
+      return turn === undefined ? undefined : { turn_id: turn.id };
+    } catch (error) {
+      // Pending but nothing active to steer into (a manual compaction holds
+      // the context): the message stays queued and launches once compaction
+      // finishes, so report it as queued rather than failing the steer.
+      if (isError2(error) && error.code === ErrorCodes.PROMPT_NOT_FOUND) return undefined;
+      throw error;
+    }
+  }
+
+  private async updatePromptMetadata(text: string | undefined): Promise<void> {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+    await applyPromptMetadataUpdate(
+      {
+        metadata: this.metadata,
+        eventService: this.eventService,
+        sessionId: this.sessionContext.sessionId,
+      },
+      text,
+    );
   }
 
   list(): PromptQueueSnapshot {

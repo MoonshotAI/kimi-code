@@ -1,23 +1,25 @@
 /**
- * `sessionLegacy` domain (L7 edge adapter) — v1-compatible session actions.
+ * `sessionLegacy` domain (L7 edge adapter) — v1-compatible session reads.
  *
- * Implements `POST /sessions/{id}/profile` (`updateProfile` — title rename,
- * metadata merge, and the cross-domain `agent_config` patch),
- * `GET /sessions/{id}/status` (`status`), and `GET /sessions/{id}/goal`
- * (`goal`). The thin pass-through actions (`fork` / `compact` / `abort` /
- * `archive`), the `:undo` action, and the `/sessions/{id}/children` endpoints
- * are deliberately NOT wrapped here because none of them carries v1-only
- * projection worth centralizing; only `updateProfile`, `status`, and `goal`
- * stay in this adapter (the `agent_config` patch, the best-effort status
- * rollup, and the current-goal read). Bound at App scope — it is a stateless
- * dispatcher that resolves the target session/agent per call.
+ * Implements `GET /sessions/{id}/status` (`status` — the best-effort status
+ * rollup) and `GET /sessions/{id}/goal` (`goal` — the current-goal read), the
+ * two endpoints that hold real cross-domain adaptation. Everything else is
+ * deliberately NOT wrapped here: the thin pass-through actions (`fork` /
+ * `compact` / `abort` / `archive`), the `:undo` action, the
+ * `/sessions/{id}/children` endpoints, and `POST /sessions/{id}/profile`
+ * (title/metadata patch and `agent_config` dispatch) are plain wire-to-native
+ * translations composed by the kap-server routes directly. `SessionWireFields`
+ * stays exported here as the profile route's projection shape, consumed by the
+ * kap-server helper (`routes/sessionProfile.ts`) via deep-path import. Bound
+ * at App scope — it is a stateless dispatcher that resolves the target
+ * session/agent per call.
  */
 
 import type { GoalSnapshot } from '#/agent/goal/types';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessionProtocol';
+import type { SessionStatusResponse } from './sessionProtocol';
 
 export interface SessionWireFields {
   readonly id: string;
@@ -35,7 +37,6 @@ export interface SessionWireFields {
 export interface ISessionLegacyService {
   readonly _serviceBrand: undefined;
 
-  updateProfile(sessionId: string, body: UpdateSessionProfileRequest): Promise<SessionWireFields>;
   status(sessionId: string): Promise<SessionStatusResponse>;
   goal(sessionId: string): Promise<GoalSnapshot | null>;
 }

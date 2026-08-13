@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { configResponseSchema, type ConfigResponse } from '../src/protocol/rest-config';
+import { ErrorCode } from '../src/protocol/error-codes';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -99,36 +100,77 @@ describe('server-v2 /api/v1/config', () => {
     expect(after.yolo).toBe(false);
   });
 
-  it('POST secondary_model persists [secondary_model] and echoes it on GET', async () => {
+  it('POST { secondary_model } persists the subagent model pool and GET echoes it', async () => {
     await boot();
     const cfg = await patchConfig({
-      secondary_model: { model: 'k2-test', default_effort: 'high' },
+      secondary_model: {
+        default_model: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap' },
+      },
     });
-    expect(cfg.secondary_model).toEqual({ model: 'k2-test', defaultEffort: 'high' });
+    expect(cfg.secondary_model).toMatchObject({ defaultModel: 'provider/fast' });
 
     const after = await getConfig();
-    expect(after.secondary_model).toEqual({ model: 'k2-test', defaultEffort: 'high' });
-
-    const toml = await readFile(join(home as string, 'config.toml'), 'utf-8');
-    expect(toml).toContain('[secondary_model]');
-    expect(toml).toContain('model = "k2-test"');
-    expect(toml).toContain('default_effort = "high"');
+    expect(after.secondary_model).toMatchObject({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': 'fast and cheap' },
+    });
   });
 
-  it('GET hides the synthesized __secondary__ derived entry from models', async () => {
-    await boot('[models.k2-test]\nprovider = "example"\nmodel = "example-model"\n');
-    // `default_effort` is a patch field, so the overlay synthesizes the
-    // `__secondary__` derived entry into the effective `models` view.
-    const cfg = await patchConfig({
-      secondary_model: { model: 'k2-test', default_effort: 'high' },
+  it('POST { secondary_model } preserves pool alias keys containing underscores', async () => {
+    await boot();
+    await patchConfig({
+      secondary_model: { default_model: 'provider/fast_model', models: { 'provider/fast_model': '' } },
     });
-    const models = cfg.models as Record<string, unknown>;
-    expect(models['k2-test']).toBeDefined();
-    expect(models['__secondary__']).toBeUndefined();
 
     const after = await getConfig();
-    const afterModels = after.models as Record<string, unknown>;
-    expect(afterModels['k2-test']).toBeDefined();
-    expect(afterModels['__secondary__']).toBeUndefined();
+    expect(after.secondary_model).toMatchObject({
+      defaultModel: 'provider/fast_model',
+      models: { 'provider/fast_model': '' },
+    });
+    expect(
+      Object.keys((after.secondary_model as { models: Record<string, string> }).models),
+    ).not.toContain('provider/fastModel');
+  });
+
+  it('POST { providers } converts fields of a provider id colliding with a map-valued key', async () => {
+    await boot();
+    await patchConfig({
+      providers: {
+        models: { type: 'openai', base_url: 'https://example.test', api_key: 'sk-test' },
+      },
+    });
+
+    const after = await getConfig();
+    expect(after.providers['models']).toMatchObject({
+      type: 'openai',
+      base_url: 'https://example.test',
+      has_api_key: true,
+    });
+  });
+
+  it('session create with a broken subagent model pool fails with VALIDATION_FAILED', async () => {
+    await boot(
+      '[experimental]\n"secondary-model" = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+    const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metadata: { cwd: home as string } }),
+    });
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
+    expect(body.msg).toContain('[secondary_model].default_model is required');
+  });
+
+  it('session create with a broken subagent model pool succeeds while the experiment is off', async () => {
+    await boot('[secondary_model.models]\n"provider/fast" = "fast and cheap"\n');
+    const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metadata: { cwd: home as string } }),
+    });
+    const body = (await res.json()) as Envelope<{ id: string }>;
+    expect(body.code).toBe(0);
   });
 });

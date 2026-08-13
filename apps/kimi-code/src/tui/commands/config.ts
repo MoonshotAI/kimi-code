@@ -1,8 +1,8 @@
 import {
   effectiveModelAlias,
+  PRIMARY_SUBAGENT_MODEL_CHOICE,
   SECONDARY_DERIVED_MODEL_ALIAS,
   type ExperimentalFeatureState,
-  type KimiConfig,
   type ModelAlias,
   type PermissionMode,
   type Session,
@@ -270,6 +270,15 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
   const alias = args.trim();
   await refreshModelsForPicker(host);
   const models = pickerModelsForHost(host);
+  // The pool reserves `primary` as the symbolic "caller's own model" choice —
+  // a user alias with that name can never be the subagent default.
+  delete models[PRIMARY_SUBAGENT_MODEL_CHOICE];
+  if (alias === PRIMARY_SUBAGENT_MODEL_CHOICE) {
+    host.showError(
+      `"${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved by the subagent model pool (it always binds the caller's own model) — rename the [models] alias to use it here.`,
+    );
+    return;
+  }
   if (Object.keys(models).length === 0) {
     host.showNotice(
       'No models configured',
@@ -282,7 +291,10 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
     return;
   }
   const secondary = (await host.harness.getConfig()).secondaryModel;
-  showSecondaryModelPicker(host, models, secondary?.model ?? '', secondary?.defaultEffort, alias);
+  // The v2 engine honors a lone legacy `model` key as the fallback pool
+  // default — reflect it as the picker's current value.
+  const current = secondary?.defaultModel ?? secondary?.model ?? '';
+  showSecondaryModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
 }
 
 export async function handleEffortCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -428,8 +440,8 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
 /**
  * The models a picker may offer: the user's configured aliases with
  * host-effective provider resolution applied, minus the synthesized
- * `__secondary__` derived entry — a runtime artifact of the `[secondary_model]`
- * recipe that must never be selectable as a primary or secondary model.
+ * `__secondary__` derived entry — a runtime artifact of the v1 engine's
+ * `[secondary_model]` recipe that must never be selectable as a model.
  */
 function pickerModelsForHost(host: SlashCommandHost): Record<string, ModelAlias> {
   return Object.fromEntries(
@@ -605,14 +617,13 @@ async function persistModelSelection(
 }
 
 // ---------------------------------------------------------------------------
-// Secondary model (`/secondary_model`)
+// Secondary model (`/secondary-model`) — persists `[secondary_model] default_model`
 // ---------------------------------------------------------------------------
 
 function showSecondaryModelPicker(
   host: SlashCommandHost,
   models: Record<string, ModelAlias>,
   currentValue: string,
-  currentEffort: string | undefined,
   selectedValue?: string,
 ): void {
   host.mountEditorReplacement(
@@ -620,11 +631,14 @@ function showSecondaryModelPicker(
       models,
       currentValue,
       selectedValue,
-      currentThinkingEffort: currentEffort ?? 'off',
+      currentThinkingEffort: 'off',
+      // Subagent pool bindings carry no explicit thinking level, so the picker
+      // hides the Thinking footer instead of offering a no-op choice.
+      thinkingControl: false,
       title: ' Select a secondary model (subagents)',
-      onSelect: ({ alias, thinking }) => {
+      onSelect: ({ alias }) => {
         host.restoreEditor();
-        void performSecondaryModelSwitch(host, alias, thinking);
+        void performSecondaryModelSave(host, alias);
       },
       onCancel: () => {
         host.restoreEditor();
@@ -634,65 +648,32 @@ function showSecondaryModelPicker(
 }
 
 /**
- * Persist-first, then live-apply: the synthesized derived entry only exists in
- * the core config after a reload. No session-only variant — a session-local
- * recipe with patch fields would bind a derived alias the core config cannot
- * resolve.
+ * Persists `[secondary_model] default_model`. When a
+ * `[secondary_model.models]` pool exists and does not list the alias yet, the
+ * alias is added with an empty description — the engine requires the default
+ * to be a pool key. Without a pool the default alone forms an implicit
+ * single-entry pool, so nothing else is written. No live-apply step: the
+ * engine resolves the pool per spawn, so the next subagent dispatch picks the
+ * new value up on its own.
  */
-async function performSecondaryModelSwitch(
-  host: SlashCommandHost,
-  alias: string,
-  effort: ThinkingEffort,
-): Promise<void> {
+async function performSecondaryModelSave(host: SlashCommandHost, alias: string): Promise<void> {
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
-  let updatedConfig: KimiConfig;
   try {
-    updatedConfig = await host.harness.setConfig({
-      secondaryModel: { model: alias, defaultEffort: effort },
-    });
+    const config = await host.harness.getConfig({ reload: true });
+    const existing = config.secondaryModel?.models;
+    const patch: { defaultModel: string; models?: Record<string, string> } = {
+      defaultModel: alias,
+    };
+    if (existing !== undefined) {
+      patch.models = { ...existing, [alias]: existing[alias] ?? '' };
+    }
+    await host.harness.setConfig({ secondaryModel: patch });
   } catch (error) {
     host.showError(`Failed to save secondary model: ${formatErrorMessage(error)}`);
     return;
   }
-  if (host.session !== undefined) {
-    try {
-      await host.session.applyPersistedSecondaryModel();
-    } catch (error) {
-      host.showError(
-        `Saved ${displayName} as the secondary model, but failed to apply it to this session: ${formatErrorMessage(error)}`,
-      );
-      return;
-    }
-  }
-  host.setAppState({ availableModels: updatedConfig.models ?? {} });
-  // Report the effective binding from the reloaded config, not the picked
-  // value: KIMI_SECONDARY_MODEL / KIMI_SECONDARY_EFFORT override the recipe at
-  // runtime, and the session binds the overlaid snapshot (mirrors how
-  // /model displays the effective alias read back from the session).
-  const effective = updatedConfig.secondaryModel;
-  const envOverrides: string[] = [];
-  if (effective?.model !== undefined && effective.model !== alias) {
-    envOverrides.push(`KIMI_SECONDARY_MODEL=${effective.model}`);
-  }
-  if (effective?.defaultEffort !== undefined && effective.defaultEffort !== effort) {
-    envOverrides.push(`KIMI_SECONDARY_EFFORT=${effective.defaultEffort}`);
-  }
-  if (envOverrides.length > 0 && effective?.model !== undefined) {
-    const effectiveName = modelDisplayName(
-      effective.model,
-      updatedConfig.models?.[effective.model],
-    );
-    host.showStatus(
-      `Saved ${displayName} as the secondary model, but ${envOverrides.join(' and ')} ` +
-        `overrides it at runtime — subagents bind ${effectiveName} until the env var is unset.`,
-      'warning',
-    );
-    return;
-  }
   host.showStatus(
-    host.session === undefined
-      ? `Secondary model set to ${displayName} with thinking ${effort}; applies to new sessions.`
-      : `Secondary model set to ${displayName} with thinking ${effort}.`,
+    `Secondary model set to ${displayName}. Newly spawned subagents will use it by default.`,
     'success',
   );
 }

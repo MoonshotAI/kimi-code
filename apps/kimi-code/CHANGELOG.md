@@ -1,5 +1,29 @@
 # @moonshot-ai/kimi-code
 
+## 0.36.0
+
+### Minor Changes
+
+- [#2830](https://github.com/MoonshotAI/kimi-code/pull/2830) [`ec84a6f`](https://github.com/MoonshotAI/kimi-code/commit/ec84a6f9a3eb35e1118f8a327f7a11b3978a899c) Thanks [@liruifengv](https://github.com/liruifengv)! - Add an experimental fullscreen TUI mode. Set the `KIMI_CODE_TUI_FULL_SCREEN=1` environment variable to enable it.
+
+- [#2700](https://github.com/MoonshotAI/kimi-code/pull/2700) [`c9bfe8b`](https://github.com/MoonshotAI/kimi-code/commit/c9bfe8b2c8314ba4ef8806fb3b92ac654c1d1860) Thanks [@7Sageer](https://github.com/7Sageer)! - Add a configurable model pool for spawned subagents behind the `secondary-model` experiment (`KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`, or the master flag): with the experiment on, the `/secondary-model` command or the `[secondary_model]` section in config.toml sets a default model or a small named pool that the main agent picks from per spawn. A lone legacy `model` key in the same section keeps working as the fallback default.
+
+### Patch Changes
+
+- [#2830](https://github.com/MoonshotAI/kimi-code/pull/2830) [`ec84a6f`](https://github.com/MoonshotAI/kimi-code/commit/ec84a6f9a3eb35e1118f8a327f7a11b3978a899c) Thanks [@liruifengv](https://github.com/liruifengv)! - Render LaTeX math formulas (`$…$` / `$$…$$`) in messages as Unicode formulas.
+
+- [#2855](https://github.com/MoonshotAI/kimi-code/pull/2855) [`30f56a2`](https://github.com/MoonshotAI/kimi-code/commit/30f56a2d2da332cbf0c36a13cbe01aac5d319c7b) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix Ctrl+C being ignored during automatic retries of failed API requests.
+
+- [#2819](https://github.com/MoonshotAI/kimi-code/pull/2819) [`fe3cdae`](https://github.com/MoonshotAI/kimi-code/commit/fe3cdae5f8ab40be71b65eff32319eb94a53c17d) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix sessions failing with a provider 400 error on every follow-up request after a turn is interrupted while the model is still thinking, on strict OpenAI-compatible providers.
+
+- [#2847](https://github.com/MoonshotAI/kimi-code/pull/2847) [`3b0936d`](https://github.com/MoonshotAI/kimi-code/commit/3b0936d8e025c5a944759c40593d5f21bfb3e621) Thanks [@sailist](https://github.com/sailist)! - Fix plain Markdown files (such as CHANGELOG.md) in an installed plugin's root directory being misidentified as skills when the plugin relies on the root SKILL.md fallback.
+
+- [#2843](https://github.com/MoonshotAI/kimi-code/pull/2843) [`c212ae9`](https://github.com/MoonshotAI/kimi-code/commit/c212ae9715371c0d7939c15e664acbe0d7cf7fc3) Thanks [@sailist](https://github.com/sailist)! - Show project MCP launch targets in the workspace trust prompt, default to declining trust, and resolve fd and stty binaries to absolute paths so untrusted workspaces cannot plant bare-name executables before confirmation.
+
+  `@moonshot-ai/kimi-code-sdk` contract change: `WorkspaceTrustInfo.gatedMcpServers` now carries structured `WorkspaceTrustMcpServerInfo` records (`name`, `transport`, and `command`/`args`/`cwd` or `url`) instead of plain strings, so SDK consumers rendering a trust prompt can show the full launch target.
+
+- [#2856](https://github.com/MoonshotAI/kimi-code/pull/2856) [`504e629`](https://github.com/MoonshotAI/kimi-code/commit/504e6292ede448367d1341751f9f98b24cc2994f) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Refresh active MCP connections after OAuth credentials are added or reset.
+
 ## 0.35.0
 
 ### Minor Changes

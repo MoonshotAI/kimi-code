@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { McpOAuthService } from '../../src/mcp/oauth/service';
 import { KimiCore } from '../../src/rpc/core-impl';
 
 describe('KimiCore plugin RPCs', () => {
@@ -81,6 +82,103 @@ describe('KimiCore plugin RPCs', () => {
         ]),
       }),
     );
+  });
+
+  it('inspects global and plugin MCP servers through the v1 app catalog', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
+    const pluginRoot = await mkdtemp(path.join(tmpdir(), 'plugin-'));
+    await writeFile(
+      path.join(home, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          global: { command: 'global-mcp', env: { GLOBAL_SECRET: 'global-secret-value' } },
+        },
+      }),
+      'utf8',
+    );
+    await writeFile(
+      path.join(pluginRoot, 'kimi.plugin.json'),
+      JSON.stringify({
+        name: 'demo',
+        mcpServers: {
+          local: { command: 'local-mcp', env: { PLUGIN_SECRET: 'plugin-secret-value' } },
+          remote: {
+            transport: 'http',
+            url: 'https://mcp.example.test/service',
+            auth: 'oauth',
+          },
+        },
+      }),
+      'utf8',
+    );
+
+    const core = new KimiCore(async () => ({}) as never, { homeDir: home });
+    await core.installPlugin({ source: pluginRoot });
+    await core.setPluginMcpServerEnabled({ id: 'demo', server: 'remote', enabled: false });
+
+    const inspections = await core.inspectAppMcpServers({});
+    expect(inspections).toEqual([
+      expect.objectContaining({
+        serverId: 'global:global',
+        locator: { source: 'global', name: 'global' },
+        runtimeName: 'global',
+        origin: 'global',
+        editable: true,
+        authStatus: 'not-applicable',
+        config: expect.objectContaining({ envKeys: ['GLOBAL_SECRET'] }),
+      }),
+      expect.objectContaining({
+        serverId: 'plugin:demo:local',
+        locator: { source: 'plugin', pluginId: 'demo', serverName: 'local' },
+        runtimeName: 'plugin-demo:local',
+        origin: 'plugin',
+        editable: false,
+        enabled: true,
+        authStatus: 'not-applicable',
+        config: expect.objectContaining({ envKeys: expect.arrayContaining(['PLUGIN_SECRET']) }),
+      }),
+      expect.objectContaining({
+        serverId: 'plugin:demo:remote',
+        locator: { source: 'plugin', pluginId: 'demo', serverName: 'remote' },
+        runtimeName: 'plugin-demo:remote',
+        origin: 'plugin',
+        editable: false,
+        enabled: false,
+        authStatus: 'not-applicable',
+      }),
+    ]);
+    expect(JSON.stringify(inspections)).not.toContain('global-secret-value');
+    expect(JSON.stringify(inspections)).not.toContain('plugin-secret-value');
+
+    const oauth = new McpOAuthService({ kimiHomeDir: home });
+    await oauth
+      .getProvider('plugin-demo:remote', 'https://mcp.example.test/service')
+      .saveTokens({ access_token: 'plugin-test-token', token_type: 'Bearer' });
+    await core.resetMcpServerAuth({
+      locator: { source: 'plugin', pluginId: 'demo', serverName: 'remote' },
+    });
+    expect(oauth.hasTokens('plugin-demo:remote', 'https://mcp.example.test/service')).toBe(false);
+
+    await oauth
+      .getProvider('plugin-demo:remote', 'https://mcp.example.test/service')
+      .saveTokens({ access_token: 'plugin-test-token', token_type: 'Bearer' });
+    await core.setPluginMcpServerEnabled({ id: 'demo', server: 'remote', enabled: true });
+    await core.addGlobalMcpServer({
+      server: {
+        name: 'plugin-demo:remote',
+        transport: 'http',
+        url: 'https://global.example.test/service',
+        auth: 'oauth',
+      },
+    });
+    const locator = { source: 'plugin', pluginId: 'demo', serverName: 'remote' } as const;
+    await expect(core.beginMcpServerAuth({ locator })).rejects.toThrow(
+      'is shared by multiple enabled servers',
+    );
+    await expect(core.resetMcpServerAuth({ locator })).rejects.toThrow(
+      'is shared by multiple enabled servers',
+    );
+    expect(oauth.hasTokens('plugin-demo:remote', 'https://mcp.example.test/service')).toBe(true);
   });
 
   it('injects persisted managed Kimi Code environment into the datasource plugin MCP server', async () => {

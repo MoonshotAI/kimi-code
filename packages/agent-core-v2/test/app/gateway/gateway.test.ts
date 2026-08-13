@@ -53,6 +53,8 @@ describe('RestGateway', () => {
     const promptService: IAgentPromptService = {
       _serviceBrand: undefined,
       enqueue: ({ message }: { message: ContextMessage }) => { promptCalls.push(message); return Promise.resolve({ id: 'p', launched: Promise.resolve(undefined) } as never); },
+      submit: () => Promise.resolve(undefined),
+      submitSteer: () => Promise.resolve(undefined),
       steer: () => Promise.resolve([]),
       list: () => ({ active: undefined, pending: [] }),
       abort: () => true,
@@ -93,6 +95,7 @@ describe('RestGateway', () => {
       _serviceBrand: undefined,
       onWillCreateSession: () => ({ dispose: () => {} }),
       onDidCreateSession: () => ({ dispose: () => {} }),
+      onWillCloseSession: () => ({ dispose: () => {} }),
       onDidCloseSession: () => ({ dispose: () => {} }),
       onDidArchiveSession: () => ({ dispose: () => {} }),
       onDidForkSession: () => ({ dispose: () => {} }),

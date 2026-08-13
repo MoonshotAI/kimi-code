@@ -52,6 +52,52 @@ describe('StateRegistry', () => {
     expect(() => registry.register(countKey)).toThrow(BugIndicatingError);
   });
 
+  it('removes the key and value when its registration is disposed', () => {
+    const registry = new StateRegistry();
+    const registration = registry.register(countKey);
+    registry.set(countKey, 42);
+
+    registration.dispose();
+
+    expect(registry.has(countKey)).toBe(false);
+    expect(registry.entries()).toEqual([]);
+    expect(() => registry.get(countKey)).toThrow(BugIndicatingError);
+    expect(() => registry.set(countKey, 1)).toThrow(BugIndicatingError);
+  });
+
+  it('re-registers with the initial value and ignores stale disposal', () => {
+    const registry = new StateRegistry();
+    const first = registry.register(countKey);
+    registry.set(countKey, 42);
+    first.dispose();
+
+    const second = registry.register(countKey);
+    expect(registry.get(countKey)).toBe(0);
+
+    first.dispose();
+    expect(registry.has(countKey)).toBe(true);
+    second.dispose();
+    expect(registry.has(countKey)).toBe(false);
+  });
+
+  it('isolates listeners between registrations', () => {
+    const registry = new StateRegistry();
+    const first = registry.register(countKey);
+    const oldSeen: number[] = [];
+    registry.onDidChange(countKey)((value) => oldSeen.push(value));
+    registry.set(countKey, 1);
+    first.dispose();
+
+    const second = registry.register(countKey);
+    const newSeen: number[] = [];
+    registry.onDidChange(countKey)((value) => newSeen.push(value));
+    registry.set(countKey, 2);
+
+    expect(oldSeen).toEqual([1]);
+    expect(newSeen).toEqual([2]);
+    second.dispose();
+  });
+
   it('rejects get and set on an unregistered key', () => {
     const registry = new StateRegistry();
     expect(() => registry.get(countKey)).toThrow(BugIndicatingError);

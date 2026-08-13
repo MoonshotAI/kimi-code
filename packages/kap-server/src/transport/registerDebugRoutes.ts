@@ -21,7 +21,7 @@ import { type RouteHost, registerServiceDispatcherRoutes } from './serviceDispat
 
 export function registerDebugRoutes(app: RouteHost, core: Scope): void {
   registerServiceDispatcherRoutes(app, core, '/debug', {
-    lookup: resolveAnyScopedServiceId,
+    lookup: (name) => resolveAnyScopedServiceId(core, name),
     describe: describeAllChannels,
   });
 }
