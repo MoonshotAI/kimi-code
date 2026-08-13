@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (25 sections · 2 overlay(s))
+# Index (26 sections · 4 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/app/skillCatalog/configSection.ts
 #   cron                     src/app/cron/configSection.ts
@@ -34,8 +34,11 @@
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tokenCounting            src/agent/tokenCounting/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
+#   visualModel              src/app/kosongConfig/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
+#   (overlay) secondaryModelOverlay  src/app/kosongConfig/secondaryModelOverlay.ts
+#   (overlay) visualModelOverlay  src/app/kosongConfig/visualModelOverlay.ts
 
 # ##########################################################################
 # background
@@ -437,3 +440,26 @@ strategy = "measured+estimated"
 [tools]
 # enabled: string[]
 # disabled: string[]
+
+# ##########################################################################
+# visualModel (config.toml: visual_model)
+#   owner: src/app/kosongConfig/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     model <- KIMI_VISUAL_MODEL (custom parse)
+#     default_effort <- KIMI_VISUAL_EFFORT (custom parse)
+# ##########################################################################
+
+[visual_model]
+# max_context_size: integer
+# max_input_size: integer
+# max_output_size: integer
+# capabilities: string[]
+# display_name: string
+# reasoning_key: string
+# adaptive_thinking: boolean
+# support_efforts: string[]
+# default_effort: string
+# off_effort: string
+# model: string

@@ -32,7 +32,9 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { type ModelRequester } from '#/kosong/model/modelRequester';
@@ -43,6 +45,8 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
+import { resolveVisualModel } from '#/session/visual/configSection';
+import type { ModelCapability } from '#/kosong/contract/capability';
 
 import { IAgentMediaToolsRegistrar } from './mediaTools';
 import { createVideoUploader, registerMediaTools } from './registerMediaTools';
@@ -61,6 +65,8 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IConfigService private readonly appConfig: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
     @IEventBus eventBus: IEventBus,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
@@ -85,11 +91,43 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
   }
 
   private refresh(): void {
-    const capabilities = this.profile.getModelCapabilities();
+    const callerCapabilities = this.profile.getModelCapabilities();
+    const callerModelAlias = this.profile.getModel();
+
+    // Visual-model companion: when configured (and the experiment is on),
+    // a vision-capable visual model lets the media tools register even if
+    // the caller's model is text-only. The visual model's capabilities and
+    // requester are used in that case so the tool's mime / compression
+    // decisions match the model that will actually consume the payload.
+    // When the visual model is unset, behavior is unchanged.
+    const visualRecipe = resolveVisualModel(this.appConfig, this.flags);
+    const visualModelAlias = visualRecipe?.model;
+    let visualRequester: ModelRequester | undefined;
+    let visualModel: Model | undefined;
+    if (visualModelAlias !== undefined) {
+      try {
+        visualRequester = this.modelCatalog.getRequester(visualModelAlias);
+        visualModel = visualRequester.model;
+      } catch {
+        // dangling pointer — the secondary-model-style warning service is
+        // responsible for surfacing it; the registrar just falls back to
+        // the caller's model.
+      }
+    }
+    const visualCapabilities: ModelCapability | undefined = visualModel?.capabilities;
+    const callerHasMedia = callerCapabilities.image_in || callerCapabilities.video_in;
+    const visualHasMedia = visualCapabilities !== undefined
+      && (visualCapabilities.image_in || visualCapabilities.video_in);
+    const useVisual = !callerHasMedia && visualHasMedia;
+    const capabilities = useVisual ? visualCapabilities! : callerCapabilities;
+
     const key = [
-      this.profile.getModel(),
-      String(capabilities.image_in),
-      String(capabilities.video_in),
+      callerModelAlias,
+      String(callerCapabilities.image_in),
+      String(callerCapabilities.video_in),
+      visualModelAlias ?? '',
+      String(visualCapabilities?.image_in ?? false),
+      String(visualCapabilities?.video_in ?? false),
     ].join('|');
     if (key === this.registeredKey) return;
     this.registeredKey = key;
@@ -97,12 +135,18 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     const workspaceCtx = this.workspaceCtx;
     const skillCatalog = this.skillCatalog;
     const env = this.env;
-    const modelAlias = this.profile.getModel();
+    const boundModelAlias = useVisual ? visualModelAlias! : callerModelAlias;
+    const boundRequester = useVisual ? visualRequester : undefined;
     let requester: ModelRequester | undefined;
     let model: Model | undefined;
-    if (modelAlias !== '') {
-      requester = this.modelCatalog.getRequester(modelAlias);
-      model = requester.model;
+    if (boundModelAlias !== '') {
+      try {
+        requester = boundRequester ?? this.modelCatalog.getRequester(boundModelAlias);
+        model = requester.model;
+      } catch {
+        requester = undefined;
+        model = undefined;
+      }
     }
     this.registration = registerMediaTools(this.toolRegistry, {
       fs: this.fs,
@@ -123,7 +167,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       videoUploader: createVideoUploader(requester, {
         client: this.telemetry,
         props: {
-          model: modelAlias,
+          model: boundModelAlias,
           provider_type: model?.providerType ?? model?.protocol,
           protocol: model?.protocol,
         },

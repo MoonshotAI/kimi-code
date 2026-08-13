@@ -37,6 +37,8 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { EventBusService } from '#/app/event/eventBusService';
+import { StubConfigService } from '../../../kosong/stubs';
+import { stubFlag } from '../../../app/flag/stubs';
 import type { IAgentProfileService } from '#/agent/profile/profile';
 import type { IModelCatalog } from '#/kosong/model/catalog';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
@@ -848,6 +850,8 @@ describe('AgentMediaToolsRegistrar', () => {
       registry,
       profile,
       modelCatalog,
+      new StubConfigService(),
+      stubFlag(false),
       eventBus,
       createTestFs({}),
       createTestEnv(),

@@ -310,6 +310,55 @@ registerConfigSection(THINKING_SECTION, ThinkingConfigSchema, {
   stripEnv: stripThinkingEnv,
 });
 
+export const SECONDARY_MODEL_SECTION = 'secondaryModel';
+
+export const SECONDARY_MODEL_ENV = 'KIMI_SECONDARY_MODEL';
+export const SECONDARY_MODEL_EFFORT_ENV = 'KIMI_SECONDARY_EFFORT';
+
+export const SecondaryModelConfigSchema = ModelOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+});
+
+export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
+
+function parseNonEmptyEnv(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export const secondaryModelEnvBindings = envBindings(SecondaryModelConfigSchema, {
+  model: { env: SECONDARY_MODEL_ENV, parse: parseNonEmptyEnv },
+  defaultEffort: { env: SECONDARY_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
+});
+
+registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
+  env: secondaryModelEnvBindings,
+  stripEnv: stripEnvBoundFields(secondaryModelEnvBindings),
+});
+
+
+export const VISUAL_MODEL_SECTION = 'visualModel';
+
+export const VISUAL_MODEL_ENV = 'KIMI_VISUAL_MODEL';
+export const VISUAL_MODEL_EFFORT_ENV = 'KIMI_VISUAL_EFFORT';
+
+export const VisualModelConfigSchema = ModelOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+});
+
+export type VisualModelConfig = z.infer<typeof VisualModelConfigSchema>;
+
+export const visualModelEnvBindings = envBindings(VisualModelConfigSchema, {
+  model: { env: VISUAL_MODEL_ENV, parse: parseNonEmptyEnv },
+  defaultEffort: { env: VISUAL_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
+});
+
+registerConfigSection(VISUAL_MODEL_SECTION, VisualModelConfigSchema, {
+  env: visualModelEnvBindings,
+  stripEnv: stripEnvBoundFields(visualModelEnvBindings),
+});
+
+
 export const MODEL_CATALOG_SECTION = 'modelCatalog';
 
 export const ModelCatalogConfigSchema = z.object({
