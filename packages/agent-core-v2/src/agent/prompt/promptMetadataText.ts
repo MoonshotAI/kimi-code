@@ -41,11 +41,12 @@ export function promptMetadataTextFromText(text: string): string | undefined {
     .replaceAll(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[redacted]')
     .replaceAll(
       /\b[A-Za-z0-9][A-Za-z0-9+/=_-]{39,}\b/g,
-      (match: string, offset: number, source: string) =>
-        isFileNameStem(match, source.slice(offset + match.length)) ||
-        isAbsolutePath(match, offset, source)
+      (match: string, offset: number, source: string) => {
+        const following = source.slice(offset + match.length);
+        return isFileNameStem(match, following) || isPathLike(match, following)
           ? match
-          : '[redacted]',
+          : '[redacted]';
+      },
     )
     .replaceAll(/\p{Cc}+/gu, ' ')
     .replaceAll(/\s+/g, ' ')
@@ -63,24 +64,25 @@ const SAFE_FILENAME_EXTENSIONS = new Set([
 ]);
 
 function isFileNameStem(stem: string, following: string): boolean {
-  if (!/^(?=.*[-_])[a-z0-9_/-]+$/.test(stem)) return false;
+  if (!/^(?=.*[-_])[a-z0-9_-]+$/.test(stem)) return false;
   const suffix = /^((?:\.[A-Za-z0-9]{1,8})+)(?![.A-Za-z0-9+/=_-])/.exec(following)?.[1];
   if (suffix === undefined) return false;
   const extension = suffix.slice(suffix.lastIndexOf('.') + 1);
   return SAFE_FILENAME_EXTENSIONS.has(extension.toLowerCase());
 }
 
-function isAbsolutePath(match: string, offset: number, source: string): boolean {
-  if (offset === 0 || source[offset - 1] !== '/') return false;
+function isPathLike(match: string, following: string): boolean {
   if (!match.includes('/')) return false;
   const segments = match.split('/');
   const directories = segments.slice(0, -1);
   const base = segments[segments.length - 1];
-  const wordShaped = (segment: string) =>
-    segment.length < 40 && /^([A-Z]?[a-z0-9_-]*|[A-Z0-9_-]+)$/.test(segment);
-  if (!directories.every(wordShaped)) return false;
-  if (wordShaped(base)) return true;
-  return isFileNameStem(base, source.slice(offset + match.length));
+  if (!directories.every(isWordShapedSegment)) return false;
+  if (isWordShapedSegment(base)) return true;
+  return isFileNameStem(base, following);
+}
+
+function isWordShapedSegment(segment: string): boolean {
+  return segment.length < 40 && /^([A-Z]?[a-z0-9_-]*|[A-Z0-9_-]+)$/.test(segment);
 }
 
 function promptPartText(part: ContentPart): string | undefined {

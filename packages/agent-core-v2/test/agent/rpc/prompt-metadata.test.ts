@@ -89,6 +89,9 @@ describe('prompt metadata sanitization', () => {
     );
     expect(sanitize(`${'A1b2'.repeat(10)}_.ts-${'Z9y8'.repeat(12)}`)).toBe('[redacted].[redacted]');
     expect(sanitize(`${'Ab1c'.repeat(10)}-.ts`)).toBe('[redacted]-.ts');
+    expect(sanitize(`open ${'a'.repeat(44)}/refact-000-08-12-external-hooks-feature-scopes.ts`)).toBe(
+      'open [redacted].ts',
+    );
     expect(sanitize(`https://example.com/${'Ab1c'.repeat(10)}_.ts?download=1`)).toBe(
       'https://example.[redacted].ts?download=1',
     );

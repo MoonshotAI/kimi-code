@@ -71,11 +71,12 @@ function sanitizeAndTruncatePromptText(text: string, maxLength: number): string 
     .replaceAll(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[redacted]')
     .replaceAll(
       /\b[A-Za-z0-9][A-Za-z0-9+/=_-]{39,}\b/g,
-      (match: string, offset: number, source: string) =>
-        isFileNameStem(match, source.slice(offset + match.length)) ||
-        isAbsolutePath(match, offset, source)
+      (match: string, offset: number, source: string) => {
+        const following = source.slice(offset + match.length);
+        return isFileNameStem(match, following) || isPathLike(match, following)
           ? match
-          : '[redacted]',
+          : '[redacted]';
+      },
     )
     .replaceAll(/\p{Cc}+/gu, ' ')
     .replaceAll(/\s+/g, ' ')
@@ -98,39 +99,39 @@ const SAFE_FILENAME_EXTENSIONS = new Set([
 // A long token-shaped word stays readable only as the stem of a human-named
 // slug of a text/code file, e.g.
 // `refact-000-08-12-external-hooks-feature-scopes.test.ts`. The stem must be
-// all-lowercase slug characters (`a-z0-9_-/`, so a `src/`-style path prefix
-// is allowed) with at least one `-`/`_` separator — machine-generated tokens
-// are mixed-case with overwhelming probability and never qualify. Compound
-// suffixes are judged by their final component; a dotted segment longer than
-// 8 alphanumerics (e.g. a JWT segment) is not an extension, and anything that
-// continues with another dot or token character after the suffix is not a
-// file name either.
+// all-lowercase slug characters (`a-z0-9_-`) with at least one `-`/`_`
+// separator — machine-generated tokens are mixed-case with overwhelming
+// probability and never qualify. Compound suffixes are judged by their final
+// component; a dotted segment longer than 8 alphanumerics (e.g. a JWT
+// segment) is not an extension, and anything that continues with another dot
+// or token character after the suffix is not a file name either.
 function isFileNameStem(stem: string, following: string): boolean {
-  if (!/^(?=.*[-_])[a-z0-9_/-]+$/.test(stem)) return false;
+  if (!/^(?=.*[-_])[a-z0-9_-]+$/.test(stem)) return false;
   const suffix = /^((?:\.[A-Za-z0-9]{1,8})+)(?![.A-Za-z0-9+/=_-])/.exec(following)?.[1];
   if (suffix === undefined) return false;
   const extension = suffix.slice(suffix.lastIndexOf('.') + 1);
   return SAFE_FILENAME_EXTENSIONS.has(extension.toLowerCase());
 }
 
-// A long token-shaped word also stays readable as an absolute path, e.g.
-// `/Users/.../kimi-code-workspace/`. The match must be rooted (preceded by
-// `/`); every directory segment must stay below the 40-char token threshold
-// and look like a human-named word (lowercase, Capitalized, or ALL-CAPS like
-// `README`), while the basename may additionally be a long slug passing the
-// file-name rule above — so `/Users/Alice/.../refact-...-scopes.ts` survives
-// but a base64/base64url token pasted with slashes (mixed-case random
-// segments) or a token-length basename (e.g. `/tmp/<48-char token>`) fails
-// closed.
-function isAbsolutePath(match: string, offset: number, source: string): boolean {
-  if (offset === 0 || source[offset - 1] !== '/') return false;
+// A long token-shaped word also stays readable as a path, absolute or
+// relative, e.g. `/Users/.../refact-...-scopes.ts` or `src/.../README.md`.
+// Every directory segment must stay below the 40-char token threshold and
+// look like a human-named word (lowercase, Capitalized, or ALL-CAPS like
+// `README`); the basename may additionally be a long slug passing the
+// file-name rule above. A base64/base64url token pasted with slashes has
+// mixed-case random segments, and a token-length segment like
+// `<44 lowercase chars>/refact-...-scopes.ts` exceeds the threshold — both
+// fail closed.
+function isPathLike(match: string, following: string): boolean {
   if (!match.includes('/')) return false;
   const segments = match.split('/');
   const directories = segments.slice(0, -1);
   const base = segments[segments.length - 1];
-  const wordShaped = (segment: string) =>
-    segment.length < 40 && /^([A-Z]?[a-z0-9_-]*|[A-Z0-9_-]+)$/.test(segment);
-  if (!directories.every(wordShaped)) return false;
-  if (wordShaped(base)) return true;
-  return isFileNameStem(base, source.slice(offset + match.length));
+  if (!directories.every(isWordShapedSegment)) return false;
+  if (isWordShapedSegment(base)) return true;
+  return isFileNameStem(base, following);
+}
+
+function isWordShapedSegment(segment: string): boolean {
+  return segment.length < 40 && /^([A-Z]?[a-z0-9_-]*|[A-Z0-9_-]+)$/.test(segment);
 }
