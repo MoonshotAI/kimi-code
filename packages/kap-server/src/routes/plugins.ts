@@ -103,6 +103,18 @@ const CAPABILITY_ROW_IDS: Readonly<
   'kimi-webbridge': { capabilityId: 'kimi-webbridge', wiringPluginIds: ['kimi-webbridge'] },
 };
 
+/**
+ * Wiring plugin ids in this platform's preference order — the canonical one
+ * first ('kimi-cu-win' on Windows x64), so a stale same-id record never
+ * shadows the capability's actual wiring plugin.
+ */
+function orderedWiringPluginIds(ids: readonly string[]): readonly string[] {
+  if (process.platform === 'win32' && process.arch === 'x64' && ids.includes('kimi-cu-win')) {
+    return ['kimi-cu-win', ...ids.filter((id) => id !== 'kimi-cu-win')];
+  }
+  return ids;
+}
+
 const MARKETPLACE_FETCH_TIMEOUT_MS = 10_000;
 
 function fetchWithTimeout(...args: Parameters<typeof fetch>): Promise<Response> {
@@ -192,11 +204,14 @@ export function registerPluginsRoutes(
       const entries: PluginMarketplaceEntryWire[] = marketplace.plugins.map((entry) => {
         const capabilityRow =
           opts.marketplaceIsDefault === true ? CAPABILITY_ROW_IDS[entry.id] : undefined;
+        // Capability rows join through the wiring plugin ids (platform order)
+        // BEFORE the bare catalog id — a stale same-id record must not win.
         const record =
-          byId.get(entry.id) ??
-          capabilityRow?.wiringPluginIds
-            .map((id) => byId.get(id))
-            .find((candidate) => candidate !== undefined);
+          capabilityRow !== undefined
+            ? (orderedWiringPluginIds(capabilityRow.wiringPluginIds)
+                .map((id) => byId.get(id))
+                .find((candidate) => candidate !== undefined) ?? byId.get(entry.id))
+            : byId.get(entry.id);
         const installedInfo =
           record === undefined
             ? undefined

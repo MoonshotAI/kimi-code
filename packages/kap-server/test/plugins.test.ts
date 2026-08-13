@@ -431,6 +431,18 @@ describe('server-v2 /api/v1 plugins', () => {
     const cu = after.body.data.entries.find((e) => e.id === 'kimi-cu');
     expect(cu?.capabilityId).toBe('kimi-cu');
     expect(cu?.installed?.version).toBe('0.5.4');
+
+    // With BOTH records present, the platform-canonical wiring plugin wins
+    // (on macOS that is the bare kimi-cu id, so this stale record shows).
+    const staleSource = await makePluginDir('kimi-cu', '0.1.0');
+    await call('POST', '/api/v1/plugins', { source: staleSource });
+    const both = await call<{
+      entries: { id: string; installed?: { version?: string } }[];
+    }>('GET', '/api/v1/plugins/marketplace');
+    const expected = process.platform === 'win32' && process.arch === 'x64' ? '0.5.4' : '0.1.0';
+    expect(both.body.data.entries.find((e) => e.id === 'kimi-cu')?.installed?.version).toBe(
+      expected,
+    );
   });
 
   it('maps an unreachable marketplace to 50001', async () => {
