@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DaemonKimiWebApi } from '../src/api/daemon/client';
 import { createAgentProjector } from '../src/api/daemon/agentEventProjector';
-import { DaemonApiError, DaemonNetworkError } from '../src/api/errors';
+import { DaemonApiError, DaemonNetworkError, isDaemonTimeoutError } from '../src/api/errors';
 import type { RestRequestInfo, Translator } from '../src/contracts';
 import type { AppEvent, KimiEventConnection, KimiEventMeta } from '../src/api/types';
 
@@ -236,6 +236,64 @@ describe('DaemonKimiWebApi.exportSession', () => {
     expect(trace).not.toContain(secret);
     expect(trace).toContain('web_log_bytes');
     expect(trace).toContain('web_log_entries');
+  });
+});
+
+describe('DaemonKimiWebApi fork timeout budget', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // What fetch rejects with when our own AbortSignal.timeout fires.
+  const timeoutRejection = () =>
+    Promise.reject(new DOMException('signal timed out', 'TimeoutError'));
+
+  it('forkSession waits five minutes before aborting', async () => {
+    vi.mocked(fetch).mockImplementation(timeoutRejection);
+
+    const caught = await createApi()
+      .forkSession('sess_1')
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(DaemonNetworkError);
+    expect(caught).toMatchObject({ timeoutMs: 300_000, phase: 'fetch' });
+    expect(isDaemonTimeoutError(caught)).toBe(true);
+  });
+
+  it('createChildSession shares the fork budget (the daemon forks server-side)', async () => {
+    vi.mocked(fetch).mockImplementation(timeoutRejection);
+
+    const caught = await createApi()
+      .createChildSession('sess_1')
+      .catch((error: unknown) => error);
+
+    expect(caught).toMatchObject({ timeoutMs: 300_000 });
+  });
+
+  it('ordinary session actions keep the default 30s budget', async () => {
+    vi.mocked(fetch).mockImplementation(timeoutRejection);
+
+    const caught = await createApi()
+      .undoSession('sess_1')
+      .catch((error: unknown) => error);
+
+    expect(caught).toMatchObject({ timeoutMs: 30_000 });
+    expect(isDaemonTimeoutError(caught)).toBe(true);
+  });
+
+  it('a connect failure is not reported as a timeout', async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError('fetch failed'));
+
+    const caught = await createApi()
+      .forkSession('sess_1')
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(DaemonNetworkError);
+    expect(isDaemonTimeoutError(caught)).toBe(false);
   });
 });
 

@@ -6,5 +6,6 @@ export {
   FileTooLargeError,
   isDaemonApiError,
   isDaemonNetworkError,
+  isDaemonTimeoutError,
   isFileTooLargeError,
 } from '@moonshot-ai/app-core/api';

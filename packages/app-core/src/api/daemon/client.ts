@@ -54,7 +54,7 @@ import type {
   UpdateProviderResult,
   V2SessionsPage,
 } from '../types';
-import { DaemonHttpClient, type RestQuery } from './http';
+import { DaemonHttpClient, FORK_TIMEOUT_MS, type RestQuery } from './http';
 import { FileTooLargeError, isDaemonApiError } from '../errors';
 import type { AgentProjector } from './projector';
 
@@ -864,12 +864,15 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   // POST /sessions/{id}:fork — fork the session into a new child session.
+  // Fork copies every agent's wire log server-side, so a long-lived session
+  // needs far longer than the default 30s request budget.
   async forkSession(sessionId: string, input?: { title?: string }): Promise<AppSession> {
     const body: Record<string, unknown> = {};
     if (input?.title !== undefined) body['title'] = input.title;
     const data = await this.http.post<WireSession>(
       `/sessions/${encodeURIComponent(sessionId)}:fork`,
       body,
+      { timeoutMs: FORK_TIMEOUT_MS },
     );
     return toAppSession(data);
   }
@@ -883,6 +886,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     const data = await this.http.post<WireSession>(
       `/sessions/${encodeURIComponent(sessionId)}/children`,
       body,
+      { timeoutMs: FORK_TIMEOUT_MS },
     );
     return toAppSession(data);
   }

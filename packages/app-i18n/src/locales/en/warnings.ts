@@ -38,6 +38,8 @@ export default {
   daemonApiTitle: 'Kimi server returned an error',
   daemonNetworkMessage: 'Web did not receive a response from the Kimi server. Check that it is still running, or refresh the page.',
   daemonNetworkTitle: 'Cannot connect to Kimi server',
+  daemonTimeoutMessage: 'The Kimi server did not respond within the wait limit. The operation may still complete in the background — refresh later to check, or try again.',
+  daemonTimeoutTitle: 'Kimi server response timed out',
   diagnostics: 'Diagnostics',
   hideDetails: 'Hide details',
   operationFailedMessage: 'The last operation did not finish. Try again later.',

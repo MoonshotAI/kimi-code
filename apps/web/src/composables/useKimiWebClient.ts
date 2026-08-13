@@ -6,7 +6,7 @@ import { i18n } from '../i18n';
 import { formatDuration as formatTaskDuration } from '../components/chatTurnRendering';
 import { traceClientEvent, traceKeyEvent } from '../debug/trace';
 import { getKimiWebApi } from '../api';
-import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
+import { isDaemonApiError, isDaemonNetworkError, isDaemonTimeoutError } from '../api/errors';
 import {
   buildWorkspaceRecencyKeys,
   currentActivityKeys,
@@ -1632,17 +1632,24 @@ function operationFailureNotice(
 ): AppNotice {
   const network = isDaemonNetworkError(err);
   const api = isDaemonApiError(err);
+  // A self-imposed abort (AbortSignal.timeout) means "still working, we stopped
+  // waiting", not "unreachable" — say so instead of the connect-failure copy.
+  const timeout = isDaemonTimeoutError(err);
   const title =
     opts.title ??
     (network
-      ? i18n.global.t('warnings.daemonNetworkTitle')
+      ? timeout
+        ? i18n.global.t('warnings.daemonTimeoutTitle')
+        : i18n.global.t('warnings.daemonNetworkTitle')
       : api
         ? i18n.global.t('warnings.daemonApiTitle')
         : i18n.global.t('warnings.operationFailedTitle'));
   const message =
     opts.message ??
     (network
-      ? i18n.global.t('warnings.daemonNetworkMessage')
+      ? timeout
+        ? i18n.global.t('warnings.daemonTimeoutMessage')
+        : i18n.global.t('warnings.daemonNetworkMessage')
       : api
         ? err.message
         : i18n.global.t('warnings.operationFailedMessage'));

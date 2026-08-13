@@ -38,6 +38,8 @@ export default {
   daemonApiTitle: 'Kimi 服务器返回错误',
   daemonNetworkMessage: 'Web 没有拿到 Kimi 服务器的响应。请确认它仍在运行，或刷新页面重试。',
   daemonNetworkTitle: '无法连接到 Kimi 服务器',
+  daemonTimeoutMessage: 'Kimi 服务器在等待时限内没有响应。操作可能仍在后台执行，请稍后刷新确认结果，或重试。',
+  daemonTimeoutTitle: 'Kimi 服务器响应超时',
   diagnostics: '诊断信息',
   hideDetails: '收起详情',
   operationFailedMessage: '刚才的操作没有完成，请稍后重试。',

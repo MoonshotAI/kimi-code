@@ -36,6 +36,7 @@ export {
   FileTooLargeError,
   isDaemonApiError,
   isDaemonNetworkError,
+  isDaemonTimeoutError,
   isFileTooLargeError,
   isPageTokenMismatchError,
   SESSION_EXPORT_TOO_LARGE_CODE,

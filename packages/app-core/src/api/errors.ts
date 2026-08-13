@@ -118,6 +118,19 @@ export function isDaemonNetworkError(error: unknown): error is DaemonNetworkErro
   );
 }
 
+/** The fetch was aborted by our own `AbortSignal.timeout` (cause is the
+ *  `TimeoutError` DOMException), i.e. the daemon may still be working — as
+ *  opposed to a genuine connect failure, where it is unreachable. The notice
+ *  copy uses this to say "timed out" instead of "cannot connect". */
+export function isDaemonTimeoutError(error: unknown): boolean {
+  return (
+    isDaemonNetworkError(error) &&
+    typeof error.cause === 'object' &&
+    error.cause !== null &&
+    (error.cause as { name?: unknown }).name === 'TimeoutError'
+  );
+}
+
 export function isFileTooLargeError(error: unknown): error is FileTooLargeError {
   return (
     error instanceof FileTooLargeError ||

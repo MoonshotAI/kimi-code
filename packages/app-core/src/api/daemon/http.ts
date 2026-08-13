@@ -13,6 +13,10 @@ import type { WireEnvelope } from './wire';
     streaming runs over the WS, not these REST calls. */
 const REQUEST_TIMEOUT_MS = 30_000;
 const EXPORT_TIMEOUT_MS = 5 * 60_000;
+/** Fork / createChild copy the whole session server-side (every agent's wire
+ *  log plus metadata), which scales with session size — a long-lived session
+ *  blows straight past the default 30s. Match the export budget. */
+export const FORK_TIMEOUT_MS = 5 * 60_000;
 const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const BODY_PREVIEW_LIMIT = 500;
 
@@ -216,8 +220,12 @@ export class DaemonHttpClient {
     });
   }
 
-  async post<T>(path: string, body?: unknown, opts?: { allowCodes?: number[] }): Promise<T> {
-    return this.request<T>('POST', path, body, undefined, opts?.allowCodes);
+  async post<T>(
+    path: string,
+    body?: unknown,
+    opts?: { allowCodes?: number[]; timeoutMs?: number },
+  ): Promise<T> {
+    return this.request<T>('POST', path, body, undefined, opts?.allowCodes, opts?.timeoutMs);
   }
 
   /** POST JSON and receive a raw ZIP. The request trace accepts a separate
@@ -469,6 +477,7 @@ export class DaemonHttpClient {
     body?: unknown,
     query?: RestQuery,
     allowCodes: number[] = [],
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
   ): Promise<T> {
     // Build URL, appending query string (omit undefined values)
     let url = buildRestUrl(this.opts.origin, path, this.opts.restBasePath);
@@ -499,7 +508,7 @@ export class DaemonHttpClient {
         method,
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: timeoutSignal(),
+        signal: timeoutSignal(timeoutMs),
       });
     } catch (err) {
       this.tracer.restFailure?.({ method, path, requestId, phase: 'fetch', durationMs: Date.now() - startedAt, error: err });
@@ -511,7 +520,7 @@ export class DaemonHttpClient {
         url,
         requestId,
         phase: 'fetch',
-        timeoutMs: REQUEST_TIMEOUT_MS,
+        timeoutMs,
         timestamp: Date.now(),
         durationMs: Date.now() - startedAt,
       });
@@ -540,7 +549,7 @@ export class DaemonHttpClient {
         url,
         requestId,
         phase: 'parse',
-        timeoutMs: REQUEST_TIMEOUT_MS,
+        timeoutMs,
         status: response.status,
         statusText: response.statusText,
         contentType: response.headers.get('content-type') ?? undefined,
