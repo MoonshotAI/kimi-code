@@ -13,11 +13,15 @@ const props = withDefaults(defineProps<{
   /** Auto-dismiss delay in ms (the close button always dismisses immediately). */
   duration?: number;
   dismissLabel?: string;
+  /** Opaque token echoed back with `dismiss` so a parent that REPLACED this
+      toast (its leave animation keeps the old instance alive, timer ticking)
+      can tell a stale instance's dismiss from the live one's. */
+  dismissToken?: string | number;
 }>(), {
   duration: 8000,
 });
 
-const emit = defineEmits<{ dismiss: [] }>();
+const emit = defineEmits<{ dismiss: [token: string | number | undefined] }>();
 
 const { t } = useKimiI18n();
 
@@ -28,7 +32,7 @@ let deadline = 0;
 let remaining = 0;
 
 function run(ms: number): void {
-  handle = setTimeout(() => emit('dismiss'), ms);
+  handle = setTimeout(() => emit('dismiss', props.dismissToken), ms);
   deadline = Date.now() + ms;
 }
 function pause(): void {
@@ -57,7 +61,7 @@ onUnmounted(() => {
         size="sm"
         :label="dismissLabel ?? t('common.dismiss')"
         :tooltip="dismissLabel ?? t('common.dismiss')"
-        @click="emit('dismiss')"
+        @click="emit('dismiss', dismissToken)"
       >
         <Icon name="close" size="sm" />
       </IconButton>

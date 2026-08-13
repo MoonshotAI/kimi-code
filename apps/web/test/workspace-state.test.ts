@@ -15,6 +15,7 @@ import { insertSessionByRecency } from '@moonshot-ai/app-core/lib';
 import { useWorkspaceState, forgetLocalTurnState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 import { clearTrace, traceKeyEvent } from '../src/debug/trace';
+import { i18n } from '../src/i18n';
 
 const apiMock = vi.hoisted(() => ({
   abortPrompt: vi.fn(),
@@ -364,7 +365,7 @@ describe('useWorkspaceState — exportSession', () => {
     apiMock.exportSession.mockResolvedValue({ blob, fileName: 'sess_1.zip' });
     const workspace = useWorkspaceState(createState(), createDeps());
 
-    await workspace.exportSession();
+    await expect(workspace.exportSession()).resolves.toBe(true);
 
     const webLog = apiMock.exportSession.mock.calls[0]?.[1] as string;
     expect(webLog).toContain('prompt:start');
@@ -389,13 +390,17 @@ describe('useWorkspaceState — exportSession', () => {
       }),
     );
     const state = createState();
-    const workspace = useWorkspaceState(state, createDeps());
+    const deps = createDeps();
+    const workspace = useWorkspaceState(state, deps);
 
     const first = workspace.exportSession();
     state.activeSessionId = 'sess_2';
     const second = workspace.exportSession();
     resolveExport({ blob: new Blob(['zip']), fileName: 'sess_1.zip' });
-    await Promise.all([first, second]);
+    // The first export completes the download; the duplicate click is locked
+    // out and reports no success.
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(false);
     await vi.waitFor(() => {
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
     });
@@ -434,13 +439,62 @@ describe('useWorkspaceState — exportSession', () => {
     const deps = createDeps();
     const workspace = useWorkspaceState(state, deps);
 
-    await workspace.exportSession();
+    await expect(workspace.exportSession()).resolves.toBe(false);
 
     expect(apiMock.exportSession).not.toHaveBeenCalled();
     expect(deps.pushOperationFailure).toHaveBeenCalledWith(
       'exportSession',
       expect.any(Error),
       expect.objectContaining({ message: expect.any(String) }),
+    );
+  });
+
+  it('resolves false when the export fails, so a retry can start', async () => {
+    apiMock.exportSession.mockRejectedValue(new Error('boom'));
+    const workspace = useWorkspaceState(createState(), createDeps());
+
+    await expect(workspace.exportSession()).resolves.toBe(false);
+    // The lock is released: a retry hits the API again.
+    apiMock.exportSession.mockResolvedValue({ blob: new Blob(['zip']), fileName: 'sess_1.zip' });
+    await expect(workspace.exportSession()).resolves.toBe(true);
+  });
+
+  it('maps the server archive-cap rejection to an actionable CLI fallback message', async () => {
+    apiMock.exportSession.mockRejectedValue(
+      new DaemonApiError({
+        code: 41301,
+        msg: 'session export exceeds the archive size limit',
+        requestId: 'req_1',
+      }),
+    );
+    const deps = createDeps();
+    const workspace = useWorkspaceState(createState(), deps);
+
+    await workspace.exportSession();
+
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'exportSession',
+      expect.any(Error),
+      {
+        sessionId: 'sess_1',
+        message: i18n.global.t('commands.export.tooLarge', { sessionId: 'sess_1' }),
+      },
+    );
+  });
+
+  it('keeps the generic failure mapping for non-cap export errors', async () => {
+    apiMock.exportSession.mockRejectedValue(
+      new DaemonApiError({ code: 50001, msg: 'internal error', requestId: 'req_1' }),
+    );
+    const deps = createDeps();
+    const workspace = useWorkspaceState(createState(), deps);
+
+    await workspace.exportSession();
+
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'exportSession',
+      expect.any(Error),
+      { sessionId: 'sess_1' },
     );
   });
 });

@@ -12,7 +12,7 @@ import { getKimiWebApi } from '../../api';
 import { i18n } from '../../i18n';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { isDaemonApiError } from '../../api/errors';
-import { SERVER_AUTH_UNAUTHORIZED_CODE, isPageTokenMismatchError, isPlaceholderSessionUsage, toAppSessionFromV2 } from '@moonshot-ai/app-core/api';
+import { SERVER_AUTH_UNAUTHORIZED_CODE, isPageTokenMismatchError, isPlaceholderSessionUsage, toAppSessionFromV2, SESSION_EXPORT_TOO_LARGE_CODE } from '@moonshot-ai/app-core/api';
 import type {
   AppConfig,
   AppInFlightTurn,
@@ -368,10 +368,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     fileDiffTexts,
     fileDiffEmptyFile,
   } = deps;
-  let exportInFlight = false;
   /** Monotonic selectSession serial: an off-list fetch that returns after a
       newer select started is stale and bails (see selectSession). */
   let selectSerial = 0;
+  let exportInFlight = false;
 
   function confirmOptimisticUserMessage(
     sessionId: string,
@@ -3002,15 +3002,18 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   /** Export the given session (default: the active one). The id is captured
    * synchronously so a later session switch cannot redirect the in-flight
-   * request, and a lock prevents duplicate ZIP generation. */
-  async function exportSession(targetSessionId?: string): Promise<void> {
-    if (exportInFlight) return;
+   * request, and a lock prevents duplicate ZIP generation. Resolves true once
+   * the browser accepted the download; false when the export was skipped
+   * (duplicate click / no active session) or failed — failures toast their
+   * own errors, so callers only need the boolean for success feedback. */
+  async function exportSession(targetSessionId?: string): Promise<boolean> {
+    if (exportInFlight) return false;
     const sessionId = targetSessionId ?? rawState.activeSessionId;
     if (!sessionId) {
       const message = t('commands.export.noSession');
       traceKeyEvent('export:failed', { status: 'no-session' });
       pushOperationFailure('exportSession', new Error(message), { message });
-      return;
+      return false;
     }
     exportInFlight = true;
     const startedAt = Date.now();
@@ -3045,6 +3048,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         zipBytes: blob.size,
         durationMs: Date.now() - startedAt,
       });
+      return true;
     } catch (error) {
       const failure =
         typeof error === 'object' && error !== null
@@ -3067,7 +3071,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         phase: typeof failure?.phase === 'string' ? failure.phase : undefined,
         httpStatus: typeof failure?.status === 'number' ? failure.status : undefined,
       });
-      pushOperationFailure('exportSession', error, { sessionId });
+      pushOperationFailure('exportSession', error, {
+        sessionId,
+        // The server's archive cap rejection (web 64 MiB / desktop 1 GiB) gets
+        // an actionable message with the CLI fallback instead of the raw
+        // envelope text; other failures keep the generic mapping.
+        ...(isDaemonApiError(error) && error.code === SESSION_EXPORT_TOO_LARGE_CODE
+          ? { message: t('commands.export.tooLarge', { sessionId }) }
+          : {}),
+      });
+      return false;
     } finally {
       exportInFlight = false;
     }

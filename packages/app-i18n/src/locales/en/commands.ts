@@ -14,6 +14,9 @@ export default {
   export: {
     desc: 'Download this session and troubleshooting logs as a ZIP',
     noSession: 'Open a session before exporting it.',
+    started: 'Exporting session…',
+    done: 'Session exported.',
+    tooLarge: 'Session data exceeds the export size limit. Export it from a terminal instead: kimi export {sessionId} -o session.zip',
   },
   status: { desc: 'View session status' },
   undo: { desc: 'Undo the last message' },

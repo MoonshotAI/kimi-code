@@ -128,6 +128,11 @@ export function isFileTooLargeError(error: unknown): error is FileTooLargeError 
   );
 }
 
+/** kap-server ErrorCode.FILE_TOO_LARGE: the session export archive exceeded
+ * the server's cap (64 MiB for web hosts, 1 GiB when the request carries
+ * `desktop: true`). The export UI maps this to an actionable message. */
+export const SESSION_EXPORT_TOO_LARGE_CODE = 41301;
+
 /** kap-server ErrorCode.PAGE_TOKEN_MISMATCH: the /api/v2/sessions opaque
  *  cursor no longer matches the first page's query conditions (or is
  *  corrupted / from an incompatible token version). Contract: discard the

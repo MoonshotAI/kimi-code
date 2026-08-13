@@ -50,7 +50,7 @@ import { commitLevel, effectiveThinkingLevel, segmentsFor } from '@moonshot-ai/a
 import { modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
 import { stripSkillPrefix } from '@moonshot-ai/app-core/lib';
 import { ActionToast, Icon, IconButton } from '@moonshot-ai/app-ui';
-import { isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
+import { isDesktop, isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
 import WindowsTitleBar from './components/window/WindowsTitleBar.vue';
 import TerminalPanel from './components/terminal/TerminalPanel.vue';
 import TerminalResizeHandle from './components/terminal/TerminalResizeHandle.vue';
@@ -816,7 +816,22 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
 // Every archive entry point (sidebar row, chat header, mobile switcher,
 // shortcut) funnels here. client.archiveSession toasts its own errors and
 // never rejects, so a failed archive simply shows no undo toast.
-const archiveToast = ref<{ id: string } | null>(null);
+//
+// Archive and export share ONE ActionToast state: the component paints a
+// single fixed top-center pill with no stacking offset, so two live toasts
+// would overlap exactly and hide each other's buttons. The newest action
+// replaces the current toast — and an in-flight export's delayed writes (the
+// 400ms running toast, the completion swap) compare keys first, so they never
+// overwrite a newer toast (its Undo/Settings must survive).
+// `key` is bumped on every assignment so the toast remounts and its
+// auto-dismiss timer restarts (it is read once in setup) — the export
+// running→done swap relies on this to get the 4s done window instead of
+// inheriting the 60s running one.
+type AppActionToast =
+  | { kind: 'archive'; id: string; key: number }
+  | { kind: 'export'; state: 'running' | 'done'; key: number };
+const actionToast = ref<AppActionToast | null>(null);
+let actionToastKey = 0;
 
 async function archiveSessionWithToast(id: string): Promise<void> {
   await client.archiveSession(id);
@@ -824,22 +839,80 @@ async function archiveSessionWithToast(id: string): Promise<void> {
   // excludes archived entries) — a failed archive keeps both.
   if (client.sessionsForView.value.some((s) => s.id === id)) return;
   terminalStore.destroySession(id);
-  archiveToast.value = { id };
+  actionToast.value = { kind: 'archive', id, key: ++actionToastKey };
+}
+
+// Export feedback mirrors the archive pattern (design-system §03 ActionToast,
+// top-center): one toast channel for every export entry point (sidebar row,
+// chat header, command palette). A progress toast only appears when the export
+// outlasts ~400ms — the common sub-second case shows exactly one success
+// toast. client.exportSession toasts its own errors and resolves false on
+// failure, so a failed export simply shows no success toast. On desktop the
+// success toast is skipped entirely — the native save dialog is the
+// confirmation (a cancelled one must not read as "exported"); the 'running'
+// state still appears for slow exports.
+let exportToastInFlight = false;
+
+async function exportSessionWithToast(id?: string): Promise<void> {
+  // A duplicate click while one export runs leaves its toast untouched.
+  if (exportToastInFlight) return;
+  exportToastInFlight = true;
+  const key = ++actionToastKey;
+  const slowTimer = setTimeout(() => {
+    // Only take the slot while no NEWER toast (e.g. an archive that started
+    // after this export) owns it — its Undo/Settings actions must survive.
+    if (actionToast.value === null || actionToast.value.key <= key) {
+      actionToast.value = { kind: 'export', state: 'running', key };
+    }
+  }, 400);
+  try {
+    const ok = await client.exportSession(id);
+    if (ok && !isDesktop) {
+      // Same newer-toast guard as the running write above. Fresh key: force
+      // a remount so the done toast's 4s timer starts now (see the
+      // AppActionToast comment). Desktop is excluded: the renderer only
+      // triggers the download — the native save dialog (main/downloads.ts)
+      // is the confirmation there, and a cancelled dialog must not read as
+      // "exported".
+      if (actionToast.value === null || actionToast.value.key <= key) {
+        actionToast.value = { kind: 'export', state: 'done', key: ++actionToastKey };
+      }
+    } else if (actionToast.value?.kind === 'export' && actionToast.value.key === key) {
+      // Clear only this export's own running toast — a concurrent archive
+      // toast is untouched.
+      actionToast.value = null;
+    }
+  } finally {
+    clearTimeout(slowTimer);
+    exportToastInFlight = false;
+  }
 }
 
 // Undo puts the session back at the front of the sidebar list (no
 // re-selection). On failure the toast stays so the user can retry — the
 // error itself surfaces via WarningToasts.
 async function undoArchive(): Promise<void> {
-  const toast = archiveToast.value;
-  if (!toast) return;
-  if (await client.restoreSession(toast.id)) archiveToast.value = null;
+  const toast = actionToast.value;
+  if (!toast || toast.kind !== 'archive') return;
+  if (await client.restoreSession(toast.id)) {
+    // A newer toast may have taken the slot while the restore was in flight
+    // — clear only the one this Undo acted on.
+    if (actionToast.value?.key === toast.key) actionToast.value = null;
+  }
+}
+
+// A REPLACED ActionToast lives on for its leave transition, and its auto-
+// dismiss timer only stops at unmount — so a stale instance can still emit
+// dismiss. The component echoes back its dismissToken; only the live toast
+// (matching key) may clear the shared state.
+function dismissActionToast(token: string | number | undefined): void {
+  if (token !== undefined && actionToast.value?.key === token) actionToast.value = null;
 }
 
 // "Settings" deep-links to the archived-sessions tab (desktop dialog) or
 // sub-view (mobile sheet).
 function openArchivedSettings(): void {
-  archiveToast.value = null;
+  actionToast.value = null;
   if (isMobile.value) {
     mobileSettingsInitialView.value = 'archived';
     showMobileSettings.value = true;
@@ -1089,7 +1162,7 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
       void client.forkSession();
       break;
     case '/export':
-      void client.exportSession();
+      void exportSessionWithToast();
       break;
     case '/undo':
       void client.undo();
@@ -1423,7 +1496,7 @@ function openPr(url: string): void {
         @rename="(id, title) => client.renameSession(id, title)"
         @archive="archiveSessionWithToast($event)"
         @fork="(id) => client.forkSession(id)"
-        @export="(id) => client.exportSession(id)"
+        @export="(id) => void exportSessionWithToast(id)"
         @pin="client.togglePinSession($event)"
         @unpin="client.unpinSession($event)"
         @drop-pin="client.pinSession($event)"
@@ -1541,7 +1614,7 @@ function openPr(url: string): void {
       @rename-session="(id, title) => client.renameSession(id, title)"
       @fork-session="(id) => client.forkSession(id)"
       @archive-session="archiveSessionWithToast($event)"
-      @export-session="(id) => client.exportSession(id)"
+      @export-session="(id) => void exportSessionWithToast(id)"
       @compact="client.compact()"
       @pick-model="openModelPicker()"
       @select-model="handleComposerSelectModel($event)"
@@ -1788,14 +1861,27 @@ function openPr(url: string): void {
          (the Dialog primitive teleports to body for the same reason). -->
     <Teleport to="body">
       <WarningToasts :warnings="client.warnings.value" @dismiss="client.dismissWarning" />
-      <!-- Archive undo toast (top-center): archiving skips the confirm dialog;
-           Undo restores the session, Settings opens the archived list. -->
+      <!-- Action toast (top-center, design-system §03): one shared channel —
+           the archive undo toast and the export result toast replace each
+           other so two fixed pills never overlap. The export 'running' state
+           only appears for genuinely slow exports (>=400ms). -->
       <Transition name="action-toast">
-        <ActionToast v-if="archiveToast" :key="archiveToast.id" @dismiss="archiveToast = null">
-          <button type="button" @click="undoArchive">{{ t('sidebar.archiveToastUndo') }}</button>
-          {{ t('sidebar.archiveToastMid') }}
-          <button type="button" @click="openArchivedSettings">{{ t('sidebar.archiveToastSettings') }}</button>
-          {{ t('sidebar.archiveToastTail') }}
+        <ActionToast
+          v-if="actionToast"
+          :key="actionToast.key"
+          :duration="actionToast.kind === 'export' ? (actionToast.state === 'running' ? 60000 : 4000) : 8000"
+          :dismiss-token="actionToast.key"
+          @dismiss="dismissActionToast"
+        >
+          <template v-if="actionToast.kind === 'archive'">
+            <button type="button" @click="undoArchive">{{ t('sidebar.archiveToastUndo') }}</button>
+            {{ t('sidebar.archiveToastMid') }}
+            <button type="button" @click="openArchivedSettings">{{ t('sidebar.archiveToastSettings') }}</button>
+            {{ t('sidebar.archiveToastTail') }}
+          </template>
+          <template v-else>
+            {{ actionToast.state === 'running' ? t('commands.export.started') : t('commands.export.done') }}
+          </template>
         </ActionToast>
       </Transition>
     </Teleport>
@@ -1901,7 +1987,13 @@ function openPr(url: string): void {
     opacity var(--duration-base) var(--ease-out),
     transform var(--duration-base) var(--ease-out);
 }
-.action-toast-leave-active { transition-duration: var(--duration-fast); }
+.action-toast-leave-active {
+  transition-duration: var(--duration-fast);
+  /* A replaced toast keeps animating out over the live one — keep the leaving
+     instance inert so its Undo/Settings/close can't act on (or clear) the
+     newer toast (same rule as the menu-pop transition). */
+  pointer-events: none;
+}
 .action-toast-enter-from,
 .action-toast-leave-to {
   opacity: 0;

@@ -38,6 +38,7 @@ export {
   isDaemonNetworkError,
   isFileTooLargeError,
   isPageTokenMismatchError,
+  SESSION_EXPORT_TOO_LARGE_CODE,
   V2_PAGE_TOKEN_MISMATCH_CODE,
 } from './errors';
 export * from './types';

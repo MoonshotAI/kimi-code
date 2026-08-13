@@ -14,6 +14,9 @@ export default {
   export: {
     desc: '将当前会话和排障日志下载为 ZIP 压缩包',
     noSession: '请先打开一个会话再导出。',
+    started: '正在导出会话…',
+    done: '会话导出完成。',
+    tooLarge: '会话数据超过导出大小限制,可在终端用 CLI 导出:kimi export {sessionId} -o session.zip',
   },
   status: { desc: '查看会话状态' },
   undo: { desc: '撤销上一条消息' },
