@@ -13,6 +13,7 @@ import type { WireEntry } from '../../types';
 import { formatBytes } from '../shared/SizePreview';
 import { formatDuration, formatTokens } from '../../util/time';
 import { Pill } from '../shared/Pill';
+import { LoopEvalSection } from './LoopEvalSection';
 
 interface TimelineTabProps {
   sessionId: string;
@@ -72,6 +73,7 @@ export function TimelineTab({ sessionId }: TimelineTabProps) {
           <SummaryGrid analysis={analysis} />
           <ContextSparkline analysis={analysis} />
           <ConfigChanges analysis={analysis} />
+          <LoopEvalSection evaluation={analysis.loopEvaluation} />
           <ToolStatsTable analysis={analysis} />
           <IdleGaps analysis={analysis} />
           <section className="mt-6">
