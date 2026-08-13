@@ -1025,6 +1025,7 @@ function openPr(url: string): void {
         @select-workspace="client.openWorkspace($event)"
         @add-workspace="showAddWorkspace = true"
         @rename="(id, title) => client.renameSession(id, title)"
+        @generate-title="(id, done) => void client.regenerateSessionTitle(id).then(done)"
         @archive="archiveSessionWithToast($event)"
         @fork="(id) => client.forkSession(id)"
         @export="(id) => void exportSessionWithToast(id)"

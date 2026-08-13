@@ -18,6 +18,9 @@ export default {
   emptyState: 'No sessions yet · click New Session to start',
   options: 'Options',
   rename: 'Rename',
+  genTitle: 'Gen Title',
+  genTitleUnavailable:
+    'Title generation unavailable — needs a managed Kimi Code login and at least one message',
   setEmoji: 'Set Emoji…',
   sessionEmojiTitle: 'Pick an emoji',
   removeEmoji: 'Remove emoji',

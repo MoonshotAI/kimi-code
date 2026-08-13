@@ -3482,6 +3482,7 @@ const workspaceState = useWorkspaceState(rawState, {
   sideChat,
   modelProvider,
   pushOperationFailure,
+  notify: pushWarning,
   activity,
   sessionsKnownEmpty,
   setSessions,
@@ -3578,6 +3579,17 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
   // WS-event-only — the snapshot path (handleSessionSnapshot) must not cry
   // wolf when opening a historical session.
   workspaceState.finishPromptLocal(sid, { turnWasActive });
+
+  // AI auto-title retry boundary: no-op once a title has been applied (or the
+  // attempt budget is spent) — see maybeGenerateSessionTitle. Rides the
+  // experimental `auto_session_title` flag (server meta flags win over the
+  // persisted [experimental] config section).
+  if (
+    (rawState.experimentalFlags?.['auto_session_title'] ??
+      rawState.config?.experimental?.['auto_session_title']) === true
+  ) {
+    workspaceState.maybeGenerateSessionTitle(sid);
+  }
 
   // Refresh git status after every turn (the agent may have edited files or
   // opened a PR): for the on-screen session this drives the header; the load
@@ -3815,6 +3827,7 @@ export function useKimiWebClient() {
     enqueue: workspaceState.enqueue,
     dismissWarning: workspaceState.dismissWarning,
     renameSession: workspaceState.renameSession,
+    regenerateSessionTitle: workspaceState.regenerateSessionTitle,
     renameWorkspace: workspaceState.renameWorkspace,
     deleteWorkspace: workspaceState.deleteWorkspace,
     reorderWorkspaces,

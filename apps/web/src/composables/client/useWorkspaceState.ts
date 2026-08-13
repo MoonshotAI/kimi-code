@@ -18,6 +18,7 @@ import type {
   AppInFlightTurn,
   AppMessage,
   AppSession,
+  AppWarning,
   AppWorkspace,
   ApprovalDecision,
   ApprovalResponse,
@@ -162,6 +163,42 @@ let nextLocalTurnToken = 0;
 const queueFlushFailures = new Map<string, { key: string; count: number }>();
 const MAX_QUEUE_FLUSH_FAILURES = 3;
 
+/**
+ * AI auto-title (POST /sessions/{id}/title/generate — managed chat_title).
+ * Fired at each main-turn end — never at prompt accept, because the
+ * `first_turn` excerpt pairs the opening prompt with its assistant reply,
+ * which only exists once the first turn completes — until a title is
+ * applied. The backend is idempotent — a generated title is not
+ * regenerated and a custom title is never overwritten (it answers 40923,
+ * surfaced here as null) — so the client only keeps a cheap per-session
+ * attempt counter: stop after TITLE_GEN_MAX_ATTEMPTS consecutive failures
+ * (typical: no managed OAuth login) instead of spending one request per turn
+ * forever. Every failure is silent; the applied title arrives via
+ * sessionMetaUpdated. Module-level singleton — a page reload resets it.
+ */
+const TITLE_GEN_MAX_ATTEMPTS = 3;
+const titleGenBySession = new Map<string, { attempts: number; done: boolean }>();
+
+function maybeGenerateSessionTitle(sid: string): void {
+  const state = titleGenBySession.get(sid);
+  if (state !== undefined && (state.done || state.attempts >= TITLE_GEN_MAX_ATTEMPTS)) return;
+  titleGenBySession.set(sid, { attempts: (state?.attempts ?? 0) + 1, done: false });
+  try {
+    void getKimiWebApi()
+      .generateSessionTitle(sid, { source: 'first_turn' })
+      .then((title) => {
+        if (title !== null) titleGenBySession.set(sid, { attempts: 0, done: true });
+      })
+      .catch(() => {
+        // generateSessionTitle already degrades every failure to null; this only
+        // guards against a future throwing implementation.
+      });
+  } catch {
+    // Fire-and-forget must never break the prompt path: getKimiWebApi() can
+    // throw when the api singleton isn't initialized (early boot, test stubs).
+  }
+}
+
 let queueEntryCounter = 0;
 function nextQueueEntryId(): string {
   queueEntryCounter += 1;
@@ -250,6 +287,8 @@ export interface UseWorkspaceStateDeps {
     err: unknown,
     opts?: { title?: string; message?: string; sessionId?: string },
   ) => void;
+  /** Toast channel for non-error notices (the facade's pushWarning). */
+  notify: (warning: AppWarning) => void;
   activity: ComputedRef<ActivityState>;
   sessionsKnownEmpty: Set<string>;
   // rawState.sessions mutation funnel, owned by the facade. This module never
@@ -327,6 +366,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     sideChat,
     modelProvider,
     pushOperationFailure,
+    notify,
     activity,
     sessionsKnownEmpty,
     setSessions,
@@ -2103,6 +2143,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // session.meta.updated (projected to sessionMetaUpdated). PATCHing a title
       // locally would mark the session isCustomTitle=true and SUPPRESS the
       // daemon's auto-title, so we let the daemon own it.
+      //
+      // AI title generation is NOT kicked off here on purpose: the first_turn
+      // excerpt needs the opening reply, so the earliest useful call is the
+      // first main-turn end (see onMainTurnEnd → maybeGenerateSessionTitle).
       return 'ok';
     } catch (err) {
       // Submit failed — clear the in-flight flag so the next prompt isn't stuck
@@ -2875,6 +2919,26 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  /** Manual "Gen Title" (the ✨ button in SessionRow's rename input):
+      force-regenerate via the managed chat_title tool, overwriting even a
+      user-customized title. Uses the `digest` excerpt (first prompt + latest
+      turn) so the title reflects what the session is about NOW, not just its
+      opening topic. Resolves with the applied title so the row can refill
+      its rename input (the title also lands via sessionMetaUpdated); a null
+      result (unavailable: no managed login / no prompt yet / backend
+      failure) gets a gentle notice — an explicit user action must not no-op
+      silently. */
+  async function regenerateSessionTitle(id: string): Promise<string | null> {
+    const title = await getKimiWebApi().generateSessionTitle(id, {
+      force: true,
+      source: 'digest',
+    });
+    if (title === null) {
+      notify({ severity: 'info', title: t('sidebar.genTitleUnavailable') });
+    }
+    return title;
+  }
+
   /** Rename a workspace — persists via the daemon update API, then applies
    *  locally. Derived workspaces (a cwd with sessions that was never explicitly
    *  registered) can't be renamed by the daemon yet: PATCH rejects them with
@@ -2975,6 +3039,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         workspaceId !== undefined ? loadedInWorkspace(workspaceId).length : 0;
       await api.archiveSession(id);
       forgetSession(id);
+      titleGenBySession.delete(id);
       if (archived !== undefined && workspaceId !== undefined) {
         // Fire-and-forget: the undo toast must not wait for the fetch.
         void backfillWorkspaceSessions(workspaceId, id, archived.updatedAt, backfillTarget);
@@ -3470,6 +3535,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     selectSession,
     submitPromptInternal,
     finishPromptLocal,
+    maybeGenerateSessionTitle,
     localTurnStartState,
     isLocalTurnSnapshotCurrent,
     afterLocalTurnStartsSettle,
@@ -3498,6 +3564,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     setPermission,
     dismissWarning,
     renameSession,
+    regenerateSessionTitle,
     renameWorkspace,
     deleteWorkspace,
     archiveSession,

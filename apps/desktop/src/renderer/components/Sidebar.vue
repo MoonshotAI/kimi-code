@@ -152,6 +152,8 @@ const emit = defineEmits<{
    *  never fires on web). */
   addWorkspacePaths: [paths: string[]];
   rename: [id: string, title: string];
+  /** Gen Title (✨ in the session row's rename input): force-regenerate. */
+  generateTitle: [id: string, done: (title: string | null) => void];
   archive: [id: string];
   fork: [id: string];
   export: [id: string];
@@ -1060,6 +1062,7 @@ onBeforeUnmount(() => {
           :unread-by-session="unreadBySession"
           @select-session="onSelectSession"
           @rename-session="(id, title) => emit('rename', id, title)"
+          @generate-session-title="(id, done) => emit('generateTitle', id, done)"
           @archive-session="(id) => emit('archive', id)"
           @fork-session="(id) => emit('fork', id)"
           @export-session="(id) => emit('export', id)"
@@ -1157,6 +1160,7 @@ onBeforeUnmount(() => {
                 @create-in-workspace="(id) => emit('createInWorkspace', id)"
                 @select-session="onSelectSession"
                 @rename-session="(id, title) => emit('rename', id, title)"
+                @generate-session-title="(id, done) => emit('generateTitle', id, done)"
                 @archive-session="(id) => emit('archive', id)"
                 @fork-session="(id) => emit('fork', id)"
                 @export-session="(id) => emit('export', id)"
@@ -1191,6 +1195,7 @@ onBeforeUnmount(() => {
             @rename-state-change="renamingFlatId = $event ? s.id : null"
             @select="onSelectSession"
             @rename="(id, title) => emit('rename', id, title)"
+            @generate-title="(id, done) => emit('generateTitle', id, done)"
             @archive="(id) => emit('archive', id)"
             @fork="(id) => emit('fork', id)"
             @export="(id) => emit('export', id)"

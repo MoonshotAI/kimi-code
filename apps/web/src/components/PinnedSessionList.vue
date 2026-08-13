@@ -29,6 +29,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   selectSession: [sessionId: string];
   renameSession: [id: string, title: string];
+  /** Gen Title (✨ in the rename input): force-regenerate via the daemon. */
+  generateSessionTitle: [id: string, done: (title: string | null) => void];
   archiveSession: [id: string];
   forkSession: [id: string];
   exportSession: [id: string];
@@ -173,6 +175,7 @@ function onContainerDragLeave(event: DragEvent): void {
           @rename-state-change="renamingSessionId = $event ? s.id : null"
           @select="emit('selectSession', $event)"
           @rename="(id, title) => emit('renameSession', id, title)"
+          @generate-title="(id, done) => emit('generateSessionTitle', id, done)"
           @archive="emit('archiveSession', $event)"
           @fork="emit('forkSession', $event)"
           @export="emit('exportSession', $event)"

@@ -1128,6 +1128,16 @@ export interface KimiWebApi {
   abortSession(sessionId: string): Promise<{ aborted: boolean }>;
   compactSession(sessionId: string, instruction?: string): Promise<void>;
   undoSession(sessionId: string, count?: number): Promise<void>;
+  /** POST /sessions/{id}/title/generate — AI 生成标题（managed chat_title）。
+      返回生成的标题；不可用（40923：未登录 managed / 无 prompt / 生成失败）、
+      旧 server 无此路由（404）或网络错误时返回 null，调用方静默降级。
+      标题落地以 sessionMetaUpdated 事件回流为准，返回值仅供即时使用。
+      `force: true` 覆盖用户手动标题；`source` 选择喂给后端的对话摘录
+      （`first_turn` 首轮问答 / `digest` 首尾混合，默认 user_prompts）。 */
+  generateSessionTitle(
+    sessionId: string,
+    input?: { force?: boolean; source?: 'user_prompts' | 'first_turn' | 'digest' },
+  ): Promise<string | null>;
   forkSession(sessionId: string, input?: { title?: string }): Promise<AppSession>;
   /** Create a child session under a parent — POST /sessions/{id}/children. */
   createChildSession(sessionId: string, input?: { title?: string }): Promise<AppSession>;

@@ -59,6 +59,7 @@ import KimiFile from '~icons/kimi/file';
 import KimiFileText from '~icons/kimi/file-text';
 import KimiFolder from '~icons/kimi/folder';
 import KimiFolderOpen from '~icons/kimi/folder-open';
+import KimiGenTitle from '~icons/kimi/gen-title';
 import KimiAddFolder from '~icons/kimi/folder-plus';
 import KimiFollowSystem from '~icons/kimi/follow-system';
 import KimiFullAccess from '~icons/kimi/full-access';
@@ -159,6 +160,7 @@ import RawKimiFile from '~icons/kimi/file?raw';
 import RawKimiFileText from '~icons/kimi/file-text?raw';
 import RawKimiFolder from '~icons/kimi/folder?raw';
 import RawKimiFolderOpen from '~icons/kimi/folder-open?raw';
+import RawKimiGenTitle from '~icons/kimi/gen-title?raw';
 import RawKimiAddFolder from '~icons/kimi/folder-plus?raw';
 import RawKimiFollowSystem from '~icons/kimi/follow-system?raw';
 import RawKimiFullAccess from '~icons/kimi/full-access?raw';
@@ -316,6 +318,7 @@ export type IconName =
   | 'clock'
   | 'robot'
   | 'sparkles'
+  | 'gen-title'
   | 'histogram'
   | 'music'
   | 'emoji'
@@ -428,6 +431,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   clock: entry(KimiClock, RawKimiClock),
   robot: entry(KimiRobot, RawKimiRobot),
   sparkles: entry(KimiTask, RawKimiTask),
+  'gen-title': entry(KimiGenTitle, RawKimiGenTitle),
   histogram: entry(KimiHistogram, RawKimiHistogram),
   music: entry(KimiMusic, RawKimiMusic),
   emoji: entry(RiEmotionLine, RawEmotionLine),
@@ -563,6 +567,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'histogram',
       'music',
       'sparkles',
+      'gen-title',
       'pause',
       'play',
       'stop',

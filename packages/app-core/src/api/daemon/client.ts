@@ -863,6 +863,29 @@ export class DaemonKimiWebApi implements KimiWebApi {
     );
   }
 
+  // POST /sessions/{id}/title/generate — AI title via the managed chat_title
+  // tool. Any failure degrades to null: 40923 (no managed login / no prompt
+  // yet / backend failure), a bare 404 from a server predating the route, or
+  // a network error. Callers must not surface this to the user; the applied
+  // title arrives over WS as session.meta.updated anyway.
+  async generateSessionTitle(
+    sessionId: string,
+    input?: { force?: boolean; source?: 'user_prompts' | 'first_turn' | 'digest' },
+  ): Promise<string | null> {
+    try {
+      const body: Record<string, unknown> = {};
+      if (input?.force === true) body['force'] = true;
+      if (input?.source !== undefined) body['source'] = input.source;
+      const data = await this.http.post<{ title?: string } | null>(
+        `/sessions/${encodeURIComponent(sessionId)}/title/generate`,
+        body,
+      );
+      return typeof data?.title === 'string' && data.title.length > 0 ? data.title : null;
+    } catch {
+      return null;
+    }
+  }
+
   // POST /sessions/{id}:fork — fork the session into a new child session.
   // Fork copies every agent's wire log server-side, so a long-lived session
   // needs far longer than the default 30s request budget.

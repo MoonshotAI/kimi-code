@@ -12,6 +12,7 @@ import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/app-core/lib';
 import SessionEmojiPicker from './SessionEmojiPicker.vue';
+import { useKimiWebClient } from '../composables/useKimiWebClient';
 import { sessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 
 const { t } = useI18n();
@@ -33,6 +34,10 @@ const props = withDefaults(
 const emit = defineEmits<{
   select: [id: string];
   rename: [id: string, title: string];
+  /** Gen Title (✨ in the rename input): force-regenerate via the daemon.
+      `done` settles with the applied title (null when unavailable) so the
+      row can fill/restore the input without leaving rename mode. */
+  generateTitle: [id: string, done: (title: string | null) => void];
   /** Rename-mode transitions — parents disable row dragging while editing so
       a drag gesture over the input selects text instead of moving the row. */
   renameStateChange: [editing: boolean];
@@ -248,10 +253,28 @@ function applyEmoji(emoji: string | null): void {
   if (newTitle && newTitle !== props.session.title) emit('rename', props.session.id, newTitle);
 }
 
+// The Gen Title action rides the experimental `auto_session_title` flag: the
+// server-reported meta flags win, the persisted [experimental] config
+// section is the fallback, and the button is hidden while the flag is off.
+const client = useKimiWebClient();
+const genTitleEnabled = computed(
+  () =>
+    (client.experimentalFlags.value['auto_session_title'] ??
+      client.config.value?.experimental?.['auto_session_title']) === true,
+);
+
 // Inline rename
 const renaming = ref(false);
 const renameValue = ref('');
 const renameInputRef = ref<HTMLInputElement | null>(null);
+const renameWrapRef = ref<HTMLElement | null>(null);
+// Gen Title in-flight state: while generating, the input shows the loading
+// wave and an outside dismissal cancels the edit. `lastGenFilledTitle` is
+// the title filled by the last successful generation — committing it back
+// would wrongly mark the daemon-owned title as a custom rename.
+const generatingTitle = ref(false);
+let beforeGenTitle = '';
+let lastGenFilledTitle: string | null = null;
 // IME guard: Enter that only confirms a composition candidate must not commit.
 const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
 async function startRename(): Promise<void> {
@@ -267,17 +290,28 @@ async function startRename(): Promise<void> {
     // jsdom may not implement focus/select
   }
 }
-function commitRename(): void {
+function finishRename(): void {
+  // The rename PATCH is skipped for a title that just came back from Gen
+  // Title (the daemon already owns it — a PATCH would mark it custom) and
+  // for no-op edits (the PATCH would bump updated_at and reshuffle the list).
+  if (!renaming.value) return;
   const newTitle = renameValue.value.trim();
-  // Skip no-op renames (Enter/blur with the title untouched, or changed only
-  // by surrounding whitespace): the PATCH would still bump the session's
-  // updated_at and reshuffle the sidebar ordering.
-  if (newTitle && newTitle !== props.session.title) emit('rename', props.session.id, newTitle);
+  if (newTitle && newTitle !== lastGenFilledTitle && newTitle !== props.session.title) {
+    emit('rename', props.session.id, newTitle);
+  }
   renaming.value = false;
+}
+function commitRename(): void {
+  // Blurs mid-generation are focus noise (clicking the in-box action itself
+  // blurs the input on some platforms) — they must neither commit nor cancel.
+  // Mid-generation dismissal lives on the outside-pointerdown path below.
+  if (generatingTitle.value) return;
+  finishRename();
 }
 function onRenameEnter(e: KeyboardEvent): void {
   if (isComposingKeyEvent(e)) return;
-  commitRename();
+  if (generatingTitle.value) return;
+  finishRename();
 }
 function onRenameEscape(e: KeyboardEvent): void {
   // An Escape that only dismisses the IME candidate panel must not cancel
@@ -286,7 +320,59 @@ function onRenameEscape(e: KeyboardEvent): void {
   cancelRename();
 }
 function cancelRename(): void {
+  generatingTitle.value = false;
   renaming.value = false;
+}
+
+// Clicking anywhere outside the rename box dismisses it — capture-phase so
+// it works even when the input no longer holds focus (a blur can drift away
+// when the title event re-renders the list). Mid-generation this is the
+// cancel path: the in-flight request still lands server-side (success
+// applies via sessionMetaUpdated, failure toasts) but never fills the input.
+function onGlobalPointerDown(e: PointerEvent): void {
+  const wrap = renameWrapRef.value;
+  if (wrap === null || !(e.target instanceof Node) || wrap.contains(e.target)) return;
+  if (generatingTitle.value) {
+    generatingTitle.value = false;
+    renaming.value = false;
+    return;
+  }
+  finishRename();
+}
+watch(renaming, (editing) => {
+  if (editing) document.addEventListener('pointerdown', onGlobalPointerDown, true);
+  else document.removeEventListener('pointerdown', onGlobalPointerDown, true);
+});
+onUnmounted(() => document.removeEventListener('pointerdown', onGlobalPointerDown, true));
+
+// Gen Title (✨ inside the rename input): force-regenerate through the
+// daemon (overwrites even a customized title). The row STAYS in rename mode:
+// the input clears and shows an in-box loading wave until the callback
+// settles — on success the generated title fills the input, focused and
+// selected (confirm with Enter, keep editing, or click away to dismiss);
+// on failure the previous text is restored (the parent toasts). The
+// button's mousedown.prevent keeps the input's blur from committing the
+// half-edited text first.
+function onGenTitle(): void {
+  if (generatingTitle.value) return;
+  generatingTitle.value = true;
+  beforeGenTitle = renameValue.value;
+  lastGenFilledTitle = null;
+  renameValue.value = '';
+  emit('generateTitle', props.session.id, (title) => {
+    generatingTitle.value = false;
+    if (!renaming.value) return;
+    renameValue.value = title ?? beforeGenTitle;
+    lastGenFilledTitle = title;
+    void nextTick(() => {
+      try {
+        renameInputRef.value?.focus();
+        renameInputRef.value?.select();
+      } catch {
+        // jsdom may not implement focus/select
+      }
+    });
+  });
 }
 
 // Row dragging (pin / reorder) hijacks the drag gesture over the rename
@@ -401,19 +487,40 @@ function openPullRequest(): void {
       </span>
 
       <div class="left">
-        <!-- Inline rename input -->
-        <input
+        <!-- Inline rename: the WHOLE row becomes the input (the status/time
+             slot unmounts), with the Gen Title action inside the box. -->
+        <div
           v-if="renaming"
-          ref="renameInputRef"
-          v-model="renameValue"
-          class="rename-input"
+          ref="renameWrapRef"
+          class="rename-wrap"
+          :class="{ generating: generatingTitle }"
           @click.stop
-          @keydown.enter.stop="onRenameEnter"
-          @keydown.esc.stop="onRenameEscape"
-          @compositionstart="handleCompositionStart"
-          @compositionend="handleCompositionEnd"
-          @blur="commitRename"
-        />
+        >
+          <input
+            ref="renameInputRef"
+            v-model="renameValue"
+            class="rename-input"
+            :readonly="generatingTitle"
+            @keydown.enter.stop="onRenameEnter"
+            @keydown.esc.stop="onRenameEscape"
+            @compositionstart="handleCompositionStart"
+            @compositionend="handleCompositionEnd"
+            @blur="commitRename"
+          />
+          <span v-if="generatingTitle" class="gen-dots" aria-hidden="true"><i /><i /><i /></span>
+          <Tooltip v-if="genTitleEnabled" :text="t('sidebar.genTitle')">
+            <IconButton
+              class="gen-title-btn"
+              size="sm"
+              :label="t('sidebar.genTitle')"
+              :disabled="generatingTitle"
+              @mousedown.prevent.stop
+              @click.stop="onGenTitle"
+            >
+              <Icon name="gen-title" />
+            </IconButton>
+          </Tooltip>
+        </div>
         <span v-else class="t" @dblclick.stop="startRename"><button
           v-if="emojiSplit.emoji"
           type="button"
@@ -439,7 +546,7 @@ function openPullRequest(): void {
            pills anchor to the row's right edge and the hover actions fade IN
            as the pills fade OUT — the two never co-exist (grouped rows keep
            pills visible on hover, status there lives in the lead slot). -->
-      <span class="act">
+      <span v-if="!renaming" class="act">
         <Tooltip :text="t('workspace.awaitingAnswerTitle')">
           <Badge
             v-if="showQuestionBadge"
@@ -915,17 +1022,78 @@ function openPullRequest(): void {
   user-select: text;
 }
 
+/* Rename mode: the wrap owns the box (border/background) so the Gen Title
+   action and the loading wave sit INSIDE it; the input itself is bare. */
+.rename-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  background: var(--color-bg);
+  border: 0.5px solid var(--color-accent);
+  border-radius: var(--radius-xs);
+}
 .rename-input {
   flex: 1;
   font-family: var(--font-ui);
   font-size: var(--text-sm);
   color: var(--color-text);
-  background: var(--color-bg);
-  border: 0.5px solid var(--color-accent);
-  border-radius: var(--radius-xs);
+  background: transparent;
+  border: none;
   padding: 1px 4px;
   outline: none;
   min-width: 0;
+}
+.rename-wrap.generating .rename-input {
+  visibility: hidden;
+}
+.gen-dots {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+}
+.gen-dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--radius-full, 50%);
+  background: var(--color-accent);
+  animation: gen-title-dot 0.9s var(--ease-out) infinite;
+}
+.gen-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.gen-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes gen-title-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateX(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateX(2px);
+  }
+}
+/* The action and its loading wave take the accent colour — the rename box
+   already carries an accent edge, and the tint marks this as the "smart"
+   action without introducing a new hue. */
+.gen-title-btn {
+  flex: none;
+  margin-right: 1px;
+  color: var(--color-accent);
+}
+.gen-title-btn:hover:not(:disabled) {
+  color: var(--color-accent-hover);
+  background: transparent;
 }
 
 .sessions .se {

@@ -18,6 +18,8 @@ export default {
   emptyState: '还没有会话 · 点击 新建会话 开始',
   options: '选项',
   rename: '重命名',
+  genTitle: '生成标题',
+  genTitleUnavailable: '无法生成标题：需要登录 Kimi Code 托管账号，且会话中已有消息',
   setEmoji: '设置 Emoji…',
   sessionEmojiTitle: '选择 Emoji',
   removeEmoji: '移除 Emoji',

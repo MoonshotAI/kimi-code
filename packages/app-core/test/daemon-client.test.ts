@@ -239,6 +239,98 @@ describe('DaemonKimiWebApi.exportSession', () => {
   });
 });
 
+describe('DaemonKimiWebApi.generateSessionTitle', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    tracedRequests.length = 0;
+  });
+
+  afterEach(() => {
+    tracedRequests.length = 0;
+    vi.unstubAllGlobals();
+  });
+
+  it('posts to the title/generate endpoint and returns the generated title', async () => {
+    vi.mocked(fetch).mockResolvedValue(envelope({ title: 'Fix lint warnings' }));
+
+    const result = await createApi().generateSessionTitle('sess/1');
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
+      'http://daemon.test/api/v1/sessions/sess%2F1/title/generate',
+    );
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    expect(result).toBe('Fix lint warnings');
+  });
+
+  it('sends the force flag only when requested', async () => {
+    vi.mocked(fetch).mockResolvedValue(envelope({ title: 't' }));
+
+    await createApi().generateSessionTitle('sess_1', { force: true });
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({ force: true }),
+    });
+
+    vi.mocked(fetch).mockClear();
+    await createApi().generateSessionTitle('sess_1');
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({}),
+    });
+  });
+
+  it('passes the excerpt source through when given', async () => {
+    vi.mocked(fetch).mockResolvedValue(envelope({ title: 't' }));
+
+    await createApi().generateSessionTitle('sess_1', { source: 'first_turn' });
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({ source: 'first_turn' }),
+    });
+
+    vi.mocked(fetch).mockClear();
+    await createApi().generateSessionTitle('sess_1', { force: true, source: 'digest' });
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({ force: true, source: 'digest' }),
+    });
+  });
+
+  it('returns null when generation is unavailable (40922)', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: 40922,
+          msg: 'session title generation is unavailable',
+          request_id: 'req_1',
+        }),
+        { status: 409, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+
+    await expect(createApi().generateSessionTitle('sess_1')).resolves.toBeNull();
+  });
+
+  it('returns null for a bare 404 from a server predating the route', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain' } }),
+    );
+
+    await expect(createApi().generateSessionTitle('sess_1')).resolves.toBeNull();
+  });
+
+  it('returns null on a network error', async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError('fetch failed'));
+
+    await expect(createApi().generateSessionTitle('sess_1')).resolves.toBeNull();
+  });
+
+  it('returns null when the success envelope carries no usable title', async () => {
+    vi.mocked(fetch).mockResolvedValue(envelope({}));
+
+    await expect(createApi().generateSessionTitle('sess_1')).resolves.toBeNull();
+  });
+});
+
 describe('DaemonKimiWebApi fork timeout budget', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
