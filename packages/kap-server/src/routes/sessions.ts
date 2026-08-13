@@ -624,10 +624,15 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       path: '/sessions/{session_id}/title/generate',
       params: sessionIdParamSchema,
       // Optional body: `{ "force": true }` requests an explicit regeneration
-      // that overwrites an already-generated or user-customized title.
+      // that overwrites an already-generated or user-customized title;
+      // `source` picks the conversation excerpt (`user_prompts` default,
+      // `first_turn`, `digest`).
       body: z.preprocess(
         (value) => (value === undefined ? {} : value),
-        z.object({ force: z.boolean().optional() }),
+        z.object({
+          force: z.boolean().optional(),
+          source: z.enum(['user_prompts', 'first_turn', 'digest']).optional(),
+        }),
       ),
       success: { data: z.object({ title: z.string() }) },
       errors: {
@@ -649,7 +654,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         }
         const title = await handle.accessor
           .get(ISessionTitleService)
-          .generateTitle({ force: req.body.force === true });
+          .generateTitle({ force: req.body.force === true, source: req.body.source });
         if (title === undefined) {
           reply.send(
             errEnvelope(

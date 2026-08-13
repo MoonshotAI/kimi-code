@@ -10,7 +10,14 @@ import type { ServiceContract } from '../types.js';
 
 export const sessionTitleContract = {
   generateTitle: {
-    input: z.tuple([z.object({ force: z.boolean().optional() }).optional()]),
+    input: z.tuple([
+      z
+        .object({
+          force: z.boolean().optional(),
+          source: z.enum(['user_prompts', 'first_turn', 'digest']).optional(),
+        })
+        .optional(),
+    ]),
     output: maybe(z.string()),
   },
 } satisfies ServiceContract;

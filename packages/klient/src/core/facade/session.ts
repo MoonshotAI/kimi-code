@@ -71,8 +71,14 @@ export interface SessionFacade {
    * managed `chat_title` tool. `undefined` when generation is unavailable
    * (no managed OAuth login, no prompt yet, or a custom title is set).
    * `force` regenerates anyway, overwriting a generated or custom title.
+   * `source` picks the conversation excerpt: `user_prompts` (default),
+   * `first_turn` (opening prompt + first reply; strict), or `digest`
+   * (head+tail of a multi-turn conversation).
    */
-  generateTitle(opts?: { force?: boolean }): Promise<string | undefined>;
+  generateTitle(opts?: {
+    force?: boolean;
+    source?: 'user_prompts' | 'first_turn' | 'digest';
+  }): Promise<string | undefined>;
   update(patch: SessionMetaPatch): Promise<void>;
   setArchived(archived: boolean): Promise<void>;
   status(): Promise<SessionStatus>;

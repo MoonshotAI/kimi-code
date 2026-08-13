@@ -148,6 +148,8 @@ export interface GenerateSessionTitleInput {
   readonly id: string;
   /** Regenerate even when the session already has a generated/custom title. */
   readonly force?: boolean;
+  /** Conversation excerpt to generate from (default `user_prompts`). */
+  readonly source?: 'user_prompts' | 'first_turn' | 'digest';
 }
 
 export interface ResumeSessionInput {

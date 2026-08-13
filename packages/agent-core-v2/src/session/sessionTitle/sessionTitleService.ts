@@ -13,7 +13,10 @@
  * generation. `force` requests an explicit user-driven regeneration: it
  * bypasses the in-flight coalescing and both title-kind guards, and the
  * applied title is marked `generated` (a previous custom marking is
- * dropped).
+ * dropped). The `source` option picks the conversation excerpt sent to the
+ * backend (see `SessionTitleSource`): the default first-prompts window, the
+ * strict `first_turn` user+assistant pair, or the head+tail `digest` for
+ * multi-turn regeneration.
  * Provider config comes
  * from `provider`, the bearer token from `auth`, host identity headers from
  * `model`, prompt history from `agentLifecycle`/`sessionTitle`, and logs
@@ -41,13 +44,20 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { IAgentTitlePromptSource } from './agentTitlePromptSource';
-import { ISessionTitleService } from './sessionTitle';
+import { ISessionTitleService, type SessionTitleSource } from './sessionTitle';
 
 const MAX_GENERATED_TITLE_LENGTH = 200;
 
 const MAX_TITLE_INPUT_LENGTH = 1000;
 
 const MAX_TITLE_PROMPTS = 3;
+
+/** Per-segment excerpt budgets inside the composed chat_content. */
+const MAX_TITLE_USER_SEGMENT = 300;
+
+const MAX_TITLE_FIRST_TURN_ASSISTANT = 600;
+
+const MAX_TITLE_DIGEST_ASSISTANT = 400;
 
 export class SessionTitleService implements ISessionTitleService {
   declare readonly _serviceBrand: undefined;
@@ -65,29 +75,34 @@ export class SessionTitleService implements ISessionTitleService {
     @ILogService private readonly log: ILogService,
   ) {}
 
-  async generateTitle(opts?: { force?: boolean }): Promise<string | undefined> {
+  async generateTitle(opts?: {
+    force?: boolean;
+    source?: SessionTitleSource;
+  }): Promise<string | undefined> {
     const force = opts?.force === true;
-    if (force) return this.generateTitleOnce(true);
+    const source = opts?.source ?? 'user_prompts';
+    if (force) return this.generateTitleOnce(true, source);
     if (this._shared !== undefined) return this._shared;
-    const tracked = this.generateTitleOnce(false).finally(() => {
+    const tracked = this.generateTitleOnce(false, source).finally(() => {
       if (this._shared === tracked) this._shared = undefined;
     });
     this._shared = tracked;
     return tracked;
   }
 
-  private async generateTitleOnce(force: boolean): Promise<string | undefined> {
+  private async generateTitleOnce(
+    force: boolean,
+    source: SessionTitleSource,
+  ): Promise<string | undefined> {
     const current = await this.metadata.read();
     if (!force) {
       if (current.titleKind === 'custom') return undefined;
       if (current.titleKind === 'generated') return undefined;
     }
     const main = this.agentLifecycle.get(MAIN_AGENT_ID);
-    const prompts =
-      main === undefined
-        ? []
-        : await main.accessor.get(IAgentTitlePromptSource).firstUserPrompts(MAX_TITLE_PROMPTS);
-    const input = titleInputFromPrompts(prompts);
+    if (main === undefined) return undefined;
+    const promptSource = main.accessor.get(IAgentTitlePromptSource);
+    const input = await composeTitleInput(promptSource, source);
     if (input === undefined) return undefined;
     return this.generateAndApply(input, force);
   }
@@ -168,6 +183,35 @@ function titleInputFromPrompts(prompts: readonly string[]): string | undefined {
     .map((prompt) => `user: ${prompt}`)
     .join('\n')
     .slice(0, MAX_TITLE_INPUT_LENGTH);
+}
+
+async function composeTitleInput(
+  promptSource: IAgentTitlePromptSource,
+  source: SessionTitleSource,
+): Promise<string | undefined> {
+  if (source === 'first_turn') {
+    const excerpt = await promptSource.firstTurnExcerpt();
+    if (excerpt.user === undefined || excerpt.assistant === undefined) return undefined;
+    return [
+      `user: ${excerpt.user.slice(0, MAX_TITLE_USER_SEGMENT)}`,
+      `assistant: ${excerpt.assistant.slice(0, MAX_TITLE_FIRST_TURN_ASSISTANT)}`,
+    ].join('\n');
+  }
+  if (source === 'digest') {
+    const excerpt = await promptSource.digestExcerpt();
+    const lines: string[] = [];
+    if (excerpt.firstUser !== undefined) {
+      lines.push(`user: ${excerpt.firstUser.slice(0, MAX_TITLE_USER_SEGMENT)}`);
+    }
+    if (excerpt.lastUser !== undefined) {
+      lines.push(`user: ${excerpt.lastUser.slice(0, MAX_TITLE_USER_SEGMENT)}`);
+    }
+    if (excerpt.assistant !== undefined) {
+      lines.push(`assistant: ${excerpt.assistant.slice(0, MAX_TITLE_DIGEST_ASSISTANT)}`);
+    }
+    return lines.length === 0 ? undefined : lines.join('\n');
+  }
+  return titleInputFromPrompts(await promptSource.firstUserPrompts(MAX_TITLE_PROMPTS));
 }
 
 registerScopedService(

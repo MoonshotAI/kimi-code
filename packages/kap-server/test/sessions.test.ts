@@ -653,6 +653,17 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(forcedCustom.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
     const afterCustom = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(afterCustom.body.data.title).toBe('generated from REST');
+
+    // `source: 'digest'` composes the head+tail user segments server-side
+    // (this session's turns produced no assistant reply to draw from).
+    const digested = await postJson<{ title: string }>(`/api/v1/sessions/${id}/title/generate`, {
+      force: true,
+      source: 'digest',
+    });
+    expect(digested.body).toMatchObject({ code: 0, data: { title: 'generated from REST' } });
+    expect(toolsRequest?.params.chat_content).toBe(
+      'user: first REST prompt\nuser: third REST prompt',
+    );
   });
 
   it('returns session-not-found when generating a title for a missing session', async () => {
