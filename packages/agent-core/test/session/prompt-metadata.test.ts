@@ -102,6 +102,10 @@ describe('prompt metadata sanitization', () => {
       '[redacted].ts.json',
     );
     expect(sanitize(`${'A1b2'.repeat(10)}_.ts-${'Z9y8'.repeat(12)}`)).toBe('[redacted].[redacted]');
+    expect(sanitize(`${'Ab1c'.repeat(10)}-.ts`)).toBe('[redacted]-.ts');
+    expect(sanitize(`https://example.com/${'Ab1c'.repeat(10)}_.ts?download=1`)).toBe(
+      'https://example.[redacted].ts?download=1',
+    );
   });
 
   it('still redacts JWT segments joined by dots', () => {

@@ -60,7 +60,7 @@ const SAFE_FILENAME_EXTENSIONS = new Set([
 ]);
 
 function isFileNameStem(stem: string, following: string): boolean {
-  if (!/[-_]/.test(stem)) return false;
+  if (!/^(?=.*[-_])[a-z0-9_/-]+$/.test(stem)) return false;
   const suffix = /^((?:\.[A-Za-z0-9]{1,8})+)(?![.A-Za-z0-9+/=_-])/.exec(following)?.[1];
   if (suffix === undefined) return false;
   const extension = suffix.slice(suffix.lastIndexOf('.') + 1);
