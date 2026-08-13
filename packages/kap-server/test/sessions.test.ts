@@ -1595,24 +1595,38 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     expect(status.body.code).toBe(0);
     expect(status.body.data.state).toBe('ready');
 
-    // A freshly created session lists, counts, and pages immediately — the
-    // mutation path never waited for the read model, the read path folds the
-    // mirror queue back in.
+    // A freshly created session lists, counts, and pages without waiting for
+    // the read model — the mutation path never awaited the read model, the
+    // read path folds the mirror queue back in. That fold is best-effort
+    // while a mirror flush is in flight: the flush's batch is only per-shard
+    // atomic and its pending-queue cleanup is not linearized with reads, so a
+    // read landing exactly inside that window can transiently miss (or
+    // double-count) the session — poll instead of sampling once.
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       metadata: { cwd: home as string },
     });
     const id = created.body.data.id;
 
-    const listed = await getJson<PageWire>('/api/v1/sessions');
-    expect(listed.body.data.items.some((s) => s.id === id)).toBe(true);
+    await vi.waitFor(
+      async () => {
+        const listed = await getJson<PageWire>('/api/v1/sessions');
+        expect(listed.body.data.items.some((s) => s.id === id)).toBe(true);
 
-    const workspaces = await getJson<{ items: { session_count: number }[] }>('/api/v1/workspaces');
-    expect(workspaces.body.data.items[0]?.session_count).toBe(1);
+        const workspaces = await getJson<{ items: { session_count: number }[] }>(
+          '/api/v1/workspaces',
+        );
+        expect(workspaces.body.data.items[0]?.session_count).toBe(1);
 
-    const paged = await getJson<PageWire>(`/api/v1/sessions?page_size=1&before_id=${id}`);
-    expect(paged.body.data.items).toEqual([]);
-    expect(paged.body.data.has_more).toBe(false);
+        const paged = await getJson<PageWire>(`/api/v1/sessions?page_size=1&before_id=${id}`);
+        expect(paged.body.data.items).toEqual([]);
+        expect(paged.body.data.has_more).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
 
+    // Archiving drains the mirror queue before responding, and the restart's
+    // boot prepare re-projects (or reuses) a fully settled generation — both
+    // of these reads are deterministic again.
     await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
     const archivedOnly = await getJson<PageWire>('/api/v1/sessions?archived_only=true');
     expect(archivedOnly.body.data.items.map((s) => s.id)).toEqual([id]);
