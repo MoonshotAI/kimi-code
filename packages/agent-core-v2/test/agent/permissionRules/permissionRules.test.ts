@@ -6,6 +6,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentPermissionRulesService, type PermissionApprovalResultRecord, type PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { AgentPermissionRulesService } from '#/agent/permissionRules/permissionRulesService';
 import { PermissionRulesModel } from '#/agent/permissionRules/permissionRulesOps';
+import { IConfigService } from '#/app/config/config';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -36,10 +37,15 @@ let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let log: IAppendLogStore;
 let svc: IAgentPermissionRulesService;
+let configuredRules: PermissionRule[];
 
 beforeEach(() => {
   disposables = new DisposableStore();
   ix = disposables.add(new TestInstantiationService());
+  configuredRules = [];
+  ix.stub(IConfigService, {
+    get: (() => ({ rules: configuredRules })) as IConfigService['get'],
+  } as unknown as IConfigService);
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IAgentPermissionRulesService, new SyncDescriptor(AgentPermissionRulesService));
@@ -60,6 +66,13 @@ async function readRecords(): Promise<WireRecord[]> {
 }
 
 describe('AgentPermissionRulesService (wire-backed)', () => {
+  it('exposes configured rules before agent runtime rules', () => {
+    configuredRules.push(denyRule);
+    svc.addRules([allowRule]);
+
+    expect(svc.rules).toEqual([denyRule, allowRule]);
+  });
+
   it('addRules appends rules and exposes the accumulated rules', () => {
     expect(svc.rules).toEqual([]);
 
