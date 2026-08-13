@@ -19,7 +19,7 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { makeHookRunner } from '../agent/externalHooks/runner-stub';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -65,6 +65,7 @@ import { createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import { StubConfigService } from '../kosong/stubs';
 import { stubFlag } from '../app/flag/stubs';
 import {
+  agentService,
   appService,
   configServices,
   createCommandRunner,
@@ -550,6 +551,37 @@ describe('Agent tool description', () => {
 
     expect(coderTools).toBeDefined();
     expect(coderTools).not.toContain('Bash');
+  });
+
+  it('lists contributed tools the caller profile does not activate', () => {
+    // The caller binds a profile without AgentSwarm, so the runtime registry
+    // never holds it; a global restriction forces the explicit enumeration
+    // branch. The listing must still draw from the full contribution
+    // collection — spawned `agent` profiles can use AgentSwarm.
+    const callerData = {
+      profileName: 'orchestrator',
+      activeToolNames: ['Agent', 'Bash', 'Read'],
+      disallowedTools: [],
+    } as unknown as ProfileData;
+    ctx = createTestAgent(
+      { autoConfigure: false },
+      agentService(IAgentProfileService, {
+        _serviceBrand: undefined,
+        data: () => callerData,
+        onDidChange: Event.None,
+      } as unknown as IAgentProfileService),
+      configServices(() => ({
+        providers: {},
+        tools: { disabled: ['Write'] },
+      })),
+    );
+
+    const description = agentDescription();
+    const agentTools = description.match(/- agent: [^\n]*\n  Tools: ([^\n]*)/)?.[1];
+
+    expect(agentTools).toBeDefined();
+    expect(agentTools).toContain('AgentSwarm');
+    expect(agentTools).not.toContain('Write');
   });
 
   it('renders effective tools after applying disallowedTools', () => {

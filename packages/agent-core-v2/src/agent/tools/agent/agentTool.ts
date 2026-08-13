@@ -26,9 +26,10 @@
  * Registered via the module-level `registerAgentToolService(ISubagentTool,
  * SubagentTool)` at the bottom of this file — the same "import = register"
  * pattern used by every agent tool. The per-profile tool listings in the
- * description read the full contribution table (not the runtime registry,
- * which only holds tools the caller's own Profile activated), plus any
- * dynamically registered tools. The description's catalog profile list is
+ * description read the full `AgentToolContribution` collection — static
+ * registrations and feature-contributed tools alike — not the runtime
+ * registry, which only holds tools the caller's own Profile activated,
+ * plus any dynamically registered tools. The description's catalog profile list is
  * snapshotted once the session catalog has loaded and frozen for the agent's
  * lifetime: plugin install / enable / disable / remove re-contributes
  * profiles mid-session, and a live read would rewrite the tools payload of
@@ -37,6 +38,7 @@
  * Bound at Agent scope.
  */
 
+import { type CollectionView } from '#/_base/di/collection';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import {
   isAbortError,
@@ -67,7 +69,7 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import {
-  getAgentToolContributions,
+  AgentToolContribution,
   registerAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
@@ -151,6 +153,7 @@ export class SubagentTool implements ISubagentTool {
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
     this.callerAgentId = scopeContext.agentId;
     this.canRunInBackground = () =>
@@ -204,7 +207,7 @@ export class SubagentTool implements ISubagentTool {
 
   private knownToolReferences(): ToolReference[] {
     const refs = new Map<string, ToolReference>();
-    for (const contribution of getAgentToolContributions()) {
+    for (const contribution of this.contributions.items) {
       refs.set(contribution.options.name, {
         name: contribution.options.name,
         source: contribution.options.source ?? 'builtin',
