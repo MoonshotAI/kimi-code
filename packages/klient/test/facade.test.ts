@@ -248,7 +248,7 @@ describe('session skills routing', () => {
     channel.results.set('agentPromptService.submit', { turn_id: 1 });
     channel.results.set('agentPromptService.submitSteer', { turn_id: 1 });
     channel.results.set('agentCommandService.list', []);
-    await agent.prompt({ input: [{ type: 'text', text: 'hi' }], disabledTools: ['Bash'] });
+    await agent.prompt({ input: [{ type: 'text', text: 'hi' }] });
     await agent.steer({ input: [{ type: 'text', text: 'steer' }] });
     await agent.cancel({ turnId: 2 });
     await agent.cancel();
@@ -258,12 +258,6 @@ describe('session skills routing', () => {
     await agent.runCommand({ name: 'plain' });
 
     expect(channel.calls).toEqual([
-      {
-        scope,
-        service: 'agentToolPolicyService',
-        method: 'setSessionDisabledTools',
-        args: [['Bash']],
-      },
       {
         scope,
         service: 'agentPromptService',

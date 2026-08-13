@@ -2393,8 +2393,8 @@ describe('v1↔v2 agent interaction parity', () => {
     // Model-less on purpose: parity covers the pre-provider surface — the
     // call returns without throwing and the metadata update (same shared
     // helpers on both engines) lands before the turn fails asynchronously.
-    // The enqueue-semantics gaps (v1 drops a mid-turn prompt, v2 queues it;
-    // v1 ignores disabledTools, v2 applies it) are pinned in the tracker.
+    // The enqueue-semantics gap (v1 drops a mid-turn prompt, v2 queues it) is
+    // pinned in the tracker.
     const pair = await makeSessionParityPair();
     try {
       await createOnBoth(pair, { id: 'session_parity_agent_prompt' });

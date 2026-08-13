@@ -1671,15 +1671,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * v1's RPC returns void. The pre-provider surface matches v1: the metadata
    * update (title/lastPrompt) runs through the same shared helpers before the
    * turn launches, and a model-less turn fails asynchronously exactly like
-   * v1's. Two enqueue-semantics gaps vs v1, pinned in the migration tracker:
+   * v1's. One enqueue-semantics gap vs v1, pinned in the migration tracker:
    * v1 drops a prompt submitted while a turn is active (error event only)
-   * where v2 queues it FIFO, and v1 never consumes `disabledTools` (the
-   * payload field reaches the agent RPC but no code reads it) where v2
-   * applies it as the session tool denylist.
+   * where v2 queues it FIFO.
    */
   override async prompt(input: SessionPromptRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
-    await agent.prompt({ input: input.input, disabledTools: input.disabledTools });
+    await agent.prompt({ input: input.input });
   }
 
   /**
