@@ -558,8 +558,14 @@ describe('server-v2 /api/v1 plugins', () => {
     const webbridge = body.data.entries.find((e) => e.id === 'kimi-webbridge');
     expect(webbridge?.capabilityId).toBe('kimi-webbridge');
     // Capabilities the catalog does not carry are injected as built-in rows
-    // (kimi-cu is not in the checked-in catalog).
+    // where supported (kimi-cu is not in the checked-in catalog, and is
+    // supported on macOS / Windows x64 only).
+    const cuSupported = process.platform === 'darwin' || (process.platform === 'win32' && process.arch === 'x64');
     const cu = body.data.entries.find((e) => e.id === 'kimi-cu');
+    if (!cuSupported) {
+      expect(cu).toBeUndefined();
+      return;
+    }
     expect(cu?.tier).toBe('official');
     expect(cu?.capabilityId).toBe('kimi-cu');
     expect(cu?.source).toBe('capability:kimi-cu');
