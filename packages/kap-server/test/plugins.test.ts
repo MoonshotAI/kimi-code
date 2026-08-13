@@ -325,6 +325,8 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(
       before.body.data.entries.find((e) => e.id === 'kimi-webbridge')?.capabilityId,
     ).toBeUndefined();
+    // And no built-in injection either.
+    expect(before.body.data.entries.some((e) => e.source.startsWith('capability:'))).toBe(false);
     // CLI metadata aliases map onto the wire fields.
     const meta = before.body.data.entries.find((e) => e.id === 'meta-alias-plugin');
     expect(meta?.displayName).toBe('Meta Alias');
@@ -550,6 +552,13 @@ describe('server-v2 /api/v1 plugins', () => {
     // capability wiring rows.
     const webbridge = body.data.entries.find((e) => e.id === 'kimi-webbridge');
     expect(webbridge?.capabilityId).toBe('kimi-webbridge');
+    // Capabilities the catalog does not carry are injected as built-in rows
+    // (kimi-cu is not in the checked-in catalog).
+    const cu = body.data.entries.find((e) => e.id === 'kimi-cu');
+    expect(cu?.tier).toBe('official');
+    expect(cu?.capabilityId).toBe('kimi-cu');
+    expect(cu?.source).toBe('capability:kimi-cu');
+    expect(cu?.displayName).toBe('Kimi Computer Use');
   });
 
   it('expands ~ in local catalog paths like the CLI loader', async () => {

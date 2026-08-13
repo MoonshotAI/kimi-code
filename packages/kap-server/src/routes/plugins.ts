@@ -38,6 +38,7 @@ import { resolve } from 'node:path';
 import {
   computeUpdateStatus,
   ErrorCodes as DomainErrorCodes,
+  ICapabilityService,
   IPluginService,
   PluginErrors,
   isError2,
@@ -233,6 +234,30 @@ export function registerPluginsRoutes(
           capabilityId: capabilityRow?.capabilityId,
         };
       });
+      // The default catalog is completed with the built-in capability rows
+      // it does not carry itself (e.g. kimi-cu) — the CLI injects the same
+      // rows client-side. capabilityId routes their install through
+      // `/capabilities/{id}:install`; the `capability:<id>` source is a
+      // sentinel, never a valid plain-plugin source.
+      if (opts.marketplaceIsDefault === true) {
+        const presentIds = new Set(entries.map((entry) => entry.id));
+        for (const descriptor of core.accessor.get(ICapabilityService).describeCapabilities()) {
+          if (!descriptor.supported || presentIds.has(descriptor.id)) continue;
+          entries.push({
+            id: descriptor.id,
+            tier: 'official',
+            displayName: descriptor.displayName,
+            description: descriptor.description,
+            homepage: undefined,
+            keywords: undefined,
+            version: undefined,
+            source: `capability:${descriptor.id}`,
+            installed: undefined,
+            updateAvailable: undefined,
+            capabilityId: descriptor.id,
+          });
+        }
+      }
       reply.send(okEnvelope({ entries }, req.id));
     },
   );

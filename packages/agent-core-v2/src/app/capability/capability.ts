@@ -11,12 +11,15 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 
-import type { CapabilityInstallChange, CapabilityStatus } from './types';
+import type { CapabilityDescriptor, CapabilityInstallChange, CapabilityStatus } from './types';
 
 export interface ICapabilityService {
   readonly _serviceBrand: undefined;
 
   readonly onDidChangeInstall: Event<CapabilityInstallChange>;
+
+  /** Static registry descriptors — no detection probes run. */
+  describeCapabilities(): readonly CapabilityDescriptor[];
 
   listCapabilities(): Promise<readonly CapabilityStatus[]>;
 

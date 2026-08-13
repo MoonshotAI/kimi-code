@@ -213,6 +213,16 @@ describe('CapabilityService', () => {
     expect.unreachable('install never settled');
   });
 
+  it('describes the registry without running detectors', async () => {
+    const service = fakeService([
+      fakeEntry({ id: 'kimi-cu', supported: true }),
+      fakeEntry({ id: 'kimi-webbridge', supported: false }),
+    ]);
+    const descriptors = service.describeCapabilities();
+    expect(descriptors.map((d) => d.id)).toEqual(['kimi-cu', 'kimi-webbridge']);
+    expect(descriptors.find((d) => d.id === 'kimi-webbridge')?.supported).toBe(false);
+  });
+
   it('emits onDidChangeInstall on every progress transition', async () => {
     const service = fakeService([
       fakeEntry({
@@ -237,7 +247,7 @@ describe('CapabilityService', () => {
 
     expect(seen[0]).toEqual({ id: 'kimi-cu', install: { running: true } });
     expect(seen).toContainEqual({ id: 'kimi-cu', install: { running: true, step: 'download', percent: 42 } });
-    expect(seen[seen.length - 1]).toEqual({ id: 'kimi-cu', install: { running: false } });
+    expect(seen.at(-1)).toEqual({ id: 'kimi-cu', install: { running: false } });
   });
 
   it('surfaces an install note from the entry through progress', async () => {

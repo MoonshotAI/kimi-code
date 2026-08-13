@@ -29,6 +29,7 @@ import { createKimiWebbridgeEntry } from './entries/kimiWebbridge';
 import type {
   CapabilityEntry,
   CapabilityId,
+  CapabilityDescriptor,
   CapabilityInstallChange,
   CapabilityInstallProgress,
   CapabilityReadiness,
@@ -79,6 +80,16 @@ export class CapabilityService extends Disposable implements ICapabilityService 
         ['kimi-webbridge', createKimiWebbridgeEntry(ctx)],
       ]);
     }
+  }
+
+  describeCapabilities(): readonly CapabilityDescriptor[] {
+    return [...this.entries.values()].map((entry) => ({
+      id: entry.id,
+      pluginId: entry.pluginId,
+      displayName: entry.displayName,
+      description: entry.description,
+      supported: entry.supported,
+    }));
   }
 
   listCapabilities(): Promise<readonly CapabilityStatus[]> {
