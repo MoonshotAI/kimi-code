@@ -74,6 +74,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/app/kosongConfig/configSection';
 import {
   SECONDARY_MODEL_SECTION,
+  cascadeSubagentModelPool,
   type SecondaryModelConfig,
 } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 import { z } from 'zod';
@@ -182,52 +183,6 @@ async function loadConfig(core: Scope): Promise<IConfigService> {
   await config.ready;
   await core.accessor.get(IKosongConfigService).ready;
   return config;
-}
-
-/**
- * Provider-write cascade for the `[secondary_model]` subagent pool, mirroring
- * the SDK's `planProviderRemoval`: pool entries naming a removed model alias
- * are filtered out (aliases renamed by a provider rename are repointed via
- * `renamedAliases` first, the same way the route migrates the global default
- * pointers), and the whole section is cleared (`null` → `replace` drops it)
- * when its effective default (`default_model`, or the legacy recipe's
- * `model` fallback) dangles — a surviving pool table without its default
- * would fail pool validation on every session create.
- */
-function cascadeSecondaryModelPool(
-  section: SecondaryModelConfig | undefined,
-  survivingModels: Record<string, unknown>,
-  renamedAliases: ReadonlyMap<string, string> = new Map(),
-): SecondaryModelConfig | null | undefined {
-  if (section === undefined) return undefined;
-  const remap = (alias: string): string => renamedAliases.get(alias) ?? alias;
-  const nextDefault = section.defaultModel === undefined ? undefined : remap(section.defaultModel);
-  const nextLegacyDefault = section.model === undefined ? undefined : remap(section.model);
-  const effectiveDefault = nextDefault ?? nextLegacyDefault;
-  if (effectiveDefault !== undefined && !(effectiveDefault in survivingModels)) return null;
-
-  let changed = nextDefault !== section.defaultModel || nextLegacyDefault !== section.model;
-  let nextPool: Record<string, string> | undefined;
-  if (section.models !== undefined) {
-    nextPool = {};
-    for (const [alias, description] of Object.entries(section.models)) {
-      const key = remap(alias);
-      if (!(key in survivingModels)) {
-        changed = true;
-        continue;
-      }
-      if (key !== alias) changed = true;
-      nextPool[key] = description;
-    }
-    // An emptied table folds into the implicit single-entry pool form — a
-    // default naming no pool key would fail validation.
-    if (Object.keys(nextPool).length === 0) {
-      nextPool = undefined;
-      changed = true;
-    }
-  }
-  if (!changed) return undefined;
-  return { ...section, defaultModel: nextDefault, model: nextLegacyDefault, models: nextPool };
 }
 
 async function loadDiscovery(core: Scope): Promise<IProviderDiscoveryService> {
@@ -623,7 +578,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         const secondaryModel = config.inspect<SecondaryModelConfig>(
           SECONDARY_MODEL_SECTION,
         ).userValue;
-        const cascadedPool = cascadeSecondaryModelPool(secondaryModel, nextModels, renamedAliases);
+        const cascadedPool = cascadeSubagentModelPool(secondaryModel, nextModels, renamedAliases);
         if (cascadedPool !== undefined) {
           await config.replace(SECONDARY_MODEL_SECTION, cascadedPool);
         }
@@ -840,7 +795,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         const secondaryModel = config.inspect<SecondaryModelConfig>(
           SECONDARY_MODEL_SECTION,
         ).userValue;
-        const cascadedPool = cascadeSecondaryModelPool(secondaryModel, restModels);
+        const cascadedPool = cascadeSubagentModelPool(secondaryModel, restModels);
         if (cascadedPool !== undefined) {
           await config.replace(SECONDARY_MODEL_SECTION, cascadedPool);
         }

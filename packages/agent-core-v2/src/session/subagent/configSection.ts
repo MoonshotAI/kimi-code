@@ -88,7 +88,14 @@
  * repeats the reserved-key and force-rule checks so a pool broken by a
  * runtime config edit fails loudly at spawn instead of binding the wrong
  * model; any other malformation the startup checks missed surfaces as the
- * spawn-time errors above.
+ * spawn-time errors above. Writes that rewrite the `[models]` table
+ * (provider removal/replace at the edge, background catalog refreshes)
+ * fold the pool through `cascadeSubagentModelPool` into the same atomic
+ * write — renamed aliases are repointed, dropped aliases filtered, and the
+ * whole section cleared when its effective default dangles (an emptied pool
+ * table folds into the implicit single-entry form — a default naming no
+ * pool key would fail validation) — so the startup
+ * validation never meets a pool orphaned by a write it did not see.
  * Self-registered at module load via `registerConfigSection`.
  */
 
@@ -275,6 +282,40 @@ export function assertValidSubagentModelConfig(
   }
   const pool = resolveSubagentModelPool(config);
   if (pool !== undefined) assertValidSubagentModelPool(pool, modelCatalog);
+}
+
+export function cascadeSubagentModelPool(
+  section: SecondaryModelConfig | undefined,
+  survivingModels: Record<string, unknown>,
+  renamedAliases: ReadonlyMap<string, string> = new Map(),
+): SecondaryModelConfig | null | undefined {
+  if (section === undefined) return undefined;
+  const remap = (alias: string): string => renamedAliases.get(alias) ?? alias;
+  const nextDefault = section.defaultModel === undefined ? undefined : remap(section.defaultModel);
+  const nextLegacyDefault = section.model === undefined ? undefined : remap(section.model);
+  const effectiveDefault = nextDefault ?? nextLegacyDefault;
+  if (effectiveDefault !== undefined && !(effectiveDefault in survivingModels)) return null;
+
+  let changed = nextDefault !== section.defaultModel || nextLegacyDefault !== section.model;
+  let nextPool: Record<string, string> | undefined;
+  if (section.models !== undefined) {
+    nextPool = {};
+    for (const [alias, description] of Object.entries(section.models)) {
+      const key = remap(alias);
+      if (!(key in survivingModels)) {
+        changed = true;
+        continue;
+      }
+      if (key !== alias) changed = true;
+      nextPool[key] = description;
+    }
+    if (Object.keys(nextPool).length === 0) {
+      nextPool = undefined;
+      changed = true;
+    }
+  }
+  if (!changed) return undefined;
+  return { ...section, defaultModel: nextDefault, model: nextLegacyDefault, models: nextPool };
 }
 
 export function resolveSubagentBinding(
