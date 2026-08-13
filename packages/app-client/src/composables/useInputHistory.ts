@@ -15,11 +15,11 @@
 //
 // The composer keeps the keydown orchestration (which also juggles the slash
 // and mention menus); this composable owns only the history map, the browsing
-// cursor, and the textarea caret/selection work needed to apply a recalled
-// entry.
+// cursor, and the caret/selection work needed to apply a recalled entry.
 
 import { computed, nextTick, ref, watch, type Ref } from 'vue';
 import { STORAGE_KEYS, safeGetJson, safeSetJson } from '@moonshot-ai/app-core/lib';
+import type { TextFieldLike } from '../lib/textField';
 
 /** Cap each session's persisted history so storage can't grow without bound. */
 const MAX_HISTORY = 100;
@@ -27,10 +27,8 @@ const MAX_HISTORY = 100;
 export interface InputHistoryDeps {
   /** The live composer text — recalled entries overwrite it. */
   text: Ref<string>;
-  /** The textarea element, used to read the caret and move the selection. */
-  textareaRef: Ref<HTMLTextAreaElement | null>;
-  /** Re-fit the textarea after its text changes. */
-  autosize: () => void;
+  /** The editing surface, used to read the caret and move the selection. */
+  editorRef: Ref<TextFieldLike | null>;
   /** Active session id — scopes the recalled history (getter for reactivity). */
   sessionId: () => string | undefined;
 }
@@ -59,7 +57,7 @@ function loadMap(sessionId: string | undefined): Record<string, string[]> {
 }
 
 export function useInputHistory(deps: InputHistoryDeps) {
-  const { text, textareaRef, autosize, sessionId } = deps;
+  const { text, editorRef, sessionId } = deps;
 
   const historyMap = ref<Record<string, string[]>>(loadMap(sessionId()));
   const currentList = computed(() => historyMap.value[sessionId() ?? ''] ?? []);
@@ -84,7 +82,7 @@ export function useInputHistory(deps: InputHistoryDeps) {
   }
 
   function caretAtTextStart(): boolean {
-    const el = textareaRef.value;
+    const el = editorRef.value;
     if (!el) return false;
     // Only recall when the caret sits at the very start of the text. Otherwise
     // ArrowUp while navigating a multi-line draft would hijack the caret and
@@ -95,9 +93,8 @@ export function useInputHistory(deps: InputHistoryDeps) {
   function applyHistoryText(value: string): void {
     text.value = value;
     void nextTick(() => {
-      const el = textareaRef.value;
+      const el = editorRef.value;
       if (!el) return;
-      autosize();
       const pos = value.length;
       el.setSelectionRange(pos, pos);
     });

@@ -1,6 +1,7 @@
 // packages/app-client/src/composables/useComposerDraft.ts
-import { nextTick, ref, watch } from 'vue';
+import { nextTick, ref, watch, type Ref } from 'vue';
 import { draftStorageKey, safeGetString, safeRemove, safeSetString } from '@moonshot-ai/app-core/lib';
+import type { TextFieldLike } from '../lib/textField';
 
 export interface ComposerDraftDeps {
   /** Active session id — scopes the persisted draft (getter for reactivity). */
@@ -13,8 +14,11 @@ export interface ComposerDraftDeps {
  * The draft is kept in localStorage keyed by session, so switching away and back
  * (or a page refresh) restores whatever the user was typing for that session; it
  * is cleared when the draft is sent/steered. This composable owns the `text`
- * and `textarea` refs, the `autosize` helper, the draft load/save watchers, and
- * the imperative `loadForEdit` handle exposed to the parent.
+ * and `editor` refs, the draft load/save watchers, and the imperative
+ * `loadForEdit` handle exposed to the parent.
+ *
+ * `editorRef` is the mounted editing surface (textarea on web, ProseMirror
+ * adapter on desktop) seen through the TextFieldLike char-offset contract.
  */
 export function useComposerDraft(deps: ComposerDraftDeps) {
   const { sessionId } = deps;
@@ -29,21 +33,9 @@ export function useComposerDraft(deps: ComposerDraftDeps) {
   }
 
   const text = ref(loadDraft(sessionId()));
-  const textareaRef = ref<HTMLTextAreaElement | null>(null);
-
-  function autosize(): void {
-    const el = textareaRef.value;
-    if (!el) return;
-    // Reset to measure the natural content height, then fit the box to it.
-    // The resting height and the upper cap live in CSS (`min-height` /
-    // `max-height`); once the content outgrows the cap, `overflow-y: auto`
-    // scrolls internally. This keeps a single source of truth for the bounds.
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
-  }
+  const editorRef: Ref<TextFieldLike | null> = ref(null);
 
   watch(text, (value) => {
-    void nextTick(autosize);
     // Persist the live draft for the current session (empty clears the entry).
     saveDraft(sessionId(), value);
   });
@@ -54,7 +46,6 @@ export function useComposerDraft(deps: ComposerDraftDeps) {
     if (newSid === oldSid) return;
     saveDraft(oldSid, text.value);
     text.value = loadDraft(newSid);
-    void nextTick(autosize);
   });
 
   /** Imperatively load text into the box for editing (used by "edit & resend the
@@ -63,12 +54,11 @@ export function useComposerDraft(deps: ComposerDraftDeps) {
   function loadForEdit(value: string): void {
     text.value = value;
     void nextTick(() => {
-      const el = textareaRef.value;
+      const el = editorRef.value;
       if (!el) return;
       el.focus();
       const pos = value.length;
       el.setSelectionRange(pos, pos);
-      autosize();
     });
   }
 
@@ -83,5 +73,5 @@ export function useComposerDraft(deps: ComposerDraftDeps) {
     saveDraft(sessionId(), '');
   }
 
-  return { text, textareaRef, autosize, loadForEdit, clearDraft };
+  return { text, editorRef, loadForEdit, clearDraft };
 }

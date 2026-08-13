@@ -1,14 +1,13 @@
 // packages/app-client/src/composables/useMentionMenu.ts
 import { nextTick, ref, type Ref } from 'vue';
 import type { FileItem } from '@moonshot-ai/app-core/client';
+import type { TextFieldLike } from '../lib/textField';
 
 export interface MentionMenuDeps {
   /** The live composer text — the @token is read from it and rewritten on select. */
   text: Ref<string>;
-  /** The textarea element, used to read the caret and place it after insertion. */
-  textareaRef: Ref<HTMLTextAreaElement | null>;
-  /** Re-fit the textarea after its text changes. */
-  autosize: () => void;
+  /** The editing surface, used to read the caret and place it after insertion. */
+  editorRef: Ref<TextFieldLike | null>;
   /** File search for the @-query (getter; undefined disables the menu). */
   searchFiles: () => ((q: string) => Promise<FileItem[]>) | undefined;
 }
@@ -28,7 +27,7 @@ interface MentionToken {
  * owns the menu's open/items/active/loading state and the search/insert logic.
  */
 export function useMentionMenu(deps: MentionMenuDeps) {
-  const { text, textareaRef, autosize, searchFiles } = deps;
+  const { text, editorRef, searchFiles } = deps;
 
   const open = ref(false);
   const items = ref<FileItem[]>([]);
@@ -41,7 +40,7 @@ export function useMentionMenu(deps: MentionMenuDeps) {
   /** Find the @token under the cursor in the current text value. Returns null if none. */
   function getMentionToken(): MentionToken | null {
     const val = text.value;
-    const pos = textareaRef.value?.selectionStart ?? val.length;
+    const pos = editorRef.value?.selectionStart ?? val.length;
     // Walk backwards from the cursor to find the start of a @token.
     let start = pos - 1;
     while (start >= 0 && !/\s/.test(val[start]!)) {
@@ -93,12 +92,11 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     text.value = val.slice(0, mt.start) + item.path + val.slice(mt.end);
     open.value = false;
     void nextTick(() => {
-      const el = textareaRef.value;
+      const el = editorRef.value;
       if (!el) return;
       const newPos = mt.start + item.path.length;
       el.setSelectionRange(newPos, newPos);
       el.focus();
-      autosize();
     });
   }
 

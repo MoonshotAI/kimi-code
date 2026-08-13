@@ -104,33 +104,24 @@ describe('useComposerDraft', () => {
     expect(draft.text.value).toBe('edit me');
   });
 
-  it('autosize fits the textarea height to its content', () => {
+  it('loadForEdit focuses the editing surface and places the caret at the end', async () => {
     const { draft } = setup('s1');
-    const style: Record<string, string> = {};
-    const el = { scrollHeight: 120, style };
-    draft.textareaRef.value = el as unknown as HTMLTextAreaElement;
-
-    draft.autosize();
-    expect(style.height).toBe('120px');
-  });
-
-  it('autosize shrinks the textarea when content is removed', () => {
-    const { draft } = setup('s1');
-    const style: Record<string, string> = {};
-    const el = { scrollHeight: 120, style };
-    draft.textareaRef.value = el as unknown as HTMLTextAreaElement;
-
-    draft.autosize();
-    el.scrollHeight = 40;
-    draft.autosize();
-    expect(style.height).toBe('40px');
-  });
-
-  it('autosize is a no-op before the textarea mounts', () => {
-    const { draft } = setup('s1');
-    expect(() => {
-      draft.autosize();
-    }).not.toThrow();
+    const ranges: Array<[number, number]> = [];
+    let focused = false;
+    draft.editorRef.value = {
+      selectionStart: 0,
+      selectionEnd: 0,
+      setSelectionRange: (start: number, end: number) => {
+        ranges.push([start, end]);
+      },
+      focus: () => {
+        focused = true;
+      },
+    };
+    draft.loadForEdit('edit me');
+    await nextTick();
+    expect(focused).toBe(true);
+    expect(ranges).toEqual([['edit me'.length, 'edit me'.length]]);
   });
 
   it('clearDraft removes the persisted draft synchronously', async () => {

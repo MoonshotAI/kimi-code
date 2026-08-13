@@ -1,7 +1,7 @@
 <!-- apps/web/src/components/chat/Composer.vue -->
 <script setup lang="ts">
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
@@ -128,11 +128,27 @@ const emit = defineEmits<{
 const { t, locale } = useI18n();
 
 // ---------------------------------------------------------------------------
-// Textarea + per-session draft persistence — see useComposerDraft.
+// Textarea + per-session draft persistence — see useComposerDraft. Web still
+// uses a plain <textarea> (the ProseMirror composer is desktop-only for now);
+// the shared composables only need the TextFieldLike char-offset subset, which
+// HTMLTextAreaElement satisfies.
 // ---------------------------------------------------------------------------
-const { text, textareaRef, autosize, loadForEdit, clearDraft } = useComposerDraft({
+const { text, editorRef, loadForEdit, clearDraft } = useComposerDraft({
   sessionId: () => props.sessionId,
 });
+const textareaRef = editorRef as unknown as Ref<HTMLTextAreaElement | null>;
+
+// Autosize is textarea-specific (the desktop editor grows with its content):
+// reset to measure the natural content height, then fit the box to it. The
+// bounds stay in CSS (`min-height` / `max-height`); past the cap,
+// `overflow-y: auto` scrolls internally.
+function autosize(): void {
+  const el = textareaRef.value;
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${el.scrollHeight}px`;
+}
+watch(text, () => void nextTick(autosize));
 
 // ---------------------------------------------------------------------------
 // Expanded editor — a taller, multi-line composing mode. While expanded, Enter
@@ -187,7 +203,7 @@ function recomputeGrown(): void {
   isGrown.value = !!el && el.scrollHeight > restingHeightPx(el);
 }
 watch(text, () => {
-  // Registered after useComposerDraft's autosize watcher, so the inline height
+  // Registered after the local autosize watcher above, so the inline height
   // already reflects the latest content when this reads scrollHeight.
   void nextTick(recomputeGrown);
 });
@@ -205,7 +221,7 @@ watch(() => props.sessionId, () => {
 // implementation; the composer keeps the keydown orchestration (which also
 // juggles the slash and mention menus).
 // ---------------------------------------------------------------------------
-const history = useInputHistory({ text, textareaRef, autosize, sessionId: () => props.sessionId });
+const history = useInputHistory({ text, editorRef: textareaRef, sessionId: () => props.sessionId });
 
 // ---------------------------------------------------------------------------
 // Slash-command menu — see useSlashMenu for the implementation. The composer
@@ -221,8 +237,7 @@ const {
   select: selectSlashCommand,
 } = useSlashMenu({
   text,
-  textareaRef,
-  autosize,
+  editorRef: textareaRef,
   skills: () => props.skills,
   // Menu-selected bare commands never carry attachments (skills all take
   // `acceptsInput`, so they leave the command in the composer instead of
@@ -272,8 +287,7 @@ const {
   select: selectMentionItem,
 } = useMentionMenu({
   text,
-  textareaRef,
-  autosize,
+  editorRef: textareaRef,
   searchFiles: () => props.searchFiles,
 });
 

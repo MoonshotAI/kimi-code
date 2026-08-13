@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { nextTick, ref, type Ref } from 'vue';
 import type { AppSkill } from '@moonshot-ai/app-core/api';
 import { useSlashMenu } from '../src/composables';
+import type { TextFieldLike } from '../src/lib/textField';
 
 // Public slash-menu contract: matching built-ins and dispatching selected
 // commands without coupling tests to component internals.
 
-interface MockTextarea {
+interface MockEditor {
   value: string;
   selectionStart: number;
   setSelectionRange: (start: number, end: number) => void;
@@ -14,7 +15,7 @@ interface MockTextarea {
 }
 
 function setup(initialText = '', skills: AppSkill[] = []) {
-  const textarea: MockTextarea = {
+  const editor: MockEditor = {
     value: initialText,
     selectionStart: 0,
     setSelectionRange(start: number) {
@@ -23,18 +24,17 @@ function setup(initialText = '', skills: AppSkill[] = []) {
     focus: () => {},
   };
   const text = ref(initialText);
-  const textareaRef = ref(textarea as unknown as HTMLTextAreaElement) as Ref<HTMLTextAreaElement | null>;
+  const editorRef = ref(editor as unknown as TextFieldLike) as Ref<TextFieldLike | null>;
   const emitted: string[] = [];
   const pushed: string[] = [];
   const slash = useSlashMenu({
     text,
-    textareaRef,
-    autosize: () => {},
+    editorRef,
     skills: () => skills,
     emitCommand: (cmd) => emitted.push(cmd),
     historyPush: (entry) => pushed.push(entry),
   });
-  return { text, textarea, emitted, pushed, slash };
+  return { text, editor, emitted, pushed, slash };
 }
 
 describe('useSlashMenu — update', () => {

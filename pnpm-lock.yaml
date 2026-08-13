@@ -786,6 +786,24 @@ importers:
       photoswipe:
         specifier: ^5.4.4
         version: 5.4.4
+      prosemirror-commands:
+        specifier: ^1.7.2
+        version: 1.7.2
+      prosemirror-history:
+        specifier: ^1.5.0
+        version: 1.5.0
+      prosemirror-keymap:
+        specifier: ^1.2.3
+        version: 1.2.3
+      prosemirror-model:
+        specifier: ^1.25.11
+        version: 1.25.11
+      prosemirror-state:
+        specifier: ^1.4.4
+        version: 1.4.4
+      prosemirror-view:
+        specifier: ^1.42.2
+        version: 1.42.2
     devDependencies:
       '@moonshot-ai/vite-preset':
         specifier: workspace:*
@@ -4762,6 +4780,9 @@ packages:
   openapi-types@12.1.3:
     resolution: {integrity: sha512-N4YtSYJqghVu4iek2ZUvcN/0aqH1kRDuNqzcycDxhOUpg7GdvLa2F3DgS6yBNhInhv2r/6I0Flkn7CqL8+nIcw==}
 
+  orderedmap@2.1.1:
+    resolution: {integrity: sha512-TvAWxi0nDe1j/rtMcWcIj94+Ffe6n7zhow33h40SKxmsmozs6dz/e+EajymfoFcHd7sxNn8yHM8839uixMOV6g==}
+
   outdent@0.5.0:
     resolution: {integrity: sha512-/jHxFIzoMXdqPzTaCpFzAAWhpkSjZPF4Vsn6jAfNpmbH/ymsmd7Qc6VE9BGn0L6YMj6uwpQLxCECpus4ukKS9Q==}
 
@@ -4989,6 +5010,27 @@ packages:
   property-information@7.2.0:
     resolution: {integrity: sha512-IAtzIB6sUiWaJYrX9smp3V46pBGbBeLFRGdh25kg1334VcBlD8HzhPeNIWQH9zhGmo2itIe25EHt9dQP7G5hmg==}
 
+  prosemirror-commands@1.7.2:
+    resolution: {integrity: sha512-q6Q6szxqdu9Xd6EcdKsqXghu5nQdZTpB4Q9yd04WRc7/jt763e/rT60Owh0L1GYY+T46o5rD+9lEN36dZS43tw==}
+
+  prosemirror-history@1.5.0:
+    resolution: {integrity: sha512-zlzTiH01eKA55UAf1MEjtssJeHnGxO0j4K4Dpx+gnmX9n+SHNlDqI2oO1Kv1iPN5B1dm5fsljCfqKF9nFL6HRg==}
+
+  prosemirror-keymap@1.2.3:
+    resolution: {integrity: sha512-4HucRlpiLd1IPQQXNqeo81BGtkY8Ai5smHhKW9jjPKRc2wQIxksg7Hl1tTI2IfT2B/LgX6bfYvXxEpJl7aKYKw==}
+
+  prosemirror-model@1.25.11:
+    resolution: {integrity: sha512-QWg9RhnpLlogAmp3p96uEFrE5txQpFynd4vhBAELkwgOCWQs/X0yCzB3/hrHqiPwf91RG5KyWq6553zs9JqIOQ==}
+
+  prosemirror-state@1.4.4:
+    resolution: {integrity: sha512-6jiYHH2CIGbCfnxdHbXZ12gySFY/fz/ulZE333G6bPqIZ4F+TXo9ifiR86nAHpWnfoNjOb3o5ESi7J8Uz1jXHw==}
+
+  prosemirror-transform@1.12.0:
+    resolution: {integrity: sha512-GxboyN4AMIsoHNtz5uf2r2Ru551i5hWeCMD6E2Ib4Eogqoub0NflniaBPVQ4MrGE5yZ8JV9tUHg9qcZTTrcN4w==}
+
+  prosemirror-view@1.42.2:
+    resolution: {integrity: sha512-Pdg0l5kXm8aLDquFAnQFTCITg0q44sLqBlHlpsVLD9segdOao8TOfQdAhCrCXyVgPSRr6UDDROOIWA3bIrN9YQ==}
+
   protobufjs@7.6.5:
     resolution: {integrity: sha512-/FPD0nUc9jH6rfFjji9IBqOz4pcSE3CsT1m7Ep6Mdb0LxSUMj8hgl6GomOvZzpNpAqqGaXA0P3VSrZLFzIhQrw==}
     engines: {node: '>=12.0.0'}
@@ -5172,6 +5214,9 @@ packages:
     resolution: {integrity: sha512-RFnrW4lhXA3s3eqHDZvN654g8OTjzRfqpIRJYczCGB6HzphckVAi/Qh4tbPUbRuDi7s1Llv8g/NspLkttY3gTA==}
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
     hasBin: true
+
+  rope-sequence@1.3.4:
+    resolution: {integrity: sha512-UT5EDe2cu2E/6O4igUr5PSFs23nvvukicWHx6GnOPlHAiiYbzNuCRQCuiUdHJQcqKalLKlrYJnjY0ySGsXNQXQ==}
 
   roughjs@4.6.6:
     resolution: {integrity: sha512-ZUz/69+SYpFN/g/lUlo2FXcIjRkSu3nDarreVdGGndHEBJ6cXPdKguS8JGxwj5HA5xIbVKSmLgr5b3AWxtRfvQ==}
@@ -5935,6 +5980,9 @@ packages:
     peerDependenciesMeta:
       typescript:
         optional: true
+
+  w3c-keyname@2.2.8:
+    resolution: {integrity: sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ==}
 
   wasm-feature-detect@1.8.0:
     resolution: {integrity: sha512-zksaLKM2fVlnB5jQQDqKXXwYHLQUVH9es+5TOOHwGOVJOCeRBCiPjwSg+3tN2AdTCzjgli4jijCH290kXb/zWQ==}
@@ -10142,6 +10190,8 @@ snapshots:
 
   openapi-types@12.1.3: {}
 
+  orderedmap@2.1.1: {}
+
   outdent@0.5.0: {}
 
   own-keys@1.0.1:
@@ -10367,6 +10417,44 @@ snapshots:
       signal-exit: 3.0.7
 
   property-information@7.2.0: {}
+
+  prosemirror-commands@1.7.2:
+    dependencies:
+      prosemirror-model: 1.25.11
+      prosemirror-state: 1.4.4
+      prosemirror-transform: 1.12.0
+
+  prosemirror-history@1.5.0:
+    dependencies:
+      prosemirror-state: 1.4.4
+      prosemirror-transform: 1.12.0
+      prosemirror-view: 1.42.2
+      rope-sequence: 1.3.4
+
+  prosemirror-keymap@1.2.3:
+    dependencies:
+      prosemirror-state: 1.4.4
+      w3c-keyname: 2.2.8
+
+  prosemirror-model@1.25.11:
+    dependencies:
+      orderedmap: 2.1.1
+
+  prosemirror-state@1.4.4:
+    dependencies:
+      prosemirror-model: 1.25.11
+      prosemirror-transform: 1.12.0
+      prosemirror-view: 1.42.2
+
+  prosemirror-transform@1.12.0:
+    dependencies:
+      prosemirror-model: 1.25.11
+
+  prosemirror-view@1.42.2:
+    dependencies:
+      prosemirror-model: 1.25.11
+      prosemirror-state: 1.4.4
+      prosemirror-transform: 1.12.0
 
   protobufjs@7.6.5:
     dependencies:
@@ -10609,6 +10697,8 @@ snapshots:
       '@rollup/rollup-win32-x64-gnu': 4.62.2
       '@rollup/rollup-win32-x64-msvc': 4.62.2
       fsevents: 2.3.3
+
+  rope-sequence@1.3.4: {}
 
   roughjs@4.6.6:
     dependencies:
@@ -11448,6 +11538,8 @@ snapshots:
       '@vue/shared': 3.5.39
     optionalDependencies:
       typescript: 6.0.2
+
+  w3c-keyname@2.2.8: {}
 
   wasm-feature-detect@1.8.0: {}
 

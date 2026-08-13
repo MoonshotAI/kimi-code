@@ -1,7 +1,7 @@
 <!-- apps/web/src/components/chat/Composer.vue -->
 <script setup lang="ts">
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
@@ -26,7 +26,7 @@ import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, type Attachment } from '@moonshot-ai/app-client/composables';
 import { matchBinding } from '../../lib/keymap';
 import { resolvedBinding } from '../../composables/useShortcuts';
-import { openFileAttachment } from '@moonshot-ai/app-client/lib';
+import { openFileAttachment, createComposerEditor, type ComposerEditorApi } from '@moonshot-ai/app-client/lib';
 import { getKimiWebApi } from '../../api';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
@@ -130,10 +130,123 @@ const emit = defineEmits<{
 const { t, locale } = useI18n();
 
 // ---------------------------------------------------------------------------
-// Textarea + per-session draft persistence — see useComposerDraft.
+// Text state + per-session draft persistence — see useComposerDraft.
 // ---------------------------------------------------------------------------
-const { text, textareaRef, autosize, loadForEdit, clearDraft } = useComposerDraft({
+const { text, editorRef, loadForEdit, clearDraft } = useComposerDraft({
   sessionId: () => props.sessionId,
+});
+
+// ---------------------------------------------------------------------------
+// ProseMirror editing surface — see app-client's composerEditor. The host div
+// carries the .ph styling; the EditorView mounts inside it. The text model
+// stays a plain-string ref: user edits flow OUT via onChange, external writes
+// (draft load, history recall, mention select, submit clear) flow IN via the
+// watcher below, which skips editor-originated changes by comparing text.
+// ---------------------------------------------------------------------------
+const editorHostRef = ref<HTMLElement | null>(null);
+let editor: ComposerEditorApi | null = null;
+
+onMounted(() => {
+  const host = editorHostRef.value;
+  if (!host) return;
+  editor = createComposerEditor(host, {
+    initialText: text.value,
+    onChange: (value) => {
+      text.value = value;
+      handleInput();
+    },
+    handleKeyDown: (e) => handleKeydown(e),
+    onCompositionStart: handleCompositionStart,
+    onCompositionEnd: handleCompositionEnd,
+  });
+  editor.setEditable(!props.starting);
+  editorRef.value = editor;
+
+  // Restore the session's stashed state, falling back to the persisted
+  // draft. If the two ever diverge (e.g. localStorage lost the draft
+  // mid-run), the stashed state is the fresher truth — push it back into the
+  // text ref so data-empty/canSend/submit stay consistent with the visible
+  // doc (the draft watcher then re-persists it, healing the divergence).
+  function restoreSessionState(sid: string): void {
+    if (!editor) return;
+    if (editor.restoreState(sid)) {
+      const restored = editor.getText();
+      if (restored !== text.value) text.value = restored;
+    } else {
+      // Nothing stashed for this session — plain text load (fresh stack),
+      // exactly what the text watcher would do anyway.
+      editor.setText(text.value);
+    }
+  }
+
+  // A remount for the same session (empty-session ↔ docked composer swap)
+  // gets its stashed state back, undo stack included; first-ever mount finds
+  // nothing and keeps the draft text.
+  if (props.sessionId) restoreSessionState(props.sessionId);
+
+  // Session switching swaps the WHOLE editor state: stash the old session's
+  // state (doc + selection + undo stack) and adopt the new one's. Registered
+  // BEFORE the text watcher — the draft composable's session watcher has
+  // already loaded the new draft into `text` when this runs, and after a
+  // restore the texts match, so the text watcher below skips its setText
+  // (which would reset the freshly restored undo stack).
+  watch(
+    () => props.sessionId,
+    (newSid, oldSid) => {
+      if (!editor || newSid === oldSid) return;
+      // The empty-session composer (no sid yet) is never stashed: its first
+      // prompt becomes a brand-new session with no undo carry-over.
+      if (oldSid) editor.stashState(oldSid);
+      if (newSid) restoreSessionState(newSid);
+      else editor.setText(text.value);
+    },
+  );
+
+  // External text writes flow into the editor here. Registered on mount (not
+  // in setup) so it can see the editor handle; flush order guarantees this
+  // runs before the nextTick caret placement in the composables.
+  watch(text, (value) => {
+    if (editor && value !== editor.getText()) editor.setText(value);
+  });
+
+  // `starting` disables the field while the first prompt is being submitted.
+  watch(
+    () => props.starting,
+    (starting) => editor?.setEditable(!starting),
+  );
+
+  // Combobox semantics for the slash/mention menus live on the focusable PM
+  // root (the textarea used to carry them in template bindings). The
+  // localized placeholder doubles as the accessible name — the CSS ::before
+  // placeholder overlay never reaches the a11y tree.
+  watchEffect(() => {
+    const dom = editor?.dom;
+    if (!dom) return;
+    dom.setAttribute('aria-label', placeholder.value);
+    dom.setAttribute('aria-expanded', String(!!menuAriaControls.value));
+    const controls = menuAriaControls.value;
+    if (controls) dom.setAttribute('aria-controls', controls);
+    else dom.removeAttribute('aria-controls');
+    const activeDescendant = menuAriaActiveDescendant.value;
+    if (activeDescendant) dom.setAttribute('aria-activedescendant', activeDescendant);
+    else dom.removeAttribute('aria-activedescendant');
+  });
+});
+
+onUnmounted(() => {
+  // Keep the session's state (undo stack included) across composer remounts —
+  // the empty-session and docked composers are separate instances. Sync the
+  // text ref into the editor FIRST: an optimistic send clears `text` and
+  // swaps this component out within the same flush, so the pre-flush text
+  // watcher may never run — without the sync we'd stash a state still
+  // holding the just-sent prompt and resurrect it on the next mount.
+  if (editor && props.sessionId) {
+    if (text.value !== editor.getText()) editor.setText(text.value);
+    editor.stashState(props.sessionId);
+  }
+  editor?.destroy();
+  editor = null;
+  editorRef.value = null;
 });
 
 // ---------------------------------------------------------------------------
@@ -144,53 +257,48 @@ const { text, textareaRef, autosize, loadForEdit, clearDraft } = useComposerDraf
 const expanded = ref(false);
 function toggleExpand(): void {
   expanded.value = !expanded.value;
-  // Re-fit the textarea after the min/max-height swap between modes, then
-  // recompute growth against the *post-toggle* resting height. Without this,
+  // Re-measure growth against the *post-toggle* resting height. Without this,
   // collapsing would keep the isGrown measured against the expanded 70vh
   // min-height, hiding the toggle even though the collapsed draft is still
   // multi-line. (This does not affect the expanded state itself — once
   // expanded, it stays at 70vh until toggled back or sent.)
   void nextTick(() => {
-    autosize();
     recomputeGrown();
-    // Return focus to the textarea so the user can keep typing right away;
+    // Return focus to the editor so the user can keep typing right away;
     // otherwise focus stays on the toggle button and the next Enter would
     // activate it again instead of inserting a newline.
-    textareaRef.value?.focus();
+    editor?.focus();
   });
 }
 
-// Collapse the expanded editor after a successful send/steer and re-fit the
-// textarea once the 70vh min-height is gone. On image-only sends the text is
-// already empty, so the draft watcher never re-runs autosize — without this,
-// the textarea keeps the inline height measured at 70vh and the collapsed cap
-// (1/4 viewport) leaves an oversized empty box until the next keystroke.
+// Collapse the expanded editor after a successful send/steer. On image-only
+// sends the text is already empty, so nothing else re-measures the box —
+// without this the collapsed cap (1/4 viewport) leaves an oversized empty box
+// until the next keystroke.
 function collapseAndRefit(): void {
   if (!expanded.value) return;
   expanded.value = false;
-  void nextTick(autosize);
+  void nextTick(recomputeGrown);
 }
 
 // The expand toggle is hidden at the resting height and only appears once the
 // box has grown past it (multi-line content) — keeps the empty composer
 // uncluttered. While expanded it always shows so the user can collapse back.
 //
-// The resting height equals the textarea's computed `min-height` (set in
+// The resting height equals the host's computed `min-height` (set in
 // style.css). We read it from the element instead of hard-coding.
 const RESTING_HEIGHT_FALLBACK_PX = 36;
-function restingHeightPx(el: HTMLTextAreaElement): number {
+function restingHeightPx(el: HTMLElement): number {
   if (typeof getComputedStyle === 'undefined') return RESTING_HEIGHT_FALLBACK_PX;
   const min = Number.parseFloat(getComputedStyle(el).minHeight);
   return Number.isFinite(min) && min > 0 ? min : RESTING_HEIGHT_FALLBACK_PX;
 }
 const isGrown = ref(false);
 function recomputeGrown(): void {
-  const el = textareaRef.value;
+  const el = editorHostRef.value;
   isGrown.value = !!el && el.scrollHeight > restingHeightPx(el);
 }
 watch(text, () => {
-  // Registered after useComposerDraft's autosize watcher, so the inline height
-  // already reflects the latest content when this reads scrollHeight.
   void nextTick(recomputeGrown);
 });
 
@@ -207,7 +315,7 @@ watch(() => props.sessionId, () => {
 // implementation; the composer keeps the keydown orchestration (which also
 // juggles the slash and mention menus).
 // ---------------------------------------------------------------------------
-const history = useInputHistory({ text, textareaRef, autosize, sessionId: () => props.sessionId });
+const history = useInputHistory({ text, editorRef, sessionId: () => props.sessionId });
 
 // ---------------------------------------------------------------------------
 // Slash-command menu — see useSlashMenu for the implementation. The composer
@@ -223,8 +331,7 @@ const {
   select: selectSlashCommand,
 } = useSlashMenu({
   text,
-  textareaRef,
-  autosize,
+  editorRef,
   skills: () => props.skills,
   // Menu-selected bare commands never carry attachments (skills all take
   // `acceptsInput`, so they leave the command in the composer instead of
@@ -274,8 +381,7 @@ const {
   select: selectMentionItem,
 } = useMentionMenu({
   text,
-  textareaRef,
-  autosize,
+  editorRef,
   searchFiles: () => props.searchFiles,
 });
 
@@ -297,11 +403,11 @@ function handleInput(): void {
 function insertFolderPaths(paths: string[]): void {
   // Quote paths containing whitespace so the draft tokenizes like typed input.
   const insertion = paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' ');
-  const el = textareaRef.value;
+  const ed = editor;
   const val = text.value;
-  // A drop usually lands while the textarea is unfocused and its selection is
+  // A drop usually lands while the editor is unfocused and its selection is
   // stale — append at the end unless the caret is genuinely live.
-  const pos = el && document.activeElement === el ? el.selectionStart : val.length;
+  const pos = ed && document.activeElement === ed.dom ? (ed.selectionStart ?? val.length) : val.length;
   // Keep the inserted paths separated from the surrounding text.
   const prefix = pos > 0 && !/\s/.test(val[pos - 1]!) ? ' ' : '';
   const suffix = pos < val.length && !/\s/.test(val[pos]!) ? ' ' : '';
@@ -310,12 +416,10 @@ function insertFolderPaths(paths: string[]): void {
   history.resetBrowsing();
   text.value = val.slice(0, pos) + prefix + insertion + suffix + val.slice(pos);
   void nextTick(() => {
-    const ta = textareaRef.value;
-    if (!ta) return;
+    if (!ed) return;
     const caret = pos + prefix.length + insertion.length;
-    ta.setSelectionRange(caret, caret);
-    ta.focus();
-    autosize();
+    ed.setSelectionRange(caret, caret);
+    ed.focus();
   });
 }
 
@@ -410,13 +514,11 @@ watch(
 );
 
 onMounted(() => {
-  // Fit the box to a restored draft on first render, and reflect its grown
-  // state so the expand toggle shows for an already-long draft.
+  // Reflect the grown state of a restored draft on first render so the expand
+  // toggle shows for an already-long draft. (The PM editor grows the box to
+  // fit its content on its own — no explicit re-fit needed here.)
   if (text.value) {
-    void nextTick(() => {
-      autosize();
-      recomputeGrown();
-    });
+    void nextTick(recomputeGrown);
   }
 });
 
@@ -433,7 +535,7 @@ onUnmounted(() => {
 function focus(): void {
   // preventScroll keeps the pane from jumping if the composer is already in view
   // or if focus is triggered during an animation/transition.
-  textareaRef.value?.focus({ preventScroll: true });
+  editor?.focus({ preventScroll: true });
 }
 function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
   loadAttachments(atts);
@@ -611,20 +713,25 @@ function isComposingKeyEvent(e: KeyboardEvent): boolean {
   return isComposingText || e.isComposing || e.keyCode === 229;
 }
 
-function handleKeydown(e: KeyboardEvent): void {
-  if (isComposingKeyEvent(e)) return;
+// Keydown arbitrator, wired as the PM editor's handleKeyDown prop. Return
+// true = claimed (we preventDefault those ourselves, which also keeps them
+// from the global shortcut dispatcher); false = fall through to the PM
+// keymaps (history undo/redo, baseKeymap's Enter/Backspace behavior) and the
+// browser default.
+function handleKeydown(e: KeyboardEvent): boolean {
+  if (isComposingKeyEvent(e)) return false;
 
   // Close dropdowns on Escape
   if (e.key === 'Escape') {
     if (dropdownOpen.value) {
       e.preventDefault();
       closeDropdown();
-      return;
+      return true;
     }
     if (permDropdownOpen.value) {
       e.preventDefault();
       closePermDropdown();
-      return;
+      return true;
     }
   }
 
@@ -635,31 +742,31 @@ function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       e.preventDefault();
       slashOpen.value = false;
-      return;
+      return true;
     }
     // An empty ("no commands") menu has nothing to select — let Tab move
     // focus on, but close the menu so it can't strand the popup open.
     if (e.key === 'Tab' && slashItems.value.length === 0) {
       slashOpen.value = false;
-      return;
+      return false;
     }
   }
   if (slashOpen.value && slashItems.value.length > 0) {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       slashActive.value = (slashActive.value + 1) % slashItems.value.length;
-      return;
+      return true;
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault();
       slashActive.value = (slashActive.value - 1 + slashItems.value.length) % slashItems.value.length;
-      return;
+      return true;
     }
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
       const item = slashItems.value[slashActive.value];
       if (item) selectSlashCommand(item);
-      return;
+      return true;
     }
   }
 
@@ -670,24 +777,24 @@ function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       e.preventDefault();
       mentionOpen.value = false;
-      return;
+      return true;
     }
     if (mentionItems.value.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         mentionActive.value = (mentionActive.value + 1) % mentionItems.value.length;
-        return;
+        return true;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
         mentionActive.value = (mentionActive.value - 1 + mentionItems.value.length) % mentionItems.value.length;
-        return;
+        return true;
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
         const item = mentionItems.value[mentionActive.value];
         if (item) selectMentionItem(item);
-        return;
+        return true;
       }
     }
   }
@@ -700,7 +807,7 @@ function handleKeydown(e: KeyboardEvent): void {
     if (props.running) {
       handleSteer();
     }
-    return;
+    return true;
   }
 
   // History recall (shell-style ↑/↓) — see useInputHistory for the machinery.
@@ -733,32 +840,28 @@ function handleKeydown(e: KeyboardEvent): void {
       // ('/new'), and the menu's arrow-key branch would then swallow the
       // next history step. Typing reopens the menu via handleInput.
       slashOpen.value = false;
-      return;
+      return true;
     }
     if (e.key === 'ArrowDown' && browsing) {
       e.preventDefault();
       history.recallNewer();
       slashOpen.value = false;
-      return;
+      return true;
     }
   }
 
   // Send / newline — customizable bindings (defaults: Enter sends, Shift+Enter
-  // inserts a newline). The default Shift+Enter is left to the browser so the
-  // newline lands in the textarea's native undo history; only rebound combos
-  // (which have no browser default) get the manual insert.
+  // inserts a newline). Default and rebound combos alike go through the
+  // editor's splitBlock so the insert lands in the PM undo history
+  // (baseKeymap binds only Enter — Shift+Enter must be handled here, the
+  // browser's native contenteditable newline would produce DOM PM can't map
+  // to the schema). The preventDefault also keeps the chord away from the
+  // global shortcut dispatcher (it skips defaultPrevented events).
   const newlineBinding = resolvedBinding('composer.newline');
   if (newlineBinding !== null && matchBinding(e, newlineBinding)) {
-    if (newlineBinding !== 'shift+enter') {
-      e.preventDefault();
-      insertNewlineAtCaret();
-    } else {
-      // The browser inserts the newline natively (native undo history), but
-      // the event must not bubble on to the global shortcut dispatcher — a
-      // global action rebound to the same combo would otherwise fire too.
-      e.stopPropagation();
-    }
-    return;
+    e.preventDefault();
+    insertNewlineAtCaret();
+    return true;
   }
   const sendBinding = resolvedBinding('composer.send');
   // Default send ('enter') keeps the legacy aliases in BOTH modes: plain
@@ -774,34 +877,30 @@ function handleKeydown(e: KeyboardEvent): void {
   if (sendMatches) {
     e.preventDefault();
     handleSubmit();
-    return;
+    return true;
   }
   // The default newline combo was rebound away (or unassigned): swallow its
-  // browser default so the old key stops inserting newlines behind the
+  // old behavior so the old key stops inserting newlines behind the
   // user's back. Runs AFTER the send match so a send rebound to Shift+Enter
   // still wins the chord.
   if (newlineBinding !== 'shift+enter' && matchBinding(e, 'shift+enter')) {
     e.preventDefault();
+    return true;
   }
+  return false;
 }
 
-// Insert '\n' at the caret programmatically: a rebound newline combo (say
-// Ctrl+Enter) has no browser default, so the composer has to do it itself.
-// Goes through the v-model ref so the draft watcher / autosize run as usual.
+// Insert a line break at the caret programmatically: a rebound newline combo
+// (say Ctrl+Enter) has no keymap default, so the composer has to do it itself.
+// The editor's splitBlock is a normal transaction, so it IS undoable via PM
+// history, and onChange runs handleInput for us.
 function insertNewlineAtCaret(): void {
-  const el = textareaRef.value;
-  if (!el) {
+  if (!editor) {
     text.value += '\n';
     handleInput();
     return;
   }
-  const start = el.selectionStart ?? text.value.length;
-  const end = el.selectionEnd ?? text.value.length;
-  text.value = `${text.value.slice(0, start)}\n${text.value.slice(end)}`;
-  handleInput();
-  void nextTick(() => {
-    el.selectionStart = el.selectionEnd = start + 1;
-  });
+  editor.insertNewlineAtCaret();
 }
 
 // ---------------------------------------------------------------------------
@@ -1295,26 +1394,15 @@ function selectModel(modelId: string): void {
         />
 
         <div class="input-row">
-          <textarea
-            ref="textareaRef"
-            v-model="text"
+          <!-- ProseMirror mounts inside this host (see script). The host keeps
+               the .ph styling + placeholder data attrs; combobox ARIA lives on
+               the PM root (the focusable element), set imperatively. -->
+          <div
+            ref="editorHostRef"
             class="ph"
-            :placeholder="placeholder"
-            :disabled="starting"
-            autocomplete="off"
-            spellcheck="false"
-            rows="1"
-            role="combobox"
-            aria-autocomplete="list"
-            aria-haspopup="listbox"
-            :aria-expanded="!!menuAriaControls"
-            :aria-controls="menuAriaControls"
-            :aria-activedescendant="menuAriaActiveDescendant"
-            @keydown="handleKeydown"
-            @compositionstart="handleCompositionStart"
-            @compositionend="handleCompositionEnd"
-            @input="handleInput"
-          />
+            :data-placeholder="placeholder"
+            :data-empty="text.length === 0"
+          ></div>
           <Tooltip :text="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')">
           <button
             v-if="expanded || isGrown"
@@ -1876,9 +1964,10 @@ function selectModel(modelId: string): void {
      and an unset caret inherits that faint colour and nearly disappears. */
   caret-color: var(--color-text);
   flex: 1;
+  /* Anchor for the placeholder ::before overlay. */
+  position: relative;
   border: none;
   outline: none;
-  resize: none;
   font-family: var(--font-ui);
   font-size: var(--content-font-size);
   text-autospace: normal;
@@ -1896,12 +1985,36 @@ function selectModel(modelId: string): void {
   display: none;
 }
 
-.ph::placeholder {
+/* Placeholder: an overlay shown only while the doc is empty (a contenteditable
+   has no native `placeholder`); the text comes from the host's data attr. */
+.ph[data-empty='true']::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  top: 0;
+  left: 0;
   color: var(--muted);
+  pointer-events: none;
 }
 
-.ph:not(:placeholder-shown) {
+.ph:not([data-empty='true']) {
   color: var(--color-text);
+}
+
+/* The ProseMirror root is created at runtime inside the host — :deep() reaches
+   it. Keep its paragraphs margin-free so lines pack exactly like the textarea
+   they replaced. */
+.ph :deep(.ProseMirror) {
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  /* Fill the host's minimum box (36px resting / 70vh expanded) so clicking
+     anywhere in the visible editor area lands on the contenteditable and can
+     focus/place the caret — not on the inert host below the last line. */
+  min-height: inherit;
+}
+
+.ph :deep(.ProseMirror p) {
+  margin: 0;
 }
 
 /* Expanded editor: a tall composing area at ~70% of the viewport — clearly

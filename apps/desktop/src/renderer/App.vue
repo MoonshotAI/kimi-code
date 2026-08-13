@@ -29,6 +29,7 @@ import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
+import { runComposerMenuEdit } from '@moonshot-ai/app-client/lib';
 import type { ColorScheme, FontScale, PromptAttachment } from './composables/useKimiWebClient';
 import type { OpenMediaRequest, ToolMedia, TurnAttachment } from './types';
 import { usePageTitle } from '@moonshot-ai/app-client/composables';
@@ -328,6 +329,13 @@ onMounted(() => {
         selectAllFromMenu();
         return;
       }
+      // Same shadowing story for Undo/Redo: a focused ProseMirror composer
+      // runs its own history commands; other editable fields keep the
+      // browser's native editing undo.
+      if (menuId === 'undo' || menuId === 'redo') {
+        undoRedoFromMenu(menuId);
+        return;
+      }
       // The connection retry itself runs main-side (menu.ts); the renderer
       // only records the menu-only action.
       if (menuId === 'retry-connection') {
@@ -507,6 +515,19 @@ function selectAllFromMenu(): void {
     return;
   }
   conversationPaneRef.value?.selectAllRegion(active);
+}
+
+// The native Undo/Redo menu items forward here the same way (see menu.ts):
+// the composer's ProseMirror editor must undo through its OWN history plugin —
+// the roles' native contenteditable undo would mutate the DOM behind PM's
+// back. Other editable fields (rename inputs, …) keep the browser behavior.
+function undoRedoFromMenu(command: 'undo' | 'redo'): void {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return;
+  if (runComposerMenuEdit(active, command)) return;
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active.isContentEditable) {
+    document.execCommand(command);
+  }
 }
 
 function onShortcutKeydown(e: KeyboardEvent): void {

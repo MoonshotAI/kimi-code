@@ -22,6 +22,8 @@ interface MenuStrings {
   closeWindow: string;
   file: string;
   edit: string;
+  undo: string;
+  redo: string;
   selectAll: string;
   substitutions: string;
   speech: string;
@@ -61,6 +63,8 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     closeWindow: '关闭窗口',
     file: '文件',
     edit: '编辑',
+    undo: '撤销',
+    redo: '重做',
     selectAll: '全选',
     substitutions: '替换',
     speech: '语音',
@@ -98,6 +102,8 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     closeWindow: 'Close Window',
     file: 'File',
     edit: 'Edit',
+    undo: 'Undo',
+    redo: 'Redo',
     selectAll: 'Select All',
     substitutions: 'Substitutions',
     speech: 'Speech',
@@ -539,18 +545,34 @@ export function menuTemplate(
     : { role: 'windowMenu' };
 
   // The edit menu is built item-by-item instead of the editMenu role because
-  // of Select All: the role's native CmdOrCtrl+A accelerator intercepts the
-  // key BEFORE the renderer (selecting the whole document, sidebar included),
-  // so a custom item keeps the chord but forwards to the renderer's scoped
-  // select-all — same wiring pattern as New Chat / Open Folder. Everything
-  // else mirrors Electron's editMenu expansion verbatim (editing roles stay
-  // native; mac keeps its pasteAndMatchStyle / Substitutions / Speech items).
+  // two items must forward to the renderer instead of running their native
+  // role: Select All keeps its chord but routes to the scoped select-all (the
+  // role's accelerator would otherwise select the whole document, sidebar
+  // included), and Undo/Redo route to the composer's ProseMirror history (the
+  // roles would run Chromium's native contenteditable undo, which fights PM's
+  // document model). Same wiring pattern as New Chat / Open Folder. The rest
+  // mirrors Electron's editMenu expansion verbatim (mac keeps its
+  // pasteAndMatchStyle / Substitutions / Speech items).
   const editMenu: MenuItemConstructorOptions = {
     id: 'edit-menu',
     label: strings.edit,
     submenu: [
-      { role: 'undo' },
-      { role: 'redo' },
+      {
+        id: 'undo',
+        label: strings.undo,
+        accelerator: 'CommandOrControl+Z',
+        click: () => {
+          sendToRenderer(IPC.menuAction, 'undo');
+        },
+      },
+      {
+        id: 'redo',
+        label: strings.redo,
+        accelerator: isMac ? 'Shift+CommandOrControl+Z' : 'Control+Y',
+        click: () => {
+          sendToRenderer(IPC.menuAction, 'redo');
+        },
+      },
       { type: 'separator' },
       { role: 'cut' },
       { role: 'copy' },

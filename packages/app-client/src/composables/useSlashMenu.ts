@@ -2,14 +2,13 @@
 import { nextTick, ref, type Ref } from 'vue';
 import type { AppSkill } from '@moonshot-ai/app-core/api';
 import { buildSlashItems, filterCommandMatches, type SlashCommand, type SlashMatchRanges } from '@moonshot-ai/app-core/lib';
+import type { TextFieldLike } from '../lib/textField';
 
 export interface SlashMenuDeps {
   /** The live composer text — drives filtering and is rewritten on select. */
   text: Ref<string>;
-  /** The textarea element, used to focus and place the caret for acceptsInput. */
-  textareaRef: Ref<HTMLTextAreaElement | null>;
-  /** Re-fit the textarea after its text changes. */
-  autosize: () => void;
+  /** The editing surface, used to focus and place the caret for acceptsInput. */
+  editorRef: Ref<TextFieldLike | null>;
   /** Current session skills (getter, so the menu stays reactive). */
   skills: () => AppSkill[];
   /** Emit a chosen slash command up to the parent. */
@@ -33,13 +32,13 @@ export interface SlashMenuDeps {
 /**
  * `/` slash-command menu: filtering, keyboard navigation state, and selection.
  *
- * The composer keeps the keydown orchestration (arrow keys, Enter/Tab, Escape)
+ * The composer keeps the keydown orchestration (arrow keys / Enter / Escape)
  * because it also juggles the mention menu and history recall; this composable
  * owns the menu's open/items/active state, the filter logic, and what happens
  * when an item is chosen.
  */
 export function useSlashMenu(deps: SlashMenuDeps) {
-  const { text, textareaRef, autosize, skills, emitCommand, historyPush, clearDraft, resolveDesc } = deps;
+  const { text, editorRef, skills, emitCommand, historyPush, clearDraft, resolveDesc } = deps;
 
   const open = ref(false);
   const items = ref<SlashCommand[]>([]);
@@ -68,12 +67,11 @@ export function useSlashMenu(deps: SlashMenuDeps) {
     if (item.acceptsInput) {
       text.value = `${item.name} `;
       void nextTick(() => {
-        const el = textareaRef.value;
+        const el = editorRef.value;
         if (!el) return;
         const pos = text.value.length;
         el.setSelectionRange(pos, pos);
         el.focus();
-        autosize();
       });
       return;
     }

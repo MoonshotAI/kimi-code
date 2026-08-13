@@ -406,13 +406,40 @@ describe('menuTemplate', () => {
     }
   });
 
+  it('replaces the undo/redo roles with wired custom items (the roles would run Chromium-native contenteditable undo behind ProseMirror’s back)', () => {
+    for (const [locale, menuLabel, undoLabel, redoLabel] of [
+      ['zh', '编辑', '撤销', '重做'],
+      ['en', 'Edit', 'Undo', 'Redo'],
+    ] as const) {
+      for (const isMac of [true, false]) {
+        const edit = menuTemplate(isMac, locale).find((item) => item.id === 'edit-menu');
+        expect(edit).toMatchObject({ label: menuLabel });
+        const items = submenuItems(edit as MenuItemConstructorOptions);
+        // The roles must not come back — their native undo mutates the
+        // contenteditable DOM outside the composer's ProseMirror history.
+        expect(items.some((item) => item.role === 'undo')).toBe(false);
+        expect(items.some((item) => item.role === 'redo')).toBe(false);
+        const undo = items.find((item) => item.id === 'undo');
+        expect(undo).toMatchObject({ label: undoLabel, accelerator: 'CommandOrControl+Z' });
+        expect(typeof undo?.click).toBe('function');
+        const redo = items.find((item) => item.id === 'redo');
+        expect(redo).toMatchObject({
+          label: redoLabel,
+          accelerator: isMac ? 'Shift+CommandOrControl+Z' : 'Control+Y',
+        });
+        expect(typeof redo?.click).toBe('function');
+      }
+    }
+  });
+
   it('keeps the remaining editMenu items (delete on both platforms; mac Substitutions/Speech)', () => {
-    // Mirrors Electron v43's editmenu expansion: only Select All is replaced.
+    // Mirrors Electron v43's editmenu expansion: Select All and Undo/Redo are
+    // replaced (see the dedicated tests above).
     for (const isMac of [true, false]) {
       const edit = menuTemplate(isMac, 'en').find((item) => item.id === 'edit-menu');
       const items = walkItems(submenuItems(edit as MenuItemConstructorOptions));
       expect(items.some((item) => item.role === 'delete')).toBe(true);
-      for (const role of ['undo', 'redo', 'cut', 'copy', 'paste']) {
+      for (const role of ['cut', 'copy', 'paste']) {
         expect(items.some((item) => item.role === role)).toBe(true);
       }
       const macOnly = ['pasteAndMatchStyle', 'showSubstitutions', 'startSpeaking', 'stopSpeaking'];

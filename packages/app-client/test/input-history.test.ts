@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ref, type Ref } from 'vue';
 import { useInputHistory } from '../src/composables';
 import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
+import type { TextFieldLike } from '../src/lib/textField';
 
-interface MockTextarea {
+interface MockEditor {
   value: string;
   selectionStart: number;
   selectionEnd: number;
@@ -11,7 +12,7 @@ interface MockTextarea {
 }
 
 function setup(initialText = '', caret = 0, sessionId: string | null = 'test-session') {
-  const textarea: MockTextarea = {
+  const editor: MockEditor = {
     value: initialText,
     selectionStart: caret,
     selectionEnd: caret,
@@ -21,9 +22,9 @@ function setup(initialText = '', caret = 0, sessionId: string | null = 'test-ses
     },
   };
   const text = ref(initialText);
-  const textareaRef = ref(textarea as unknown as HTMLTextAreaElement) as Ref<HTMLTextAreaElement | null>;
-  const history = useInputHistory({ text, textareaRef, autosize: () => {}, sessionId: () => sessionId ?? undefined });
-  return { text, textarea, history };
+  const editorRef = ref(editor as unknown as TextFieldLike) as Ref<TextFieldLike | null>;
+  const history = useInputHistory({ text, editorRef, sessionId: () => sessionId ?? undefined });
+  return { text, editor, history };
 }
 
 describe('useInputHistory — push', () => {
@@ -119,20 +120,20 @@ describe('useInputHistory — recall', () => {
 
 describe('useInputHistory — caretAtTextStart', () => {
   it('is true at the very start of the text', () => {
-    const { textarea, history } = setup('hello\nworld', 0);
-    textarea.value = 'hello\nworld';
+    const { editor, history } = setup('hello\nworld', 0);
+    editor.value = 'hello\nworld';
     expect(history.caretAtTextStart()).toBe(true);
   });
 
   it('is false when the caret is on the first line but not at the start', () => {
-    const { textarea, history } = setup('hello\nworld', 3);
-    textarea.value = 'hello\nworld';
+    const { editor, history } = setup('hello\nworld', 3);
+    editor.value = 'hello\nworld';
     expect(history.caretAtTextStart()).toBe(false);
   });
 
   it('is false once the caret is past the first newline', () => {
-    const { textarea, history } = setup('hello\nworld', 8);
-    textarea.value = 'hello\nworld';
+    const { editor, history } = setup('hello\nworld', 8);
+    editor.value = 'hello\nworld';
     expect(history.caretAtTextStart()).toBe(false);
   });
 

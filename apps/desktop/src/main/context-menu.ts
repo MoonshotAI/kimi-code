@@ -5,6 +5,7 @@
 import { app, Menu } from 'electron';
 import type { MenuItemConstructorOptions, WebContents } from 'electron';
 
+import { IPC } from './ipc-channels';
 import type { TrayLocale } from './tray';
 
 // --- localization -------------------------------------------------------------
@@ -12,7 +13,8 @@ import type { TrayLocale } from './tray';
 // Same pattern as tray.ts / menu.ts: own string table, renderer pushes its
 // locale over `IPC.locale`, OS language as fallback. Every item gets an
 // explicit label — role-default labels follow the OS locale only, not the
-// in-app language (roles are kept for the native editing behavior).
+// in-app language (cut/copy/paste/selectAll stay roles for the native editing
+// behavior; undo/redo are forwarded — see below).
 interface ContextMenuStrings {
   lookUp: string;
   undo: string;
@@ -99,12 +101,19 @@ export interface EditableContextInfo {
 
 /** Right-click menu for an editable field: Look Up (macOS only, selection
  *  required; Electron has no lookUp role, hence showDefinition) plus the
- *  standard editing verbs as roles, gated by editFlags. */
+ *  standard editing verbs. Undo/redo are forwarded to the renderer via
+ *  `forwardEdit` (same path as the app Edit menu): on the ProseMirror
+ *  composer the roles' Chromium-native undo would mutate the contenteditable
+ *  DOM behind PM's back — and Chromium's canUndo/canRedo flags are invalid
+ *  for a PM-managed field anyway, so the forwarded items are always enabled
+ *  (PM's undo and the execCommand fallback both no-op on an empty stack).
+ *  Cut/copy/paste/selectAll keep their roles, gated by editFlags. */
 export function editableMenuTemplate(
   info: EditableContextInfo,
   locale: TrayLocale,
   isMac: boolean,
   showDefinition: () => void,
+  forwardEdit: (command: 'undo' | 'redo') => void,
 ): MenuItemConstructorOptions[] {
   const strings = CONTEXT_MENU_STRINGS[locale];
   const hasSelection = info.selectionText.trim().length > 0;
@@ -119,8 +128,8 @@ export function editableMenuTemplate(
           { type: 'separator' as const },
         ]
       : []),
-    { role: 'undo' as const, label: strings.undo, enabled: info.editFlags.canUndo },
-    { role: 'redo' as const, label: strings.redo, enabled: info.editFlags.canRedo },
+    { label: strings.undo, enabled: true, click: () => forwardEdit('undo') },
+    { label: strings.redo, enabled: true, click: () => forwardEdit('redo') },
     { type: 'separator' as const },
     { role: 'cut' as const, label: strings.cut, enabled: info.editFlags.canCut },
     { role: 'copy' as const, label: strings.copy, enabled: info.editFlags.canCopy },
@@ -144,6 +153,9 @@ export function installEditableContextMenu(contents: WebContents): void {
       process.platform === 'darwin',
       () => {
         if (!contents.isDestroyed()) contents.showDefinitionForSelection();
+      },
+      (command) => {
+        if (!contents.isDestroyed()) contents.send(IPC.menuAction, command);
       },
     );
     Menu.buildFromTemplate(template).popup();

@@ -21,6 +21,7 @@ import {
   setContextMenuLocale,
   type EditableContextInfo,
 } from '../../src/main/context-menu';
+import { IPC } from '../../src/main/ipc-channels';
 
 function info(overrides: Partial<EditableContextInfo> = {}): EditableContextInfo {
   return {
@@ -50,11 +51,12 @@ function findByRole(
 }
 
 describe('editableMenuTemplate', () => {
-  it('mirrors the Edit menu vocabulary, gated by editFlags', () => {
-    const template = editableMenuTemplate(info(), 'en', false, vi.fn());
+  it('mirrors the Edit menu vocabulary: cut/copy/paste/selectAll as editFlags-gated roles, undo/redo forwarded', () => {
+    const forward = vi.fn();
+    const template = editableMenuTemplate(info(), 'en', false, vi.fn(), forward);
     expect(roles(template)).toEqual([
-      'undo',
-      'redo',
+      undefined, // undo (forwarded, not a role)
+      undefined, // redo (forwarded, not a role)
       undefined, // separator
       'cut',
       'copy',
@@ -62,35 +64,43 @@ describe('editableMenuTemplate', () => {
       undefined, // separator
       'selectAll',
     ]);
-    expect(findByRole(template, 'undo')?.enabled).toBe(true);
-    expect(findByRole(template, 'redo')?.enabled).toBe(false);
+    // Forwarded undo/redo are always enabled: Chromium's canUndo/canRedo are
+    // invalid for the ProseMirror composer, and both the PM history command
+    // and the execCommand fallback no-op on an empty stack.
+    const undo = template[0];
+    const redo = template[1];
+    expect(undo).toMatchObject({ label: 'Undo', enabled: true });
+    expect(redo).toMatchObject({ label: 'Redo', enabled: true });
+    (undo as { click: () => void }).click();
+    (redo as { click: () => void }).click();
+    expect(forward.mock.calls).toEqual([['undo'], ['redo']]);
     expect(findByRole(template, 'cut')?.enabled).toBe(false);
     expect(findByRole(template, 'paste')?.enabled).toBe(true);
     expect(findByRole(template, 'selectAll')?.enabled).toBe(true);
   });
 
   it('adds Look Up and pasteAndMatchStyle on macOS only', () => {
-    const mac = editableMenuTemplate(info(), 'en', true, vi.fn());
+    const mac = editableMenuTemplate(info(), 'en', true, vi.fn(), vi.fn());
     expect(roles(mac)).toContain('pasteAndMatchStyle');
     expect(mac[0]?.label).toBe('Look Up “”');
-    const win = editableMenuTemplate(info(), 'en', false, vi.fn());
+    const win = editableMenuTemplate(info(), 'en', false, vi.fn(), vi.fn());
     expect(roles(win)).not.toContain('pasteAndMatchStyle');
-    expect(win[0]?.role).toBe('undo');
+    expect(win[0]?.label).toBe('Undo');
   });
 
   it('labels every item explicitly so the menu follows the in-app language', () => {
     // Role-default labels come from the OS locale at startup — they would mix
     // languages when the in-app language differs from the OS.
-    const zh = editableMenuTemplate(info(), 'zh', true, vi.fn());
-    expect(findByRole(zh, 'undo')?.label).toBe('撤销');
-    expect(findByRole(zh, 'redo')?.label).toBe('重做');
+    const zh = editableMenuTemplate(info(), 'zh', true, vi.fn(), vi.fn());
+    expect(zh.some((item) => item.label === '撤销')).toBe(true);
+    expect(zh.some((item) => item.label === '重做')).toBe(true);
     expect(findByRole(zh, 'cut')?.label).toBe('剪切');
     expect(findByRole(zh, 'copy')?.label).toBe('拷贝');
     expect(findByRole(zh, 'paste')?.label).toBe('粘贴');
     expect(findByRole(zh, 'pasteAndMatchStyle')?.label).toBe('粘贴并匹配样式');
     expect(findByRole(zh, 'selectAll')?.label).toBe('全选');
-    const en = editableMenuTemplate(info(), 'en', false, vi.fn());
-    expect(findByRole(en, 'undo')?.label).toBe('Undo');
+    const en = editableMenuTemplate(info(), 'en', false, vi.fn(), vi.fn());
+    expect(en.some((item) => item.label === 'Undo')).toBe(true);
     expect(findByRole(en, 'selectAll')?.label).toBe('Select All');
   });
 
@@ -101,6 +111,7 @@ describe('editableMenuTemplate', () => {
       'en',
       true,
       showDefinition,
+      vi.fn(),
     );
     expect(template[0]?.label).toBe('Look Up “transcript”');
     expect(template[0]?.enabled).toBe(true);
@@ -109,7 +120,7 @@ describe('editableMenuTemplate', () => {
   });
 
   it('Look Up is disabled with an empty selection and localized in zh', () => {
-    const template = editableMenuTemplate(info(), 'zh', true, vi.fn());
+    const template = editableMenuTemplate(info(), 'zh', true, vi.fn(), vi.fn());
     expect(template[0]?.label).toBe('查找“”');
     expect(template[0]?.enabled).toBe(false);
   });
@@ -136,6 +147,7 @@ describe('installEditableContextMenu', () => {
     let handler: ((event: unknown, params: unknown) => void) | null = null;
     return {
       showDefinitionForSelection: vi.fn(),
+      send: vi.fn(),
       isDestroyed: () => false,
       on: vi.fn((channel: string, cb: (event: unknown, params: unknown) => void) => {
         if (channel === 'context-menu') handler = cb;
@@ -167,6 +179,33 @@ describe('installEditableContextMenu', () => {
       },
     });
     expect(popupMock).toHaveBeenCalledOnce();
+  });
+
+  it('undo/redo clicks forward to the renderer over the menu-action channel', () => {
+    const contents = fakeContents();
+    installEditableContextMenu(contents as never);
+    buildMock.mockClear();
+    contents.fire({
+      isEditable: true,
+      selectionText: '',
+      editFlags: {
+        canUndo: false,
+        canRedo: false,
+        canCut: false,
+        canCopy: false,
+        canPaste: false,
+        canSelectAll: true,
+      },
+    });
+    const template = buildMock.mock.calls.at(-1)?.[0] as MenuItemConstructorOptions[];
+    const undo = template.find((item) => item.label === 'Undo');
+    const redo = template.find((item) => item.label === 'Redo');
+    (undo as { click: () => void }).click();
+    (redo as { click: () => void }).click();
+    expect(contents.send.mock.calls).toEqual([
+      [IPC.menuAction, 'undo'],
+      [IPC.menuAction, 'redo'],
+    ]);
   });
 
   it('resolves the locale from the renderer push', () => {

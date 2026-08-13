@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref, type Ref } from 'vue';
 import { useMentionMenu } from '../src/composables';
 import type { FileItem } from '@moonshot-ai/app-core/client';
+import type { TextFieldLike } from '../src/lib/textField';
 
-interface MockTextarea {
+interface MockEditor {
   value: string;
   selectionStart: number;
   setSelectionRange: (start: number, end: number) => void;
@@ -11,7 +12,7 @@ interface MockTextarea {
 }
 
 function setup(initialText = '', searchFiles?: (q: string) => Promise<FileItem[]>) {
-  const textarea: MockTextarea = {
+  const editor: MockEditor = {
     value: initialText,
     // Caret defaults to the end of the text.
     selectionStart: initialText.length,
@@ -21,14 +22,13 @@ function setup(initialText = '', searchFiles?: (q: string) => Promise<FileItem[]
     focus: () => {},
   };
   const text = ref(initialText);
-  const textareaRef = ref(textarea as unknown as HTMLTextAreaElement) as Ref<HTMLTextAreaElement | null>;
+  const editorRef = ref(editor as unknown as TextFieldLike) as Ref<TextFieldLike | null>;
   const mention = useMentionMenu({
     text,
-    textareaRef,
-    autosize: () => {},
+    editorRef,
     searchFiles: () => searchFiles,
   });
-  return { text, textarea, mention };
+  return { text, editor, mention };
 }
 
 describe('useMentionMenu — update', () => {
@@ -70,12 +70,12 @@ describe('useMentionMenu — update', () => {
 
   it('closes without searching when the query is deleted back to a bare @', async () => {
     const searchFiles = vi.fn().mockResolvedValue([{ path: 'src/a.ts', name: 'a.ts' }]);
-    const { text, textarea, mention } = setup('@a', searchFiles);
+    const { text, editor, mention } = setup('@a', searchFiles);
     mention.update();
     // Backspace the 'a' before the debounce fires.
     text.value = '@';
-    textarea.value = '@';
-    textarea.selectionStart = 1;
+    editor.value = '@';
+    editor.selectionStart = 1;
     mention.update();
     await vi.advanceTimersByTimeAsync(500);
     expect(searchFiles).not.toHaveBeenCalled();
@@ -84,12 +84,12 @@ describe('useMentionMenu — update', () => {
 
   it('stays closed when the @token is deleted before the debounce fires', async () => {
     const searchFiles = vi.fn().mockResolvedValue([{ path: 'src/a.ts', name: 'a.ts' }]);
-    const { text, textarea, mention } = setup('@a', searchFiles);
+    const { text, editor, mention } = setup('@a', searchFiles);
     mention.update();
     // Delete the whole token before the debounce fires.
     text.value = '';
-    textarea.value = '';
-    textarea.selectionStart = 0;
+    editor.value = '';
+    editor.selectionStart = 0;
     mention.update();
     await vi.advanceTimersByTimeAsync(500);
     expect(searchFiles).not.toHaveBeenCalled();
@@ -101,14 +101,14 @@ describe('useMentionMenu — update', () => {
     const searchFiles = vi.fn().mockImplementation(
       () => new Promise<FileItem[]>((resolve) => { resolveSearch = resolve; }),
     );
-    const { text, textarea, mention } = setup('@a', searchFiles);
+    const { text, editor, mention } = setup('@a', searchFiles);
     mention.update();
     await vi.advanceTimersByTimeAsync(200); // search fires
     expect(searchFiles).toHaveBeenCalledWith('a');
     // Backspace to a bare @ while the search is in flight.
     text.value = '@';
-    textarea.value = '@';
-    textarea.selectionStart = 1;
+    editor.value = '@';
+    editor.selectionStart = 1;
     mention.update();
     resolveSearch([{ path: 'src/a.ts', name: 'a.ts' }]);
     await vi.advanceTimersByTimeAsync(0);
@@ -143,8 +143,8 @@ describe('useMentionMenu — update', () => {
 
 describe('useMentionMenu — select', () => {
   it('replaces the @token with the chosen path', async () => {
-    const { text, textarea, mention } = setup('hello @a');
-    textarea.value = 'hello @a';
+    const { text, editor, mention } = setup('hello @a');
+    editor.value = 'hello @a';
     mention.select({ path: 'src/a.ts', name: 'a.ts' });
     expect(text.value).toBe('hello src/a.ts');
     expect(mention.open.value).toBe(false);
