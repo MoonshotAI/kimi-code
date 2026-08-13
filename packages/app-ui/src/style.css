@@ -299,12 +299,52 @@ html[data-color-scheme="dark"] {
   --radius-2xl: 20px;
   --radius-composer: 32px;
   --corner-shape-composer: superellipse(1.5);
+  /* Menu rows inset 6px inside a composer-radius frame: the diagonal-exact
+     concentric radius for superellipse(1.5) nesting (32 − 6.7). */
+  --radius-menu-row: 25.3px;
+  /* Menu frame and its rows share one curve — single-sourced from the
+     composer's superellipse so they never drift apart. */
+  --corner-shape-menu: var(--corner-shape-composer);
+  /* The autocomplete family's frostier surface (the dock work panel shares
+     it): 70% page background over the shared blur. */
+  --color-menu-bg-frost: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  /* Overlay scroll thumb on the autocomplete menus: 16% ink at rest, 48% on
+     hover. */
+  --color-menu-scrollbar: color-mix(in srgb, var(--color-text) 16%, transparent);
+  --color-menu-scrollbar-hover: color-mix(in srgb, var(--color-text) 48%, transparent);
   --radius-full: 999px;
 
   /* Scroll-edge mask fade distance — referenced from JS-built gradients via
-     var(), so the dock panels (and later the composer menus) track the
-     spacing scale. */
+     var(), so the dock panels and the composer menus track the spacing
+     scale. */
   --menu-scroll-fade: var(--space-5);
+
+  /* -- composer menu row geometry (slash / mention menus) -------------------
+     The frame pads --space-1-5 × --space-3; rows hug the frame's block edge
+     while their content lands on the composer's --space-4 text column, and
+     each row's 0.5px transparent border (the Chromium corner-shape
+     workaround) is absorbed into the padding so neither the text column nor
+     the row height moves. */
+  --menu-row-hug: var(--space-1-5); /* row box hugs this far from the frame edge */
+  --menu-rows-seam: 1px; /* stacked-row seam */
+  --menu-row-gap-icon: 7px; /* row icon ↔ label */
+  --menu-row-padding-block: calc(var(--menu-row-hug) - var(--p-hairline)); /* 5.5px */
+  /* 9.5px = text column (--space-4) − frame padding (--space-3) + hug − border. */
+  --menu-row-padding-inline: calc(var(--space-4) - var(--space-3) + var(--menu-row-hug) - var(--p-hairline));
+  --menu-row-touch-padding-block: 11px; /* pads the row to the 44px touch hit height */
+  /* Overlay scroll thumb (slash / mention menus): floats at the frame's
+     right edge with its OUTER side on the rows' hug line — never in the
+     layout, so rows keep their full width — and its travel clamps to the
+     straight band past the frame's corner arc (the scrollport already starts
+     --space-1-5 in, so the inset is radius − that padding). */
+  --menu-scrollbar-width: 3px;
+  /* Thumb's right offset: hug + frame hairline − width = outer side on the
+     hug line (6.5px from the frame's outer edge). */
+  --menu-scrollbar-edge: calc(var(--menu-row-hug) + var(--p-hairline) - var(--menu-scrollbar-width));
+  --menu-scrollbar-track-inset: calc(var(--radius-composer) - var(--space-1-5));
+  /* Overlay thumb's minimum height (short lists would shrink it below a
+     readable nub otherwise) — read from JS via getComputedStyle. */
+  --menu-scrollbar-thumb-min: 24px;
 
   /* Attachment chip's left padding — the composer's concentric-chip override
      pulls the icon tile left by this + --space-05 (a 2px bleed past the chip's
@@ -313,6 +353,10 @@ html[data-color-scheme="dark"] {
 
   /* -- elevation / z-index ------------------------------------------------- */
   --z-base: 0;
+  /* In-component local stacking: an element pinned just above its own
+     siblings (menu scroll thumbs, strip badges, floating pills) — never a
+     global layer, so it starts at 1 and stays off the 100s scale. */
+  --z-raised: 1;
   --z-sticky: 100;
   --z-dropdown: 200;
   --z-overlay: 300;
@@ -502,6 +546,9 @@ html[data-color-scheme="dark"] {
   --p-dock-panel-h: 320px;
   /* Subagent grid's minimum card column width. */
   --p-subagent-card-min: 180px;
+  /* Slash / mention menu scrollport caps. */
+  --p-slash-menu-h: 228px;
+  --p-mention-menu-h: 208px;
   --p-bp-sm: 640px;
   --p-bp-md: 980px;
 }

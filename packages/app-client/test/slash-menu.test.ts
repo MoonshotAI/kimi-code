@@ -65,10 +65,12 @@ describe('useSlashMenu — update', () => {
     expect(slash.items.value.map((item) => item.name)).toContain('/export');
   });
 
-  it('closes when nothing matches', () => {
+  it('opens with an empty state when nothing matches', () => {
+    // The menu stays open so it can show its "no commands" empty state.
     const { slash } = setup('/zzzznotacommand');
     slash.update();
-    expect(slash.open.value).toBe(false);
+    expect(slash.open.value).toBe(true);
+    expect(slash.items.value).toEqual([]);
   });
 
   it('closes once the token contains a space', () => {

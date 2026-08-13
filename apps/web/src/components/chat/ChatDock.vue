@@ -695,7 +695,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
   right: calc(16px + var(--panes-scrollbar-width, 0px));
   bottom: 100%;
   /* The menu family material (Menu.vue): 70% page bg over the shared blur. */
-  background: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  background: var(--color-menu-bg-frost);
   -webkit-backdrop-filter: var(--p-menu-backdrop);
   backdrop-filter: var(--p-menu-backdrop);
   border: 0.5px solid var(--color-line);

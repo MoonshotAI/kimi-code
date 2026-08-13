@@ -13,7 +13,9 @@
     "./transcript": "./src/transcript/index.ts"
   },
   "dependencies": {
-    "@moonshot-ai/transcript": "workspace:^"
+    "@moonshot-ai/transcript": "workspace:^",
+    "fuse.js": "^7.5.0",
+    "pinyin-pro": "^3.28.2"
   },
   "peerDependencies": {
     "shiki": "^4.3.0",

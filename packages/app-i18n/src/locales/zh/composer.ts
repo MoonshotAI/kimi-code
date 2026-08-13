@@ -22,6 +22,7 @@ export default {
   uploading: '上传中',
   uploadFailed: '上传失败',
   attachFile: '添加附件',
+  noCommands: '无匹配命令',
   previewAttachment: '预览 {name}',
   interrupt: '中断',
   interruptTitle: '中断当前操作',

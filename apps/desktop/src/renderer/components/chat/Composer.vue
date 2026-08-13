@@ -217,6 +217,7 @@ const history = useInputHistory({ text, textareaRef, autosize, sessionId: () => 
 const {
   open: slashOpen,
   items: slashItems,
+  ranges: slashRanges,
   active: slashActive,
   update: updateSlashMenu,
   select: selectSlashCommand,
@@ -231,6 +232,32 @@ const {
   emitCommand: (cmd) => emit('command', { cmd, attachments: [] }),
   historyPush: (entry) => history.push(entry),
   clearDraft,
+  // Built-in descs are i18n keys — resolve them so filtering (and its pinyin
+  // matching) works over display text.
+  resolveDesc: (item) => (item.isSkill ? item.desc : t(item.desc)),
+});
+
+// The `/token` text driving the slash menu — passed down so matches in the
+// command names can be highlighted.
+const slashQuery = computed(() =>
+  text.value.startsWith('/') && !text.value.includes(' ') ? text.value.slice(1) : '',
+);
+
+// Combobox semantics for the autocomplete menus (slash / mention): the
+// textarea keeps focus while a menu is open, so it must advertise expansion,
+// the open menu, and the active row for assistive tech.
+const menuAriaControls = computed(() => {
+  if (slashOpen.value) return 'composer-slash-menu';
+  if (mentionOpen.value) return 'composer-mention-menu';
+  return undefined;
+});
+const menuAriaActiveDescendant = computed(() => {
+  if (slashOpen.value && slashItems.value.length > 0) return `composer-slash-option-${slashActive.value}`;
+  // While a new search loads, the menu shows its loading branch with every
+  // role="option" node unmounted — pointing aria-activedescendant at the
+  // stale row would reference an element that isn't there.
+  if (mentionOpen.value && !mentionLoading.value && mentionItems.value.length > 0) return `composer-mention-option-${mentionActive.value}`;
+  return undefined;
 });
 
 // ---------------------------------------------------------------------------
@@ -601,8 +628,23 @@ function handleKeydown(e: KeyboardEvent): void {
     }
   }
 
-  // Slash menu navigation
+  // Slash menu navigation. Escape closes even the empty ("no commands") menu —
+  // arrows/Enter/Tab only apply with items; an empty menu lets Enter fall
+  // through to the normal submit.
   if (slashOpen.value) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      slashOpen.value = false;
+      return;
+    }
+    // An empty ("no commands") menu has nothing to select — let Tab move
+    // focus on, but close the menu so it can't strand the popup open.
+    if (e.key === 'Tab' && slashItems.value.length === 0) {
+      slashOpen.value = false;
+      return;
+    }
+  }
+  if (slashOpen.value && slashItems.value.length > 0) {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       slashActive.value = (slashActive.value + 1) % slashItems.value.length;
@@ -617,11 +659,6 @@ function handleKeydown(e: KeyboardEvent): void {
       e.preventDefault();
       const item = slashItems.value[slashActive.value];
       if (item) selectSlashCommand(item);
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      slashOpen.value = false;
       return;
     }
   }
@@ -682,16 +719,26 @@ function handleKeydown(e: KeyboardEvent): void {
   // ArrowUp did nothing ("only one step back"). Walking freely while browsing
   // fixes that; typing exits history (handleInput resets browsing), after which
   // the arrows move the caret normally again.
-  if (!expanded.value && !slashOpen.value && !mentionOpen.value && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+  // An empty-result slash menu is only the status note — it must not
+  // block history recall.
+  const slashMenuBlocking = slashOpen.value && slashItems.value.length > 0;
+  if (!expanded.value && !slashMenuBlocking && !mentionOpen.value && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
     const browsing = history.isBrowsing();
     if (e.key === 'ArrowUp' && history.hasHistory() && (browsing || history.caretAtTextStart())) {
       e.preventDefault();
       history.recallOlder();
+      // Recall rewrites `text` directly, bypassing handleInput. Close the
+      // slash menu outright rather than recompute it — recomputing would
+      // reopen a populated menu when the recalled entry is a bare command
+      // ('/new'), and the menu's arrow-key branch would then swallow the
+      // next history step. Typing reopens the menu via handleInput.
+      slashOpen.value = false;
       return;
     }
     if (e.key === 'ArrowDown' && browsing) {
       e.preventDefault();
       history.recallNewer();
+      slashOpen.value = false;
       return;
     }
   }
@@ -1050,7 +1097,16 @@ function scheduleMenuDescriptionMeasure(): void {
   });
 }
 
-watch(locale, scheduleMenuDescriptionMeasure, { immediate: true });
+watch(
+  locale,
+  () => {
+    scheduleMenuDescriptionMeasure();
+    // Descriptions change language — re-filter an open slash menu so the
+    // results (and their highlight ranges) match the new text.
+    if (slashOpen.value) updateSlashMenu();
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
   scheduleMenuDescriptionMeasure();
@@ -1221,7 +1277,9 @@ function selectModel(modelId: string): void {
         <SlashMenu
           v-if="slashOpen"
           :items="slashItems"
+          :ranges="slashRanges"
           :active-index="slashActive"
+          :query="slashQuery"
           @select="selectSlashCommand"
           @hover="slashActive = $event"
         />
@@ -1246,6 +1304,12 @@ function selectModel(modelId: string): void {
             autocomplete="off"
             spellcheck="false"
             rows="1"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            :aria-expanded="!!menuAriaControls"
+            :aria-controls="menuAriaControls"
+            :aria-activedescendant="menuAriaActiveDescendant"
             @keydown="handleKeydown"
             @compositionstart="handleCompositionStart"
             @compositionend="handleCompositionEnd"

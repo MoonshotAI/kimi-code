@@ -1,7 +1,7 @@
 // packages/app-client/src/composables/useSlashMenu.ts
 import { nextTick, ref, type Ref } from 'vue';
 import type { AppSkill } from '@moonshot-ai/app-core/api';
-import { buildSlashItems, filterCommands, type SlashCommand } from '@moonshot-ai/app-core/lib';
+import { buildSlashItems, filterCommandMatches, type SlashCommand, type SlashMatchRanges } from '@moonshot-ai/app-core/lib';
 
 export interface SlashMenuDeps {
   /** The live composer text — drives filtering and is rewritten on select. */
@@ -22,6 +22,12 @@ export interface SlashMenuDeps {
    * is not left behind if the Composer unmounts before the text watcher flushes.
    */
   clearDraft?: () => void;
+  /**
+   * Map an item to its display description (built-in descs are i18n keys, so
+   * callers with a `t()` should pass one). Optional so the composable stays
+   * usable outside a setup context; defaults to the raw `desc`.
+   */
+  resolveDesc?: (item: SlashCommand) => string;
 }
 
 /**
@@ -33,20 +39,25 @@ export interface SlashMenuDeps {
  * when an item is chosen.
  */
 export function useSlashMenu(deps: SlashMenuDeps) {
-  const { text, textareaRef, autosize, skills, emitCommand, historyPush, clearDraft } = deps;
+  const { text, textareaRef, autosize, skills, emitCommand, historyPush, clearDraft, resolveDesc } = deps;
 
   const open = ref(false);
   const items = ref<SlashCommand[]>([]);
+  const ranges = ref<SlashMatchRanges[]>([]);
   const active = ref(0);
 
   function update(): void {
     const val = text.value;
-    // Only show if the value starts with `/` and has no space yet (single token).
-    if (val.startsWith('/') && !val.includes(' ')) {
+    // Open on any single `/token` — even with zero matches, so the menu can
+    // show its empty state instead of silently staying shut. Any whitespace
+    // (a pasted newline or Tab) means real text, not a command token.
+    if (/^\/\S*$/.test(val)) {
       // Built-in commands + the active session's skills (shown as /<skill-name>).
-      items.value = filterCommands(val, buildSlashItems(skills()));
+      const matches = filterCommandMatches(val, buildSlashItems(skills()), resolveDesc);
+      items.value = matches.map((match) => match.item);
+      ranges.value = matches.map((match) => match.ranges);
       active.value = 0;
-      open.value = items.value.length > 0;
+      open.value = true;
     } else {
       open.value = false;
     }
@@ -75,5 +86,5 @@ export function useSlashMenu(deps: SlashMenuDeps) {
     emitCommand(item.name);
   }
 
-  return { open, items, active, update, select };
+  return { open, items, ranges, active, update, select };
 }

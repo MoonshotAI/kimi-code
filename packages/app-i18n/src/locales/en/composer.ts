@@ -22,6 +22,7 @@ export default {
   uploading: 'Uploading',
   uploadFailed: 'Upload failed',
   attachFile: 'Attach file',
+  noCommands: 'No commands',
   previewAttachment: 'Preview {name}',
   interrupt: 'Interrupt',
   interruptTitle: 'Interrupt current operation',
