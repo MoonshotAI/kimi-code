@@ -13,7 +13,6 @@ import { LifecycleScope } from '#/app/scopes';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
 import {
-  _clearContributedServicesForTests,
   _clearFeatureRecipesForTests,
   getContributedServices,
   registerFeature,
@@ -26,7 +25,6 @@ describe('DebugEventsFeature — App-scope introspection service', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
     _clearFeatureRecipesForTests();
-    _clearContributedServicesForTests();
     registerScopedService(
       LifecycleScope.App,
       IFeatureManager,

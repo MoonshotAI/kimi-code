@@ -53,7 +53,3 @@ export function recordContributedService(
 export function getContributedServices(): ReadonlyArray<ContributedServiceRecord> {
   return _contributedServices;
 }
-
-export function _clearContributedServicesForTests(): void {
-  _contributedServices.length = 0;
-}

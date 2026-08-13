@@ -21,7 +21,6 @@ import { Feature } from '#/features/feature';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
 import {
-  _clearContributedServicesForTests,
   _clearFeatureRecipesForTests,
   getContributedServices,
   registerFeature,
@@ -72,7 +71,6 @@ describe('Feature — built-in capability assembly (src/features)', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
     _clearFeatureRecipesForTests();
-    _clearContributedServicesForTests();
     registerScopedService(
       LifecycleScope.App,
       IFeatureManager,

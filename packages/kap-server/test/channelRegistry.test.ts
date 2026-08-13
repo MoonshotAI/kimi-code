@@ -1,17 +1,12 @@
 import {
-  _clearContributedServicesForTests,
   createDecorator,
   recordContributedService,
 } from '@moonshot-ai/agent-core-v2';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { resolveAnyScopedServiceId } from '../src/transport/channelRegistry';
 
 describe('channelRegistry', () => {
-  beforeEach(() => {
-    _clearContributedServicesForTests();
-  });
-
   it('stops resolving a contributed service after its provider withdraws', () => {
     const id = createDecorator<unknown>('test-contributed-service');
     const provider = recordContributedService('agent', id);
