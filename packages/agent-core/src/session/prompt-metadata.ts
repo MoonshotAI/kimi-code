@@ -98,6 +98,6 @@ const SAFE_FILENAME_EXTENSIONS = new Set([
 // than 8 alphanumerics (e.g. a JWT segment boundary) is not an extension.
 function isFileNameStem(stem: string, following: string): boolean {
   if (!/[-_]/.test(stem)) return false;
-  const extension = /^\.([A-Za-z0-9]{1,8})(?![A-Za-z0-9_])/.exec(following)?.[1];
+  const extension = /^\.([A-Za-z0-9]{1,8})(?![A-Za-z0-9+/=_-])/.exec(following)?.[1];
   return extension !== undefined && SAFE_FILENAME_EXTENSIONS.has(extension.toLowerCase());
 }

@@ -95,6 +95,7 @@ describe('prompt metadata sanitization', () => {
     expect(sanitize(`cat ${'A1b2'.repeat(13)}.json`)).toBe('cat [redacted].json');
     expect(sanitize('检查 sk-project-notes-2024.md')).toBe('检查 [redacted].md');
     expect(sanitize('refact-000-08-12-external-hooks-feature-scopes.json')).toBe('[redacted].json');
+    expect(sanitize(`${'A1b2'.repeat(10)}_.ts-${'Z9y8'.repeat(12)}`)).toBe('[redacted].[redacted]');
   });
 
   it('still redacts JWT segments joined by dots', () => {
