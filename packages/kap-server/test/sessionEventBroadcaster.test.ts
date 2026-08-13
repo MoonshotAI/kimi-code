@@ -1220,6 +1220,10 @@ describe('SessionEventBroadcaster', () => {
           install: { running: true, step: 'download', percent: 42 },
         },
       });
+      // Progress ticks are live-only (volatile, not journaled); the plugin
+      // change signal stays durable so a reconnecting client can replay it.
+      expect(globalView.envelopes[0]!.volatile).toBeUndefined();
+      expect(globalView.envelopes[1]!.volatile).toBe(true);
     });
 
     it('drops malformed event.capability.changed payloads', async () => {

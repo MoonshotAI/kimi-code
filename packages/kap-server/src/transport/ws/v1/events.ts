@@ -253,6 +253,10 @@ export const VOLATILE_EVENT_TYPES = [
   'shell.completed',
   'agent.status.updated',
   'event.di.unit_changed',
+  // Live-only install progress (per-chunk download ticks) — durable journaling
+  // would persist hundreds of stale frames per install. The settle frame is
+  // recoverable via a direct capability read, so the whole type stays volatile.
+  'event.capability.changed',
 ] as const;
 
 export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];
