@@ -805,6 +805,10 @@ export class GoogleGenAIChatProvider implements ChatProvider {
 
       const params = { model: this._model, contents, config };
 
+      options?.onRequestPrepared?.({
+        maxCompletionTokens:
+          typeof config['maxOutputTokens'] === 'number' ? config['maxOutputTokens'] : undefined,
+      });
       options?.onRequestSent?.();
       if (this._stream) {
         const stream = await Promise.race([

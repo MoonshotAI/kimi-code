@@ -1019,6 +1019,10 @@ export class AnthropicChatProvider implements ChatProvider {
     }
     const finalRequestOptions = Object.keys(requestOptions).length > 0 ? requestOptions : undefined;
     const client = this._createClient(options?.auth);
+    options?.onRequestPrepared?.({
+      maxCompletionTokens:
+        typeof createParams['max_tokens'] === 'number' ? createParams['max_tokens'] : undefined,
+    });
     options?.onRequestSent?.();
 
     if (this._stream) {

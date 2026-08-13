@@ -100,7 +100,7 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
-  it('clamps the LLM completion cap to 128k for openai-compatible providers', async () => {
+  it('honors an explicit maxOutputSize above the 128k transport ceiling', async () => {
     let requestMaxTokens: unknown;
     const ctx = testAgent({
       generate: async (provider) => {
@@ -147,9 +147,10 @@ describe('ConfigState model capabilities', () => {
       signal: new AbortController().signal,
     });
 
-    // maxOutputSize (384000) is clamped to the 128k ceiling applied to
-    // non-Kimi chat-completions providers.
-    expect(requestMaxTokens).toBe(131072);
+    // maxOutputSize (384000) is an authoritative declared limit: the 128k
+    // transport ceiling only applies to inferred budgets, so the explicit
+    // value reaches the wire as-is.
+    expect(requestMaxTokens).toBe(384000);
   });
 
   it('warns and sends when an Anthropic effort is not listed by the model', async () => {

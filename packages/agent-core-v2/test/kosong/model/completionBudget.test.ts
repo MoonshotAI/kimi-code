@@ -72,6 +72,7 @@ describe('completionBudgetParams (the budget fold)', () => {
       }),
     ).toEqual({
       maxCompletionTokens: 8192,
+      maxCompletionTokensExplicit: true,
       usedContextTokens: 5000,
       maxContextTokens: 128000,
     });
@@ -86,5 +87,16 @@ describe('completionBudgetParams (the budget fold)', () => {
     expect(params?.maxCompletionTokens).toBe(8192);
     expect(params?.maxContextTokens).toBe(128000);
     expect(params?.usedContextTokens).toBeUndefined();
+  });
+
+  it('marks hardCap-sourced caps explicit and inferred caps non-explicit', () => {
+    expect(
+      completionBudgetParams({ budget: { hardCap: 8192 }, capability: capability(128000) })
+        ?.maxCompletionTokensExplicit,
+    ).toBe(true);
+    expect(
+      completionBudgetParams({ budget: { fallback: 300 }, capability: capability(128000) })
+        ?.maxCompletionTokensExplicit,
+    ).toBe(false);
   });
 });

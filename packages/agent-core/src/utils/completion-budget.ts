@@ -90,5 +90,6 @@ export function applyCompletionBudget(args: {
   return args.provider.withMaxCompletionTokens(cap, {
     usedContextTokens: args.usedContextTokens,
     maxContextTokens: args.capability?.max_context_tokens,
+    explicit: args.budget.hardCap !== undefined,
   });
 }

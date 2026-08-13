@@ -50,6 +50,7 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 import { ProtocolErrors } from '#/kosong/protocol/errors';
 
 import {
+  clampCompletionTokens,
   convertOpenAIError,
   hasModelPrefix,
   isMediaPart,
@@ -1123,15 +1124,10 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     }
 
     if (options?.maxCompletionTokens !== undefined) {
-      let cap = options.maxCompletionTokens;
-      if (
-        options.usedContextTokens !== undefined &&
-        options.maxContextTokens !== undefined &&
-        options.maxContextTokens > 0
-      ) {
-        cap = Math.min(cap, options.maxContextTokens - options.usedContextTokens);
-      }
-      kwargs = { ...kwargs, max_output_tokens: Math.max(1, cap) };
+      kwargs = {
+        ...kwargs,
+        max_output_tokens: clampCompletionTokens(options.maxCompletionTokens, options),
+      };
     }
 
     const reasoningEffort = kwargs['reasoning_effort'] as string | undefined;
@@ -1183,6 +1179,9 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         );
       }
 
+      options?.onRequestPrepared?.({
+        maxCompletionTokens: readNumberField(createParams, 'max_output_tokens'),
+      });
       options?.onRequestSent?.();
       const response = await (
         client.responses as {
