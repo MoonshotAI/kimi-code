@@ -243,6 +243,16 @@ describe('TasksBrowserApp — full-screen rendering', () => {
     expect(out).toContain('listening on :3000');
   });
 
+  it('removes carriage returns from Windows task output so frames stay aligned', () => {
+    const lines = makeApp({
+      tasks: [task({ taskId: 'bash-aaaaaaaa' })],
+      selectedTaskId: 'bash-aaaaaaaa',
+      tailOutput: 'Reply from 127.0.0.1: time<1ms TTL=128\r\nReply from 127.0.0.1: time<1ms TTL=128\r\n',
+    }).render(120);
+
+    expect(lines.every((line) => !line.includes('\r'))).toBe(true);
+  });
+
   it('shows a loading state when tail is loading', () => {
     const out = strip(
       makeApp({
