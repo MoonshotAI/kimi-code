@@ -60,6 +60,7 @@ export default {
   signIn: 'Sign in',
   defaultUserName: 'Kimi User',
   upgrade: 'Upgrade',
+  upgradeMembership: 'Upgrade membership',
   logoutConfirmTitle: 'Sign out',
   logoutConfirmMessage: 'Are you sure you want to sign out?',
   language: 'Language',

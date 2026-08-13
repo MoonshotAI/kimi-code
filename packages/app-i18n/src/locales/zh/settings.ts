@@ -43,7 +43,7 @@ export default {
     durationHour: '{n} 小时',
     durationMinute: '{n} 分钟',
     durationSecond: '{n} 秒',
-    usedPct: '已用 {pct}%',
+    usedPct: '已使用 {pct}%',
     boosterTitle: '加油包',
     boosterBalance: '余额',
     monthlyUsed: '本月已用',

@@ -358,7 +358,7 @@ async function onLogout(): Promise<void> {
           </MenuItem>
           <MenuItem v-if="showUpgrade" @click="onUpgrade" @mouseenter="scheduleSubmenuClose">
             <Icon name="music" size="sm" />
-            <span class="user-menu-item-label">{{ t('sidebar.upgrade') }}</span>
+            <span class="user-menu-item-label">{{ t('sidebar.upgradeMembership') }}</span>
             <Icon name="external-link" size="sm" />
           </MenuItem>
           <MenuItem separator />
@@ -451,7 +451,7 @@ async function onLogout(): Promise<void> {
                 <span v-if="resetHint(row)" class="user-menu-usage-hint">{{ resetHint(row) }}</span>
               </span>
               <span class="user-menu-usage-value" :class="`sev-${usageSeverity(row.used, row.limit)}`">
-                {{ usagePercent(row.used, row.limit) }}%
+                {{ t('settings.planUsage.usedPct', { pct: usagePercent(row.used, row.limit) }) }}
               </span>
             </div>
           </div>
@@ -566,11 +566,21 @@ async function onLogout(): Promise<void> {
   transform: scale(0.97) translateY(var(--menu-pop-shift, 2px));
 }
 
+/* This menu runs one step above the §03 default density (product call):
+   base-size labels and taller rows; the flyout panels follow suit. Horizontal
+   inset stays at the primitive's 9px so long labels (e.g. en "Upgrade
+   membership") still fit narrow sidebars. */
+.user-menu .ui-menu-item,
+.user-submenu .ui-menu-item {
+  padding: var(--space-2) 9px;
+  font-size: var(--text-base);
+}
+
 .user-menu-usage {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 5px 9px 7px;
+  gap: var(--space-1-5);
+  padding: var(--space-2) var(--space-3);
 }
 .user-menu-usage-state {
   display: flex;
@@ -579,7 +589,7 @@ async function onLogout(): Promise<void> {
   gap: var(--space-2);
   padding: var(--space-1) 0;
   color: var(--color-text-muted);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
 }
 .user-menu-usage-error {
   flex: 1;
@@ -598,25 +608,25 @@ async function onLogout(): Promise<void> {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--space-05);
 }
 .user-menu-usage-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   color: var(--color-text);
 }
 .user-menu-usage-hint {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   color: var(--color-text-faint);
 }
 .user-menu-usage-value {
   flex: none;
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   color: var(--color-text);
   font-variant-numeric: tabular-nums;
@@ -646,7 +656,7 @@ async function onLogout(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   color: var(--color-text-faint);
 }
 </style>

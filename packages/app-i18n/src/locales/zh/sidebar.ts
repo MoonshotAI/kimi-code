@@ -59,6 +59,7 @@ export default {
   signIn: '登录',
   defaultUserName: 'Kimi 用户',
   upgrade: '升级',
+  upgradeMembership: '会员升级',
   logoutConfirmTitle: '退出登录',
   logoutConfirmMessage: '确定要退出当前账号吗？',
   language: '语言',
