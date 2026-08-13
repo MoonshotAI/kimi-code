@@ -94,10 +94,15 @@ const SAFE_FILENAME_EXTENSIONS = new Set([
 
 // A long token-shaped word stays readable only as the stem of a human-named
 // slug (contains `-`/`_`) of a text/code file, e.g.
-// `refact-000-08-12-external-hooks-feature-scopes.ts`. A dot followed by more
-// than 8 alphanumerics (e.g. a JWT segment boundary) is not an extension.
+// `refact-000-08-12-external-hooks-feature-scopes.test.ts`. Compound suffixes
+// are judged by their final component; a dotted segment longer than 8
+// alphanumerics (e.g. a JWT segment) is not an extension, and anything that
+// continues with another dot or token character after the suffix is not a
+// file name either.
 function isFileNameStem(stem: string, following: string): boolean {
   if (!/[-_]/.test(stem)) return false;
-  const extension = /^\.([A-Za-z0-9]{1,8})(?![A-Za-z0-9+/=_-])/.exec(following)?.[1];
-  return extension !== undefined && SAFE_FILENAME_EXTENSIONS.has(extension.toLowerCase());
+  const suffix = /^((?:\.[A-Za-z0-9]{1,8})+)(?![.A-Za-z0-9+/=_-])/.exec(following)?.[1];
+  if (suffix === undefined) return false;
+  const extension = suffix.slice(suffix.lastIndexOf('.') + 1);
+  return SAFE_FILENAME_EXTENSIONS.has(extension.toLowerCase());
 }

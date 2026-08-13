@@ -68,6 +68,9 @@ describe('prompt metadata sanitization', () => {
     expect(sanitize('打开 src/refact-000-08-12-external-hooks-feature-scopes.md')).toBe(
       '打开 src/refact-000-08-12-external-hooks-feature-scopes.md',
     );
+    expect(sanitize('跑下 refact-000-08-12-external-hooks-feature-scopes.test.ts')).toBe(
+      '跑下 refact-000-08-12-external-hooks-feature-scopes.test.ts',
+    );
   });
 
   it('still redacts bare long tokens, sk- keys, and git SHAs', () => {
@@ -81,6 +84,9 @@ describe('prompt metadata sanitization', () => {
     expect(sanitize(`cat ${'A1b2'.repeat(13)}.json`)).toBe('cat [redacted].json');
     expect(sanitize('检查 sk-project-notes-2024.md')).toBe('检查 [redacted].md');
     expect(sanitize('refact-000-08-12-external-hooks-feature-scopes.json')).toBe('[redacted].json');
+    expect(sanitize('refact-000-08-12-external-hooks-feature-scopes.ts.json')).toBe(
+      '[redacted].ts.json',
+    );
     expect(sanitize(`${'A1b2'.repeat(10)}_.ts-${'Z9y8'.repeat(12)}`)).toBe('[redacted].[redacted]');
   });
 
