@@ -101,12 +101,18 @@ const SAFE_FILENAME_EXTENSIONS = new Set([
 // `refact-000-08-12-external-hooks-feature-scopes.test.ts`. The stem must be
 // all-lowercase slug characters (`a-z0-9_-`) with at least one `-`/`_`
 // separator — machine-generated tokens are mixed-case with overwhelming
-// probability and never qualify. Compound suffixes are judged by their final
-// component; a dotted segment longer than 8 alphanumerics (e.g. a JWT
-// segment) is not an extension, and anything that continues with another dot
-// or token character after the suffix is not a file name either.
+// probability and never qualify — and a safe extension must follow.
 function isFileNameStem(stem: string, following: string): boolean {
   if (!/^(?=.*[-_])[a-z0-9_-]+$/.test(stem)) return false;
+  return safeSuffixFollows(following);
+}
+
+// A dotted suffix counts as a file extension only when its final component
+// is a safe text/code extension; a dotted segment longer than 8
+// alphanumerics (e.g. a JWT segment) is not an extension, and anything that
+// continues with another dot or token character after the suffix is not a
+// file name either.
+function safeSuffixFollows(following: string): boolean {
   const suffix = /^((?:\.[A-Za-z0-9]{1,8})+)(?![.A-Za-z0-9+/=_-])/.exec(following)?.[1];
   if (suffix === undefined) return false;
   const extension = suffix.slice(suffix.lastIndexOf('.') + 1);
@@ -117,12 +123,15 @@ function isFileNameStem(stem: string, following: string): boolean {
 // relative, e.g. `/Users/.../refact-...-scopes.ts` or `src/.../README.md`.
 // Every directory segment must stay below the 40-char token threshold and
 // look like a human-named word (lowercase, Capitalized, or ALL-CAPS like
-// `README`); the basename may additionally be a long slug passing the
-// file-name rule above. An extensionless match needs stronger context — at
-// least three segments, each no longer than a natural directory name — so
-// slash-joined token material like `<32 lowercase chars>/<32 lowercase
-// chars>` fails closed, as do mixed-case random segments and token-length
-// basenames (e.g. `/tmp/<48-char token>`).
+// `README`). The basename is more flexible: a long slug must pass the strict
+// file-name rule above, but below the token threshold it cannot be a
+// catch-all secret on its own, so normal code-file casing (camelCase /
+// PascalCase / kebab / snake) with a safe suffix stays readable. An
+// extensionless match needs stronger context — at least three segments, each
+// no longer than a natural directory name — so slash-joined token material
+// like `<32 lowercase chars>/<32 lowercase chars>` fails closed, as do
+// mixed-case random segments and token-length basenames (e.g.
+// `/tmp/<48-char token>`).
 function isPathLike(match: string, following: string): boolean {
   if (!match.includes('/')) return false;
   const segments = match.split('/');
@@ -130,6 +139,9 @@ function isPathLike(match: string, following: string): boolean {
   const base = segments[segments.length - 1];
   if (!directories.every(isWordShapedSegment)) return false;
   if (isFileNameStem(base, following)) return true;
+  if (base.length < 40 && /^[A-Za-z][A-Za-z0-9_-]*$/.test(base) && safeSuffixFollows(following)) {
+    return true;
+  }
   if (!isWordShapedSegment(base)) return false;
   return segments.length >= 3 && segments.every((segment) => segment.length <= 24);
 }

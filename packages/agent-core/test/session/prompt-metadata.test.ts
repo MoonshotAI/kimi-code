@@ -125,6 +125,9 @@ describe('prompt metadata sanitization', () => {
     ).toBe(
       '看下 /Users/alice/Projects/kimi-code-workspace/refact-000-08-12-external-hooks-feature-scopes.ts',
     );
+    expect(sanitize('看下 packages/agent-core-v2/src/agent/prompt/promptMetadataText.ts')).toBe(
+      '看下 packages/agent-core-v2/src/agent/prompt/promptMetadataText.ts',
+    );
     expect(sanitize(`cat /tmp/${'Ab1c'.repeat(12)}`)).toBe('cat /[redacted]');
     expect(sanitize(`token ${'Ab1c'.repeat(10)}/${'Z9x8'.repeat(10)}`)).toBe('token [redacted]');
     expect(sanitize(`token ${'a'.repeat(32)}/${'b'.repeat(32)}`)).toBe('token [redacted]');

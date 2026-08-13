@@ -65,6 +65,10 @@ const SAFE_FILENAME_EXTENSIONS = new Set([
 
 function isFileNameStem(stem: string, following: string): boolean {
   if (!/^(?=.*[-_])[a-z0-9_-]+$/.test(stem)) return false;
+  return safeSuffixFollows(following);
+}
+
+function safeSuffixFollows(following: string): boolean {
   const suffix = /^((?:\.[A-Za-z0-9]{1,8})+)(?![.A-Za-z0-9+/=_-])/.exec(following)?.[1];
   if (suffix === undefined) return false;
   const extension = suffix.slice(suffix.lastIndexOf('.') + 1);
@@ -78,6 +82,9 @@ function isPathLike(match: string, following: string): boolean {
   const base = segments[segments.length - 1];
   if (!directories.every(isWordShapedSegment)) return false;
   if (isFileNameStem(base, following)) return true;
+  if (base.length < 40 && /^[A-Za-z][A-Za-z0-9_-]*$/.test(base) && safeSuffixFollows(following)) {
+    return true;
+  }
   if (!isWordShapedSegment(base)) return false;
   return segments.length >= 3 && segments.every((segment) => segment.length <= 24);
 }
