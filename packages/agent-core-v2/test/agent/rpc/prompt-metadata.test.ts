@@ -94,6 +94,17 @@ describe('prompt metadata sanitization', () => {
     );
   });
 
+  it('keeps absolute paths readable but redacts token-looking segments', () => {
+    expect(sanitize('cd /Users/moonshot/Projects/kimi-code-workspace/')).toBe(
+      'cd /Users/moonshot/Projects/kimi-code-workspace/',
+    );
+    expect(
+      sanitize('看下 /Users/moonshot/Projects/kimi-code-workspace/kimi-code/packages/README.md'),
+    ).toBe('看下 /Users/moonshot/Projects/kimi-code-workspace/kimi-code/packages/README.md');
+    expect(sanitize(`cat /tmp/${'Ab1c'.repeat(12)}`)).toBe('cat /[redacted]');
+    expect(sanitize(`token ${'Ab1c'.repeat(10)}/${'Z9x8'.repeat(10)}`)).toBe('token [redacted]');
+  });
+
   it('still redacts JWT segments joined by dots', () => {
     const jwt = `eyJhbGciOiJIUzI1NiJ9.${'a'.repeat(45)}.${'b'.repeat(43)}`;
     expect(sanitize(`jwt ${jwt}`)).toBe('jwt eyJhbGciOiJIUzI1NiJ9.[redacted].[redacted]');

@@ -72,7 +72,10 @@ function sanitizeAndTruncatePromptText(text: string, maxLength: number): string 
     .replaceAll(
       /\b[A-Za-z0-9][A-Za-z0-9+/=_-]{39,}\b/g,
       (match: string, offset: number, source: string) =>
-        isFileNameStem(match, source.slice(offset + match.length)) ? match : '[redacted]',
+        isFileNameStem(match, source.slice(offset + match.length)) ||
+        isAbsolutePath(match, offset, source)
+          ? match
+          : '[redacted]',
     )
     .replaceAll(/\p{Cc}+/gu, ' ')
     .replaceAll(/\s+/g, ' ')
@@ -108,4 +111,15 @@ function isFileNameStem(stem: string, following: string): boolean {
   if (suffix === undefined) return false;
   const extension = suffix.slice(suffix.lastIndexOf('.') + 1);
   return SAFE_FILENAME_EXTENSIONS.has(extension.toLowerCase());
+}
+
+// A long token-shaped word also stays readable as an absolute path, e.g.
+// `/Users/.../kimi-code-workspace/`. The match must be rooted (preceded by
+// `/`) and every `/`-separated segment must stay below the 40-char token
+// threshold — a path containing a token-length segment (e.g.
+// `/tmp/<48-char token>`) is redacted as a whole instead.
+function isAbsolutePath(match: string, offset: number, source: string): boolean {
+  if (offset === 0 || source[offset - 1] !== '/') return false;
+  if (!match.includes('/')) return false;
+  return match.split('/').every((segment) => segment.length < 40);
 }

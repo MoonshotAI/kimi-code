@@ -42,7 +42,10 @@ export function promptMetadataTextFromText(text: string): string | undefined {
     .replaceAll(
       /\b[A-Za-z0-9][A-Za-z0-9+/=_-]{39,}\b/g,
       (match: string, offset: number, source: string) =>
-        isFileNameStem(match, source.slice(offset + match.length)) ? match : '[redacted]',
+        isFileNameStem(match, source.slice(offset + match.length)) ||
+        isAbsolutePath(match, offset, source)
+          ? match
+          : '[redacted]',
     )
     .replaceAll(/\p{Cc}+/gu, ' ')
     .replaceAll(/\s+/g, ' ')
@@ -65,6 +68,12 @@ function isFileNameStem(stem: string, following: string): boolean {
   if (suffix === undefined) return false;
   const extension = suffix.slice(suffix.lastIndexOf('.') + 1);
   return SAFE_FILENAME_EXTENSIONS.has(extension.toLowerCase());
+}
+
+function isAbsolutePath(match: string, offset: number, source: string): boolean {
+  if (offset === 0 || source[offset - 1] !== '/') return false;
+  if (!match.includes('/')) return false;
+  return match.split('/').every((segment) => segment.length < 40);
 }
 
 function promptPartText(part: ContentPart): string | undefined {
