@@ -1,5 +1,13 @@
 # @moonshot-ai/pi-tui
 
+## 0.84.2
+
+### Patch Changes
+
+- [#2830](https://github.com/MoonshotAI/kimi-code/pull/2830) [`ec84a6f`](https://github.com/MoonshotAI/kimi-code/commit/ec84a6f9a3eb35e1118f8a327f7a11b3978a899c) Thanks [@liruifengv](https://github.com/liruifengv)! - Add fullscreen groundwork to the alternate-screen renderer: `ScrollView.canScroll`, `TuiAltScreen.getLayoutRoot()`, and viewport navigation keys (PageUp/PageDown/Home/End and friends) now fall through to the focused component when the primary scroll view has nothing to scroll. Terminal focus in/out reports are no longer consumed by the viewport input handler, so app-level listeners (focus-aware notifications, clipboard-image hints) keep working in fullscreen.
+
+- [#2830](https://github.com/MoonshotAI/kimi-code/pull/2830) [`ec84a6f`](https://github.com/MoonshotAI/kimi-code/commit/ec84a6f9a3eb35e1118f8a327f7a11b3978a899c) Thanks [@liruifengv](https://github.com/liruifengv)! - Re-baseline the fork on upstream pi-tui v0.84.1 plus upstream main up to `40a3d85` (2026-08-11), which adds the fullscreen transcript search (`ctrl+shift+f`), single-line scroll actions, the ~9-18x alternate-screen render-churn reduction, and an SSH-aware escape-timeout default. The upstream renderer is now split into main-screen and alternate-screen implementations (the `TUI` class is now an interface implemented by `TuiMainScreen` and `TuiAltScreen`), and the Markdown component gained opt-out LaTeX math rendering. All local patches are retained: narrow-terminal hardening, processed-line render caching, editor history hooks, the paste-burst fallback, and multi-root `@` completion. `Editor.setText` accepts a `preservePasteRegistry` option so subclasses can replace text without orphaning live paste markers (upstream resets the registry on every `setText`).
+
 ## 0.84.1
 
 ### Patch Changes
