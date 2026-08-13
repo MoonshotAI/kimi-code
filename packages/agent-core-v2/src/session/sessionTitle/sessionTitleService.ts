@@ -6,7 +6,7 @@
  * `chat_title` endpoint, persists it through
  * `sessionMetadata`, and rebroadcasts `session.meta.updated`.
  * Generation is on demand only: `generateTitle()` is the single entry point
- * (the kap-server route), gated by the experimental `session-title` flag and
+ * (the kap-server route), gated by the experimental `auto_session_title` flag and
  * a managed Kimi Code OAuth login; any
  * failure degrades to keeping the current title, and a custom title set by
  * the user is never overwritten. An already-generated title is not
@@ -47,7 +47,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { IAgentTitlePromptSource } from './agentTitlePromptSource';
-import { SESSION_TITLE_FLAG_ID } from './flag';
+import { AUTO_SESSION_TITLE_FLAG_ID } from './flag';
 import { ISessionTitleService, type SessionTitleSource } from './sessionTitle';
 
 const MAX_GENERATED_TITLE_LENGTH = 200;
@@ -99,7 +99,7 @@ export class SessionTitleService implements ISessionTitleService {
     force: boolean,
     source: SessionTitleSource,
   ): Promise<string | undefined> {
-    if (!this.flags.enabled(SESSION_TITLE_FLAG_ID)) return undefined;
+    if (!this.flags.enabled(AUTO_SESSION_TITLE_FLAG_ID)) return undefined;
     const current = await this.metadata.read();
     if (!force) {
       if (current.titleKind === 'custom') return undefined;

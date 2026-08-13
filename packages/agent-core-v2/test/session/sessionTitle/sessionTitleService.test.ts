@@ -241,7 +241,7 @@ describe('SessionTitleService', () => {
     vi.unstubAllEnvs();
   });
 
-  it('is unavailable while the experimental session-title flag is off', async () => {
+  it('is unavailable while the experimental auto_session_title flag is off', async () => {
     flagEnabled = false;
     titlePrompts = ['hello'];
 
