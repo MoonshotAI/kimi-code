@@ -29,10 +29,12 @@
  * `/sessions/{id}/children` endpoints call `ISessionLifecycleService.createChild`
  * and `ISessionIndex.list({ childOf })` directly — the child markers and
  * parent-title default live in the lifecycle, and the child filter lives in the
- * index. Only `POST /sessions/{id}/profile` (`updateProfile`),
- * `GET /sessions/{id}/status`, and `GET /sessions/{id}/goal` go through
- * `ISessionLegacyService` (the `agent_config` patch, the status rollup, and the
- * current-goal read hold real cross-domain adaptation);
+ * index. `POST /sessions/{id}/profile` is composed at the edge too: both the
+ * title/metadata patch (`sessionProfile.ts`) and the `agent_config` dispatch
+ * (`sessionAgentConfig.ts`) are wire-to-native translations over the native v2
+ * services. Only `GET /sessions/{id}/status` and `GET /sessions/{id}/goal` go
+ * through `ISessionLegacyService` (the status rollup and the current-goal read
+ * hold real cross-domain adaptation);
  * the route forwards each adapter result verbatim, mirroring v1's thin handler.
  * `create`, `fork`, and child creation publish `event.session.created` on the
  * core event bus, matching v1.
@@ -135,6 +137,8 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
+import { applySessionAgentConfig } from './sessionAgentConfig';
+import { updateSessionProfile } from './sessionProfile';
 
 interface SessionRouteHost {
   post(
@@ -611,9 +615,15 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const fields = await core.accessor
-          .get(ISessionLegacyService)
-          .updateProfile(session_id, req.body);
+        const { agent_config, ...profileBody } = req.body;
+        // Both halves of the profile patch are wire-to-native translations
+        // dispatched to the native v2 services at the edge (same direct-call
+        // pattern as fork/compact/undo); title/metadata applies first,
+        // matching the original in-adapter ordering.
+        const fields = await updateSessionProfile(core, session_id, profileBody);
+        if (agent_config !== undefined) {
+          await applySessionAgentConfig(core, session_id, agent_config);
+        }
         const session = toWireSession(fields, fields.root, resolveSessionFacts(core, fields.id));
         // Broadcast the title change to every connection (including clients not
         // subscribed to this session, and covering inactive sessions), so session
