@@ -115,6 +115,13 @@ describe('prompt metadata sanitization', () => {
     expect(
       sanitize('看下 /Users/alice/Projects/kimi-code-workspace/kimi-code/packages/README.md'),
     ).toBe('看下 /Users/alice/Projects/kimi-code-workspace/kimi-code/packages/README.md');
+    expect(
+      sanitize(
+        '看下 /Users/alice/Projects/kimi-code-workspace/refact-000-08-12-external-hooks-feature-scopes.ts',
+      ),
+    ).toBe(
+      '看下 /Users/alice/Projects/kimi-code-workspace/refact-000-08-12-external-hooks-feature-scopes.ts',
+    );
     expect(sanitize(`cat /tmp/${'Ab1c'.repeat(12)}`)).toBe('cat /[redacted]');
     expect(sanitize(`token ${'Ab1c'.repeat(10)}/${'Z9x8'.repeat(10)}`)).toBe('token [redacted]');
     expect(sanitize(`secret /${'Ab1c'.repeat(8)}/${'Z9x8'.repeat(8)}`)).toBe('secret /[redacted]');

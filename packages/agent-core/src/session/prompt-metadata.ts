@@ -115,15 +115,22 @@ function isFileNameStem(stem: string, following: string): boolean {
 
 // A long token-shaped word also stays readable as an absolute path, e.g.
 // `/Users/.../kimi-code-workspace/`. The match must be rooted (preceded by
-// `/`) and every `/`-separated segment must stay below the 40-char token
-// threshold and look like a human-named word (lowercase, Capitalized, or
-// ALL-CAPS like `README`) — a base64/base64url token pasted with slashes has
-// mixed-case random segments and fails closed, as does a path containing a
-// token-length segment (e.g. `/tmp/<48-char token>`).
+// `/`); every directory segment must stay below the 40-char token threshold
+// and look like a human-named word (lowercase, Capitalized, or ALL-CAPS like
+// `README`), while the basename may additionally be a long slug passing the
+// file-name rule above — so `/Users/Alice/.../refact-...-scopes.ts` survives
+// but a base64/base64url token pasted with slashes (mixed-case random
+// segments) or a token-length basename (e.g. `/tmp/<48-char token>`) fails
+// closed.
 function isAbsolutePath(match: string, offset: number, source: string): boolean {
   if (offset === 0 || source[offset - 1] !== '/') return false;
   if (!match.includes('/')) return false;
-  return match
-    .split('/')
-    .every((segment) => segment.length < 40 && /^([A-Z]?[a-z0-9_-]*|[A-Z0-9_-]+)$/.test(segment));
+  const segments = match.split('/');
+  const directories = segments.slice(0, -1);
+  const base = segments[segments.length - 1];
+  const wordShaped = (segment: string) =>
+    segment.length < 40 && /^([A-Z]?[a-z0-9_-]*|[A-Z0-9_-]+)$/.test(segment);
+  if (!directories.every(wordShaped)) return false;
+  if (wordShaped(base)) return true;
+  return isFileNameStem(base, source.slice(offset + match.length));
 }
