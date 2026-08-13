@@ -399,11 +399,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (handle === undefined) return;
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
     this.sessions.delete(sessionId);
-    await this.drainAgents(handle);
-    await drainSessionMetadataWrites();
-    await this.indexMirror.drain();
-    handle.dispose();
-    this._onDidCloseSession.fire({ sessionId });
+    try {
+      await this.drainAgents(handle);
+      await drainSessionMetadataWrites();
+      await this.indexMirror.drain();
+    } finally {
+      handle.dispose();
+      this._onDidCloseSession.fire({ sessionId });
+    }
   }
 
   async archive(sessionId: string): Promise<void> {

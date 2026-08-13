@@ -636,6 +636,33 @@ describe('SessionLifecycleService', () => {
     expect(svc.get('s1')).toBeUndefined();
   });
 
+  it('close disposes the session while preserving an agent removal failure', async () => {
+    const removeError = new Error('wire flush failed');
+    const onTeardown = vi.fn();
+    const agentHandle = {
+      id: 'main',
+      kind: LifecycleScope.Agent,
+      accessor: { get: () => ({}) },
+      dispose: () => {},
+    } as unknown as IAgentScopeHandle;
+    const svc = await build([
+      stubPair(IAgentLifecycleService, {
+        ...agentLifecycleStub(),
+        list: () => [agentHandle],
+        remove: () => Promise.reject(removeError),
+      }),
+    ]);
+    svc.onWillCreateSession((event) => {
+      event.onSessionDispose(onTeardown);
+    });
+    await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+    await expect(svc.close('s1')).rejects.toBe(removeError);
+
+    expect(svc.get('s1')).toBeUndefined();
+    expect(onTeardown).toHaveBeenCalledOnce();
+  });
+
   it('create seeds identity and materializes metadata', async () => {
     const svc = await build();
     const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
