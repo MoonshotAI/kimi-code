@@ -56,7 +56,7 @@ export function opToWireRecord(op: Op, now = Date.now()): WireRecord {
     payload !== null && typeof payload === 'object' && !Array.isArray(payload)
       ? { type: op.type, ...(payload as Record<string, unknown>) }
       : { type: op.type, payload };
-  if (record['time'] === undefined) record['time'] = op.time ?? now;
+  if (record['time'] === undefined) record['time'] = now;
   return record as WireRecord;
 }
 

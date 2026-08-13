@@ -401,7 +401,7 @@ export class SessionEventHandler {
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
-    const startedAt = event.startedAt ?? Date.now();
+    const startedAt = Date.now();
     this.host.streamingUI.flushNow();
     this.host.streamingUI.setStep(event.step, startedAt);
     this.host.streamingUI.resetToolUi();
@@ -418,7 +418,7 @@ export class SessionEventHandler {
   }
 
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
-    const completedAt = event.completedAt ?? Date.now();
+    const completedAt = Date.now();
     this.host.streamingUI.flushNow();
     this.host.streamingUI.completeStep(
       String(event.turnId),

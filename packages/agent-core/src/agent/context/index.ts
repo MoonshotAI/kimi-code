@@ -653,10 +653,10 @@ export class ContextMemory {
     return this.closePendingToolResults(output).length;
   }
 
-  appendLoopEvent(event: LoopRecordedEvent, recordedAt?: number): number | undefined {
+  appendLoopEvent(event: LoopRecordedEvent): void {
     const eventTime =
       this.agent.records.restoring === null
-        ? (recordedAt ?? Date.now())
+        ? Date.now()
         : this.agent.records.restoring.time;
     this.agent.records.logRecord({
       type: 'context.append_loop_event',
@@ -687,7 +687,7 @@ export class ContextMemory {
         this.pushHistory(message);
         this.openSteps.set(event.uuid, message);
         if (eventTime !== undefined) this.openStepStartedAt.set(event.uuid, eventTime);
-        return eventTime;
+        return;
       }
       case 'step.end': {
         const openStep = this.openSteps.get(event.uuid);
@@ -739,7 +739,7 @@ export class ContextMemory {
           this.tokenCountCoveredMessageCount = coveredCount;
         }
         this.flushDeferredMessagesIfToolExchangeClosed();
-        return eventTime;
+        return;
       }
       case 'content.part': {
         const openStep = this.openSteps.get(event.stepUuid);
@@ -749,7 +749,7 @@ export class ContextMemory {
           );
         }
         openStep.content.push(event.part);
-        return eventTime;
+        return;
       }
       case 'tool.call': {
         const openStep = this.openSteps.get(event.stepUuid);
@@ -770,7 +770,7 @@ export class ContextMemory {
           openStep.toolCallDisplays[event.toolCallId] = event.display;
         }
         this.pendingToolResultIds.add(event.toolCallId);
-        return eventTime;
+        return;
       }
       case 'tool.result': {
         // Drop a result for an id that is not awaiting one: it was already
@@ -790,7 +790,7 @@ export class ContextMemory {
         });
         this.pendingToolResultIds.delete(event.toolCallId);
         this.flushDeferredMessagesIfToolExchangeClosed();
-        return eventTime;
+        return;
       }
     }
   }

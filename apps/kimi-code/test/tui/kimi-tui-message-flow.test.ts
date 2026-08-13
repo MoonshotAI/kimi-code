@@ -480,7 +480,7 @@ afterEach(async () => {
 });
 
 describe('KimiTUI message flow', () => {
-  it('approximates first output from persisted step start and TTFT when handling is delayed', async () => {
+  it('approximates first output from the local step start and TTFT', async () => {
     const { driver } = await makeDriver();
     const now = vi.spyOn(Date, 'now').mockReturnValue(9_000);
     try {
@@ -492,7 +492,6 @@ describe('KimiTUI message flow', () => {
           turnId: 1,
           step: 1,
           stepId: 'step-1',
-          startedAt: 1_000,
         } as Event,
         vi.fn(),
       );
@@ -507,6 +506,7 @@ describe('KimiTUI message flow', () => {
         } as Event,
         vi.fn(),
       );
+      now.mockReturnValue(13_000);
       driver.sessionEventHandler.handleEvent(
         {
           type: 'turn.step.completed',
@@ -514,7 +514,6 @@ describe('KimiTUI message flow', () => {
           sessionId: 'ses-1',
           turnId: 1,
           step: 1,
-          completedAt: 5_000,
           llmFirstTokenLatencyMs: 3_000,
         } as Event,
         vi.fn(),
@@ -522,8 +521,8 @@ describe('KimiTUI message flow', () => {
 
       expect(driver.state.transcriptEntries.at(-1)).toMatchObject({
         kind: 'assistant',
-        createdAt: 4_000,
-        endedAt: 5_000,
+        createdAt: 12_000,
+        endedAt: 13_000,
       });
       expect(stripSgr(renderTranscript(driver))).toContain('(took 1s)');
     } finally {

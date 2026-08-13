@@ -1081,12 +1081,12 @@ export class TurnFlow {
   private buildDispatchEvent(turnId: number) {
     return createLoopEventDispatcher({
       appendTranscriptRecord: async (event: LoopRecordedEvent) => {
-        return this.agent.context.appendLoopEvent(event);
+        this.agent.context.appendLoopEvent(event);
       },
-      emitLiveEvent: (event: LoopEvent, recordedAt?: number) => {
+      emitLiveEvent: (event: LoopEvent) => {
         this.noteFirstRequestEvent(event);
         this.trackLoopTelemetry(event, turnId);
-        const mapped = mapLoopEvent(event, turnId, recordedAt);
+        const mapped = mapLoopEvent(event, turnId);
         if (mapped !== undefined) this.agent.emitEvent(mapped);
       },
     });
@@ -1340,11 +1340,7 @@ function isTerminalUpdateGoalResult(
   return status === 'complete' || status === 'blocked';
 }
 
-function mapLoopEvent(
-  event: LoopEvent,
-  turnId: number,
-  recordedAt?: number,
-): AgentEvent | undefined {
+function mapLoopEvent(event: LoopEvent, turnId: number): AgentEvent | undefined {
   switch (event.type) {
     case 'step.begin':
       return {
@@ -1352,7 +1348,6 @@ function mapLoopEvent(
         turnId,
         step: event.step,
         stepId: event.uuid,
-        startedAt: recordedAt,
       };
     case 'step.end':
       return {
@@ -1360,7 +1355,6 @@ function mapLoopEvent(
         turnId,
         step: event.step,
         stepId: event.uuid,
-        completedAt: recordedAt,
         usage: event.usage,
         finishReason: event.finishReason,
         llmFirstTokenLatencyMs: event.llmFirstTokenLatencyMs,

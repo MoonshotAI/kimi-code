@@ -85,8 +85,8 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     this.publishSplice({ start, deleteCount: 0, messages: [...messages] });
   }
 
-  appendLoopEvent(event: LoopRecordedEvent, time = Date.now()): void {
-    this.wire.dispatch(contextAppendLoopEvent({ event }, { time }));
+  appendLoopEvent(event: LoopRecordedEvent): void {
+    this.wire.dispatch(contextAppendLoopEvent({ event }));
   }
 
   publishTrailingRemoval(previous: readonly ContextMessage[]): boolean {

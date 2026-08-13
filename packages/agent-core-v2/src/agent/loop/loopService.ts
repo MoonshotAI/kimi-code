@@ -862,19 +862,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     onStarted: ((step: number) => void) | undefined,
   ): () => void {
     signal.throwIfAborted();
-    const startedAt = Date.now();
+    this.eventBus.publish({ type: 'turn.step.started', turnId, step: currentStep, stepId: stepUuid });
     this.context.appendLoopEvent({
       type: 'step.begin',
       uuid: stepUuid,
       turnId: String(turnId),
       step: currentStep,
-    }, startedAt);
-    this.eventBus.publish({
-      type: 'turn.step.started',
-      turnId,
-      step: currentStep,
-      stepId: stepUuid,
-      startedAt,
     });
     let stepStarted = false;
     return () => {
@@ -981,7 +974,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     markStepStarted();
     const timing = response.timing;
     const stepFinishReason = normalizeFinishReason(finishReason);
-    const completedAt = Date.now();
     this.context.appendLoopEvent({
       type: 'step.end',
       uuid: stepUuid,
@@ -998,7 +990,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       messageId: response.providerMessageId,
       providerFinishReason: response.providerFinishReason,
       rawFinishReason: response.rawFinishReason,
-    }, completedAt);
+    });
     this.emitStepCompleted(
       turnId,
       currentStep,
@@ -1006,7 +998,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       response.usage,
       stepFinishReason,
       response,
-      completedAt,
     );
   }
 
@@ -1042,14 +1033,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     usage: TokenUsage,
     finishReason: string,
     response: AgentLLMRequestFinish,
-    completedAt: number,
   ): void {
     this.eventBus.publish({
       type: 'turn.step.completed',
       turnId,
       step,
       stepId,
-      completedAt,
       usage,
       finishReason,
       llmFirstTokenLatencyMs: response.timing?.firstTokenLatencyMs,

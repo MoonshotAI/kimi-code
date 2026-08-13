@@ -5,34 +5,13 @@
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  createLoopEventDispatcher,
-  type LoopEvent,
-  type LoopLiveEventEmitter,
-} from '../../src/loop/index';
+import type { LoopEvent, LoopLiveEventEmitter } from '../../src/loop/index';
 import { CollectingSink } from './fixtures/collecting-sink';
 import { makeEndTurnResponse, makeToolCall, makeToolUseResponse } from './fixtures/fake-llm';
 import { runTurn } from './fixtures/helpers';
 import { EchoTool, markReadFileAccesses, ProgressTool } from './fixtures/tools';
 
 describe('runTurn — LoopEventDispatcher live event containment', () => {
-  it('forwards the exact persisted record time to the live emitter', async () => {
-    const emitted: Array<{ event: LoopEvent; recordedAt?: number }> = [];
-    const dispatch = createLoopEventDispatcher({
-      appendTranscriptRecord: async () => 1_234,
-      emitLiveEvent: (event, recordedAt) => emitted.push({ event, recordedAt }),
-    });
-
-    await dispatch({ type: 'step.begin', uuid: 'step-1', turnId: '1', step: 1 });
-
-    expect(emitted).toEqual([
-      {
-        event: { type: 'step.begin', uuid: 'step-1', turnId: '1', step: 1 },
-        recordedAt: 1_234,
-      },
-    ]);
-  });
-
   it('contains synchronous emit() throws', async () => {
     const sink = new CollectingSink({ errorMode: { kind: 'sync-throw' } });
     const { result } = await runTurn({

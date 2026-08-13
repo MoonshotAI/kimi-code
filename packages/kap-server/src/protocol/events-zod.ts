@@ -694,7 +694,6 @@ export const turnStepStartedEventSchema = z.object({
   turnId: z.number(),
   step: z.number(),
   stepId: z.string().optional(),
-  startedAt: z.number().optional(),
 }) satisfies z.ZodType<TurnStepStartedEvent>;
 
 export const turnStepCompletedEventSchema = z.object({
@@ -702,7 +701,6 @@ export const turnStepCompletedEventSchema = z.object({
   turnId: z.number(),
   step: z.number(),
   stepId: z.string().optional(),
-  completedAt: z.number().optional(),
   usage: tokenUsageSchema.optional(),
   finishReason: z.string().optional(),
   llmFirstTokenLatencyMs: z.number().optional(),

@@ -65,7 +65,6 @@ export interface TurnStepStartedEvent {
   readonly turnId: number;
   readonly step: number;
   readonly stepId?: string;
-  readonly startedAt?: number;
 }
 
 export interface TurnStepCompletedEvent {
@@ -73,7 +72,6 @@ export interface TurnStepCompletedEvent {
   readonly turnId: number;
   readonly step: number;
   readonly stepId?: string;
-  readonly completedAt?: number;
   readonly usage?: TokenUsage;
   readonly finishReason?: string;
   readonly llmFirstTokenLatencyMs?: number;

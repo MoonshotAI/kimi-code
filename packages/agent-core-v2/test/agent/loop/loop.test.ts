@@ -106,39 +106,6 @@ describe('Agent loop', () => {
     expect(record?.['time']).toEqual(expect.any(Number));
   });
 
-  it('emits the exact persisted times for step boundaries', async () => {
-    profile.update({ activeToolNames: [] });
-    const started: number[] = [];
-    const completed: number[] = [];
-    const subscriptions: IDisposable[] = [
-      ctx.get(IEventBus).subscribe('turn.step.started', (event) => {
-        if (event.startedAt !== undefined) started.push(event.startedAt);
-      }),
-      ctx.get(IEventBus).subscribe('turn.step.completed', (event) => {
-        if (event.completedAt !== undefined) completed.push(event.completedAt);
-      }),
-    ];
-    try {
-      ctx.mockNextResponse({ type: 'text', text: 'done' });
-      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
-      await ctx.untilTurnEnd();
-    } finally {
-      for (const subscription of subscriptions) subscription.dispose();
-    }
-
-    const boundaries = (await ctx.persistedWireRecords()).filter(
-      (record) => record.type === 'context.append_loop_event',
-    );
-    const stepBegin = boundaries.find(
-      (record) => (record['event'] as { type?: string } | undefined)?.type === 'step.begin',
-    );
-    const stepEnd = boundaries.find(
-      (record) => (record['event'] as { type?: string } | undefined)?.type === 'step.end',
-    );
-    expect(started).toEqual([stepBegin?.time]);
-    expect(completed).toEqual([stepEnd?.time]);
-  });
-
   it('fails the turn after a filtered step completes', async () => {
     ctx.mockNextProviderResponse({
       parts: [{ type: 'text', text: 'blocked' }],
