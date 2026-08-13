@@ -269,6 +269,9 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       `
 default_model = "stub"
 
+[experimental]
+auto_session_title = true
+
 [providers.stub]
 type = "openai"
 base_url = "https://model.example.test/v1"
@@ -370,6 +373,9 @@ key = "${titleOAuthRef.key}"
       join(homeDir, 'config.toml'),
       `
 default_model = "stub"
+
+[experimental]
+auto_session_title = true
 
 [providers.stub]
 type = "openai"
