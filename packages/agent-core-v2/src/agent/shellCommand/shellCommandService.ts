@@ -21,7 +21,9 @@
  * stays an instance field (per-command `AbortController`s, not plain data).
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
@@ -31,6 +33,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import type { ToolUpdate } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
+import { Error2, ErrorCodes } from '#/errors';
 
 import {
   IAgentShellCommandService,
@@ -200,7 +203,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
   private ensureBashTool() {
     const bash = this.toolRegistry.resolve('Bash');
     if (bash === undefined) {
-      throw new Error('Bash tool is not registered.');
+      throw new Error2(ErrorCodes.INTERNAL, 'Bash tool is not registered.');
     }
     return bash;
   }

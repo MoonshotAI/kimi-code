@@ -11,3 +11,11 @@ for (const key of Object.keys(process.env)) {
     delete process.env[key];
   }
 }
+
+// `persistence_minidb_readmodel` defaults ON in production, but the shared
+// harness boots full containers against a fixed homeDir — with the read
+// model engaged, every container opens the same query-store minidb (teardown
+// races, mirror flush timers under fake timers). Pin the legacy path here;
+// read-model suites opt in with explicit flag service overrides
+// (test/app/sessionIndex).
+process.env['KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL'] = 'false';

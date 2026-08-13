@@ -40,8 +40,8 @@
 
 import { randomBytes } from 'node:crypto';
 import { join } from 'pathe';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import type { ContentPart } from '#/kosong/contract/message';
 
@@ -52,8 +52,10 @@ import {
   abortable,
   userCancellationReason,
 } from '#/_base/utils/abort';
+import { setClampedTimeout } from '#/_base/utils/timer';
 import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
+import { Error2, ErrorCodes } from '#/errors';
 import { defineCheckpointedModel } from '#/agent/contextMemory/conversationTime';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
@@ -247,6 +249,7 @@ export const taskActiveTaskReminderPendingKey = defineState<boolean>(
   () => false,
 );
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
 
@@ -684,7 +687,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private armManagerTimeout(entry: ManagedTask, timeoutMs: number): void {
-    entry.timeoutHandle = setTimeout(() => {
+    entry.timeoutHandle = setClampedTimeout(() => {
       entry.timeoutHandle = undefined;
       if (this.canAutoBackgroundOnTimeout(entry)) {
         this.detachEntry(entry, true);
@@ -870,7 +873,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
           entry.waiters.push(resolve);
         }),
         new Promise<void>((resolve) => {
-          timeout = setTimeout(resolve, timeoutMs);
+          // A clamped early return just makes callers (e.g. the print drain
+          // loop) re-poll — the task may still be running, which the caller
+          // observes from the returned info.
+          timeout = setClampedTimeout(resolve, timeoutMs);
           timeout.unref?.();
         }),
       ]);
@@ -918,7 +924,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (maxRunningTasks === undefined) return;
     if (!detached) return;
     if (this.activeTaskCount() < maxRunningTasks) return;
-    throw new Error('Too many background tasks are already running.');
+    throw new Error2(ErrorCodes.TASK_LIMIT_EXCEEDED, 'Too many background tasks are already running.', {
+      details: { running: this.activeTaskCount(), max: maxRunningTasks },
+    });
   }
 
   private activeTaskCount(): number {

@@ -23,7 +23,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 67 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 69 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -57,9 +57,12 @@
 //     activityView.lastTurn                           src/agent/activityView/activityViewService.ts
 //     activityView.lifecycle                          src/agent/activityView/activityViewService.ts
 //     activityView.turn                               src/agent/activityView/activityViewService.ts
-//     contextInjector.isNewTurn                       src/agent/contextInjector/contextInjectorService.ts
+//     agentPlugin.sessionStartRefreshPending          src/agent/plugin/agentPluginService.ts
+//     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
-//     contextSize.lastEmittedTokens                   src/agent/contextSize/contextSizeService.ts
+//     dateChange.seed                                 src/agent/dateChange/dateChangeService.ts
 //     externalHooks.stopHookContinuationUsed          src/agent/externalHooks/externalHooksService.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
@@ -91,7 +94,7 @@
 //     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
 //     media.resolved                                  src/agent/media/videoResolverService.ts
 //     permissionMode.lastMode                         src/agent/permissionMode/injection/permissionModeInjection.ts
-//     plan.wasActive                                  src/agent/plan/injection/planModeInjection.ts
+//     plan.wasActive                                  src/features/plan/injection/planModeInjection.ts
 //     profile.activeToolNamesOverlay                  src/agent/profile/profileService.ts
 //     profile.agentsMdWarning                         src/agent/profile/profileService.ts
 //     profile.emittedPluginBudgetWarnings             src/agent/profile/profileService.ts
@@ -115,7 +118,6 @@
 //     toolDedupe.syntheticCallIds                     src/agent/toolDedupe/toolDedupeService.ts
 //     toolExecutor.dupTypeTurnId                      src/agent/toolExecutor/toolExecutorService.ts
 //     toolExecutor.toolCallDupTypes                   src/agent/toolExecutor/toolExecutorService.ts
-//     toolSelect.needsBoundaryInjection               src/agent/toolSelect/toolSelectAnnouncementsService.ts
 //     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
 //     usage.currentTurn                               src/agent/usage/usageService.ts
 //     usage.currentTurnId                             src/agent/usage/usageService.ts
@@ -135,6 +137,7 @@ export interface WorkspaceStateSnapshot {
   'workspaceInstructions.current': /* WorkspaceInstructionsSnapshot — packages/agent-core-v2/src/workspace/workspaceInstructions/workspaceInstructions.ts */ {
     readonly agentsMd: string | undefined;
     readonly agentsMdWarning: string | undefined;
+    readonly agentsMdPaths: readonly string[] | undefined;
   };
   // src/workspace/workspaceSkillCatalog/workspaceSkillCatalogService.ts
   'workspaceSkillCatalog.contributions': Map<string, {
@@ -163,6 +166,7 @@ export interface WorkspaceStateSnapshot {
         };
         readonly mermaid?: string;
         readonly d2?: string;
+        readonly productSpecific?: boolean;
       }[];
       readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
         readonly path: string;
@@ -198,6 +202,7 @@ export interface WorkspaceStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     }) => void;
     register: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -223,6 +228,7 @@ export interface WorkspaceStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     }, options?: {
       readonly replace?: boolean;
     }) => void;
@@ -256,6 +262,7 @@ export interface WorkspaceStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     } | undefined;
     getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -281,6 +288,7 @@ export interface WorkspaceStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     } | undefined;
     renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -306,6 +314,7 @@ export interface WorkspaceStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     }, rawArgs: string, context?: {
       readonly sessionId?: string;
     }) => string;
@@ -333,6 +342,7 @@ export interface WorkspaceStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     }[];
     listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -358,6 +368,7 @@ export interface WorkspaceStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     }[];
     getSkillRoots: () => readonly string[];
     getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
@@ -442,6 +453,7 @@ export interface SessionStateSnapshot {
     readonly createdAt: number;
     readonly updatedAt: number;
     readonly archived: boolean;
+    readonly archivedAt?: number;
     readonly cwd?: string;
     readonly forkedFrom?: string;
     readonly agents?: Readonly<Record<string, /* AgentMeta — packages/agent-core-v2/src/session/sessionMetadata/sessionMetadata.ts */ {
@@ -453,6 +465,7 @@ export interface SessionStateSnapshot {
       readonly swarmItem?: string;
     }>>;
     readonly custom?: Record<string, unknown>;
+    readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   } | undefined;
   // src/session/sessionSkillCatalog/skillCatalogService.ts
   'sessionSkillCatalog.contributions': Map<string, {
@@ -481,6 +494,7 @@ export interface SessionStateSnapshot {
         };
         readonly mermaid?: string;
         readonly d2?: string;
+        readonly productSpecific?: boolean;
       }[];
       readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
         readonly path: string;
@@ -516,6 +530,7 @@ export interface SessionStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     }) => void;
     register: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -541,6 +556,7 @@ export interface SessionStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     }, options?: {
       readonly replace?: boolean;
     }) => void;
@@ -574,6 +590,7 @@ export interface SessionStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     } | undefined;
     getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -599,6 +616,7 @@ export interface SessionStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     } | undefined;
     renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -624,6 +642,7 @@ export interface SessionStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     }, rawArgs: string, context?: {
       readonly sessionId?: string;
     }) => string;
@@ -651,6 +670,7 @@ export interface SessionStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     }[];
     listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
       readonly name: string;
@@ -676,6 +696,7 @@ export interface SessionStateSnapshot {
       };
       readonly mermaid?: string;
       readonly d2?: string;
+      readonly productSpecific?: boolean;
     }[];
     getSkillRoots: () => readonly string[];
     getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
@@ -731,6 +752,7 @@ export interface AgentStateSnapshot {
         readonly kind: 'injection';
         readonly variant: string;
         readonly ownerPromptId?: string;
+        readonly disclosure?: unknown;
       } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';
@@ -855,6 +877,7 @@ export interface AgentStateSnapshot {
       readonly kind: 'injection';
       readonly variant: string;
       readonly ownerPromptId?: string;
+      readonly disclosure?: unknown;
     } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'shell_command';
       readonly phase: 'input' | 'output';
@@ -911,6 +934,7 @@ export interface AgentStateSnapshot {
         readonly kind: 'injection';
         readonly variant: string;
         readonly ownerPromptId?: string;
+        readonly disclosure?: unknown;
       } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';
@@ -969,12 +993,18 @@ export interface AgentStateSnapshot {
       readonly since: number;
     };
   } | undefined;
-  // src/agent/contextInjector/contextInjectorService.ts
-  'contextInjector.isNewTurn': boolean;
+  // src/agent/agentsMdReminder/agentsMdReminderService.ts
+  'agentsMdReminder.cwd': string | undefined;
+  'agentsMdReminder.known': Set<string>;
+  'agentsMdReminder.seeded': boolean;
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
-  // src/agent/contextSize/contextSizeService.ts
-  'contextSize.lastEmittedTokens': number;
+  // src/agent/dateChange/dateChangeService.ts
+  'dateChange.seed': /* DateDisclosure — packages/agent-core-v2/src/agent/dateChange/dateChangeService.ts */ {
+    readonly localDate: string;
+    readonly timeZone: string;
+    readonly renderGeneration: number;
+  } | undefined;
   // src/agent/externalHooks/externalHooksService.ts
   'externalHooks.stopHookContinuationUsed': boolean;
   // src/agent/fullCompaction/fullCompactionService.ts
@@ -1078,8 +1108,8 @@ export interface AgentStateSnapshot {
   }>;
   // src/agent/permissionMode/injection/permissionModeInjection.ts
   'permissionMode.lastMode': 'manual' | 'yolo' | 'auto' | undefined;
-  // src/agent/plan/injection/planModeInjection.ts
-  'plan.wasActive': boolean;
+  // src/agent/plugin/agentPluginService.ts
+  'agentPlugin.sessionStartRefreshPending': boolean;
   // src/agent/profile/profileService.ts
   'profile.activeToolNamesOverlay': readonly string[] | undefined;
   'profile.agentsMdWarning': string | undefined;
@@ -1113,6 +1143,8 @@ export interface AgentStateSnapshot {
     readonly kind: 'agent';
     readonly agentId?: string;
     readonly subagentType?: string;
+    readonly model?: string;
+    readonly thinkingEffort?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1150,8 +1182,6 @@ export interface AgentStateSnapshot {
   // src/agent/toolExecutor/toolExecutorService.ts
   'toolExecutor.dupTypeTurnId': number | undefined;
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
-  // src/agent/toolSelect/toolSelectAnnouncementsService.ts
-  'toolSelect.needsBoundaryInjection': boolean;
   // src/agent/toolSelect/toolSelectService.ts
   'toolSelect.pendingLoaded': Set<string>;
   // src/agent/usage/usageService.ts
@@ -1162,6 +1192,8 @@ export interface AgentStateSnapshot {
     inputCacheCreation: number;
   } | undefined;
   'usage.currentTurnId': number | undefined;
+  // src/features/plan/injection/planModeInjection.ts
+  'plan.wasActive': boolean;
 }
 
 export type AgentStateKey = keyof AgentStateSnapshot;

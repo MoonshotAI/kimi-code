@@ -246,6 +246,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v2/sessions",
+    ],
+    [
+      "GET",
       "/asyncapi.json",
     ],
     [

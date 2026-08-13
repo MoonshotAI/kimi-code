@@ -8,6 +8,10 @@
  * kosong's in-memory registries), and publishes `event.model_catalog.changed`
  * on change. Bound at App scope.
  *
+ * Custom registries are third-party endpoints, so the refresh User-Agent
+ * carries the configured custom identity's product token, matching what chat
+ * requests send.
+ *
  * `modelSource: 'static'` short-circuits refresh: a provider whose effective
  * model source is `static` (config-declared, or declared by its vendor
  * definition) serves its models from the static `[models.*]` section, so
@@ -25,6 +29,10 @@
  *    registries therefore never pass through a halfway-removed state — that
  *    intermediate state was the source of the "provider/model not
  *    configured" startup race against profile binding.
+ *    A write that replaces the models table also folds the
+ *    `[secondary_model]` subagent pool through `cascadeSubagentModelPool`
+ *    into the same transition, so a refresh that drops an alias can never
+ *    leave a dangling pool for the session-start validation to trip on.
  *  - The env-synthesized `__kimi_env__` slice is never written to config:
  *    it lives in the effective overlay, and the bridge's event-driven sync
  *    carries it into the registries on its own. `defaultModel` / `thinking`
@@ -42,11 +50,12 @@ import {
   type RefreshProviderHost,
   type RefreshResult,
 } from '@moonshot-ai/kimi-code-oauth';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { IOAuthService } from '#/app/auth/auth';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { AuthErrors } from '#/app/auth/errors';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { ModelCatalogErrors } from '#/kosong/model/errors';
@@ -65,6 +74,11 @@ import {
   PROVIDERS_SECTION,
   THINKING_SECTION,
 } from './configSection';
+import {
+  SECONDARY_MODEL_SECTION,
+  cascadeSubagentModelPool,
+  type SecondaryModelConfig,
+} from '#/session/subagent/configSection';
 import {
   IProviderDiscoveryService,
   type RefreshProviderModelsOptions,
@@ -90,7 +104,7 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {}
 
   refreshProviderModels(
@@ -122,7 +136,8 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     }
 
     const exclusion = this.computeStaticExclusion();
-    const result = await refreshProviderModels(this.buildRefreshHost(exclusion), {
+    const { outboundUserAgent } = await this.identity.resolved();
+    const result = await refreshProviderModels(this.buildRefreshHost(exclusion, outboundUserAgent), {
       scope: options.scope,
       providerId: options.providerId,
     });
@@ -175,13 +190,13 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     };
   }
 
-  private buildRefreshHost(exclusion: StaticExclusion): RefreshProviderHost {
+  private buildRefreshHost(exclusion: StaticExclusion, userAgent: string): RefreshProviderHost {
     return {
       getConfig: async () => this.readUserConfigShape(exclusion),
       removeProvider: (providerId) => this.shapeWithoutProvider(providerId),
       setConfig: (patch) => this.applyRefreshPatch(patch, exclusion),
       resolveOAuthToken: (providerName, oauthRef) => this.resolveOAuthToken(providerName, oauthRef),
-      userAgent: this.bootstrap.args.requestHeaders['User-Agent'],
+      userAgent,
     };
   }
 
@@ -248,6 +263,16 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     if ('thinking' in patch) {
       sections[THINKING_SECTION] = restoreDefault ? exclusion.thinking : patch.thinking;
     }
+    const nextModels = sections[MODELS_SECTION] as Record<string, ModelRecord> | undefined;
+    if (nextModels !== undefined) {
+      const cascadedPool = cascadeSubagentModelPool(
+        this.config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue,
+        nextModels,
+      );
+      if (cascadedPool !== undefined) {
+        sections[SECONDARY_MODEL_SECTION] = cascadedPool ?? undefined;
+      }
+    }
     await this.config.replaceSections(sections);
     return {
       providers:
@@ -282,7 +307,9 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
       oauthRef as unknown as OAuthRef | undefined,
     );
     if (tokenProvider === undefined) {
-      throw new Error('OAuth token provider is not configured.');
+      throw new Error2(AuthErrors.codes.AUTH_TOKEN_MISSING, 'OAuth token provider is not configured.', {
+        details: { provider_id: providerName },
+      });
     }
     return tokenProvider.getAccessToken();
   }

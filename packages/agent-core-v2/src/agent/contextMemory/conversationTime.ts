@@ -3,10 +3,14 @@
  * wire-Model factory.
  *
  * Defines the undo anchor vocabulary and registers conversation-time Models
- * for undo validation. Scope-agnostic.
+ * for undo validation. `CHECKPOINTED_MODELS` stays the undo domain's read
+ * path; the `WireModelContribution` fold also drains it into the built-in
+ * layer so the checkpointed list is part of the folded wire vocabulary.
+ * Scope-agnostic.
  */
 
 import { defineModel, type ModelDef } from '#/wire/model';
+import type { ModelReducers } from '#/wire/types';
 
 import type { ContextMessage } from './types';
 
@@ -45,6 +49,7 @@ export const CHECKPOINTED_MODELS: ModelDef<Checkpointed<unknown>>[] = [];
 
 export interface CheckpointModelOptions<T> {
   readonly onAppendMessage?: (current: T, message: ContextMessage) => T;
+  readonly reducers?: ModelReducers<Checkpointed<T>>;
 }
 
 export function defineCheckpointedModel<T>(
@@ -52,11 +57,13 @@ export function defineCheckpointedModel<T>(
   initial: () => T,
   opts?: CheckpointModelOptions<T>,
 ): ModelDef<Checkpointed<T>> {
+  const customReducers = opts?.reducers ?? {};
   const def = defineModel<Checkpointed<T>>(
     name,
     () => ({ current: initial(), checkpoints: [] }),
     {
       reducers: {
+        ...customReducers,
         'context.append_message': (state, { message }) => {
           if (isUndoAnchor(message)) {
             return { ...state, checkpoints: [...state.checkpoints, state.current] };

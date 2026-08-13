@@ -8,8 +8,11 @@ import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { summarizeSkill } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { IEventService } from '#/app/event/event';
 import { AgentSkillService } from '#/agent/skill/skillService';
 import {
   MAX_SKILL_QUERY_DEPTH,
@@ -76,6 +79,11 @@ describe('AgentSkillService', () => {
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),
         });
+        reg.definePartialInstance(ISessionMetadata, {
+          read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
+          update: async () => {},
+        });
+        reg.definePartialInstance(IEventService, { publish: () => {} });
         reg.defineInstance(ISessionContext, stubSessionContext());
         reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
@@ -89,6 +97,7 @@ describe('AgentSkillService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      list: async () => skills.listSkills().map(summarizeSkill),
     };
     ix.set(ISessionSkillCatalog, skillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
@@ -127,6 +136,7 @@ describe('AgentSkillService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      list: async () => skills.listSkills().map(summarizeSkill),
     } satisfies ISessionSkillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
 
@@ -168,6 +178,11 @@ describe('SkillTool', () => {
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),
         });
+        reg.definePartialInstance(ISessionMetadata, {
+          read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
+          update: async () => {},
+        });
+        reg.definePartialInstance(IEventService, { publish: () => {} });
         reg.defineInstance(ISessionContext, stubSessionContext());
         reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
@@ -181,6 +196,7 @@ describe('SkillTool', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      list: async () => skills.listSkills().map(summarizeSkill),
     } satisfies ISessionSkillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
   });
@@ -217,7 +233,7 @@ describe('SkillTool', () => {
 
     expect(tool.name).toBe('Skill');
     expect(tool.description).toContain('Invoke a registered skill');
-    expect(tool.description).toContain('kimi-skill-loaded');
+    expect(tool.description).toContain('skill-loaded');
     expect(tool.description).toContain('with the same `args`');
     expect(tool.parameters).toMatchObject({
       type: 'object',
@@ -299,7 +315,7 @@ describe('SkillTool', () => {
     expect(result.delivery?.message.content[0]).toMatchObject({
       type: 'text',
       text: expect.stringContaining(
-        '<kimi-skill-loaded name="commit" trigger="model-tool" source="user" dir="/skills/commit" args="src/app.ts">',
+        '<skill-loaded name="commit" trigger="model-tool" source="user" dir="/skills/commit" args="src/app.ts">',
       ),
     });
     expect(result.delivery?.message.content[0]).toMatchObject({

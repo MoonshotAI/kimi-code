@@ -9,13 +9,19 @@
  *   - `data: null`.
  *
  * Validation failures are handled by route-level middleware as 40001
- * `validation.failed`; this handler remains the catch-all unknown-exception path.
+ * `validation.failed`; this handler remains the catch-all unknown-exception
+ * path, with one coded exception: an `Error2(config.invalid)` escaping a
+ * route (e.g. a session resume that fails the subagent model-pool check
+ * outside any route-level mapper) maps to 40001 as well — a broken user
+ * config is a client error, not a server fault.
  *
  * The handler logs `err` + the resolved `request_id` so operators can
  * correlate log lines with the envelope returned to the client. This is the
  * single place a stack trace ever crosses our process boundary into a log —
  * we never bleed it into the JSON response.
  */
+
+import { ErrorCodes, isError2 } from '@moonshot-ai/agent-core-v2';
 
 import { errEnvelope } from './envelope';
 import { ErrorCode } from './protocol/error-codes';
@@ -40,6 +46,12 @@ interface ErrorHandlerHost {
 export function installErrorHandler(app: ErrorHandlerHost): void {
   app.setErrorHandler((err, req, reply) => {
     const requestId = req.id;
+    if (isError2(err) && err.code === ErrorCodes.CONFIG_INVALID) {
+      reply
+        .status(200)
+        .send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
+      return;
+    }
     req.log.error({ err, request_id: requestId }, 'unhandled error');
     reply.status(200).send(
       errEnvelope(

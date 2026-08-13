@@ -5,10 +5,22 @@
  * into the agent's tool registry (the manager arrives through the seeded
  * `ISessionMcpHandle` — one manager per workspace handler, shared by every
  * session and agent): registers qualified tools for connected servers,
- * keeps them registered across reconnects, swaps in the OAuth tool for
+ * keeps them registered across reconnects, keeps them registered (with
+ * calls short-circuited to a removal notice) when the server is tombstoned
+ * as `removed`, swaps in the OAuth tool for
  * `needs-auth` servers, journals tool discoveries on the wire (queued until
  * restore finishes), and publishes `mcp.server.status` / `tool.list.updated`
- * events. The plain-data state (`mcpToolsByServer`, `discoveryWritesReady`)
+ * events. Only the session's baseline servers take part
+ * (`ISessionMcpHandle.isBaselineServer`, checked on every replayed and
+ * live status change): a server that appears mid-session — a plugin
+ * install or a config edit — is ignored here, so its tools, status events,
+ * and discoveries never reach a live agent; it joins on the next session
+ * materialization (`/new`, `/reload`, resume), while a tombstoned baseline
+ * server reconnecting under the same name (a re-enabled plugin) registers
+ * again. Sessions and agents construct without awaiting the manager's
+ * initial connect; each LLM step instead waits for it through a `loop`
+ * onWillBeginStep hook (a no-op once settled), with the per-execution
+ * `toolExecutor` onWillExecuteTool wait as the backstop. The plain-data state (`mcpToolsByServer`, `discoveryWritesReady`)
  * is registered into `agentState` (`IAgentStateService`) and read/written
  * through it; `mcpTools` stays a plain instance field (its values hold
  * disposable resource handles, not plain data), as does `pendingDiscoveries`
@@ -16,12 +28,13 @@
  */
 
 import { createHash } from 'node:crypto';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import type { Tool as KosongTool } from '#/kosong/contract/tool';
 
-import { Disposable, type IDisposable } from "#/_base/di/lifecycle";
+import { type IDisposable } from "#/_base/di/lifecycle";
+import { Service } from "#/_base/di/service";
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
@@ -31,6 +44,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -53,7 +67,7 @@ export interface ErrorEvent extends KimiErrorPayload {
 export interface McpServerStatusPayload {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
-  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
   readonly toolCount: number;
   readonly error?: string;
 }
@@ -93,7 +107,7 @@ export const mcpDiscoveryWritesReadyKey = defineState<boolean>(
   () => false,
 );
 
-export class AgentMcpService extends Disposable implements IAgentMcpService {
+export class AgentMcpService extends Service implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
   private readonly mcpTools = new Map<string, McpToolRegistration>();
   private readonly pendingDiscoveries: Array<() => void> = [];
@@ -104,6 +118,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLoopService loop: IAgentLoopService,
     @IWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -112,6 +127,10 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     this.states.register(mcpMcpToolsByServerKey);
     this.states.register(mcpDiscoveryWritesReadyKey);
     this.attachMcpTools();
+    loop.hooks.onWillBeginStep.register('mcp', async (ctx, next) => {
+      await this.waitForInitialLoad(ctx.signal);
+      await next();
+    });
     this._register(
       toolExecutor.onWillExecuteTool((event) => {
         event.waitUntil(this.waitForInitialLoad(event.signal));
@@ -142,7 +161,8 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
   }
 
   waitForInitialLoad(signal?: AbortSignal): Promise<void> {
-    return this.mcpHandle.connectionManager.waitForInitialLoad(signal);
+    const ready = this.mcpHandle.ready;
+    return signal === undefined ? ready : abortable(ready, signal);
   }
 
   initialLoadDurationMs(): number {
@@ -206,6 +226,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
   }
 
   private handleMcpServerStatusChange(entry: McpServerEntry): void {
+    if (!this.mcpHandle.isBaselineServer(entry.name)) return;
     this.eventBus.publish({
       type: 'mcp.server.status',
       server: {
@@ -224,7 +245,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
       this.registerNeedsAuthMcpServer(entry);
       return;
     }
-    if (entry.status === 'failed' || entry.status === 'pending') {
+    if (entry.status === 'failed' || entry.status === 'pending' || entry.status === 'removed') {
       return;
     }
     if (entry.status === 'disabled') {
@@ -319,6 +340,8 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
             originalsDir: sessionMediaOriginalsDir(this.sessionContext.sessionDir),
             telemetry: this.telemetry,
             reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),
+            isRemoved: () =>
+              this.mcpHandle.connectionManager.get(serverName)?.status === 'removed',
           }),
           { source: 'mcp' },
         ),

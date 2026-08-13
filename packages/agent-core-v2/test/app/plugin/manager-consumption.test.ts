@@ -251,6 +251,7 @@ describe('PluginManager consumption plane', () => {
         skills: [stubSkill('provided')],
         skipped: [],
         scannedRoots: [],
+        scannedDirectories: [],
       }),
     });
     await manager.load();
@@ -266,6 +267,8 @@ describe('PluginManager consumption plane', () => {
       '---\nname: root-skill\ndescription: at root\n---\nbody',
       'utf8',
     );
+    // Sibling docs at the plugin root are not skills.
+    await writeFile(path.join(root, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
     await manager.install(root);
@@ -831,8 +834,6 @@ describe('PluginManager consumption plane', () => {
           }),
         }),
       );
-      // An Electron host must not be routed through the CLI's `__plugin_run_node`
-      // subcommand (which only the CLI binary implements).
       expect(JSON.stringify(server)).not.toContain('__plugin_run_node');
     } finally {
       if (originalElectron === undefined) delete process.versions['electron'];
@@ -849,8 +850,6 @@ describe('PluginManager consumption plane', () => {
     await manager.load();
     await manager.install(root);
 
-    // Plain node host (tests run under node): not Electron, not the CLI native
-    // binary, so the config passes through unchanged (command stays `node`).
     const server = manager.enabledMcpServers()['plugin-demo:data'];
     expect(server).toEqual(
       expect.objectContaining({

@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
-import { type IAgentScopeHandle, type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -52,6 +53,8 @@ describe('RestGateway', () => {
     const promptService: IAgentPromptService = {
       _serviceBrand: undefined,
       enqueue: ({ message }: { message: ContextMessage }) => { promptCalls.push(message); return Promise.resolve({ id: 'p', launched: Promise.resolve(undefined) } as never); },
+      submit: () => Promise.resolve(undefined),
+      submitSteer: () => Promise.resolve(undefined),
       steer: () => Promise.resolve([]),
       list: () => ({ active: undefined, pending: [] }),
       abort: () => true,
@@ -90,6 +93,7 @@ describe('RestGateway', () => {
 
     const sessionLifecycle: ISessionLifecycleService = {
       _serviceBrand: undefined,
+      onWillCreateSession: () => ({ dispose: () => {} }),
       onDidCreateSession: () => ({ dispose: () => {} }),
       onDidCloseSession: () => ({ dispose: () => {} }),
       onDidArchiveSession: () => ({ dispose: () => {} }),
@@ -101,6 +105,7 @@ describe('RestGateway', () => {
       close: () => Promise.resolve(),
       archive: () => Promise.resolve(),
       restore: () => Promise.resolve(sessionHandle),
+      delete: () => Promise.resolve(),
       fork: () => Promise.resolve(sessionHandle),
       createChild: () => Promise.resolve(sessionHandle),
     };

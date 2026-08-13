@@ -17,6 +17,10 @@ import {
 } from '#/index';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
+
+import { startMcpAuthStatusServer } from './mcp-auth-status-server';
+
 const tempDirs: string[] = [];
 const stdioFixture = join(
   import.meta.dirname,
@@ -38,6 +42,17 @@ async function makeTempDir(): Promise<string> {
 async function writeMcpConfig(homeDir: string, value: unknown): Promise<void> {
   await mkdir(homeDir, { recursive: true });
   await writeFile(join(homeDir, 'mcp.json'), JSON.stringify(value), 'utf-8');
+}
+
+function definePrototypeNamedMcpServer(
+  servers: Record<string, unknown>,
+  url: string,
+): Record<string, unknown> {
+  Object.defineProperty(servers, '__proto__', {
+    value: { transport: 'http', url },
+    enumerable: true,
+  });
+  return servers;
 }
 
 async function readMcpConfig(homeDir: string): Promise<Record<string, unknown>> {
@@ -211,6 +226,76 @@ describe('standalone MCP check (connection result)', () => {
 });
 
 describe('MCP OAuth facade (host-controlled browser flow)', () => {
+  it('reports authorization from real connections while preserving legacy status values', async () => {
+    const homeDir = await makeTempDir();
+    const statusServer = await startMcpAuthStatusServer();
+    const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
+    await externalOAuth
+      .getProvider('oauth-authorized', statusServer.oauthUrl)
+      .saveTokens({ access_token: statusServer.authToken, token_type: 'Bearer' });
+    await externalOAuth
+      .getProvider('oauth-stale', statusServer.oauthUrl)
+      .saveTokens({ access_token: 'stale-test-access-token', token_type: 'Bearer' });
+    await externalOAuth
+      .getProvider('sse', statusServer.unavailableUrl)
+      .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
+    await writeMcpConfig(homeDir, {
+      mcpServers: definePrototypeNamedMcpServer({
+        stdio: { command: 'local-command' },
+        plain: { transport: 'http', url: statusServer.plainUrl },
+        detected: { transport: 'http', url: statusServer.oauthUrl },
+        sse: { transport: 'sse', url: statusServer.unavailableUrl },
+        'sse-bearer': {
+          transport: 'sse',
+          url: statusServer.unavailableUrl,
+          bearerTokenEnvVar: 'EXAMPLE_SSE_TOKEN',
+        },
+        'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
+        bearer: {
+          transport: 'http',
+          url: 'https://bearer.example.test/mcp',
+          bearerTokenEnvVar: 'EXAMPLE_MCP_TOKEN',
+        },
+        'oauth-required': {
+          transport: 'http',
+          url: statusServer.unavailableUrl,
+          auth: 'oauth',
+        },
+        'oauth-authorized': {
+          transport: 'http',
+          url: statusServer.oauthUrl,
+          auth: 'oauth',
+        },
+        'oauth-stale': {
+          transport: 'http',
+          url: statusServer.oauthUrl,
+          auth: 'oauth',
+        },
+      }, statusServer.oauthUrl),
+    });
+    const harness = createKimiHarness({ homeDir });
+
+    try {
+      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'sse-bearer', authStatus: 'bearer-token' },
+        { name: 'sse-oauth', authStatus: 'oauth-required' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+        { name: 'oauth-stale', authStatus: 'oauth-required' },
+        { name: '__proto__', authStatus: 'oauth-required' },
+      ]);
+      expect(statusServer.requestCount('/unavailable')).toBe(0);
+    } finally {
+      await harness.close();
+      await statusServer.close();
+    }
+  }, 15_000);
+
   it('resets authorization for a configured remote server', async () => {
     const homeDir = await makeTempDir();
     const harness = createKimiHarness({ homeDir });

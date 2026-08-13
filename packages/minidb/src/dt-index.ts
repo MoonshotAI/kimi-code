@@ -2,11 +2,13 @@
 //
 // Ordered indexes over declared datetime columns (dt1..dtN). Each column is a
 // SkipList ordered by epoch-ms (numeric) with the record key as tie-break, giving
-// O(log N) range / rank on every dt column. Pure in-memory derived state; rebuilt
-// from the store on startup.
+// O(log N) range / rank on every dt column. Derived state: restored from the
+// published index generation on open (stage 5) or rebuilt from the store as
+// the fallback.
 
 import { SkipList, cmpNumber, cmpString } from './skiplist.js';
 import type { RangeEntry } from './skiplist.js';
+import type { DtImageColumn } from './gen-codec.js';
 
 interface DtColumn {
   list: SkipList<number, string>;
@@ -19,8 +21,8 @@ export interface DtRangeEntry {
 }
 
 export class DtIndex {
-  private readonly cols = new Map<string, DtColumn>(); // col -> column
-  private readonly byKey = new Map<string, Record<string, number>>(); // key -> { col: ms }
+  private cols = new Map<string, DtColumn>(); // col -> column
+  private byKey = new Map<string, Record<string, number>>(); // key -> { col: ms }
 
   private col(name: string): DtColumn {
     let c = this.cols.get(name);
@@ -97,10 +99,71 @@ export class DtIndex {
 
   /** Rebuild from an iterator of { key, dt }. */
   rebuild(entries: Iterable<{ key: string; dt: Record<string, number> | null | undefined }>): void {
-    this.cols.clear();
-    this.byKey.clear();
-    for (const { key, dt } of entries) {
-      if (dt) this.set(key, dt);
+    const b = this.beginRebuild();
+    for (const { key, dt } of entries) b.add(key, dt);
+    b.commit();
+  }
+
+  /** Stage-5 generation: export the whole index as columns with entries in
+   *  ascending (ms, key) order — the image serialization order. */
+  exportImage(): DtImageColumn[] {
+    return [...this.cols.entries()].map(([name, c]) => ({
+      name,
+      entries: c.list.toArray().map((n: RangeEntry<number, string>) => ({ ms: n.key, key: n.val })),
+    }));
+  }
+
+  /** Replace the whole index from a loaded generation image: the columns are
+   *  bulk-built (O(N)) and the byKey reverse map is derived from them. */
+  loadImage(cols: DtImageColumn[]): void {
+    const nextCols = new Map<string, DtColumn>();
+    const nextByKey = new Map<string, Record<string, number>>();
+    for (const { name, entries } of cols) {
+      const list = SkipList.bulkLoad<number, string>(
+        entries.map((e) => ({ key: e.ms, val: e.key })),
+        { compareKey: cmpNumber, compareVal: cmpString },
+      );
+      const byKey = new Map<string, number>();
+      for (const e of entries) {
+        byKey.set(e.key, e.ms);
+        const rec = nextByKey.get(e.key) ?? {};
+        rec[name] = e.ms;
+        nextByKey.set(e.key, rec);
+      }
+      nextCols.set(name, { list, byKey });
     }
+    this.cols = nextCols;
+    this.byKey = nextByKey;
+  }
+
+  /** Stage a rebuild in fresh state and swap it in on commit(), so a rebuild
+   *  that fails midway leaves the previous index fully intact. Rebuild keys
+   *  are unique (one store record each), so add() is a pure insert — the
+   *  diff-based set() logic is not needed here. */
+  beginRebuild(): { add(key: string, dt: Record<string, number> | null | undefined): void; commit(): void } {
+    const cols = new Map<string, DtColumn>();
+    const byKey = new Map<string, Record<string, number>>();
+    return {
+      add: (key, dt) => {
+        if (!dt) return;
+        const rec: Record<string, number> = {};
+        for (const [name, ms] of Object.entries(dt)) {
+          if (typeof ms !== 'number' || !Number.isFinite(ms)) continue;
+          let c = cols.get(name);
+          if (!c) {
+            c = { list: new SkipList<number, string>({ compareKey: cmpNumber, compareVal: cmpString }), byKey: new Map() };
+            cols.set(name, c);
+          }
+          c.list.insert(ms, key);
+          c.byKey.set(key, ms);
+          rec[name] = ms;
+        }
+        if (Object.keys(rec).length) byKey.set(key, rec);
+      },
+      commit: () => {
+        this.cols = cols;
+        this.byKey = byKey;
+      },
+    };
   }
 }

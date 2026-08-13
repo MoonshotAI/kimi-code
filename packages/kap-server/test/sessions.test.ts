@@ -1037,6 +1037,34 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(second.body.data.has_more).toBe(false);
   });
 
+  it('keeps the after_id lower bound while a filtered drain pages for more candidates', async () => {
+    const cwd = home as string;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    // Oldest → newest: an archived cursor session, a stretch of live
+    // (filtered-out) sessions, then one archived hit.
+    const archivedOlder = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    await postJson<{ archived: boolean }>(`/api/v1/sessions/${archivedOlder.body.data.id}:archive`);
+    await sleep(5);
+    for (let i = 0; i < 3; i++) {
+      const { body } = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      expect(body.code).toBe(0);
+      await sleep(5);
+    }
+    const archivedNewer = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    await postJson<{ archived: boolean }>(`/api/v1/sessions/${archivedNewer.body.data.id}:archive`);
+
+    // archived_only drops the whole live stretch, so the drain must page past
+    // it for more candidates — and must not slide below the after_id cursor
+    // while doing so (the cursor session itself is NOT strictly newer).
+    const page = await getJson<PageWire>(
+      `/api/v1/sessions?archived_only=true&page_size=2&after_id=${archivedOlder.body.data.id}`,
+    );
+    expect(page.body.code).toBe(0);
+    expect(page.body.data.items.map((s) => s.id)).toEqual([archivedNewer.body.data.id]);
+    expect(page.body.data.has_more).toBe(false);
+  });
+
   it('rejects archived_only combined with include_archive (40001)', async () => {
     const { body } = await getJson<null>(
       '/api/v1/sessions?archived_only=true&include_archive=true',
@@ -1479,5 +1507,167 @@ describe('server-v2 /api/v1/sessions status context window', () => {
     expect(body.data.max_context_tokens).toBe(131072);
     expect(body.data.context_tokens).toBe(0);
     expect(body.data.context_usage).toBe(0);
+  });
+});
+
+describe('server-v2 /api/v1/sessions (minidb read model)', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+
+  // The suite-level setup pins the read-model flag OFF (env outranks the
+  // `[experimental]` config section), so this describe re-enables it per test.
+  const READ_MODEL_ENV = 'KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL';
+
+  const READ_MODEL_CONFIG = [
+    'default_model = "stub"',
+    '',
+    '[providers.stub]',
+    'type = "openai"',
+    'base_url = "http://127.0.0.1:9999"',
+    'api_key = "stub"',
+    '',
+    '[models.stub]',
+    'provider = "stub"',
+    'model = "stub"',
+    'max_context_size = 1000',
+    '',
+  ].join('\n');
+
+  beforeEach(async () => {
+    process.env[READ_MODEL_ENV] = '1';
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-rm-'));
+    await writeFile(join(home, 'config.toml'), READ_MODEL_CONFIG, 'utf8');
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterEach(async () => {
+    process.env[READ_MODEL_ENV] = 'false';
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+      home = undefined;
+    }
+  });
+
+  async function postJson<T>(
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; body: Envelope<T> }> {
+    const hasBody = body !== undefined;
+    const res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: authHeaders(
+        server as RunningServer,
+        hasBody ? { 'content-type': 'application/json' } : {},
+      ),
+      body: hasBody ? JSON.stringify(body) : undefined,
+    } as never);
+    return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  async function getJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
+    const res = await fetch(`${base}${path}`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  it('prepares the read model at boot and serves immediate reads', async () => {
+    const status = await getJson<{ state: string; generation?: number }>(
+      '/api/v1/debug/sessionIndex/status',
+    );
+    expect(status.body.code).toBe(0);
+    expect(status.body.data.state).toBe('ready');
+
+    // A freshly created session lists, counts, and pages immediately — the
+    // mutation path never waited for the read model, the read path folds the
+    // mirror queue back in.
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+
+    const listed = await getJson<PageWire>('/api/v1/sessions');
+    expect(listed.body.data.items.some((s) => s.id === id)).toBe(true);
+
+    const workspaces = await getJson<{ items: { session_count: number }[] }>('/api/v1/workspaces');
+    expect(workspaces.body.data.items[0]?.session_count).toBe(1);
+
+    const paged = await getJson<PageWire>(`/api/v1/sessions?page_size=1&before_id=${id}`);
+    expect(paged.body.data.items).toEqual([]);
+    expect(paged.body.data.has_more).toBe(false);
+
+    await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
+    const archivedOnly = await getJson<PageWire>('/api/v1/sessions?archived_only=true');
+    expect(archivedOnly.body.data.items.map((s) => s.id)).toEqual([id]);
+
+    // A restart re-projects from the authoritative documents (the persisted
+    // read model may also be reused; either way the listing is complete).
+    await (server as RunningServer).close();
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    const relisted = await getJson<PageWire>('/api/v1/sessions?include_archive=true');
+    expect(relisted.body.data.items.map((s) => s.id)).toEqual([id]);
+  });
+
+  it('serves session routes from the authoritative store when the read model cannot open', async () => {
+    // Break the read model at its root: a plain FILE where the query-store
+    // directory must be. Boot-time prepare fails; every later access retries
+    // and fails the same way for the whole server lifetime.
+    await (server as RunningServer).close();
+    server = undefined;
+    await rm(join(home as string, 'cache', 'query-store'), { recursive: true, force: true });
+    await writeFile(join(home as string, 'cache', 'query-store'), 'sabotage', 'utf8');
+
+    // The boot itself must survive the read-model failure (prepare's failure
+    // is logged, never propagated).
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    // The degradation is diagnosable through the debug surface.
+    const status = await getJson<{ state: string; reason?: string; degradedCount: number }>(
+      '/api/v1/debug/sessionIndex/status',
+    );
+    expect(status.body.data.state).toBe('degraded');
+    expect(status.body.data.degradedCount).toBeGreaterThan(0);
+
+    // Session lifecycle is untouched: create, list, point-lookup all answer
+    // from the authoritative metadata.
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    expect(created.body.code).toBe(0);
+    const id = created.body.data.id;
+    const listed = await getJson<PageWire>('/api/v1/sessions');
+    expect(listed.body.data.items.some((s) => s.id === id)).toBe(true);
+    const fetched = await getJson<{ id: string }>(`/api/v1/sessions/${id}`);
+    expect(fetched.body.data.id).toBe(id);
   });
 });

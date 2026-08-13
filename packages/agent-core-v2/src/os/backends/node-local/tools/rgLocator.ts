@@ -20,6 +20,7 @@ import { type Entry, fromBuffer as yauzlFromBuffer } from 'yauzl';
 import { basename, join } from 'pathe';
 
 import { abortable } from '#/_base/utils/abort';
+import { ErrorCodes, Error2 } from '#/errors';
 
 const RG_VERSION = '15.0.0';
 const RG_BASE_URL = 'https://code.kimi.com/kimi-code/rg';
@@ -101,7 +102,7 @@ async function resolveRgPath(
   if (options.allowCachedFallback === true) {
     return downloadRgWithLock(probe, shareDir);
   }
-  throw new Error('ripgrep (rg) is not available on PATH');
+  throw new Error2(ErrorCodes.OS_FS_UNAVAILABLE, 'ripgrep (rg) is not available on PATH');
 }
 
 export async function findExistingRg(
@@ -181,8 +182,10 @@ export function detectTarget(): string | undefined {
 async function downloadAndInstallRg(shareDir: string): Promise<string> {
   const target = detectTarget();
   if (target === undefined) {
-    throw new Error(
+    throw new Error2(
+      ErrorCodes.OS_FS_UNAVAILABLE,
       `Unsupported platform/arch for ripgrep download: ${process.platform}/${process.arch}`,
+      { details: { platform: process.platform, arch: process.arch } },
     );
   }
 
@@ -191,7 +194,11 @@ async function downloadAndInstallRg(shareDir: string): Promise<string> {
   const archiveName = `ripgrep-${RG_VERSION}-${target}.${archiveExt}`;
   const expectedSha256 = RG_ARCHIVE_SHA256[archiveName];
   if (expectedSha256 === undefined) {
-    throw new Error(`No pinned SHA-256 is configured for ripgrep archive ${archiveName}`);
+    throw new Error2(
+      ErrorCodes.OS_FS_UNAVAILABLE,
+      `No pinned SHA-256 is configured for ripgrep archive ${archiveName}`,
+      { details: { archiveName } },
+    );
   }
   const url = `${RG_BASE_URL}/${archiveName}`;
 
@@ -214,7 +221,11 @@ async function downloadAndInstallRg(shareDir: string): Promise<string> {
       clearTimeout(timeoutHandle);
     }
     if (!resp.ok || resp.body === null) {
-      throw new Error(`Failed to download ripgrep: HTTP ${String(resp.status)} ${resp.statusText}`);
+      throw new Error2(
+        ErrorCodes.OS_FS_UNAVAILABLE,
+        `Failed to download ripgrep: HTTP ${String(resp.status)} ${resp.statusText}`,
+        { details: { url, status: resp.status, statusText: resp.statusText } },
+      );
     }
     const write = createWriteStream(archivePath);
     await pipeline(Readable.fromWeb(resp.body as never), write);
@@ -233,9 +244,11 @@ async function downloadAndInstallRg(shareDir: string): Promise<string> {
       });
       const extracted = join(extractDir, `ripgrep-${RG_VERSION}-${target}`, rgBinaryName());
       if (!existsSync(extracted)) {
-        throw new Error(
+        throw new Error2(
+          ErrorCodes.OS_FS_UNAVAILABLE,
           `Ripgrep archive did not contain expected binary at ${extracted}. ` +
             'CDN content may have changed.',
+          { details: { path: extracted } },
         );
       }
       const installDir = await mkdtemp(join(binDir, '.rg-install-'));
@@ -263,9 +276,11 @@ export async function verifyArchiveChecksum(
     .update(await readFile(archivePath))
     .digest('hex');
   if (actualSha256 !== expectedSha256) {
-    throw new Error(
+    throw new Error2(
+      ErrorCodes.OS_FS_UNAVAILABLE,
       `Ripgrep archive checksum mismatch for ${archiveName}: expected ${expectedSha256}, ` +
         `got ${actualSha256}. CDN content may have changed.`,
+      { details: { archiveName, expectedSha256, actualSha256 } },
     );
   }
 }
@@ -276,7 +291,13 @@ export async function extractRgFromZip(archivePath: string, destination: string)
   await new Promise<void>((resolve, reject) => {
     yauzlFromBuffer(buf, { lazyEntries: true }, (openErr, zipfile) => {
       if (openErr !== null || zipfile === undefined) {
-        reject(new Error(`Failed to open ripgrep archive: ${openErr?.message ?? 'unknown error'}`));
+        reject(
+          new Error2(
+            ErrorCodes.OS_FS_UNAVAILABLE,
+            `Failed to open ripgrep archive: ${openErr?.message ?? 'unknown error'}`,
+            { cause: openErr ?? undefined },
+          ),
+        );
         return;
       }
       let found = false;
@@ -289,7 +310,11 @@ export async function extractRgFromZip(archivePath: string, destination: string)
         zipfile.openReadStream(entry, (streamErr, stream) => {
           if (streamErr !== null) {
             reject(
-              new Error(`Failed to read ${entry.fileName} from archive: ${streamErr.message}`),
+              new Error2(
+                ErrorCodes.OS_FS_UNAVAILABLE,
+                `Failed to read ${entry.fileName} from archive: ${streamErr.message}`,
+                { cause: streamErr },
+              ),
             );
             zipfile.close();
             return;
@@ -302,7 +327,13 @@ export async function extractRgFromZip(archivePath: string, destination: string)
               resolve();
             } catch (error) {
               zipfile.close();
-              reject(error instanceof Error ? error : new Error(String(error)));
+              reject(
+                new Error2(
+                  ErrorCodes.OS_FS_UNAVAILABLE,
+                  error instanceof Error ? error.message : String(error),
+                  { cause: error },
+                ),
+              );
             }
           })();
         });
@@ -311,9 +342,11 @@ export async function extractRgFromZip(archivePath: string, destination: string)
       zipfile.on('end', () => {
         if (!found) {
           reject(
-            new Error(
+            new Error2(
+              ErrorCodes.OS_FS_UNAVAILABLE,
               `Ripgrep archive did not contain expected binary '${binName}'. ` +
                 'CDN content may have changed.',
+              { details: { binary: binName } },
             ),
           );
         }

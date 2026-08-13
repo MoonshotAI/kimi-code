@@ -18,8 +18,6 @@ import type { UrlFetcher, UrlFetchResult } from '#/app/web/tools/fetch-url-types
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
 
-// LocalFetchURLProvider resolves hostnames before fetching; keep DNS
-// hermetic so provider-level tests never touch the real resolver.
 beforeEach(() => {
   (lookup as unknown as Mock).mockReset();
   (lookup as unknown as Mock).mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
@@ -127,6 +125,26 @@ describe('FetchURLTool output note', () => {
       'The returned content is the main text extracted from the page. ' +
         'If you use it in your answer, cite this page as a markdown link, e.g. [title](url).\n\nBODY',
     );
+  });
+});
+
+describe('FetchURLTool backend resolution', () => {
+  // Agent creation constructs the tool; the backend must not materialize
+  // until a call needs it. The service documents that each getUrlFetcher()
+  // call re-reads config and login state, and a construction-time read would
+  // race the identity freeze during a fast bootstrap.
+  it('resolves the fetcher per invocation, never at construction', async () => {
+    const fetch = vi
+      .fn<UrlFetcher['fetch']>()
+      .mockResolvedValue({ content: 'hello', kind: 'passthrough' } satisfies UrlFetchResult);
+    const getUrlFetcher = vi.fn(() => ({ fetch }));
+    const tool = new FetchURLTool({ _serviceBrand: undefined, getUrlFetcher });
+
+    expect(getUrlFetcher).not.toHaveBeenCalled();
+
+    await execute(tool, 'https://example.com', new AbortController().signal);
+    await execute(tool, 'https://example.com', new AbortController().signal);
+    expect(getUrlFetcher).toHaveBeenCalledTimes(2);
   });
 });
 

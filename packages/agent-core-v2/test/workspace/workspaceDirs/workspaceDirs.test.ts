@@ -23,9 +23,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -36,12 +35,17 @@ import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
+import { stubProviderService } from '../../app/provider/stubs';
+import { IFlagService } from '#/app/flag/flag';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
 import {
   IProjectLocalConfigService,
 } from '#/app/projectLocalConfig/projectLocalConfig';
-import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
 import { WorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycleService';
@@ -87,6 +91,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 
 import { stubLog } from '../../_base/log/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 
 function workspaceCatalogStub(): IWorkspaceService {
   const workspaces = new Map<string, Workspace>();
@@ -266,7 +271,6 @@ describe('workspace add-dir (handler chain)', () => {
     return root;
   }
 
-  /** A project root with a `.git` marker so local.toml lands at the root. */
   async function makeProjectRoot(): Promise<string> {
     const root = await makeRoot('kimi-add-dir-proj-');
     await mkdir(join(root, '.git'));
@@ -298,6 +302,13 @@ describe('workspace add-dir (handler chain)', () => {
         get: () => undefined,
         onDidSectionChange: () => ({ dispose: () => {} }),
       } as unknown as IConfigService),
+      stubPair(IModelCatalog, { _serviceBrand: undefined } as unknown as IModelCatalog),
+      stubPair(IModelService, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+      } as unknown as IModelService),
+      stubPair(IProviderService, stubProviderService()),
+      stubPair(IFlagService, stubFlag(() => false)),
       stubPair(ITelemetryService, noopTelemetryService),
       stubPair(IWorkspaceService, workspaceCatalogStub()),
       stubPair(ISessionIndex, {
@@ -306,6 +317,12 @@ describe('workspace add-dir (handler chain)', () => {
         get: () => Promise.resolve(undefined),
         countActive: () => Promise.resolve(0),
       } as unknown as ISessionIndex),
+      stubPair(ISessionIndexMirror, {
+        _serviceBrand: undefined,
+        record: () => {},
+        pending: () => [],
+        drain: () => Promise.resolve(),
+      } as unknown as ISessionIndexMirror),
       stubPair(IAppendLogStore, {
         _serviceBrand: undefined,
         append: () => {},
@@ -413,13 +430,10 @@ describe('workspace add-dir (handler chain)', () => {
     expect(result.projectRoot).toBe(root);
     expect(result.configPath).toBe(join(root, '.kimi-code', 'local.toml'));
     expect(result.additionalDirs).toEqual([extra]);
-    // local.toml written on disk.
     const toml = await readFile(join(root, '.kimi-code', 'local.toml'), 'utf8');
     expect(toml).toContain('additional_dir');
     expect(toml).toContain(extra);
-    // The live session's view refreshed through the change event.
     expect(dirsOf(s1)).toEqual([extra]);
-    // A second session of the same workspace sees it immediately.
     const s2 = await service.create({ sessionId: 's2', workDir: root });
     expect(dirsOf(s2)).toEqual([extra]);
   });
@@ -454,9 +468,7 @@ describe('workspace add-dir (handler chain)', () => {
     expect(result.persisted).toBe(false);
     expect(result.additionalDirs).toEqual([extra]);
     expect(dirsOf(s1)).toEqual([extra]);
-    // Nothing written: local.toml does not exist.
     await expect(readFile(join(root, '.kimi-code', 'local.toml'), 'utf8')).rejects.toThrow();
-    // The in-memory dir is shared with a second session of the workspace.
     const s2 = await service.create({ sessionId: 's2', workDir: root });
     expect(dirsOf(s2)).toEqual([extra]);
   });
@@ -470,16 +482,11 @@ describe('workspace add-dir (handler chain)', () => {
     const s1 = await service.create({ sessionId: 's1', workDir: root });
     expect(dirsOf(s1)).toEqual([]);
 
-    // External write (another process, an editor, `kimi` in a second CLI).
     await mkdir(join(root, '.kimi-code'), { recursive: true });
     const writeLocalToml = () =>
       writeFile(join(root, '.kimi-code', 'local.toml'), `[workspace]\nadditional_dir = ["${extra}"]\n`);
     await writeLocalToml();
 
-    // The chokidar watcher ignores files it finds during its initial scan
-    // (`ignoreInitial`), so a write landing inside that window is swallowed;
-    // rewrite while polling (slower than the 200ms reload debounce, so the
-    // debounce always gets a quiet window) until a `modify` event lands.
     const deadline = Date.now() + 10_000;
     while (!dirsOf(s1).includes(extra)) {
       if (Date.now() > deadline) {
@@ -521,8 +528,6 @@ describe('workspace add-dir (handler chain)', () => {
 
     const s1 = await service.create({ sessionId: 's1', workDir: root, additionalDirs: [extra] });
     expect(dirsOf(s1)).toEqual([extra]);
-    // Caller dirs join the handler-shared set: a session created WITHOUT the
-    // option sees them too, and nothing was persisted.
     const s2 = await service.create({ sessionId: 's2', workDir: root });
     expect(dirsOf(s2)).toEqual([extra]);
     await expect(readFile(join(root, '.kimi-code', 'local.toml'), 'utf8')).rejects.toThrow();

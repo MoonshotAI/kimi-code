@@ -17,9 +17,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -38,16 +37,23 @@ import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoad
 import { PluginAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoaderService';
 import { IBootstrapService, resolveHostArgs } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
+import { stubProviderService } from '../app/provider/stubs';
+import { IFlagService } from '#/app/flag/flag';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
-import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
 import { InMemorySkillDiscovery } from '#/app/skillCatalog/inMemorySkillDiscovery';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { BuiltinSkillSource, IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { AgentIdentityService } from '#/app/agentIdentity/agentIdentityService';
 import { IUserFileSkillSource, UserFileSkillSource } from '#/app/skillCatalog/userFileSkillSource';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
 import { WorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycleService';
@@ -102,6 +108,7 @@ import { IPluginSkillSource, PluginSkillSource } from '#/workspace/workspaceSkil
 import { IWorkspaceRootSkillSource, WorkspaceRootSkillSource } from '#/workspace/workspaceSkillCatalog/rootFileSkillSource';
 
 import { stubLog } from '../_base/log/stubs';
+import { stubFlag } from '../app/flag/stubs';
 import { stubSkill } from '../app/skillCatalog/stubs';
 import { stdioFixture } from '../mcpCore/stubs';
 
@@ -252,6 +259,7 @@ describe('workspace resource sharing (handler chain)', () => {
     registerScopedService(LifecycleScope.App, IAppStateService, AppStateService, ScopeActivation.OnScopeCreated, 'state');
     registerScopedService(LifecycleScope.Workspace, IWorkspaceStateService, WorkspaceStateService, ScopeActivation.OnScopeCreated, 'state');
     registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
+    registerScopedService(LifecycleScope.App, IAgentIdentity, AgentIdentityService, ScopeActivation.OnDemand, 'agentIdentity');
     registerScopedService(LifecycleScope.App, IBuiltinSkillSource, BuiltinSkillSource, ScopeActivation.OnDemand, 'skillCatalog');
     registerScopedService(LifecycleScope.App, IUserFileSkillSource, UserFileSkillSource, ScopeActivation.OnDemand, 'skillCatalog');
     registerScopedService(LifecycleScope.App, IAgentProfileRegistry, AgentProfileRegistryService, ScopeActivation.OnDemand, 'agentProfileCatalog');
@@ -294,6 +302,13 @@ describe('workspace resource sharing (handler chain)', () => {
         get: () => undefined,
         onDidSectionChange: () => ({ dispose: () => {} }),
       } as unknown as IConfigService),
+      stubPair(IModelCatalog, { _serviceBrand: undefined } as unknown as IModelCatalog),
+      stubPair(IModelService, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+      } as unknown as IModelService),
+      stubPair(IProviderService, stubProviderService()),
+      stubPair(IFlagService, stubFlag(() => false)),
       stubPair(ITelemetryService, noopTelemetryService),
       stubPair(ISkillDiscovery, discovery),
       stubPair(IPluginService, pluginStub()),
@@ -304,6 +319,12 @@ describe('workspace resource sharing (handler chain)', () => {
         get: () => Promise.resolve(undefined),
         countActive: () => Promise.resolve(0),
       } as unknown as ISessionIndex),
+      stubPair(ISessionIndexMirror, {
+        _serviceBrand: undefined,
+        record: () => {},
+        pending: () => [],
+        drain: () => Promise.resolve(),
+      } as unknown as ISessionIndexMirror),
       stubPair(IAppendLogStore, {
         _serviceBrand: undefined,
         append: () => {},
@@ -410,6 +431,9 @@ describe('workspace resource sharing (handler chain)', () => {
     const m2 = s2.accessor.get(ISessionMcpHandle);
     expect(m1.connectionManager).toBe(m2.connectionManager);
     expect(connectAll).toHaveBeenCalledTimes(1);
+    // Session creation no longer waits for the initial connect; the seeded
+    // handle's readiness promise is the wait point.
+    await m1.ready;
     expect(m1.connectionManager.get('alpha')?.status).toBe('connected');
   }, 20000);
 
@@ -466,8 +490,6 @@ describe('workspace resource sharing (handler chain)', () => {
       () => {
         expect(catalog.catalog.getSkill('watched-skill')?.description).toBe('from watch');
       },
-      // Real FSEvents delivery + the 200 ms source debounce + a real disk
-      // rescan: under high parallel load the 10 s budget flakes, so allow 30 s.
       { timeout: 30000, interval: 100 },
     );
   }, 60000);

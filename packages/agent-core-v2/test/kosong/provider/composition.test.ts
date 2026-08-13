@@ -26,6 +26,8 @@
  *
  *  - the behavior probes for per-turn intent encoding (cacheKey / thinking /
  *     budget) on the Kimi, OpenAI, and Anthropic wires;
+ *  - reasoning-only assistant history remains canonical while each wire
+ *    projects it into a provider-valid representation;
  *  - the per-base `responseFormat` encodings (re-added from the deleted
  *     llmProtocol structured-output suite; morph-seeded kwargs cases that no
  *     longer have a channel are noted where they dropped);
@@ -33,10 +35,18 @@
  *     profile, and the OpenAI `reasoning_effort` auto-enable with its
  *     load-bearing kill switch (a `withThinking` hook disables it).
  *
+ * Plus one construction invariant: every wire base builds its SDK client
+ * with `maxRetries: 0` — retry is owned by the engine's step-retry layer,
+ * never by the SDK (whose backoff sleep ignores the turn's AbortSignal). The
+ * closing section proves it over a real HTTP 429: the first response reaches
+ * the caller after exactly one request, carrying the server-directed delay.
+ *
  * Note: base/definition registries are module-level state shared across this
  * file, so the contribs and test-vendor definitions are imported/registered
  * exactly once here.
  */
+
+import { createServer } from 'node:http';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -47,6 +57,7 @@ import {
   APIConnectionError,
   APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
+  APIStatusError,
   isRetryableGenerateError,
 } from '#/kosong/contract/errors';
 import type { Message } from '#/kosong/contract/message';
@@ -146,8 +157,6 @@ describe('supportedProtocols (probe 4)', () => {
     expect([...protocols].toSorted()).toEqual(
       ['anthropic', 'google-genai', 'openai', 'openai_responses'].toSorted(),
     );
-    // A vendor is not a protocol, and Vertex AI is a providerOptions mode of
-    // the google-genai base — neither may appear here.
     expect(protocols).not.toContain('kimi');
     expect(protocols).not.toContain('vertexai');
   });
@@ -162,8 +171,6 @@ describe('apiKey env suppression (probe 1)', () => {
     });
     await expect(provider.generate('sys', [], [])).rejects.toThrow(/apiKey is required/);
 
-    // Even with a stray OPENAI_API_KEY in the environment, the composed Kimi
-    // provider must not silently use it.
     process.env['OPENAI_API_KEY'] = 'sk-openai-must-not-leak';
     const withStrayEnv = registry.createChatProvider({
       protocol: 'openai',
@@ -195,8 +202,6 @@ describe('apiKey env suppression (probe 1)', () => {
       modelName: 'gpt-4o',
       baseUrl: 'http://127.0.0.1:9/v1',
     });
-    // The request is attempted (key found via the base default) and fails on
-    // the connection — not on a missing key.
     await expect(withKey.generate('sys', [], [])).rejects.toThrow(APIConnectionError);
   });
 
@@ -246,26 +251,25 @@ describe('resolveAdapterIdentity', () => {
   it('resolves the (kimi, openai) pair registration: its traits plus the trailing synthetic trait', () => {
     const identity = registry.resolveAdapterIdentity('openai', 'kimi');
     expect(identity.baseId).toBe('openai');
-    expect(identity.traits).toHaveLength(2); // 1 vendor trait + synthetic
+    expect(identity.traits).toHaveLength(2);
   });
 
   it('resolves the (kimi, anthropic) pair registration: only its own traits', () => {
     const identity = registry.resolveAdapterIdentity('anthropic', 'kimi');
     expect(identity.baseId).toBe('anthropic');
-    expect(identity.traits).toHaveLength(2); // 1 pair trait + synthetic
+    expect(identity.traits).toHaveLength(2);
   });
 
   it('resolves an unregistered (vendor, protocol) pair to no vendor traits', () => {
-    // Kimi registers no google-genai definition — the pair contributes nothing.
     const identity = registry.resolveAdapterIdentity('google-genai', 'kimi');
     expect(identity.baseId).toBe('google-genai');
-    expect(identity.traits).toHaveLength(1); // synthetic only
+    expect(identity.traits).toHaveLength(1);
   });
 
   it('resolves the unregistered-vendor branch: protocol itself as base, no vendor traits', () => {
     const identity = registry.resolveAdapterIdentity('openai', 'no-such-vendor');
     expect(identity.baseId).toBe('openai');
-    expect(identity.traits).toHaveLength(1); // synthetic only
+    expect(identity.traits).toHaveLength(1);
   });
 
   it('resolves the no-providerType branch identically', () => {
@@ -303,10 +307,6 @@ describe('resolveCapability', () => {
   });
 
   it('kimi declares no vendor-level capability — the base catalog answers instead', () => {
-    // Kimi model ids never match the bases' builtin catalogs, so the detected
-    // layer still answers UNKNOWN for them; an id the base does know (gpt-4o)
-    // now resolves through the base catalog rather than being suppressed by a
-    // vendor-level UNKNOWN declaration.
     expect(isUnknownCapability(registry.resolveCapability('openai', 'kimi-for-coding', 'kimi'))).toBe(
       true,
     );
@@ -343,7 +343,6 @@ describe('createChatProvider', () => {
       providerType: 'kimi',
       modelName: 'kimi-k2',
     });
-    // The composed provider's name is the base's — there is no vendor name.
     expect(provider.name).toBe('openai');
     expect(provider.modelName).toBe('kimi-k2');
     expect(typeof provider.uploadVideo).toBe('function');
@@ -353,6 +352,17 @@ describe('createChatProvider', () => {
     const provider = registry.createChatProvider({ protocol: 'openai', modelName: 'gpt-4o' });
     expect(provider.name).toBe('openai');
     expect(provider.uploadVideo).toBeUndefined();
+  });
+});
+
+describe('SDK-internal retry disabled (engine-owned step retry)', () => {
+  it.each([
+    { protocol: 'openai', modelName: 'gpt-4o' },
+    { protocol: 'openai_responses', modelName: 'gpt-5' },
+    { protocol: 'anthropic', modelName: 'claude-opus-4-6' },
+  ] as const)('builds the $protocol SDK client with maxRetries 0', ({ protocol, modelName }) => {
+    const provider = registry.createChatProvider({ protocol, modelName, apiKey: 'sk-probe' });
+    expect((sdkClient(provider) as { maxRetries?: number }).maxRetries).toBe(0);
   });
 });
 
@@ -466,8 +476,6 @@ describe('kimi provider definitions', () => {
   });
 
   it('answers id-level queries and reports unregistered pairs', () => {
-    // The id-level view is the first registration; vendor-level facts are
-    // identical on both, so any of them answers an id-level query.
     expect(getProviderDefinition('kimi')?.baseProtocol).toBe('openai');
     expect(getProviderDefinitions('kimi')).toHaveLength(2);
     expect(hasProviderDefinition('kimi')).toBe(true);
@@ -489,12 +497,6 @@ describe('kimi provider definitions', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Wire-body probes: drive `generate` with a mocked SDK client and assert the
-// exact params the base would send. Registry-composed providers always
-// stream, so the mocks answer minimal valid streams; directly constructed
-// bases use `stream: false` and answer plain responses.
-// ---------------------------------------------------------------------------
 
 const PROBE_HISTORY: Message[] = [
   { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
@@ -603,6 +605,7 @@ async function captureOpenAIBody(
 async function captureAnthropicBody(
   provider: ChatProvider,
   options?: GenerateOptions,
+  history: Message[] = PROBE_HISTORY,
 ): Promise<{
   readonly params: Record<string, unknown>;
   readonly requestOptions: Record<string, unknown> | undefined;
@@ -626,7 +629,7 @@ async function captureAnthropicBody(
     });
   client.messages.create = create('standard');
   client.beta.messages.create = create('beta');
-  await drain(await provider.generate('', [], PROBE_HISTORY, options));
+  await drain(await provider.generate('', [], history, options));
   if (capturedParams === undefined || via === undefined) {
     throw new Error('expected messages.create to be called');
   }
@@ -636,6 +639,7 @@ async function captureAnthropicBody(
 async function captureGoogleBody(
   provider: ChatProvider,
   options?: GenerateOptions,
+  history: Message[] = PROBE_HISTORY,
 ): Promise<Record<string, unknown>> {
   let captured: Record<string, unknown> | undefined;
   const client = sdkClient(provider) as { models: { generateContent: unknown } };
@@ -649,7 +653,7 @@ async function captureGoogleBody(
       modelVersion: 'probe',
     });
   });
-  await drain(await provider.generate('', [], PROBE_HISTORY, options));
+  await drain(await provider.generate('', [], history, options));
   if (captured === undefined) throw new Error('expected models.generateContent to be called');
   return captured;
 }
@@ -685,13 +689,10 @@ describe('per-turn intent wire encoding (behavior probes)', () => {
     });
 
     expect(body['prompt_cache_key']).toBe('session-probe');
-    // kimiOpenAITrait.buildParams expands extra_body into the top-level params.
     expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high', keep: 'all' });
     expect(body).not.toHaveProperty('extra_body');
-    // The Kimi trait takes over the token field (no max_tokens backfill left).
     expect(body['max_completion_tokens']).toBe(5000);
     expect(body).not.toHaveProperty('max_tokens');
-    // A trait took thinking over — the base must not add reasoning_effort.
     expect(body).not.toHaveProperty('reasoning_effort');
   });
 
@@ -735,9 +736,59 @@ describe('per-turn intent wire encoding (behavior probes)', () => {
     expect(via).toBe('standard');
     expect(params['thinking']).toEqual({ type: 'enabled' });
     expect(params['output_config']).toEqual({ effort: 'high' });
-    // The (kimi, anthropic) trait strips the interleaved-thinking beta and
-    // adds nothing else: no beta header reaches the wire at all.
     expect(requestOptions).toBeUndefined();
+  });
+});
+
+describe('reasoning-only assistant history projection', () => {
+  it('adds empty content on the OpenAI Chat Completions wire without dropping reasoning', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'deepseek-v4-flash',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const body = await captureOpenAIBody(provider, undefined, THINK_HISTORY);
+    const messages = body['messages'] as Array<Record<string, unknown>>;
+
+    expect(messages[0]).toEqual({
+      role: 'assistant',
+      content: '',
+      reasoning_content: 'earlier reasoning',
+    });
+  });
+
+  it('keeps unsigned thinking on the Kimi Anthropic wire', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'anthropic',
+      providerType: 'kimi',
+      modelName: 'kimi-for-coding',
+      apiKey: 'sk-probe',
+    });
+
+    const { params } = await captureAnthropicBody(provider, undefined, THINK_HISTORY);
+    const messages = params['messages'] as Array<Record<string, unknown>>;
+
+    expect(messages[0]).toEqual({
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: 'earlier reasoning' }],
+    });
+  });
+
+  it('keeps unsigned thinking on the Google GenAI wire', async () => {
+    const provider = new GoogleGenAIChatProvider({
+      model: 'gemini-2.5-flash',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const body = await captureGoogleBody(provider, undefined, THINK_HISTORY);
+    const contents = body['contents'] as Array<Record<string, unknown>>;
+
+    expect(contents[0]).toEqual({
+      role: 'model',
+      parts: [{ text: 'earlier reasoning', thought: true }],
+    });
   });
 });
 
@@ -862,7 +913,6 @@ describe('reasoning dialect (behavior probes)', () => {
       };
     });
 
-    // Detection happens while draining the first response.
     await drain(await provider.generate('', [], PROBE_HISTORY));
 
     await drain(await provider.generate('', [], THINK_HISTORY));
@@ -880,7 +930,6 @@ describe('reasoning dialect (behavior probes)', () => {
       apiKey: 'sk-probe',
     });
 
-    // The probe stream carries no reasoning field, so nothing is detected.
     const body = await captureOpenAIBody(provider, undefined, THINK_HISTORY);
 
     const messages = body['messages'] as Array<Record<string, unknown>>;
@@ -917,8 +966,6 @@ describe('reasoning dialect (behavior probes)', () => {
       };
     });
 
-    // With an explicit key, only that key is read inbound: a `reasoning`
-    // field is not picked up, and detection stays out of the way.
     const firstParts: unknown[] = [];
     for await (const part of await provider.generate('', [], PROBE_HISTORY)) {
       firstParts.push(part);
@@ -998,9 +1045,6 @@ describe('responseFormat wire encoding (per base)', () => {
       responseFormat: JSON_SCHEMA_FORMAT,
     });
 
-    // The morph era seeded `output_config.effort` via withGenerationKwargs;
-    // the per-turn thinking intent is the channel now, and the format merges
-    // into the same output_config object.
     expect(params['output_config']).toEqual({
       effort: 'medium',
       format: { type: 'json_schema', schema: CONTACT_SCHEMA },
@@ -1031,10 +1075,6 @@ describe('responseFormat wire encoding (per base)', () => {
 
     expect(config['responseMimeType']).toBe('application/json');
     expect(config['responseJsonSchema']).toEqual(CONTACT_SCHEMA);
-    // The deleted suite's "replaces conflicting native schema config" case is
-    // unreachable now: the morph kwargs channel is gone, so a conflicting
-    // `responseSchema` can never be seeded (the base still deletes both keys
-    // defensively before applying the format).
   });
 
   it('maps json_schema to the OpenAI Responses text.format', async () => {
@@ -1051,9 +1091,6 @@ describe('responseFormat wire encoding (per base)', () => {
         description: undefined,
       },
     });
-    // The deleted suite's "preserves existing text options" case is
-    // unreachable now: no channel seeds `text.verbosity` (the per-request
-    // merge in the base still stands, but only per-turn formats reach it).
   });
 });
 
@@ -1130,12 +1167,10 @@ describe('Anthropic max-tokens profile', () => {
   });
 
   it('falls back to the nearest lower catalogued minor for unknown minors', () => {
-    // Uncatalogued minors inherit at least their predecessor's cap.
     expect(resolveDefaultMaxTokens('claude-opus-4-9')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-10')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-sonnet-4-9')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-haiku-4-9')).toBe(64000);
-    // A gap between catalogued minors resolves to the nearest lower one.
     expect(resolveDefaultMaxTokens('claude-opus-4-3')).toBe(32000);
   });
 
@@ -1261,9 +1296,6 @@ describe('OpenAI reasoning_effort path (issue #1616)', () => {
   });
 
   it('disables the auto-enable entirely once a withThinking hook exists (load-bearing)', async () => {
-    // A hook that defers (returns undefined) still counts as "a trait took
-    // thinking over": the base's history scan must not fire, but an explicit
-    // effort still falls through to the base's own reasoning_effort encoding.
     const provider = new OpenAILegacyChatProvider({
       model: 'gpt-4.1',
       apiKey: 'sk-probe',
@@ -1277,4 +1309,89 @@ describe('OpenAI reasoning_effort path (issue #1616)', () => {
     const explicit = await captureOpenAIBody(provider, { thinking: { effort: 'low' } });
     expect(explicit['reasoning_effort']).toBe('low');
   });
+});
+
+describe('429 wire behavior over real HTTP (no hidden SDK retry)', () => {
+  async function with429Server(
+    body: Record<string, unknown>,
+    run: (port: number, requestCount: () => number) => Promise<void>,
+  ): Promise<void> {
+    let count = 0;
+    const server = createServer((_req, res) => {
+      count += 1;
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '5' });
+      res.end(JSON.stringify(body));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string') {
+        throw new Error('server has no address');
+      }
+      await run(address.port, () => count);
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    }
+  }
+
+  it.each([
+    {
+      protocol: 'openai',
+      modelName: 'gpt-4o',
+      baseUrlPath: '/v1',
+      body: { error: { message: 'slow down', type: 'rate_limit_error' } },
+    },
+    {
+      protocol: 'openai_responses',
+      modelName: 'gpt-5',
+      baseUrlPath: '/v1',
+      body: { error: { message: 'slow down', type: 'rate_limit_error' } },
+    },
+    {
+      protocol: 'anthropic',
+      modelName: 'claude-opus-4-6',
+      baseUrlPath: '',
+      body: { type: 'error', error: { type: 'rate_limit_error', message: 'slow down' } },
+    },
+    {
+      protocol: 'google-genai',
+      modelName: 'gemini-2.5-flash',
+      baseUrlPath: '',
+      body: {
+        error: {
+          code: 429,
+          message: 'Resource exhausted',
+          status: 'RESOURCE_EXHAUSTED',
+          details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '5s' }],
+        },
+      },
+    },
+  ] as const)(
+    'the first 429 reaches the caller after exactly one request with the 5s server delay ($protocol)',
+    async ({ protocol, modelName, baseUrlPath, body }) => {
+      await with429Server(body, async (port, requestCount) => {
+        const provider = registry.createChatProvider({
+          protocol,
+          modelName,
+          apiKey: 'sk-probe',
+          baseUrl: `http://127.0.0.1:${String(port)}${baseUrlPath}`,
+        });
+        const rejected: unknown = await provider.generate('sys', [], PROBE_HISTORY).then(
+          () => {
+            throw new Error('expected generate to reject');
+          },
+          (error: unknown) => error,
+        );
+        expect(rejected).toBeInstanceOf(APIProviderRateLimitError);
+        expect((rejected as APIStatusError).retryAfterMs).toBe(5000);
+        expect(requestCount()).toBe(1);
+      });
+    },
+  );
 });

@@ -31,6 +31,11 @@ export interface AppState {
   sessionId: string;
   permissionMode: PermissionMode;
   planMode: boolean;
+  /** Resolved profile name from --agent/--agent-file, carried to the
+   * lazy-created first session when the TUI starts session-less. */
+  agentProfile?: string;
+  /** Raw --agent-file paths, passed to session creation alongside `agentProfile`. */
+  agentFiles?: readonly string[];
   /** 'bash' when the editor is in `!` shell-command mode. */
   inputMode: 'prompt' | 'bash';
   swarmMode: boolean;
@@ -38,6 +43,20 @@ export interface AppState {
    * mirrors the runtime. The single source of truth for the thinking state in
    * the TUI. */
   thinkingEffort: ThinkingEffort;
+  /**
+   * The current `defaultPlanMode` value from config (false when absent),
+   * refreshed by `hydrateLazyConfigDefaults`. Used to tell a config-driven
+   * plan-mode entry apart from an explicit CLI `--plan` when lazy-creating
+   * the first session (the engine applies the config default itself).
+   */
+  configDefaultPlanMode?: boolean;
+  /**
+   * Session-only thinking effort chosen (e.g. via the model picker's Alt+S)
+   * while no session exists yet on the v2 engine. Applied to the first
+   * lazy-created session and cleared once it exists; the engine's config
+   * default is used instead when unset.
+   */
+  lazySessionThinking?: ThinkingEffort;
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
@@ -45,11 +64,17 @@ export interface AppState {
   isReplaying: boolean;
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing' | 'shell';
   streamingStartTime: number;
+  /** Pending step retry backoff (fed by `turn.step.retrying`); null when no retry is in flight. */
+  stepRetry: StepRetryState | null;
   theme: ThemeName;
   version: string;
   editorCommand: string | null;
   /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */
   disablePasteBurst?: boolean;
+  /** LaTeX math rendering in Markdown; defaults to true when absent from older fixtures. */
+  renderLatex?: boolean;
+  /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
+  cacheExpiryHint?: boolean;
   notifications: NotificationsConfig;
   upgrade: UpgradePreferences;
   /** Footer status line customization from tui.toml; absent means the default layout. */
@@ -62,6 +87,24 @@ export interface AppState {
   mcpServersSummary: string | null;
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
+}
+
+export interface StepRetryState {
+  /** Upcoming attempt number (1-based). */
+  nextAttempt: number;
+  maxAttempts: number;
+  /** Backoff wait before the next attempt, in milliseconds. */
+  delayMs: number;
+  errorName: string;
+  errorMessage: string;
+  /** HTTP status code for `APIStatusError`; undefined for network/timeout failures. */
+  statusCode?: number;
+  /**
+   * `backoff` while sleeping before the next attempt (label shows the
+   * countdown); `attempt` once the `delayMs` backoff has elapsed and the next
+   * attempt is running — the countdown has expired by then and is dropped.
+   */
+  phase: 'backoff' | 'attempt';
 }
 
 export interface ToolCallBlockData {
@@ -109,6 +152,10 @@ export interface BackgroundAgentMetadata {
   readonly parentToolCallId: string;
   readonly agentName?: string;
   readonly description?: string;
+  /** Display name of the model the agent is bound to (resolved at spawn). */
+  readonly model?: string;
+  /** Thinking effort, set only for concrete levels (boolean on/off hidden). */
+  readonly effort?: string;
 }
 
 export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed';

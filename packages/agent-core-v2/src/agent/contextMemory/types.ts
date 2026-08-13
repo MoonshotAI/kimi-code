@@ -34,6 +34,7 @@ export interface InjectionOrigin {
   readonly kind: 'injection';
   readonly variant: string;
   readonly ownerPromptId?: string;
+  readonly disclosure?: unknown;
 }
 
 export interface ShellCommandOrigin {

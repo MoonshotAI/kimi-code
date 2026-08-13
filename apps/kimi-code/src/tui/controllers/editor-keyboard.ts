@@ -23,6 +23,7 @@ import type { BtwPanelController } from './btw-panel';
 export interface EditorKeyboardHost {
   state: TUIState;
   session: Session | undefined;
+  readonly engineV2: boolean;
   cancelInFlight: (() => void) | undefined;
   /**
    * The host's harness (KimiTUI always has one). Its `imageLimits` drives
@@ -51,10 +52,12 @@ export interface EditorKeyboardHost {
   hideSessionPicker(): void;
   openUndoSelector(): void;
   stop(exitCode?: number): Promise<void>;
+  ensureSession(): Promise<Session | undefined>;
   handlePlanToggle(next: boolean): void;
   handleInputModeChange(mode: 'prompt' | 'bash'): void;
   clearQueuedMessages(): void;
   setExternalEditorRunning(running: boolean): void;
+  updateActivityPane(): void;
 }
 
 export class EditorKeyboardController {
@@ -212,14 +215,25 @@ export class EditorKeyboardController {
     };
 
     editor.onShiftTab = () => {
+      const togglePlan = (): void => {
+        const next = !host.state.appState.planMode;
+        host.track('shortcut_plan_toggle', { enabled: next });
+        host.track('shortcut_mode_switch', { to_mode: next ? 'plan' : 'agent' });
+        host.handlePlanToggle(next);
+      };
       if (host.session === undefined) {
-        host.showError(NO_ACTIVE_SESSION_MESSAGE);
+        if (!host.engineV2) {
+          host.showError(NO_ACTIVE_SESSION_MESSAGE);
+          return;
+        }
+        // v2 session-less: lazy-create the session, then toggle — the same
+        // path /plan takes.
+        void host.ensureSession().then((session) => {
+          if (session !== undefined) togglePlan();
+        });
         return;
       }
-      const next = !host.state.appState.planMode;
-      host.track('shortcut_plan_toggle', { enabled: next });
-      host.track('shortcut_mode_switch', { to_mode: next ? 'plan' : 'agent' });
-      host.handlePlanToggle(next);
+      togglePlan();
     };
 
     editor.onInputModeChange = (mode) => {
@@ -512,7 +526,10 @@ export class EditorKeyboardController {
     }
     this.host.setExternalEditorRunning(true);
     const seed = state.editor.getExpandedText?.() ?? state.editor.getText();
-    state.ui.stop();
+    // Fullscreen: a plain stop() would replay the whole transcript into the
+    // main screen on exit; the external editor only needs the alternate
+    // screen released, so preserve the screen instead.
+    state.ui.stop({ preserveScreen: state.ui.mode === 'fullscreen' ? true : undefined });
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
@@ -531,6 +548,11 @@ export class EditorKeyboardController {
       state.ui.start();
       state.ui.setFocus(state.editor);
       state.ui.requestRender(true);
+      // terminal.stop() cleared the OSC 9;4 progress indicator while the
+      // app-side progressActive flag still reads true; resync so a turn that
+      // was streaming while the editor was open gets its progress back.
+      state.terminalState.progressActive = false;
+      this.host.updateActivityPane();
       this.host.setExternalEditorRunning(false);
     }
   }

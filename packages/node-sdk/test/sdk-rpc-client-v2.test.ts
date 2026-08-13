@@ -7,7 +7,7 @@
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; remote provider calls are stubbed.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,22 +30,62 @@ import {
 } from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
+  drainQueryStoreDisposals,
+  drainSessionIndexMirror,
+  HostProcessError,
   IHostRequestHeaders,
   ISessionLifecycleHooks,
   ISessionLifecycleService,
   IWorkspaceLifecycleService,
+  OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
 
+import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
+
 import { TEST_IDENTITY } from './test-identity';
+import { startMcpAuthStatusServer } from './mcp-auth-status-server';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
+
+const hostEnvProbe = vi.hoisted(() => ({ failWithMissingShell: false }));
+
+vi.mock('@moonshot-ai/agent-core-v2/_base/execEnv/environmentProbe', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('@moonshot-ai/agent-core-v2/_base/execEnv/environmentProbe')
+  >();
+  return {
+    ...actual,
+    probeHostEnvironmentFromNode: () =>
+      hostEnvProbe.failWithMissingShell
+        ? Promise.reject(
+            new actual.ProbeShellNotFoundError('Git Bash missing (stubbed)', [
+              'C:\\Program Files\\Git\\bin\\bash.exe',
+            ]),
+          )
+        : actual.probeHostEnvironmentFromNode(),
+  };
+});
 
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  // The read-model mirror/query-store close asynchronously on dispose; await
+  // the drains so the rm below never races their final flush (ENOTEMPTY).
+  await drainSessionIndexMirror();
+  await drainQueryStoreDisposals();
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+function stubProcessPlatform(platform: NodeJS.Platform): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  return () => {
+    if (descriptor !== undefined) {
+      Object.defineProperty(process, 'platform', descriptor);
+    }
+  };
+}
 
 async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }> {
   const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
@@ -54,6 +94,82 @@ async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }>
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
+  it('reports global MCP authorization from the persisted v2 credential store', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const statusServer = await startMcpAuthStatusServer();
+    const authorizedUrl = 'https://authorized.example.test/mcp';
+    const requiredUrl = 'https://required.example.test/mcp';
+    const externalOAuth = new McpOAuthService({ kimiHomeDir: homeDir });
+    await externalOAuth
+      .getProvider('oauth-authorized', authorizedUrl)
+      .saveTokens({ access_token: 'test-access-token', token_type: 'Bearer' });
+    await externalOAuth
+      .getProvider('sse', statusServer.oauthUrl)
+      .saveTokens({ access_token: 'stale-sse-token', token_type: 'Bearer' });
+    await writeFile(
+      join(homeDir, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          stdio: { command: 'local-command' },
+          plain: { transport: 'http', url: statusServer.plainUrl },
+          detected: { transport: 'http', url: statusServer.oauthUrl },
+          sse: { transport: 'sse', url: statusServer.oauthUrl },
+          'sse-oauth': { transport: 'sse', url: statusServer.oauthUrl, auth: 'oauth' },
+          bearer: {
+            transport: 'http',
+            url: 'https://bearer.example.test/mcp',
+            bearerTokenEnvVar: 'EXAMPLE_MCP_TOKEN',
+          },
+          'oauth-required': {
+            transport: 'http',
+            url: requiredUrl,
+            auth: 'oauth',
+          },
+          'oauth-authorized': {
+            transport: 'http',
+            url: authorizedUrl,
+            auth: 'oauth',
+          },
+        },
+      }),
+      'utf-8',
+    );
+    const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'sse-oauth', authStatus: 'oauth-required' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+      ]);
+
+      await externalOAuth
+        .getProvider('oauth-required', requiredUrl)
+        .saveTokens({ access_token: 'new-test-access-token', token_type: 'Bearer' });
+      await externalOAuth.invalidate('oauth-authorized', authorizedUrl, 'tokens');
+
+      await expect(harness.listMcpServerAuthStatuses()).resolves.toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'oauth-required' },
+        { name: 'sse', authStatus: 'not-applicable' },
+        { name: 'sse-oauth', authStatus: 'oauth-required' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-authorized' },
+        { name: 'oauth-authorized', authStatus: 'oauth-required' },
+      ]);
+    } finally {
+      await harness.close();
+      await statusServer.close();
+    }
+  }, 15_000);
+
   it('seeds the host request headers (User-Agent + X-Msh-*) into the engine', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
@@ -68,6 +184,45 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       expect(headers['X-Msh-Device-Id']).toBeTruthy();
     } finally {
       await client.close();
+    }
+  });
+
+  it('surfaces a missing Git Bash probe failure during ensureConfigFile on Windows', async () => {
+    hostEnvProbe.failWithMissingShell = true;
+    const restorePlatform = stubProcessPlatform('win32');
+    try {
+      const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+      tempDirs.push(homeDir);
+      const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+      try {
+        await expect(harness.ensureConfigFile()).rejects.toBeInstanceOf(HostProcessError);
+        await expect(harness.ensureConfigFile()).rejects.toMatchObject({
+          code: OsProcessErrors.codes.SHELL_GIT_BASH_NOT_FOUND,
+        });
+      } finally {
+        await harness.close();
+      }
+    } finally {
+      hostEnvProbe.failWithMissingShell = false;
+      restorePlatform();
+    }
+  });
+
+  it('does not block ensureConfigFile on the host environment probe on POSIX', async () => {
+    hostEnvProbe.failWithMissingShell = true;
+    const restorePlatform = stubProcessPlatform('darwin');
+    try {
+      const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+      tempDirs.push(homeDir);
+      const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+      try {
+        await expect(harness.ensureConfigFile()).resolves.toBeUndefined();
+      } finally {
+        await harness.close();
+      }
+    } finally {
+      hostEnvProbe.failWithMissingShell = false;
+      restorePlatform();
     }
   });
 
@@ -547,6 +702,47 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('cascades removeProvider into the secondary_model pool', async () => {
+    const { harness } = await makeHarness();
+    try {
+      await harness.setConfig({
+        providers: {
+          a: { type: 'openai', baseUrl: 'https://a.example.test/v1', apiKey: 'sk-a' },
+          b: { type: 'openai', baseUrl: 'https://b.example.test/v1', apiKey: 'sk-b' },
+        },
+        models: {
+          'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
+          'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
+        },
+        secondaryModel: {
+          defaultModel: 'a/m1',
+          models: { 'a/m1': 'fast', 'b/m1': 'smart' },
+        },
+      });
+
+      // Pool entries naming a removed model alias are filtered out; the
+      // surviving default keeps the section valid.
+      const filtered = await harness.removeProvider('b');
+      expect(filtered.secondaryModel).toEqual({
+        defaultModel: 'a/m1',
+        models: { 'a/m1': 'fast' },
+      });
+
+      // When the pool's default dangles the whole section is dropped — a
+      // leftover models table without its default would fail pool validation
+      // on every session create.
+      await harness.setConfig({
+        secondaryModel: { defaultModel: 'a/m1', models: { 'a/m1': 'fast' } },
+      });
+      const cleared = await harness.removeProvider('a');
+      expect(cleared.secondaryModel).toBeUndefined();
+      const reread = await harness.getConfig({ reload: true });
+      expect(reread.secondaryModel).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('replaces config sections atomically and clears undefined sections', async () => {
     const { harness } = await makeHarness();
     try {
@@ -562,6 +758,32 @@ key = "${titleOAuthRef.key}"
       // Sections absent from the write stay untouched.
       expect(next.providers['a']).toBeDefined();
       expect(next.models?.['a/m1']).toBeDefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('round-trips the secondaryModel pool field to the [secondary_model] config section', async () => {
+    const { harness, homeDir } = await makeHarness();
+    try {
+      await harness.setConfig({
+        secondaryModel: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast and cheap' },
+        },
+      });
+
+      const toml = await readFile(join(homeDir, 'config.toml'), 'utf-8');
+      expect(toml).toContain('[secondary_model]');
+      expect(toml).toContain('default_model');
+      expect(toml).toContain('[secondary_model.models]');
+      expect(toml).not.toContain('[subagent.models]');
+
+      const reread = await harness.getConfig({ reload: true });
+      expect(reread.secondaryModel).toEqual({
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap' },
+      });
     } finally {
       await harness.close();
     }
@@ -590,7 +812,22 @@ describe('SDKRpcClientV2 workspace trust', () => {
     tempDirs.push(workDir);
     await writeFile(
       join(workDir, '.mcp.json'),
-      JSON.stringify({ mcpServers: { 'root-server': { command: 'root-cmd' } } }),
+      JSON.stringify({
+        mcpServers: {
+          'root-server': {
+            command: 'root-cmd',
+            args: ['--safe'],
+            cwd: '/tmp/root',
+            env: { SECRET: 'hidden' },
+          },
+          'http-server': {
+            transport: 'http',
+            url: 'https://example.test/mcp',
+            headers: { Authorization: 'Bearer hidden' },
+            bearerTokenEnvVar: 'TOKEN',
+          },
+        },
+      }),
       'utf-8',
     );
     await mkdir(join(workDir, '.kimi-code'), { recursive: true });
@@ -602,7 +839,15 @@ describe('SDKRpcClientV2 workspace trust', () => {
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info.trusted).toBe(false);
-      expect(info.gatedMcpServers).toEqual(['nested-server', 'root-server']);
+      expect(info.gatedMcpServers).toEqual([
+        { name: 'http-server', transport: 'http', url: 'https://example.test/mcp' },
+        { name: 'nested-server', transport: 'stdio', command: 'nested-cmd' },
+        { name: 'root-server', transport: 'stdio', command: 'root-cmd', args: ['--safe'], cwd: '/tmp/root' },
+      ]);
+      const serialized = JSON.stringify(info);
+      expect(serialized).not.toContain('hidden');
+      expect(serialized).not.toContain('SECRET');
+      expect(serialized).not.toContain('TOKEN');
     } finally {
       await harness.close();
     }
@@ -803,6 +1048,66 @@ describe('removeProviderFromConfig', () => {
     expect(Object.keys(next.models ?? {})).toEqual(['a/m1']);
     expect(next.defaultModel).toBe('a/m1');
     expect(next.defaultProvider).toBe('a');
+  });
+
+  it('filters secondary_model pool entries whose model alias was removed', () => {
+    const config = {
+      providers: { a: { type: 'openai' }, b: { type: 'openai' } },
+      models: {
+        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
+        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
+      },
+      secondaryModel: {
+        defaultModel: 'a/m1',
+        models: { 'a/m1': 'fast', 'b/m1': 'smart' },
+      },
+    } as unknown as KimiConfig;
+
+    const next = removeProviderFromConfig(config, 'b');
+
+    expect(next.secondaryModel).toEqual({
+      defaultModel: 'a/m1',
+      models: { 'a/m1': 'fast' },
+    });
+  });
+
+  it('drops the secondary_model section when its default model dangles', () => {
+    const config = {
+      providers: { a: { type: 'openai' }, b: { type: 'openai' } },
+      models: {
+        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
+        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
+      },
+      secondaryModel: {
+        defaultModel: 'b/m1',
+        models: { 'a/m1': 'fast', 'b/m1': 'smart' },
+      },
+    } as unknown as KimiConfig;
+
+    expect(removeProviderFromConfig(config, 'b').secondaryModel).toBeUndefined();
+
+    // The legacy recipe's `model` key acts as the default fallback and
+    // cascades the same way.
+    const legacy = {
+      ...config,
+      secondaryModel: { model: 'b/m1', default_effort: 'low' },
+    } as unknown as KimiConfig;
+    expect(removeProviderFromConfig(legacy, 'b').secondaryModel).toBeUndefined();
+  });
+
+  it('leaves the secondary_model section untouched when nothing dangles', () => {
+    const config = {
+      providers: { a: { type: 'openai' }, b: { type: 'openai' } },
+      models: {
+        'a/m1': { provider: 'a', model: 'm1', maxContextSize: 100 },
+        'b/m1': { provider: 'b', model: 'm1', maxContextSize: 100 },
+      },
+      secondaryModel: { defaultModel: 'a/m1' },
+    } as unknown as KimiConfig;
+
+    const next = removeProviderFromConfig(config, 'b');
+
+    expect(next.secondaryModel).toEqual({ defaultModel: 'a/m1' });
   });
 });
 

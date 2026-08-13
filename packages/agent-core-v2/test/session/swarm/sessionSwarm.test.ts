@@ -2,7 +2,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { LifecycleScope } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
@@ -13,6 +13,9 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
+import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { APIProviderRateLimitError } from '#/kosong/contract/errors';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -52,6 +55,8 @@ import { ConfigErrors } from '#/app/config/errors';
 import { SessionSwarmService } from '#/session/swarm/sessionSwarmService';
 
 import { stubLog } from '../../_base/log/stubs';
+import { stubFlag } from '../../app/flag/stubs';
+import { StubConfigService } from '../../kosong/stubs';
 
 describe('resolveSwarmMaxConcurrency', () => {
   it('returns undefined when the variable is unset', () => {
@@ -606,6 +611,35 @@ describe('AgentRunBatch scheduling contract', () => {
     }
   });
 
+  it('a non-positive task timeout means unbounded (v1 parity)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockAgentRunBatchRunner();
+      const running = runBatch([{ ...queuedAgentRunTask(1), timeout: 0 }], {
+        signal: new AbortController().signal,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      attempts[0]!.markReady();
+      // Print mode fills the subagent timeout with 0 = unbounded; it must not
+      // arm an immediate abort.
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      attempts[0]!.outcome.resolve({
+        task: attempts[0]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'done',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(running).resolves.toMatchObject([
+        { task: { data: 1 }, agentId: 'agent-1', status: 'completed' },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not spend task timeout while the task is queued', async () => {
     vi.useFakeTimers();
     try {
@@ -866,9 +900,9 @@ describe('SessionSwarmService metadata compatibility', () => {
       ready: Promise.resolve(),
       get: (name: string) =>
         name === 'coder'
-          ? { name: 'coder', tools: [], systemPrompt: () => '' }
+          ? normalizeAgentProfile({ name: 'coder', tools: [], systemPrompt: () => '' })
           : undefined,
-      getDefault: () => ({ name: 'agent', tools: [], systemPrompt: () => '' }),
+      getDefault: () => normalizeAgentProfile({ name: 'agent', tools: [], systemPrompt: () => '' }),
       list: () => [],
     });
     ix.stub(
@@ -906,6 +940,8 @@ describe('SessionSwarmService metadata compatibility', () => {
       },
     });
     ix.stub(ILogService, stubLog());
+    ix.stub(IConfigService, new StubConfigService({}));
+    ix.stub(IFlagService, stubFlag(() => false));
     ix.stub(IModelCatalog, {
       _serviceBrand: undefined,
       get: (alias: string) => {
@@ -1094,8 +1130,15 @@ describe('SessionSwarmService metadata compatibility', () => {
       }),
     ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-existing' }]);
 
-    // No realign: resume must not drag the child back to the parent's model.
     expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('stale-model');
+    expect(eventBus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'subagent.spawned',
+        subagentId: 'agent-existing',
+        model: 'stale-model',
+        thinkingEffort: 'medium',
+      }),
+    );
     expect(runAgent).toHaveBeenCalledWith(
       'agent-existing',
       { kind: 'prompt', prompt: 'Continue' },
@@ -1108,7 +1151,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     const spawnTask: SessionSwarmSpawnTask = {
       ...spawnSessionTask('src/a.ts'),
       kind: 'spawn',
-      binding: { model: 'provider/secondary', thinking: 'low' },
+      binding: { model: 'provider/pool', thinking: 'low' },
     };
 
     await expect(
@@ -1122,14 +1165,22 @@ describe('SessionSwarmService metadata compatibility', () => {
       expect.objectContaining({
         binding: {
           profile: 'coder',
-          model: 'provider/secondary',
+          model: 'provider/pool',
           thinking: 'low',
         },
       }),
     );
+    expect(eventBus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'subagent.spawned',
+        subagentId: 'agent-new',
+        model: 'provider/pool',
+        thinkingEffort: 'low',
+      }),
+    );
   });
 
-  it('points at the secondary model config when a spawn task binding is invalid', async () => {
+  it('points at the [secondary_model.models] config when a spawn task binding is invalid', async () => {
     const service = ix.get(ISessionSwarmService);
     const spawnTask: SessionSwarmSpawnTask = {
       ...spawnSessionTask('src/a.ts'),
@@ -1145,7 +1196,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     ).resolves.toMatchObject([
       {
         status: 'failed',
-        error: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
+        error: expect.stringContaining('comes from [secondary_model.models]'),
       },
     ]);
     expect(createAgent).not.toHaveBeenCalled();
@@ -1344,6 +1395,7 @@ function agentHandle(
     _serviceBrand: undefined,
     mode: 'auto',
     setMode: () => {},
+    setModeAndBroadcast: () => {},
     onDidChangeMode: Event.None,
   } as IAgentPermissionModeService;
   return {
@@ -1381,6 +1433,7 @@ function profileService(data: ProfileData): IAgentProfileService {
       current = { ...current, ...changed };
     },
     republishStatus: () => {},
+    getEffectiveThinkingLevel: () => current.thinkingLevel,
   } as IAgentProfileService;
 }
 

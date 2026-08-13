@@ -32,6 +32,8 @@ export interface RegisterWsV1Options {
   readonly flushIntervalMs?: number;
   readonly maxBatchSize?: number;
   readonly highWaterMarkBytes?: number;
+  /** Heartbeat ping cadence override — tests inject small values. */
+  readonly heartbeatIntervalMs?: number;
 }
 
 export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketServer {
@@ -53,6 +55,7 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
       flushIntervalMs: opts.flushIntervalMs,
       maxBatchSize: opts.maxBatchSize,
       highWaterMarkBytes: opts.highWaterMarkBytes,
+      heartbeatIntervalMs: opts.heartbeatIntervalMs,
     });
     socket.on('close', () => registry.remove(conn.id));
   });

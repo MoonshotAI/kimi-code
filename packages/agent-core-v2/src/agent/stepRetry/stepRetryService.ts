@@ -16,7 +16,8 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import {
   DEFAULT_MAX_RETRY_ATTEMPTS,
@@ -67,6 +68,7 @@ export const stepRetryFailedAttemptsKey = defineState<number>(
   () => 0,
 );
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class AgentStepRetryService extends Disposable implements IAgentStepRetryService {
   declare readonly _serviceBrand: undefined;
 
@@ -127,7 +129,7 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     this.failedAttempts += 1;
 
     const maxAttempts = Math.max(
-      this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxRetriesPerStep ??
+      this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep ??
         DEFAULT_MAX_RETRY_ATTEMPTS,
       1,
     );

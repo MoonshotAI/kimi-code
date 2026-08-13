@@ -7,7 +7,8 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -24,6 +25,7 @@ import { type FlagDefinitionInput, type FlagId, IFlagRegistry } from './flagRegi
 
 export const MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
 
+// NOTE: stays Disposable — its own 'state' and 'config' collide with the Fiber
 export class FlagService extends Disposable implements IFlagService {
   declare readonly _serviceBrand: undefined;
   readonly registry: IFlagRegistry;

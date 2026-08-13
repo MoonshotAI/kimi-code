@@ -21,11 +21,15 @@
  * processed the call but before the response arrived, the retry may
  * duplicate side effects. There is no protocol-level dedup across
  * reconnects, so this trade-off is accepted deliberately.
+ *
+ * When the server has been tombstoned as removed (`options.isRemoved`),
+ * the call short-circuits to an error result telling the model to stop
+ * calling the tool — no client call, no reconnect.
  */
 
 import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import { toErrorMessage } from '#/errors';
+import { Error2, ErrorCodes, toErrorMessage } from '#/errors';
 import { isAbortError } from '#/_base/utils/abort';
 
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult } from '#/tool/toolContract';
@@ -42,6 +46,7 @@ interface McpToolOptions {
   readonly originalsDir?: string;
   readonly telemetry?: ITelemetryService;
   readonly reconnect?: (signal?: AbortSignal) => Promise<MCPClient | undefined>;
+  readonly isRemoved?: () => boolean;
 }
 
 export function createMcpTool(
@@ -59,6 +64,14 @@ export function createMcpTool(
     resolveExecution: (args) => ({
       approvalRule: qualifiedName,
       execute: async (context) => {
+        if (options.isRemoved?.() === true) {
+          return {
+            output:
+              `MCP server for tool "${qualifiedName}" has been removed ` +
+              `(plugin uninstalled or config deleted). Do not call this tool again.`,
+            isError: true,
+          };
+        }
         let result;
         try {
           result = await callTool(client, args, context.signal);
@@ -118,7 +131,8 @@ async function retryAfterReconnect(
     if (context.signal.aborted || isAbortError(reconnectError)) {
       throw reconnectError;
     }
-    throw new Error(
+    throw new Error2(
+      ErrorCodes.MCP_STARTUP_FAILED,
       `${toErrorMessage(failure)} (reconnecting the MCP server also failed: ${toErrorMessage(reconnectError)})`,
       { cause: reconnectError },
     );

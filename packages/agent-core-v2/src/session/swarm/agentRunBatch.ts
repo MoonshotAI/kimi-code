@@ -12,6 +12,8 @@ import { type TokenUsage } from '#/kosong/contract/usage';
 import * as retry from 'retry';
 
 import { isUserCancellation } from '#/_base/utils/abort';
+import { setClampedTimeout } from '#/_base/utils/timer';
+import { BugIndicatingError, Error2, ErrorCodes } from '#/errors';
 import type { SessionSwarmRunResult, SessionSwarmTask } from './sessionSwarm';
 
 
@@ -155,7 +157,7 @@ export class AgentRunBatch<T> {
 
   run(): Promise<Array<AgentRunResult<T>>> {
     if (this.started) {
-      throw new Error('AgentRunBatch.run() can only be called once.');
+      throw new BugIndicatingError('AgentRunBatch.run() can only be called once.');
     }
     this.started = true;
 
@@ -600,9 +602,9 @@ export class AgentRunBatch<T> {
       attempt.controller.abort(task.signal?.reason);
     };
     const timeout =
-      task.timeout === undefined
+      task.timeout === undefined || task.timeout <= 0
         ? undefined
-        : setTimeout(() => {
+        : setClampedTimeout(() => {
             attempt.timedOut = true;
             attempt.controller.abort(new Error('Aborted'));
           }, task.timeout);
@@ -643,8 +645,10 @@ export function resolveSwarmMaxConcurrency(
   if (raw === undefined || raw.trim() === '') return undefined;
   const value = Number(raw);
   if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(
+    throw new Error2(
+      ErrorCodes.VALIDATION_FAILED,
       `${AGENT_SWARM_MAX_CONCURRENCY_ENV} must be a positive integer, got ${JSON.stringify(raw)}.`,
+      { details: { value: raw } },
     );
   }
   return value;

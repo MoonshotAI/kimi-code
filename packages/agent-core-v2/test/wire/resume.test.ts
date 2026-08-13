@@ -15,7 +15,7 @@ import {
   type PromptOrigin,
 } from '#/index';
 import { IAgentTaskService } from '#/agent/task/task';
-import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { TurnModel } from '#/agent/loop/turnOps';
 import { IWireService } from '#/wire/wire';
@@ -63,6 +63,108 @@ describe('Agent resume', () => {
 
     expect(persistence.appended).toEqual([]);
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
+  });
+
+  it('does not reconstruct an event-point interruption after restore', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Hello' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'Hello' }],
+        origin: { kind: 'user' },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'step-0', turnId: '0', step: 1 },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'part-0',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'step-0',
+          part: { type: 'text', text: 'partial answer' },
+        },
+      },
+      { type: 'turn.cancel', turnId: 0, target: 'active', reason: 'user_cancelled' },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+
+      expect(ctx.context.get()).not.toContainEqual(
+        expect.objectContaining({ origin: { kind: 'injection', variant: 'interruption' } }),
+      );
+      ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
+      await ctx.untilTurnEnd();
+      expect(ctx.context.get()).not.toContainEqual(
+        expect.objectContaining({
+          role: 'user',
+          origin: { kind: 'injection', variant: 'interruption' },
+        }),
+      );
+      expect(persistence.appended).not.toContainEqual(
+        expect.objectContaining({
+          type: 'context.append_message',
+          message: expect.objectContaining({
+            origin: { kind: 'injection', variant: 'interruption' },
+          }),
+        }),
+      );
+
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('does not reconcile a legacy interruption whose delivery was recorded', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Hello' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'Hello' }],
+        origin: { kind: 'user' },
+      },
+      { type: 'turn.cancel', turnId: 0, target: 'active', reason: 'user_cancelled' },
+      { type: 'interruptionReminder.recorded', turnId: 0 },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+      ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
+      await ctx.untilTurnEnd();
+
+      expect(ctx.context.get()).not.toContainEqual(
+        expect.objectContaining({ origin: { kind: 'injection', variant: 'interruption' } }),
+      );
+    } finally {
+      await ctx.dispose();
+    }
   });
 
   it('replays persisted records without restarting turns, compactions, plan turns, or tools', async () => {

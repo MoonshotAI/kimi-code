@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -143,8 +142,6 @@ describe('StateRegistry', () => {
     class FakeService {
       constructor(readonly dep: object) {}
     }
-    // A resource graph reachable from plain data: plain -> class -> plain…
-    // The class boundary stops the walk, so the deep plain tail never copied.
     const service = new FakeService({ deep: { tail: 'unreachable' } });
     const mixedKey = defineState('test.mixed', () => ({
       plain: { nested: [1, { ok: true }] },

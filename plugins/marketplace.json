@@ -11,6 +11,15 @@
       "source": "./official/kimi-datasource"
     },
     {
+      "id": "kimi-webbridge",
+      "tier": "official",
+      "displayName": "Kimi WebBridge",
+      "version": "1.11.3",
+      "description": "Control your real browser from Kimi Code.",
+      "keywords": ["browser", "automation", "webbridge"],
+      "source": "./official/kimi-webbridge"
+    },
+    {
       "id": "superpowers",
       "tier": "curated",
       "displayName": "Superpowers",
@@ -27,6 +36,15 @@
       "homepage": "https://vercel.com/docs/agent-resources/vercel-plugin",
       "keywords": ["vercel", "deployment", "nextjs", "skills", "agents"],
       "source": "https://github.com/vercel/vercel-plugin"
+    },
+    {
+      "id": "modern-web-guidance",
+      "tier": "curated",
+      "displayName": "Modern Web Guidance",
+      "description": "Modern web platform expertise, best practices, and browser compatibility data for coding agents, from the Google Chrome team.",
+      "homepage": "https://github.com/GoogleChrome/modern-web-guidance",
+      "keywords": ["web", "css", "browser", "frontend", "skills"],
+      "source": "https://github.com/GoogleChrome/modern-web-guidance"
     }
   ]
 }

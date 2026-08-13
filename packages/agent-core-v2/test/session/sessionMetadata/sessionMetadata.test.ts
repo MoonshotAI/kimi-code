@@ -4,8 +4,8 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IFlagService } from '#/app/flag/flag';
 import { ILogService } from '#/_base/log/log';
+import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetadata } from '#/session/sessionMetadata/sessionMetadataService';
@@ -15,17 +15,12 @@ import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDo
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
-import { IQueryStore } from '#/persistence/interface/queryStore';
 
-import { stubFlag } from '../../app/flag/stubs';
+import { stubSessionIndexMirror } from '../../app/sessionIndex/stubs';
 import { stubLog } from '../../_base/log/stubs';
-import { stubQueryStore } from '../../persistence/interface/stubs';
 
 const META_SCOPE = 'sessions/wd_test/s1/session-meta';
 
-// A re-constructed SessionMetadata stands for a new session lifetime: it gets
-// its own state registry, so the shared `sessionMetadata.data` key registers
-// cleanly instead of colliding with the first instance's registration.
 function createFreshMetadata(ix: TestInstantiationService): SessionMetadata {
   return ix
     .createChild(new ServiceCollection([ISessionStateService, new SessionStateService()]))
@@ -46,14 +41,15 @@ function makeContext(): ISessionContext {
 describe('SessionMetadata', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
+  let mirror: ReturnType<typeof stubSessionIndexMirror>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
+    mirror = stubSessionIndexMirror();
     ix.stub(ILogService, stubLog());
     ix.stub(ISessionContext, makeContext());
-    ix.stub(IQueryStore, stubQueryStore());
-    ix.stub(IFlagService, stubFlag(false));
+    ix.stub(ISessionIndexMirror, mirror);
     ix.set(ISessionStateService, new SyncDescriptor(SessionStateService));
     ix.set(IFileSystemStorageService, new SyncDescriptor(InMemoryStorageService));
     ix.set(IAtomicDocumentStore, new SyncDescriptor(JsonAtomicDocumentStore));
@@ -70,8 +66,6 @@ describe('SessionMetadata', () => {
     expect(await meta.read()).toMatchObject({
       id: 's1',
       archived: false,
-      // Seeded so released v1 builds can open a v2-created state.json
-      // (v1's Session.resume() indexes `agents` unconditionally).
       agents: {},
       custom: {},
     });
@@ -87,6 +81,16 @@ describe('SessionMetadata', () => {
     const next = await meta.read();
     expect(next.title).toBe('hello');
     expect(next.updatedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it('update with touchUpdatedAt:false keeps the previous updatedAt', async () => {
+    const meta = ix.get(ISessionMetadata);
+    const before = (await meta.read()).updatedAt;
+    await meta.update({ title: 'quiet' }, { touchUpdatedAt: false });
+
+    const next = await meta.read();
+    expect(next.title).toBe('quiet');
+    expect(next.updatedAt).toBe(before);
   });
 
   it('setTitle / setArchived write through', async () => {
@@ -106,10 +110,58 @@ describe('SessionMetadata', () => {
     });
   });
 
+  it('setTitle keeps updatedAt (rename must not reorder listings)', async () => {
+    const meta = ix.get(ISessionMetadata);
+    const before = (await meta.read()).updatedAt;
+    await new Promise((r) => setTimeout(r, 2));
+    await meta.setTitle('renamed');
+
+    const next = await meta.read();
+    expect(next.title).toBe('renamed');
+    expect(next.updatedAt).toBe(before);
+  });
+
+  it('setArchived records archivedAt without touching updatedAt; restore clears it', async () => {
+    const meta = ix.get(ISessionMetadata);
+    const before = (await meta.read()).updatedAt;
+    await new Promise((r) => setTimeout(r, 2));
+
+    await meta.setArchived(true);
+    const archived = await meta.read();
+    expect(archived.archived).toBe(true);
+    expect(archived.archivedAt).toBeGreaterThan(before);
+    expect(archived.updatedAt).toBe(before);
+
+    await meta.setArchived(false);
+    const restored = await meta.read();
+    expect(restored.archived).toBe(false);
+    expect(restored.archivedAt).toBeUndefined();
+    expect(restored.updatedAt).toBe(before);
+  });
+
+  it('registerAgent never bumps updatedAt — the agents map is structural', async () => {
+    const meta = ix.get(ISessionMetadata);
+    const before = (await meta.read()).updatedAt;
+    await new Promise((r) => setTimeout(r, 2));
+    // A genuinely NEW agent (resume materializing a cold session's main
+    // agent, or a runtime subagent) is not content activity.
+    await meta.registerAgent('main', { homedir: '/tmp/h', type: 'main' });
+
+    const next = await meta.read();
+    expect(next.agents?.['main']?.homedir).toBe('/tmp/h');
+    expect(next.updatedAt).toBe(before);
+  });
+
+  it('an explicit patch.updatedAt always wins (fork inherits the source recency)', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.update({ title: 'fork', updatedAt: 1234 });
+
+    const next = await meta.read();
+    expect(next.title).toBe('fork');
+    expect(next.updatedAt).toBe(1234);
+  });
+
   it('mirrors a boolean archived to the read model even when the loaded document lacks the field', async () => {
-    // A state.json written before `archived` existed: normalizeSessionMeta
-    // keeps the field undefined, and a naive mirror would drop the key from
-    // the cached JSON entirely (failing the read-model contract on reads).
     const store = ix.get(IAtomicDocumentStore);
     await store.set(META_SCOPE, 'state.json', {
       id: 's1',
@@ -120,20 +172,53 @@ describe('SessionMetadata', () => {
       custom: {},
     });
 
-    const writes: unknown[] = [];
-    ix.stub(IQueryStore, {
-      ...stubQueryStore(),
-      put: async (_c: string, _k: string, value: unknown) => {
-        writes.push(value);
-      },
-    });
-    ix.stub(IFlagService, stubFlag(true));
-
     const meta = ix.get(ISessionMetadata);
+    await meta.ready;
+    // A resume loads silently; only mutations reach the mirror.
+    expect(mirror.recorded).toEqual([]);
+
     await meta.update({ title: 'x' });
 
-    expect(writes).toHaveLength(1);
-    expect(writes[0]).toMatchObject({ id: 's1', archived: false });
+    expect(mirror.recorded).toHaveLength(1);
+    expect(mirror.recorded[0]).toMatchObject({ id: 's1', archived: false });
+  });
+
+  it('persists the authoritative document before recording to the mirror', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    // Read the persisted document back from inside record(): at that point
+    // the mutation must already be durable.
+    const persistedAtRecord: Promise<Record<string, unknown> | undefined>[] = [];
+    const baseRecord = mirror.record;
+    mirror.record = (summary) => {
+      persistedAtRecord.push(store.get<Record<string, unknown>>(META_SCOPE, 'state.json'));
+      baseRecord(summary);
+    };
+
+    const meta = ix.get(ISessionMetadata);
+    await meta.ready; // first-time creation records too
+    await meta.update({ title: 'durable-first' });
+
+    expect(persistedAtRecord).toHaveLength(2);
+    const [atCreate, atUpdate] = await Promise.all(persistedAtRecord);
+    expect(atCreate).toMatchObject({ id: 's1', archived: false });
+    expect(atUpdate).toMatchObject({ title: 'durable-first' });
+  });
+
+  it('a mirror failure degrades the read model but never fails the metadata mutation', async () => {
+    mirror.record = () => {
+      throw new Error('mirror down');
+    };
+
+    const meta = ix.get(ISessionMetadata);
+    // The creation-time record throws inside load(); the load must survive.
+    await meta.ready;
+    await meta.update({ title: 'still fine' });
+    expect(await meta.read()).toMatchObject({ title: 'still fine' });
+
+    // The mutation reached the authoritative document: a fresh instance reads
+    // it back even though every mirror record failed.
+    const fresh = createFreshMetadata(ix);
+    expect(await fresh.read()).toMatchObject({ title: 'still fine' });
   });
 
   it('persists across instances', async () => {
@@ -145,8 +230,6 @@ describe('SessionMetadata', () => {
   });
 
   it('backfills and persists missing agents/custom maps on a pre-fix document', async () => {
-    // Written by a v2 build predating the create-path map seeding: no
-    // agents / custom keys at all.
     const store = ix.get(IAtomicDocumentStore);
     await store.set(META_SCOPE, 'state.json', {
       id: 's1',
@@ -159,8 +242,6 @@ describe('SessionMetadata', () => {
     const meta = ix.get(ISessionMetadata);
     expect(await meta.read()).toMatchObject({ agents: {}, custom: {} });
 
-    // The heal is persisted: a fresh instance reads the maps from disk, and
-    // updatedAt is untouched so session listings keep their order.
     const fresh = createFreshMetadata(ix);
     const healed = await fresh.read();
     expect(healed.agents).toEqual({});
@@ -491,8 +572,6 @@ describe('SessionMetadata', () => {
     const before = (await meta.read()).updatedAt;
     await new Promise((r) => setTimeout(r, 2));
 
-    // A resumed session re-registers its materialized agents; with identical
-    // metadata that must not write, bump updatedAt, or fire an event.
     let fired = 0;
     const sub = meta.onDidChangeMetadata(() => {
       fired++;
@@ -511,9 +590,6 @@ describe('SessionMetadata', () => {
   });
 
   it('stays a no-op when re-registering against a persisted document', async () => {
-    // The document as it lands on disk: keys with undefined values are gone,
-    // and a legacy writer stored parentAgentId: null. A server restart then
-    // re-registers `main` with explicit undefineds — still no update.
     const store = ix.get(IAtomicDocumentStore);
     await store.set(META_SCOPE, 'state.json', {
       id: 's1',
@@ -542,7 +618,7 @@ describe('SessionMetadata', () => {
     expect((await meta.read()).updatedAt).toBe(1700000000000);
   });
 
-  it('updates when re-registering with changed fields', async () => {
+  it('updates changed fields on re-registration without bumping updatedAt', async () => {
     const meta = ix.get(ISessionMetadata);
     await meta.registerAgent('main', {
       homedir: '/tmp/sessions/wd_test/s1/agents/main',
@@ -559,6 +635,47 @@ describe('SessionMetadata', () => {
 
     const next = await meta.read();
     expect(next.agents?.['main']?.labels).toEqual({ swarmItem: 'src/a.ts' });
-    expect(next.updatedAt).toBeGreaterThan(before);
+    // Agent registration is structural, not content activity — listings stay.
+    expect(next.updatedAt).toBe(before);
+  });
+
+  it('records the fresh summary into the session index mirror on update', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.ready;
+    // First-time creation is recorded (a new session must list immediately).
+    expect(mirror.recorded).toHaveLength(1);
+
+    await meta.update({ title: 'mirrored' });
+
+    expect(mirror.recorded).toHaveLength(2);
+    expect(mirror.recorded[1]).toMatchObject({
+      id: 's1',
+      workspaceId: 'wd_test',
+      title: 'mirrored',
+      archived: false,
+    });
+    expect(mirror.recorded[1]?.updatedAt).toBe((await meta.read()).updatedAt);
+  });
+
+  it('does not re-record when loading an existing document', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      agents: {},
+      custom: {},
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    await meta.ready;
+    // A resume loads silently; only mutations reach the mirror.
+    expect(mirror.recorded).toEqual([]);
+
+    await meta.setArchived(true);
+    expect(mirror.recorded).toHaveLength(1);
+    expect(mirror.recorded[0]?.archived).toBe(true);
   });
 });

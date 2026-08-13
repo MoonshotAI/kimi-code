@@ -24,3 +24,13 @@ export class CyclicDependencyError extends Error {
     this.name = 'CyclicDependencyError';
   }
 }
+
+export class CascadeConflictError extends Error {
+  constructor(
+    readonly token: string,
+    readonly detail: string,
+  ) {
+    super(`Cascade conflict resolving '${token}': ${detail}`);
+    this.name = 'CascadeConflictError';
+  }
+}

@@ -709,4 +709,164 @@ describe('SessionPickerComponent', () => {
     expect(onToggleScope).toHaveBeenCalledOnce();
     expect(onToggleScope).toHaveBeenCalledWith('ses_beta');
   });
+
+  it('fires onLoadMore when the cursor reaches the last fetched row', () => {
+    const onLoadMore = vi.fn();
+    const component = new SessionPickerComponent({
+      sessions: [
+        { id: 'ses_a', title: 'Alpha', work_dir: '/tmp/project', updated_at: 1 },
+        { id: 'ses_b', title: 'Beta', work_dir: '/tmp/project', updated_at: 2 },
+      ],
+      loading: false,
+      currentSessionId: '',
+      hasMore: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onLoadMore,
+    });
+
+    component.handleInput('\u001B[B');
+
+    expect(onLoadMore).toHaveBeenCalledOnce();
+  });
+
+  it('does not fire onLoadMore while a page fetch is in flight', () => {
+    const onLoadMore = vi.fn();
+    const component = new SessionPickerComponent({
+      sessions: [
+        { id: 'ses_a', title: 'Alpha', work_dir: '/tmp/project', updated_at: 1 },
+        { id: 'ses_b', title: 'Beta', work_dir: '/tmp/project', updated_at: 2 },
+      ],
+      loading: false,
+      currentSessionId: '',
+      hasMore: true,
+      loadingMore: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onLoadMore,
+    });
+
+    component.handleInput('\u001B[B');
+
+    expect(onLoadMore).not.toHaveBeenCalled();
+  });
+
+  it('appendSessions extends the list and keeps the active query', () => {
+    const component = new SessionPickerComponent({
+      sessions: [{ id: 'ses_alpha', title: 'Alpha session', work_dir: '/tmp/p', updated_at: 1 }],
+      loading: false,
+      currentSessionId: '',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    component.handleInput('g');
+    expect(renderPlain(component)).toContain('No matches');
+
+    component.appendSessions([
+      { id: 'ses_gamma', title: 'Gamma session', work_dir: '/tmp/p', updated_at: 2 },
+    ]);
+
+    const output = renderPlain(component);
+    expect(output).toContain('Search: g');
+    expect(output).toContain('Gamma session');
+    expect(output).not.toContain('Alpha session');
+  });
+
+  it('appendSessions keeps the selected row', () => {
+    const onSelect = vi.fn();
+    const beta = { id: 'ses_beta', title: 'Beta session', work_dir: '/tmp/p', updated_at: 2 };
+    const component = new SessionPickerComponent({
+      sessions: [
+        { id: 'ses_alpha', title: 'Alpha session', work_dir: '/tmp/p', updated_at: 1 },
+        beta,
+      ],
+      loading: false,
+      currentSessionId: '',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    component.handleInput('\u001B[B');
+    component.appendSessions([
+      { id: 'ses_gamma', title: 'Gamma session', work_dir: '/tmp/p', updated_at: 3 },
+    ]);
+    component.handleInput('\r');
+
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(onSelect).toHaveBeenCalledWith(beta);
+  });
+
+  it('fires onSearchDrain only when the query becomes active with unfetched pages', () => {
+    const onSearchDrain = vi.fn();
+    const component = new SessionPickerComponent({
+      sessions: [{ id: 'ses_alpha', title: 'Alpha session', work_dir: '/tmp/p', updated_at: 1 }],
+      loading: false,
+      currentSessionId: '',
+      hasMore: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onSearchDrain,
+    });
+
+    component.handleInput('a');
+    component.handleInput('l');
+
+    expect(onSearchDrain).toHaveBeenCalledOnce();
+  });
+
+  it('does not fire onSearchDrain when every page is already fetched', () => {
+    const onSearchDrain = vi.fn();
+    const component = new SessionPickerComponent({
+      sessions: [{ id: 'ses_alpha', title: 'Alpha session', work_dir: '/tmp/p', updated_at: 1 }],
+      loading: false,
+      currentSessionId: '',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onSearchDrain,
+    });
+
+    component.handleInput('a');
+
+    expect(onSearchDrain).not.toHaveBeenCalled();
+  });
+
+  it('announces unfetched pages and in-flight fetches in the footer', () => {
+    const component = new SessionPickerComponent({
+      sessions: [
+        { id: 'ses_a', title: 'Alpha', work_dir: '/tmp/project', updated_at: 1 },
+        { id: 'ses_b', title: 'Beta', work_dir: '/tmp/project', updated_at: 2 },
+      ],
+      loading: false,
+      currentSessionId: '',
+      hasMore: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    expect(renderPlain(component)).toContain('· scroll for more');
+
+    component.setPaging(true, true);
+    expect(renderPlain(component)).toContain('· loading more…');
+
+    component.setPaging(false, false);
+    const settled = renderPlain(component);
+    expect(settled).not.toContain('· scroll for more');
+    expect(settled).not.toContain('· loading more…');
+  });
+
+  it('notes the background drain in the footer while searching with unfetched pages', () => {
+    const component = new SessionPickerComponent({
+      sessions: [{ id: 'ses_alpha', title: 'Alpha session', work_dir: '/tmp/p', updated_at: 1 }],
+      loading: false,
+      currentSessionId: '',
+      hasMore: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    component.handleInput('a');
+
+    expect(renderPlain(component)).toContain('· searching all…');
+  });
 });

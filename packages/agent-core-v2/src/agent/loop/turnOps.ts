@@ -4,9 +4,9 @@
  *
  * Owns the next available turn id, including cancelled queued reservations and
  * legacy loop-event observations. Also persists the terminal `turn.ended`
- * record (reason / error / durationMs) so downstream history rebuilds can
- * recover how a turn ended; the record carries no engine-restorable state, so
- * its `apply` is a no-op.
+ * record (reason / error / durationMs) so downstream history rebuilds and
+ * cold-resumed read models (e.g. the activity view) can recover how the last
+ * turn ended. Consumed by the Agent-scope `loopService`.
  */
 
 import { z } from 'zod';
@@ -19,6 +19,11 @@ import type { PromptOrigin } from '#/agent/contextMemory/types';
 export interface TurnModelState {
   readonly nextTurnId: number;
   readonly cancelledTurnIds: readonly number[];
+  readonly lastEnded?: {
+    readonly turnId: number;
+    readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+    readonly durationMs?: number;
+  };
 }
 
 export const TurnModel = defineModel<TurnModelState>(
@@ -32,9 +37,13 @@ export const TurnModel = defineModel<TurnModelState>(
         }
 
         const turnId = Number.parseInt(event.turnId, 10);
-        return Number.isInteger(turnId) && turnId >= state.nextTurnId
-          ? advanceTurnClock(state, turnId + 1)
-          : state;
+        if (!Number.isInteger(turnId)) return state;
+        let next = state;
+        if (turnId >= state.nextTurnId) next = advanceTurnClock(state, turnId + 1);
+        if (next.lastEnded !== undefined && turnId > next.lastEnded.turnId) {
+          next = { ...next, lastEnded: undefined };
+        }
+        return next;
       },
     },
   },
@@ -68,9 +77,11 @@ export const cancelTurn = TurnModel.defineOp('turn.cancel', {
   schema: z.object({
     turnId: z.number().optional(),
     target: z.enum(['active', 'queued']).optional(),
+    reason: z.enum(['user_cancelled', 'aborted']).optional(),
   }),
   apply: (s, { turnId, target }) => {
-    if (target === undefined || turnId === undefined || turnId < s.nextTurnId) return s;
+    if (target === undefined || turnId === undefined) return s;
+    if (turnId < s.nextTurnId) return s;
     return advanceTurnClock(s, s.nextTurnId, [...s.cancelledTurnIds, turnId]);
   },
 });
@@ -82,7 +93,10 @@ export const endTurn = TurnModel.defineOp('turn.ended', {
     error: z.custom<KimiErrorPayload>().optional(),
     durationMs: z.number().optional(),
   }),
-  apply: (s) => s,
+  apply: (s, { turnId, reason, durationMs }) => ({
+    ...s,
+    lastEnded: { turnId, reason, durationMs },
+  }),
 });
 
 function advanceTurnClock(
@@ -95,6 +109,7 @@ function advanceTurnClock(
   );
   while (pendingCancellations.delete(nextTurnId)) nextTurnId += 1;
   return {
+    ...state,
     nextTurnId,
     cancelledTurnIds: [...pendingCancellations].toSorted((a, b) => a - b),
   };

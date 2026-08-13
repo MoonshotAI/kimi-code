@@ -16,7 +16,10 @@ import {
   type ToolUpdate,
 } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
+import type {
+  BeforeToolExecuteEvent,
+  ToolExecutionOutcome,
+} from '#/agent/toolExecutor/toolHooks';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -301,6 +304,51 @@ describe('AgentToolExecutorService', () => {
       calls: ['call_strict'],
       results: ['call_strict'],
     });
+  });
+
+  it('recompiles the cached args validator when a tool advertises a different schema object', async () => {
+    const inner = new TestTool('dynamic');
+    let currentSchema: Record<string, unknown> = {
+      type: 'object',
+      properties: { value: { type: 'number' } },
+      required: ['value'],
+      additionalProperties: false,
+    };
+    const tool: ExecutableTool<Record<string, unknown>> = {
+      name: inner.name,
+      description: inner.description,
+      get parameters() {
+        return currentSchema;
+      },
+      resolveExecution: (args) => inner.resolveExecution(args),
+    };
+    registry.register(tool);
+
+    const rejected = await execute([
+      toolCall('call_strict', 'dynamic', { value: 1, model: 'fast' }),
+    ]);
+
+    expect(rejected).toEqual([
+      expect.objectContaining({
+        output: expect.stringContaining('Invalid args for tool "dynamic"'),
+        isError: true,
+      }),
+    ]);
+    expect(inner.calls).toEqual([]);
+
+    currentSchema = {
+      type: 'object',
+      properties: { value: { type: 'number' }, model: { type: 'string' } },
+      required: ['value'],
+      additionalProperties: false,
+    };
+    const accepted = await execute([
+      toolCall('call_open', 'dynamic', { value: 1, model: 'fast' }),
+    ]);
+
+    expect(accepted).toEqual([expect.objectContaining({ stopTurn: false })]);
+    expect(inner.calls).toHaveLength(1);
+    expect(inner.calls[0]?.args).toEqual({ value: 1, model: 'fast' });
   });
 
   it('routes malformed JSON args through schema validation', async () => {
@@ -588,8 +636,13 @@ describe('AgentToolExecutorService', () => {
     const controller = new AbortController();
     const first = new ControlledTool('first', ToolAccesses.writeFile('/repo/a.ts'));
     const second = new ControlledTool('second', ToolAccesses.writeFile('/repo/a.ts'));
+    const outcomes = new Map<string, ToolExecutionOutcome>();
     registry.register(first);
     registry.register(second);
+    executor.hooks.onDidExecuteTool.register('capture-outcomes', async (ctx, next) => {
+      outcomes.set(ctx.toolCall.id, ctx.outcome);
+      await next();
+    });
 
     const execution = execute(
       [toolCall('call_first', 'first', {}), toolCall('call_second', 'second', {})],
@@ -601,6 +654,12 @@ describe('AgentToolExecutorService', () => {
 
     expect(first.calls).toHaveLength(1);
     expect(second.calls).toHaveLength(0);
+    expect(outcomes).toEqual(
+      new Map([
+        ['call_first', 'executed'],
+        ['call_second', 'aborted'],
+      ]),
+    );
     expect(results).toEqual([
       expect.objectContaining({ output: 'Tool "first" was aborted', isError: true }),
       expect.objectContaining({ output: 'Tool "second" was aborted', isError: true }),
@@ -791,10 +850,6 @@ describe('onBeforeExecuteTool veto semantics', () => {
     expect(tool.calls[0]).toEqual(expect.objectContaining({ metadata }));
   });
 
-  // Regression for the ask/deny ordering bug: a deny-style veto (btw's
-  // deny-all) registered after an ask-style listener (permission) must win
-  // without the ask's Interaction ever starting — the waitUntil factory
-  // stays cold because the veto lands in the immediate pass.
   it('never invokes waitUntil factories when an immediate veto decides the call', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);

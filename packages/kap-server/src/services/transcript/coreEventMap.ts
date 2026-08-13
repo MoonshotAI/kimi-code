@@ -60,7 +60,7 @@
  * `agent/task/taskOps.ts`, `agent/shellCommand/shellCommandService.ts`,
  * `session/agentLifecycle/mirrorAgentRun.ts`, `session/swarm/sessionSwarmService.ts`,
  * `agent/goal/goalOps.ts`, `agent/usage/usageOps.ts`, `agent/skill/skillOps.ts`,
- * `agent/rpc/rpcService.ts`, `session/cron/cronOps.ts`,
+ * `agent/pluginCommand/pluginCommandService.ts`, `session/cron/cronOps.ts`,
  * `agent/fullCompaction/compactionOps.ts`, `agent/mcp/mcpService.ts`,
  * `agent/profile/profileService.ts`, `agent/contextMemory/contextMemoryService.ts`).
  */
@@ -323,6 +323,7 @@ export class AgentTranscriptProjector {
     reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
     error?: { message: string };
     durationMs?: number;
+    interruptReason?: string;
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
@@ -351,6 +352,15 @@ export class AgentTranscriptProjector {
     };
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
     this.currentStep = undefined;
+    // The user-facing counterpart of the (hidden) context reminder: a
+    // deliberate user interrupt gets a timeline marker, mirroring the cold
+    // fold's `turn.cancel` handling. Programmatic aborts already surface
+    // through the turn's error field or goal/task state.
+    if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
+      ops.push(
+        this.markerOp('interruption', { turnId: event.turnId, reason: event.interruptReason }),
+      );
+    }
     return ops;
   }
 

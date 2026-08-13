@@ -72,12 +72,24 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     async run() { return { type: 'completed', steps: 0, truncated: false }; },
     status() { return { state: active !== undefined ? 'running' : 'idle', activeTurnId: active?.id, pendingTurnIds: [], hasPendingRequests: queue.hasPendingRequests() }; },
     cancel(turnId, reason) { cancels.push({ turnId, reason }); if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false; active.cancel(reason); return true; },
+    cancelFromUser(turnId) { stub.cancel(turnId); },
     tryAcquireQuiescence: () => toDisposable(() => {}),
     hasPendingRequests: () => queue.hasPendingRequests(), registerLoopErrorHandler: errorHandlers.register,
     settled: () => Promise.resolve(),
     drainNextBatch(context) { const batch = queue.takeNextBatch(); if (!batch) return undefined; materialize(batch.driver, context); for (const r of batch.merged) materialize(r, context); return batch; },
   };
   return stub;
+}
+export async function runWillBeginStepHooks(
+  loop: IAgentLoopService,
+  firstStepOfTurn = false,
+): Promise<void> {
+  await loop.hooks.onWillBeginStep.run({
+    turnId: 0,
+    step: 0,
+    firstStepOfTurn,
+    signal: new AbortController().signal,
+  });
 }
 export type StubWire = IWireService & { readonly ops: readonly Op[]; readonly steered: readonly { readonly input: readonly ContentPart[]; readonly origin?: PromptOrigin }[] };
 export function stubWire(): StubWire { const ops: Op[] = []; const steered: { input: readonly ContentPart[]; origin?: PromptOrigin }[] = []; return { _serviceBrand: undefined, hooks: createHooks(['onDidRestore']), ops, steered, dispatch: (...incoming: Op[]) => { for (const op of incoming) { ops.push(op); if (op.type === 'turn.steer') steered.push(op.payload as never); } }, replay: async () => {}, signal: () => {}, flush: async () => {}, getModel: () => ({}), subscribe: () => toDisposable(() => {}), onEmission: () => toDisposable(() => {}) } as unknown as StubWire; }

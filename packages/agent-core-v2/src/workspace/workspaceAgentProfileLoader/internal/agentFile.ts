@@ -11,16 +11,20 @@
  * (Claude Code).
  */
 
+import { CoreErrors } from '#/_base/errors/codes';
+import { Error2 } from '#/_base/errors/errors';
 import { FrontmatterError, parseFrontmatter } from '#/_base/text/frontmatter';
 
 import type { AgentFileDefinition, AgentFileSource } from './types';
 
-export class AgentFileParseError extends Error {
+export class AgentFileParseError extends Error2 {
   readonly reason?: unknown;
 
   constructor(message: string, cause?: unknown) {
-    super(message);
-    this.name = 'AgentFileParseError';
+    super(CoreErrors.codes.VALIDATION_FAILED, message, {
+      cause,
+      name: 'AgentFileParseError',
+    });
     if (cause !== undefined) this.reason = cause;
   }
 }
@@ -90,7 +94,6 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
   const rawSubagents = parseStringList(frontmatter['subagents'], 'subagents', options.path);
   const subagents =
     rawSubagents?.length === 1 && rawSubagents[0] === '*' ? undefined : rawSubagents;
-  const modelPreference = parseModelPreference(frontmatter['model_preference'], options.path);
 
   const prompt = parsed.body.trim();
   if (prompt.length === 0) {
@@ -105,22 +108,10 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     tools,
     disallowedTools,
     subagents,
-    modelPreference,
     prompt,
     path: options.path,
     source: options.source,
   };
-}
-
-function parseModelPreference(
-  value: unknown,
-  filePath: string,
-): AgentFileDefinition['modelPreference'] {
-  if (value === undefined || value === null) return undefined;
-  if (value === 'primary' || value === 'secondary') return value;
-  throw new AgentFileParseError(
-    `Frontmatter field "model_preference" in ${filePath} must be "primary" or "secondary"`,
-  );
 }
 
 function parseBoolean(value: unknown, field: string, filePath: string): boolean {

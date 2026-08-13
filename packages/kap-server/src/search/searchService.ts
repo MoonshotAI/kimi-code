@@ -6,23 +6,48 @@
  * session titles, backed by a single minidb database at
  * `<homeDir>/search-index`.
  *
- * Concurrency model — "the lock is the election":
+ * Request/sync split — "requests serve a published generation, never wait":
+ *   - A search request reads the currently published index generation and
+ *     returns immediately — with `building` semantics when no generation has
+ *     been published yet. It may KICK a background sync/refresh but never
+ *     awaits one.
+ *   - The background coordinator (single-flight + debounce + one queued
+ *     follow-up) detects authoritative changes (session/wire enumeration),
+ *     projects them incrementally, and publishes new checkpoints; a sync
+ *     that REPLACED indexed documents (shrink rescan, title overwrite) also
+ *     bumps the generation, invalidating older page tokens.
+ *   - Refresh/sync failures are recorded in `lastRefreshError` and surface
+ *     as `indexState.degraded` while the previous generation keeps serving.
+ *
+ * Execution hosts (stage 4 worker isolation):
+ *   - Everything that touches the search-index MiniDb lives in the
+ *     host-agnostic core (`indexCore.ts`). The service never opens the
+ *     global search MiniDb itself.
+ *   - WORKER host (default): the core runs inside a dedicated worker thread
+ *     (`worker/entry.ts`), driven over RPC by `worker/host.ts`
+ *     (`SearchWorkerHost`) — generation loads, WAL replays, sync passes and
+ *     query execution never share this process's event loop. A worker that
+ *     fails to start or dies mid-flight yields recognizable degraded
+ *     responses (never a silent fallback onto the main thread); the
+ *     `search_worker` experimental flag (`KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER`,
+ *     default ON) is the explicit rollback switch back to the inline host.
+ *   - INLINE host (rollback / tests): the same core runs in-process.
+ *   - The main thread keeps only: query normalization, page-token
+ *     encode/decode, the sync coordinator (debounce/single-flight over the
+ *     backend's sync), the live-transcript route, and hit projection.
+ *
+ * Concurrency model — "the lock is the election" (unchanged; the write lock
+ * is now held by the worker thread on behalf of this process):
  *   - `MiniDb.open({ onLockFail: 'readonly' })`: the process that grabs the
  *     exclusive write lock becomes the indexer (build + incremental sync);
  *     every other process opens read-only and never rescans wire files.
- *   - A read-only instance refreshes before each search via a cheap file
- *     fingerprint (db.wal / db.snapshot / db.textindexes.json): unchanged →
- *     serve the in-memory view; WAL pure-append on the same inode →
- *     `MiniDb.catchUpFromWal` incremental replay; anything else → close +
- *     full reopen. When the indexer dies, the next opener takes the lock and
- *     becomes the new indexer.
- *   - In-process, syncs are serialized behind a single-flight promise.
- *
- * Incremental indexing anchors on wire.jsonl byte offsets (the files are
- * append-only JSONL): a `\0meta\file\<path>` key per wire file records how
- * far it has been indexed; growth re-reads only the new byte range, shrinkage
- * drops the file's docs and rescans. Session title docs (`<sid>/$title`) are
- * overwritten each sync; disappeared sessions are dropped by key prefix.
+ *   - A read-only instance checks a cheap file fingerprint (db.wal /
+ *     db.snapshot / db.textindexes.json) per search: unchanged → serve the
+ *     in-memory view; changed → refresh in the BACKGROUND (WAL pure-append →
+ *     `MiniDb.catchUpFromWal` incremental replay; anything else → open the
+ *     replacement db first, then swap — a failed reopen keeps the stale
+ *     generation servable). When the indexer dies, the next opener takes the
+ *     lock and becomes the new indexer.
  *
  * Registration: this module is side-effect-imported by `start.ts` BEFORE
  * `bootstrap()` runs, so the module-level `registerScopedService` below lands
@@ -31,61 +56,87 @@
  * reflection surface as `globalSearch` with zero extra code.
  */
 
-import { createHash } from 'node:crypto';
-import { open, readdir, rm, stat } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { stat } from 'node:fs/promises';
 
 import {
   createDecorator,
   IBootstrapService,
+  IFlagService,
   ILogService,
   ISessionIndex,
   LifecycleScope,
   ScopeActivation,
+  registerFlagDefinition,
   registerScopedService,
   sessionDirOf,
   workspacePersistenceScope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
-import { LockError, MiniDb, normalizeLiteral, tokenize, type BatchInputOp } from '@moonshot-ai/minidb';
+import { normalizeLiteral, tokenize } from '@moonshot-ai/minidb';
 import type { TranscriptStore } from '@moonshot-ai/transcript';
 
-import type {
-  GlobalSearchHit,
-  GlobalSearchIndexState,
-  GlobalSearchPage,
-  GlobalSearchQuery,
-  GlobalSearchSource,
+import {
+  GlobalSearchError,
+  type GlobalSearchHit,
+  type GlobalSearchIndexState,
+  type GlobalSearchPage,
+  type GlobalSearchQuery,
 } from './contract';
+import { MAX_DOC_TEXT_CHARS, type MessageDoc, type TitleDoc } from './docs';
+import {
+  SearchIndexCore,
+  type CoreIndexView,
+  type CoreLifecycleReport,
+  type CoreSearchParams,
+  type CoreSearchResult,
+  type CoreStatus,
+  type CoreSyncOutcome,
+  type SyncSessionInput,
+} from './indexCore';
+import {
+  boundaryOf,
+  decodePageToken,
+  encodePageToken,
+  matchDocs,
+  paginateRows,
+  type MatchedRow,
+  type NormalizedQuery,
+  type SearchBudgets,
+} from './match';
 import { makeSnippet } from './snippet';
-import { analyzeWireLine, type StepEffect, type TurnEffect } from './wireExtract';
+import { SearchWorkerError, SearchWorkerHost, dropLiveLockToken, noteLiveLockToken } from './worker/host';
+
+export { GlobalSearchError } from './contract';
+export type { GlobalSearchErrorReason } from './contract';
 
 // ---------------------------------------------------------------------------
-// Constants & stored document shapes
+// Constants
 // ---------------------------------------------------------------------------
 
 const INDEX_DIR_NAME = 'search-index';
-const TEXT_INDEX_NAME = 'body';
-/** n-gram substring index backing literal mode, alongside 'body'. */
-const TRI_INDEX_NAME = 'tri';
-const WIRE_FILENAME = 'wire.jsonl';
+/** Sessions are listed in pages of this size. */
+const SESSION_PAGE_SIZE = 500;
 
-/** Key namespaces inside the single db. */
-const FILE_META_PREFIX = '\0meta\\file\\';
-const SESSION_META_PREFIX = '\0meta\\session\\';
-const STATS_KEY = '\0meta\\stats';
+// -- query budgets (service knobs; the defaults are the production values) ----
 
+/** Max distinct query terms in terms mode. */
+const MAX_QUERY_TERMS = 32;
+/** Max literal-query length in normalized code points (bounds n-gram terms). */
+const MAX_LITERAL_QUERY_CHARS = 1_024;
 /**
- * minidb keys are limited to 128 bytes, far shorter than an absolute wire
- * path — the file meta key is a hash of the path (the path itself, and the
- * owning session, live in the value).
+ * Max posting entries the index may visit for one query (both modes). A hot
+ * term/n-gram whose postings overflow the budget contributes a prefix and
+ * the page is flagged `incomplete: 'postings_budget'` — the budget applies
+ * at the postings/score stage, not just at final confirmation.
  */
-function fileMetaKey(filePath: string): string {
-  return FILE_META_PREFIX + createHash('sha256').update(filePath).digest('hex').slice(0, 32);
-}
-
-/** Cap one indexed document's text so huge pastes do not bloat the index. */
-const MAX_DOC_TEXT_CHARS = 20_000;
+const MAX_POSTINGS_VISITS = 250_000;
+/** Wall-clock budget for the in-memory match/confirm phase of one query. */
+const QUERY_DEADLINE_MS = 500;
+/** Max document text processed by literal confirmation per query (UTF-16
+ *  code units) — the backstop for pathological huge-document corpora. */
+const QUERY_TEXT_BUDGET_CHARS = 16_000_000;
 /** Upper bound for text-index candidates handed to the scoring map / query. */
 const MAX_TEXT_HITS = 100_000;
 /**
@@ -94,243 +145,99 @@ const MAX_TEXT_HITS = 100_000;
  * the page is truncated and flagged `incomplete: 'candidate_cap'`.
  */
 const LITERAL_CANDIDATE_CAP = 10_000;
-/** Sessions are listed in pages of this size. */
-const SESSION_PAGE_SIZE = 500;
 
-interface MessageDoc {
-  readonly kind: 'message';
-  readonly sessionId: string;
-  readonly workspaceId: string;
-  readonly sessionTitle: string;
-  readonly agentId: string;
-  readonly role: 'user' | 'assistant';
-  readonly text: string;
-  readonly time: number;
-  /**
-   * 0-based turn ordinal in the transcript view (groupTurns numbering). Absent
-   * for docs indexed before turn tracking existed.
-   */
-  readonly turn?: number;
-  /**
-   * Transcript step id (`t<turn>.<step>`, engine live numbering from the wire
-   * record's `step` field) of the step that produced this assistant text.
-   * Absent for user docs and docs indexed before step tracking existed.
-   */
-  readonly stepId?: string;
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
-interface TitleDoc {
-  readonly kind: 'title';
-  readonly sessionId: string;
-  readonly workspaceId: string;
-  readonly sessionTitle: string;
-  /** Titles belong to the session, not an agent — always ''. */
-  readonly agentId: '';
-  readonly role: 'title';
-  readonly text: string;
-  readonly time: number;
-}
-
-interface FileMetaDoc {
-  readonly kind: 'fileMeta';
-  /** Owning session, used to drop metas when a session disappears. */
-  readonly sessionId: string;
-  /** Doc-key coordinates of this file's documents (see `docKeyPrefix`). */
-  readonly agentId: string;
-  readonly source: 'root' | 'agents';
-  /** Absolute wire path (debugging aid; the key is its hash). */
-  readonly path: string;
-  /** Byte offset up to which the wire file has been indexed. */
-  readonly offset: number;
-  readonly size: number;
-  /**
-   * Turn counter state at `offset` — persisted with the watermark so an
-   * incremental pass resumes counting instead of restarting at turn 0.
-   * Absent in metas written before turn tracking; treated as the initial
-   * state, which makes a legacy meta resume mid-file with a zeroed counter —
-   * an accepted one-time drift, self-healing on the next shrink/rescan.
-   */
-  readonly turnState?: TurnCounterState;
-  /**
-   * Step tracker state at `offset` — persisted with the watermark for the
-   * same resume reason as `turnState`. Absent in metas written before step
-   * tracking: such a file is RESCANNED from scratch (docs dropped, offset
-   * reset) so stepIds are all-or-nothing per file instead of drifting.
-   */
-  readonly stepState?: StepTrackerState;
-}
-
-interface SessionMetaDoc {
-  readonly kind: 'sessionMeta';
-}
-
-// ---------------------------------------------------------------------------
-// Turn counter (transcript groupTurns numbering, replayed over the wire file)
-// ---------------------------------------------------------------------------
-
-interface TurnOpener {
-  readonly turn: number;
-  readonly anchor: boolean;
-}
-
-interface TurnCounterState {
-  /** Ordinal the next opened turn will get (0-based). */
-  readonly next: number;
-  /** Whether a turn is currently open (groupTurns' `ensureTurn` gate). */
-  readonly hasTurn: boolean;
-  /** Turn openers, in order — the replay stack for `context.undo`. */
-  readonly openers: readonly TurnOpener[];
-}
-
-const INITIAL_TURN_STATE: TurnCounterState = { next: 0, hasTurn: false, openers: [] };
-
-function initialTurnState(): TurnCounterState {
-  return INITIAL_TURN_STATE;
-}
-
-/**
- * Replay `context.undo {count}`: drop the last `count` anchor-opened turns.
- * The counter rewinds to the ordinal of the earliest dropped anchor, and the
- * opener stack is truncated there. An undo with fewer anchors than `count`
- * never reaches the wire (the engine's precheck rejects it) — left untouched.
- */
-function applyUndoToTurnState(state: TurnCounterState, count: number): TurnCounterState {
-  let found = 0;
-  for (let i = state.openers.length - 1; i >= 0; i--) {
-    if (state.openers[i]!.anchor) {
-      found++;
-      if (found === count) {
-        return {
-          next: state.openers[i]!.turn,
-          hasTurn: i > 0,
-          openers: state.openers.slice(0, i),
-        };
-      }
-    }
-  }
-  return state;
-}
-
-/**
- * Advance the counter with one record's turn effect. Returns the ordinal that
- * documents extracted from the SAME record belong to: a user opener carries
- * the turn it opens; assistant content carries the current turn (after the
- * `ensure` gate). Undefined when the record owns no turn.
- *
- * The counter is monotonic except for `undo` rewinds: `apply_compaction` and
- * `clear` do NOT renumber (the transcript's cold replay keeps full history
- * and groupTurns numbers it continuously; the live TurnModel is monotonic
- * too), so they are `none` effects by construction. Docs indexed BEFORE an
- * `undo` keep their pre-undo ordinals — those messages no longer exist in the
- * transcript view, so their ordinals point nowhere (known, accepted
- * deviation, same class as "folded-away messages stay searchable").
- */
-function advanceTurnCounter(
-  state: TurnCounterState,
-  effect: TurnEffect,
-): { docTurn: number | undefined; state: TurnCounterState } {
-  switch (effect.kind) {
-    case 'open':
-      return {
-        docTurn: state.next,
-        state: {
-          next: state.next + 1,
-          hasTurn: true,
-          openers: [...state.openers, { turn: state.next, anchor: effect.anchor }],
-        },
-      };
-    case 'ensure': {
-      const next = state.hasTurn ? state : { ...state, next: state.next + 1, hasTurn: true };
-      return { docTurn: next.next - 1, state: next };
-    }
-    case 'undo':
-      return { docTurn: undefined, state: applyUndoToTurnState(state, effect.count) };
-    case 'none':
-      return { docTurn: undefined, state };
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Step tracker (transcript step ids `t<turn>.<step>`, per-turn uuid → ordinal)
+// Experimental flag (the rollback switch for the worker host)
 // ---------------------------------------------------------------------------
 
-interface StepTrackerState {
-  /** Current turn's step uuid → ordinal (the wire `step` field, else the fallback counter). */
-  readonly byUuid: Record<string, number>;
-  /** `step.begin` count within the current turn — the fallback ordinal source. */
-  readonly begins: number;
-}
-
-const INITIAL_STEP_STATE: StepTrackerState = { byUuid: {}, begins: 0 };
-
-function initialStepState(): StepTrackerState {
-  return INITIAL_STEP_STATE;
-}
-
 /**
- * Advance the tracker with one record's step effect. `begin` maps the step's
- * uuid to its ordinal: the wire record's own `step` field when present (the
- * engine's live 1-based numbering — the same numbering transcript step ids
- * use), otherwise the count of begins seen in this turn (v1 loops had no
- * loop-level retries, so counting matches the surviving-step numbering).
- * The mapping is never narrowed per step — it is reset wholesale at turn
- * boundaries (`open`, a fallback-opening `ensure`, `undo`) by the caller.
+ * `search_worker` — run the global search index in a dedicated worker
+ * thread (default ON). Disable via `KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER=false`
+ * or the `[experimental]` config section to fall back to the in-process
+ * (inline) host. Read once at service construction.
  */
-function advanceStepTracker(state: StepTrackerState, effect: StepEffect): StepTrackerState {
-  if (effect.kind !== 'begin') return state;
-  const begins = state.begins + 1;
-  const ordinal = effect.ordinal ?? begins;
-  if (state.byUuid[effect.uuid] === ordinal) return state;
-  return { byUuid: { ...state.byUuid, [effect.uuid]: ordinal }, begins };
-}
+export const SEARCH_WORKER_FLAG_ID = 'search_worker';
 
-interface StatsDoc {
-  readonly kind: 'stats';
-  readonly sessions: number;
-  readonly documents: number;
-  readonly lastIndexedAt: number;
-}
+registerFlagDefinition({
+  id: SEARCH_WORKER_FLAG_ID,
+  title: 'search worker isolation',
+  description:
+    'Run the global search-index MiniDB (open, WAL replay, sync, queries) in a dedicated worker thread instead of the server main thread.',
+  env: 'KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER',
+  default: true,
+  surface: 'core',
+});
 
-type SearchDoc = MessageDoc | TitleDoc | FileMetaDoc | SessionMetaDoc | StatsDoc;
+// ---------------------------------------------------------------------------
+// Disposal drain (unchanged contract with start.ts)
+// ---------------------------------------------------------------------------
 
 /**
  * Fire-and-forget close promises produced by `dispose()` (DI disposal is
  * synchronous). The server shutdown path awaits these via
  * `drainGlobalSearchDisposals()` before the homeDir is released, so a
- * teardown `rm()` never races an in-flight minidb open/close.
+ * teardown `rm()` never races an in-flight backend close.
  */
 const pendingDisposals = new Set<Promise<void>>();
 
 export async function drainGlobalSearchDisposals(): Promise<void> {
-  await Promise.all(pendingDisposals);
+  // Fixpoint loop (review #21): awaiting a batch of disposals can trigger
+  // further dispose() calls — an embedder tearing down scopes concurrently —
+  // which register NEW pending promises a one-shot Promise.all snapshot
+  // would not wait for. Keep draining until the set is still empty at the
+  // end of a wait.
+  while (pendingDisposals.size > 0) {
+    await Promise.all(pendingDisposals);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Service interface
 // ---------------------------------------------------------------------------
 
-export type GlobalSearchErrorReason =
-  | 'invalid_query'
-  | 'invalid_page_token'
-  | 'readonly_index'
-  | 'index_unavailable';
-
-export class GlobalSearchError extends Error {
-  constructor(
-    readonly reason: GlobalSearchErrorReason,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'GlobalSearchError';
-  }
-}
-
 export interface IGlobalSearchService {
   readonly _serviceBrand: undefined;
   search(query: GlobalSearchQuery): Promise<GlobalSearchPage>;
   /** Full rebuild: wipe the index and rescan every wire file. */
   reindex(): Promise<{ sessions: number; documents: number }>;
-  status(): Promise<{ sessions: number; documents: number; lastIndexedAt: number | null }>;
+  /**
+   * Diagnostic status (the `/api/v1/debug` surface reflects it). Never
+   * throws: a backend that cannot answer (failed open, worker down) reports
+   * a degraded lifecycle instead of rejecting. `lifecycle` is the aggregate
+   * state machine (stage 5): stopped → opening → ready → building/degraded →
+   * closing. NOTE the historical contract: the call may kick/await the
+   * backend's open and read-only refresh — use `lifecycleReport()` for a
+   * non-intrusive local read.
+   */
+  status(): Promise<{
+    sessions: number;
+    documents: number;
+    lastIndexedAt: number | null;
+    /** Identity of the published base; bumps invalidate v2 page tokens. */
+    generation: number;
+    /** Last background refresh/sync/reindex failure, if serving stale. */
+    degraded?: string;
+    lifecycle: CoreLifecycleReport;
+  }>;
+  /**
+   * Synchronous local lifecycle report (stage 5): never kicks an open, never
+   * spawns the worker, never awaits. Answers the transitional states
+   * (stopped/opening/degraded-backoff/closing) that status() would block on.
+   */
+  lifecycleReport(): CoreLifecycleReport;
   /**
    * Wire the live-transcript source for the in-memory search route. Called
    * once from the composition root (start.ts) after `TranscriptService` is
@@ -357,38 +264,10 @@ export interface LiveTranscriptSource {
 }
 
 // ---------------------------------------------------------------------------
-// Query normalization & page tokens
+// Query normalization
 // ---------------------------------------------------------------------------
 
-interface NormalizedQuery {
-  readonly query: string;
-  readonly mode: 'terms' | 'literal';
-  /**
-   * Literal mode only: `normalizeLiteral(query)`, computed once here and
-   * reused by candidate confirmation and the snippet anchor. The n-gram
-   * index's query tokenizer applies the same normalization to the query
-   * terms, so index and comparison agree by construction.
-   */
-  readonly literalQuery?: string;
-  /**
-   * Terms mode only: the query's deduplicated terms under minidb's default
-   * `tokenize` (the same tokenizer the 'body' text index applies to both
-   * sides). Computed once here so the live route's in-memory AND match agrees
-   * with the index route by construction. Empty when the query tokenizes to
-   * nothing (e.g. punctuation only) — both routes then match zero docs,
-   * mirroring `TextIndex.search`.
-   */
-  readonly termsQuery?: readonly string[];
-  readonly op: 'AND' | 'OR';
-  readonly container?: { readonly sessionId?: string; readonly agentId?: string };
-  readonly role?: 'user' | 'assistant' | 'title';
-  readonly startTime?: number;
-  readonly endTime?: number;
-  readonly sort: 'score' | 'time_desc' | 'time_asc';
-  readonly pageSize: number;
-}
-
-function normalizeQuery(input: GlobalSearchQuery): NormalizedQuery {
+function normalizeQuery(input: GlobalSearchQuery, maxQueryTerms: number): NormalizedQuery {
   const mode = input.mode ?? 'terms';
   // Literal matching is byte-exact (mod NFKC/case) — whitespace is part of
   // the query, so it is never trimmed.
@@ -401,6 +280,13 @@ function normalizeQuery(input: GlobalSearchQuery): NormalizedQuery {
   // (`searchIndex`) — it is a constraint of the n-gram candidate index, not of
   // literal matching itself. The live route (pure in-memory scan) accepts any
   // non-empty literal query, down to a single code point.
+  const termsQuery = mode === 'terms' ? [...new Set(tokenize(query))] : undefined;
+  if (termsQuery !== undefined && termsQuery.length > maxQueryTerms) {
+    throw new GlobalSearchError(
+      'invalid_query',
+      `query has too many terms (${termsQuery.length} > ${maxQueryTerms}); narrow it down`,
+    );
+  }
   const pageSize = input.pageSize ?? 20;
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 50) {
     throw new GlobalSearchError('invalid_query', 'pageSize must be an integer between 1 and 50');
@@ -409,7 +295,7 @@ function normalizeQuery(input: GlobalSearchQuery): NormalizedQuery {
     query,
     mode,
     literalQuery,
-    termsQuery: mode === 'terms' ? [...new Set(tokenize(query))] : undefined,
+    termsQuery,
     op: input.op ?? 'AND',
     container: input.container,
     role: input.role,
@@ -420,62 +306,87 @@ function normalizeQuery(input: GlobalSearchQuery): NormalizedQuery {
   };
 }
 
-/**
- * The page token encodes a fingerprint of the query conditions plus the skip
- * offset — changing conditions mid-pagination invalidates the token (same
- * rule as Lark's search API). The serving route (`source`) is part of the
- * fingerprint: a route flip mid-pagination (e.g. the container session
- * closed and the live route fell away) invalidates the token too, so the
- * client restarts the search instead of silently switching result sets.
- */
-function tokenFingerprint(q: NormalizedQuery, source: GlobalSearchSource): string {
-  const basis = JSON.stringify([
-    q.query,
-    q.mode,
-    q.op,
-    q.container?.sessionId,
-    q.container?.agentId,
-    q.role,
-    q.startTime,
-    q.endTime,
-    q.sort,
-    source,
-  ]);
-  return createHash('sha256').update(basis).digest('base64url').slice(0, 16);
+// ---------------------------------------------------------------------------
+// Execution backends (worker RPC vs inline core)
+// ---------------------------------------------------------------------------
+
+/** The service's view of an execution host for the search-index core. */
+export interface SearchBackend {
+  /**
+   * Synchronously stop accepting new background work (called from the
+   * service's synchronous dispose() before any awaiting): in-flight passes
+   * skip their remaining writes at the next gate check.
+   */
+  beginClose(): void;
+  /**
+   * Local, round-trip-free aggregate lifecycle (stage 5): the states a wedged
+   * or not-yet-started backend must be able to report without being asked
+   * (stopped/opening/degraded/closing). The full status() round trip refines
+   * the up states (ready/building) with exact stats.
+   */
+  lifecycleSnapshot(): CoreLifecycleReport;
+  ensureOpen(): Promise<unknown>;
+  search(params: CoreSearchParams): Promise<CoreSearchResult>;
+  sync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncOutcome>;
+  refresh(): Promise<unknown>;
+  reindex(): Promise<unknown>;
+  status(): Promise<CoreStatus>;
+  dispose(): Promise<void>;
 }
 
-function encodePageToken(q: NormalizedQuery, source: GlobalSearchSource, skip: number): string {
-  return Buffer.from(JSON.stringify({ f: tokenFingerprint(q, source), s: skip })).toString(
-    'base64url',
-  );
-}
+/** Rollback host: the search-index core running on the main thread. */
+export class InlineSearchBackend implements SearchBackend {
+  readonly core: SearchIndexCore;
 
-function decodePageToken(
-  q: NormalizedQuery,
-  source: GlobalSearchSource,
-  token: string | undefined,
-): number {
-  if (token === undefined) return 0;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
-  } catch {
-    throw new GlobalSearchError('invalid_page_token', 'pageToken is malformed');
+  constructor(options: { indexDir: string; log: ILogService }) {
+    // A fresh boot salt per service instance: page tokens never validate
+    // across a service/process restart (the core's local generation counter
+    // restarts from 0), mirroring the worker host's per-spawn salt. The held
+    // lock token is registered process-wide so a worker-host peer's orphan
+    // detector never mistakes this inline writer's lock for a dead worker's.
+    this.core = new SearchIndexCore({
+      ...options,
+      bootSalt: randomUUID(),
+      onLockToken: noteLiveLockToken,
+    });
   }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new GlobalSearchError('invalid_page_token', 'pageToken is malformed');
+
+  beginClose(): void {
+    this.core.beginClose();
   }
-  const p = parsed as { f?: unknown; s?: unknown };
-  if (p.f !== tokenFingerprint(q, source)) {
-    throw new GlobalSearchError(
-      'invalid_page_token',
-      'pageToken does not match the query conditions; query conditions must not change mid-pagination',
-    );
+
+  lifecycleSnapshot(): CoreLifecycleReport {
+    return this.core.lifecycleState();
   }
-  if (typeof p.s !== 'number' || !Number.isInteger(p.s) || p.s < 0) {
-    throw new GlobalSearchError('invalid_page_token', 'pageToken is malformed');
+
+  ensureOpen(): Promise<void> {
+    return this.core.ensureOpen();
   }
-  return p.s;
+
+  search(params: CoreSearchParams): Promise<CoreSearchResult> {
+    return this.core.search(params);
+  }
+
+  sync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncOutcome> {
+    return this.core.sync(sessions);
+  }
+
+  refresh(): Promise<void> {
+    return this.core.refresh();
+  }
+
+  reindex(): Promise<void> {
+    return this.core.reindex();
+  }
+
+  status(): Promise<CoreStatus> {
+    return this.core.status();
+  }
+
+  dispose(): Promise<void> {
+    dropLiveLockToken(this.core.lockTokenView);
+    return this.core.close();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -491,30 +402,53 @@ export class GlobalSearchService implements IGlobalSearchService {
   /** Literal-mode candidate cap (test knob, see LITERAL_CANDIDATE_CAP). */
   literalCandidateCap = LITERAL_CANDIDATE_CAP;
 
-  private db: MiniDb<SearchDoc> | null = null;
-  private openPromise: Promise<void> | null = null;
+  /** Terms-mode candidate cap (test knob, see MAX_TEXT_HITS). */
+  maxTextHits = MAX_TEXT_HITS;
+
+  /** Postings-visit budget per query (test knob, see MAX_POSTINGS_VISITS). */
+  postingsVisitBudget = MAX_POSTINGS_VISITS;
+
+  /** Match/confirm wall-clock budget per query (test knob). */
+  queryDeadlineMs = QUERY_DEADLINE_MS;
+
+  /** Literal-confirmation text-volume budget per query (test knob). */
+  queryTextBudgetChars = QUERY_TEXT_BUDGET_CHARS;
+
+  /** Max distinct query terms in terms mode (test knob). */
+  maxQueryTerms = MAX_QUERY_TERMS;
+
+  private readonly backend: SearchBackend;
   private syncPromise: Promise<void> | null = null;
   private refreshPromise: Promise<void> | null = null;
   private lastSyncStartedAt = 0;
-  private fullSyncDone = false;
-  /** WAL watermark (bytes applied) for read-only catch-up. */
-  private walOffset = 0;
-  private fingerprint = '';
   private summaries = new Map<string, SessionSummary>();
   private disposed = false;
   /** Set while `reindex()` swaps the db — syncs started meanwhile are no-ops. */
   private reindexing = false;
   /** Live-transcript source for the in-memory route; null until start.ts wires it. */
   private liveSource: LiveTranscriptSource | null = null;
+  /** One queued follow-up pass behind the in-flight one (backpressure). */
+  private syncQueued = false;
+  /** Trailing-pass timer behind the debounce window. */
+  private syncTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Last background sync/reindex/worker failure — surfaced as degraded. */
+  private lastRefreshError: { at: number; message: string } | null = null;
+  /** Set when dispose()'s async drain finished — lifecycle 'stopped'. */
+  private drainSettled = false;
 
   constructor(
     @ISessionIndex private readonly sessionIndex: ISessionIndex,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ILogService private readonly log: ILogService,
+    @IFlagService private readonly flags: IFlagService,
   ) {
+    const indexDir = join(this.bootstrap.homeDir, INDEX_DIR_NAME);
+    this.backend = this.flags.enabled(SEARCH_WORKER_FLAG_ID)
+      ? new SearchWorkerHost({ dir: indexDir, log: this.log })
+      : new InlineSearchBackend({ indexDir, log: this.log });
     // App-scope OnScopeCreated activation: kick the first full sync off in the
     // background so server bootstrap never blocks on indexing.
-    this.kickBackgroundSync();
+    this.requestSync();
   }
 
   setLiveTranscriptSource(source: LiveTranscriptSource): void {
@@ -527,169 +461,95 @@ export class GlobalSearchService implements IGlobalSearchService {
     return join(this.bootstrap.homeDir, INDEX_DIR_NAME);
   }
 
-  private ensureOpen(): Promise<void> {
-    this.openPromise ??= this.openDb().catch((error: unknown) => {
-      this.openPromise = null;
-      throw error;
-    });
-    return this.openPromise;
-  }
-
-  private async openDb(): Promise<void> {
-    const db = await this.openSearchDb();
-    // The scope may have been disposed while the (slow) open was in flight —
-    // close the handle immediately instead of leaking it and writing the
-    // text-index definition below into a directory the caller may already be
-    // deleting.
-    if (this.disposed) {
-      await db.close().catch(() => {});
-      throw new GlobalSearchError('index_unavailable', 'search service is disposed');
-    }
-    this.db = db;
-    this.walOffset = db.recoveryInfo?.walScanEnd ?? 0;
-    if (!db.readOnly) {
-      // Both indexes are created here (not at first write) so a pre-existing
-      // db gets the tri index built over its current documents on first open
-      // after the upgrade, and a read-only peer only ever reopens on the
-      // definitions-file fingerprint change.
-      for (const [name, options] of [
-        [TEXT_INDEX_NAME, { fields: ['text'] }],
-        [TRI_INDEX_NAME, { fields: ['text'], tokenizer: 'ngram' }],
-      ] as const) {
-        try {
-          await db.createTextIndex(name, options);
-        } catch (error) {
-          if (!(error instanceof Error && error.message.includes('already exists'))) throw error;
-        }
-      }
-    }
-    this.fingerprint = await this.computeFingerprint();
-  }
-
-  /**
-   * Open the index db, rebuilding from scratch on unrecoverable corruption
-   * (the index is derived data — never repaired, only rebuilt).
-   *
-   * Rebuild is WRITER-ONLY: a process that fails to grab the write lock must
-   * never delete the directory out from under the live indexer. Lock state is
-   * not observable once `open` throws, so corruption is disambiguated with a
-   * probe open WITHOUT `onLockFail`: it throws `LockError` before recovery
-   * when another process holds the lock, and re-throws the corruption
-   * (releasing the lock) when the lock is free — in which case this process
-   * is the would-be writer and may rebuild.
-   */
-  private async openSearchDb(): Promise<MiniDb<SearchDoc>> {
-    const opts = {
-      dir: this.indexDir,
-      valueCodec: 'json',
-      fsyncPolicy: 'everysec',
-      onLockFail: 'readonly',
-    } as const;
-    try {
-      return await MiniDb.open<SearchDoc>(opts);
-    } catch (error) {
-      if (!isRebuildableCorruption(error)) throw error;
-      let probeError: unknown;
-      try {
-        const probe = await MiniDb.open<SearchDoc>({ dir: opts.dir, valueCodec: opts.valueCodec });
-        await probe.close().catch(() => {});
-        probeError = undefined; // lock free AND data fine — cannot happen, but treat as rebuildable
-      } catch (error) {
-        probeError = error;
-      }
-      if (probeError instanceof LockError) {
-        // Another process holds the write lock: leave its files alone. The
-        // caller's open fails; the next search retries from scratch.
-        throw error;
-      }
-      await rm(this.indexDir, { recursive: true, force: true });
-      return MiniDb.open<SearchDoc>(opts);
-    }
+  private toSyncInput(summary: SessionSummary): SyncSessionInput {
+    return {
+      id: summary.id,
+      workspaceId: summary.workspaceId,
+      title: summary.title,
+      updatedAt: summary.updatedAt,
+      dir: sessionDirOf(
+        this.bootstrap.homeDir,
+        workspacePersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
+        summary.id,
+      ),
+    };
   }
 
   dispose(): void {
     this.disposed = true;
-    // DI disposal is synchronous, but closing a MiniDb is not: wait for any
-    // in-flight open to settle, then close the handle. The promise is
+    if (this.syncTimer !== null) {
+      clearTimeout(this.syncTimer);
+      this.syncTimer = null;
+    }
+    // Synchronously gate the backend BEFORE any awaiting: an in-flight sync
+    // pass skips its remaining writes at the next disposed check (the
+    // review-#20 drain contract). Both hosts honor it: the inline core flips
+    // its own flag; the worker host forwards a beginClose control message so
+    // the worker-side core gates mid-pass too.
+    this.backend.beginClose();
+    // DI disposal is synchronous, but draining background work and closing
+    // the backend are not: wait for the in-flight coordinator facades to
+    // settle (bounded now — a gated pass returns early), then dispose the
+    // backend (the inline core drains its tracked ops before closing the db;
+    // the worker drains and closes on the `close` request, with terminate()
+    // as the host's bounded backstop). The promise is
     // registered module-level so the server shutdown path
     // (`drainGlobalSearchDisposals` in start.ts) can await it before the
     // homeDir is torn down — otherwise teardown rm() races the close and
     // fails with ENOTEMPTY.
     const pending = (async () => {
-      await this.openPromise?.catch(() => {});
-      const db = this.db;
-      this.db = null;
-      if (db) await db.close().catch(() => {});
+      await this.syncPromise?.catch(() => {});
+      await this.refreshPromise?.catch(() => {});
+      await this.backend.dispose();
+      this.drainSettled = true;
     })();
     pendingDisposals.add(pending);
     void pending.finally(() => pendingDisposals.delete(pending));
   }
 
-  // -- read-only freshness (fingerprint + WAL catch-up) -------------------------
+  // -- sync coordinator (indexer only) -------------------------------------------
+  //
+  // Requests never await a sync; they ask the coordinator to schedule one.
+  // Single-flight serializes passes, the debounce window coalesces bursts,
+  // and backpressure is one queued follow-up behind the in-flight pass.
 
-  private async computeFingerprint(): Promise<string> {
-    const parts: string[] = [];
-    for (const name of ['db.wal', 'db.snapshot', 'db.textindexes.json']) {
-      try {
-        const s = await stat(join(this.indexDir, name));
-        parts.push(`${name}:${s.dev}:${s.ino}:${s.mtimeMs}:${s.size}`);
-      } catch {
-        parts.push(`${name}:-`);
+  private requestSync(): void {
+    if (this.disposed || this.reindexing) return;
+    if (this.syncPromise !== null) {
+      // A pass is already running: queue exactly one follow-up.
+      this.syncQueued = true;
+      return;
+    }
+    const wait = this.syncDebounceMs - (Date.now() - this.lastSyncStartedAt);
+    if (wait > 0) {
+      // Inside the debounce window: coalesce requests into one trailing pass.
+      if (this.syncTimer === null) {
+        this.syncTimer = setTimeout(() => {
+          this.syncTimer = null;
+          this.requestSync();
+        }, wait);
+        this.syncTimer.unref?.();
       }
+      return;
     }
-    return parts.join('|');
+    this.startSyncPass();
   }
 
-  /**
-   * Bring a read-only instance up to date with the indexer's committed
-   * writes. Unchanged fingerprint → zero IO; WAL pure-append → incremental
-   * `catchUpFromWal`; anything else → close + full reopen (which may also
-   * promote this process to indexer when the old writer's lock is gone).
-   */
-  private refreshReadonly(): Promise<void> {
-    this.refreshPromise ??= this.doRefreshReadonly()
-      .catch(() => {
-        // A failed refresh must not fail the search — serve the stale view.
-      })
-      .finally(() => {
-        this.refreshPromise = null;
-      });
-    return this.refreshPromise;
-  }
-
-  private async doRefreshReadonly(): Promise<void> {
-    const db = this.db;
-    if (!db || !db.readOnly || this.disposed) return;
-    const fp = await this.computeFingerprint();
-    if (fp === this.fingerprint) return;
-    const [, snapPrev, defsPrev] = this.fingerprint.split('|');
-    const [, snapNow, defsNow] = fp.split('|');
-    if (snapPrev === snapNow && defsPrev === defsNow) {
-      const res = await db.catchUpFromWal(this.walOffset);
-      if (res !== null) {
-        this.walOffset = res.offset;
-        this.fingerprint = fp;
-        return;
-      }
-    }
-    // WAL rotated/truncated, snapshot or index definitions changed, or the
-    // watermark no longer aligns: close and reopen from scratch.
-    await db.close().catch(() => {});
-    if (this.db === db) {
-      this.db = null;
-      this.openPromise = null;
-      await this.ensureOpen();
-    }
-  }
-
-  // -- sync (indexer only) --------------------------------------------------------
-
-  private kickBackgroundSync(): void {
-    void this.ensureSyncStarted().catch((error: unknown) => {
-      this.log.warn('global search: background sync failed', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
+  private startSyncPass(): void {
+    this.syncQueued = false;
+    void this.ensureSyncStarted().then(
+      () => {
+        this.lastRefreshError = null;
+        if (this.syncQueued) {
+          this.syncQueued = false;
+          this.requestSync();
+        }
+      },
+      (error: unknown) => {
+        this.lastRefreshError = { at: Date.now(), message: errorMessage(error) };
+        this.log.warn('global search: background sync failed', { error: errorMessage(error) });
+      },
+    );
   }
 
   /** Single-flight: concurrent callers share the in-flight sync. */
@@ -708,258 +568,58 @@ export class GlobalSearchService implements IGlobalSearchService {
     // the rebuild itself runs the authoritative sync when done.
     if (this.disposed || this.reindexing) return;
     const sessions = await this.listAllSessions();
+    if (this.disposed) return; // dispose landed while sessions were enumerated
     // Nothing to index and no index on disk yet: don't even create the
     // `<home>/search-index` directory — it would show up in the fs folder
     // picker and cost every server boot a pointless db open.
     if (sessions.length === 0 && !(await pathExists(this.indexDir))) {
       this.summaries = new Map();
       this.lastSyncStartedAt = Date.now();
-      this.fullSyncDone = true;
       return;
     }
-
-    await this.ensureOpen();
-    const db = this.db;
-    if (!db || db.readOnly || this.disposed) return;
-    this.lastSyncStartedAt = Date.now();
-
     this.summaries = new Map(sessions.map((s) => [s.id, s]));
-    const currentIds = new Set(sessions.map((s) => s.id));
-
-    // Drop sessions whose directory disappeared since the last sync.
-    for (const row of db.query({ key: { prefix: SESSION_META_PREFIX }, project: [] })) {
-      const sessionId = row.key.slice(SESSION_META_PREFIX.length);
-      if (!currentIds.has(sessionId)) await this.deleteSessionDocs(db, sessionId);
-    }
-
-    let indexed = 0;
-    for (const summary of sessions) {
-      if (this.disposed) return;
-      try {
-        await this.syncSession(db, summary);
-        indexed++;
-      } catch (error) {
-        // One unreadable session must not abort the whole pass.
-        this.log.warn('global search: failed to index session', {
-          sessionId: summary.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    const metaCount = db.query({ key: { prefix: '\0meta\\' }, project: [] }).length;
-    const stats: StatsDoc = {
-      kind: 'stats',
-      sessions: indexed,
-      documents: db.size - metaCount,
-      lastIndexedAt: Date.now(),
-    };
-    await db.set(STATS_KEY, stats);
-    this.fullSyncDone = true;
+    this.lastSyncStartedAt = Date.now();
+    await this.backend.sync(sessions.map((s) => this.toSyncInput(s)));
   }
 
   private async listAllSessions(): Promise<SessionSummary[]> {
     const out: SessionSummary[] = [];
     let cursor: string | undefined;
     do {
-      const page = await this.sessionIndex.list({ cursor, limit: SESSION_PAGE_SIZE });
+      const page = await this.sessionIndex.listRecent({ before: cursor, limit: SESSION_PAGE_SIZE });
       out.push(...page.items);
       cursor = page.nextCursor;
     } while (cursor !== undefined);
     return out;
   }
 
-  private async deleteSessionDocs(db: MiniDb<SearchDoc>, sessionId: string): Promise<void> {
-    for (const row of db.query({ key: { prefix: `${sessionId}/` }, project: [] })) {
-      await db.del(row.key);
+  /**
+   * Drive a read-only refresh of the backend (single-flight facade).
+   * Production note: request-path searches no longer call this — the core
+   * kicks read-only refreshes internally and reports freshness via
+   * `CoreIndexView.freshnessStale`. The facade remains as the deterministic
+   * refresh drive for tests (`refreshNow`) and its promise feeds the
+   * read-only-side `stale` bit while an explicit refresh is in flight. The
+   * core records refresh failures itself (surfaced as `degraded`); only
+   * worker-availability failures land in the rejection branch here — a
+   * failed refresh must never fail the search that kicked it.
+   */
+  private refreshReadonly(): Promise<void> {
+    if (this.refreshPromise === null) {
+      this.refreshPromise = this.backend.refresh().then(
+        () => {},
+        (error: unknown) => {
+          this.lastRefreshError = { at: Date.now(), message: errorMessage(error) };
+          this.log.warn('global search: read-only refresh failed; serving the stale view', {
+            error: errorMessage(error),
+          });
+        },
+      );
+      void this.refreshPromise.finally(() => {
+        this.refreshPromise = null;
+      });
     }
-    for (const row of db.query({ key: { prefix: FILE_META_PREFIX } })) {
-      if (row.value.kind === 'fileMeta' && row.value.sessionId === sessionId) {
-        await db.del(row.key);
-      }
-    }
-    await db.del(SESSION_META_PREFIX + sessionId);
-  }
-
-  private async syncSession(db: MiniDb<SearchDoc>, summary: SessionSummary): Promise<void> {
-    const sessionDir = sessionDirOf(
-      this.bootstrap.homeDir,
-      workspacePersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
-      summary.id,
-    );
-    const wireFiles = await collectWireFiles(sessionDir);
-    const seenPaths = new Set(wireFiles.map((file) => file.path));
-
-    // A wire file that vanished on its own (e.g. one agent's log deleted
-    // while the session lives on): drop its docs and meta. Session-level
-    // disappearance is handled separately in runSync.
-    for (const row of db.query({ key: { prefix: FILE_META_PREFIX } })) {
-      const meta = row.value;
-      if (meta.kind !== 'fileMeta' || meta.sessionId !== summary.id) continue;
-      if (seenPaths.has(meta.path)) continue;
-      await this.deleteFileDocs(db, meta);
-      await db.del(row.key);
-    }
-
-    for (const file of wireFiles) {
-      await this.syncWireFile(db, summary, file);
-    }
-
-    const title = summary.title ?? '';
-    const titleKey = `${summary.id}/$title`;
-    const existing = db.get(titleKey);
-    if (title.length > 0) {
-      if (existing?.kind !== 'title' || existing.text !== title) {
-        const doc: TitleDoc = {
-          kind: 'title',
-          sessionId: summary.id,
-          workspaceId: summary.workspaceId,
-          sessionTitle: title,
-          agentId: '',
-          role: 'title',
-          text: title,
-          time: summary.updatedAt,
-        };
-        await db.set(titleKey, doc);
-      }
-    } else if (existing !== undefined) {
-      await db.del(titleKey);
-    }
-    // Session marker: presence is the information — write only when missing.
-    if (db.get(SESSION_META_PREFIX + summary.id) === undefined) {
-      const sessionMeta: SessionMetaDoc = { kind: 'sessionMeta' };
-      await db.set(SESSION_META_PREFIX + summary.id, sessionMeta);
-    }
-  }
-
-  private async deleteFileDocs(db: MiniDb<SearchDoc>, meta: FileMetaDoc): Promise<void> {
-    const prefix = `${meta.sessionId}/${meta.agentId}/${meta.source}:`;
-    for (const row of db.query({ key: { prefix }, project: [] })) {
-      await db.del(row.key);
-    }
-  }
-
-  private async syncWireFile(
-    db: MiniDb<SearchDoc>,
-    summary: SessionSummary,
-    file: WireFileRef,
-  ): Promise<void> {
-    let size: number;
-    try {
-      size = (await stat(file.path)).size;
-    } catch {
-      return; // transiently unreadable — retry next pass
-    }
-    const metaKey = fileMetaKey(file.path);
-    const meta = db.get(metaKey);
-    let offset = meta?.kind === 'fileMeta' ? meta.offset : 0;
-    let turnState: TurnCounterState =
-      meta?.kind === 'fileMeta' ? (meta.turnState ?? initialTurnState()) : initialTurnState();
-    let stepState: StepTrackerState =
-      meta?.kind === 'fileMeta' ? (meta.stepState ?? initialStepState()) : initialStepState();
-    const fileMeta = (
-      nextOffset: number,
-      turns: TurnCounterState,
-      steps: StepTrackerState,
-    ): FileMetaDoc => ({
-      kind: 'fileMeta',
-      sessionId: summary.id,
-      agentId: file.agentId,
-      source: file.source,
-      path: file.path,
-      offset: nextOffset,
-      size,
-      turnState: turns,
-      stepState: steps,
-    });
-    // Metas written before step tracking carry no `stepState`: rescan the
-    // file from scratch so stepIds are all-or-nothing per file rather than
-    // drifting mid-file (the shrink path does exactly this).
-    const legacyMeta = meta?.kind === 'fileMeta' && meta.stepState === undefined;
-    if (size < offset || legacyMeta) {
-      // File was rebuilt/truncated: drop its docs and rescan from scratch —
-      // the turn counter and step tracker restart with it.
-      await this.deleteFileDocs(db, fileMeta(0, initialTurnState(), initialStepState()));
-      offset = 0;
-      turnState = initialTurnState();
-      stepState = initialStepState();
-    }
-    if (size === offset) {
-      await db.set(metaKey, fileMeta(offset, turnState, stepState));
-      return;
-    }
-
-    // Read only the new byte range; consume up to the last complete line. A
-    // short read (the file was truncated between stat and read) just defers
-    // the remainder to the next pass — the watermark below never advances
-    // past bytes that were actually read.
-    const handle = await open(file.path, 'r');
-    let buf: Buffer;
-    try {
-      buf = Buffer.allocUnsafe(size - offset);
-      const { bytesRead } = await handle.read(buf, 0, buf.length, offset);
-      buf = buf.subarray(0, bytesRead);
-    } finally {
-      await handle.close();
-    }
-    const lastNl = buf.lastIndexOf(0x0a);
-    if (lastNl === -1) return; // no complete line yet
-    const complete = buf.subarray(0, lastNl + 1).toString('utf8');
-
-    const ops: BatchInputOp<SearchDoc>[] = [];
-    let byteCursor = offset;
-    for (const line of complete.split('\n')) {
-      const lineBytes = Buffer.byteLength(line, 'utf8') + 1;
-      const lineOffset = byteCursor;
-      byteCursor += lineBytes;
-      const analysis = analyzeWireLine(line);
-      // Turn counting runs independently of indexing: every line moves the
-      // counter (a text-less user message still opens a turn).
-      const advanced = advanceTurnCounter(turnState, analysis.turn);
-      // A turn boundary invalidates the step mapping: a new turn opens
-      // (`open`, or `ensure` opening a fallback turn from no-turn), or an
-      // `undo` rewinds the counter mid-turn.
-      if (
-        analysis.turn.kind === 'open' ||
-        analysis.turn.kind === 'undo' ||
-        (analysis.turn.kind === 'ensure' && !turnState.hasTurn)
-      ) {
-        stepState = initialStepState();
-      }
-      turnState = advanced.state;
-      stepState = advanceStepTracker(stepState, analysis.step);
-      const extracted = analysis.messages;
-      for (let i = 0; i < extracted.length; i++) {
-        const e = extracted[i]!;
-        const stepOrdinal = e.stepUuid !== undefined ? stepState.byUuid[e.stepUuid] : undefined;
-        const doc: MessageDoc = {
-          kind: 'message',
-          sessionId: summary.id,
-          workspaceId: summary.workspaceId,
-          sessionTitle: summary.title ?? '',
-          agentId: file.agentId,
-          role: e.role,
-          text: e.text.length > MAX_DOC_TEXT_CHARS ? e.text.slice(0, MAX_DOC_TEXT_CHARS) : e.text,
-          time: e.time ?? summary.updatedAt,
-          turn: advanced.docTurn,
-          // A doc whose step cannot be resolved (no `step.begin` seen, or a
-          // turn boundary invalidated the mapping) just omits the id.
-          stepId:
-            advanced.docTurn !== undefined && stepOrdinal !== undefined
-              ? `t${advanced.docTurn}.${stepOrdinal}`
-              : undefined,
-        };
-        // A line can yield several docs — the per-line index keeps keys unique.
-        ops.push({
-          op: 'set',
-          key: `${docKeyPrefix(summary.id, file)}${lineOffset}:${i}`,
-          value: doc,
-        });
-      }
-    }
-    const newOffset = offset + Buffer.byteLength(complete, 'utf8');
-    ops.push({ op: 'set', key: metaKey, value: fileMeta(newOffset, turnState, stepState) });
-    await db.batch(ops);
+    return this.refreshPromise;
   }
 
   // -- public API ---------------------------------------------------------------
@@ -972,7 +632,7 @@ export class GlobalSearchService implements IGlobalSearchService {
    * alive, so a scan failure is a real error, not a degradation signal.
    */
   async search(input: GlobalSearchQuery): Promise<GlobalSearchPage> {
-    const q = normalizeQuery(input);
+    const q = normalizeQuery(input, this.maxQueryTerms);
     const sessionId = q.container?.sessionId;
     const liveStore = sessionId !== undefined ? this.liveSource?.forSessionLive(sessionId) : undefined;
     if (liveStore !== undefined && sessionId !== undefined) {
@@ -989,7 +649,11 @@ export class GlobalSearchService implements IGlobalSearchService {
     store: TranscriptStore,
     pageToken: string | undefined,
   ): Promise<GlobalSearchPage> {
-    const skip = decodePageToken(q, 'live', pageToken);
+    // The live route has no published generations — the store mutates
+    // continuously — so its keyset tokens carry no `g` and no generation
+    // check applies; the (time, key) cursor itself is what keeps pages
+    // consistent under concurrent appends.
+    const page = decodePageToken(q, 'live', pageToken, undefined);
     const source = this.liveSource;
     if (source === null) {
       // Unreachable (the router only enters with a source-wired store), but a
@@ -1007,27 +671,45 @@ export class GlobalSearchService implements IGlobalSearchService {
       await source.ensureAgentHistory(sessionId, agentId);
     }
     const docs = await this.collectLiveDocs(sessionId, store, agentIds);
+    const budget = {
+      deadlineAt: Date.now() + this.queryDeadlineMs,
+      textCharsLeft: this.queryTextBudgetChars,
+    };
+    const boundary = page.kind === 'keyset' ? page.boundary : undefined;
     // Literal mode needs no candidate index: every in-memory document is a
     // candidate and the shared confirmation pass decides. Terms mode runs the
     // in-memory AND match first, scoring each hit.
     const matched =
       q.mode === 'literal'
-        ? this.matchDocs(
+        ? matchDocs(
             q,
-            docs.map((value) => ({ value, score: 0 })),
+            docs.map(({ key, value }) => ({ key, value, score: 0 })),
+            boundary,
+            budget,
           )
-        : this.matchDocs(q, matchLiveTerms(q.termsQuery ?? [], docs));
-    return this.toPage(q, 'live', skip, matched, undefined, {
-      state: 'ready',
-      indexedSessions: 1,
-      totalSessions: 1,
-      documents: docs.length,
-    });
+        : matchDocs(q, matchLiveTerms(q.termsQuery ?? [], docs), boundary, budget);
+    const { pageRows, hasMore } = paginateRows(q, page, matched.rows);
+    return {
+      items: pageRows.map((row) => this.projectHit(q, row)),
+      hasMore,
+      pageToken: hasMore
+        ? encodePageToken(q, 'live', boundaryOf(q, pageRows[pageRows.length - 1]!), undefined)
+        : undefined,
+      incomplete: matched.incomplete,
+      indexState: {
+        state: 'ready',
+        indexedSessions: 1,
+        totalSessions: 1,
+        documents: docs.length,
+      },
+      source: 'live',
+    };
   }
 
   /**
    * Flatten the live transcript store into the same document shape the index
-   * route searches (`MessageDoc` / `TitleDoc`):
+   * route searches (`MessageDoc` / `TitleDoc`), each with a stable synthetic
+   * key for keyset pagination:
    *   - one user doc per non-empty `turn.prompt` (turn ordinal + turn time);
    *   - one assistant doc per assistant-role text frame (turn ordinal +
    *     stepId); thinking / tool / notice frames are skipped;
@@ -1039,7 +721,7 @@ export class GlobalSearchService implements IGlobalSearchService {
     sessionId: string,
     store: TranscriptStore,
     agentIds: readonly string[],
-  ): Promise<(MessageDoc | TitleDoc)[]> {
+  ): Promise<{ key: string; value: MessageDoc | TitleDoc }[]> {
     const summary = await this.sessionIndex.get(sessionId);
     const workspaceId = summary?.workspaceId ?? '';
     const sessionTitle = summary?.title ?? '';
@@ -1049,7 +731,7 @@ export class GlobalSearchService implements IGlobalSearchService {
       const ms = Date.parse(iso);
       return Number.isNaN(ms) ? fallbackTime : ms;
     };
-    const docs: (MessageDoc | TitleDoc)[] = [];
+    const docs: { key: string; value: MessageDoc | TitleDoc }[] = [];
     for (const agentId of agentIds) {
       const transcript = store.getAgent(agentId);
       if (transcript === undefined) continue;
@@ -1059,16 +741,19 @@ export class GlobalSearchService implements IGlobalSearchService {
         const prompt = item.prompt?.trim() ?? '';
         if (prompt.length > 0) {
           docs.push({
-            kind: 'message',
-            sessionId,
-            workspaceId,
-            sessionTitle,
-            agentId,
-            role: 'user',
-            text: prompt.length > MAX_DOC_TEXT_CHARS ? prompt.slice(0, MAX_DOC_TEXT_CHARS) : prompt,
-            time: turnTime,
-            turn: item.ordinal,
-            stepId: undefined,
+            key: `${sessionId}/${agentId}/live/u/t${item.ordinal}`,
+            value: {
+              kind: 'message',
+              sessionId,
+              workspaceId,
+              sessionTitle,
+              agentId,
+              role: 'user',
+              text: prompt.length > MAX_DOC_TEXT_CHARS ? prompt.slice(0, MAX_DOC_TEXT_CHARS) : prompt,
+              time: turnTime,
+              turn: item.ordinal,
+              stepId: undefined,
+            },
           });
         }
         for (const step of item.steps) {
@@ -1078,16 +763,19 @@ export class GlobalSearchService implements IGlobalSearchService {
             const text = frame.text.trim();
             if (text.length === 0) continue;
             docs.push({
-              kind: 'message',
-              sessionId,
-              workspaceId,
-              sessionTitle,
-              agentId,
-              role: 'assistant',
-              text: text.length > MAX_DOC_TEXT_CHARS ? text.slice(0, MAX_DOC_TEXT_CHARS) : text,
-              time: stepTime,
-              turn: item.ordinal,
-              stepId: step.stepId,
+              key: `${sessionId}/${agentId}/live/a/${frame.frameId}`,
+              value: {
+                kind: 'message',
+                sessionId,
+                workspaceId,
+                sessionTitle,
+                agentId,
+                role: 'assistant',
+                text: text.length > MAX_DOC_TEXT_CHARS ? text.slice(0, MAX_DOC_TEXT_CHARS) : text,
+                time: stepTime,
+                turn: item.ordinal,
+                stepId: step.stepId,
+              },
             });
           }
         }
@@ -1095,251 +783,273 @@ export class GlobalSearchService implements IGlobalSearchService {
     }
     if (sessionTitle.length > 0) {
       docs.push({
-        kind: 'title',
-        sessionId,
-        workspaceId,
-        sessionTitle,
-        agentId: '',
-        role: 'title',
-        text: sessionTitle,
-        time: fallbackTime,
+        key: `${sessionId}/$title`,
+        value: {
+          kind: 'title',
+          sessionId,
+          workspaceId,
+          sessionTitle,
+          agentId: '',
+          role: 'title',
+          text: sessionTitle,
+          time: fallbackTime,
+        },
       });
     }
     return docs;
   }
 
-  // -- index route (minidb) -------------------------------------------------------
+  // -- index route (backend: search worker, or the inline core) --------------------
+
+  private budgets(): SearchBudgets {
+    return {
+      literalCandidateCap: this.literalCandidateCap,
+      maxTextHits: this.maxTextHits,
+      postingsVisitBudget: this.postingsVisitBudget,
+      queryDeadlineMs: this.queryDeadlineMs,
+      queryTextBudgetChars: this.queryTextBudgetChars,
+    };
+  }
 
   private async searchIndex(
     q: NormalizedQuery,
     pageToken: string | undefined,
   ): Promise<GlobalSearchPage> {
-    const skip = decodePageToken(q, 'index', pageToken);
-
-    await this.ensureOpen();
-    if (this.db?.readOnly === true) {
-      await this.refreshReadonly();
-    }
-    const db = this.db;
-    if (db === null) {
-      throw new GlobalSearchError('index_unavailable', 'search index is unavailable');
-    }
-
-    if (!db.readOnly) {
-      if (this.fullSyncDone) {
-        // Incremental catch-up before searching, debounced; the first full
-        // sync is never awaited (search serves whatever is indexed so far).
-        if (Date.now() - this.lastSyncStartedAt >= this.syncDebounceMs) {
-          await this.ensureSyncStarted().catch(() => {});
-        }
-      } else {
-        this.kickBackgroundSync();
+    // Query validation comes before any index-state handling: an invalid
+    // query must fail the same way whether or not a generation is published.
+    if (q.mode === 'literal') {
+      // The n-gram index cannot confirm queries shorter than 2 normalized
+      // code points. Judged AFTER normalization on purpose: NFKC can change
+      // the length (the ligature 'ﬀ' folds to 'ff' and becomes legal). The
+      // live route has no such constraint — it never reaches this branch.
+      const literalLength = Array.from(q.literalQuery ?? '').length;
+      if (literalLength < 2) {
+        throw new GlobalSearchError(
+          'invalid_query',
+          'literal queries need at least 2 characters (after Unicode normalization)',
+        );
+      }
+      if (literalLength > MAX_LITERAL_QUERY_CHARS) {
+        throw new GlobalSearchError(
+          'invalid_query',
+          `literal queries are limited to ${MAX_LITERAL_QUERY_CHARS} characters`,
+        );
       }
     }
 
-    // One text-index pass: db.search returns every candidate with its score;
-    // container/role/time filters and the requested sort are applied in
-    // memory. (A separate db.query({text}) for pagination would scan the same
-    // postings a second time.)
-    let candidates: { key: string; value: SearchDoc | undefined; score: number }[];
-    let incomplete: 'candidate_cap' | undefined;
+    // The request path serves the currently published generation and never
+    // waits for an open, sync, reopen or reindex: the backend answers from
+    // its published base (or with building semantics) while the coordinator
+    // below catches up in the background.
+    let result: CoreSearchResult;
     try {
-      if (q.mode === 'literal') {
-        // The n-gram index cannot confirm queries shorter than 2 normalized
-        // code points. Judged AFTER normalization on purpose: NFKC can change
-        // the length (the ligature 'ﬀ' folds to 'ff' and becomes legal). The
-        // live route has no such constraint — it never reaches this branch.
-        if (Array.from(q.literalQuery ?? '').length < 2) {
+      result = await this.backend.search({ q, pageToken, budgets: this.budgets() });
+    } catch (error) {
+      if (error instanceof GlobalSearchError) {
+        // A failed open self-heals through search traffic: kick a background
+        // retry (runSync → backend.sync → ensureOpen), exactly like the
+        // pre-worker service did.
+        if (error.reason === 'index_unavailable') this.requestSync();
+        throw error;
+      }
+      if (error instanceof SearchWorkerError) {
+        // The worker is down (spawn failure, crash, backoff): never restore
+        // the heavy work inline onto this thread — report a recognizable
+        // degraded state. Recovery is LAZY: the respawn happens on the next
+        // sync/search that arrives after the backoff window (kicked here),
+        // never on a timer.
+        this.lastRefreshError = { at: Date.now(), message: error.message };
+        this.log.warn('global search: search worker unavailable; serving a degraded page', {
+          error: error.message,
+          code: error.code,
+        });
+        if (error.code === 'disposed') {
+          // Same contract as the inline host after dispose: fail fast.
+          throw new GlobalSearchError('index_unavailable', 'search service is disposed');
+        }
+        this.requestSync();
+        if (pageToken !== undefined) {
+          // No generation to validate the token against — the client
+          // restarts the search once a base is published.
           throw new GlobalSearchError(
-            'invalid_query',
-            'literal queries need at least 2 characters (after Unicode normalization)',
+            'invalid_page_token',
+            'the search index is not ready yet; restart the search',
           );
         }
-        // Ask for one past the cap so an over-cap candidate set is detectable.
-        candidates = db.search(TRI_INDEX_NAME, q.query, {
-          op: 'AND',
-          limit: this.literalCandidateCap + 1,
-        });
-        if (candidates.length > this.literalCandidateCap) {
-          candidates.length = this.literalCandidateCap;
-          incomplete = 'candidate_cap';
-        }
-      } else {
-        candidates = db.search(TEXT_INDEX_NAME, q.query, { op: q.op, limit: MAX_TEXT_HITS });
-      }
-    } catch (error) {
-      // A read-only instance can open before the writer has created the text
-      // index — serve an empty page instead of failing the search.
-      if (error instanceof Error && error.message.includes('no such text index')) {
-        return {
-          items: [],
-          hasMore: false,
-          pageToken: undefined,
-          incomplete: undefined,
-          indexState: this.readIndexState(db),
-          source: 'index',
-        };
+        return this.buildingPage(null);
       }
       throw error;
     }
 
-    const matched = this.matchDocs(q, candidates);
-    return this.toPage(q, 'index', skip, matched, incomplete, this.readIndexState(db));
-  }
+    // Writer-side kick (the read-only refresh kick happens inside the core):
+    // the served generation is the one published by the last completed pass.
+    if (!result.index.readOnly) this.requestSync();
 
-  // -- shared match & page assembly (both routes) --------------------------------
-
-  /**
-   * Container/role/time filtering plus literal confirmation — one
-   * implementation shared by the index route (confirming n-gram candidates)
-   * and the live route (scanning every in-memory document).
-   */
-  private matchDocs(
-    q: NormalizedQuery,
-    docs: Iterable<{ value: SearchDoc | undefined; score: number }>,
-  ): { value: MessageDoc | TitleDoc; score: number; anchor?: number }[] {
-    const literalQuery = q.literalQuery;
-    const matched: { value: MessageDoc | TitleDoc; score: number; anchor?: number }[] = [];
-    for (const { value: doc, score } of docs) {
-      if (doc === undefined || (doc.kind !== 'message' && doc.kind !== 'title')) continue;
-      if (q.container?.sessionId !== undefined && doc.sessionId !== q.container.sessionId) continue;
-      if (q.container?.agentId !== undefined && doc.agentId !== q.container.agentId) continue;
-      if (q.role !== undefined && doc.role !== q.role) continue;
-      if (q.startTime !== undefined && doc.time < q.startTime) continue;
-      if (q.endTime !== undefined && doc.time > q.endTime) continue;
-      if (literalQuery !== undefined) {
-        // Two-phase execution (same model as Elasticsearch's wildcard field):
-        // candidates (from the n-gram index, or every in-memory doc on the
-        // live route) are confirmed against the document text — hash
-        // collisions and non-contiguous n-gram coverage can produce false
-        // positives. Zero false positives is the hard guarantee of literal
-        // mode. The match offset doubles as the snippet anchor. Deliberate
-        // deviation from ES: the comparison is case-insensitive (NFKC +
-        // lowercase), aligned with the terms tokenizer.
-        const at = normalizeLiteral(doc.text).indexOf(literalQuery);
-        if (at === -1) continue;
-        matched.push({ value: doc, score: 0, anchor: at });
-      } else {
-        matched.push({ value: doc, score });
-      }
-    }
-    return matched;
-  }
-
-  /** Sort, paginate and project the matched docs into a page (both routes). */
-  private toPage(
-    q: NormalizedQuery,
-    source: GlobalSearchSource,
-    skip: number,
-    matched: { value: MessageDoc | TitleDoc; score: number; anchor?: number }[],
-    incomplete: 'candidate_cap' | undefined,
-    indexState: GlobalSearchIndexState,
-  ): GlobalSearchPage {
-    // Literal mode: the normalized query (computed in normalizeQuery), reused
-    // by confirmation and the snippet anchor.
-    const literalQuery = q.literalQuery;
-    // Literal hits carry no relevance score and always order by time desc
-    // (`sort` is a terms-mode concept). 'score' keeps the relevance order the
-    // route produced: the text index's on the index route, `matchLiveTerms'`
-    // on the live route.
-    if (q.mode === 'literal' || q.sort === 'time_desc') {
-      matched.sort((a, b) => b.value.time - a.value.time);
-    } else if (q.sort === 'time_asc') {
-      matched.sort((a, b) => a.value.time - b.value.time);
-    }
-
-    const pageRows = matched.slice(skip, skip + q.pageSize + 1);
-    const hasMore = pageRows.length > q.pageSize;
-    const items: GlobalSearchHit[] = pageRows.slice(0, q.pageSize).map((row) => {
-      const doc = row.value;
-      return {
-        sessionId: doc.sessionId,
-        workspaceId: doc.workspaceId,
-        sessionTitle: this.summaries.get(doc.sessionId)?.title ?? doc.sessionTitle,
-        agentId: doc.agentId,
-        role: doc.role,
-        snippet:
-          doc.kind === 'title'
-            ? doc.text
-            : row.anchor !== undefined && literalQuery !== undefined
-              ? makeSnippet(doc.text, q.query, 80, { at: row.anchor, len: literalQuery.length })
-              : makeSnippet(doc.text, q.query),
-        time: doc.time,
-        turn: doc.kind === 'message' ? doc.turn : undefined,
-        stepId: doc.kind === 'message' ? doc.stepId : undefined,
-        score: row.score,
-      };
-    });
+    if (result.kind === 'building') return this.buildingPage(result.index);
 
     return {
-      items,
-      hasMore,
-      pageToken: hasMore ? encodePageToken(q, source, skip + q.pageSize) : undefined,
-      incomplete,
-      indexState,
-      source,
+      items: result.rows.map((row) => this.projectHit(q, row)),
+      hasMore: result.hasMore,
+      pageToken: result.hasMore
+        ? encodePageToken(
+            q,
+            'index',
+            boundaryOf(q, result.rows[result.rows.length - 1]!),
+            result.generation,
+          )
+        : undefined,
+      incomplete: result.incomplete,
+      indexState: this.composeIndexState(result.index),
+      source: 'index',
+    };
+  }
+
+  // -- shared hit projection & index-state assembly -------------------------------
+
+  private projectHit(q: NormalizedQuery, row: MatchedRow): GlobalSearchHit {
+    const doc = row.value;
+    return {
+      sessionId: doc.sessionId,
+      workspaceId: doc.workspaceId,
+      sessionTitle: this.summaries.get(doc.sessionId)?.title ?? doc.sessionTitle,
+      agentId: doc.agentId,
+      role: doc.role,
+      snippet:
+        doc.kind === 'title'
+          ? doc.text
+          : row.anchor !== undefined && q.literalQuery !== undefined
+            ? makeSnippet(doc.text, q.query, 80, { at: row.anchor, len: q.literalQuery.length })
+            : makeSnippet(doc.text, q.query),
+      time: doc.time,
+      turn: doc.kind === 'message' ? doc.turn : undefined,
+      stepId: doc.kind === 'message' ? doc.stepId : undefined,
+      score: row.score,
+    };
+  }
+
+  /**
+   * Merge the backend's index view with the coordinator's writer-side state:
+   * a page is stale when the backend knows its view is behind (read-only
+   * freshness) OR a sync pass is in flight/queued/pending behind the
+   * debounce window.
+   */
+  private composeIndexState(view: CoreIndexView): GlobalSearchIndexState {
+    const coordinatorStale = view.readOnly
+      ? this.refreshPromise !== null
+      : this.syncPromise !== null || this.syncQueued || this.syncTimer !== null;
+    return {
+      state: view.state,
+      indexedSessions: view.indexedSessions,
+      totalSessions: view.readOnly
+        ? view.indexedSessions
+        : Math.max(view.indexedSessions, this.summaries.size),
+      documents: view.documents,
+      stale: view.freshnessStale || coordinatorStale || undefined,
+      degraded: this.lastRefreshError?.message ?? view.degraded,
+    };
+  }
+
+  /**
+   * The page served while the index base is unavailable: the first full sync
+   * has not finished yet (no db yet), a deferred open-time base build is
+   * still running / finally failed on the served handle, or the search
+   * worker is down. Same "never wait" rule as every other request path —
+   * the background coordinator/build catches up and a later search serves
+   * real hits.
+   */
+  private buildingPage(view: CoreIndexView | null): GlobalSearchPage {
+    const indexed = view?.indexedSessions ?? 0;
+    const readOnly = view?.readOnly === true;
+    return {
+      items: [],
+      hasMore: false,
+      pageToken: undefined,
+      incomplete: undefined,
+      indexState: {
+        state: 'building',
+        indexedSessions: indexed,
+        totalSessions: readOnly ? indexed : Math.max(indexed, this.summaries.size),
+        documents: view?.documents ?? 0,
+        stale: true,
+        degraded: this.lastRefreshError?.message ?? view?.degraded,
+      },
+      source: 'index',
     };
   }
 
   async reindex(): Promise<{ sessions: number; documents: number }> {
-    await this.ensureOpen();
-    if (this.db?.readOnly === true) {
-      throw new GlobalSearchError(
-        'readonly_index',
-        'another process holds the search-index write lock; reindex from that process',
-      );
-    }
-    this.reindexing = true;
     try {
-      // Let the in-flight sync settle before closing the db it writes into.
-      // Syncs triggered while we wait see `reindexing` and return as no-ops,
-      // so one await is sufficient — no new writer of the old db can appear.
+      // Block new background passes BEFORE the first await, so no sync can
+      // start writing into the db this rebuild is about to swap out.
+      this.reindexing = true;
+      await this.backend.ensureOpen();
+      // Let the in-flight sync settle before the backend closes the db it
+      // writes into. Syncs triggered while we wait see `reindexing` and
+      // return as no-ops, so one await is sufficient — no new writer of the
+      // old db can appear.
       await this.syncPromise?.catch(() => {});
-      const db = this.db;
-      if (db) {
-        await db.close().catch(() => {});
-        this.db = null;
-      }
-      this.openPromise = null;
-      this.fullSyncDone = false;
-      await rm(this.indexDir, { recursive: true, force: true });
-      await this.ensureOpen();
-    } finally {
+      await this.backend.reindex();
+      // The rebuild runs the authoritative sync itself — an explicit
+      // maintenance operation, never ordinary in-request work.
       this.reindexing = false;
+      await this.ensureSyncStarted();
+      this.lastRefreshError = null;
+    } catch (error) {
+      this.reindexing = false;
+      this.lastRefreshError = { at: Date.now(), message: errorMessage(error) };
+      throw error;
     }
-    await this.ensureSyncStarted();
-    const stats = this.db?.get(STATS_KEY);
-    return {
-      sessions: stats?.kind === 'stats' ? stats.sessions : 0,
-      documents: stats?.kind === 'stats' ? stats.documents : 0,
-    };
+    const stats = await this.backend.status();
+    return { sessions: stats.sessions, documents: stats.documents };
   }
 
-  async status(): Promise<{ sessions: number; documents: number; lastIndexedAt: number | null }> {
-    await this.ensureOpen();
-    if (this.db?.readOnly === true) {
-      await this.refreshReadonly();
-    } else {
-      this.kickBackgroundSync();
+  async status(): Promise<{
+    sessions: number;
+    documents: number;
+    lastIndexedAt: number | null;
+    generation: number;
+    degraded?: string;
+    lifecycle: CoreLifecycleReport;
+  }> {
+    const empty = { sessions: 0, documents: 0, lastIndexedAt: null, generation: 0 };
+    if (this.disposed) {
+      return {
+        ...empty,
+        lifecycle: { state: this.drainSettled ? 'stopped' : 'closing' },
+      };
     }
-    const stats = this.db?.get(STATS_KEY);
-    return {
-      sessions: stats?.kind === 'stats' ? stats.sessions : 0,
-      documents: stats?.kind === 'stats' ? stats.documents : 0,
-      lastIndexedAt: stats?.kind === 'stats' ? stats.lastIndexedAt : null,
-    };
+    try {
+      const status = await this.backend.status();
+      if (!status.readOnly) this.requestSync();
+      return {
+        sessions: status.sessions,
+        documents: status.documents,
+        lastIndexedAt: status.lastIndexedAt,
+        generation: status.generation,
+        degraded: this.lastRefreshError?.message ?? status.degraded,
+        lifecycle: status.lifecycle,
+      };
+    } catch (error) {
+      // A backend that cannot answer (failed open, worker down, wedged call
+      // reaped by the watchdog) reports degraded — this diagnostic surface
+      // never throws, exactly so the failure states stay observable.
+      const message = errorMessage(error);
+      return { ...empty, degraded: message, lifecycle: { state: 'degraded', detail: message } };
+    }
   }
 
-  private readIndexState(db: MiniDb<SearchDoc>): GlobalSearchIndexState {
-    const stats = db.get(STATS_KEY);
-    const indexed = stats?.kind === 'stats' ? stats.sessions : 0;
-    const documents = stats?.kind === 'stats' ? stats.documents : 0;
-    return {
-      state: db.readOnly ? 'readonly' : this.fullSyncDone ? 'ready' : 'building',
-      indexedSessions: indexed,
-      totalSessions: db.readOnly ? indexed : Math.max(indexed, this.summaries.size),
-      documents,
-    };
+  /**
+   * Synchronous LOCAL lifecycle report (stage 5): never kicks an open, never
+   * spawns the worker, never awaits — the view that still answers DURING a
+   * minutes-long first open (or while the worker backs off), where status()
+   * would block. The up states (ready/building) come from the backend's
+   * cached last response and may lag one RPC; status() is the exact,
+   * round-trip variant. Reflected on the `/api/v1/debug` surface like every
+   * Service method.
+   */
+  lifecycleReport(): CoreLifecycleReport {
+    if (this.disposed) return { state: this.drainSettled ? 'stopped' : 'closing' };
+    return this.backend.lifecycleSnapshot();
   }
 }
 
@@ -1354,18 +1064,18 @@ export class GlobalSearchService implements IGlobalSearchService {
  * uses — so a document matches when EVERY query term appears in its term set
  * (AND). The score is Σ log(1 + tf) per query term: it is only comparable
  * within the live route, since there is no corpus-wide IDF in memory (the
- * `GlobalSearchSource` contract comment says the same). Hits are returned
- * score-sorted, mirroring `TextIndex.search`, because the shared `toPage`
- * keeps the candidate order for `sort: 'score'`.
+ * `GlobalSearchSource` contract comment says the same). The shared
+ * pagination applies the final (score, time, key) order over the returned
+ * rows.
  */
 function matchLiveTerms(
   terms: readonly string[],
-  docs: readonly (MessageDoc | TitleDoc)[],
-): { value: MessageDoc | TitleDoc; score: number }[] {
+  docs: readonly { key: string; value: MessageDoc | TitleDoc }[],
+): { key: string; value: MessageDoc | TitleDoc; score: number }[] {
   // A query that tokenizes to nothing matches zero docs, same as the index.
   if (terms.length === 0) return [];
-  const matched: { value: MessageDoc | TitleDoc; score: number }[] = [];
-  for (const doc of docs) {
+  const matched: { key: string; value: MessageDoc | TitleDoc; score: number }[] = [];
+  for (const { key, value: doc } of docs) {
     const counts = new Map<string, number>();
     for (const token of tokenize(doc.text)) counts.set(token, (counts.get(token) ?? 0) + 1);
     let score = 0;
@@ -1378,70 +1088,9 @@ function matchLiveTerms(
       }
       score += Math.log(1 + tf);
     }
-    if (hit) matched.push({ value: doc, score });
+    if (hit) matched.push({ key, value: doc, score });
   }
-  matched.sort((a, b) => b.score - a.score);
   return matched;
-}
-
-// ---------------------------------------------------------------------------
-// wire file enumeration & doc keys
-// ---------------------------------------------------------------------------
-
-interface WireFileRef {
-  readonly path: string;
-  /** 'main' or a subagent id, for both legacy and v2 layouts. */
-  readonly agentId: string;
-  /**
-   * Key discriminator: a session can carry BOTH a legacy root wire.jsonl and
-   * v2 per-agent logs; without this their `<agentId>/<offset>` keys collide.
-   */
-  readonly source: 'root' | 'agents';
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function collectWireFiles(sessionDir: string): Promise<WireFileRef[]> {
-  const files: WireFileRef[] = [];
-  const root = join(sessionDir, WIRE_FILENAME);
-  try {
-    if ((await stat(root)).isFile()) files.push({ path: root, agentId: 'main', source: 'root' });
-  } catch {
-    // no legacy root log
-  }
-  const agentsDir = join(sessionDir, 'agents');
-  try {
-    const entries = await readdir(agentsDir, { recursive: true, withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isFile() || entry.name !== WIRE_FILENAME) continue;
-      const path = join(entry.parentPath, entry.name);
-      files.push({ path, agentId: relative(agentsDir, entry.parentPath), source: 'agents' });
-    }
-  } catch {
-    // no agents dir
-  }
-  return files;
-}
-
-function docKeyPrefix(sessionId: string, file: WireFileRef): string {
-  return `${sessionId}/${file.agentId}/${file.source}:`;
-}
-
-/** Same rebuildability test as `MiniDb.openOrRebuild`. */
-function isRebuildableCorruption(error: unknown): boolean {
-  return (
-    error instanceof SyntaxError ||
-    (error !== null &&
-      typeof error === 'object' &&
-      (error as { name?: string }).name === 'CorruptFrameError')
-  );
 }
 
 registerScopedService(

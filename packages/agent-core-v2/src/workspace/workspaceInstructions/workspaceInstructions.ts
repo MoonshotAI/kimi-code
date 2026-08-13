@@ -20,6 +20,7 @@ import type { ISessionInstructionsProvider } from '#/session/sessionInstructions
 export interface WorkspaceInstructionsSnapshot {
   readonly agentsMd: string | undefined;
   readonly agentsMdWarning: string | undefined;
+  readonly agentsMdPaths: readonly string[] | undefined;
 }
 
 export interface IWorkspaceInstructionsService {

@@ -8,7 +8,14 @@
  * slots instance it runs around create/close,
  * tearing sessions down on close/archive — archiving flags the session's
  * metadata, removes its agents, restoring clears
- * the archived flag, and broadcasts the transition; session start and
+ * the archived flag, and broadcasts the transition; deleting closes a live
+ * session through the same flow, then removes the session directory
+ * (metadata, agent wire records, plans, logs), evicts the index read-model
+ * entry, and appends a `deleted` tombstone to the shared
+ * `session_index.jsonl`, raising `session.not_found` for ids this handler
+ * never persisted. Pending metadata writes and the index mirror are
+ * drained before any teardown, so a listing right after close/archive/delete
+ * never reads a stale outcome. Session start and
  * resume failures are reported through telemetry. Each Session scope
  * receives a telemetry view bound to its session id, while failures before
  * a scope is available use an ephemeral context view. Closing a session
@@ -16,7 +23,9 @@
  * Every Session scope is also seeded with the handler's shared workspace
  * resources as pure-data read views (the injection contracts) — discovery,
  * watching and connecting all live on the Workspace-scope services; session
- * consumers read the seeds and refresh off their change events.
+ * consumers read the seeds and refresh off their change events. The five
+ * workspace-projection seeds are provided by the seed-adapter units
+ * installed with the scope (`installSessionSeedAdapters`), not by `extra`.
  * Materializes the session's initial metadata on
  * creation. Bound at Workspace scope.
  * Persisted sessions are discovered through the session-index read model.
@@ -29,6 +38,11 @@
  * live Agent wire journals, normalizes a missing protocol envelope, and
  * appends the fork boundary before restoring the target Agent; fork is
  * confined to this handler (source and target share the workspace bucket).
+ * Fork restores the source's recency onto the target: the metadata write
+ * carries an explicit `updatedAt` and runs after agent recreation as the
+ * fork's final metadata write (agent registration is non-touching), ahead
+ * of cron duplication, so a mid-fork failure never leaves cloned cron
+ * records behind.
  * On
  * materialize, the agent-profile loaders' `ready` is awaited
  * before the handle is published — agent-file discovery is local-
@@ -40,11 +54,36 @@
  * with a fire-and-forget `reload()` so a fixed agent file unblocks later
  * creates
  * (the workspace skill catalog, by contrast, is kicked fire-and-forget).
- * The handler's shared MCP manager (file + plugin servers only — sessions
- * cannot contribute servers) is awaited before create/resume returns. The
- * session-level services whose subscriptions
+ * The handler's shared MCP manager is NOT awaited before create/resume
+ * returns — it connects fire-and-forget at Workspace scope, and the seeded
+ * handle's `ready` promise lets the agent's LLM steps wait on it instead
+ * (see `AgentMcpService`). A session created with ephemeral `mcpServers`
+ * gets them seeded verbatim (`ISessionEphemeralMcpServers`); connecting
+ * them is the MCP domain's own concern — `workspaceMcp` subscribes to this
+ * service's `onWillCreateSession`, reads the session's seeds through the
+ * event's session-domain surface (`readSeed` / `contributeSeed` /
+ * `onSessionDispose`), contributes its session overlay handle, and attaches
+ * the overlay's shutdown to the session's teardown, so this service never
+ * depends on MCP.
+ * The session-level services whose subscriptions
  * must exist before the first agent / turn (external hooks, cron, the
- * secondary-model startup warning) opt into `OnScopeCreated` activation.
+ * subagent model-pool startup validation) opt into `OnScopeCreated` activation.
+ * The subagent model pool itself is validated even earlier — at
+ * the top of `materializeSession`, before the MCP overlay, the session scope,
+ * and any persisted artifact come into existence, and again at the top of
+ * `fork` before the source session's files are copied — so a broken pool
+ * (or invalid `force` configuration) fails create/resume/fork without
+ * leaving orphaned session dirs or leaked
+ * overlay connections behind; the Session-scope validation service
+ * (`session/subagent/subagentModelsValidationService.ts`) repeats the same
+ * check at scope activation as a backstop for paths that bypass this service.
+ * That pre-flight awaits the kosong model/provider registries' `ready`
+ * alongside `config.ready` first: the catalog resolves aliases through those
+ * registries rather than the config document, so a cold bootstrap that
+ * creates a session before hydration completes must not fail a valid pool
+ * with `CONFIG_INVALID`.
+ * The pool is gated behind the `secondary-model` experiment, so with the
+ * experiment off these validations are no-ops and the section stays inert.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -54,17 +93,17 @@ import { ulid } from 'ulid';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Emitter, type Event } from '#/_base/event';
-import { DEFAULT_PLAN_MODE_SECTION } from '#/agent/plan/configSection';
-import { IAgentPlanService } from '#/agent/plan/plan';
+import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
+import { IAgentPlanService } from '#/features/plan/plan';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -74,6 +113,7 @@ import {
   CHILD_SESSION_KIND,
   CHILD_SESSION_KIND_KEY,
   ISessionIndex,
+  ISessionIndexMirror,
   PARENT_SESSION_ID_KEY,
 } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -85,28 +125,31 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import { sessionMcpHandleSeed } from '#/session/mcp/sessionMcpHandle';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
-import { sessionInstructionsProviderSeed } from '#/session/sessionInstructions/instructionsProvider';
-import { sessionWorkspaceInfoSeed } from '#/session/workspaceInfo/workspaceInfo';
+import { installSessionSeedAdapters } from '#/session/sessionSeed/sessionSeedAdapters';
 import {
   ISessionLifecycleHooks,
   sessionLifecycleHooksSeed,
   type SessionLifecycleHookSlots,
 } from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { drainSessionMetadataWrites, toEpochMs } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
-import { sessionSkillCatalogDataSeed } from '#/session/sessionSkillCatalog/skillCatalogData';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { sessionToolPolicyGateSeed } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { IWireService } from '#/wire/wire';
 import {
   AGENT_WIRE_RECORD_KEY,
   createWireMetadataRecord,
   type WireRecord,
 } from '#/wire/record';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
+import { IFlagService } from '#/app/flag/flag';
+import { assertValidSubagentModelConfig } from '#/session/subagent/configSection';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
@@ -120,10 +163,6 @@ import {
   IWorkspaceAgentProfileLoader,
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
-import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceToolPolicy';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import {
@@ -136,6 +175,7 @@ import {
   type SessionCreatedEvent,
   type SessionForkedEvent,
   type SessionWillCloseEvent,
+  type SessionWillCreateEvent,
   ISessionLifecycleService,
 } from './sessionLifecycle';
 
@@ -143,9 +183,15 @@ type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly sessionId: string;
 };
 
+// NOTE: stays Disposable — its own 'get' and 'config' collide with the Fiber
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
+  private readonly _onWillCreateSession = this._register(
+    new Emitter<SessionWillCreateEvent>(),
+  );
+  readonly onWillCreateSession: Event<SessionWillCreateEvent> =
+    this._onWillCreateSession.event;
   private readonly _onDidCreateSession = this._register(new Emitter<SessionCreatedEvent>());
   readonly onDidCreateSession: Event<SessionCreatedEvent> = this._onDidCreateSession.event;
   private readonly _onDidCloseSession = this._register(new Emitter<SessionClosedEvent>());
@@ -163,13 +209,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IConfigService private readonly config: IConfigService,
     @IHostEnvironment private readonly hostEnv: IHostEnvironment,
     @ISessionIndex private readonly index: ISessionIndex,
+    @ISessionIndexMirror private readonly indexMirror: ISessionIndexMirror,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ICronTaskPersistence private readonly cronStore: ICronTaskPersistence,
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IWorkspaceSkillCatalog private readonly skillCatalog: IWorkspaceSkillCatalog,
     @IWorkspaceAgentProfileLoader
     private readonly workspaceAgentProfileLoader: IWorkspaceAgentProfileLoader,
     @IExtraAgentProfileLoader
@@ -180,11 +226,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     private readonly userAgentProfileLoader: IUserAgentProfileLoader,
     @IPluginAgentProfileLoader
     private readonly pluginAgentProfileLoader: IPluginAgentProfileLoader,
-    @IWorkspaceInstructionsService private readonly instructions: IWorkspaceInstructionsService,
-    @IWorkspaceMcpService private readonly mcp: IWorkspaceMcpService,
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
-    @IWorkspaceToolPolicy private readonly toolPolicy: IWorkspaceToolPolicy,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IModelService private readonly models: IModelService,
+    @IProviderService private readonly providers: IProviderService,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     super();
   }
@@ -225,11 +272,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
+  private async assertSubagentModelPoolPreFlight(): Promise<void> {
+    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
+    assertValidSubagentModelConfig(this.config, this.flags, this.modelCatalog);
+  }
+
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
     const workspaceId = this.workspaceId;
     const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
+    await this.assertSubagentModelPoolPreFlight();
     await this.workspaceDirs.ready;
     await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
@@ -252,27 +305,38 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       LifecycleScope.Session,
       opts.sessionId,
       {
-        extra: [
+        seeds: [
           ...sessionContextSeed(ctx),
           ...sessionLifecycleHooksSeed(hooks),
           [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
-          ...sessionSkillCatalogDataSeed(this.skillCatalog.sessionData()),
           ...sessionAgentProfileCatalogSeed({
             _serviceBrand: undefined,
             workspaceKey: workspaceId,
           }),
-          ...sessionInstructionsProviderSeed(this.instructions.sessionProvider()),
-          ...sessionMcpHandleSeed(this.mcp.sessionHandle()),
-          ...sessionWorkspaceInfoSeed(this.workspaceDirs.sessionInfo()),
-          ...sessionToolPolicyGateSeed(this.toolPolicy.sessionGate()),
           [ISessionProcessRunner, this.processRunner],
+          ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
         ],
+        configureContainer: (container) => {
+          installSessionSeedAdapters(container);
+          // The will-create moment is a business-lifecycle event; the DI
+          // container behind the participation surface stays this service's
+          // implementation detail.
+          this._onWillCreateSession.fire({
+            sessionId: opts.sessionId,
+            readSeed: (id) => container.invokeFunction((accessor) => accessor.get(id)),
+            contributeSeed: (id, value) => {
+              container.provide(id, value);
+            },
+            onSessionDispose: (dispose) => {
+              container.anchorKernelEntry(dispose, 'sessionLifecycle:willCreateParticipant');
+            },
+          });
+        },
       },
     ) as ISessionScopeHandle;
     try {
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
-      void this.skillCatalog.ready;
       await Promise.all([
         this.workspaceAgentProfileLoader.ready,
         this.extraAgentProfileLoader.ready,
@@ -280,7 +344,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         this.userAgentProfileLoader.ready,
         this.pluginAgentProfileLoader.ready,
       ]);
-      await this.mcp.ready;
     } catch (error) {
       handle.dispose();
       void this.explicitAgentProfileLoader.reload().catch(() => undefined);
@@ -349,6 +412,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sessionId,
       workDir,
       additionalDirs: opts?.additionalDirs,
+      mcpServers: opts?.mcpServers,
     });
     const agents = handle.accessor.get(IAgentLifecycleService);
     if (agents.get(MAIN_AGENT_ID) === undefined) {
@@ -372,6 +436,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
     this.sessions.delete(sessionId);
     await this.drainAgents(handle);
+    await drainSessionMetadataWrites();
+    await this.indexMirror.drain();
     handle.dispose();
     this._onDidCloseSession.fire({ sessionId });
   }
@@ -386,17 +452,42 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       type: 'event.session.archived',
       payload: { sessionId },
     });
-    await this.announceWillClose({ sessionId, handle, reason: 'exit' });
+    await this.announceWillClose({ sessionId, handle, reason: 'archive' });
     this.sessions.delete(sessionId);
+    await drainSessionMetadataWrites();
+    await this.indexMirror.drain();
     handle.dispose();
     this._onDidArchiveSession.fire({ sessionId });
   }
 
-  async restore(sessionId: string): Promise<ISessionScopeHandle | undefined> {
-    const handle = await this.resume(sessionId);
+  async restore(
+    sessionId: string,
+    opts?: ResumeSessionOptions,
+  ): Promise<ISessionScopeHandle | undefined> {
+    const handle = await this.resume(sessionId, opts);
     if (handle === undefined) return undefined;
     await handle.accessor.get(ISessionMetadata).setArchived(false);
     return handle;
+  }
+
+  async delete(sessionId: string): Promise<void> {
+    const inflight = this.resuming.get(sessionId);
+    if (inflight !== undefined) {
+      await inflight.catch(() => undefined);
+    }
+    const handle = this.sessions.get(sessionId);
+    const summary = await this.index.get(sessionId);
+    const persistedHere = summary !== undefined && summary.workspaceId === this.workspaceId;
+    if (handle === undefined && !persistedHere) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+    }
+    if (handle !== undefined) {
+      await this.close(sessionId);
+    }
+    await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
+    await this.index.remove(sessionId);
+    this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
+    await this.appendLogStore.flush();
   }
 
   private async announceWillClose(event: SessionWillCloseEvent): Promise<void> {
@@ -428,6 +519,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
     try {
+      await this.assertSubagentModelPoolPreFlight();
+      // A turn that just ended may still have its outcome write queued;
+      // settle pending metadata writes before reading the source for
+      // inheritance, or the fork could copy a stale (or absent) outcome.
+      await drainSessionMetadataWrites();
       const sourceMeta =
         sourceHandle !== undefined
           ? await sourceHandle.accessor.get(ISessionMetadata).read()
@@ -466,16 +562,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
 
       const title = opts.title ?? `Fork: ${sourceMeta?.title || sourceId}`;
-      await targetMeta.update({
-        title,
-        titleKind: opts.title === undefined ? 'replaceable' : 'custom',
-        forkedFrom: sourceId,
-        archived: false,
-        lastPrompt: sourceMeta?.lastPrompt,
-        custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
-      });
-
-      await this.duplicateCronTasks(sourceId, targetId);
 
       for (const agentId of agentIds) {
         const sourceAgent = sourceAgents[agentId]!;
@@ -485,6 +571,22 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           labels: labelsFromAgentMeta(sourceAgent),
         });
       }
+
+      await targetMeta.update({
+        title,
+        titleKind: opts.title !== undefined ? 'custom' : 'replaceable',
+        forkedFrom: sourceId,
+        archived: false,
+        updatedAt: toEpochMs(sourceMeta?.updatedAt) || Date.now(),
+        lastPrompt: sourceMeta?.lastPrompt,
+        // The fork continues the source's conversation, so it inherits the
+        // last turn's outcome too — otherwise a restart would drop a failure
+        // the warm fork was still reporting.
+        lastTurnReason: sourceMeta?.lastTurnReason,
+        custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
+      });
+
+      await this.duplicateCronTasks(sourceId, targetId);
 
       await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
       this._onDidForkSession.fire({

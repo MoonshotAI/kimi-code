@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -11,6 +10,11 @@ import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
+import { stubProviderService } from '../provider/stubs';
+import { IFlagService } from '#/app/flag/flag';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -18,7 +22,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
-import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -51,6 +55,7 @@ import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceT
 import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
 import { stubLog } from '../../_base/log/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
 import { WorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycleService';
@@ -81,7 +86,6 @@ function hostEnvironmentStub(): IHostEnvironment {
   };
 }
 
-/** Catalog stub that mints `encodeWorkDirKey` ids and records createOrTouch calls. */
 function catalogStub() {
   const workspaces = new Map<string, Workspace>();
   const createOrTouch = vi.fn((root: string, name?: string) => {
@@ -103,12 +107,25 @@ function catalogStub() {
   return { service, createOrTouch };
 }
 
+function sessionIndexMirrorStub(): ISessionIndexMirror {
+  return {
+    _serviceBrand: undefined,
+    record: () => {},
+    pending: () => [],
+    evict: () => Promise.resolve(),
+    drain: () => Promise.resolve(),
+  };
+}
+
 function sessionIndexStub(): ISessionIndex {
   return {
     _serviceBrand: undefined,
-    list: () => Promise.resolve({ items: [], total: 0, hasMore: false }),
+    prepare: () => Promise.resolve({ state: 'ready', generation: 0, degradedCount: 0 }),
+    status: () => ({ state: 'ready', generation: 0, degradedCount: 0 }),
     get: () => Promise.resolve(undefined),
-    countActive: () => Promise.resolve(0),
+    listRecent: () => Promise.resolve({ items: [] }),
+    count: () => Promise.resolve(0),
+    remove: () => Promise.resolve(),
   };
 }
 
@@ -314,7 +331,15 @@ describe('WorkspaceLifecycleService', () => {
       stubPair(IHostEnvironment, hostEnvironmentStub()),
       stubPair(IWorkspaceService, catalog.service),
       stubPair(ISessionIndex, sessionIndexStub()),
+      stubPair(ISessionIndexMirror, sessionIndexMirrorStub()),
       stubPair(IConfigService, { get: () => undefined } as unknown as IConfigService),
+      stubPair(IModelCatalog, { _serviceBrand: undefined } as unknown as IModelCatalog),
+      stubPair(IModelService, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+      } as unknown as IModelService),
+      stubPair(IProviderService, stubProviderService()),
+      stubPair(IFlagService, stubFlag(() => false)),
       stubPair(IAppendLogStore, {
         _serviceBrand: undefined,
         append: () => {},
@@ -429,8 +454,6 @@ describe('WorkspaceLifecycleService', () => {
     const again = await lifecycle.handlerFor({ workspaceId: encodeWorkDirKey('/tmp/proj') });
 
     expect(again).toBe(handler);
-    // A live handler is returned as-is — no catalog write beyond the initial
-    // materialization.
     expect(createOrTouchSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -528,7 +551,6 @@ describe('WorkspaceLifecycleService', () => {
 
       const first = await lifecycle.handlerFor({ root: '/tmp/proj' });
       await first.accessor.get(ISessionLifecycleService).create({ sessionId: 's1', workDir: '/tmp/proj' });
-      // Materialized AFTER the follow subscription — still observed.
       const second = await lifecycle.handlerFor({ root: '/tmp/other' });
       await second.accessor.get(ISessionLifecycleService).create({ sessionId: 's2', workDir: '/tmp/other' });
 
