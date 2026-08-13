@@ -15,14 +15,20 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { FiberState } from '#/_base/di/fiber';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentStateService } from '#/agent/state/agentState';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
   type EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IFeatureManager } from '#/app/feature/featureManager';
+import { IAgentDateChangeService } from '#/features/dateChange/dateChange';
+import { DateChangeFeature } from '#/features/dateChange/dateChangeFeature';
+import { dateChangeSeedKey } from '#/features/dateChange/dateChangeService';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
@@ -33,7 +39,7 @@ import {
   InMemoryWireRecordPersistence,
   type TestAgentContext,
 } from '../../harness';
-import { runWillBeginStepHooks } from '../loop/stubs';
+import { runWillBeginStepHooks } from '../../agent/loop/stubs';
 
 const TEST_TIME_ZONE = 'Asia/Shanghai';
 const INITIAL_INSTANT = '2026-07-29T04:00:00.000Z';
@@ -442,5 +448,43 @@ describe('AgentDateChangeService', () => {
     clock.set('2026-07-30T04:00:00.000Z');
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(0);
+  });
+
+  it('withdraws and restores the eager service, provider, and seed with the Feature', async () => {
+    const manager = ctx.get(IFeatureManager);
+    const states = ctx.get(IAgentStateService);
+    updateSystemPromptWithoutDate(profile, ctx.get(ISessionContext).cwd);
+
+    expect(manager.units().find((unit) => unit.name === 'dateChange')?.state).toBe(
+      FiberState.Active,
+    );
+    expect(ctx.get(IAgentDateChangeService)).toBeDefined();
+    expect(states.has(dateChangeSeedKey)).toBe(true);
+    await runWillBeginStepHooks(loop);
+    expect(states.get(dateChangeSeedKey)).toMatchObject({ localDate: '2026-07-29' });
+
+    await manager.unprovideUnit('dateChange');
+    expect(() => ctx.get(IAgentDateChangeService)).toThrow();
+    expect(states.has(dateChangeSeedKey)).toBe(false);
+
+    clock.set('2026-07-30T04:00:00.000Z');
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(0);
+
+    manager.provideUnit(DateChangeFeature);
+    expect(ctx.get(IAgentDateChangeService)).toBeDefined();
+    expect(states.has(dateChangeSeedKey)).toBe(true);
+    expect(states.get(dateChangeSeedKey)).toBeUndefined();
+
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(0);
+    expect(states.get(dateChangeSeedKey)).toMatchObject({ localDate: '2026-07-30' });
+
+    clock.set('2026-07-31T04:00:00.000Z');
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(1);
+    expect(messageText(dateReminders(context)[0] as ContextMessage)).toContain(
+      "Today's date is now 2026-07-31",
+    );
   });
 });
