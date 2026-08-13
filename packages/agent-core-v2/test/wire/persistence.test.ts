@@ -93,6 +93,14 @@ async function collect<R>(log: IAppendLogStore, scope = SCOPE, key = KEY): Promi
   return records;
 }
 
+async function drainJournal(svc: IWireService): Promise<WireRecord[]> {
+  const records: WireRecord[] = [];
+  for await (const record of svc.readJournal()) {
+    records.push(record);
+  }
+  return records;
+}
+
 describe('AppendLogStore file persistence', () => {
   it('writes only the appended record', async () => {
     const { dir, log } = await createFileAppendLogHarness();
@@ -331,12 +339,12 @@ describe('WireService seal', () => {
     expect(lines).toHaveLength(1);
   });
 
-  it('restore after seal keeps the sealed log untouched', async () => {
+  it('journal read after seal keeps the sealed log untouched', async () => {
     const { dir, log } = await createFileAppendLogHarness();
     const svc = createAgentWireHarness(log);
 
     await svc.seal();
-    await svc.restore();
+    await drainJournal(svc);
     await log.close();
 
     const lines = await readLines(join(dir, SCOPE, KEY));
@@ -365,7 +373,7 @@ describe('WireService migration rewrite', () => {
     return log;
   }
 
-  it('restore resolves only after the migration rewrite is durable', async () => {
+  it('journal read resolves only after the migration rewrite is durable', async () => {
     const storage = new InMemoryStorageService();
     const log = await seedLegacyLog(storage);
     let markWriteStarted!: () => void;
@@ -384,15 +392,15 @@ describe('WireService migration rewrite', () => {
     };
 
     const svc = createAgentWireHarness(log);
-    let restored = false;
-    const restorePromise = svc.restore().then(() => {
-      restored = true;
+    let drained = false;
+    const journalPromise = drainJournal(svc).then(() => {
+      drained = true;
     });
     await writeStarted;
-    expect(restored).toBe(false);
+    expect(drained).toBe(false);
 
     releaseWrite();
-    await restorePromise;
+    await journalPromise;
 
     const records = await collect<WireRecord>(log);
     expect(records[0]).toMatchObject({
@@ -401,7 +409,7 @@ describe('WireService migration rewrite', () => {
     });
   });
 
-  it('restore propagates a migration rewrite failure', async () => {
+  it('journal read propagates a migration rewrite failure', async () => {
     const storage = new InMemoryStorageService();
     const log = await seedLegacyLog(storage);
     storage.write = async () => {
@@ -410,6 +418,6 @@ describe('WireService migration rewrite', () => {
 
     const svc = createAgentWireHarness(log);
 
-    await expect(svc.restore()).rejects.toThrow('disk full');
+    await expect(drainJournal(svc)).rejects.toThrow('disk full');
   });
 });

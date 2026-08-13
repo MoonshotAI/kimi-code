@@ -6,50 +6,70 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import {
-  CompactionModel,
-  fullCompactionBegin,
-  fullCompactionCancel,
-  fullCompactionComplete,
+  fullCompactionKey,
+  FullCompactionBegin,
+  FullCompactionCancel,
+  FullCompactionComplete,
 } from '#/agent/fullCompaction/compactionOps';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'full-compaction-test';
 
 let disposables: DisposableStore;
-let wire: IWireService;
+let dispatcher: IEventDispatcher;
+let agentState: IAgentStateService;
 let log: IAppendLogStore;
 
-function buildHost(key: string): { wire: IWireService; log: IAppendLogStore; eventBus: IEventBus } {
+function buildHost(key: string): {
+  dispatcher: IEventDispatcher;
+  agentState: IAgentStateService;
+  log: IAppendLogStore;
+  eventBus: IEventBus;
+} {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
+  registerTestAgentWire(ix, testWireScope(SCOPE, key), {
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   });
-  return { wire, log: ix.get(IAppendLogStore), eventBus: ix.get(IEventBus) };
+  const dispatcher = registerTestEventDispatcher(ix);
+  ix.get(IAgentStateService).contributeState(fullCompactionKey);
+  return {
+    dispatcher,
+    agentState: ix.get(IAgentStateService),
+    log: ix.get(IAppendLogStore),
+    eventBus: ix.get(IEventBus),
+  };
 }
 
 beforeEach(() => {
   disposables = new DisposableStore();
   const host = buildHost(KEY);
-  wire = host.wire;
+  dispatcher = host.dispatcher;
+  agentState = host.agentState;
   log = host.log;
 });
 
 afterEach(() => disposables.dispose());
 
 async function readRecords(key = KEY): Promise<WireRecord[]> {
-  await wire.flush();
+  await dispatcher.flush();
   const out: WireRecord[] = [];
   for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
@@ -59,18 +79,18 @@ async function readRecords(key = KEY): Promise<WireRecord[]> {
 
 describe('fullCompaction ops (wire-backed)', () => {
   it('begin/complete/cancel drive the phase and persist flat records', async () => {
-    expect(wire.getModel(CompactionModel).phase).toBe('idle');
+    expect(agentState.get(fullCompactionKey).phase).toBe('idle');
 
-    wire.dispatch(fullCompactionBegin({ source: 'manual', instruction: 'keep facts' }));
-    expect(wire.getModel(CompactionModel).phase).toBe('running');
+    void dispatcher.dispatch(new FullCompactionBegin({ source: 'manual', instruction: 'keep facts' }));
+    expect(agentState.get(fullCompactionKey).phase).toBe('running');
 
-    wire.dispatch(fullCompactionComplete({}));
-    expect(wire.getModel(CompactionModel).phase).toBe('idle');
+    void dispatcher.dispatch(new FullCompactionComplete({}));
+    expect(agentState.get(fullCompactionKey).phase).toBe('idle');
 
-    wire.dispatch(fullCompactionBegin({ source: 'auto' }));
-    expect(wire.getModel(CompactionModel).phase).toBe('running');
-    wire.dispatch(fullCompactionCancel({}));
-    expect(wire.getModel(CompactionModel).phase).toBe('idle');
+    void dispatcher.dispatch(new FullCompactionBegin({ source: 'auto' }));
+    expect(agentState.get(fullCompactionKey).phase).toBe('running');
+    void dispatcher.dispatch(new FullCompactionCancel({}));
+    expect(agentState.get(fullCompactionKey).phase).toBe('idle');
 
     const records = await readRecords();
     expect(records.map((record) => record.type)).toEqual([
@@ -90,21 +110,21 @@ describe('fullCompaction ops (wire-backed)', () => {
     expect(records[1]).toEqual({ type: 'full_compaction.complete', time: expect.any(Number) });
   });
 
-  it('apply returns the same reference on a no-op (gate stays quiet)', () => {
-    wire.dispatch(fullCompactionCancel({}));
-    const idle = wire.getModel(CompactionModel);
-    wire.dispatch(fullCompactionCancel({}));
-    expect(wire.getModel(CompactionModel)).toBe(idle);
+  it('fold keeps the same reference on a no-op (state stays quiet)', () => {
+    void dispatcher.dispatch(new FullCompactionCancel({}));
+    const idle = agentState.get(fullCompactionKey);
+    void dispatcher.dispatch(new FullCompactionCancel({}));
+    expect(agentState.get(fullCompactionKey)).toBe(idle);
 
-    wire.dispatch(fullCompactionBegin({ source: 'manual' }));
-    const running = wire.getModel(CompactionModel);
-    wire.dispatch(fullCompactionBegin({ source: 'auto' }));
-    expect(wire.getModel(CompactionModel)).toBe(running);
+    void dispatcher.dispatch(new FullCompactionBegin({ source: 'manual' }));
+    const running = agentState.get(fullCompactionKey);
+    void dispatcher.dispatch(new FullCompactionBegin({ source: 'auto' }));
+    expect(agentState.get(fullCompactionKey)).toBe(running);
   });
 
   it('replay rebuilds the phase silently', async () => {
-    wire.dispatch(fullCompactionBegin({ source: 'manual' }));
-    wire.dispatch(fullCompactionComplete({}));
+    void dispatcher.dispatch(new FullCompactionBegin({ source: 'manual' }));
+    void dispatcher.dispatch(new FullCompactionComplete({}));
     const records = await readRecords();
 
     const host = buildHost('full-compaction-replay');
@@ -112,30 +132,30 @@ describe('fullCompaction ops (wire-backed)', () => {
     host.eventBus.subscribe((e) => {
       emissions.push(e.type);
     });
-    await restoreTestAgentWire(
-      host.wire,
+    await restoreTestEventDispatcher(
+      host.dispatcher,
       host.log,
       testWireScope(SCOPE, 'full-compaction-replay'),
       records,
     );
-    expect(host.wire.getModel(CompactionModel).phase).toBe('idle');
+    expect(host.agentState.get(fullCompactionKey).phase).toBe('idle');
     expect(emissions).toEqual([]);
 
     const stranded = buildHost('full-compaction-stranded');
-    await restoreTestAgentWire(
-      stranded.wire,
+    await restoreTestEventDispatcher(
+      stranded.dispatcher,
       stranded.log,
       testWireScope(SCOPE, 'full-compaction-stranded'),
       [{ type: 'full_compaction.begin', source: 'auto' }],
     );
-    expect(stranded.wire.getModel(CompactionModel).phase).toBe('running');
+    expect(stranded.agentState.get(fullCompactionKey).phase).toBe('running');
   });
 
   it('replays legacy complete payloads that carried accounting numbers', async () => {
     const host = buildHost('full-compaction-legacy-complete-replay');
 
-    await restoreTestAgentWire(
-      host.wire,
+    await restoreTestEventDispatcher(
+      host.dispatcher,
       host.log,
       testWireScope(SCOPE, 'full-compaction-legacy-complete-replay'),
       [
@@ -144,6 +164,6 @@ describe('fullCompaction ops (wire-backed)', () => {
       ],
     );
 
-    expect(host.wire.getModel(CompactionModel).phase).toBe('idle');
+    expect(host.agentState.get(fullCompactionKey).phase).toBe('idle');
   });
 });

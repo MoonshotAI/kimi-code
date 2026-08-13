@@ -21,6 +21,8 @@
  * `agent.status.updated` frame.
  */
 
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
@@ -28,14 +30,14 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IEventBus } from '#/app/event/eventBus';
+import { Event2 } from '#/app/event/event2';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { type AgentRunHandle, ISessionSubagentService } from './subagent';
 
-export interface SubagentSpawnedEvent {
-  readonly type: 'subagent.spawned';
+export interface SubagentSpawnedPayload {
   readonly subagentId: string;
   readonly subagentName: string;
   readonly parentToolCallId: string;
@@ -49,33 +51,45 @@ export interface SubagentSpawnedEvent {
   readonly thinkingEffort?: string;
 }
 
-export interface SubagentStartedEvent {
-  readonly type: 'subagent.started';
+export class SubagentSpawned extends Event2<SubagentSpawnedPayload> {
+  static override readonly type = 'subagent.spawned';
+  static override readonly observable = true;
+}
+export interface SubagentSpawned extends SubagentSpawnedPayload {}
+
+export interface SubagentStartedPayload {
   readonly subagentId: string;
 }
 
-export interface SubagentCompletedEvent {
-  readonly type: 'subagent.completed';
+export class SubagentStarted extends Event2<SubagentStartedPayload> {
+  static override readonly type = 'subagent.started';
+  static override readonly observable = true;
+}
+export interface SubagentStarted extends SubagentStartedPayload {}
+
+export interface SubagentCompletedPayload {
   readonly subagentId: string;
   readonly resultSummary: string;
   readonly usage?: TokenUsage;
   readonly contextTokens?: number;
 }
 
-export interface SubagentFailedEvent {
-  readonly type: 'subagent.failed';
+export class SubagentCompleted extends Event2<SubagentCompletedPayload> {
+  static override readonly type = 'subagent.completed';
+  static override readonly observable = true;
+}
+export interface SubagentCompleted extends SubagentCompletedPayload {}
+
+export interface SubagentFailedPayload {
   readonly subagentId: string;
   readonly error: string;
 }
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'subagent.spawned': SubagentSpawnedEvent;
-    'subagent.started': SubagentStartedEvent;
-    'subagent.completed': SubagentCompletedEvent;
-    'subagent.failed': SubagentFailedEvent;
-  }
+export class SubagentFailed extends Event2<SubagentFailedPayload> {
+  static override readonly type = 'subagent.failed';
+  static override readonly observable = true;
 }
+export interface SubagentFailed extends SubagentFailedPayload {}
 
 export interface AgentRunSpawnedMeta {
   readonly profileName: string;
@@ -104,20 +118,21 @@ export function emitAgentRunSpawned(
     .get(IAgentLifecycleService)
     ?.get(targetAgentId)
     ?.accessor.get(IAgentProfileService);
-  requester.accessor.get(IEventBus)?.publish({
-    type: 'subagent.spawned',
-    subagentId: targetAgentId,
-    subagentName: meta.profileName,
-    parentToolCallId: meta.parentToolCallId ?? '',
-    parentToolCallUuid: meta.parentToolCallUuid,
-    parentAgentId: requester.id,
-    callerAgentId: requester.id,
-    description: meta.description,
-    swarmIndex: meta.swarmIndex,
-    runInBackground: meta.runInBackground ?? false,
-    model: meta.model,
-    thinkingEffort: childProfile?.getEffectiveThinkingLevel(),
-  });
+  void requester.accessor.get(IEventDispatcher)?.dispatch(
+    new SubagentSpawned({
+      subagentId: targetAgentId,
+      subagentName: meta.profileName,
+      parentToolCallId: meta.parentToolCallId ?? '',
+      parentToolCallUuid: meta.parentToolCallUuid,
+      parentAgentId: requester.id,
+      callerAgentId: requester.id,
+      description: meta.description,
+      swarmIndex: meta.swarmIndex,
+      runInBackground: meta.runInBackground ?? false,
+      model: meta.model,
+      thinkingEffort: childProfile?.getEffectiveThinkingLevel(),
+    }),
+  );
   childProfile?.republishStatus();
   requester.accessor.get(ITelemetryService)?.track2('subagent_created', {
     subagent_name: meta.profileName,
@@ -133,10 +148,10 @@ export async function mirrorAgentRun(
   run: AgentRunHandle,
   options: MirrorAgentRunOptions,
 ): Promise<{ summary: string; usage?: TokenUsage }> {
-  const eventBus = requester.accessor.get(IEventBus);
+  const dispatcher = requester.accessor.get(IEventDispatcher);
   const subagents = requester.accessor.get(ISessionSubagentService);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
-  eventBus?.publish({ type: 'subagent.started', subagentId: run.agentId });
+  void dispatcher?.dispatch(new SubagentStarted({ subagentId: run.agentId }));
   if (options.prompt !== undefined) {
     const cancelAndRethrow = (reason: unknown): never => {
       options.cancel?.(reason);
@@ -159,13 +174,14 @@ export async function mirrorAgentRun(
   try {
     const result = await run.completion;
     const contextTokens = childContextTokens(agentLifecycle, run.agentId);
-    eventBus?.publish({
-      type: 'subagent.completed',
-      subagentId: run.agentId,
-      resultSummary: result.summary,
-      usage: result.usage,
-      contextTokens,
-    });
+    void dispatcher?.dispatch(
+      new SubagentCompleted({
+        subagentId: run.agentId,
+        resultSummary: result.summary,
+        usage: result.usage,
+        contextTokens,
+      }),
+    );
     subagents?.notifyAgentTaskStopped({
       agentName: options.profileName,
       response: result.summary,
@@ -173,11 +189,12 @@ export async function mirrorAgentRun(
     return result;
   } catch (error) {
     if (!isAbortError(error) && !shouldSuppressFailure(options, error)) {
-      eventBus?.publish({
-        type: 'subagent.failed',
-        subagentId: run.agentId,
-        error: errorMessage(error),
-      });
+      void dispatcher?.dispatch(
+        new SubagentFailed({
+          subagentId: run.agentId,
+          error: errorMessage(error),
+        }),
+      );
     }
     throw error;
   }

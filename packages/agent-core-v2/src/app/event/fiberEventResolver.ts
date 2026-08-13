@@ -13,7 +13,8 @@
 import { setFiberEventResolver } from '#/_base/di/fiber';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 
-import { type DomainEvent, type DomainEventMap, IEventBus } from './eventBus';
+import type { Event2 } from './event2';
+import { IEventBus } from './eventBus';
 
 setFiberEventResolver((host, event, handler) => {
   const busRef = host.liveRef(IEventBus);
@@ -22,10 +23,8 @@ setFiberEventResolver((host, event, handler) => {
     if (subscription !== undefined) return;
     const bus = busRef.current;
     if (bus === undefined) return;
-    subscription = bus.subscribe(
-      event as keyof DomainEventMap,
-      handler as (e: DomainEvent) => void,
-    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    subscription = bus.subscribe(event, handler as (e: Event2<any>) => void);
   };
   attach();
   const onChange = busRef.onDidChange(attach);

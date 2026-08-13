@@ -16,7 +16,7 @@
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import type { ISkillSource, SkillContribution } from '#/app/skillCatalog/skillSource';
@@ -58,8 +58,8 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
-    this.states.register(workspaceSkillCatalogContributionsKey);
-    this.states.register(workspaceSkillCatalogMergedKey);
+    this.states.contributeState(workspaceSkillCatalogContributionsKey);
+    this.states.contributeState(workspaceSkillCatalogMergedKey);
     this.sources = [builtin, user, explicit, extra, workspace, plugin].toSorted(
       (a, b) => a.priority - b.priority,
     );

@@ -30,9 +30,10 @@ import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { type ModelRequester } from '#/kosong/model/modelRequester';
@@ -68,9 +69,9 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {
     super();
-    this.states.register(mediaRegisteredKeyKey);
+    this.states.contributeState(mediaRegisteredKeyKey);
     this.refresh();
-    this._register(eventBus.subscribe('agent.status.updated', () => this.refresh()));
+    this._register(eventBus.subscribe(AgentStatusUpdated, () => this.refresh()));
     this._register(this.runtime.onDidChange(() => this.refresh()));
     this._register(toDisposable(() => this.registration?.dispose()));
   }

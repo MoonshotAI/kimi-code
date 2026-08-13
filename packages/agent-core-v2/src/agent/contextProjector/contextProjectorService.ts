@@ -29,7 +29,7 @@ import { createHash } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
@@ -55,7 +55,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
-    this.states.register(contextProjectorLastRepairSignatureKey);
+    this.states.contributeState(contextProjectorLastRepairSignatureKey);
   }
 
   private get lastRepairSignature(): string | null {

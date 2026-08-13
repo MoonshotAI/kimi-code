@@ -1,17 +1,23 @@
 /**
  * `wire` domain — the persisted journal record language.
  *
- * A `WireRecord` is the flat JSONL representation of one persisted Op. The
- * first line of an Agent journal is a `WireMetadataRecord`; metadata is a
- * journal envelope, not an Op, so it never enters the model reducer registry.
- * This module owns only pure encoding and decoding.
+ * A `WireRecord` is the flat JSONL representation of one persisted durable
+ * event. The first line of an Agent journal is a `WireMetadataRecord`;
+ * metadata is a journal envelope, not an event, so it never enters the state
+ * fold registry. This module owns only pure encoding and decoding plus the
+ * blob-offload transform types.
  */
-
-import type { Op } from '#/wire/op';
 
 import { WIRE_PROTOCOL_VERSION } from './migration/migration';
 
 export const AGENT_WIRE_RECORD_KEY = 'wire.jsonl';
+
+export type PartsTransformer = (parts: readonly unknown[]) => Promise<readonly unknown[]>;
+
+export type RecordDehydrator = (
+  record: WireRecord,
+  transform: PartsTransformer,
+) => WireRecord | Promise<WireRecord>;
 
 export interface WireRecord {
   readonly type: string;
@@ -48,21 +54,4 @@ export function isWireMetadataRecord(record: WireRecord): record is WireMetadata
     typeof record['protocol_version'] === 'string' &&
     typeof record['created_at'] === 'number'
   );
-}
-
-export function opToWireRecord(op: Op, now = Date.now()): WireRecord {
-  const payload = op.payload;
-  const record: Record<string, unknown> =
-    payload !== null && typeof payload === 'object' && !Array.isArray(payload)
-      ? { type: op.type, ...(payload as Record<string, unknown>) }
-      : { type: op.type, payload };
-  if (record['time'] === undefined) record['time'] = now;
-  return record as WireRecord;
-}
-
-export function wireRecordToPayload(record: WireRecord): unknown {
-  const { type: _type, time: _time, ...payload } = record;
-  return Object.keys(payload).length === 1 && 'payload' in payload
-    ? payload['payload']
-    : payload;
 }

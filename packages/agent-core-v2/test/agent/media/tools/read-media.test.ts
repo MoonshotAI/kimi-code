@@ -42,6 +42,7 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { EventBusService } from '#/app/event/eventBusService';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import type { IAgentProfileService } from '#/agent/profile/profile';
 import type { IModelCatalog } from '#/kosong/model/catalog';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
@@ -904,11 +905,12 @@ describe('AgentMediaToolsRegistrar', () => {
     const bindModel = (alias: string, caps: ModelCapability): void => {
       state.alias = alias;
       state.capabilities = caps;
-      eventBus.publish({
-        type: 'agent.status.updated',
-        model: alias,
-        maxContextTokens: caps.max_context_tokens,
-      });
+      eventBus.publish(
+        new AgentStatusUpdated({
+          model: alias,
+          maxContextTokens: caps.max_context_tokens,
+        }),
+      );
     };
     const setRuntimeAvailable = (available: boolean): void => {
       runtimeAvailable = available;

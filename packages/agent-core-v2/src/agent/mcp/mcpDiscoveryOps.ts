@@ -1,14 +1,20 @@
 /**
- * `mcp` domain — MCP tool-discovery wire state.
+ * `mcp` domain — MCP tool-discovery state.
  *
  * Restores the per-agent de-dup cursor for durable MCP discovery records,
- * keyed by `${serverName}\n${hash}` entries already present in this log.
+ * keyed by `${serverName}\n${hash}` entries already present in this log. The
+ * durable `mcp.tools_discovered` event (`McpToolsDiscovered`) carries the
+ * discovered tool snapshot; only the cursor is folded into state.
+ * Scope-agnostic.
  */
+
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
+import { Event2 } from '#/app/event/event2';
 import type { MCPToolDefinition } from '#/mcpCore/types';
+import { defineState } from '#/state/state';
 
 export interface McpToolCollision {
   readonly qualified: string;
@@ -22,10 +28,6 @@ export interface McpDiscoveryState {
   readonly seen: readonly string[];
 }
 
-export const McpDiscoveryModel = defineModel<McpDiscoveryState>('mcp.discovery', () => ({
-  seen: [],
-}));
-
 const mcpToolCollisionSchema = z.object({
   qualified: z.string(),
   toolName: z.string(),
@@ -35,23 +37,25 @@ const mcpToolCollisionSchema = z.object({
   ]),
 });
 
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'mcp.tools_discovered': typeof mcpToolsDiscovered;
-  }
-}
+const mcpToolsDiscoveredSchema = z.object({
+  serverName: z.string(),
+  hash: z.string(),
+  tools: z.custom<readonly MCPToolDefinition[]>(),
+  enabledNames: z.array(z.string()).readonly(),
+  collisions: z.array(mcpToolCollisionSchema).readonly().optional(),
+});
 
-export const mcpToolsDiscovered = McpDiscoveryModel.defineOp('mcp.tools_discovered', {
-  schema: z.object({
-    serverName: z.string(),
-    hash: z.string(),
-    tools: z.custom<readonly MCPToolDefinition[]>(),
-    enabledNames: z.array(z.string()).readonly(),
-    collisions: z.array(mcpToolCollisionSchema).readonly().optional(),
-  }),
-  apply: (s, p) => {
-    const key = `${p.serverName}\n${p.hash}`;
-    if (s.seen.includes(key)) return s;
-    return { seen: [...s.seen, key] };
-  },
+export class McpToolsDiscovered extends Event2<z.infer<typeof mcpToolsDiscoveredSchema>> {
+  static override readonly type = 'mcp.tools_discovered';
+  static override readonly durable = true;
+  static override readonly schema = mcpToolsDiscoveredSchema;
+}
+export interface McpToolsDiscovered extends z.infer<typeof mcpToolsDiscoveredSchema> {}
+
+export const mcpDiscoveryKey = defineState('mcp.discovery', (): McpDiscoveryState => ({ seen: [] }))
+  .replayable({ schema: z.custom<McpDiscoveryState>() })
+  .on(McpToolsDiscovered, (s, e) => {
+  const key = `${e.serverName}\n${e.hash}`;
+  if (s.seen.includes(key)) return;
+  s.seen = [...s.seen, key];
 });

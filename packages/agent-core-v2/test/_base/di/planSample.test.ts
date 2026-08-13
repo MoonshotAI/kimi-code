@@ -18,7 +18,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
 import { AgentProfileContribution } from '#/app/agentProfileCatalog/agentProfileContribution';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
-import { WireModelContribution } from '#/wire/wireContribution';
+import { EventStateContribution } from '#/state/stateContribution';
 
 interface IAgentPlanService {
   readonly _serviceBrand: undefined;
@@ -71,7 +71,7 @@ describe('Plan sample (plan-domain-plugin.manifest.ts) — API acceptance', () =
 
       constructor() {
         super();
-        this.provide(WireModelContribution, { models: [], ops: [] });
+        this.provide(EventStateContribution, { events: [] });
         this.provide(IAgentPlanService, AgentPlanService, {
           activation: ScopeActivation.OnScopeCreated,
         });
@@ -119,7 +119,7 @@ describe('Plan sample (plan-domain-plugin.manifest.ts) — API acceptance', () =
     const toolView = (agent.instantiation as InstantiationService).fiberHost.collectionView(AgentToolContribution);
     expect(toolView.items).toHaveLength(1);
     expect(toolView.items[0]!.options.name).toBe('EnterPlanMode');
-    const wireView = (agent.instantiation as InstantiationService).fiberHost.collectionView(WireModelContribution);
+    const wireView = (agent.instantiation as InstantiationService).fiberHost.collectionView(EventStateContribution);
     expect(wireView.items).toHaveLength(1);
 
     const tool = agent.instantiation.createInstance(EnterPlanModeTool);
@@ -128,7 +128,7 @@ describe('Plan sample (plan-domain-plugin.manifest.ts) — API acceptance', () =
     featureHandle.dispose();
     await app.instantiation.cascade.whenIdle();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect((agent.instantiation as InstantiationService).fiberHost.collectionView(WireModelContribution).items).toHaveLength(0);
+    expect((agent.instantiation as InstantiationService).fiberHost.collectionView(EventStateContribution).items).toHaveLength(0);
     expect(toolView.items).toHaveLength(0);
     expect(seen).toEqual(['config:+defaultPlanMode', 'config:-defaultPlanMode']);
     expect(log).toEqual(['agent feature up']);

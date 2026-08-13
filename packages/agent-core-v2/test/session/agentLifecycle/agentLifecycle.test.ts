@@ -17,17 +17,27 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import '#/agent/profile/profileService';
-import { profileBind } from '#/agent/profile/profileOps';
+import { ProfileBind } from '#/agent/profile/profileOps';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import '#/agent/permissionMode/permissionModeOps';
+import '#/agent/permissionMode/permissionModeService';
+import {
+  permissionModeConfiguredKey,
+  permissionModeKey,
+} from '#/agent/permissionMode/permissionModeOps';
 import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
+import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -40,10 +50,20 @@ import { createMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import '#/agent/mcp/mcpService';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import '#/wire/wireService';
+import '#/state/eventDispatcherService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
+import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
+import { CRON_SECTION } from '#/app/cron/configSection';
+import { ISessionInteractionService } from '#/session/interaction/interaction';
+import { SessionInteractionService } from '#/session/interaction/interactionService';
+import { ISessionTodoService } from '#/session/todo/sessionTodo';
+import { SessionTodoService } from '#/session/todo/sessionTodoService';
+import { todoKey } from '#/session/todo/todoOps';
+import { interactionKey } from '#/session/interaction/interactionOps';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -184,6 +204,8 @@ describe('AgentLifecycleService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.set(ISessionStateService, new SessionStateService());
     ix.set(IAgentStateService, new AgentStateService());
+    ix.get(IAgentStateService).contributeState(permissionModeKey);
+    ix.get(IAgentStateService).contributeState(permissionModeConfiguredKey);
     ix.stub(IAppendLogStore, recordingAppendLog().store);
     stubBlobPassThrough(ix);
     registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
@@ -340,6 +362,22 @@ describe('AgentLifecycleService', () => {
     });
     ix.stub(IHostEnvironment, { _serviceBrand: undefined } as IHostEnvironment);
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
+    ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
+    ix.stub(IModelCatalog, { _serviceBrand: undefined } as IModelCatalog);
+    ix.stub(IProtocolAdapterRegistry, {
+      _serviceBrand: undefined,
+    } as IProtocolAdapterRegistry);
+    ix.stub(IBuiltinAgentProfileLoader, {
+      _serviceBrand: undefined,
+    } as IBuiltinAgentProfileLoader);
+    ix.stub(IAgentIdentity, { _serviceBrand: undefined } as IAgentIdentity);
+    ix.stub(IAgentAgentsMdReminderService, {
+      _serviceBrand: undefined,
+    } as IAgentAgentsMdReminderService);
+    ix.stub(IAgentContextInjectorService, {
+      _serviceBrand: undefined,
+      register: () => ({ dispose: () => {} }),
+    } as unknown as IAgentContextInjectorService);
     ix.stub(ISessionAgentProfileCatalog, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -641,10 +679,9 @@ describe('AgentLifecycleService', () => {
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
 
-    await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const main = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
 
-    expect(permissionModeSetMode).toHaveBeenCalledOnce();
-    expect(permissionModeSetMode).toHaveBeenCalledWith('auto');
+    expect(main.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('auto');
   });
 
   it('keeps the restored permission mode instead of overwriting it with the default', async () => {
@@ -678,33 +715,80 @@ describe('AgentLifecycleService', () => {
     expect(agent.accessor.get(IAgentRuntimeService).inspect().identity.generation).toBe('remote-one');
   });
 
+  it('contributes session-domain replayable keys before restore and replays them', async () => {
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: [{ title: 'bridged', status: 'pending' }],
+        time: 2,
+      },
+      { type: 'interaction.request', id: 'i1', kind: 'question', request: { q: 1 }, time: 3 },
+    ]).store);
+    ix.stub(ICronTaskPersistence, {
+      _serviceBrand: undefined,
+      get: async () => undefined,
+      list: async () => [],
+      save: async () => {},
+      delete: async () => {},
+    } as ICronTaskPersistence);
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: ((section: unknown) =>
+        section === CRON_SECTION ? { disabled: true } : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+    ix.set(ISessionTodoService, new SyncDescriptor(SessionTodoService));
+    ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
+    ix.set(ISessionCronService, new SyncDescriptor(SessionCronServiceImpl));
+    ix.get(ISessionTodoService);
+    ix.get(ISessionInteractionService);
+    ix.get(ISessionCronService);
+
+    const main = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    const state = main.accessor.get(IAgentStateService);
+    expect(state.replayableKeys().map((key) => key.name)).toEqual(
+      expect.arrayContaining(['todo', 'cron', 'interaction']),
+    );
+    expect(state.get(todoKey)).toEqual([{ title: 'bridged', status: 'pending' }]);
+    expect(state.get(interactionKey).get('i1')).toMatchObject({
+      id: 'i1',
+      kind: 'question',
+      request: { q: 1 },
+      resolved: false,
+    });
+  });
+
   it('broadcastPermissionMode sets the mode on every live agent', async () => {
     const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
-    await svc.create({ agentId: 'child' });
+    const main = await svc.create({ agentId: 'main' });
+    const child = await svc.create({ agentId: 'child' });
 
     svc.broadcastPermissionMode('yolo');
 
-    expect(permissionModeSetMode.mock.calls).toEqual([['yolo'], ['yolo']]);
+    expect(main.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('yolo');
+    expect(child.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('yolo');
   });
 
   it('broadcastPermissionMode skips agents that have been removed', async () => {
     const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
+    const main = await svc.create({ agentId: 'main' });
     await svc.create({ agentId: 'child' });
     await svc.remove('child');
 
     svc.broadcastPermissionMode('auto');
 
-    expect(permissionModeSetMode.mock.calls).toEqual([['auto']]);
+    expect(main.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('auto');
   });
 
   it('broadcastPermissionMode leaves tower-worker agents pinned to their spawned mode', async () => {
     const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
+    const main = await svc.create({ agentId: 'main' });
     const worker = await svc.create({ agentId: 'worker-1' });
-    worker.accessor.get(IWireService).dispatch(
-      profileBind({
+    void worker.accessor.get(IEventDispatcher).dispatch(
+      new ProfileBind({
         profileName: TOWER_WORKER_PROFILE,
         thinkingEffort: 'off',
         systemPrompt: '',
@@ -712,9 +796,10 @@ describe('AgentLifecycleService', () => {
       }),
     );
 
-    svc.broadcastPermissionMode('manual');
+    svc.broadcastPermissionMode('yolo');
 
-    expect(permissionModeSetMode.mock.calls).toEqual([['manual']]);
+    expect(main.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('yolo');
+    expect(worker.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('manual');
   });
 
   it('wires MCP OAuth credentials through the session atomic document store', async () => {

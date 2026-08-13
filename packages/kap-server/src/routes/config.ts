@@ -27,6 +27,7 @@
  */
 
 import {
+  ConfigChanged,
   IConfigService,
   IEventService,
   type Scope,
@@ -106,13 +107,9 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
         }
         const response = toConfigResponse(config.getAll());
         const changedFields = Object.keys(req.body as Record<string, unknown>);
-        core.accessor.get(IEventService).publish({
-          type: 'event.config.changed',
-          payload: {
-            changedFields,
-            config: response,
-          },
-        });
+        core.accessor.get(IEventService).publish(
+          new ConfigChanged({ payload: { changedFields, config: response } }),
+        );
         // Only the changed field *names* — values may carry secrets.
         requestLog(req)?.info({ changedFields }, 'config updated');
         reply.send(okEnvelope(response, req.id));

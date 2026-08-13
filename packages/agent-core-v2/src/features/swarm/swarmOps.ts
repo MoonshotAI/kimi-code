@@ -1,37 +1,59 @@
 /**
- * `swarm` domain — wire Model (`SwarmModel`) and the `swarm_mode.enter` /
- * `swarm_mode.exit` Ops (`swarmEnter` / `swarmExit`) for the agent's swarm mode.
+ * `swarm` domain — the `swarmKey` state and the durable `swarm_mode.enter`
+ * (`SwarmModeEnter`) / `swarm_mode.exit` (`SwarmModeExit`) events for the
+ * agent's swarm mode.
  *
- * Declares swarm mode as a `SwarmModeTrigger | null` wire Model (the trigger is
+ * The state holds `SwarmModeTrigger | null` (initial `null`; the trigger is
  * retained, not collapsed to a boolean, so `shouldAutoExit` can still
- * distinguish `task` / `tool`) plus the two Ops that set and clear it; the
- * `apply` functions are the pure extraction of the former live `applyEnter` /
- * `applyExit` and `resume` facets.
+ * distinguish `task` / `tool`). The durable classes are the wire-protocol
+ * record vocabulary: their `serialize()` output is the on-disk record (flat
+ * payload, epoch-ms `time`), byte-compatible with the retired op encoding.
+ * Each fold emits the `AgentStatusUpdated` swarm-mode slice after the state
+ * commits, live only. The trailing enter-reminder pop on `swarm_mode.exit` is
+ * a fold the swarm feature registers onto the core `contextMemoryKey`
+ * (`popSwarmModeReminder` returns the same reference on a no-op, and
+ * returning the draft keeps the immer base).
  */
+
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
+import { contextMemoryKey, popSwarmModeReminder } from '#/agent/contextMemory/contextOps';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { Event2 } from '#/app/event/event2';
+import { defineState } from '#/state/state';
 
 import type { SwarmModeTrigger } from './agent/swarm';
 
-export const SwarmModel = defineModel<SwarmModeTrigger | null>('swarm', () => null);
+const swarmModeEnterSchema = z.object({ trigger: z.custom<SwarmModeTrigger>() });
 
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'swarm_mode.enter': typeof swarmEnter;
-    'swarm_mode.exit': typeof swarmExit;
-  }
+export class SwarmModeEnter extends Event2<z.infer<typeof swarmModeEnterSchema>> {
+  static override readonly type = 'swarm_mode.enter';
+  static override readonly durable = true;
+  static override readonly schema = swarmModeEnterSchema;
 }
+export interface SwarmModeEnter extends z.infer<typeof swarmModeEnterSchema> {}
 
-export const swarmEnter = SwarmModel.defineOp('swarm_mode.enter', {
-  schema: z.object({ trigger: z.custom<SwarmModeTrigger>() }),
-  apply: (_s, p) => p.trigger,
-  toEvent: () => ({ type: 'agent.status.updated' as const, swarmMode: true }),
-});
+const swarmModeExitSchema = z.object({});
 
-export const swarmExit = SwarmModel.defineOp('swarm_mode.exit', {
-  schema: z.object({}),
-  apply: () => null,
-  toEvent: () => ({ type: 'agent.status.updated' as const, swarmMode: false }),
-});
+export class SwarmModeExit extends Event2<z.infer<typeof swarmModeExitSchema>> {
+  static override readonly type = 'swarm_mode.exit';
+  static override readonly durable = true;
+  static override readonly schema = swarmModeExitSchema;
+}
+export interface SwarmModeExit extends z.infer<typeof swarmModeExitSchema> {}
+
+export const swarmKey = defineState('swarm', (): SwarmModeTrigger | null => null).replayable({
+  schema: z.custom<SwarmModeTrigger | null>(),
+})
+  .on(SwarmModeEnter, (_s, e, ctx) => {
+    ctx.emit(new AgentStatusUpdated({ swarmMode: true }));
+    return e.trigger;
+  })
+  .on(SwarmModeExit, (_s, _e, ctx) => {
+    ctx.emit(new AgentStatusUpdated({ swarmMode: false }));
+    return null;
+  });
+
+contextMemoryKey.on(SwarmModeExit, (s) => popSwarmModeReminder(s));

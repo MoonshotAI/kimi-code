@@ -45,6 +45,7 @@ import { IProviderService } from '#/kosong/provider/provider';
 import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 
 import { IAgentTitlePromptSource } from './agentTitlePromptSource';
 import { AUTO_SESSION_TITLE_FLAG_ID } from './flag';
@@ -170,15 +171,16 @@ export class SessionTitleService implements ISessionTitleService {
     const title = result.title.slice(0, MAX_GENERATED_TITLE_LENGTH);
     const applied = await this.metadata.setGeneratedTitleIfUncustomized(title, { force });
     if (!applied) return undefined;
-    this.eventService.publish({
-      type: 'session.meta.updated',
-      payload: {
-        agentId: 'main',
-        sessionId: this.ctx.sessionId,
-        title,
-        patch: { title, isCustomTitle: false },
-      },
-    });
+    this.eventService.publish(
+      new SessionMetaUpdated({
+        payload: {
+          agentId: 'main',
+          sessionId: this.ctx.sessionId,
+          title,
+          patch: { title, isCustomTitle: false },
+        },
+      }),
+    );
     return title;
   }
 }

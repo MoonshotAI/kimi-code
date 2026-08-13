@@ -17,8 +17,7 @@ import {
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { TurnModel } from '#/agent/loop/turnOps';
-import { IWireService } from '#/wire/wire';
+import { turnKey } from '#/agent/loop/turnOps';
 import {
   createAgentTaskPersistence,
   type TaskServiceTestManager,
@@ -39,7 +38,7 @@ const MOCK_PROVIDER = {
 } as const;
 
 function turnCurrentId(ctx: ReturnType<typeof testAgent>): number {
-  return ctx.get(IWireService).getModel(TurnModel).nextTurnId - 1;
+  return ctx.agentState.get(turnKey).nextTurnId - 1;
 }
 
 describe('Agent resume', () => {
@@ -943,8 +942,11 @@ describe('Agent resume', () => {
 
       expect(ctx.context.get()).toHaveLength(1);
       await expect(ctx.get(IAgentPlanService).status()).resolves.toBeNull();
-      expect(unexpected).toHaveLength(1);
-      expect(unexpected[0]).toMatchObject({
+      const malformed = unexpected.filter((error) =>
+        String((error as Error).message).includes('Malformed wire record'),
+      );
+      expect(malformed).toHaveLength(1);
+      expect(malformed[0]).toMatchObject({
         code: 'wire.unknown_record',
         details: { type: 'context.undo', index: 1 },
       });

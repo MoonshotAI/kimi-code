@@ -17,7 +17,7 @@ import {
   ErrorCodes,
   IBootstrapService,
   IOAuthService,
-  type DomainEvent,
+  type Event2,
   type IOAuthService as IOAuthServiceType,
   IAgentConversationUndoService,
   IAgentGoalService,
@@ -31,6 +31,7 @@ import {
   type ServiceIdentifier,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
@@ -79,13 +80,12 @@ function agentRpc(
   return `/api/v1/debug/session/${sessionId}/agent/main/${String(service)}/${method}`;
 }
 
-function goalContinuationStarts(events: readonly DomainEvent[]): readonly DomainEvent[] {
-  return events.filter(
-    (event) =>
-      event.type === 'turn.started' &&
-      event.origin.kind === 'system_trigger' &&
-      event.origin.name === 'goal_continuation',
-  );
+function goalContinuationStarts(events: readonly Event2<any>[]): readonly Event2<any>[] {
+  return events.filter((event) => {
+    if (event.type !== 'turn.started') return false;
+    const { origin } = event as TurnStarted;
+    return origin.kind === 'system_trigger' && origin.name === 'goal_continuation';
+  });
 }
 
 describe('server-v2 /api/v1/sessions', () => {
@@ -304,7 +304,7 @@ describe('server-v2 /api/v1/sessions', () => {
     if (agent === undefined) throw new Error('expected a live main agent');
 
     const eventBus = agent.accessor.get(IEventBus);
-    const events: DomainEvent[] = [];
+    const events: Event2<any>[] = [];
     const subscription = eventBus.subscribe((event) => events.push(event));
 
     const stopped = await postJson<{ status: string }>(
@@ -770,7 +770,7 @@ describe('server-v2 /api/v1/sessions', () => {
   it('returns the active goal when the Web refreshes after blocked-goal resume', async () => {
     const rig = await createBlockedGoalRig();
     try {
-      rig.eventBus.publish({ type: 'turn.started', turnId: 999, origin: { kind: 'user' } });
+      rig.eventBus.publish(new TurnStarted({ turnId: 999, origin: { kind: 'user' } }));
       await postJson<SessionWire>(`/api/v1/sessions/${rig.id}/profile`, {
         agent_config: { goal_control: 'resume' },
       });
@@ -1323,7 +1323,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const events: { type: string; payload: unknown }[] = [];
     const sub = (server as RunningServer).core.accessor
       .get(IEventService)
-      .subscribe((event) => events.push(event));
+      .subscribe((event) => events.push(event as unknown as { type: string; payload: unknown }));
 
     const updated = await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
       title: 'renamed-via-profile',
@@ -1357,7 +1357,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const events: { type: string; payload: unknown }[] = [];
     const sub = (server as RunningServer).core.accessor
       .get(IEventService)
-      .subscribe((event) => events.push(event));
+      .subscribe((event) => events.push(event as unknown as { type: string; payload: unknown }));
 
     const submitted = await postJson<{ prompt_id: string; status: string }>(
       `/api/v1/sessions/${id}/prompts`,
