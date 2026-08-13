@@ -556,6 +556,9 @@ describe('server-v2 /api/v1/sessions', () => {
         'storage = "file"',
         'key = "kimi-code"',
         '',
+        '[experimental]',
+        'session-title = true',
+        '',
       ].join('\n'),
       'utf-8',
     );

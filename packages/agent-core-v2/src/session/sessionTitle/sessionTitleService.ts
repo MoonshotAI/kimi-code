@@ -6,7 +6,8 @@
  * `chat_title` endpoint, persists it through
  * `sessionMetadata`, and rebroadcasts `session.meta.updated`.
  * Generation is on demand only: `generateTitle()` is the single entry point
- * (the kap-server route), gated by a managed Kimi Code OAuth login; any
+ * (the kap-server route), gated by the experimental `session-title` flag and
+ * a managed Kimi Code OAuth login; any
  * failure degrades to keeping the current title, and a custom title set by
  * the user is never overwritten. An already-generated title is not
  * regenerated. Concurrent calls coalesce onto one shared in-flight
@@ -32,7 +33,9 @@ import {
   resolveKimiCodeRuntimeAuth,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { IFlagService } from '#/app/flag/flag';
 import { ILogService } from '#/_base/log/log';
 import { IOAuthService } from '#/app/auth/auth';
 import { IEventService } from '#/app/event/event';
@@ -44,6 +47,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { IAgentTitlePromptSource } from './agentTitlePromptSource';
+import { SESSION_TITLE_FLAG_ID } from './flag';
 import { ISessionTitleService, type SessionTitleSource } from './sessionTitle';
 
 const MAX_GENERATED_TITLE_LENGTH = 200;
@@ -72,6 +76,7 @@ export class SessionTitleService implements ISessionTitleService {
     @IProviderService private readonly providers: IProviderService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IHostRequestHeaders private readonly hostHeaders: IHostRequestHeaders,
+    @IFlagService private readonly flags: IFlagService,
     @ILogService private readonly log: ILogService,
   ) {}
 
@@ -94,6 +99,7 @@ export class SessionTitleService implements ISessionTitleService {
     force: boolean,
     source: SessionTitleSource,
   ): Promise<string | undefined> {
+    if (!this.flags.enabled(SESSION_TITLE_FLAG_ID)) return undefined;
     const current = await this.metadata.read();
     if (!force) {
       if (current.titleKind === 'custom') return undefined;

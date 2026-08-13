@@ -133,6 +133,7 @@ export * from '#/session/sessionTitle/agentTitlePromptSource';
 import '#/session/sessionTitle/agentTitlePromptSourceService';
 export * from '#/session/sessionTitle/sessionTitle';
 export * from '#/session/sessionTitle/sessionTitleService';
+import '#/session/sessionTitle/flag';
 export * from '#/session/sessionToolPolicy/sessionToolPolicy';
 export * from '#/session/sessionToolPolicy/sessionToolPolicyService';
 export * from '#/app/config/config';
