@@ -50,6 +50,7 @@ import {
   resolveMcpToolTimeoutMs,
   resolveSessionMcpConfig,
   mergeCallerMcpServers,
+  toMcpServerConfigView,
   type BeginAuthorizationResult,
   type McpOAuthTokenState,
   type McpRegistryEntry,
@@ -451,7 +452,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       },
       mcpConfig,
       mcpOAuthService: this.mcpOAuth,
-      mcpConfigResolver: (name) => this.resolveMcpRegistryEntry(name, workDir),
+      mcpConfigResolver: (name) => this.resolveMcpRuntimeTarget(name, workDir),
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
       telemetry: sessionTelemetry,
@@ -517,6 +518,25 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       await session.close();
       this.sessions.delete(sessionId);
     }
+  }
+
+  /**
+   * Release process-wide resources: close every live session, then shut down
+   * the shared MCP OAuth service (proactive-refresh timers, in-flight
+   * interactive authorization flows, credential listeners and cached
+   * providers). Idempotent; the SDK RPC client awaits this on close so
+   * timers and callback listeners never outlive their host.
+   */
+  async shutdown(): Promise<void> {
+    for (const sessionId of Array.from(this.sessions.keys())) {
+      await this.closeSession({ sessionId }).catch((error: unknown) => {
+        log.warn('session close during core shutdown failed', {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+    await this.mcpOAuth.shutdown();
   }
 
   async archiveSession({ sessionId }: ArchiveSessionPayload): Promise<void> {
@@ -615,7 +635,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       },
       mcpConfig,
       mcpOAuthService: this.mcpOAuth,
-      mcpConfigResolver: (name) => this.resolveMcpRegistryEntry(name, summary.workDir),
+      mcpConfigResolver: (name) => this.resolveMcpRuntimeTarget(name, summary.workDir),
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
@@ -856,7 +876,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       this.throwReadOnlyMcpServer(existing);
     }
     await this.globalMcpConfig.add(server);
-    await this.upsertGlobalMcpServerInSessions(server.name, mcpConfigWithoutName(server));
+    await this.reconcileMcpServerInSessions([server.name], 'global-add');
     return this.listGlobalMcpServers({});
   }
 
@@ -871,7 +891,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     } else {
       this.throwReadOnlyMcpServer(existing);
       await this.globalMcpConfig.update(server);
-      await this.upsertGlobalMcpServerInSessions(server.name, mcpConfigWithoutName(server));
+      await this.reconcileMcpServerInSessions([server.name], 'global-update');
     }
     return this.listGlobalMcpServers({});
   }
@@ -883,7 +903,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const existing = await this.mcpRegistry.get(name).catch(() => undefined);
     if (existing !== undefined) this.throwReadOnlyMcpServer(existing);
     await this.globalMcpConfig.remove(name);
-    await this.removeGlobalMcpServerFromSessions(name);
+    await this.reconcileMcpServerInSessions([name], 'global-remove');
     return this.listGlobalMcpServers({});
   }
 
@@ -900,74 +920,86 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   /**
-   * Push a user-level config upsert into every live session: global servers
-   * used to be frozen into the session at creation time, so management-plane
-   * edits never reached running sessions. Caller- or plugin-sourced entries
-   * with the same name keep their own config.
+   * Recompute what one live session should run for `name` and drive it there.
+   * This is the single sync path behind every MCP config mutation (global
+   * CRUD, plugin install/enable/disable/remove/reload, persisted session
+   * adds): the target comes from the registry's runtime resolution (enabled
+   * plugin > project > user file) instead of mutation-specific patching, so
+   * shadowed layers recover when the winner disappears — a disabled plugin
+   * falls back to the project/user entry instead of vanishing, and a removed
+   * user-level entry resurrects its project-layer shadow.
+   *
+   * Caller-injected entries shadow every registry source for their session
+   * and are left alone.
    */
-  private async upsertGlobalMcpServerInSessions(
-    name: string,
-    config: McpServerConfig,
-  ): Promise<void> {
-    await Promise.allSettled(
-      [...this.sessions.values()].map(async (session) => {
-        const entry = session.mcp.get(name);
-        if (entry !== undefined && entry.source !== undefined && entry.source !== 'global') return;
-        // A project-layer file shadowing this name owns the session's
-        // effective config; a user-level write must not clobber it.
-        const resolved = await this.resolveMcpRegistryEntry(name, session.metadata.workDir);
-        if (resolved !== undefined && !resolved.mutable) return;
-        await session.mcp.connect(name, config, 'global');
-      }),
-    );
-  }
-
-  private async removeGlobalMcpServerFromSessions(name: string): Promise<void> {
-    await Promise.allSettled(
-      [...this.sessions.values()].map(async (session) => {
-        if (session.mcp.get(name)?.source !== 'global') return;
-        // A project-layer shadow still defines the server for this session;
-        // only the user-level definition went away.
-        const resolved = await this.resolveMcpRegistryEntry(name, session.metadata.workDir);
-        if (resolved !== undefined && !resolved.mutable) return;
-        await session.mcp.remove(name);
-      }),
-    );
+  private async reconcileMcpServerInSession(session: Session, name: string): Promise<void> {
+    const entry = session.mcp.getRawEntry(name);
+    if (entry?.source === 'caller') return;
+    const target = await this.resolveMcpRuntimeTarget(name, session.metadata.workDir);
+    if (target === undefined) {
+      if (entry !== undefined) await session.mcp.remove(name);
+      return;
+    }
+    if (
+      entry !== undefined &&
+      entry.source === target.source &&
+      mcpServerConfigsEqual(entry.config, target.config)
+    ) {
+      return;
+    }
+    await session.mcp.connect(name, target.config, target.source);
   }
 
   /**
-   * Reconcile every live session's plugin-sourced MCP entries with the
-   * current plugin state (install / enable / disable / remove / reload):
-   * added servers connect, removed or disabled ones are torn down, changed
-   * configs reconnect, unchanged ones are left alone.
+   * {@link reconcileMcpServerInSession} fanned out to every live session.
+   * Per-session failures are logged with context instead of failing the
+   * calling RPC: the config files / plugin state remain the source of truth,
+   * and an untouched session self-heals on its next config-aware reconnect.
+   */
+  private async reconcileMcpServerInSessions(
+    names: Iterable<string>,
+    op: string,
+    excludeSessionId?: string,
+  ): Promise<void> {
+    const tasks: Promise<void>[] = [];
+    for (const [sessionId, session] of this.sessions) {
+      if (sessionId === excludeSessionId) continue;
+      for (const name of names) {
+        tasks.push(
+          this.reconcileMcpServerInSession(session, name).catch((error: unknown) => {
+            log.error('mcp live-session sync failed', {
+              op,
+              server: name,
+              sessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }),
+        );
+      }
+    }
+    await Promise.all(tasks);
+  }
+
+  /**
+   * Reconcile every live session's plugin-affected MCP entries with the
+   * current plugin state (install / enable / disable / remove / reload). The
+   * affected names are the union of what the plugins currently contribute and
+   * what any session still runs as plugin-sourced, since those may need to
+   * fall back to a shadowed file-layer config or be torn down.
    */
   private async syncPluginMcpServersInSessions(): Promise<void> {
-    const target = new Map(
+    const names = new Set<string>(
       this.plugins
         .mcpServerEntries({ managedEnv: this.managedKimiCodeEnvForPlugins() })
         .filter((entry) => entry.config.enabled !== false)
-        .map((entry) => [entry.name, entry.config] as const),
+        .map((entry) => entry.name),
     );
-    await Promise.allSettled(
-      [...this.sessions.values()].map(async (session) => {
-        for (const entry of session.mcp.list()) {
-          if (entry.source !== 'plugin' || target.has(entry.name)) continue;
-          await session.mcp.remove(entry.name);
-        }
-        for (const [name, config] of target) {
-          const existing = session.mcp.get(name);
-          if (existing === undefined) {
-            await session.mcp.connect(name, config, 'plugin');
-            continue;
-          }
-          if (existing.source === 'caller') continue;
-          if (existing.source === 'plugin' && mcpServerConfigsEqual(existing.config, config)) {
-            continue;
-          }
-          await session.mcp.connect(name, config, 'plugin');
-        }
-      }),
-    );
+    for (const session of this.sessions.values()) {
+      for (const entry of session.mcp.list()) {
+        if (entry.source === 'plugin') names.add(entry.name);
+      }
+    }
+    await this.reconcileMcpServerInSessions(names, 'plugin-sync');
   }
 
   async beginGlobalMcpServerAuth(
@@ -1334,16 +1366,27 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     let source: McpServerSource = 'caller';
     if (persist === true) {
       await this.awaitMcpRegistryReady();
-      const registryEntry = await this.mcpRegistry.get(server.name).catch(() => undefined);
+      // Resolve with this session's cwd: persisting over a project-layer
+      // shadow or a plugin entry would silently replace what the session
+      // runs, so reject it the same way the global add path does. A mutable
+      // user-level duplicate falls through to the store's own error.
+      const registryEntry = await this.resolveMcpRegistryEntry(
+        server.name,
+        session.metadata.workDir,
+      );
       if (registryEntry !== undefined) {
-        // Persisting over a read-only entry would shadow it; over a mutable
-        // one the store's own duplicate error applies.
         this.throwReadOnlyMcpServer(registryEntry);
       }
       await this.globalMcpConfig.add(server);
       source = 'global';
     }
     await session.mcp.connect(server.name, parsed.data, source);
+    if (persist === true) {
+      // A persisted add is a global write: every other live session learns
+      // about it through the same reconciliation path as a management-plane
+      // add. The requesting session was connected explicitly above.
+      await this.reconcileMcpServerInSessions([server.name], 'persist-add', sessionId);
+    }
     const entry = session.mcp.get(server.name);
     if (entry === undefined) {
       throw new KimiError(
@@ -1794,6 +1837,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const servers: Record<string, McpServerConfig> = { ...base?.servers };
     const sources: Record<string, McpServerSource> = { ...base?.sources };
     for (const entry of pluginEntries) {
+      // Caller injection is explicit per-session intent and shadows every
+      // registry source — including plugins. The live-session reconciliation
+      // makes the same call, so init and sync stay consistent.
+      if (sources[entry.name] === 'caller') continue;
       servers[entry.name] = entry.config;
       sources[entry.name] = 'plugin';
     }
@@ -1806,6 +1853,18 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     cwd: string | undefined,
   ): Promise<McpRegistryEntry | undefined> {
     return this.mcpRegistry.get(name, { cwd }).catch(() => undefined);
+  }
+
+  /**
+   * What a live session should currently run for `name`: the registry's
+   * runtime target (enabled plugin > project > user file); caller-sourced
+   * entries are handled by the reconciliation callers themselves.
+   */
+  private async resolveMcpRuntimeTarget(
+    name: string,
+    cwd: string | undefined,
+  ): Promise<McpRegistryEntry | undefined> {
+    return this.mcpRegistry.resolveRuntimeTarget(name, { cwd }).catch(() => undefined);
   }
 
   private managedKimiCodeEnvForPlugins(): Record<string, string> {
@@ -2008,12 +2067,7 @@ function sanitizeAppMcpServerInspection(
 }
 
 function sanitizeAppMcpServerConfig(config: McpServerConfig): AppMcpServerConfig {
-  if (config.transport === 'stdio') {
-    const { env, ...safe } = config;
-    return env === undefined ? safe : { ...safe, envKeys: Object.keys(env).toSorted() };
-  }
-  const { headers, ...safe } = config;
-  return headers === undefined ? safe : { ...safe, headerKeys: Object.keys(headers).toSorted() };
+  return toMcpServerConfigView(config);
 }
 
 
@@ -2024,9 +2078,13 @@ function mcpConfigWithoutName(server: GlobalMcpServerConfig): McpServerConfig {
 
 /** Flatten a registry entry into the wire shape of the unified management view. */
 function toManagedServerInfo(entry: McpRegistryEntry): McpManagedServerInfo {
+  // Read-only entries (plugin / project-layer) report key lists instead of
+  // literal secret-bearing values; mutable user-level entries keep the full
+  // values so edit UIs can prefill them.
+  const config = entry.mutable ? entry.config : toMcpServerConfigView(entry.config);
   return {
     name: entry.name,
-    ...entry.config,
+    ...config,
     source: entry.source,
     origin: entry.origin,
     mutable: entry.mutable,

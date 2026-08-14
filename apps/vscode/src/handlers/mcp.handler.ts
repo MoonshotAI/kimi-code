@@ -29,7 +29,9 @@ interface NameParams { name: string }
 
 export const mcpHandlers: Record<string, Handler<any, any>> = {
   [Methods.GetMCPServers]: async (_, ctx): Promise<MCPServerConfig[]> => {
-    return toWebviewServers(await ctx.harness.listMcpServers());
+    return toWebviewServers(
+      await ctx.harness.listMcpServers({ cwd: ctx.workDir ?? undefined }),
+    );
   },
 
   [Methods.AddMCPServer]: async (params: MCPServerConfig, ctx): Promise<MCPServerConfig[]> => {
@@ -44,9 +46,9 @@ export const mcpHandlers: Record<string, Handler<any, any>> = {
     ctx,
   ): Promise<MCPServerConfig[]> => {
     const request = normalizeUpdateRequest(params);
-    const current = (await ctx.harness.listMcpServers()).find(
-      (server) => server.name === request.originalName,
-    );
+    const current = (
+      await ctx.harness.listMcpServers({ cwd: ctx.workDir ?? undefined })
+    ).find((server) => server.name === request.originalName);
     const edited = restoreMaskedSecrets(current, request.server);
     const next = mergeEditableServer(current, edited, request.replaceEditableFields);
     const servers = toWebviewServers(

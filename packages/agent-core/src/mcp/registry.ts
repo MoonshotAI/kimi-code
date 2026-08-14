@@ -51,7 +51,7 @@ export interface McpRegistryEntry {
 }
 
 export interface McpServerRegistryOptions {
-  readonly homeDir?: string | undefined;
+  readonly homeDir?: string;
   readonly store: GlobalMcpConfigStore;
   readonly plugins: PluginManager;
   /** Host-managed env merged into plugin stdio servers (see KimiCore). */
@@ -129,6 +129,32 @@ export class McpServerRegistry {
     const entry = (await this.list(query)).find((candidate) => candidate.name === name);
     if (entry !== undefined) return entry;
     throw new KimiError(ErrorCodes.MCP_SERVER_NOT_FOUND, `MCP server "${name}" was not found`);
+  }
+
+  /**
+   * Session-runtime resolution for one server name — the entry a live session
+   * should actually run, as opposed to the management view which lists every
+   * collision side by side:
+   *
+   *  - An enabled plugin entry wins over the file layers (project > user),
+   *    matching the session-start merge order.
+   *  - A disabled plugin descriptor is treated as absent, mirroring session
+   *    start where disabled plugin servers never join a session at all.
+   *  - Caller entries never appear here: SDK injection is session-scoped and
+   *    shadows every registry source for its session.
+   *
+   * Returns `undefined` when no source currently defines the name.
+   */
+  async resolveRuntimeTarget(
+    name: string,
+    query: McpRegistryQuery = {},
+  ): Promise<McpRegistryEntry | undefined> {
+    const matches = (await this.list(query)).filter((entry) => entry.name === name);
+    const plugin = matches.find(
+      (entry) => entry.source === 'plugin' && entry.config.enabled !== false,
+    );
+    if (plugin !== undefined) return plugin;
+    return matches.find((entry) => entry.source === 'global');
   }
 }
 

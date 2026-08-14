@@ -182,6 +182,44 @@ describe('McpServerRegistry', () => {
       message: 'MCP server "missing" was not found',
     });
   });
+
+  it('resolveRuntimeTarget picks the enabled plugin winner and falls back when it is disabled', async () => {
+    const home = await makeKimiHome();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: { 'plugin-demo:api': { command: 'user-version' } },
+    });
+    const plugins = await installPlugin(
+      home,
+      await makePlugin('demo', { api: { transport: 'http', url: 'https://example.com/mcp' } }),
+    );
+    const registry = new McpServerRegistry({
+      homeDir: home,
+      store: new GlobalMcpConfigStore(home),
+      plugins,
+    });
+
+    // An enabled plugin entry wins the runtime-name collision.
+    await expect(registry.resolveRuntimeTarget('plugin-demo:api')).resolves.toMatchObject({
+      source: 'plugin',
+      config: { url: 'https://example.com/mcp' },
+    });
+
+    // A disabled plugin descriptor is treated as absent, falling back to the
+    // file-layer entry (what session start would have connected).
+    await plugins.setMcpServerEnabled('demo', 'api', false);
+    await expect(registry.resolveRuntimeTarget('plugin-demo:api')).resolves.toMatchObject({
+      source: 'global',
+      config: { command: 'user-version' },
+    });
+
+    // With the file layer gone too, the name no longer resolves at all.
+    await new GlobalMcpConfigStore(home).remove('plugin-demo:api');
+    await expect(registry.resolveRuntimeTarget('plugin-demo:api')).resolves.toBeUndefined();
+
+    // A disabled descriptor alone never becomes the runtime target.
+    await plugins.setEnabled('demo', true);
+    await expect(registry.resolveRuntimeTarget('plugin-demo:api')).resolves.toBeUndefined();
+  });
 });
 
 describe('mcpServerConfigsEqual', () => {

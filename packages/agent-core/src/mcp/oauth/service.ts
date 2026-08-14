@@ -30,6 +30,10 @@
  *    absolute expiry to reason about (`tokenState`).
  *  - `refresh()` is single-flight per credential: concurrent callers (proactive
  *    timer, manual trigger) share one in-flight SDK refresh.
+ *  - Interactive authorization flows are single-instance per credential: a
+ *    concurrent `beginAuthorization` for the same store key joins the
+ *    in-flight flow (same URL, shared completion) instead of resetting the
+ *    shared provider's PKCE/state mid-flow.
  *  - A proactive timer refreshes tokens shortly before they expire
  *    (`sweepProactiveRefresh` re-arms it at process start from the credential
  *    store's meta files; the save hook re-arms it after every write). The
@@ -40,6 +44,8 @@
  */
 
 import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+
+import { log } from '#/logging/logger';
 
 import { startCallbackServer, type CallbackServer } from './callback-server';
 import {
@@ -76,13 +82,32 @@ export interface BeginAuthorizationResult {
    * Awaits the OAuth callback, validates `state`, exchanges the code for
    * tokens, and persists them via the provider. Resolves on success;
    * rejects on abort, timeout, or auth-server error.
+   *
+   * Handles sharing one underlying flow (concurrent `beginAuthorization`
+   * calls for the same credential) run the wait and the exchange exactly
+   * once: the first `complete()` call's `signal`/`timeoutMs` apply and the
+   * rest await the same outcome.
    */
   complete(opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<void>;
   /**
-   * Tears down the callback listener without finishing the flow. Safe to
-   * call repeatedly; called automatically by `complete()`.
+   * Tears down the callback listener without finishing the flow. Only the
+   * initiating handle cancels the shared flow; on a joined handle this just
+   * detaches that caller. Safe to call repeatedly; called automatically by
+   * `complete()`.
    */
   cancel(): Promise<void>;
+}
+
+/**
+ * The single underlying interactive flow shared by every handle that
+ * `beginAuthorization` hands out for the same credential store key.
+ */
+interface SharedAuthorizationFlow {
+  readonly authorizationUrl: URL;
+  /** Starts the wait-for-callback + code exchange on first call; later calls share the outcome. */
+  readonly startCompletion: BeginAuthorizationResult['complete'];
+  /** Tears down the callback listener and flow state; invoked by the initiating handle only. */
+  readonly cancelUnderlying: () => Promise<void>;
 }
 
 export type McpOAuthEvent =
@@ -127,6 +152,8 @@ export class McpOAuthService {
   private readonly listeners = new Set<McpOAuthEventListener>();
   private readonly refreshes = new Map<string, Promise<void>>();
   private readonly refreshTimers = new Map<string, NodeJS.Timeout>();
+  /** In-flight interactive flows by credential store key; values resolve to the shared flow. */
+  private readonly activeAuthorizations = new Map<string, Promise<SharedAuthorizationFlow>>();
 
   constructor(options: McpOAuthServiceOptions = {}) {
     this.store =
@@ -205,15 +232,24 @@ export class McpOAuthService {
   /**
    * Arm the proactive refresh timer for every stored credential that carries
    * enough data to expire. Called once at engine start; subsequent token
-   * writes re-arm through the provider save hook.
+   * writes re-arm through the provider save hook. A malformed meta sidecar
+   * (or any per-credential failure) is skipped with a warning rather than
+   * aborting the whole sweep.
    */
   sweepProactiveRefresh(): void {
     for (const file of this.store.list(META_SUFFIX)) {
-      const meta = this.store.read<McpOAuthStoreMeta>(file);
+      const meta = readStoreMeta(this.store, file);
       if (meta === undefined) continue;
-      const state = this.tokenState(meta.serverName, meta.serverUrl);
-      if (!state.hasTokens || !state.hasRefreshToken || state.expiresAt === undefined) continue;
-      this.scheduleRefresh(meta.serverName, meta.serverUrl, state.expiresAt);
+      try {
+        const state = this.tokenState(meta.serverName, meta.serverUrl);
+        if (!state.hasTokens || !state.hasRefreshToken || state.expiresAt === undefined) continue;
+        this.scheduleRefresh(meta.serverName, meta.serverUrl, state.expiresAt);
+      } catch (error) {
+        log.warn('skipping MCP OAuth credential during proactive-refresh sweep', {
+          file,
+          error: error instanceof Error ? error : String(error),
+        });
+      }
     }
   }
 
@@ -224,16 +260,93 @@ export class McpOAuthService {
   }
 
   /**
+   * Release everything the service owns: pending proactive-refresh timers,
+   * in-flight interactive flows (closing their callback listeners), event
+   * listeners, and cached providers. Idempotent.
+   */
+  async shutdown(): Promise<void> {
+    this.stopProactiveRefresh();
+    const inFlight = [...this.activeAuthorizations.values()];
+    this.activeAuthorizations.clear();
+    await Promise.all(
+      inFlight.map(async (started) => {
+        const flow = await started.catch(() => undefined);
+        await flow?.cancelUnderlying();
+      }),
+    );
+    this.listeners.clear();
+    this.providers.clear();
+  }
+
+  /**
    * Drive the SDK `auth()` orchestrator far enough to surface an
    * authorization URL. The caller is responsible for displaying the URL
    * (typically via the synthetic authenticate tool) and then awaiting
    * `complete()` to finish the code exchange.
+   *
+   * Interactive flows are serialized per credential: while one flow for a
+   * store key is in flight, further calls join it — same URL, shared
+   * `complete()`, and a `cancel()` that only detaches the caller — instead
+   * of resetting the shared provider's PKCE/state mid-flow.
    */
   async beginAuthorization(
     serverName: string,
     serverUrl: string | URL,
     options: BeginAuthorizationOptions = {},
   ): Promise<BeginAuthorizationResult> {
+    const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
+    const inFlight = this.activeAuthorizations.get(storeKey);
+    if (inFlight !== undefined) {
+      // A begin-phase failure (e.g. AlreadyAuthorizedError) propagates here.
+      const flow = await inFlight;
+      let detached = false;
+      return {
+        authorizationUrl: flow.authorizationUrl,
+        complete: (opts = {}) => {
+          if (detached) {
+            return Promise.reject(new Error('OAuth flow already completed or cancelled'));
+          }
+          return flow.startCompletion(opts);
+        },
+        cancel: () => {
+          detached = true;
+          return Promise.resolve();
+        },
+      };
+    }
+
+    // Reserve the slot before the first await, so a concurrent call for the
+    // same credential (a `clientLabel` variant included — the key is the
+    // same store key) joins this flow instead of racing a second one.
+    const started = this.startAuthorizationFlow(serverName, serverUrl, options);
+    this.activeAuthorizations.set(storeKey, started);
+    let flow: SharedAuthorizationFlow;
+    try {
+      flow = await started;
+    } catch (error) {
+      // Begin-phase failures leave no active flow behind.
+      this.activeAuthorizations.delete(storeKey);
+      throw error;
+    }
+    return {
+      authorizationUrl: flow.authorizationUrl,
+      complete: (opts = {}) => flow.startCompletion(opts),
+      cancel: () => flow.cancelUnderlying(),
+    };
+  }
+
+  /**
+   * The initiating side of an interactive flow: start the callback listener,
+   * point the provider at it, and run `auth()` until it surfaces an
+   * authorization URL. The returned flow owns the single wait-for-callback +
+   * code exchange shared by every handle for this credential.
+   */
+  private async startAuthorizationFlow(
+    serverName: string,
+    serverUrl: string | URL,
+    options: BeginAuthorizationOptions,
+  ): Promise<SharedAuthorizationFlow> {
+    const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
     const provider =
       options.clientLabel === undefined
         ? this.getProvider(serverName, serverUrl)
@@ -286,44 +399,53 @@ export class McpOAuthService {
     }
 
     let settled = false;
-    const cancel = async (): Promise<void> => {
+    let completion: Promise<void> | undefined;
+    const settle = async (): Promise<void> => {
       if (settled) return;
       settled = true;
-      await callbackServer.close().catch(() => undefined);
+      this.activeAuthorizations.delete(storeKey);
+      // Release the provider's flow state before the first await: as soon as
+      // the map entry is gone a new flow may begin on the same provider, and
+      // a late resetFlow would clobber its redirect URL / PKCE state.
       provider.resetFlow();
+      await callbackServer.close().catch(() => undefined);
     };
 
-    const complete: BeginAuthorizationResult['complete'] = async (opts = {}) => {
-      if (settled) {
-        throw new Error('OAuth flow already completed or cancelled');
-      }
-      try {
-        const { code, state } = await callbackServer.waitForCode({
-          signal: opts.signal,
-          timeoutMs: opts.timeoutMs,
-        });
-        const expectedState = provider.expectedState();
-        if (expectedState !== undefined && state !== expectedState) {
-          throw new Error('OAuth state mismatch — possible CSRF; refusing token exchange');
+    return {
+      authorizationUrl,
+      startCompletion: (opts = {}) => {
+        if (completion !== undefined) return completion;
+        if (settled) {
+          return Promise.reject(new Error('OAuth flow already completed or cancelled'));
         }
-        const finalResult = await auth(provider as OAuthClientProvider, {
-          serverUrl,
-          authorizationCode: code,
-          fetchFn: provider.createOAuthFetch(),
-        });
-        if (finalResult !== 'AUTHORIZED') {
-          throw new Error(`OAuth code exchange returned "${finalResult}" instead of AUTHORIZED`);
-        }
-      } catch (error) {
-        await cancel();
-        throw wrapAuthError(`OAuth flow for "${serverName}" failed`, error);
-      }
-      settled = true;
-      await callbackServer.close().catch(() => undefined);
-      provider.resetFlow();
+        completion = (async () => {
+          try {
+            const { code, state } = await callbackServer.waitForCode({
+              signal: opts.signal,
+              timeoutMs: opts.timeoutMs,
+            });
+            const expectedState = provider.expectedState();
+            if (expectedState !== undefined && state !== expectedState) {
+              throw new Error('OAuth state mismatch — possible CSRF; refusing token exchange');
+            }
+            const finalResult = await auth(provider as OAuthClientProvider, {
+              serverUrl,
+              authorizationCode: code,
+              fetchFn: provider.createOAuthFetch(),
+            });
+            if (finalResult !== 'AUTHORIZED') {
+              throw new Error(`OAuth code exchange returned "${finalResult}" instead of AUTHORIZED`);
+            }
+          } catch (error) {
+            await settle();
+            throw wrapAuthError(`OAuth flow for "${serverName}" failed`, error);
+          }
+          await settle();
+        })();
+        return completion;
+      },
+      cancelUnderlying: settle,
     };
-
-    return { authorizationUrl, complete, cancel };
   }
 
   /**
@@ -400,23 +522,41 @@ export class McpOAuthService {
     const canonicalUrl = canonicalMcpOAuthResource(serverUrl);
     const storeKey = mcpOAuthStoreKey(serverName, canonicalUrl);
     this.cancelScheduledRefresh(serverName, canonicalUrl);
-    const delay = expiresAt - Date.now() - REFRESH_AHEAD_MS;
-    // Only future refresh points are armed. A grant already past its
-    // proactive point is left to the connect path (the transport's 401
-    // refresh) — firing a network refresh immediately on boot/save is both
-    // wasteful for dead servers and racy for short-lived embedders (tests).
-    if (delay <= 0 || delay > MAX_TIMER_DELAY_MS) return;
-    const timer = setTimeout(() => {
-      this.refreshTimers.delete(storeKey);
-      void this.refresh(serverName, canonicalUrl).catch((error: unknown) => {
-        this.emit({
-          type: 'refresh-failed',
-          serverName,
-          serverUrl: canonicalUrl,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    }, delay);
+    const now = Date.now();
+    // Already-expired grants are never refreshed proactively: the grant may
+    // belong to a server nobody connects to anymore, so firing a network
+    // refresh on boot/save would be wasted work. The connect path (the
+    // transport's 401-driven refresh) remains the backstop for live servers.
+    if (expiresAt <= now) return;
+    const delay = expiresAt - now - REFRESH_AHEAD_MS;
+    let timer: NodeJS.Timeout;
+    if (delay > MAX_TIMER_DELAY_MS) {
+      // setTimeout cannot schedule beyond 2^31-1 ms. Arm the maximum and
+      // recompute on firing, so far-future grants are rescheduled instead of
+      // never being refreshed proactively.
+      timer = setTimeout(() => {
+        this.refreshTimers.delete(storeKey);
+        this.scheduleRefresh(serverName, canonicalUrl, expiresAt);
+      }, MAX_TIMER_DELAY_MS);
+    } else {
+      // delay <= 0 means the grant is already inside the ahead-of-expiry
+      // window but still valid — refresh immediately. Refresh is
+      // single-flight per credential, so duplicate triggers are safe.
+      timer = setTimeout(
+        () => {
+          this.refreshTimers.delete(storeKey);
+          void this.refresh(serverName, canonicalUrl).catch((error: unknown) => {
+            this.emit({
+              type: 'refresh-failed',
+              serverName,
+              serverUrl: canonicalUrl,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        },
+        Math.max(delay, 0),
+      );
+    }
     timer.unref();
     this.refreshTimers.set(storeKey, timer);
   }
@@ -445,6 +585,32 @@ export class AlreadyAuthorizedError extends Error {
     super(`"${serverName}" is already authorized; no browser flow needed`);
     this.name = 'AlreadyAuthorizedError';
   }
+}
+
+/**
+ * Read and validate one `<key>-meta.json` sidecar. `JsonFileStore.read` only
+ * guarantees parseable JSON, so the shape is checked field by field; a
+ * malformed sidecar is skipped with a warning instead of aborting the
+ * startup sweep.
+ */
+function readStoreMeta(store: JsonFileStore, file: string): McpOAuthStoreMeta | undefined {
+  const raw: unknown = store.read(file);
+  // undefined: the file vanished between list and read, or held corrupt JSON.
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'object' || raw === null) {
+    log.warn('ignoring malformed MCP OAuth meta file', { file });
+    return undefined;
+  }
+  const { serverName, serverUrl } = raw as Record<string, unknown>;
+  if (typeof serverName !== 'string' || serverName.length === 0 || typeof serverUrl !== 'string') {
+    log.warn('ignoring malformed MCP OAuth meta file', { file });
+    return undefined;
+  }
+  if (URL.parse(serverUrl) === null) {
+    log.warn('ignoring MCP OAuth meta file with unparseable serverUrl', { file, serverUrl });
+    return undefined;
+  }
+  return { serverName, serverUrl };
 }
 
 function wrapAuthError(prefix: string, error: unknown): Error {

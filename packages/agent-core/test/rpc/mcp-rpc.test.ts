@@ -647,4 +647,257 @@ describe('KimiCore unified MCP management plane', () => {
       code: 'request.invalid',
     });
   }, 20000);
+
+  it('restores the shadowed file-layer entry when a plugin server is disabled', async () => {
+    const http = await startMcpHttpServer();
+    const { core, rpc, home, workDir } = await makeCore();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        'plugin-demo:api': { command: process.execPath, args: [STDIO_FIXTURE] },
+      },
+    });
+    const pluginRoot = await makePlugin('demo', {
+      api: { transport: 'http', url: http.url },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+    const session = core.sessions.get(created.id)!;
+    await session.mcp.waitForInitialLoad();
+    // The enabled plugin wins the colliding runtime name at session start.
+    expect(session.mcp.get('plugin-demo:api')).toMatchObject({
+      status: 'connected',
+      source: 'plugin',
+      transport: 'http',
+    });
+
+    // Disabling the plugin falls back to the shadowed user-level entry
+    // instead of leaving the session without the server.
+    await core.setPluginEnabled({ id: 'demo', enabled: false });
+    expect(session.mcp.get('plugin-demo:api')).toMatchObject({
+      status: 'connected',
+      source: 'global',
+      transport: 'stdio',
+    });
+
+    // Re-enabling restores the plugin winner.
+    await core.setPluginEnabled({ id: 'demo', enabled: true });
+    expect(session.mcp.get('plugin-demo:api')).toMatchObject({
+      status: 'connected',
+      source: 'plugin',
+      transport: 'http',
+    });
+  }, 30000);
+
+  it('removes the live connection when removing a user-level entry shadowed only by a disabled plugin', async () => {
+    const { core, rpc, home, workDir } = await makeCore();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        'plugin-demo:api': { command: process.execPath, args: [STDIO_FIXTURE] },
+      },
+    });
+    const pluginRoot = await makePlugin('demo', {
+      api: { transport: 'http', url: 'https://example.com/mcp' },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    await core.setPluginMcpServerEnabled({ id: 'demo', server: 'api', enabled: false });
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+    const session = core.sessions.get(created.id)!;
+    await session.mcp.waitForInitialLoad();
+    // The disabled plugin entry stays out of the session; the user-level
+    // entry runs under the colliding runtime name.
+    expect(session.mcp.get('plugin-demo:api')).toMatchObject({
+      status: 'connected',
+      source: 'global',
+    });
+
+    // Removing it must tear the connection down even though the registry
+    // still holds the plugin's read-only disabled descriptor.
+    await core.removeGlobalMcpServer({ name: 'plugin-demo:api' });
+    expect(session.mcp.get('plugin-demo:api')).toBeUndefined();
+  }, 30000);
+
+  it('falls back to a project-layer shadow that appeared while the session was live', async () => {
+    const { core, rpc, home, workDir } = await makeCore();
+    await writeJson(join(workDir, '.git', 'keep'), {});
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        shadowed: { command: process.execPath, args: [STDIO_FIXTURE, '--user'] },
+      },
+    });
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+    const session = core.sessions.get(created.id)!;
+    await session.mcp.waitForInitialLoad();
+    expect(session.mcp.get('shadowed')).toMatchObject({
+      status: 'connected',
+      config: { args: [STDIO_FIXTURE, '--user'] },
+    });
+
+    // The project layer starts shadowing the name mid-session; removing the
+    // user-level entry falls back to it instead of killing the server.
+    await writeJson(join(workDir, '.mcp.json'), {
+      mcpServers: {
+        shadowed: { command: process.execPath, args: [STDIO_FIXTURE, '--project'] },
+      },
+    });
+    await core.removeGlobalMcpServer({ name: 'shadowed' });
+    expect(session.mcp.get('shadowed')).toMatchObject({
+      status: 'connected',
+      source: 'global',
+      config: { args: [STDIO_FIXTURE, '--project'] },
+    });
+  }, 30000);
+
+  it('pushes a persisted session add into the other live sessions', async () => {
+    const { core, rpc, workDir } = await makeCore();
+    const first = await rpc.createSession({ workDir, model: 'default-mock' });
+    const second = await rpc.createSession({ workDir, model: 'default-mock' });
+    const secondSession = core.sessions.get(second.id)!;
+
+    await rpc.addSessionMcpServer({
+      sessionId: first.id,
+      server: {
+        name: 'kept',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [STDIO_FIXTURE],
+      },
+      persist: true,
+    });
+    expect(secondSession.mcp.get('kept')).toMatchObject({
+      status: 'connected',
+      source: 'global',
+    });
+  }, 30000);
+
+  it('rejects a persisted session add over a project-layer shadow', async () => {
+    const { core, rpc, workDir } = await makeCore();
+    await writeJson(join(workDir, '.git', 'keep'), {});
+    await writeJson(join(workDir, '.mcp.json'), {
+      mcpServers: { shadowed: { command: '/this/path/does/not/exist/anywhere' } },
+    });
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+
+    await expect(
+      rpc.addSessionMcpServer({
+        sessionId: created.id,
+        server: {
+          name: 'shadowed',
+          transport: 'stdio',
+          command: process.execPath,
+          args: [STDIO_FIXTURE],
+        },
+        persist: true,
+      }),
+    ).rejects.toMatchObject({ code: 'request.invalid' });
+    // Nothing was persisted to the user-level file either.
+    await expect(core.getGlobalMcpServer({ name: 'shadowed' })).rejects.toMatchObject({
+      code: 'mcp.server_not_found',
+    });
+  }, 30000);
+
+  it('keeps caller-injected servers when a plugin collides on the runtime name', async () => {
+    const http = await startMcpHttpServer();
+    const { core, rpc, workDir } = await makeCore();
+    const pluginRoot = await makePlugin('demo', {
+      api: { transport: 'http', url: http.url },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    const created = await rpc.createSession({
+      workDir,
+      model: 'default-mock',
+      mcpServers: {
+        'plugin-demo:api': {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [STDIO_FIXTURE],
+        },
+      },
+    });
+    const session = core.sessions.get(created.id)!;
+    await session.mcp.waitForInitialLoad();
+    // Caller injection is per-session explicit intent and wins the collision.
+    expect(session.mcp.get('plugin-demo:api')).toMatchObject({
+      status: 'connected',
+      source: 'caller',
+      transport: 'stdio',
+    });
+
+    // Plugin state churn must not displace the caller entry either.
+    await core.setPluginEnabled({ id: 'demo', enabled: false });
+    expect(session.mcp.get('plugin-demo:api')).toMatchObject({
+      status: 'connected',
+      source: 'caller',
+      transport: 'stdio',
+    });
+  }, 30000);
+
+  it('reconnects a plugin-shadowed name to the plugin winner, not the file layer', async () => {
+    const http = await startMcpHttpServer();
+    const { core, rpc, home, workDir } = await makeCore();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        'plugin-demo:api': { command: process.execPath, args: [STDIO_FIXTURE] },
+      },
+    });
+    const pluginRoot = await makePlugin('demo', {
+      api: { transport: 'http', url: http.url },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+    const session = core.sessions.get(created.id)!;
+    await session.mcp.waitForInitialLoad();
+    expect(session.mcp.get('plugin-demo:api')).toMatchObject({ source: 'plugin' });
+
+    await rpc.reconnectMcpServer({ sessionId: created.id, name: 'plugin-demo:api' });
+    expect(session.mcp.get('plugin-demo:api')).toMatchObject({
+      status: 'connected',
+      source: 'plugin',
+      transport: 'http',
+    });
+  }, 30000);
+
+  it('redacts secret-bearing config values in session and management views', async () => {
+    const { core, rpc, home, workDir } = await makeCore();
+    const pluginRoot = await makePlugin('demo', {
+      runner: {
+        transport: 'stdio',
+        // Plugin manifests only accept PATH-style commands.
+        command: 'node',
+        args: [STDIO_FIXTURE],
+        env: { PLUGIN_API_KEY: 'plugin-secret' },
+      },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        own: {
+          command: process.execPath,
+          args: [STDIO_FIXTURE],
+          env: { USER_TOKEN: 'user-secret' },
+        },
+      },
+    });
+
+    // Management view: read-only entries report key names only; mutable
+    // user-level entries keep their values so edit UIs can prefill them.
+    const managed = new Map((await core.listGlobalMcpServers({})).map((s) => [s.name, s]));
+    const pluginEntry = managed.get('plugin-demo:runner');
+    expect(pluginEntry).toMatchObject({
+      mutable: false,
+      envKeys: expect.arrayContaining(['PLUGIN_API_KEY']),
+    });
+    expect(pluginEntry).not.toHaveProperty('env');
+    expect(managed.get('own')).toMatchObject({
+      mutable: true,
+      env: { USER_TOKEN: 'user-secret' },
+    });
+
+    // Session status view: every entry is redacted, regardless of source.
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+    await core.sessions.get(created.id)!.mcp.waitForInitialLoad();
+    const listed = await rpc.listMcpServers({ sessionId: created.id });
+    const own = listed.find((entry) => entry.name === 'own');
+    expect(own?.config).toMatchObject({ envKeys: ['USER_TOKEN'] });
+    expect(own?.config).not.toHaveProperty('env');
+  }, 30000);
 });

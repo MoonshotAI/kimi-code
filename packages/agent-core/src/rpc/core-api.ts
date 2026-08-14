@@ -20,6 +20,7 @@ import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
 import type { GlobalMcpServerConfig } from '#/mcp/global-config';
+import type { McpServerConfigView } from '#/mcp/config-view';
 import type { McpRegistryPluginOrigin, McpServerSource } from '#/mcp/registry';
 import type { ContentPart } from '@moonshot-ai/kosong';
 import type { SessionWarning } from '@moonshot-ai/protocol';
@@ -335,8 +336,12 @@ export interface McpServerInfo {
   readonly error?: string;
   /** Config origin tag (v1 only for now): global layered files / plugin / caller. */
   readonly source?: McpServerSource;
-  /** The effective config the entry is running (or last failed) with. */
-  readonly config?: McpServerConfig;
+  /**
+   * The effective config the entry is running (or last failed) with, in its
+   * wire-facing view: stdio `env` / remote `headers` values are redacted to
+   * key lists because they may carry credentials (v1 only for now).
+   */
+  readonly config?: AppMcpServerConfig;
 }
 
 export interface McpStartupMetrics {
@@ -370,6 +375,9 @@ export type { McpServerSource } from '#/mcp/registry';
  * One entry of the unified MCP management view: the effective config plus its
  * source metadata. `global` entries from the user-level file are `mutable`;
  * plugin and project-layer entries are read-only through the management API.
+ * Read-only entries also withhold secret-bearing values: their stdio `env` /
+ * remote `headers` are redacted to the `envKeys` / `headerKeys` lists, while
+ * mutable (user-level) entries keep the full values so edit UIs can prefill.
  */
 export type McpManagedServerInfo = GlobalMcpServerConfig & {
   readonly source: McpServerSource;
@@ -377,6 +385,9 @@ export type McpManagedServerInfo = GlobalMcpServerConfig & {
   readonly origin: string;
   readonly mutable: boolean;
   readonly plugin?: McpRegistryPluginOrigin;
+  /** Set instead of `env` / `headers` when the entry is read-only. */
+  readonly envKeys?: readonly string[];
+  readonly headerKeys?: readonly string[];
 };
 
 export interface ListGlobalMcpServersPayload {
@@ -449,15 +460,9 @@ export type AppMcpServerAuthState = GlobalMcpServerAuthState | 'unavailable';
 /**
  * Inspection config as exposed on the wire: the effective config with literal
  * stdio `env` / remote `headers` values redacted to sorted key lists, since
- * they may carry secrets.
+ * they may carry secrets. Shared with the session MCP status surface.
  */
-export type AppMcpServerConfig =
-  | (Omit<Extract<McpServerConfig, { readonly transport: 'stdio' }>, 'env'> & {
-      readonly envKeys?: readonly string[];
-    })
-  | (Omit<Exclude<McpServerConfig, { readonly transport: 'stdio' }>, 'headers'> & {
-      readonly headerKeys?: readonly string[];
-    });
+export type AppMcpServerConfig = McpServerConfigView;
 
 export interface AppMcpServerDescriptor {
   /** `global:<name>` or `plugin:<pluginId>:<serverName>` (URL-encoded parts). */

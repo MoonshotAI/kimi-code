@@ -10,6 +10,7 @@ import { isRemoteMcpConfig } from './client-remote';
 import { SseMcpClient } from './client-sse';
 import type { UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
+import { toMcpServerConfigView, type McpServerConfigView } from './config-view';
 import type { McpOAuthService } from './oauth';
 import type { McpRegistryEntry, McpServerSource } from './registry';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
@@ -27,8 +28,13 @@ export interface McpServerEntry {
    * before source tracking (tests that construct the manager directly).
    */
   readonly source?: McpServerSource;
-  /** The effective config the entry is running (or last failed) with. */
-  readonly config: McpServerConfig;
+  /**
+   * The effective config the entry is running (or last failed) with, in its
+   * wire-facing view: secret-bearing stdio `env` / remote `headers` values are
+   * redacted to key lists. Core-internal reconciliation uses
+   * {@link McpConnectionManager.getRawEntry} instead.
+   */
+  readonly config: McpServerConfigView;
 }
 
 interface InternalEntry {
@@ -201,6 +207,18 @@ export class McpConnectionManager {
   get(name: string): McpServerEntry | undefined {
     const entry = this.entries.get(name);
     return entry !== undefined ? toPublicEntry(entry) : undefined;
+  }
+
+  /**
+   * Internal view of an entry carrying the full (unredacted) effective config.
+   * The management plane's live-session reconciliation compares and connects
+   * these; the public {@link get} / {@link list} entries stay redacted.
+   */
+  getRawEntry(
+    name: string,
+  ): { readonly config: McpServerConfig; readonly source?: McpServerSource } | undefined {
+    const entry = this.entries.get(name);
+    return entry === undefined ? undefined : { config: entry.config, source: entry.source };
   }
 
   /**
@@ -629,7 +647,7 @@ function toPublicEntry(entry: InternalEntry): McpServerEntry {
         : 0,
     error: entry.error,
     source: entry.source,
-    config: entry.config,
+    config: toMcpServerConfigView(entry.config),
   };
 }
 

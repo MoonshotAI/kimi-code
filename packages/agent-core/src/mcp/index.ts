@@ -1,3 +1,4 @@
+export * from './config-view';
 export * from './connection-manager';
 export * from './global-config';
 export * from './oauth';
