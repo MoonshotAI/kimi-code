@@ -1,5 +1,65 @@
 # kimi-code-app
 
+## 0.0.17
+
+### Patch Changes
+
+- [#229](https://github.com/MoonshotAI/kimi-code-app/pull/229) [`fb090fa`](https://github.com/MoonshotAI/kimi-code-app/commit/fb090fa9a755cc9bf8993c067f898082c8d673fd) - AI 回复下方的时间改为显示消息时间，不再显示工作时长。
+
+- [#211](https://github.com/MoonshotAI/kimi-code-app/pull/211) [`51f725f`](https://github.com/MoonshotAI/kimi-code-app/commit/51f725fdef815059ddd868dd661a79ba144f3c40) - 新增实验性的自动生成会话标题功能
+
+- [#218](https://github.com/MoonshotAI/kimi-code-app/pull/218) [`b85fdf3`](https://github.com/MoonshotAI/kimi-code-app/commit/b85fdf35df759dfda2d90db1a6c8fdf87c406745) - 斜杠命令和 @ 文件引用菜单更换新样式：斜杠命令菜单中匹配的片段会加粗高亮；两个菜单的长列表滚动时都有渐隐效果和可拖动的悬浮滚动条。
+
+- [#209](https://github.com/MoonshotAI/kimi-code-app/pull/209) [`dda9935`](https://github.com/MoonshotAI/kimi-code-app/commit/dda9935db80963b380c2a7ec1e5bd6dac63cb62d) - 后台 Bash 面板支持按状态筛选，点击任务可在右侧查看命令与输出。
+
+- [#230](https://github.com/MoonshotAI/kimi-code-app/pull/230) [`ce891bb`](https://github.com/MoonshotAI/kimi-code-app/commit/ce891bb015ad8d82b791e2022d24b3c56ecf5591) - 修复斜杠命令面板在切换会话或输入框失焦后仍然显示的问题。
+
+- [#220](https://github.com/MoonshotAI/kimi-code-app/pull/220) [`c2d2bc3`](https://github.com/MoonshotAI/kimi-code-app/commit/c2d2bc36a2320ac4a00cab60cf04c9a88c4cd954) - 聊天输入框的撤销/重做现在按会话独立保留，切换会话不会丢失。
+
+- [#219](https://github.com/MoonshotAI/kimi-code-app/pull/219) [`a7f0cc9`](https://github.com/MoonshotAI/kimi-code-app/commit/a7f0cc943c528bdf0067597767c8a15ac4221bc8) - 删除模式菜单：计划与目标改为输入区左侧的互斥模式 pill（/plan、/goal 启用，× 退出），Swarm 拆分为独立的工具栏开关。
+
+- [#209](https://github.com/MoonshotAI/kimi-code-app/pull/209) [`dda9935`](https://github.com/MoonshotAI/kimi-code-app/commit/dda9935db80963b380c2a7ec1e5bd6dac63cb62d) - 输入框上方的工作状态胶囊更换为无边框圆角的新样式。
+
+- [#235](https://github.com/MoonshotAI/kimi-code-app/pull/235) [`af7ed8f`](https://github.com/MoonshotAI/kimi-code-app/commit/af7ed8fa03278bbe2f988732b3195649e7a6f2bc) - 插件设置页的浏览器扩展安装提示收为一行，商店入口改为按钮。
+
+- [#222](https://github.com/MoonshotAI/kimi-code-app/pull/222) [`db79803`](https://github.com/MoonshotAI/kimi-code-app/commit/db79803a9c9c0f1cb38c3c88d61612d616ffe365) - 修复行内代码中的 `$` 内容被误渲染为数学公式的问题。
+
+- [#213](https://github.com/MoonshotAI/kimi-code-app/pull/213) [`db76891`](https://github.com/MoonshotAI/kimi-code-app/commit/db7689160bb4eb9edc823372f82b9f576dfc8aa6) - 修复子智能体模型选择列表最后一个模型时思考强度选不到的问题。
+
+- [#223](https://github.com/MoonshotAI/kimi-code-app/pull/223) [`da12e2a`](https://github.com/MoonshotAI/kimi-code-app/commit/da12e2a9d69bd7e87b72537378ee03b7f0b1d699) - 修复复制历史很长的会话时 fork 操作总是超时失败的问题。
+
+- [#219](https://github.com/MoonshotAI/kimi-code-app/pull/219) [`a7f0cc9`](https://github.com/MoonshotAI/kimi-code-app/commit/a7f0cc943c528bdf0067597767c8a15ac4221bc8) - 在斜杠菜单中选择「/goal」会立即在输入框中启用目标标记（可撤销），输入内容后发送即创建目标，不再要求先在命令后补全目标文本。
+
+- [#209](https://github.com/MoonshotAI/kimi-code-app/pull/209) [`dda9935`](https://github.com/MoonshotAI/kimi-code-app/commit/dda9935db80963b380c2a7ec1e5bd6dac63cb62d) - 目标面板的目标与已运行时间移到头部展示，操作改为图标按钮。
+
+- [#233](https://github.com/MoonshotAI/kimi-code-app/pull/233) [`a52cdbc`](https://github.com/MoonshotAI/kimi-code-app/commit/a52cdbcfbab8ba3d9a3f3936671e1d21de95548c) - 修复链接后紧跟中文时中文被错误并入链接、点击后打不开的问题。
+
+- [#219](https://github.com/MoonshotAI/kimi-code-app/pull/219) [`a7f0cc9`](https://github.com/MoonshotAI/kimi-code-app/commit/a7f0cc943c528bdf0067597767c8a15ac4221bc8) - 调整计划模式的启用时机：开启后先作为输入框内的「计划」标记（可随时撤销），发送消息时才真正生效，与目标模式的行为保持一致。
+
+- [#219](https://github.com/MoonshotAI/kimi-code-app/pull/219) [`a7f0cc9`](https://github.com/MoonshotAI/kimi-code-app/commit/a7f0cc943c528bdf0067597767c8a15ac4221bc8) - 新增计划查看面板：点击工作栏的计划条目即可查看完整计划、评审结果与反馈。
+
+- [#217](https://github.com/MoonshotAI/kimi-code-app/pull/217) [`330ab27`](https://github.com/MoonshotAI/kimi-code-app/commit/330ab2725f9c33de4bcab2dc828bf4aa3e26fe68) - 设置新增「插件」页：内置能力（Kimi Computer Use、Kimi WebBridge）带实时安装进度；官方与第三方插件市场支持安装/更新、启用/禁用与移除；支持从 zip 链接、GitHub 仓库或本地路径直接安装自定义插件；本地装载的插件也会在「已安装」区单独展示。
+
+- [#217](https://github.com/MoonshotAI/kimi-code-app/pull/217) [`330ab27`](https://github.com/MoonshotAI/kimi-code-app/commit/330ab2725f9c33de4bcab2dc828bf4aa3e26fe68) - 修复插件设置页已安装的插件偶尔闪现"安装"按钮的问题。
+
+- [#216](https://github.com/MoonshotAI/kimi-code-app/pull/216) [`09bbd11`](https://github.com/MoonshotAI/kimi-code-app/commit/09bbd11f79f0b33285b6cc3bbcbdfb86b6cc5b82) - 导出会话增加明确的完成反馈(web 端为顶部居中提示,与归档样式一致;桌面端以系统保存对话框为确认),并为会话过大导致的导出失败补充明确的提示。
+
+- [#218](https://github.com/MoonshotAI/kimi-code-app/pull/218) [`b85fdf3`](https://github.com/MoonshotAI/kimi-code-app/commit/b85fdf35df759dfda2d90db1a6c8fdf87c406745) - 斜杠命令支持模糊搜索：输入描述文字、拼音或拼音首字母都能找到命令。
+
+- [#209](https://github.com/MoonshotAI/kimi-code-app/pull/209) [`dda9935`](https://github.com/MoonshotAI/kimi-code-app/commit/dda9935db80963b380c2a7ec1e5bd6dac63cb62d) - 子 Agent 面板改为卡片网格布局，支持按状态过滤，默认展示进行中与最近完成的任务。
+
+- [#227](https://github.com/MoonshotAI/kimi-code-app/pull/227) [`acc0738`](https://github.com/MoonshotAI/kimi-code-app/commit/acc07381f3a1d3947aa1b8e28701e708cd83b2c0) - 修复终端输出较多时最后一行被挤出可视区域的问题。
+
+- [#227](https://github.com/MoonshotAI/kimi-code-app/pull/227) [`acc0738`](https://github.com/MoonshotAI/kimi-code-app/commit/acc07381f3a1d3947aa1b8e28701e708cd83b2c0) - 修复终端面板里输出的链接无法点击打开的问题。
+
+- [#223](https://github.com/MoonshotAI/kimi-code-app/pull/223) [`da12e2a`](https://github.com/MoonshotAI/kimi-code-app/commit/da12e2a9d69bd7e87b72537378ee03b7f0b1d699) - 修复请求服务器超时被误报为“无法连接到 Kimi 服务器”的问题。
+
+- [#209](https://github.com/MoonshotAI/kimi-code-app/pull/209) [`dda9935`](https://github.com/MoonshotAI/kimi-code-app/commit/dda9935db80963b380c2a7ec1e5bd6dac63cb62d) - 待办面板改为磨砂卡片样式，新增「当前进度」完成计数。
+
+- [#225](https://github.com/MoonshotAI/kimi-code-app/pull/225) [`72585bf`](https://github.com/MoonshotAI/kimi-code-app/commit/72585bf09d31b8ca66a34ca093df6b91a87d1aca) - 用户菜单及套餐用量浮层的字号和行高调大了一档。
+
+- [#225](https://github.com/MoonshotAI/kimi-code-app/pull/225) [`72585bf`](https://github.com/MoonshotAI/kimi-code-app/commit/72585bf09d31b8ca66a34ca093df6b91a87d1aca) - 用户菜单的「升级」更名为「会员升级」，套餐用量的百分比增加「已使用」标注。
+
 ## 0.0.16
 
 ### Patch Changes
