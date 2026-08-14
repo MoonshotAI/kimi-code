@@ -1303,6 +1303,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     verify: boolean,
   ): Promise<GlobalMcpServerAuthState> {
     const server = entry.config;
+    // A disabled server never participates in OAuth; keep the historical
+    // classification instead of reporting oauth-required or probing it.
+    if (server.enabled === false) return 'not-applicable';
     if (server.transport === 'stdio') return 'not-applicable';
     if (server.bearerTokenEnvVar !== undefined) return 'bearer-token';
     // Keep status classification aligned with the existing connection manager:

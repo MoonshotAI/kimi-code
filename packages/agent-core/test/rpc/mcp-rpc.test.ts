@@ -502,6 +502,23 @@ describe('KimiCore unified MCP management plane', () => {
     ]);
   });
 
+  it('classifies disabled servers as not-applicable, even with online verification', async () => {
+    const { core, home } = await makeCore();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        off: {
+          transport: 'http',
+          url: 'https://disabled.example.test/mcp',
+          auth: 'oauth',
+          enabled: false,
+        },
+      },
+    });
+    await expect(core.listGlobalMcpServerAuthStatuses({ verify: true })).resolves.toEqual([
+      { name: 'off', authStatus: 'not-applicable' },
+    ]);
+  });
+
   it('inspects global and plugin servers with locators and real connection states', async () => {
     const gated = await startMcpHttpServer({ bearerToken: 'good-token', oauthRejecting: true });
     const plain = await startMcpHttpServer();
