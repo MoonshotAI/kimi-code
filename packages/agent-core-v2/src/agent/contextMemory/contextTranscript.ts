@@ -16,8 +16,9 @@
  * `clearFloor`, and `foldedLength` — plus the transcript-specific
  * application of those decisions: undo splices the tail but keeps orphan
  * injections (prompt-owned ones leave with their prompt), clear keeps
- * entries and moves the floor, and compaction appends the summary marker
- * while keeping the folded prefix.
+ * entries and moves the floor, and compaction settles any frame a failed
+ * attempt left open, then appends the summary marker while keeping the
+ * folded prefix.
  */
 
 import type { WireRecord } from '#/wire/record';
@@ -32,6 +33,7 @@ import { computeUndoCutFrom, isFullyUndoable, isUndoAnchor } from './conversatio
 import {
   appendMessageTo,
   applyLoopEventTo,
+  settleOpenStep,
   type FoldEntryAdapter,
   type LoopRecordedEvent,
 } from './loopEventFold';
@@ -126,6 +128,17 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         return;
       }
       case 'context.apply_compaction': {
+        // Close any frame left open by a failed attempt (overflow compaction
+        // lands mid-fold): the model fold settles that stale partial lazily
+        // at the retried step's `step.begin`, which would make the transcript
+        // length dip by one there and leave `foldedLength` short. Settling at
+        // the marker keeps the count exact; `recoverFoldedLength` recomputes
+        // the absolute value right after either way.
+        const settled = settleOpenStep(
+          state,
+          entryAdapter,
+          (message): TranscriptEntry => ({ message, time: record.time }),
+        );
         const summary: ContextMessage = {
           role: 'user',
           content: [{ type: 'text', text: readCompactionSummaryText(record) }],
@@ -133,7 +146,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
           origin: { kind: 'compaction_summary' },
         };
         state = {
-          messages: [...state.messages, { message: summary, time: record.time }],
+          messages: [...settled.messages, { message: summary, time: record.time }],
           fold: EMPTY_FOLD,
         };
         foldedLength = recoverFoldedLength(record, state.messages, clearFloor, foldedLength);

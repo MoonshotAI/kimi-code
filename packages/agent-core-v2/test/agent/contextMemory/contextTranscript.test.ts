@@ -43,6 +43,7 @@ import {
   type ContextState,
   type PromptOrigin,
 } from '#/agent/contextMemory/types';
+import { deriveVisibleMessages } from '#/agent/contextMemory/visibleWindow';
 import type { WireRecord } from '#/wire/record';
 
 function userMessage(text: string, origin?: PromptOrigin): ContextMessage {
@@ -478,5 +479,31 @@ describe('transcript/model fold parity', () => {
       undo(1),
       undo(1),
     ]);
+  });
+
+  it('settles a frame left open by a failed attempt when compaction lands mid-fold', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1', { kind: 'user' })),
+      ...assistantStep('s1', 'a1'),
+      // The overflow-failed attempt: opened, never ended.
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      compaction('SUM', 3, 1),
+      // The retried step.
+      ...assistantStep('s3', 'a3'),
+    ];
+    let state: ContextState = { messages: [], fold: EMPTY_FOLD };
+    const reducer = createContextTranscriptReducer();
+    for (const record of records) {
+      state = applyRecordToModel(state, record);
+      reducer.add(record);
+    }
+    const result = reducer.result();
+
+    // The stale frame is closed at the marker — if the retried step's
+    // step.begin settled it instead, the drop would cancel the new frame's
+    // length increase and foldedLength would fall one short of the
+    // model-visible window.
+    expect(result.foldedLength).toBe(deriveVisibleMessages(state.messages).length);
+    expect(result.entries.every((m) => m.partial !== true)).toBe(true);
   });
 });

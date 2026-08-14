@@ -48,7 +48,10 @@
  * entry carries. The wire model folds bare `ContextMessage`s
  * (`foldAppendMessage` / `foldLoopEvent` specializations below), while the
  * display transcript (`contextTranscript.ts`) folds time-stamped entries —
- * one reduction semantics, two read models.
+ * one reduction semantics, two read models. `settleOpenStep` stands alone for
+ * read models that must close an open frame outside the event stream (the
+ * transcript applies it when a compaction lands mid-fold, so the retried
+ * step cannot settle a stale frame and skew its length bookkeeping).
  */
 
 import type { FinishReason } from '#/kosong/contract/provider';
@@ -238,7 +241,7 @@ function updateOpenAssistant<E>(
   return { ...state, messages };
 }
 
-function settleOpenStep<E>(
+export function settleOpenStep<E>(
   state: ContextState<E>,
   adapter: FoldEntryAdapter<E>,
   makeEntry: (message: ContextMessage) => E,
