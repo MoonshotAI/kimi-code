@@ -88,6 +88,9 @@ export class AgentSkillService extends Service implements IAgentSkillService {
   }
 
   async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult | undefined> {
+    if (input.input.length === 0) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'promptWithSkills requires a non-empty prompt');
+    }
     await this.skillCatalog.ready;
     const submissionId = input.submissionId ?? randomUUID();
     const prepared = input.skills.map((skill) => this.prepare(skill, submissionId));

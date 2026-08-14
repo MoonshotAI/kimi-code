@@ -129,6 +129,23 @@ describe('promptWithSkills', () => {
     ).toBe(false);
   });
 
+  it('rejects a grouped submission with an empty prompt message', async () => {
+    ctx = agentWithSkills();
+
+    await expect(
+      ctx.rpc.promptWithSkills({
+        input: [],
+        skills: [{ name: 'review' }],
+      }),
+    ).rejects.toThrow(/non-empty prompt/i);
+
+    expect(ctx.llmCalls).toHaveLength(0);
+    expect(ctx.context.get()).toHaveLength(0);
+    expect(
+      ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'skill.activated'),
+    ).toBe(false);
+  });
+
   it('undoes the prompt and its skill activations as one unit', async () => {
     ctx = agentWithSkills();
     ctx.mockNextResponse({ type: 'text', text: 'done' });

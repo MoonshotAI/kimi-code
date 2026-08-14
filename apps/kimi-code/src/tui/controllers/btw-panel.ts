@@ -35,7 +35,11 @@ export class BtwPanelController {
 
   constructor(private readonly host: BtwPanelHost) {}
 
-  open(agentId: string, initialPrompt: string): void {
+  open(
+    agentId: string,
+    initialPrompt: string,
+    inlineSkillActivations?: readonly InlineSkillActivation[],
+  ): void {
     let panel: BtwPanelComponent;
     panel = new BtwPanelComponent({
       markdownTheme: createMarkdownTheme(),
@@ -48,7 +52,7 @@ export class BtwPanelController {
     this.active = { agentId, panel };
     this.panelsByAgentId.set(agentId, panel);
     this.mount(panel);
-    panel.submit(initialPrompt);
+    panel.submit(initialPrompt, inlineSkillActivations);
   }
 
   clear(): void {

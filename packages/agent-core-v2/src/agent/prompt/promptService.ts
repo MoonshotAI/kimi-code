@@ -274,7 +274,13 @@ export class AgentPromptService implements IAgentPromptService {
     try {
       if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') { this.pending.unshift(item); return; }
       const { message, captions } = this.extractCompressionCaptions(item.message);
-      if (await this.blockedByHook(message, false)) {
+      let blocked = false;
+      for (const before of item.messagesBefore) {
+        blocked = (await this.blockedByHook(before, false)) || blocked;
+      }
+      blocked = (await this.blockedByHook(message, false)) || blocked;
+      if (blocked) {
+        for (const before of item.messagesBefore) this.appendPrompt(before, []);
         this.appendPrompt(message, captions); item.state = 'blocked'; item.launchedDeferred.resolve(undefined);
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
         this.publishCompleted(item.id, 'blocked'); return;

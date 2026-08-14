@@ -147,6 +147,37 @@ describe('AgentPromptService', () => {
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
   });
 
+  it('runs the submit hook against grouped messagesBefore content before materialization', async () => {
+    const { prompt, context } = harness();
+    const seen: string[] = [];
+    prompt.hooks.onBeforeSubmitPrompt.register('audit', async (ctx, next) => {
+      seen.push(ctx.promptMessage.content.map((part) => (part.type === 'text' ? part.text : '')).join(''));
+      if (ctx.promptMessage.origin?.kind === 'skill_activation') ctx.block = true;
+      await next();
+    });
+    const skillMessage: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'skill body' }],
+      toolCalls: [],
+      origin: {
+        kind: 'skill_activation',
+        activationId: 'act-1',
+        skillName: 'review',
+        trigger: 'user-slash',
+        submissionId: 'sub-1',
+      },
+    };
+    const promptMessage: ContextMessage = {
+      ...message('the prompt'),
+      origin: { kind: 'user', submissionId: 'sub-1' },
+    };
+    const handle = await prompt.enqueue({ message: promptMessage, messagesBefore: [skillMessage] });
+
+    await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
+    expect(seen).toEqual(['skill body', 'the prompt']);
+    expect(context.get().map((entry) => entry.origin?.kind)).toEqual(['skill_activation', 'user']);
+  });
+
   it('delivers a blocked prompt’s compression captions right after their host message', async () => {
     const { prompt, context } = harness();
     prompt.hooks.onBeforeSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
