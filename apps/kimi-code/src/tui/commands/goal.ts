@@ -191,8 +191,10 @@ function parseNextGoalCommand(tokens: readonly string[]): ParsedGoalCommand {
  * forms (`status`/`pause`/`resume`/`cancel`/`next manage`).
  */
 export function goalObjectiveLengthWarning(text: string): string | undefined {
-  if (!text.startsWith('/goal')) return undefined;
-  const args = text.slice('/goal'.length);
+  // Submitted text is trimmed before dispatch, so match leading whitespace.
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith('/goal')) return undefined;
+  const args = trimmed.slice('/goal'.length);
   // `/goalfoo` is a different (probably unknown) command, not `/goal`.
   if (args.length > 0 && !/\s/.test(args.charAt(0))) return undefined;
   const objective = extractGoalObjective(args);

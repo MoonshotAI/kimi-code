@@ -345,6 +345,18 @@ describe('EditorKeyboardController input changes', () => {
     expect(host.updateGoalLengthWarning).toHaveBeenCalledWith(undefined);
   });
 
+  it('gates on trimmed text because submit trims leading whitespace', () => {
+    const { host, editor } = createHarness();
+    const expanded = `/goal ${'x'.repeat(4001)}`;
+    const getExpandedText = installExpandedText(editor, expanded);
+    const onChange = editor['onChange'] as unknown as (text: string) => void;
+
+    onChange(`  /goal ${'x'.repeat(4001)}`);
+
+    expect(getExpandedText).toHaveBeenCalled();
+    expect(host.updateGoalLengthWarning).toHaveBeenCalledWith(expanded);
+  });
+
   it('skips the goal length warning in bash mode', () => {
     const { host, editor } = createHarness();
     const getExpandedText = installExpandedText(editor, '/goal x');

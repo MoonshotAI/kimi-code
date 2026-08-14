@@ -237,6 +237,10 @@ describe('goalObjectiveLengthWarning', () => {
     expect(warning).toContain('reference the file path');
   });
 
+  it('ignores leading whitespace because submitted text is trimmed', () => {
+    expect(goalObjectiveLengthWarning(`  /goal ${'x'.repeat(4001)}`)).toBeDefined();
+  });
+
   it('warns for over-limit /goal next and /goal replace objectives', () => {
     expect(goalObjectiveLengthWarning(`/goal next ${'x'.repeat(4001)}`)).toBeDefined();
     expect(goalObjectiveLengthWarning(`/goal replace ${'x'.repeat(4001)}`)).toBeDefined();
