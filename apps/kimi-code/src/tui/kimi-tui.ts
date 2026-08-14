@@ -3128,6 +3128,9 @@ export class KimiTUI {
       ...stepIndices.slice(0, stepMergeCount),
       ...assistantIndices.slice(0, assistantMergeCount),
     ];
+    const foldedAssistants = assistantIndices
+      .slice(0, assistantMergeCount)
+      .map((idx) => children[idx] as AssistantMessageComponent);
 
     let thinkingCount = 0;
     let toolCount = 0;
@@ -3146,6 +3149,8 @@ export class KimiTUI {
       summary = new StepSummaryComponent();
       summary.addCounts(thinkingCount, toolCount, assistantMergeCount);
     }
+    summary.addFoldedMessages(foldedAssistants);
+    summary.setExpanded(this.state.toolOutputExpanded && TRANSCRIPT_EXPAND_TURNS > 0);
 
     // Rebuild children: keep everything except the merged steps, with the summary
     // sitting right after the user message.
@@ -3181,6 +3186,10 @@ export class KimiTUI {
 
     const newChildren: Component[] = [];
     const toDispose: Component[] = [];
+    const expandedTurnStart =
+      TRANSCRIPT_EXPAND_TURNS > 0
+        ? Math.max(0, boundaries.length - TRANSCRIPT_EXPAND_TURNS)
+        : boundaries.length;
     for (let i = 0; i < boundaries[0]!; i++) newChildren.push(children[i]!);
 
     for (let t = 0; t < boundaries.length; t++) {
@@ -3213,6 +3222,9 @@ export class KimiTUI {
           ...stepIndices.slice(0, stepMergeCount),
           ...assistantIndices.slice(0, assistantMergeCount),
         ];
+        const foldedAssistants = assistantIndices
+          .slice(0, assistantMergeCount)
+          .map((idx) => children[idx] as AssistantMessageComponent);
         let thinkingCount = 0;
         let toolCount = 0;
         for (const idx of toMergeIndices) {
@@ -3228,6 +3240,8 @@ export class KimiTUI {
           summary = new StepSummaryComponent();
           summary.addCounts(thinkingCount, toolCount, assistantMergeCount);
         }
+        summary.addFoldedMessages(foldedAssistants);
+        summary.setExpanded(this.state.toolOutputExpanded && t >= expandedTurnStart);
         newChildren.push(summary);
         for (const idx of toMergeIndices) toDispose.push(children[idx]!);
         const toMergeSet = new Set(toMergeIndices);
