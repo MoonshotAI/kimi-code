@@ -812,6 +812,59 @@ describe('KimiCore unified MCP management plane', () => {
     });
   }, 30000);
 
+  it('shadows a plugin entry on a session-local add, but still rejects persisted writes', async () => {
+    const http = await startMcpHttpServer();
+    const { core, rpc, workDir } = await makeCore();
+    const pluginRoot = await makePlugin('demo', {
+      api: { transport: 'http', url: http.url },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+    const session = core.sessions.get(created.id)!;
+    await session.mcp.waitForInitialLoad();
+    expect(session.mcp.get('plugin-demo:api')?.source).toBe('plugin');
+
+    // A session-local add is caller injection, which shadows every registry
+    // source — plugins included — exactly like session-start injection does.
+    const caller = await rpc.addSessionMcpServer({
+      sessionId: created.id,
+      server: {
+        name: 'plugin-demo:api',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [STDIO_FIXTURE],
+      },
+    });
+    expect(caller).toMatchObject({
+      name: 'plugin-demo:api',
+      status: 'connected',
+      source: 'caller',
+    });
+
+    // Persisting the same name is still a user-level write behind a read-only
+    // plugin owner (registry guard), so it is rejected and nothing is stored.
+    await expect(
+      rpc.addSessionMcpServer({
+        sessionId: created.id,
+        server: {
+          name: 'plugin-demo:api',
+          transport: 'stdio',
+          command: process.execPath,
+          args: [STDIO_FIXTURE],
+        },
+        persist: true,
+      }),
+    ).rejects.toMatchObject({ code: 'request.invalid' });
+    // Nothing landed in the mutable user-level file: the only entry for this
+    // name remains the plugin's read-only descriptor.
+    const listed = await core.listGlobalMcpServers({});
+    expect(
+      listed
+        .filter((entry) => entry.name === 'plugin-demo:api')
+        .every((entry) => entry.mutable === false),
+    ).toBe(true);
+  }, 30000);
+
   it('keeps caller-injected servers when a plugin collides on the runtime name', async () => {
     const http = await startMcpHttpServer();
     const { core, rpc, workDir } = await makeCore();

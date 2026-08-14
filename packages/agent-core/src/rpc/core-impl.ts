@@ -1393,7 +1393,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }: SessionScopedPayload<AddSessionMcpServerPayload>): Promise<McpServerInfo> {
     const session = this.requireSession(sessionId);
     const existing = session.mcp.get(server.name);
-    if (existing?.source === 'plugin') {
+    // A session-local (non-persist) add is caller injection, which shadows
+    // every registry source at startup — plugins included — so it passes
+    // here and reconciles untouched later. A persisted add is a user-level
+    // write, which must not hide behind a read-only plugin owner.
+    if (persist === true && existing?.source === 'plugin') {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
         `MCP server "${server.name}" is contributed by a plugin; update the plugin manifest instead`,
