@@ -1209,9 +1209,7 @@ describe('v1↔v2 plugin parity', () => {
 // referenced path, so sharing it makes the workDir / additionalDirs /
 // configPath comparisons exact). Explicit session ids keep identity
 // comparisons meaningful. No provider calls anywhere — create / resume /
-// reload / fork never touch a model. `deleteSession` has no parity case:
-// the v2 engine has no session-deletion capability, so the v2 side stays
-// not_implemented by design (tracked in `.tmp/v2-migration-tracker.md`).
+// reload / fork / delete never touch a model.
 // ---------------------------------------------------------------------------
 
 interface SessionParityPair {
@@ -1295,6 +1293,96 @@ async function appendMainWireRecord(
     }
   }
   throw new Error(`wire.jsonl for ${sessionId} not found under ${sessionsRoot}`);
+}
+
+/**
+ * The on-disk session directory under the given home (both engines lay
+ * sessions out as `<home>/sessions/<workdir-key>/<id>`).
+ */
+async function sessionDirPath(home: HomePair, sessionId: string): Promise<string> {
+  const sessionsRoot = join(home.raw, 'sessions');
+  for (const bucket of await readdir(sessionsRoot)) {
+    const dir = join(sessionsRoot, bucket, sessionId);
+    try {
+      await readdir(dir);
+      return dir;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  throw new Error(`session dir for ${sessionId} not found under ${sessionsRoot}`);
+}
+
+/**
+ * Fabricate a subagent on disk the way the engine would have left it: a
+ * `wire.jsonl` opening with the main wire's protocol envelope re-stamped to
+ * the subagent's creation time, plus a state.json `agents` entry. Feeds the
+ * SAME subagent through both engines' fork paths.
+ */
+async function fabricateSubagentWire(
+  sessionDir: string,
+  agentId: string,
+  createdAt: number,
+  records: readonly JsonObject[],
+): Promise<void> {
+  const mainWire = await readFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+  const envelope = {
+    ...(JSON.parse(mainWire.split('\n', 1)[0]!) as Record<string, unknown>),
+    created_at: createdAt,
+  };
+  const agentDir = join(sessionDir, 'agents', agentId);
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(
+    join(agentDir, 'wire.jsonl'),
+    `${[envelope, ...records].map((record) => JSON.stringify(record)).join('\n')}\n`,
+    'utf-8',
+  );
+  const statePath = join(sessionDir, 'state.json');
+  const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
+  const agents = (state['agents'] ?? {}) as Record<string, unknown>;
+  agents[agentId] = { homedir: agentDir, type: 'sub', parentAgentId: 'main' };
+  state['agents'] = agents;
+  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf-8');
+}
+
+/** The `user:`/`assistant:` text lines of a fork/resume result's main replay. */
+function replayMessageTexts(resumed: ResumedSessionSummary): readonly string[] {
+  const entries: string[] = [];
+  for (const record of resumed.agents['main']?.replay ?? []) {
+    if (record.type !== 'message') continue;
+    const message = record.message;
+    entries.push(
+      `${message.role}:${message.content
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text ?? '')
+        .join('')}`,
+    );
+  }
+  return entries;
+}
+
+/**
+ * Whether the persisted session directory still exists under the home (both
+ * engines lay sessions out as `<home>/sessions/<workdir-key>/<id>`).
+ */
+async function sessionDirExists(home: HomePair, sessionId: string): Promise<boolean> {
+  const sessionsRoot = join(home.raw, 'sessions');
+  let buckets: readonly string[];
+  try {
+    buckets = await readdir(sessionsRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+  for (const bucket of buckets) {
+    try {
+      await readdir(join(sessionsRoot, bucket, sessionId));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && (error as NodeJS.ErrnoException).code !== 'ENOTDIR') throw error;
+    }
+  }
+  return false;
 }
 
 describe('v1↔v2 session lifecycle parity', () => {
@@ -1451,6 +1539,41 @@ describe('v1↔v2 session lifecycle parity', () => {
     }
   });
 
+  it('deleteSession removes the session from the listing and disk on both engines', async () => {
+    const pair = await makeSessionParityPair();
+    try {
+      await createOnBoth(pair, { id: 'session_parity_delete' });
+      // Deleting a live session closes it first on both engines.
+      await Promise.all([
+        pair.v1.deleteSession({ sessionId: 'session_parity_delete' }),
+        pair.v2.deleteSession({ sessionId: 'session_parity_delete' }),
+      ]);
+      const project = KNOWN_DIFFS.listSessions;
+      const [v1List, v2List] = await Promise.all([
+        pair.v1.listSessions(),
+        pair.v2.listSessions(),
+      ]);
+      expect(normalize(project(v2List, pair.v2Home), 'id')).toEqual(
+        normalize(project(v1List, pair.v1Home), 'id'),
+      );
+      expect(v1List).toHaveLength(0);
+      // The persisted session directory is gone on both engines.
+      expect(await sessionDirExists(pair.v1Home, 'session_parity_delete')).toBe(false);
+      expect(await sessionDirExists(pair.v2Home, 'session_parity_delete')).toBe(false);
+      // Resume and re-delete reject with session_not_found on both engines.
+      for (const client of [pair.v1, pair.v2]) {
+        await expect(client.resumeSession({ id: 'session_parity_delete' })).rejects.toMatchObject({
+          code: ErrorCodes.SESSION_NOT_FOUND,
+        });
+        await expect(
+          client.deleteSession({ sessionId: 'session_parity_delete' }),
+        ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+      }
+    } finally {
+      await closeSessionPair(pair);
+    }
+  });
+
   it('forkSession copies the session with merged metadata on both engines', async () => {
     const pair = await makeSessionParityPair();
     try {
@@ -1490,6 +1613,143 @@ describe('v1↔v2 session lifecycle parity', () => {
         'session_parity_fork',
         'session_parity_source',
       ]);
+    } finally {
+      await closeSessionPair(pair);
+    }
+  });
+
+  it('forkSession truncates at the given turn index identically on both engines', async () => {
+    const pair = await makeSessionParityPair();
+    try {
+      // Source metadata: a metadata-less fork reports `{}` on v1 vs an unset
+      // field on v2 (pre-existing gap the full-fork case above never hits) —
+      // a non-empty map compares exactly.
+      await createOnBoth(pair, {
+        id: 'session_parity_fork_turns',
+        metadata: { origin: 'fork-turns' },
+      });
+      // See materializeMainAgentOnBoth: v2's main agent is lazy, so
+      // materialize it on the source first.
+      await materializeMainAgentOnBoth(pair, 'session_parity_fork_turns');
+      await Promise.all([
+        pair.v1.closeSession({ sessionId: 'session_parity_fork_turns' }),
+        pair.v2.closeSession({ sessionId: 'session_parity_fork_turns' }),
+      ]);
+      // Both sessions closed: feed the SAME three user-visible turns into
+      // each engine's main wire (a turn.prompt op plus the user/assistant
+      // append_message pair, the shape a real prompt journals). Times start
+      // at the close moment so every pre-existing record sits before them.
+      const t0 = Date.now();
+      const turnRecords = (question: string, answer: string, start: number): JsonObject[] => [
+        {
+          type: 'turn.prompt',
+          input: [{ type: 'text', text: question }],
+          origin: { kind: 'user' },
+          time: start,
+        },
+        {
+          type: 'context.append_message',
+          message: { role: 'user', content: [{ type: 'text', text: question }] },
+          time: start + 1,
+        },
+        {
+          type: 'context.append_message',
+          message: { role: 'assistant', content: [{ type: 'text', text: answer }] },
+          time: start + 2,
+        },
+      ];
+      const records = [
+        ...turnRecords('first question', 'first answer', t0 + 1),
+        ...turnRecords('second question', 'second answer', t0 + 11),
+        ...turnRecords('third question', 'third answer', t0 + 21),
+      ];
+      for (const record of records) {
+        await appendMainWireRecord(pair.v1Home, 'session_parity_fork_turns', record);
+        await appendMainWireRecord(pair.v2Home, 'session_parity_fork_turns', record);
+      }
+      // Two subagents fabricated on disk for both engines: one whose records
+      // predate the cut (retained), one created after it (dropped).
+      for (const home of [pair.v1Home, pair.v2Home]) {
+        const sessionDir = await sessionDirPath(home, 'session_parity_fork_turns');
+        await fabricateSubagentWire(sessionDir, 'sub_old', t0 + 4, [
+          {
+            type: 'context.append_message',
+            message: { role: 'user', content: [{ type: 'text', text: 'old sub task' }] },
+            time: t0 + 5,
+          },
+          {
+            type: 'context.append_message',
+            message: { role: 'assistant', content: [{ type: 'text', text: 'old sub done' }] },
+            time: t0 + 6,
+          },
+        ]);
+        await fabricateSubagentWire(sessionDir, 'sub_new', t0 + 23, [
+          {
+            type: 'context.append_message',
+            message: { role: 'user', content: [{ type: 'text', text: 'late sub task' }] },
+            time: t0 + 24,
+          },
+        ]);
+      }
+
+      const input = {
+        id: 'session_parity_fork_turns',
+        forkId: 'session_parity_fork_cut',
+        title: 'Cut Fork',
+        turnIndex: 1,
+      } as const;
+      const [v1Fork, v2Fork] = await Promise.all([
+        pair.v1.forkSession(input),
+        pair.v2.forkSession(input),
+      ]);
+      const project = KNOWN_DIFFS.forkSession;
+      expect(project(v2Fork as ResumedSessionSummary, pair.v2Home)).toEqual(
+        project(v1Fork as ResumedSessionSummary, pair.v1Home),
+      );
+      // lastPrompt re-derives from the retained turn, and the replay holds
+      // exactly the turns through the cut — on both engines.
+      expect(v1Fork.lastPrompt).toBe('second question');
+      expect(v2Fork.lastPrompt).toBe('second question');
+      const expectedReplay = [
+        'user:first question',
+        'assistant:first answer',
+        'user:second question',
+        'assistant:second answer',
+      ];
+      expect(replayMessageTexts(v1Fork as ResumedSessionSummary)).toEqual(expectedReplay);
+      expect(replayMessageTexts(v2Fork as ResumedSessionSummary)).toEqual(expectedReplay);
+      // The subagent created after the cut is omitted on both engines.
+      expect(
+        Object.keys((v1Fork as ResumedSessionSummary).sessionMetadata.agents).toSorted(),
+      ).toEqual(['main', 'sub_old']);
+      expect(
+        Object.keys((v2Fork as ResumedSessionSummary).sessionMetadata.agents).toSorted(),
+      ).toEqual(['main', 'sub_old']);
+
+      // A negative index rejects with request.invalid on both engines.
+      await expect(
+        pair.v1.forkSession({ id: input.id, forkId: 'session_parity_fork_neg', turnIndex: -1 }),
+      ).rejects.toMatchObject({ code: ErrorCodes.REQUEST_INVALID, details: { turnIndex: -1 } });
+      await expect(
+        pair.v2.forkSession({ id: input.id, forkId: 'session_parity_fork_neg', turnIndex: -1 }),
+      ).rejects.toMatchObject({ code: ErrorCodes.REQUEST_INVALID, details: { turnIndex: -1 } });
+
+      // An out-of-range index rejects with the available turn count and
+      // leaves no fork behind on either engine.
+      await expect(
+        pair.v1.forkSession({ id: input.id, forkId: 'session_parity_fork_oob', turnIndex: 5 }),
+      ).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+        details: { turnIndex: 5, availableTurns: 3 },
+      });
+      await expect(
+        pair.v2.forkSession({ id: input.id, forkId: 'session_parity_fork_oob', turnIndex: 5 }),
+      ).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+        details: { turnIndex: 5, availableTurns: 3 },
+      });
+      expect(await sessionDirExists(pair.v1Home, 'session_parity_fork_oob')).toBe(false);
+      expect(await sessionDirExists(pair.v2Home, 'session_parity_fork_oob')).toBe(false);
     } finally {
       await closeSessionPair(pair);
     }
@@ -2505,6 +2765,26 @@ describe('v1↔v2 agent interaction parity', () => {
       expect(v2List[0]?.title).toBe('steer text');
       expect(v2List[0]?.lastPrompt).toBe('steer text');
       await settleTurns();
+    } finally {
+      await closeSessionPair(pair);
+      restoreEnv();
+    }
+  });
+
+  it('cancel is a silent no-op on an idle session and rejects a missing session identically', async () => {
+    const restoreEnv = scrubConfigEnv();
+    const pair = await makeSessionParityPair();
+    try {
+      await createOnBoth(pair, { id: 'session_parity_agent_cancel' });
+      const input = { sessionId: 'session_parity_agent_cancel' } as const;
+      // No turn is running: cancel resolves without an effect on both engines.
+      await Promise.all([pair.v1.cancel(input), pair.v2.cancel(input)]);
+      await expect(pair.v1.cancel({ sessionId: 'session_missing' })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+      await expect(pair.v2.cancel({ sessionId: 'session_missing' })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
     } finally {
       await closeSessionPair(pair);
       restoreEnv();

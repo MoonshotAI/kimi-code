@@ -95,6 +95,11 @@
             "Share when active file changes"
           ],
           "description": "Control when to share the active editor's file and cursor position with Kimi"
+        },
+        "kimi.useAgentCoreV1": {
+          "type": "boolean",
+          "default": false,
+          "description": "Temporary rollback switch: run Kimi on the legacy v1 engine instead of the current one. This setting will be removed in a future version. Requires a window reload to take effect."
         }
       }
     },

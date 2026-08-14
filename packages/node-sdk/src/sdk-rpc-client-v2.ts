@@ -26,17 +26,15 @@
  *   is needed. Unlike the config domain, the v2 plugin service serializes
  *   every read behind its own initial load, so there is no ready trap here.
  * - `listSessions` / `createSession` / `renameSession` / `forkSession` /
- *   `closeSession` / `resumeSession` / `reloadSession` /
+ *   `closeSession` / `resumeSession` / `reloadSession` / `deleteSession` /
  *   `updateSessionMetadata` / `addAdditionalDir` → the session lifecycle
  *   batch: `klient.global.sessions.list` plus the `klient.session(id)`
  *   metadata mutations where the facade reaches, and the
  *   `IWorkspaceLifecycleService` / handler chain / session-scope services through
  *   {@link engineAccessor} where it does not (explicit session ids, resume,
- *   fork ids, the workspace-level add-dir surface). The v1 `SessionSummary` / `SessionMeta`
+ *   fork ids, delete, the workspace-level add-dir surface). The v1 `SessionSummary` / `SessionMeta`
  *   shapes are restored by the pure mapping layer in
- *   `src/v2/session-mapper.ts`. `deleteSession` stays `not_implemented` —
- *   the v2 engine has no session-deletion capability anywhere (tracked in
- *   `.tmp/v2-migration-tracker.md`). The resumed results carry the full v1
+ *   `src/v2/session-mapper.ts`. The resumed results carry the full v1
  *   per-agent snapshot: the live slices are read from the restored agent
  *   scope (profile / permission / swarm services + the klient agent facade),
  *   while `replay` and `toolStore` are folded from each agent's `wire.jsonl`
@@ -44,8 +42,10 @@
  *   (`src/v2/resume-replay.ts`) — `includeSubagents` and `replayTurnLimit`
  *   included.
  * - `setModel` / `setPermission` / `setPlanMode` / `getPlan` / `clearPlan` /
- *   `getContext` / `getUsage` / `cancel` / `listCommands` / `runCommand` →
- *   the `klient.session(id).agent(id)` facade; `setThinking` / `compact` /
+ *   `getContext` / `getUsage` / `listCommands` / `runCommand` →
+ *   the `klient.session(id).agent(id)` facade; `cancel` → the same facade
+ *   plus `ISessionInitService.cancelInit` (v1's cascade to the session-level
+ *   /init run); `setThinking` / `compact` /
  *   `cancelCompaction` / `undoHistory` / `clearContext` / `importContext` →
  *   agent-scope services through the live
  *   session handle (no facade exists); `getStatus` → the same six-slice
@@ -369,7 +369,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * Per-session print-steer state for `handlePrintMainTurnCompleted`: v1
    * keeps the deadline/turn counters on the `Session` object, so they reset
    * when the session closes (a resume builds a fresh `Session`); mirrored
-   * here by deleting the entry in `closeSession` / `reloadSession`.
+   * here by deleting the entry in {@link unwireSession}, which every close
+   * path (client, engine, delete) funnels through.
    */
   private readonly printSteerStates = new Map<string, { deadline?: number; turns: number }>();
   /**
@@ -913,6 +914,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   private unwireSession(sessionId: string): void {
+    // v1's print-steer counters die with the Session object; drop ours with
+    // every close path (ours, the engine's, or a delete).
+    this.printSteerStates.delete(sessionId);
     const wiring = this.sessionWirings.get(sessionId);
     if (wiring === undefined) return;
     this.sessionWirings.delete(sessionId);
@@ -1277,20 +1281,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * Through `engineAccessor` (the handler chain's `ISessionLifecycleService.fork`) because the
-   * klient facade fork takes no explicit target id. Known gaps vs v1: the
-   * engine's fork is unconditional — it never rejects an in-flight source
-   * turn (v1's SESSION_FORK_ACTIVE_TURN) — and `turnIndex` truncation has no
-   * v2 counterpart at all, so it fails loudly. The default title also differs
-   * by design (v1: "New Session", v2: "Fork: <source>") — pass an explicit
-   * title for identical results.
+   * klient facade fork takes no explicit target id. `turnIndex` truncation and
+   * the live-source busy rejection (v1's `SESSION_FORK_ACTIVE_TURN`) are the
+   * engine's own now, so their failures cross the in-process call with v1's
+   * codes and details (`request.invalid` with `{turnIndex, availableTurns}` /
+   * `session.fork_active_turn`). The default title still differs by design
+   * (v1: "New Session", v2: "Fork: <source>") — pass an explicit title for
+   * identical results.
    */
   override async forkSession(input: ForkSessionInput): Promise<SessionSummary> {
-    if (input.turnIndex !== undefined) {
-      throw new KimiError(
-        ErrorCodes.NOT_IMPLEMENTED,
-        'forkSession turnIndex truncation is not wired to agent-core-v2 yet.',
-      );
-    }
     // The source session's reads (metadata, wire flush) stay atomic against
     // its close/reload through the per-session queue; an explicit target id
     // takes a second (sorted) queue so fork(A→X) is also atomic against
@@ -1305,6 +1304,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           newSessionId: input.forkId,
           title: input.title,
           metadata: input.metadata,
+          turnIndex: input.turnIndex,
         });
         this.wireSession(handle);
         return this.resumedSessionSummary(handle);
@@ -1313,11 +1313,41 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async closeSession(input: SessionIdRpcInput): Promise<void> {
-    // v1's print-steer counters die with the Session object; drop ours too.
-    this.printSteerStates.delete(input.sessionId);
     await this.runSessionAccess(input.sessionId, () =>
       this.klient.session(input.sessionId).close(),
     );
+  }
+
+  /**
+   * Through `engineAccessor` (the handler chain's
+   * `ISessionLifecycleService.delete`) because the klient facade's
+   * `session(id).delete()` reports a missing session with its own
+   * `RPCError(NOT_FOUND)` where v1's store failure is a
+   * `KimiError(SESSION_NOT_FOUND)` — the pre-check here keeps the v1 shape.
+   * The engine's delete mirrors v1's order: close the live session first
+   * (which also drops this client's wiring via the close subscription), then
+   * remove the session dir, the index entry, and journal the deletion.
+   */
+  override async deleteSession(input: SessionIdRpcInput): Promise<void> {
+    // Same per-session queue as close/reload: a delete serializes against
+    // every other lifecycle operation on the session.
+    return this.runSessionAccess(input.sessionId, async () => {
+      const handler = await handlerForSession(this.engineAccessor, input.sessionId);
+      if (handler === undefined) throw SDKRpcClientV2.sessionNotFound(input.sessionId);
+      try {
+        await handler.accessor.get(ISessionLifecycleService).delete(input.sessionId);
+      } catch (error) {
+        // The session vanished between the index check and the delete: the
+        // engine's own not-found crosses as an Error2 — restate it in v1's shape.
+        if (
+          error instanceof Error &&
+          (error as { code?: unknown }).code === ErrorCodes.SESSION_NOT_FOUND
+        ) {
+          throw SDKRpcClientV2.sessionNotFound(input.sessionId);
+        }
+        throw error;
+      }
+    });
   }
 
   /**
@@ -1381,9 +1411,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       if (live !== undefined) {
         await closeSessionById(this.engineAccessor, sessionId);
       }
-      // Same print-steer reset as closeSession: v1's reload rebuilds the
-      // Session, and with it the counters.
-      this.printSteerStates.delete(sessionId);
       const handle = await resumeSessionById(this.engineAccessor, sessionId);
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
       const main = handle.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
@@ -1670,7 +1697,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     };
   }
 
+  /**
+   * Facade (`agentLoopService.cancelFromUser`) plus the session-level init
+   * run: v1's cancel cascades from the agent's turn to every foreground
+   * subagent run of the session, and /init is the one session-level run v2
+   * keeps off the agent turn lane — its abort controller lives in
+   * `ISessionInitService` (a silent no-op when no init is running).
+   */
   override async cancel(input: SessionIdRpcInput): Promise<void> {
+    const session = this.requireLiveSession(input.sessionId);
+    session.accessor.get(ISessionInitService).cancelInit();
     const agent = await this.agentFacade(input.sessionId);
     return agent.cancel();
   }

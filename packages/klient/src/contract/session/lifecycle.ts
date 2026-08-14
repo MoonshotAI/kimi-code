@@ -37,15 +37,17 @@ export const resumeSessionOptionsSchema = z.object({
   mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
 });
 
+/** Same fields as `ForkSessionOptions` in the engine — keep in sync. */
 export const forkSessionOptionsSchema = z.object({
   sourceSessionId: z.string(),
   newSessionId: z.string().optional(),
   title: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  turnIndex: z.number().optional(),
 });
 
-/** Same fields as `ForkSessionOptions` in the engine — keep in sync. */
-export const createChildSessionOptionsSchema = forkSessionOptionsSchema;
+/** Same fields as `ForkSessionOptions` in the engine, minus the fork-only truncation. */
+export const createChildSessionOptionsSchema = forkSessionOptionsSchema.omit({ turnIndex: true });
 
 /** `IScopeHandle` as it survives JSON — `{ id, kind }` plus extras. */
 export const handleWireSchema = z.looseObject({

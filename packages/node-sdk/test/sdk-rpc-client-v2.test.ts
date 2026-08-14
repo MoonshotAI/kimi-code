@@ -1,9 +1,10 @@
 /**
- * Scenario: v2 wiring MVP — the harness talks to the in-process agent-core-v2
+ * Scenario: v2 wiring — the harness talks to the in-process agent-core-v2
  * engine (klient memory transport) instead of the v1 KimiCore RPC pair.
- * Responsibilities: `getExperimentalFeatures` is migrated end-to-end; every
- * not-yet-migrated method fails loudly with `not_implemented` instead of
- * silently hitting a v1 core.
+ * Responsibilities: v2-client behaviors the v1↔v2 parity gate does not
+ * compare (engine telemetry forwarding, host request headers, the Windows
+ * Git Bash probe, workspace trust, the config write cascade, deleteSession,
+ * foldAgentWireReplay).
  * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; remote provider calls are stubbed.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
@@ -21,7 +22,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createKimiHarnessV2,
   ErrorCodes,
-  KimiError,
   KimiHarness,
   removeProviderFromConfig,
   SDKRpcClientV2,
@@ -92,7 +92,26 @@ async function makeHarness(): Promise<{ harness: KimiHarness; homeDir: string }>
   return { harness: createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY }), homeDir };
 }
 
-describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
+/** Whether the persisted session directory exists under `<home>/sessions/<bucket>/<id>`. */
+async function sessionDirExists(homeDir: string, sessionId: string): Promise<boolean> {
+  let buckets: readonly string[];
+  try {
+    buckets = await readdir(join(homeDir, 'sessions'));
+  } catch {
+    return false;
+  }
+  for (const bucket of buckets) {
+    try {
+      await readdir(join(homeDir, 'sessions', bucket, sessionId));
+      return true;
+    } catch {
+      // Not under this bucket.
+    }
+  }
+  return false;
+}
+
+describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
   it('reports global MCP authorization from the persisted v2 credential store', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
@@ -792,15 +811,19 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('fails loudly with not_implemented for methods not yet migrated', async () => {
-    const { harness } = await makeHarness();
+  it('deleteSession removes a session and rejects a missing id with session_not_found', async () => {
+    const { harness, homeDir } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
     try {
-      // `deleteSession` is the permanent case: the v2 engine has no
-      // session-deletion capability, so it stays not_implemented by design
-      // (tracked in `.tmp/v2-migration-tracker.md`).
-      await expect(harness.deleteSession('session_missing')).rejects.toThrowError(KimiError);
+      const session = await harness.createSession({ workDir });
+      await harness.deleteSession(session.id);
+      await expect(harness.resumeSession({ id: session.id })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+      expect(await sessionDirExists(homeDir, session.id)).toBe(false);
       await expect(harness.deleteSession('session_missing')).rejects.toMatchObject({
-        code: ErrorCodes.NOT_IMPLEMENTED,
+        code: ErrorCodes.SESSION_NOT_FOUND,
       });
     } finally {
       await harness.close();

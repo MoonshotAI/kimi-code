@@ -38,6 +38,22 @@
  * live Agent wire journals, normalizes a missing protocol envelope, and
  * appends the fork boundary before restoring the target Agent; fork is
  * confined to this handler (source and target share the workspace bucket).
+ * Fork rejects a LIVE source with an active turn
+ * (`session.fork_active_turn`, read off the agents' `activityView`); a
+ * closed source forks from disk unchecked. The copied file set drops the
+ * v1-only `upcoming-goals.json` goal queue on every fork. A fork carrying
+ * a `turnIndex` truncates the copy through the addressed user-visible turn
+ * (the slicing itself lives in `internal/forkTurnSlice.ts`, with the
+ * `prompt` domain's metadata-text normalization deriving the fork's
+ * `lastPrompt` from the addressed turn): the main wire is sliced at the
+ * turn boundary keeping only matched turn inputs, subagent wires time-cut
+ * at the main slice's latest record time and subagents left empty are
+ * dropped with their copied files, retained agents' `tasks/` and `cron/`
+ * dirs are cleared, and cron duplication is skipped. The slice runs before
+ * any target artifact exists, so an out-of-range index fails without a
+ * cleanup pass. v1's missing-parent sweep has no counterpart: v2 agent metas
+ * parent `main` by construction, so a retained agent's chain cannot dangle
+ * outside fabricated wires.
  * Fork restores the source's recency onto the target: the metadata write
  * carries an explicit `updatedAt` and runs after agent recreation as the
  * fork's final metadata write (agent registration is non-touching), ahead
@@ -157,8 +173,14 @@ import {
   IWorkspaceAgentProfileLoader,
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import { IAgentActivityView } from '#/agent/activityView/activityView';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
+import {
+  assertForkTurnIndex,
+  sliceMainRecordsAtTurn,
+  sliceSubagentRecordsAtTime,
+} from './internal/forkTurnSlice';
 import {
   type CreateChildSessionOptions,
   type CreateSessionOptions,
@@ -508,6 +530,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     ) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sourceId} does not exist`);
     }
+    if (sourceHandle !== undefined) {
+      for (const agent of sourceHandle.accessor.get(IAgentLifecycleService).list()) {
+        if (agent.accessor.get(IAgentActivityView).state().turn !== undefined) {
+          throw new Error2(
+            ErrorCodes.SESSION_FORK_ACTIVE_TURN,
+            `Session "${sourceId}" cannot be forked while a turn is running`,
+            { details: { sessionId: sourceId } },
+          );
+        }
+      }
+    }
+    assertForkTurnIndex(opts.turnIndex);
 
     let targetId: string | undefined;
     let target: ISessionScopeHandle | undefined;
@@ -531,6 +565,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         );
       }
 
+      const turnSlice =
+        opts.turnIndex === undefined
+          ? undefined
+          : sliceMainRecordsAtTurn(
+              await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID),
+              sourceId,
+              opts.turnIndex,
+            );
+
       targetSessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, targetId);
       await this.copySessionFiles(
         sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sourceId),
@@ -546,18 +589,38 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
       const sourceAgents = sourceMeta?.agents ?? {};
       const agentIds = Object.keys(sourceAgents);
+      const retainedAgentIds: string[] = [];
       for (const agentId of agentIds) {
+        let slicedRecords: readonly WireRecord[] | undefined;
+        if (turnSlice !== undefined) {
+          if (agentId === MAIN_AGENT_ID) {
+            slicedRecords = turnSlice.records;
+          } else {
+            const subagentRecords = sliceSubagentRecordsAtTime(
+              await this.readSourceWireRecords(sourceHandle, sourceId, agentId),
+              turnSlice.cutoffTime,
+            );
+            if (subagentRecords.length === 0) continue;
+            slicedRecords = subagentRecords;
+          }
+        }
         await this.copyAgentWire({
           sourceHandle,
           sourceSessionId: sourceId,
           agentId,
           targetSessionId: targetCtx.sessionId,
+          records: slicedRecords,
         });
+        retainedAgentIds.push(agentId);
+      }
+
+      if (turnSlice !== undefined) {
+        await this.pruneTruncatedForkFiles(targetSessionDir, agentIds, retainedAgentIds);
       }
 
       const title = opts.title ?? `Fork: ${sourceMeta?.title || sourceId}`;
 
-      for (const agentId of agentIds) {
+      for (const agentId of retainedAgentIds) {
         const sourceAgent = sourceAgents[agentId]!;
         await target.accessor.get(IAgentLifecycleService).create({
           agentId,
@@ -572,7 +635,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         forkedFrom: sourceId,
         archived: false,
         updatedAt: toEpochMs(sourceMeta?.updatedAt) || Date.now(),
-        lastPrompt: sourceMeta?.lastPrompt,
+        lastPrompt: turnSlice === undefined ? sourceMeta?.lastPrompt : turnSlice.lastPrompt,
         // The fork continues the source's conversation, so it inherits the
         // last turn's outcome too — otherwise a restart would drop a failure
         // the warm fork was still reporting.
@@ -580,7 +643,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
       });
 
-      await this.duplicateCronTasks(sourceId, targetId);
+      if (turnSlice === undefined) {
+        await this.duplicateCronTasks(sourceId, targetId);
+      }
 
       await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
       this._onDidForkSession.fire({
@@ -637,22 +702,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     readonly sourceSessionId: string;
     readonly agentId: string;
     readonly targetSessionId: string;
+    readonly records?: readonly WireRecord[];
   }): Promise<void> {
-    if (args.sourceHandle !== undefined) {
-      const agentHandle = args.sourceHandle.accessor
-        .get(IAgentLifecycleService)
-        .get(args.agentId);
-      if (agentHandle !== undefined) {
-        await agentHandle.accessor.get(IWireService).flush();
-      }
-    }
-
-    const records = await collect(
-      this.appendLogStore.read<WireRecord>(
-        agentScopeOf(sessionScopeOf(this.handlerScope, args.sourceSessionId), args.agentId),
-        AGENT_WIRE_RECORD_KEY,
-      ),
-    );
+    const records = [
+      ...(args.records ??
+        (await this.readSourceWireRecords(args.sourceHandle, args.sourceSessionId, args.agentId))),
+    ];
     if (records.length === 0) {
       records.push(createWireMetadataRecord());
     } else if (records[0]?.type !== 'metadata') {
@@ -665,6 +720,44 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       AGENT_WIRE_RECORD_KEY,
       records,
     );
+  }
+
+  private async readSourceWireRecords(
+    sourceHandle: ISessionScopeHandle | undefined,
+    sourceSessionId: string,
+    agentId: string,
+  ): Promise<WireRecord[]> {
+    if (sourceHandle !== undefined) {
+      const agentHandle = sourceHandle.accessor.get(IAgentLifecycleService).get(agentId);
+      if (agentHandle !== undefined) {
+        await agentHandle.accessor.get(IWireService).flush();
+      }
+    }
+    return collect(
+      this.appendLogStore.read<WireRecord>(
+        agentScopeOf(sessionScopeOf(this.handlerScope, sourceSessionId), agentId),
+        AGENT_WIRE_RECORD_KEY,
+      ),
+    );
+  }
+
+  private async pruneTruncatedForkFiles(
+    targetSessionDir: string,
+    agentIds: readonly string[],
+    retainedAgentIds: readonly string[],
+  ): Promise<void> {
+    const retained = new Set(retainedAgentIds);
+    const removals: Promise<void>[] = [];
+    for (const agentId of agentIds) {
+      if (retained.has(agentId)) continue;
+      removals.push(this.hostFs.remove(join(targetSessionDir, 'agents', agentId)));
+    }
+    for (const agentId of retainedAgentIds) {
+      const agentDir = join(targetSessionDir, 'agents', agentId);
+      removals.push(this.hostFs.remove(join(agentDir, 'tasks')));
+      removals.push(this.hostFs.remove(join(agentDir, 'cron')));
+    }
+    await Promise.all(removals);
   }
 
   private async copySessionFiles(sourceDir: string, targetDir: string): Promise<void> {
@@ -686,7 +779,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   ): Promise<void> {
     for (const entry of entries) {
       const rel = relBase === '' ? entry.name : `${relBase}/${entry.name}`;
-      if (rel === 'state.json' || rel === 'logs' || entry.name === AGENT_WIRE_RECORD_KEY) {
+      if (rel === 'state.json' || rel === 'logs' || rel === 'upcoming-goals.json' || entry.name === AGENT_WIRE_RECORD_KEY) {
         continue;
       }
       if (entry.isSymbolicLink === true) continue;

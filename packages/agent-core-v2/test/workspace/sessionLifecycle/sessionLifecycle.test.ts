@@ -351,6 +351,136 @@ function appendLogStoreStub(): IAppendLogStore {
   };
 }
 
+/**
+ * In-memory wire store for fork tests: `wires` maps `<sessionId>/<agentId>`
+ * to the source records served by `read`; every `rewrite` is captured under
+ * the same key shape so tests can assert exactly what a fork persisted.
+ */
+function wireStoreStub(wires: Readonly<Record<string, readonly unknown[]>>): {
+  readonly store: IAppendLogStore;
+  readonly rewritten: Map<string, unknown[]>;
+} {
+  const rewritten = new Map<string, unknown[]>();
+  const keyOf = (scope: string, key: string): string => {
+    const match = /([^/]+)\/agents\/([^/]+)$/.exec(scope);
+    return match === null ? `${scope}/${key}` : `${match[1]}/${match[2]}`;
+  };
+  const store: IAppendLogStore = {
+    _serviceBrand: undefined,
+    append: () => {},
+    read: <R>(scope: string, key: string): AsyncIterable<R> => {
+      const records = wires[keyOf(scope, key)] ?? [];
+      return (async function* () {
+        for (const record of records) {
+          yield record as R;
+        }
+      })();
+    },
+    rewrite: <R>(scope: string, key: string, records: readonly R[]) => {
+      rewritten.set(keyOf(scope, key), [...records]);
+      return Promise.resolve();
+    },
+    flush: () => Promise.resolve(),
+    close: () => Promise.resolve(),
+    acquire: () => ({ dispose: () => {} }),
+  };
+  return { store, rewritten };
+}
+
+function wireEnvelopeRecord(time: number): Record<string, unknown> {
+  return { type: 'metadata', protocol_version: '1.5', created_at: time };
+}
+
+function turnPromptRecord(text: string, time: number): Record<string, unknown> {
+  return {
+    type: 'turn.prompt',
+    input: [{ type: 'text', text }],
+    origin: { kind: 'user' },
+    time,
+  };
+}
+
+function turnSteerRecord(text: string, time: number): Record<string, unknown> {
+  return {
+    type: 'turn.steer',
+    input: [{ type: 'text', text }],
+    origin: { kind: 'user' },
+    time,
+  };
+}
+
+function userTurnRecord(text: string, time: number): Record<string, unknown> {
+  return {
+    type: 'context.append_message',
+    message: { role: 'user', content: [{ type: 'text', text }] },
+    time,
+  };
+}
+
+function assistantMessageRecord(text: string, time: number): Record<string, unknown> {
+  return {
+    type: 'context.append_message',
+    message: { role: 'assistant', content: [{ type: 'text', text }] },
+    time,
+  };
+}
+
+/** Three user-visible turns on the main agent, each prompt + user + assistant. */
+function threeTurnMainWire(): Record<string, unknown>[] {
+  return [
+    wireEnvelopeRecord(1),
+    turnPromptRecord('first question', 2),
+    userTurnRecord('first question', 3),
+    assistantMessageRecord('first answer', 4),
+    turnPromptRecord('second question', 5),
+    userTurnRecord('second question', 6),
+    assistantMessageRecord('second answer', 7),
+    turnPromptRecord('third question', 8),
+    userTurnRecord('third question', 9),
+    assistantMessageRecord('third answer', 10),
+  ];
+}
+
+function agentHandleStub(agentId: string): IAgentScopeHandle {
+  return {
+    id: agentId,
+    kind: LifecycleScope.Agent,
+    accessor: {
+      get: () => {
+        throw new Error('unexpected agent service access');
+      },
+    },
+    dispose: () => {},
+  } as unknown as IAgentScopeHandle;
+}
+
+/** Agent lifecycle whose `create` resolves and records the created agent ids. */
+function agentLifecycleCreatingStub(created: string[]): IAgentLifecycleService {
+  return {
+    ...agentLifecycleStub(),
+    create: (opts) => {
+      const agentId = opts?.agentId ?? MAIN_AGENT_ID;
+      created.push(agentId);
+      return Promise.resolve(agentHandleStub(agentId));
+    },
+  };
+}
+
+/** Session metadata stub serving a fixed source document and capturing updates. */
+function sessionMetadataStubFor(
+  document: Record<string, unknown>,
+  updates: Array<Record<string, unknown>>,
+): ISessionMetadata {
+  return {
+    ...metadataStub(),
+    read: () => Promise.resolve(document as never),
+    update: (patch) => {
+      updates.push(patch as Record<string, unknown>);
+      return Promise.resolve();
+    },
+  };
+}
+
 function atomicDocumentStoreStub(): IAtomicDocumentStore {
   return {
     _serviceBrand: undefined,
@@ -1241,7 +1371,7 @@ describe('SessionLifecycleService', () => {
     });
   });
 
-  it('forks successfully even while the source has a busy agent (crash-equivalent copy)', async () => {
+  it('rejects fork of a live source session while a turn is running', async () => {
     const busyAgent = {
       id: MAIN_AGENT_ID,
       kind: LifecycleScope.Agent,
@@ -1270,8 +1400,37 @@ describe('SessionLifecycleService', () => {
 
     await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
 
-    const target = await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+    await expect(svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' })).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_FORK_ACTIVE_TURN,
+      message: 'Session "src" cannot be forked while a turn is running',
+      details: { sessionId: 'src' },
+    });
+    expect(svc.get('dst')).toBeUndefined();
+  });
+
+  it('forks a closed source session without consulting live activity (crash-equivalent copy)', async () => {
+    const wireStore = wireStoreStub({ 'src/main': threeTurnMainWire() });
+    const created: string[] = [];
+    const svc = await build([
+      stubPair(ISessionIndex, sessionIndexWithSummary('src', '/tmp/proj', 'wd_stub')),
+      stubPair(IAtomicDocumentStore, {
+        ...atomicDocumentStoreStub(),
+        get: (scope: string, key: string) =>
+          Promise.resolve(
+            scope === 'sessions/wd_stub/src' && key === 'state.json'
+              ? { agents: { main: { type: 'main' } } }
+              : undefined,
+          ),
+      } as unknown as IAtomicDocumentStore),
+      stubPair(IAppendLogStore, wireStore.store),
+      stubPair(IAgentLifecycleService, agentLifecycleCreatingStub(created)),
+    ]);
+
+    const target = await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst', turnIndex: 1 });
+
     expect(target.id).toBe('dst');
+    expect(created).toEqual([MAIN_AGENT_ID]);
+    expect(wireStore.rewritten.get('dst/main')).toHaveLength(8);
   });
 
   it('fires onDidCreateSession with the new handle', async () => {
@@ -2024,6 +2183,212 @@ describe('SessionLifecycleService', () => {
       expect(clone).toMatchObject({ cron: '0 9 * * *', prompt: 'standup', createdAt: 1 });
       expect(clone!.id).not.toBe('task-src');
       expect(cron.docs.get('task-src')!.tags![CRON_SESSION_TAG]).toBe('src');
+    });
+  });
+
+  describe('fork turnIndex truncation', () => {
+    it('slices the main wire at the turn boundary and keeps only matched turn inputs', async () => {
+      const wireStore = wireStoreStub({
+        'src/main': [
+          wireEnvelopeRecord(1),
+          turnPromptRecord('first question', 2),
+          userTurnRecord('first question', 3),
+          assistantMessageRecord('first answer', 4),
+          turnPromptRecord('second question', 5),
+          userTurnRecord('second question', 6),
+          assistantMessageRecord('second answer', 7),
+          turnSteerRecord('a stray steer', 7.1),
+          turnSteerRecord('third question', 7.2),
+          turnPromptRecord('third question', 8),
+          userTurnRecord('third question', 9),
+          assistantMessageRecord('third answer', 10),
+        ],
+      });
+      const updates: Array<Record<string, unknown>> = [];
+      const created: string[] = [];
+      const svc = await build([
+        stubPair(IAppendLogStore, wireStore.store),
+        stubPair(
+          ISessionMetadata,
+          sessionMetadataStubFor(
+            { lastPrompt: 'third question', agents: { main: { type: 'main' } } },
+            updates,
+          ),
+        ),
+        stubPair(IAgentLifecycleService, agentLifecycleCreatingStub(created)),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst', turnIndex: 1 });
+
+      // Both steers drop: the stray one matches no visible turn, and the one
+      // echoing turn 2's content matches a turn that is itself cut.
+      expect(wireStore.rewritten.get('dst/main')).toEqual([
+        wireEnvelopeRecord(1),
+        turnPromptRecord('first question', 2),
+        userTurnRecord('first question', 3),
+        assistantMessageRecord('first answer', 4),
+        turnPromptRecord('second question', 5),
+        userTurnRecord('second question', 6),
+        assistantMessageRecord('second answer', 7),
+        { type: 'forked', time: expect.any(Number) },
+      ]);
+      expect(created).toEqual([MAIN_AGENT_ID]);
+      // The fork's lastPrompt re-derives from the retained turn instead of
+      // inheriting the source's (turn 2's) value.
+      const forkUpdate = updates.find((patch) => 'forkedFrom' in patch);
+      expect(forkUpdate?.['lastPrompt']).toBe('second question');
+    });
+
+    it('retains the whole wire when turnIndex addresses the last turn', async () => {
+      const wireStore = wireStoreStub({ 'src/main': threeTurnMainWire() });
+      const updates: Array<Record<string, unknown>> = [];
+      const svc = await build([
+        stubPair(IAppendLogStore, wireStore.store),
+        stubPair(
+          ISessionMetadata,
+          sessionMetadataStubFor({ agents: { main: { type: 'main' } } }, updates),
+        ),
+        stubPair(IAgentLifecycleService, agentLifecycleCreatingStub([])),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst', turnIndex: 2 });
+
+      expect(wireStore.rewritten.get('dst/main')).toEqual([
+        ...threeTurnMainWire(),
+        { type: 'forked', time: expect.any(Number) },
+      ]);
+      const forkUpdate = updates.find((patch) => 'forkedFrom' in patch);
+      expect(forkUpdate?.['lastPrompt']).toBe('third question');
+    });
+
+    it('time-cuts subagent wires at the main cutoff, drops emptied subagents, and prunes copied task state', async () => {
+      const root = await makeTmpRoot();
+      const wireStore = wireStoreStub({
+        'src/main': threeTurnMainWire(),
+        'src/sub_old': [
+          wireEnvelopeRecord(2),
+          userTurnRecord('old sub task', 3),
+          assistantMessageRecord('old sub done', 4),
+        ],
+        'src/sub_new': [wireEnvelopeRecord(8), userTurnRecord('late sub task', 9)],
+      });
+      const created: string[] = [];
+      const svc = await build([
+        stubPair(IBootstrapService, tmpBootstrapStub(root)),
+        stubPair(IAppendLogStore, wireStore.store),
+        stubPair(
+          ISessionMetadata,
+          sessionMetadataStubFor(
+            {
+              agents: {
+                main: { type: 'main' },
+                sub_old: { type: 'sub' },
+                sub_new: { type: 'sub' },
+              },
+            },
+            [],
+          ),
+        ),
+        stubPair(IAgentLifecycleService, agentLifecycleCreatingStub(created)),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      const srcDir = join(root, 'sessions', 'wd_stub', 'src');
+      await mkdir(join(srcDir, 'agents', 'main', 'tasks'), { recursive: true });
+      await writeFile(join(srcDir, 'agents', 'main', 'tasks', 't1.json'), '{}');
+      await mkdir(join(srcDir, 'agents', 'main', 'plans'), { recursive: true });
+      await writeFile(join(srcDir, 'agents', 'main', 'plans', 'p1.md'), '# plan');
+      await mkdir(join(srcDir, 'agents', 'sub_old', 'tasks'), { recursive: true });
+      await writeFile(join(srcDir, 'agents', 'sub_old', 'tasks', 't2.json'), '{}');
+      await mkdir(join(srcDir, 'agents', 'sub_new', 'plans'), { recursive: true });
+      await writeFile(join(srcDir, 'agents', 'sub_new', 'plans', 'p2.md'), '# late');
+
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst', turnIndex: 1 });
+
+      // The main cutoff is 7 (turn 1's assistant reply): sub_old survives in
+      // full, while sub_new's only records sit past the cut and it is dropped.
+      expect(created).toEqual([MAIN_AGENT_ID, 'sub_old']);
+      expect(wireStore.rewritten.get('dst/sub_old')).toEqual([
+        wireEnvelopeRecord(2),
+        userTurnRecord('old sub task', 3),
+        assistantMessageRecord('old sub done', 4),
+        { type: 'forked', time: expect.any(Number) },
+      ]);
+      expect(wireStore.rewritten.has('dst/sub_new')).toBe(false);
+      const dstDir = join(root, 'sessions', 'wd_stub', 'dst');
+      await expect(stat(join(dstDir, 'agents', 'sub_new'))).rejects.toThrow();
+      await expect(stat(join(dstDir, 'agents', 'main', 'tasks'))).rejects.toThrow();
+      await expect(stat(join(dstDir, 'agents', 'sub_old', 'tasks'))).rejects.toThrow();
+      await expect(readFile(join(dstDir, 'agents', 'main', 'plans', 'p1.md'), 'utf8')).resolves.toBe(
+        '# plan',
+      );
+    });
+
+    it('does not duplicate cron tasks on a truncated fork', async () => {
+      const cron = cronStoreStub([
+        {
+          id: 'task-src',
+          cron: '0 9 * * *',
+          prompt: 'standup',
+          createdAt: 1,
+          tags: { [CRON_SESSION_TAG]: 'src' },
+        },
+      ]);
+      const svc = await build([
+        stubPair(IAppendLogStore, wireStoreStub({ 'src/main': threeTurnMainWire() }).store),
+        stubPair(
+          ISessionMetadata,
+          sessionMetadataStubFor({ agents: { main: { type: 'main' } } }, []),
+        ),
+        stubPair(IAgentLifecycleService, agentLifecycleCreatingStub([])),
+        stubPair(ICronTaskPersistence, cron),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst', turnIndex: 1 });
+
+      expect([...cron.docs.values()]).toHaveLength(1);
+    });
+
+    it('rejects an invalid turnIndex with request.invalid and creates nothing', async () => {
+      const svc = await build();
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      for (const turnIndex of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+        await expect(
+          svc.fork({ sourceSessionId: 'src', newSessionId: 'dst', turnIndex }),
+        ).rejects.toMatchObject({
+          code: ErrorCodes.REQUEST_INVALID,
+          message: 'forkSession turnIndex must be a non-negative safe integer',
+          details: { turnIndex },
+        });
+      }
+      expect(svc.get('dst')).toBeUndefined();
+    });
+
+    it('rejects an out-of-range turnIndex with the available turn count and creates nothing', async () => {
+      const root = await makeTmpRoot();
+      const svc = await build([
+        stubPair(IBootstrapService, tmpBootstrapStub(root)),
+        stubPair(IAppendLogStore, wireStoreStub({ 'src/main': threeTurnMainWire() }).store),
+        stubPair(
+          ISessionMetadata,
+          sessionMetadataStubFor({ agents: { main: { type: 'main' } } }, []),
+        ),
+        stubPair(IAgentLifecycleService, agentLifecycleCreatingStub([])),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      await expect(
+        svc.fork({ sourceSessionId: 'src', newSessionId: 'dst', turnIndex: 5 }),
+      ).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+        message: 'Turn 5 was not found in session "src"',
+        details: { turnIndex: 5, availableTurns: 3 },
+      });
+      expect(svc.get('dst')).toBeUndefined();
+      await expect(stat(join(root, 'sessions', 'wd_stub', 'dst'))).rejects.toThrow();
     });
   });
 
