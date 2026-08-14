@@ -917,4 +917,29 @@ describe('KimiCore unified MCP management plane', () => {
     expect(own?.config).toMatchObject({ envKeys: ['USER_TOKEN'] });
     expect(own?.config).not.toHaveProperty('env');
   }, 30000);
+
+  it('rejects legacy name-based auth/reset under a runtime-name collision', async () => {
+    const plain = await startMcpHttpServer();
+    const { core, home } = await makeCore();
+    const pluginRoot = await makePlugin('demo', {
+      api: { transport: 'http', url: plain.url, auth: 'oauth' },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        'plugin-demo:api': { transport: 'http', url: plain.url, auth: 'oauth' },
+      },
+    });
+
+    // A name-only call cannot tell which of the two enabled entries owns the
+    // OAuth credential, so it must refuse like the locator path does.
+    await expect(core.beginGlobalMcpServerAuth({ name: 'plugin-demo:api' })).rejects.toMatchObject({
+      code: 'request.invalid',
+      message: expect.stringContaining('shared by multiple enabled servers'),
+    });
+    await expect(core.resetGlobalMcpServerAuth({ name: 'plugin-demo:api' })).rejects.toMatchObject({
+      code: 'request.invalid',
+      message: expect.stringContaining('shared by multiple enabled servers'),
+    });
+  }, 20000);
 });

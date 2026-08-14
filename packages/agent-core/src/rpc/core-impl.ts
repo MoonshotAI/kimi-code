@@ -1005,9 +1005,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async beginGlobalMcpServerAuth(
     { name }: GlobalMcpServerNamePayload,
   ): Promise<BeginGlobalMcpServerAuthResult> {
-    await this.awaitMcpRegistryReady();
-    const entry = await this.mcpRegistry.get(name);
-    return this.beginAppMcpServerAuth(this.appMcpServerDescriptor(entry));
+    return this.beginAppMcpServerAuth(await this.resolveLegacyNamedAppMcpServer(name));
   }
 
   async beginMcpServerAuth({
@@ -1078,10 +1076,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async resetGlobalMcpServerAuth({ name }: GlobalMcpServerNamePayload): Promise<void> {
     // The legacy name-based surface resolves through the registry too, so a
     // plugin runtime name works here as well.
-    await this.awaitMcpRegistryReady();
-    await this.appMcpServerDescriptorReset(
-      this.appMcpServerDescriptor(await this.mcpRegistry.get(name)),
-    );
+    await this.appMcpServerDescriptorReset(await this.resolveLegacyNamedAppMcpServer(name));
   }
 
   async resetMcpServerAuth({ locator }: McpServerLocatorPayload): Promise<void> {
@@ -1137,8 +1132,36 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   ): Promise<AppMcpServerRuntimeDescriptor> {
     const catalog = await this.appMcpServerDescriptors();
     const server = selectAppMcpServerDescriptors(catalog, [locator])[0]!;
-    // A runtime name shared by another enabled entry makes the OAuth
-    // credential identity ambiguous; refuse to guess.
+    this.requireUnambiguousRuntimeName(catalog, server);
+    return server;
+  }
+
+  /**
+   * Legacy name-only auth/reset resolution: exactly one enabled entry may own
+   * the runtime name — with a collision the caller cannot tell which
+   * credential the OAuth flow acts on, so reject like the locator path does
+   * instead of silently picking the first registry match.
+   */
+  private async resolveLegacyNamedAppMcpServer(
+    name: string,
+  ): Promise<AppMcpServerRuntimeDescriptor> {
+    await this.awaitMcpRegistryReady();
+    // get() first, preserving its not-found error for unknown names.
+    const entry = await this.mcpRegistry.get(name);
+    const descriptor = this.appMcpServerDescriptor(entry);
+    const catalog = await this.appMcpServerDescriptors();
+    this.requireUnambiguousRuntimeName(catalog, descriptor);
+    return descriptor;
+  }
+
+  /**
+   * A runtime name shared by another enabled entry makes the OAuth credential
+   * identity ambiguous; refuse to guess.
+   */
+  private requireUnambiguousRuntimeName(
+    catalog: readonly AppMcpServerRuntimeDescriptor[],
+    server: AppMcpServerRuntimeDescriptor,
+  ): void {
     const conflict = catalog.find(
       (candidate) =>
         candidate.serverId !== server.serverId &&
@@ -1148,10 +1171,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     if (conflict !== undefined) {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
-        `MCP runtime name "${server.runtimeName}" is shared by multiple enabled servers`,
+        `MCP runtime name "${server.runtimeName}" is shared by multiple enabled servers; use the locator-addressed RPC instead`,
       );
     }
-    return server;
   }
 
   /**
