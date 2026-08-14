@@ -143,6 +143,18 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
     }),
   }),
   z.object({
+    // SessionRow's applyEmoji is the single funnel: picking in the grid /
+    // search / recents ('set'), the footer Remove item ('remove') and Random
+    // ('random', distinguished by the picker's pick emit). Re-picking the
+    // current emoji is a no-op and emits nothing. `via` attributes how the
+    // picker was opened; the emoji itself is never sent (user-chosen content).
+    event: z.literal('session_emoji_changed'),
+    properties: z.object({
+      action: z.enum(['set', 'remove', 'random']),
+      via: z.enum(['menu', 'icon']),
+    }),
+  }),
+  z.object({
     event: z.literal('attachment_added'),
     properties: z.object({
       via: z.enum(['drop', 'click', 'paste']),
@@ -252,6 +264,7 @@ export type NativeFeatureUsedEvent = RendererEventPayloads['native_feature_used'
 export type ApprovalDecisionEvent = RendererEventPayloads['approval_decision'];
 export type ApprovalDecisionName = ApprovalDecisionEvent['decision'];
 export type SessionMenuActionEvent = RendererEventPayloads['session_menu_action'];
+export type SessionEmojiChangedEvent = RendererEventPayloads['session_emoji_changed'];
 export type AttachmentAddedEvent = RendererEventPayloads['attachment_added'];
 export type UiElementToggledEvent = RendererEventPayloads['ui_element_toggled'];
 export type SessionCreatedEvent = RendererEventPayloads['session_created'];

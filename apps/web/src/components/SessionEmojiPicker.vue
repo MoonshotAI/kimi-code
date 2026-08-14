@@ -27,7 +27,7 @@ const props = withDefaults(
   }>(),
   { current: null, removable: true },
 );
-const emit = defineEmits<{ pick: [emoji: string | null] }>();
+const emit = defineEmits<{ pick: [emoji: string | null, method?: 'random'] }>();
 
 // Random's pool: a small curated set of safe bets (all round-trip through
 // splitSessionEmoji's conservative detection).
@@ -63,14 +63,14 @@ function readRecents(): string[] {
   }
 }
 
-function onPick(emoji: string): void {
+function onPick(emoji: string, method?: 'random'): void {
   recents.value = pushRecentEmoji(recents.value, emoji);
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(recents.value));
   } catch {
     // Quota / private mode: recents just don't persist.
   }
-  emit('pick', emoji);
+  emit('pick', emoji, method);
 }
 
 const query = ref('');
@@ -92,7 +92,7 @@ function pickRandom(): void {
   while (next === undefined || next === props.current) {
     next = RANDOM_POOL[Math.floor(Math.random() * RANDOM_POOL.length)];
   }
-  onPick(next);
+  onPick(next, 'random');
 }
 
 // Mirror Menu/IconButton's exposed-el pattern so the consumer can outside-click

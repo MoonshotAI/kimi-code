@@ -18,6 +18,7 @@ import type {
   RendererErrorEvent,
   SearchExecutedEvent,
   SessionCreatedEvent,
+  SessionEmojiChangedEvent,
   SessionMenuActionEvent,
   SettingsChangedEvent,
   ShortcutBindingChangedEvent,
@@ -43,6 +44,7 @@ export type {
   RendererErrorEvent,
   SearchExecutedEvent,
   SessionCreatedEvent,
+  SessionEmojiChangedEvent,
   SessionMenuActionEvent,
   SettingsChangedEvent,
   ShortcutBindingChangedEvent,
@@ -207,6 +209,7 @@ export interface DesktopEventPayloads {
   native_feature_used: NativeFeatureUsedEvent;
   approval_decision: ApprovalDecisionEvent;
   session_menu_action: SessionMenuActionEvent;
+  session_emoji_changed: SessionEmojiChangedEvent;
   session_created: SessionCreatedEvent;
   attachment_added: AttachmentAddedEvent;
   ui_element_toggled: UiElementToggledEvent;

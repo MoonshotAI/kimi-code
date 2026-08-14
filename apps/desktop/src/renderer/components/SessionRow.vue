@@ -12,6 +12,9 @@ import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { applySessionEmoji, splitSessionEmoji } from '@moonshot-ai/app-core/lib';
 import SessionEmojiPicker from './SessionEmojiPicker.vue';
+// Telemetry (desktop-only fork block, see docs/native-todos.md): the web copy
+// of this file drops this import and the track() call in applyEmoji.
+import { track } from '../lib/track';
 import { useKimiWebClient } from '../composables/useKimiWebClient';
 import { sessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 
@@ -138,6 +141,8 @@ const displayText = computed(() => {
   return e ? props.session.title.slice(e.length) : props.session.title;
 });
 const pickerOpen = ref(false);
+/** How the open picker was entered — the `via` attribution of session_emoji_changed. */
+const pickerVia = ref<'menu' | 'icon'>('menu');
 const pickerRef = ref<InstanceType<typeof SessionEmojiPicker> | null>(null);
 const pickerStyle = ref<Record<string, string>>({});
 /** Element the picker is anchored to — its own clicks toggle, so outside-click ignores it. */
@@ -228,6 +233,7 @@ function pointRect(e: MouseEvent): DOMRect | undefined {
 
 function openPickerFromRow(e: Event): void {
   e.stopPropagation();
+  pickerVia.value = 'icon';
   const me = e as MouseEvent;
   void openPicker(me.currentTarget as HTMLElement, pointRect(me), 'left', me.clientX || undefined);
 }
@@ -236,6 +242,7 @@ function openPickerFromMenu(e: Event): void {
   // The menu only opens at the cursor (right-click): anchor the picker to the
   // click point (or, as a keyboard fallback, the menu's rect captured before
   // closeMenu unmounts it).
+  pickerVia.value = 'menu';
   const anchor = menuRef.value?.el;
   const me = e as MouseEvent;
   const rect = pointRect(me) ?? anchor?.getBoundingClientRect();
@@ -243,14 +250,20 @@ function openPickerFromMenu(e: Event): void {
   void openPicker(anchor, rect, 'left', me.clientX || undefined);
 }
 
-function applyEmoji(emoji: string | null): void {
+function applyEmoji(emoji: string | null, method?: 'random'): void {
   closePicker();
   // Re-picking the current icon is a no-op — even for stored titles whose
   // prefix isn't in the normalized `emoji + space` shape, don't rewrite them.
   if (emoji === emojiSplit.value.emoji) return;
   const newTitle = applySessionEmoji(props.session.title, emoji);
   // Never PATCH an empty title (the title was emoji-only and the emoji is removed).
-  if (newTitle && newTitle !== props.session.title) emit('rename', props.session.id, newTitle);
+  if (newTitle && newTitle !== props.session.title) {
+    track('session_emoji_changed', {
+      action: emoji === null ? 'remove' : method === 'random' ? 'random' : 'set',
+      via: pickerVia.value,
+    });
+    emit('rename', props.session.id, newTitle);
+  }
 }
 
 // The Gen Title action rides the experimental `auto_session_title` flag: the
