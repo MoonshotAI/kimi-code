@@ -12,7 +12,7 @@
     "@moonshot-ai/app-i18n": "workspace:*",
     "@moonshot-ai/app-ui": "workspace:*",
     "katex": "^0.17.0",
-    "markstream-vue": "1.0.9-beta.1",
+    "markstream-vue": "1.1.4",
     "monaco-editor": "^0.55.1",
     "stream-diffs": "0.0.2",
     "stream-markdown": "0.0.16",
