@@ -3238,6 +3238,7 @@ export class KimiTUI {
   // =========================================================================
 
   mountEditorReplacement(panel: Component & Focusable): void {
+    this.state.editorReplacementMounted = true;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
     this.state.ui.setFocus(panel);
@@ -3245,6 +3246,7 @@ export class KimiTUI {
   }
 
   restoreEditor(): void {
+    this.state.editorReplacementMounted = false;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);

@@ -25,6 +25,7 @@ import {
   type GoalQueueSnapshot,
 } from '../goal-queue-store';
 import { formatErrorMessage } from '../utils/event-payload';
+import { canRestoreSubmittedInput } from './dispatch';
 import type { SlashCommandHost } from './dispatch';
 
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
@@ -134,9 +135,10 @@ export async function handleGoalCommand(host: SlashCommandHost, args: string): P
       if (parsed.severity === 'hint') host.showStatus(parsed.message);
       else host.showError(parsed.message);
       // Give rejected input back so a long hand-typed objective is not
-      // lost — unless the user already typed a new draft (possible after
-      // the async lazy-session creation on the v2 engine).
-      if (parsed.restoreInput === true && host.state.editor.getText().length === 0)
+      // lost — unless the user already moved on (a newer draft or an
+      // opened panel), which is possible after the async lazy-session
+      // creation on the v2 engine.
+      if (parsed.restoreInput === true && canRestoreSubmittedInput(host))
         host.restoreInputText(`/goal ${args}`);
       return;
     case 'status':

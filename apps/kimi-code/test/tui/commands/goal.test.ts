@@ -870,6 +870,28 @@ describe('dispatchInput /goal integration', () => {
     });
     expect(session.createGoal).not.toHaveBeenCalled();
   });
+
+  it('does not restore when an editor-replacement panel opened during creation', async () => {
+    const { host, session } = makeHost({ hasSession: false });
+    Object.assign(host, {
+      engineV2: true,
+      ensureSession: vi.fn(async () => {
+        // The user opened a panel (e.g. /help) while creation was pending.
+        Object.assign(host.state, { editorReplacementMounted: true });
+        return undefined;
+      }),
+    });
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(host.state.editorReplacementMounted).toBe(true);
+    });
+    // Allow the post-creation branch to run before asserting.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(session.createGoal).not.toHaveBeenCalled();
+    expect(host.restoreInputText).not.toHaveBeenCalled();
+  });
 });
 
 describe('goalArgumentCompletions', () => {

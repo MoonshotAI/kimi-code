@@ -350,6 +350,15 @@ const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set
   'web',
 ]);
 
+/**
+ * Whether a delayed input restore is still safe: the editor must be empty
+ * (no newer draft) and still mounted (no editor-replacement panel opened
+ * meanwhile). Restores that run synchronously with submit do not need this.
+ */
+export function canRestoreSubmittedInput(host: SlashCommandHost): boolean {
+  return host.state.editor.getText().length === 0 && !host.state.editorReplacementMounted;
+}
+
 async function handleBuiltInSlashCommand(
   host: SlashCommandHost,
   name: BuiltinSlashCommandName,
@@ -360,8 +369,8 @@ async function handleBuiltInSlashCommand(
     const session = await ensureSessionForCommand(host);
     if (session === undefined) {
       // Creation failed after submit cleared the buffer; give the input
-      // back unless the user already typed a new draft meanwhile.
-      if (host.state.editor.getText().length === 0) host.restoreInputText(input);
+      // back unless the user moved on — a newer draft or an opened panel.
+      if (canRestoreSubmittedInput(host)) host.restoreInputText(input);
       return;
     }
     // A first prompt may have started a turn while the session was being
@@ -380,7 +389,7 @@ async function handleBuiltInSlashCommand(
       host.showError(slashBusyMessage(name, busyReason));
       // Same as the dispatch blocked branch: give the cleared input back,
       // guarded the same way — session creation awaited above.
-      if (host.state.editor.getText().length === 0) host.restoreInputText(input);
+      if (canRestoreSubmittedInput(host)) host.restoreInputText(input);
       return;
     }
   }
