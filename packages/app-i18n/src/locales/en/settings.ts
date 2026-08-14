@@ -28,8 +28,8 @@ export default {
     customInstall: 'Install custom plugin',
     customInstallPlaceholder: 'https://… or /path/to/plugin',
     customInstallHint: 'Accepts an https zip URL, a GitHub repo URL, or a local directory path.',
-    extensionHintTitle: 'One step left: install the Kimi WebBridge browser extension',
-    extensionGuide: 'Manual guide',
+    extensionHintTitle: 'One step left: install the browser extension',
+    extensionGuide: 'Manual install',
     dismissHint: 'Dismiss',
     catalogUnavailable: 'The marketplace catalog is currently unreachable; installed plugins remain manageable below.',
     source: {

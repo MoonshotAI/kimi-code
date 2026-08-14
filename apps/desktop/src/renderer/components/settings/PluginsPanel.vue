@@ -19,7 +19,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Button, EmptyState, Icon, IconButton, Input, Spinner, Switch } from '@moonshot-ai/app-ui';
+import { Button, EmptyState, Icon, IconButton, Input, Link, Spinner, Switch } from '@moonshot-ai/app-ui';
 import type { AppPluginMarketplaceEntry, AppPluginSummary } from '@moonshot-ai/app-core';
 import { CUSTOM_INSTALL_ROW_ID, capabilityRowShowsInstall, usePlugins, type CapabilityRow } from '../../composables/usePlugins';
 import { connectEventsIfNeeded } from '../../composables/useKimiWebClient';
@@ -74,6 +74,17 @@ function rowBusy(id: string, pluginId?: string): boolean {
 }
 
 // --- custom source install ----------------------------------------------------
+
+const CHROME_EXTENSION_URL =
+  'https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc';
+const EDGE_EXTENSION_URL =
+  'https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg';
+const EXTENSION_GUIDE_URL =
+  'https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension';
+
+function openExternal(url: string): void {
+  window.open(url, '_blank', 'noopener');
+}
 
 const customOpen = ref(false);
 const customSource = ref('');
@@ -237,26 +248,19 @@ function metaLine(plugin: AppPluginSummary): string {
           <div v-if="state.extensionHint" class="pp-ext-hint" role="status">
             <Icon name="globe" size="md" class="pp-ext-icon" />
             <span class="pp-ext-title">{{ t('settings.plugins.extensionHintTitle') }}</span>
-            <span class="pp-ext-links">
-              <a
-                href="https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc"
-                target="_blank"
-                rel="noopener noreferrer"
-                >Chrome Web Store</a
-              >
-              <a
-                href="https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg"
-                target="_blank"
-                rel="noopener noreferrer"
-                >Edge Add-ons</a
-              >
-              <a
-                href="https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension"
-                target="_blank"
-                rel="noopener noreferrer"
-                >{{ t('settings.plugins.extensionGuide') }}</a
-              >
-            </span>
+            <div class="pp-ext-actions">
+              <Button size="sm" variant="secondary" @click="openExternal(CHROME_EXTENSION_URL)">
+                Chrome
+                <Icon name="external-link" size="sm" />
+              </Button>
+              <Button size="sm" variant="secondary" @click="openExternal(EDGE_EXTENSION_URL)">
+                Edge
+                <Icon name="external-link" size="sm" />
+              </Button>
+              <Link :href="EXTENSION_GUIDE_URL" external variant="muted" class="pp-ext-guide">
+                {{ t('settings.plugins.extensionGuide') }}
+              </Link>
+            </div>
             <IconButton
               size="sm"
               class="pp-ext-close"
@@ -606,9 +610,7 @@ function metaLine(plugin: AppPluginSummary): string {
 .pp-ext-hint {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  row-gap: var(--space-1);
-  column-gap: var(--space-2);
+  gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   font-size: var(--text-xs);
   color: var(--color-text-muted);
@@ -619,25 +621,27 @@ function metaLine(plugin: AppPluginSummary): string {
   color: var(--color-text-faint);
 }
 
+/* One line, always: the title yields (ellipsis) before the actions wrap. */
 .pp-ext-title {
-  margin-right: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.pp-ext-links {
-  display: contents;
+.pp-ext-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
 }
 
-.pp-ext-links a {
-  color: var(--color-accent);
-  text-decoration: none;
-}
-
-.pp-ext-links a:hover {
-  text-decoration: underline;
+.pp-ext-guide {
+  flex: none;
 }
 
 .pp-ext-close {
   flex: none;
-  margin-left: auto;
 }
 </style>

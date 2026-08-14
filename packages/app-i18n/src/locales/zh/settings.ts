@@ -28,8 +28,8 @@ export default {
     customInstall: '安装自定义插件',
     customInstallPlaceholder: 'https://… 或 /本地/目录',
     customInstallHint: '支持 https zip 链接、GitHub 仓库地址或本地目录路径。',
-    extensionHintTitle: '还差一步：安装 Kimi WebBridge 浏览器扩展',
-    extensionGuide: '手动安装指南',
+    extensionHintTitle: '还差一步：安装浏览器扩展',
+    extensionGuide: '手动安装',
     dismissHint: '知道了',
     catalogUnavailable: '插件市场目录暂时不可达；已安装的插件仍可正常管理。',
     source: {
