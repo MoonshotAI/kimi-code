@@ -237,6 +237,24 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(await res.resolve(plain, req)).toBe(plain);
   });
 
+  it('degrades to the path tag when the current model cannot accept video, ignoring a memoized upload', async () => {
+    const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
+    const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
+
+    const capable = await res.resolve([message], requester({ uploadVideo: upload }));
+    expect(firstPart(capable)).toEqual(msPart('prov-1'));
+
+    // Same provider, video_in:false: the memoized ms:// part must not leak to
+    // a model that cannot accept video.
+    const incapable = await res.resolve(
+      [message],
+      requester({ videoIn: false, uploadVideo: upload }),
+    );
+    expect(firstPart(incapable)).toEqual({ type: 'text', text: VIDEO_TAG });
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
   it('reuses a persisted upload across resolver instances without re-uploading', async () => {
     const files = new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]);
     const blobs = blobStore();

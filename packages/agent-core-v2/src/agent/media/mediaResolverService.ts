@@ -24,7 +24,9 @@
  * outcomes are memoized per (file, provider) for step/retry stability —
  * except a transient upload failure, which degrades only the current request
  * to the tag form so a later step retries the upload instead of freezing the
- * fallback.
+ * fallback. The `video_in` capability gate runs before the memo lookup
+ * (mirroring the image strategy), so a switch to a video-incapable model
+ * degrades to the tag instead of replaying a memoized upload reference.
  *
  * Image: inlines the bytes as a base64 `data:` `image_url` part — kosong has
  * no image upload channel, so there is no provider reference to persist. The
@@ -227,6 +229,10 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     signal: AbortSignal | undefined,
   ): Promise<ContentPart> {
     const model = requester.model;
+    // The capability gate runs before the memo lookup (mirroring the image
+    // strategy): an `ms://` part memoized under a video-capable model must
+    // not leak to a same-provider model that cannot accept video.
+    if (!model.capabilities.video_in) return videoTag(await this.displayPath(ref));
     const providerKey = model.providerType ?? model.protocol;
     const cacheKey = `${ref.fileId}\0${providerKey}`;
 
@@ -276,7 +282,6 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const mimeType = fileType.mimeType;
 
     const model = requester.model;
-    if (!model.capabilities.video_in) return { part: videoTag(tagPath), memoize: true };
     const inlineSupported = inlineVideoSupportedForProtocol(model.protocol);
 
     const uploader = createVideoUploader(requester, {
