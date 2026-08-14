@@ -916,6 +916,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   private throwReadOnlyMcpServer(entry: McpRegistryEntry): void {
     if (entry.source === 'global' && entry.mutable) return;
+    // A disabled plugin descriptor is absent from the runtime target, so a
+    // user-level entry of this name becomes the effective one the moment it
+    // is written — never block mutations on a dead shadow. (Disabled project
+    // entries still shadow the user file at runtime, so they keep their
+    // read-only rejection.)
+    if (entry.source === 'plugin' && entry.config.enabled === false) return;
     const reason =
       entry.source === 'plugin'
         ? `it is contributed by plugin "${entry.origin}" — update the plugin manifest instead`

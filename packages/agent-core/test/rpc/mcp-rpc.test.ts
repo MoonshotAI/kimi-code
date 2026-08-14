@@ -733,6 +733,37 @@ describe('KimiCore unified MCP management plane', () => {
     expect(session.mcp.get('plugin-demo:api')).toBeUndefined();
   }, 30000);
 
+  it('allows a global add over a disabled plugin descriptor', async () => {
+    const { core, rpc, workDir } = await makeCore();
+    const pluginRoot = await makePlugin('demo', {
+      api: { transport: 'http', url: 'https://example.com/mcp' },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    await core.setPluginMcpServerEnabled({ id: 'demo', server: 'api', enabled: false });
+
+    // The disabled plugin descriptor is absent from the runtime, so the
+    // user-level fallback must be installable after the plugin was disabled.
+    await core.addGlobalMcpServer({
+      server: {
+        name: 'plugin-demo:api',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [STDIO_FIXTURE],
+      },
+    });
+    await expect(
+      core.getGlobalMcpServer({ name: 'plugin-demo:api' }),
+    ).resolves.toMatchObject({ mutable: true });
+
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+    const session = core.sessions.get(created.id)!;
+    await session.mcp.waitForInitialLoad();
+    expect(session.mcp.get('plugin-demo:api')).toMatchObject({
+      status: 'connected',
+      source: 'global',
+    });
+  }, 30000);
+
   it('falls back to a project-layer shadow that appeared while the session was live', async () => {
     const { core, rpc, home, workDir } = await makeCore();
     await writeJson(join(workDir, '.git', 'keep'), {});
