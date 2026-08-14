@@ -189,6 +189,19 @@ describe('StagingLeaseTracker', () => {
       tracker.handleTurnEnded(turnEnded(99));
       expect(deleteFiles).not.toHaveBeenCalled();
     });
+
+    it('consumes one retain per id occurrence at turn end', () => {
+      const { tracker, takeFileIds } = makeTracker();
+      // Multiplicity in the lease's id list is the retain count (creation
+      // sites dedupe per extraction): [7, 7] means two retains, e.g. a
+      // batched steer of two queued messages sharing the image.
+      tracker.create([7, 7], [], 'user', 'sub-dup');
+      tracker.handleTurnStarted(turnStarted(1, 'user', 'sub-dup'));
+
+      tracker.handleTurnEnded(turnEnded(1));
+
+      expect(takeFileIds.mock.calls).toEqual([[[7]], [[7]]]);
+    });
   });
 
   describe('abandonment', () => {

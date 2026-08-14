@@ -3189,6 +3189,35 @@ command = "vim"
     expect(driver.state.queuedMessages).toEqual([]);
   });
 
+  it('keeps a shared staged upload alive while another submission still holds it', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-shared');
+
+    // One message referencing the same image twice retains it once; a second
+    // queued message retains it again — two retains total.
+    driver.handleUserInput(`compare ${attachment.placeholder} with ${attachment.placeholder}`);
+    driver.handleUserInput(`and ${attachment.placeholder}`);
+    const [first, second] = driver.state.queuedMessages;
+
+    driver.sendQueuedMessage(session, first!);
+    emitTurn(driver, 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The first turn consumed the only retain its submission held; the second
+    // queued message's retain keeps the upload alive.
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+
+    driver.sendQueuedMessage(session, second!);
+    emitTurn(driver, 2);
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-shared');
+    });
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+  });
+
   it('steers consecutive image-only messages without a whitespace-only separator part', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);

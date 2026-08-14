@@ -1575,7 +1575,9 @@ export class KimiTUI {
         ? randomUUID()
         : undefined;
     const stagingLease = this.staging.create(
-      imageAttachmentIds ?? [],
+      // One retain per unique id per extraction: dedupe repeated placeholder
+      // occurrences so the lease's id multiplicity matches the retain count.
+      imageAttachmentIds === undefined ? [] : [...new Set(imageAttachmentIds)],
       options?.stagingPaths ?? [],
       'user',
       submissionId,
@@ -1621,7 +1623,7 @@ export class KimiTUI {
     }
     this.beginSessionRequest();
     const stagingLease = this.staging.create(
-      rewrite.imageAttachmentIds,
+      [...new Set(rewrite.imageAttachmentIds)],
       rewrite.stagingPaths,
       'skill_activation',
     );
@@ -1656,7 +1658,7 @@ export class KimiTUI {
     }
     this.beginSessionRequest();
     const stagingLease = this.staging.create(
-      rewrite.imageAttachmentIds,
+      [...new Set(rewrite.imageAttachmentIds)],
       rewrite.stagingPaths,
       'plugin_command',
     );
@@ -1711,7 +1713,11 @@ export class KimiTUI {
       });
     }
 
-    const imageAttachmentIds = input.flatMap((item) => item.imageAttachmentIds ?? []);
+    // Dedupe per item, not across the batch: each queued message retained a
+    // shared image once, so the batch's id multiplicity is the retain count.
+    const imageAttachmentIds = input.flatMap((item) => [
+      ...new Set(item.imageAttachmentIds ?? []),
+    ]);
     const stagingPaths = input.flatMap((item) => item.stagingPaths ?? []);
     const stagingLease = this.staging.create(imageAttachmentIds, stagingPaths, 'user');
     const currentTurnId = this.streamingUI.getTurnContext().turnId;

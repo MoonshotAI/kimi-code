@@ -97,6 +97,11 @@ export class StagingLeaseTracker {
     origin: StagingLeaseOrigin,
     submissionId?: string,
   ): StagingLease | undefined {
+    // `imageAttachmentIds` multiplicity is the retain count this lease must
+    // release: each extraction/rewrite retains once per unique id, so callers
+    // dedupe repeated placeholder occurrences per contribution before handing
+    // the ids over (one message referencing an image twice contributes it
+    // once; two batched messages sharing an image contribute it twice).
     if (imageAttachmentIds.length === 0 && paths.length === 0) return undefined;
     const lease: StagingLease = {
       imageAttachmentIds: [...imageAttachmentIds],
@@ -257,6 +262,9 @@ export class StagingLeaseTracker {
   }
 
   private takeFileIds(lease: StagingLease): readonly string[] {
+    // Multiplicity in the lease's id list is the retain count (creation sites
+    // dedupe per extraction before contributing ids): consume one retain per
+    // occurrence.
     return lease.imageAttachmentIds.flatMap((id) => this.effects.takeFileIds([id]));
   }
 }
