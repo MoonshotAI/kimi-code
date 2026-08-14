@@ -3,13 +3,35 @@
  *
  * Resolves the Session-scoped `ISessionMediaStore` through the workspace /
  * session lifecycle chain and streams canonical prompt media with browser
- * byte-range semantics. The global upload store is only a staging source;
- * this route remains readable after that transient file is released.
+ * byte-range semantics. The session store is canonical, so it is read first;
+ * on a miss the route falls back to the App-scope `IFileService` staged
+ * upload — the engine's prompt intake materializes bytes into the session
+ * store asynchronously and best-effort, so a `session_media` ref is
+ * downloadable during the intake window (and after an intake failure) as
+ * long as the transient daemon upload is still staged. Only a double miss
+ * is a 404.
+ *
+ * NOTE: resolving the session store through `resumeSessionById` fully
+ * RESUMES a cold session — materializing the session scope, creating the
+ * main agent, and firing `session_started` telemetry. Browsing historical
+ * attachments therefore starts the session, unlike the deliberately
+ * cold-reading transcript/messages surface. This asymmetry is an accepted
+ * short-term semantic.
+ * TODO: add a cold-read channel that resolves the sessionDir through
+ * `ISessionIndex` and reads the media storage directly, without resuming.
  */
 
 import { Readable } from 'node:stream';
 
-import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
+import {
+  ISessionMediaStore,
+  type SessionMediaFile,
+} from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
+import {
+  FileErrors,
+  IFileService,
+  isFileError,
+} from '@moonshot-ai/agent-core-v2/app/file/fileService';
 import { resumeSessionById } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/sessionLookup';
 import type { Scope } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import { z } from 'zod';
@@ -71,7 +93,8 @@ export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Sco
             errEnvelope(ErrorCode.SESSION_NOT_FOUND, 'session not found', req.id),
           ) as unknown as void;
       }
-      const file = await session.accessor.get(ISessionMediaStore).open(file_id);
+      let file = await session.accessor.get(ISessionMediaStore).open(file_id);
+      file ??= await openStagedUpload(core, file_id);
       if (file === undefined) {
         return r
           .code(404)
@@ -107,4 +130,29 @@ export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Sco
     route.options,
     route.handler as unknown as Parameters<SessionMediaRouteHost['get']>[2],
   );
+}
+
+/**
+ * Staged-upload fallback for the download route: serves the bytes from the
+ * App-scope `IFileService` while the transient daemon upload still exists,
+ * adapting its `GetResult` to the `SessionMediaFile` shape the route serves.
+ * A missing upload (already discarded) reads as `undefined`, so the caller
+ * can fall through to the canonical 404.
+ */
+async function openStagedUpload(
+  core: Scope,
+  fileId: string,
+): Promise<SessionMediaFile | undefined> {
+  try {
+    const uploaded = await core.accessor.get(IFileService).get(fileId);
+    return {
+      name: uploaded.meta.name,
+      mediaType: uploaded.meta.media_type,
+      size: uploaded.meta.size,
+      stream: (range) => uploaded.stream(range),
+    };
+  } catch (error) {
+    if (isFileError(error, FileErrors.codes.FILE_NOT_FOUND)) return undefined;
+    throw error;
+  }
 }

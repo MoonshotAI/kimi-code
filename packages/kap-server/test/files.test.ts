@@ -422,6 +422,36 @@ describe('GET /api/v1/sessions/{session_id}/media/{file_id} (server-v2)', () => 
     expect(res.rawPayload).toEqual(data);
   });
 
+  it('serves the staged upload before intake materializes the session copy', async () => {
+    const r = await boot();
+    const data = Buffer.from('staged upload bytes');
+    const sessionId = await createSession(r);
+    const meta = await uploadFile(r, data, 'staged.png', 'image/png');
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sessionId}/media/${meta.id}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.headers['content-length']).toBe(String(data.length));
+    expect(res.rawPayload).toEqual(data);
+  });
+
+  it('returns file-not-found when neither the session store nor the staged upload holds it', async () => {
+    const r = await boot();
+    const sessionId = await createSession(r);
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sessionId}/media/f_does_not_exist`,
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect((res.json() as Envelope).code).toBe(40407);
+  });
+
   it('serves a requested byte range from the session copy', async () => {
     const r = await boot();
     const data = Buffer.from('0123456789abcdefghijklmnopqrstuvwxyz');
