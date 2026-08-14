@@ -865,6 +865,37 @@ describe('KimiCore unified MCP management plane', () => {
     ).toBe(true);
   }, 30000);
 
+  it('normalizes session MCP names so the store, session, and reconcile agree', async () => {
+    const { core, rpc, workDir } = await makeCore();
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+    const session = core.sessions.get(created.id)!;
+
+    const added = await rpc.addSessionMcpServer({
+      sessionId: created.id,
+      server: {
+        name: '  spaced  ',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [STDIO_FIXTURE],
+      },
+      persist: true,
+    });
+    expect(added).toMatchObject({ name: 'spaced', status: 'connected' });
+    await expect(core.getGlobalMcpServer({ name: 'spaced' })).resolves.toMatchObject({
+      name: 'spaced',
+    });
+    expect(session.mcp.get('spaced')?.status).toBe('connected');
+    expect(session.mcp.get('  spaced  ')).toBeUndefined();
+
+    // A blank name is rejected before anything connects, persist or not.
+    await expect(
+      rpc.addSessionMcpServer({
+        sessionId: created.id,
+        server: { name: '   ', transport: 'http', url: 'https://example.com/mcp' },
+      }),
+    ).rejects.toMatchObject({ code: 'request.invalid' });
+  }, 30000);
+
   it('keeps caller-injected servers when a plugin collides on the runtime name', async () => {
     const http = await startMcpHttpServer();
     const { core, rpc, workDir } = await makeCore();

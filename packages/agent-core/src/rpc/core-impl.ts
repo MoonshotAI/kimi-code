@@ -50,6 +50,7 @@ import {
   resolveMcpToolTimeoutMs,
   resolveSessionMcpConfig,
   mergeCallerMcpServers,
+  normalizeServerName,
   toMcpServerConfigView,
   type BeginAuthorizationResult,
   type McpOAuthTokenState,
@@ -1392,7 +1393,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     persist,
   }: SessionScopedPayload<AddSessionMcpServerPayload>): Promise<McpServerInfo> {
     const session = this.requireSession(sessionId);
-    const existing = session.mcp.get(server.name);
+    // Normalize once: the persisted store trims names, so the store write,
+    // the live connect, and cross-session reconciliation must all agree on
+    // the same server identity.
+    const name = normalizeServerName(server.name);
+    const existing = session.mcp.get(name);
     // A session-local (non-persist) add is caller injection, which shadows
     // every registry source at startup — plugins included — so it passes
     // here and reconciles untouched later. A persisted add is a user-level
@@ -1400,7 +1405,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     if (persist === true && existing?.source === 'plugin') {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
-        `MCP server "${server.name}" is contributed by a plugin; update the plugin manifest instead`,
+        `MCP server "${name}" is contributed by a plugin; update the plugin manifest instead`,
       );
     }
     const parsed = McpServerConfigSchema.safeParse(server);
@@ -1417,28 +1422,25 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       // shadow or a plugin entry would silently replace what the session
       // runs, so reject it the same way the global add path does. A mutable
       // user-level duplicate falls through to the store's own error.
-      const registryEntry = await this.resolveMcpRegistryEntry(
-        server.name,
-        session.metadata.workDir,
-      );
+      const registryEntry = await this.resolveMcpRegistryEntry(name, session.metadata.workDir);
       if (registryEntry !== undefined) {
         this.throwReadOnlyMcpServer(registryEntry);
       }
-      await this.globalMcpConfig.add(server);
+      await this.globalMcpConfig.add({ ...server, name });
       source = 'global';
     }
-    await session.mcp.connect(server.name, parsed.data, source);
+    await session.mcp.connect(name, parsed.data, source);
     if (persist === true) {
       // A persisted add is a global write: every other live session learns
       // about it through the same reconciliation path as a management-plane
       // add. The requesting session was connected explicitly above.
-      await this.reconcileMcpServerInSessions([server.name], 'persist-add', sessionId);
+      await this.reconcileMcpServerInSessions([name], 'persist-add', sessionId);
     }
-    const entry = session.mcp.get(server.name);
+    const entry = session.mcp.get(name);
     if (entry === undefined) {
       throw new KimiError(
         ErrorCodes.MCP_SERVER_NOT_FOUND,
-        `MCP server "${server.name}" was not connected`,
+        `MCP server "${name}" was not connected`,
       );
     }
     return entry;
