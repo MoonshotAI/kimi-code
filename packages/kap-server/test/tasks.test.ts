@@ -36,6 +36,8 @@ interface TaskWire {
   output_preview?: string;
   output_bytes?: number;
   agent_id?: string;
+  subagent_type?: string;
+  parent_tool_call_id?: string;
 }
 
 interface ListWire {
@@ -159,6 +161,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
               kind: 'agent',
               agentId: 'sub-1',
               subagentType: 'explore',
+              parentToolCallId: 'call-parent-1',
               model: 'provider/secondary',
               thinkingEffort: 'low',
             };
@@ -216,6 +219,8 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       model: 'provider/secondary', // subagent tasks expose the bound display model
       thinking_effort: 'low', // …and its effective thinking effort
       agent_id: 'sub-1',
+      subagent_type: 'explore',
+      parent_tool_call_id: 'call-parent-1',
     });
     expect(byId.get(agentId)?.command).toBeUndefined();
 
@@ -227,6 +232,10 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     });
     expect(byId.get(processId)?.agent_id).toBeUndefined();
     expect(byId.get(questionId)?.agent_id).toBeUndefined();
+    expect(byId.get(processId)?.subagent_type).toBeUndefined();
+    expect(byId.get(questionId)?.subagent_type).toBeUndefined();
+    expect(byId.get(processId)?.parent_tool_call_id).toBeUndefined();
+    expect(byId.get(questionId)?.parent_tool_call_id).toBeUndefined();
   });
 
   it('filters the list by wire status', async () => {
@@ -264,6 +273,8 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       session_id: id,
       kind: 'subagent',
       agent_id: 'sub-1',
+      subagent_type: 'explore',
+      parent_tool_call_id: 'call-parent-1',
     });
 
     const missing = await getJson<null>(`/api/v1/sessions/${id}/tasks/nope`);
