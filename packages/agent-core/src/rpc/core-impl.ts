@@ -1884,12 +1884,17 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
    * What a live session should currently run for `name`: the registry's
    * runtime target (enabled plugin > project > user file); caller-sourced
    * entries are handled by the reconciliation callers themselves.
+   *
+   * "Not configured anywhere" resolves to `undefined`, but resolution errors
+   * (e.g. a malformed project config file) propagate: treating them as "no
+   * target" would tear down healthy connections or misreport a still-present
+   * server as unconfigured.
    */
   private async resolveMcpRuntimeTarget(
     name: string,
     cwd: string | undefined,
   ): Promise<McpRegistryEntry | undefined> {
-    return this.mcpRegistry.resolveRuntimeTarget(name, { cwd }).catch(() => undefined);
+    return this.mcpRegistry.resolveRuntimeTarget(name, { cwd });
   }
 
   private managedKimiCodeEnvForPlugins(): Record<string, string> {

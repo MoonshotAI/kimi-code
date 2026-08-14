@@ -942,4 +942,53 @@ describe('KimiCore unified MCP management plane', () => {
       message: expect.stringContaining('shared by multiple enabled servers'),
     });
   }, 20000);
+
+  it('surfaces registry config errors during sync instead of tearing down live servers', async () => {
+    const { core, rpc, home, workDir } = await makeCore();
+    await writeJson(join(workDir, '.git', 'keep'), {});
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: { working: { command: process.execPath, args: [STDIO_FIXTURE] } },
+    });
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+    const session = core.sessions.get(created.id)!;
+    await session.mcp.waitForInitialLoad();
+    expect(session.mcp.get('working')).toMatchObject({ status: 'connected', source: 'global' });
+
+    // The project config file becomes malformed mid-session: a config-aware
+    // reconnect must surface the config error, not "no longer configured"…
+    await writeFile(join(workDir, '.mcp.json'), '{not json', 'utf8');
+    await expect(
+      rpc.reconnectMcpServer({ sessionId: created.id, name: 'working' }),
+    ).rejects.toMatchObject({ code: 'config.invalid' });
+
+    // …and a global sync keeps the live entry running (the failure is
+    // logged; an unreadable file is not a license to tear connections down).
+    await core.updateGlobalMcpServer({
+      server: {
+        name: 'working',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [STDIO_FIXTURE, '--updated'],
+      },
+    });
+    expect(session.mcp.get('working')).toMatchObject({
+      status: 'connected',
+      config: { args: [STDIO_FIXTURE] },
+    });
+
+    // Fixing the file lets the next sync converge again.
+    await writeJson(join(workDir, '.mcp.json'), { mcpServers: {} });
+    await core.updateGlobalMcpServer({
+      server: {
+        name: 'working',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [STDIO_FIXTURE, '--healed'],
+      },
+    });
+    expect(session.mcp.get('working')).toMatchObject({
+      status: 'connected',
+      config: { args: [STDIO_FIXTURE, '--healed'] },
+    });
+  }, 30000);
 });
