@@ -319,6 +319,34 @@ describe('McpOAuthService single-flight refresh', () => {
       /no refreshable OAuth grant/,
     );
   });
+
+  it('routes the token request through the credential-serialized fetch', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.stopProactiveRefresh());
+    cleanups.push(() => rm(fixture.storeDir, { recursive: true, force: true }));
+    const authServer = await startFakeAuthServer();
+    const provider = fixture.service.getProvider(SERVER_NAME, SERVER_URL);
+    provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    provider.saveClientInformation({
+      client_id: 'cached-client',
+      redirect_uris: ['http://127.0.0.1:45678/callback'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+    } satisfies OAuthClientInformationFull);
+    await provider.saveTokens({
+      access_token: 'stale-access-token',
+      refresh_token: 'stale-refresh-token',
+      token_type: 'Bearer',
+    });
+
+    // The refresh's /token request must go through OAuthTokenTransaction so
+    // it serializes against concurrent 401-driven refreshes from transports.
+    const fetchSpy = vi.spyOn(provider, 'createOAuthFetch');
+    await fixture.service.refresh(SERVER_NAME, SERVER_URL);
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(authServer.counts.refresh).toBe(1);
+  }, 15000);
 });
 
 describe('McpOAuthService interactive flow serialization', () => {

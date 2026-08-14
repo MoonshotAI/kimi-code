@@ -508,8 +508,14 @@ export class McpOAuthService {
       // the access-token expiry — exactly what a proactive refresh wants. A
       // rejected refresh token falls through to the interactive branch and
       // comes back as REDIRECT, which this non-interactive path treats as
-      // failure.
-      const result = await auth(provider as OAuthClientProvider, { serverUrl });
+      // failure. The token request must ride the provider's fetch wrapper:
+      // OAuthTokenTransaction serializes grants per credential, so without it
+      // a slower response carrying an older rotating refresh token could be
+      // persisted over a newer grant written by a concurrent 401 refresh.
+      const result = await auth(provider as OAuthClientProvider, {
+        serverUrl,
+        fetchFn: provider.createOAuthFetch(),
+      });
       if (result !== 'AUTHORIZED') {
         throw new Error('the stored OAuth grant requires an interactive login');
       }
