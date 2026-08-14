@@ -933,6 +933,42 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return handle;
   }
 
+  /** The live session's workspace cwd, resolved like `listSessions` maps it. */
+  private async sessionWorkDir(sessionId: string): Promise<string | undefined> {
+    const page = await this.klient.global.sessions.list({ sessionId, limit: 1 });
+    const item = page.items[0];
+    if (item === undefined) return undefined;
+    if (item.cwd !== undefined) return item.cwd;
+    const workspaces = await this.klient.global.workspaces.list();
+    return workspaces.find((workspace) => workspace.id === item.workspaceId)?.root;
+  }
+
+  /**
+   * v1's persist-add guard ported to the workspace loader: a same-named
+   * project-layer entry wins over the user file, so persisting would write a
+   * shadow that never takes effect — and the direct workspace-manager upsert
+   * would displace the project config every live session runs. Reject like
+   * v1's read-only rule instead.
+   */
+  private async rejectProjectLayerPersistedMcpAdd(
+    sessionId: string,
+    name: string,
+  ): Promise<void> {
+    const cwd = await this.sessionWorkDir(sessionId);
+    if (cwd === undefined) return;
+    const fs = this.engineAccessor.get(IHostFileSystem);
+    const [withProject, userOnly] = await Promise.all([
+      loadMcpServers({ fs, cwd, homeDir: this.homeDir, includeProject: true }),
+      loadMcpServers({ fs, cwd, homeDir: this.homeDir, includeProject: false }),
+    ]);
+    if (withProject[name] !== undefined && userOnly[name] === undefined) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        `MCP server "${name}" is read-only: it is defined in the project MCP config — edit that file instead`,
+      );
+    }
+  }
+
   /**
    * Attach the event/interaction wiring to a freshly materialized session
    * (idempotent). Unwiring needs no call site of its own: every close path
@@ -2723,7 +2759,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         'reconnectMcpServer with an explicit config is not supported for v2 sessions with ephemeral MCP servers',
       );
     }
-    await manager.connect(input.name, parseReconnectMcpServerConfig(input.name, input.config));
+    const replacement = parseReconnectMcpServerConfig(input.name, input.config);
+    // Parity with v1's manager reconnect: a disabled replacement is rejected
+    // before anything is applied, not upserted over the live connection.
+    if (replacement.enabled === false) {
+      throw new KimiError(
+        ErrorCodes.MCP_SERVER_DISABLED,
+        `MCP server is disabled: ${input.name}`,
+      );
+    }
+    await manager.connect(input.name, replacement);
   }
 
   /**
@@ -2753,6 +2798,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // the same normalized identity, like v1's addSessionMcpServer does.
     const target = { ...parsed, name: normalizeServerName(parsed.name) };
     if (input.persist === true) {
+      await this.rejectProjectLayerPersistedMcpAdd(input.sessionId, target.name);
       await this.globalMcpConfig.add(target);
     }
     await manager.connect(target.name, mcpConfigWithoutName(target));

@@ -4216,6 +4216,32 @@ describe('v1↔v2 session MCP parity', () => {
         status: 'connected',
         toolCount: 1,
       });
+      // A disabled replacement config is rejected before anything is
+      // applied — the narrowed connection survives untouched on both engines.
+      const [v1Disabled, v2Disabled] = await Promise.all([
+        captureRejection(
+          pair.v1.reconnectMcpServer({
+            ...input,
+            name: 'added-live',
+            config: { ...liveServer, enabled: false },
+          }),
+        ),
+        captureRejection(
+          pair.v2.reconnectMcpServer({
+            ...input,
+            name: 'added-live',
+            config: { ...liveServer, enabled: false },
+          }),
+        ),
+      ]);
+      expect(v1Disabled).toMatchObject({ code: 'mcp.server_disabled' });
+      expect((v2Disabled as Error).message).toBe((v1Disabled as Error).message);
+      const [v1Kept, v2Kept] = await listMcpServersWhenSettled(pair, input);
+      expect(project(normalize(v2Kept, 'name'))).toEqual(project(normalize(v1Kept, 'name')));
+      expect(v1Kept.find((server) => server.name === 'added-live')).toMatchObject({
+        status: 'connected',
+        toolCount: 1,
+      });
       // A schema-invalid replacement config rejects with the same
       // config.invalid message on both engines.
       const [v1Bad, v2Bad] = await Promise.all([
@@ -4235,6 +4261,48 @@ describe('v1↔v2 session MCP parity', () => {
       await expect(
         pair.v2.addSessionMcpServer({ sessionId: 'session_missing', server: liveServer }),
       ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+    } finally {
+      await closeSessionPair(pair);
+      restoreEnv();
+    }
+  }, 20_000);
+
+  it('rejects a persisted session add over a project-layer entry on both engines', async () => {
+    const restoreEnv = scrubConfigEnv();
+    const pair = await makeSessionMcpPair();
+    try {
+      await createOnBoth(pair, { id: 'session_parity_mcp_project_shadow' });
+      const input = { sessionId: 'session_parity_mcp_project_shadow' } as const;
+      // Anchor the project layer at the workspace: a fake git root for v1's
+      // loader; v2 falls back to the session cwd.
+      await mkdir(join(pair.workDir, '.git'), { recursive: true });
+      await writeFile(
+        join(pair.workDir, '.mcp.json'),
+        JSON.stringify({
+          mcpServers: { 'project-owned': { command: '/no/such/executable' } },
+        }),
+        'utf-8',
+      );
+
+      const server: McpServerConfig = {
+        name: 'project-owned',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [MCP_STDIO_FIXTURE],
+      };
+      await expect(
+        pair.v1.addSessionMcpServer({ ...input, server, persist: true }),
+      ).rejects.toMatchObject({ code: 'request.invalid' });
+      await expect(
+        pair.v2.addSessionMcpServer({ ...input, server, persist: true }),
+      ).rejects.toMatchObject({ code: 'request.invalid' });
+      // Neither engine wrote the user-level shadow.
+      const [v1File, v2File] = await Promise.all([
+        readFile(join(pair.v1Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),
+        readFile(join(pair.v2Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),
+      ]);
+      expect(v1File).not.toContain('project-owned');
+      expect(v2File).not.toContain('project-owned');
     } finally {
       await closeSessionPair(pair);
       restoreEnv();
