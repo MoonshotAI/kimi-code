@@ -219,6 +219,34 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['keep me', 'kept answer']);
   });
 
+  it('multi-turn undo drops prompt-owned injections of every removed prompt but keeps unowned reminders', () => {
+    const result = reduceContextTranscript([
+      appendMessage(
+        userMessage('caption A', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'prompt-1',
+        }),
+      ),
+      appendMessage({ ...userMessage('message A', { kind: 'user' }), id: 'prompt-1' }),
+      appendMessage(assistantMessage('reply A')),
+      appendMessage(
+        userMessage('caption B', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'prompt-2',
+        }),
+      ),
+      appendMessage({ ...userMessage('message B', { kind: 'user' }), id: 'prompt-2' }),
+      appendMessage(assistantMessage('reply B')),
+      appendMessage(userMessage('standing reminder', { kind: 'injection', variant: 'system' })),
+      undo(2),
+    ]);
+
+    expect(texts(result)).toEqual(['standing reminder']);
+    expect(result.foldedLength).toBe(1);
+  });
+
   it('undo blocked at a compaction summary leaves the transcript unchanged', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('old')),
@@ -413,6 +441,30 @@ describe('transcript/model fold parity', () => {
       appendMessage(userMessage('u3', { kind: 'user' })),
       { type: 'context.clear' },
       ...assistantStep('s4', 'a4'),
+    ]);
+  });
+
+  it('matches across a multi-turn undo with prompt-owned injections on every anchor', () => {
+    expectParity([
+      appendMessage(
+        userMessage('caption u1', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'p1',
+        }),
+      ),
+      appendMessage({ ...userMessage('u1', { kind: 'user' }), id: 'p1' }),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(
+        userMessage('caption u2', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'p2',
+        }),
+      ),
+      appendMessage({ ...userMessage('u2', { kind: 'user' }), id: 'p2' }),
+      ...assistantStep('s2', 'a2'),
+      undo(2),
     ]);
   });
 

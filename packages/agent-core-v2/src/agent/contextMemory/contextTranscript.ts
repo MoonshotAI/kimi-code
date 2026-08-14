@@ -28,7 +28,7 @@ import {
   compactionResultMessageCount,
   selectRecentUserMessages,
 } from './compactionHandoff';
-import { computeUndoCutFrom, isFullyUndoable } from './conversationTime';
+import { computeUndoCutFrom, isFullyUndoable, isUndoAnchor } from './conversationTime';
 import {
   appendMessageTo,
   applyLoopEventTo,
@@ -79,11 +79,20 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     const cut = computeUndoCutFrom(state.messages, count, entryAdapter.messageOf, clearFloor);
     if (!isFullyUndoable(cut, count)) return;
     const entries = state.messages;
+    const removedPromptIds = new Set<string>();
+    for (let i = cut.cutIndex; i < entries.length; i++) {
+      const message = entries[i]!.message;
+      if (message.id !== undefined && isUndoAnchor(message)) removedPromptIds.add(message.id);
+    }
     let removed = 0;
     const kept: TranscriptEntry[] = [];
     for (let i = cut.cutIndex; i < entries.length; i++) {
       const entry = entries[i]!;
-      if (i > cut.anchorIndex && entry.message.origin?.kind === 'injection') {
+      const origin = entry.message.origin;
+      if (
+        origin?.kind === 'injection' &&
+        (origin.ownerPromptId === undefined || !removedPromptIds.has(origin.ownerPromptId))
+      ) {
         kept.push(entry);
       } else {
         removed++;
