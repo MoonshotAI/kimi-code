@@ -136,8 +136,9 @@ export class FileMentionProvider implements AutocompleteProvider {
     }
 
     // Handle slash-command name completion ourselves so that aliases are
-    // searchable and visible in the label.
-    if (!options.force && textBeforeCursor.startsWith('/')) {
+    // searchable and visible in the label. Only the first line can host a
+    // start-of-message slash command; later lines are inline skill territory.
+    if (!options.force && cursorLine === 0 && textBeforeCursor.startsWith('/')) {
       const spaceIndex = textBeforeCursor.indexOf(' ');
       if (spaceIndex === -1) {
         const tokens = textBeforeCursor
@@ -315,13 +316,15 @@ export class FileMentionProvider implements AutocompleteProvider {
  * leading slash-command area. Returns `null` when the context is not an inline
  * skill trigger.
  *
- * On lines after the first, a `/` at the start of the line is also treated as
- * an inline skill trigger so that multi-line prompts can naturally start a
- * skill reference on any line.
+ * On lines after the first, a `/` at the start of the line always begins an
+ * inline skill prefix — including the partially typed `/rev` — so the picker
+ * stays in skill-only mode while the token is completed.
  */
 export function extractInlineSkillPrefix(text: string, cursorLine: number = 0): string | null {
-  if (cursorLine > 0 && text.trim() === '/') {
-    return '/';
+  if (cursorLine > 0) {
+    const trimmedStart = text.trimStart();
+    const match = /^\/[^\s/]*$/.exec(trimmedStart);
+    if (match !== null) return match[0];
   }
   // findInlineSkillTokens skips the leading slash-command area, so a line such
   // as `/skill:review args /` still yields the trailing `/` token.

@@ -19,8 +19,6 @@ export function isUndoAnchor(message: ContextMessage): boolean {
   const origin = message.origin;
   if (origin === undefined || origin.kind === 'user') return true;
   if (origin.kind === 'skill_activation') {
-    // An activation that rode a `promptWithSkills` submission is part of its
-    // prompt's group — the prompt is the group's only anchor.
     return origin.trigger === 'user-slash' && origin.submissionId === undefined;
   }
   return origin.kind === 'plugin_command' && origin.trigger === 'user-slash';

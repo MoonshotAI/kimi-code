@@ -200,6 +200,36 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['message A', 'reply A']);
   });
 
+  it('undo removes a grouped submission together with its prompt-owned injections', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('message A', { kind: 'user' })),
+      appendMessage(assistantMessage('reply A')),
+      appendMessage(
+        userMessage('compressed image', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'prompt-1',
+        }),
+      ),
+      appendMessage(
+        userMessage('skill card', {
+          kind: 'skill_activation',
+          activationId: 'act-1',
+          skillName: 'review',
+          trigger: 'user-slash',
+          submissionId: 'sub-1',
+        }),
+      ),
+      appendMessage({
+        ...userMessage('message B', { kind: 'user', submissionId: 'sub-1' }),
+        id: 'prompt-1',
+      }),
+      appendMessage(assistantMessage('reply B')),
+      undo(1),
+    ]);
+    expect(texts(result)).toEqual(['message A', 'reply A']);
+  });
+
   it('removes a pre-anchor image compression reminder owned by the undone prompt', () => {
     const result = reduceContextTranscript([
       appendMessage(

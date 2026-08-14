@@ -705,6 +705,26 @@ describe('FileMentionProvider', () => {
       ]);
     });
 
+    it('stays in skill-only mode while typing a token on a later line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '/rev'], 1, 4, {
+        signal: ctrl(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('does not leak built-in commands onto later lines', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '/hel'], 1, 4, {
+        signal: ctrl(),
+      });
+
+      expect(result?.items.map((item) => item.value) ?? []).not.toContain('help');
+    });
+
     it('returns null for a prose slash when no skills are registered', async () => {
       const provider = new FileMentionProvider([HELP_COMMAND], workDir, NO_FD, [], () => 'prompt');
       const line = 'hello /';

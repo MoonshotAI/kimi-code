@@ -13,11 +13,6 @@ export interface PromptSubmitContext {
 export interface PromptInput {
   readonly id?: string;
   readonly message: ContextMessage;
-  /**
-   * Extra user messages materialized ahead of `message` in the same turn
-   * (e.g. the rendered skill activations of a `promptWithSkills` submission).
-   * They carry their own origins and share the turn's history batch.
-   */
   readonly messagesBefore?: readonly ContextMessage[];
 }
 

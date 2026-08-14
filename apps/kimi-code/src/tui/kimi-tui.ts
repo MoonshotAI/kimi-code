@@ -1374,21 +1374,22 @@ export class KimiTUI {
   async sendInlineSkillUserInput(
     text: string,
     activations: readonly InlineSkillActivation[],
+    preExtracted?: ExtractionResult,
   ): Promise<void> {
-    if (this.btwPanelController.sendUserInput(text)) return;
+    if (this.btwPanelController.sendUserInput(text, activations)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
     let extraction: ReturnType<typeof extractMediaAttachments>;
     try {
-      extraction = extractMediaAttachments(text, this.imageStore);
+      extraction = preExtracted ?? extractMediaAttachments(text, this.imageStore);
     } catch (error) {
       this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
       return;
     }
     if (!this.validateMediaCapabilities(extraction)) return;
-    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction)) return;
+    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction, activations)) return;
     let session = this.session;
     if (session === undefined) {
       // Dispatch only routes here on the v2 engine, so the session is created

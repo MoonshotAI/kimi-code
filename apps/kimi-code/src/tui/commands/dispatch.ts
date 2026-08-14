@@ -254,6 +254,14 @@ function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
   });
+  // An unrecognized slash token makes the whole input a plain message; scan
+  // it for inline skills like any other plain prompt.
+  if (intent.kind === 'message') {
+    const activations = extractInlineSkillActivations(text, host.skillCommandMap);
+    if (activations.length === 0) return false;
+    void host.sendInlineSkillUserInput(text, activations);
+    return true;
+  }
   if (intent.kind !== 'skill') return false;
 
   const all = extractInlineSkillActivations(text, host.skillCommandMap, { includeLeading: true });

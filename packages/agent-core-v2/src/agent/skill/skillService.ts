@@ -70,7 +70,6 @@ export class AgentSkillService extends Service implements IAgentSkillService {
 
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
     await this.skillCatalog.ready;
-    // No submissionId: a lone slash activation stays its own undo anchor.
     const prepared = this.prepare(input);
     this.recordActivation(prepared.origin);
     const turn = await (await this.prompt.enqueue({ message: prepared.message })).launched;
@@ -91,8 +90,6 @@ export class AgentSkillService extends Service implements IAgentSkillService {
   async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult | undefined> {
     await this.skillCatalog.ready;
     const submissionId = input.submissionId ?? randomUUID();
-    // Validate and render every skill before any activation is recorded, so an
-    // unknown name rejects the whole submission with no side effects.
     const prepared = input.skills.map((skill) => this.prepare(skill, submissionId));
     for (const activation of prepared) {
       this.recordActivation(activation.origin);

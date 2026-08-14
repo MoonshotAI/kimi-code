@@ -147,6 +147,24 @@ describe('computeUndoCut', () => {
     expect(cut).toEqual({ cutIndex: 1, removedCount: 1, stoppedAtCompaction: false });
     expect(isFullyUndoable(cut, 1)).toBe(true);
   });
+
+  it('cuts a grouped submission together with its prompt-owned injections', () => {
+    const history = [
+      user(USER_ORIGIN),
+      {
+        role: 'user',
+        content: [text('caption')],
+        toolCalls: [],
+        origin: { kind: 'injection', variant: 'image_compression', ownerPromptId: 'prompt-1' },
+      } as ContextMessage,
+      skillActivation('sub-1'),
+      { ...groupedPrompt('sub-1'), id: 'prompt-1' },
+      assistant(),
+    ];
+    const cut = computeUndoCut(history, 1);
+    expect(cut).toEqual({ cutIndex: 1, removedCount: 1, stoppedAtCompaction: false });
+    expect(isFullyUndoable(cut, 1)).toBe(true);
+  });
 });
 
 describe('contextUndo op', () => {

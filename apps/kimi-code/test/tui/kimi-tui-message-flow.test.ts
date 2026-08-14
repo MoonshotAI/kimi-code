@@ -660,6 +660,39 @@ describe('KimiTUI message flow', () => {
     expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
+  it('scans inline skills in messages that start with an unknown slash token (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/dance please use /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/dance please use /skill:review',
+        [{ name: 'review' }],
+        { submissionId: expect.any(String) },
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
   it('keeps inline skill tokens as plain text on the legacy engine', async () => {
     const session = makeSession({ id: 'ses-1' });
     const { driver } = await makeDriver(session, {
@@ -3591,6 +3624,48 @@ command = "vim"
     });
     expect(session.steer).not.toHaveBeenCalled();
     expect(stripSgr(renderBtwPanel(driver))).toContain('Q: What are you working on right now?');
+  });
+
+  it('sends /btw panel input with inline skills via promptWithSkills (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/btw');
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledWith();
+    });
+    expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question...');
+
+    driver.handleUserInput('check /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('check /skill:review', [
+        { name: 'review' },
+      ]);
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
   });
 
   it('cancels an unused /btw side agent when closing an empty panel', async () => {

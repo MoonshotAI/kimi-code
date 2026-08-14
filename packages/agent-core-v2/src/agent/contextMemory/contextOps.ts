@@ -338,10 +338,8 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
   let cutIndex = -1;
   let removedCount = 0;
   let stoppedAtCompaction = false;
-  // Set once the last needed anchor of a submission group is cut: the scan
-  // keeps cutting the group's remaining (non-anchor) messages, so a grouped
-  // submission (skill activations + their prompt) is removed whole.
   let completingSubmissionId: string | undefined;
+  let groupAnchor: ContextMessage | undefined;
   for (let i = state.length - 1; i >= 0; i--) {
     const message = state[i];
     if (message === undefined || message.origin?.kind === 'injection') continue;
@@ -369,12 +367,18 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
       }
       if (remaining <= 0) {
         completingSubmissionId = promptSubmissionId(message.origin);
+        groupAnchor = message;
       }
     } else if (
       completingSubmissionId !== undefined &&
       promptSubmissionId(message.origin) === completingSubmissionId
     ) {
       cutIndex = i;
+    }
+  }
+  if (completingSubmissionId !== undefined && groupAnchor !== undefined) {
+    while (cutIndex > 0 && isPromptOwnedInjection(state[cutIndex - 1]!, groupAnchor)) {
+      cutIndex--;
     }
   }
   return { cutIndex, removedCount, stoppedAtCompaction };

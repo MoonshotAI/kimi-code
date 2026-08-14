@@ -167,11 +167,10 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const applyUndo = (count: number): void => {
     if (count <= 0) return;
     let removedUserCount = 0;
-    // Set once the last needed anchor of a submission group is removed: the
-    // scan keeps removing the group's remaining (non-anchor) messages so a
-    // grouped submission is projected as undone whole.
     let completingSubmissionId: string | undefined;
-    for (let i = transcript.length - 1; i >= clearFloor; i--) {
+    let groupAnchor: ContextMessage | undefined;
+    let i = transcript.length - 1;
+    for (; i >= clearFloor; i--) {
       const message = transcript[i]!.message;
       if (message.origin?.kind === 'injection') continue;
       if (removedUserCount >= count) {
@@ -197,7 +196,17 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
             foldedLength = Math.max(0, foldedLength - 1);
           }
           completingSubmissionId = promptSubmissionId(message.origin);
+          groupAnchor = message;
         }
+      }
+    }
+    if (completingSubmissionId !== undefined && groupAnchor !== undefined) {
+      while (
+        i + 1 < transcript.length &&
+        isPromptOwnedInjection(transcript[i + 1]!.message, groupAnchor)
+      ) {
+        transcript.splice(i + 1, 1);
+        foldedLength = Math.max(0, foldedLength - 1);
       }
     }
     resetOpenState();
