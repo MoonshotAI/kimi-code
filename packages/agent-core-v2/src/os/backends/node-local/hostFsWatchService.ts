@@ -23,6 +23,11 @@ const DEFAULT_IGNORED = (p: string): boolean => /(?:^|[/\\])\.git(?:$|[/\\])/.te
 const NATIVE_RETRY_BASE_MS = 1000;
 const NATIVE_RETRY_MAX_MS = 30000;
 
+function isWatchResourceExhaustion(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'EMFILE' || code === 'ENFILE';
+}
+
 interface NativeFsWatcher {
   close(): void;
   on(event: 'error', listener: (error: NodeJS.ErrnoException) => void): this;
@@ -107,6 +112,11 @@ class HostFsWatchHandle implements IHostFsWatchHandle {
       if (mapped !== undefined) this.emitter.fire(mapped);
     });
     this.watcher.on('error', (error: unknown) => {
+      if (isWatchResourceExhaustion(error)) {
+        onUnexpectedError(error);
+        this.dispose();
+        return;
+      }
       this.readiness.reject(error);
       onUnexpectedError(error);
     });
@@ -135,6 +145,7 @@ class SignalWatchHandle implements IHostFsWatchHandle {
   private retry: IDisposable | undefined;
   private retryAttempts = 0;
   private recovering = false;
+  private resourceExhausted = false;
   private disposed = false;
 
   constructor(
@@ -150,7 +161,7 @@ class SignalWatchHandle implements IHostFsWatchHandle {
   }
 
   private startNativeLeg(): void {
-    if (this.disposed) return;
+    if (this.disposed || this.resourceExhausted) return;
     try {
       const watcher = this.runtime.watchNative(this.root, (_eventType, filename) => {
         if (this.disposed) return;
@@ -178,6 +189,13 @@ class SignalWatchHandle implements IHostFsWatchHandle {
     if (watcher !== undefined && watcher !== this.nativeWatcher) return;
     watcher?.close();
     this.nativeWatcher = undefined;
+    if (isWatchResourceExhaustion(error)) {
+      this.resourceExhausted = true;
+      this.recovering = false;
+      this.readiness.resolve();
+      onUnexpectedError(error);
+      return;
+    }
     if (error.code === 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM') {
       this.recovering = false;
       this.startChokidarLeg();

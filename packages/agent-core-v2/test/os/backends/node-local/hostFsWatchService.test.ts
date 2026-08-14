@@ -49,7 +49,10 @@ interface TestRetry {
   run(): void;
 }
 
-function signalRig(options?: { readonly synchronousFailures?: number }): {
+function signalRig(options?: {
+  readonly synchronousFailures?: number;
+  readonly synchronousFailureCode?: string;
+}): {
   readonly service: IHostFsWatchService;
   readonly attempts: TestNativeAttempt[];
   readonly retries: TestRetry[];
@@ -64,7 +67,9 @@ function signalRig(options?: { readonly synchronousFailures?: number }): {
     watchNative: (_root, listener) => {
       if (synchronousFailures > 0) {
         synchronousFailures -= 1;
-        throw Object.assign(new Error('native watch creation failed'), { code: 'EIO' });
+        throw Object.assign(new Error('native watch creation failed'), {
+          code: options?.synchronousFailureCode ?? 'EIO',
+        });
       }
       const watcher = new TestNativeWatcher();
       attempts.push({
@@ -220,6 +225,38 @@ describe('host filesystem change notifications', () => {
 
     expect(rig.retries.map((retry) => retry.delayMs)).toEqual([1000, 1000]);
   });
+
+  it.each(['EMFILE', 'ENFILE'])(
+    'disables a native watch instead of retrying after %s',
+    async (code) => {
+      const rig = signalRig();
+      const events: HostFsChange[] = [];
+      const reported: unknown[] = [];
+      setUnexpectedErrorHandler((error) => reported.push(error));
+      handle = rig.service.watch('/repo', { signal: true });
+      handle.onDidChange((event) => events.push(event));
+      await handle.ready;
+
+      rig.attempt(0).watcher.fail(code);
+
+      expect(rig.attempt(0).watcher.closed).toBe(true);
+      expect(rig.retries).toHaveLength(0);
+      expect(events).toHaveLength(0);
+      expect(reported).toHaveLength(1);
+    },
+  );
+
+  it.each(['EMFILE', 'ENFILE'])(
+    'becomes ready without retrying when native watch creation fails with %s',
+    async (code) => {
+      const rig = signalRig({ synchronousFailures: 1, synchronousFailureCode: code });
+      handle = rig.service.watch('/repo', { signal: true });
+
+      await expect(handle.ready).resolves.toBeUndefined();
+      expect(rig.attempts).toHaveLength(0);
+      expect(rig.retries).toHaveLength(0);
+    },
+  );
 
   it('cancels a pending native retry when the watch handle is disposed', () => {
     const rig = signalRig();
