@@ -8770,6 +8770,14 @@ describe('transcript step and assistant folding', () => {
       (entry) => entry.kind === 'assistant',
     );
     expect(assistantEntries).toHaveLength(cycles);
+
+    const collapsed = stripSgr(renderTranscript(driver));
+    expect(collapsed).not.toContain('msg-0');
+
+    driver.toggleToolOutputExpansion();
+    const expanded = stripSgr(renderTranscript(driver));
+    expect(expanded).toContain('msg-0');
+    expect(expanded.indexOf('msg-0')).toBeLessThan(expanded.indexOf('msg-1'));
   });
 
   it('does not fold a turn within the caps', async () => {
@@ -8818,6 +8826,10 @@ describe('transcript step and assistant folding', () => {
 
     const lastAssistant = assistants.at(-1)!;
     expect(stripSgr(lastAssistant.render(120).join('\n'))).toContain(`msg-${cycles - 1}`);
+
+    expect(stripSgr(renderTranscript(driver))).not.toContain('msg-0');
+    driver.toggleToolOutputExpansion();
+    expect(stripSgr(renderTranscript(driver))).toContain('msg-0');
   });
 });
 
@@ -8865,6 +8877,21 @@ describe('footer ctrl+o hint', () => {
 
     driver.toggleToolOutputExpansion();
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
+  });
+
+  it('offers expand for folded assistant messages and collapse once revealed', async () => {
+    const { driver } = await makeDriver();
+    const message = new AssistantMessageComponent();
+    message.updateContent('hidden assistant reply');
+    const summary = new StepSummaryComponent();
+    summary.addCounts(0, 0, 1);
+    summary.addFoldedMessages([message]);
+    driver.state.transcriptContainer.addChild(summary);
+
+    expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
+
+    driver.toggleToolOutputExpansion();
+    expect(renderFooterLine1(driver)).toContain('ctrl+o collapse');
   });
 
   it('stays silent when every card shows its whole output', async () => {

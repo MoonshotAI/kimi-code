@@ -44,6 +44,10 @@ export class AssistantMessageComponent implements Component {
     this.markRenderDirty();
   }
 
+  getContent(): string {
+    return this.lastText;
+  }
+
   updateContent(text: string, opts?: AssistantMarkdownOptions): void {
     const displayText = text.trim();
     const transient = opts?.transient === true;
