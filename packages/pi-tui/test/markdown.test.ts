@@ -1659,6 +1659,24 @@ bar`,
 				"CJK path characters remain part of the hyperlink target",
 			);
 		});
+
+		it("should keep balanced full-width parentheses inside the URL path", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown(
+				"见 https://example.com/wiki/中华人民共和国（1949年） 的说明",
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+
+			assert.ok(
+				joined.includes("\x1b]8;;https://example.com/wiki/中华人民共和国（1949年）\x1b\\"),
+				"Balanced full-width parens remain part of the hyperlink target",
+			);
+		});
 	});
 
 	describe("HTML-like tags in text", () => {
