@@ -497,6 +497,12 @@ export class McpOAuthService {
   }
 
   private async refreshNow(serverName: string, serverUrl: string | URL): Promise<void> {
+    // An interactive authorization for this credential owns the shared
+    // provider's PKCE/redirect state right now; resetting it here would break
+    // the user's in-flight browser flow. The flow produces fresh tokens on
+    // completion, and the transport 401 path remains the backstop if it
+    // fails — so skip rather than race it.
+    if (this.activeAuthorizations.has(mcpOAuthStoreKey(serverName, serverUrl))) return;
     const state = this.tokenState(serverName, serverUrl);
     if (!state.hasTokens || !state.hasRefreshToken) {
       throw new Error(`MCP server "${serverName}" has no refreshable OAuth grant`);

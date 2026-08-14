@@ -63,7 +63,9 @@ interface FakeAuthServer {
  * Discovery and the authorization redirect never touch the network — tests
  * seed discovery state and drive the localhost callback listener directly.
  */
-async function startFakeAuthServer(): Promise<FakeAuthServer> {
+async function startFakeAuthServer(
+  options: { readonly rejectRefreshToken?: boolean } = {},
+): Promise<FakeAuthServer> {
   const counts = { register: 0, exchange: 0, refresh: 0 };
   const httpServer: HttpServer = createHttpServer((req, res) => {
     if (req.method !== 'POST' || (req.url !== '/token' && req.url !== '/register')) {
@@ -84,7 +86,14 @@ async function startFakeAuthServer(): Promise<FakeAuthServer> {
       }
       const grantType = new URLSearchParams(body).get('grant_type');
       if (grantType === 'authorization_code') counts.exchange += 1;
-      if (grantType === 'refresh_token') counts.refresh += 1;
+      if (grantType === 'refresh_token') {
+        counts.refresh += 1;
+        if (options.rejectRefreshToken === true) {
+          res.writeHead(400, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid_grant' }));
+          return;
+        }
+      }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
         JSON.stringify({ access_token: 'fresh-token', token_type: 'Bearer', expires_in: 3600 }),
@@ -434,6 +443,34 @@ describe('McpOAuthService interactive flow serialization', () => {
     await firstComplete;
     // The joiner shares the settled outcome; the exchange ran exactly once.
     await second.complete();
+    expect(authServer.counts.exchange).toBe(1);
+    expect(fixture.service.tokenState(SERVER_NAME, SERVER_URL).hasTokens).toBe(true);
+  }, 15000);
+
+  it('skips a refresh that fires while an interactive flow owns the credential', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.stopProactiveRefresh());
+    cleanups.push(() => rm(fixture.storeDir, { recursive: true, force: true }));
+    const authServer = await startFakeAuthServer({ rejectRefreshToken: true });
+    const provider = fixture.service.getProvider(SERVER_NAME, SERVER_URL);
+    provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    // A dead-but-present grant keeps the credential refreshable, so a
+    // proactive/manual refresh would normally proceed — and would hit the
+    // same shared provider the interactive flow lives on.
+    await provider.saveTokens({
+      access_token: 'stale-access-token',
+      refresh_token: 'stale-refresh-token',
+      token_type: 'Bearer',
+      expires_in: 3600,
+    });
+
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const complete = flow.complete({ timeoutMs: 10_000 });
+    // Refresh must skip while the flow is active instead of resetting the
+    // shared provider's PKCE/state out from under the browser callback.
+    await expect(fixture.service.refresh(SERVER_NAME, SERVER_URL)).resolves.toBeUndefined();
+    await deliverCallback(flow);
+    await complete;
     expect(authServer.counts.exchange).toBe(1);
     expect(fixture.service.tokenState(SERVER_NAME, SERVER_URL).hasTokens).toBe(true);
   }, 15000);
