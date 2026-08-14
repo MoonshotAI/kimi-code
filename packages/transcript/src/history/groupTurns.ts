@@ -12,7 +12,7 @@
  *    `turn.ended` records and are folded in by `foldWireRecordFacts`);
  *  - media content parts become attachment entities (metadata only — base64
  *    bytes are dropped, never shipped); mid-turn media is not anchored. A
- *    daemon-ref media part (`kimi-file://<fileId>?path=…`) is self-contained
+ *    daemon-ref media part (`kimi-file://<fileId>`) is self-contained
  *    and projects to a single attachment; a standalone `<media path>` tag is
  *    user text or the legacy degrade form and stays prompt text;
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;
@@ -120,10 +120,10 @@ export function groupMessagesIntoSnapshot(
 
   /**
    * Turn-opening user message → prompt text + attachment ids. A daemon-ref
-   * media part (`kimi-file://<fileId>?path=…`) is self-contained: it yields
-   * one attachment named after the reference's materialization path. Text
-   * parts pass through verbatim — a standalone `<media path>` tag is user
-   * text or the legacy degrade form, never markup the read model may eat.
+   * media part (`kimi-file://<fileId>`) is self-contained: it yields one
+   * attachment. Text parts pass through verbatim — a standalone
+   * `<media path>` tag is user text or the legacy degrade form, never markup
+   * the read model may eat.
    */
   const foldTurnOpeningInput = (
     message: HistoryMessage,
@@ -169,11 +169,9 @@ export function groupMessagesIntoSnapshot(
       }
       const ref = daemonFileRefFromPairingPart(part);
       if (ref !== undefined) {
-        const path = ref.ref.path;
         const entity: TranscriptAttachment = {
           attachmentId: `att_${attachments.length + 1}`,
           mediaType: `${ref.kind}/*`,
-          name: path === undefined ? undefined : pathBaseName(path),
           source: { kind: 'session_media', fileId: ref.ref.fileId },
         };
         attachments.push(entity);
@@ -365,14 +363,6 @@ function textOf(message: HistoryMessage): string {
     .filter((part): part is { readonly type: 'text'; readonly text: string } => part.type === 'text' && 'text' in part)
     .map((part) => part.text)
     .join('');
-}
-
-/**
- * Basename of a materialization path for an attachment's display name.
- */
-function pathBaseName(path: string): string {
-  const sep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-  return sep === -1 ? path : path.slice(sep + 1);
 }
 
 function parseArguments(raw: string | null): unknown {

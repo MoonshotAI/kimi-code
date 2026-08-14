@@ -135,7 +135,7 @@ export type {
 // Daemon file references (agent-core-v2) — pure helpers for the internal
 // `kimi-file://` media URLs and the model-facing `<image|video|file>` path
 // tags. A daemon-ref media part is self-contained (kind from the part type,
-// path from the url's `?path=`) — there is no tag+ref pairing to fold.
+// file id from the url) — there is no tag+ref pairing to fold.
 // Hosts must not import agent-core-v2 directly; `FileMeta` and
 // `UploadFileOptions` ride the `export type * from '#/types'` below.
 export {

@@ -11,8 +11,8 @@
  * continuation, subagent run, cron…) has internal steering text as its input,
  * which must never surface in transcripts. An upload's daemon-ref media part
  * is self-contained (`daemonFileRefFromPart`): its kind comes from the part
- * type and its materialization path from the reference, so the projection
- * needs no tag+ref pairing — the referenced media rides as
+ * type and its file id from the reference, so the projection needs no
+ * tag+ref pairing — the referenced media rides as
  * {@link TurnStartedEvent.promptAttachments}.
  * `turn.started` also echoes the prompt record id as
  * {@link TurnStartedEvent.promptId} when the turn was opened by a prompt
@@ -39,14 +39,11 @@ export type TurnInterruptReason =
   | 'blocked';
 
 /**
- * One daemon-referenced upload carried by the turn-opening input. `name` is
- * a display label (the reference path's basename) — never an absolute path,
- * so the payload stays safe to forward onto client-facing event streams.
+ * One daemon-referenced upload carried by the turn-opening input.
  */
 export interface TurnPromptAttachment {
   readonly kind: 'image' | 'video';
   readonly fileId: string;
-  readonly name?: string;
 }
 
 export interface TurnStartedEvent {
@@ -84,14 +81,8 @@ export function projectTurnPrompt(input: readonly ContentPart[]): TurnPromptProj
         : media.map((entry) => ({
             kind: entry.kind,
             fileId: entry.ref.fileId,
-            name: entry.ref.path === undefined ? undefined : pathBaseName(entry.ref.path),
           })),
   };
-}
-
-function pathBaseName(path: string): string {
-  const sep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-  return sep === -1 ? path : path.slice(sep + 1);
 }
 
 export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {

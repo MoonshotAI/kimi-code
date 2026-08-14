@@ -263,7 +263,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
 
       // Re-export smoke only — helper behavior is pinned by agent-core-v2's
       // mediaRef tests.
-      expect(isDaemonFileUrl(buildDaemonFileUrl(meta.id, '/tmp/pixel.png'))).toBe(true);
+      expect(isDaemonFileUrl(buildDaemonFileUrl(meta.id))).toBe(true);
       await harness.deleteFile(meta.id);
       await expect(harness.deleteFile(meta.id)).rejects.toThrow(/file not found/);
     } finally {

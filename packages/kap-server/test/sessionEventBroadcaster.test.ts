@@ -824,7 +824,7 @@ describe('SessionEventBroadcaster', () => {
         turnId: 1,
         origin: { kind: 'user' },
         prompt: 'summarize this clip',
-        promptAttachments: [{ kind: 'video', fileId: 'file_vid_1', name: 'clip.mp4' }],
+        promptAttachments: [{ kind: 'video', fileId: 'file_vid_1' }],
       }),
     );
     await bc.getCursor('s1'); // drain between the turn boundaries (see note above)

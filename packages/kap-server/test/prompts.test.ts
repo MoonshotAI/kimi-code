@@ -376,8 +376,8 @@ describe('server-v2 /api/v1 prompts', () => {
     // The edge no longer uploads to the provider. The queued prompt reprojects
     // the video as the file reference it came from — a `{ kind: 'file' }` source
     // is only ever produced from an internal `kimi-file://` url, so this proves
-    // the enqueued message carries the reference (its materialization path is
-    // never leaked back to the client).
+    // the enqueued message carries the reference (the internal URL is never
+    // leaked back to the client).
     const content = submitted.body.data.content as Array<Record<string, unknown>>;
     expect(content).toHaveLength(2);
     expect(content[0]).toEqual({ type: 'text', text: 'what happens in this video?' });
@@ -386,10 +386,9 @@ describe('server-v2 /api/v1 prompts', () => {
       source: { kind: 'session_media', file_id: uploaded.data.id },
     });
 
-    // The `?path=` of that reference points at a materialized copy of the bytes
-    // in the session's own media dir, written asynchronously by the engine's
-    // prompt intake — the engine resolver falls back to it when it cannot
-    // upload or inline the video.
+    // Intake materializes a copy of the bytes in the session's own media dir,
+    // written asynchronously by the engine's prompt intake — the engine
+    // resolver falls back to it when it cannot upload or inline the video.
     await expectSessionMedia(server!, id, `${uploaded.data.id}.mp4`, videoBytes);
   });
 
@@ -406,7 +405,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
 
     // [compression caption, projected file reference]: the daemon ref
-    // projects to `session_media`, its materialization path never leaked.
+    // projects to `session_media`, the internal URL never leaked.
     const content = submitted.body.data.content as Array<Record<string, unknown>>;
     expect(content).toHaveLength(2);
     const caption = content[0] as { type: string; text: string };
@@ -427,10 +426,9 @@ describe('server-v2 /api/v1 prompts', () => {
     const finalFileId = image.source.file_id;
     expect(finalFileId).not.toBe(uploaded.id);
 
-    // The reference's `?path=` names the materialized session-media copy of
-    // the FINAL (compressed) bytes, named by the final upload id — the copy
-    // still lands on disk for the engine, but its path never reaches the
-    // wire.
+    // Intake materializes the session-media copy of the FINAL (compressed)
+    // bytes, named by the final upload id — the copy still lands on disk for
+    // the engine, but its path never reaches the wire.
     const mediaPath = join(sessionMediaDir(server!, id), `${finalFileId}.png`);
     expect(pngDimensions(await readFileEventually(mediaPath))).toEqual({ width: 2000, height: 1000 });
     expect(JSON.stringify(content)).not.toContain(mediaPath);
@@ -543,7 +541,7 @@ describe('server-v2 /api/v1 prompts', () => {
       content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
     });
     expect(first.body.code).toBe(0);
-    const canonicalPath = await expectSessionMedia(server!, id, `${uploaded.id}.png`, smallPng);
+    await expectSessionMedia(server!, id, `${uploaded.id}.png`, smallPng);
     await server!.core.accessor.get(IFileService).delete(uploaded.id);
 
     const replayed = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
@@ -576,7 +574,7 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(replayedMessage!.content).toContainEqual({
         type: 'image_url',
         imageUrl: {
-          url: `kimi-file://${uploaded.id}?path=${encodeURIComponent(canonicalPath)}`,
+          url: `kimi-file://${uploaded.id}`,
         },
       });
     });

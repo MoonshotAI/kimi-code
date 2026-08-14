@@ -55,23 +55,18 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     return this.storage.pathFor(this.scope, this.keyFor(fileId, ext));
   }
 
-  async resolveDisplayPath(fileId: string, hint: string | undefined): Promise<string | undefined> {
-    if (hint === undefined || hint.length === 0) return undefined;
-    // An id that is not a minted upload id can never have a canonical copy —
-    // and must never become a storage key (path traversal guard). Treat it
-    // like a missing copy: the caller's own hint stands.
-    if (!isFileId(fileId)) return hint;
-    const key = await this.findKey(fileId, hint);
-    if (key === undefined) return hint;
-    return this.storage.pathFor(this.scope, key) ?? hint;
+  async resolveDisplayPath(fileId: string): Promise<string | undefined> {
+    if (!isFileId(fileId)) return undefined;
+    const key = await this.findKey(fileId);
+    if (key === undefined) return undefined;
+    return this.storage.pathFor(this.scope, key);
   }
 
   async read(
     fileId: string,
-    hintPath?: string,
   ): Promise<{ readonly data: Uint8Array; readonly name: string } | undefined> {
     if (!isFileId(fileId)) return undefined;
-    const key = await this.findKey(fileId, hintPath);
+    const key = await this.findKey(fileId);
     if (key === undefined) return undefined;
     const data = await this.storage.read(this.scope, key);
     return data === undefined ? undefined : { data, name: key };
@@ -84,7 +79,7 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     const key =
       metadata !== undefined && (await this.storage.size(this.scope, metadata.key)) !== undefined
         ? metadata.key
-        : await this.findKey(fileId, undefined);
+        : await this.findKey(fileId);
     if (key === undefined) return undefined;
     const size = await this.storage.size(this.scope, key);
     if (size === undefined) return undefined;
@@ -99,10 +94,7 @@ export class SessionMediaStoreService implements ISessionMediaStore {
 
   async materialize(input: SessionMediaMaterializeInput): Promise<string | undefined> {
     if (!isFileId(input.fileId)) return undefined;
-    const ext =
-      (input.hintPath === undefined ? '' : extname(input.hintPath)) ||
-      extname(input.name) ||
-      (mediaExtensionForMime(input.mimeType) ?? '.bin');
+    const ext = extname(input.name) || (mediaExtensionForMime(input.mimeType) ?? '.bin');
     const key = this.keyFor(input.fileId, ext);
     const existingSize = await this.storage.size(this.scope, key);
     if (existingSize !== input.size) {
@@ -155,11 +147,7 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     );
   }
 
-  private async findKey(fileId: string, hintPath: string | undefined): Promise<string | undefined> {
-    if (hintPath !== undefined) {
-      const hinted = this.keyFor(fileId, extname(hintPath));
-      if ((await this.storage.size(this.scope, hinted)) !== undefined) return hinted;
-    }
+  private async findKey(fileId: string): Promise<string | undefined> {
     const keys = await this.storage.list(this.scope, fileId);
     return keys.find((key) => key === fileId || key.startsWith(`${fileId}.`));
   }

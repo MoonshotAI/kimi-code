@@ -4,10 +4,11 @@
  * Assigns prompt and message identities, serializes user prompts through an
  * active slot and FIFO, converts selected pending prompts into active-turn
  * steers, settles lifecycle handles, and keeps system input outside the prompt
- * resource model. Daemon file references in submissions are normalized through
- * the `media` domain's intake (`materializePromptDaemonRefs` — materialize
- * into the session media store so the reference's `?path=` carries the
- * session-canonical location); the media store owns the canonical persistence. `submit` /
+ * resource model. Daemon file references in submissions are materialized
+ * through the `media` domain's intake (`materializePromptDaemonRefs` — copy
+ * the bytes into the session media store; the reference stays the bare
+ * `kimi-file://<fileId>` form); the media store owns the canonical
+ * persistence. `submit` /
  * `submitSteer` are the wire-facing user entry
  * points: they track `input_steer` through `telemetry`, persist the derived
  * title/lastPrompt through `sessionMetadata` for the main agent only
@@ -161,9 +162,6 @@ export class AgentPromptService extends Disposable implements IAgentPromptServic
       files: this.files,
       mediaStore: this.mediaStore,
       signal: record.intakeController.signal,
-    }).then((content) => {
-      if (record.intakeController.signal.aborted) return;
-      record.message = { ...record.message, content: [...content] };
     });
     let tracked!: Promise<void>;
     tracked = intake

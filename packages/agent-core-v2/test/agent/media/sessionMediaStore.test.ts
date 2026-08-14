@@ -2,7 +2,7 @@
  * Scenario: session-canonical media persists through the byte-storage boundary.
  */
 
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -124,10 +124,8 @@ describe('SessionMediaStoreService', () => {
     expect(entries).not.toContain('f_1.mp4');
   });
 
-  it('derives the extension from the hint, then the name, then the MIME fallback', async () => {
-    expect(await store.materialize(input({ hintPath: '/elsewhere/x.mov' }))).toBe(
-      pathFor('f_1', '.mov'),
-    );
+  it('derives the extension from the name, then the MIME fallback', async () => {
+    expect(await store.materialize(input())).toBe(pathFor('f_1', '.mp4'));
     expect(await store.materialize(input({ fileId: 'f_2', name: 'noext' }))).toBe(
       pathFor('f_2', '.mp4'),
     );
@@ -137,8 +135,8 @@ describe('SessionMediaStoreService', () => {
   });
 
   it('reads canonical bytes independently from the daemon file store', async () => {
-    const target = await store.materialize(input());
-    await expect(store.read('f_1', target)).resolves.toEqual({
+    await store.materialize(input());
+    await expect(store.read('f_1')).resolves.toEqual({
       data: BYTES,
       name: 'f_1.mp4',
     });
@@ -170,41 +168,31 @@ describe('SessionMediaStoreService', () => {
     ).toEqual(BYTES.subarray(2, 7));
   });
 
-  it('resolves the display path to the canonical copy, else the hint, else undefined', async () => {
+  it('resolves the display path from the canonical copy by file id alone', async () => {
     const target = await store.materialize(input());
-    await expect(store.resolveDisplayPath('f_1', '/stale/elsewhere.mp4')).resolves.toBe(target);
-    await expect(store.resolveDisplayPath('f_missing', '/hint/x.mp4')).resolves.toBe('/hint/x.mp4');
-    await expect(store.resolveDisplayPath('f_missing', undefined)).resolves.toBeUndefined();
-    await expect(store.resolveDisplayPath('f_missing', '')).resolves.toBeUndefined();
+    await expect(store.resolveDisplayPath('f_1')).resolves.toBe(target);
+    await expect(store.resolveDisplayPath('f_missing')).resolves.toBeUndefined();
   });
 
-  it('probes the extensionless canonical location for an extensionless hint', async () => {
+  it('finds an extensionless canonical copy by listing', async () => {
     const target = await store.materialize(input({ name: 'noext', mimeType: 'odd/type' }));
     expect(target).toBe(pathFor('f_1', '.bin'));
     const extless = pathFor('f_1', '');
     await rm(target!);
     await writeFile(extless, BYTES);
-    await expect(store.resolveDisplayPath('f_1', '/stale/noext')).resolves.toBe(extless);
-  });
-
-  it('treats a hint already equal to the canonical path as-is', async () => {
-    const canonical = pathFor('f_1', '.mp4');
-    await expect(store.resolveDisplayPath('f_1', canonical)).resolves.toBe(canonical);
-    await expect(stat(canonical)).rejects.toThrow();
+    await expect(store.resolveDisplayPath('f_1')).resolves.toBe(extless);
   });
 
   it('never turns a non-upload id into a storage key (path traversal guard)', async () => {
-    // A crafted daemon reference (`kimi-file://../../…?path=…`) reaches the
+    // A crafted daemon reference (`kimi-file://../../…`) reaches the
     // store through the request-time resolver's canonical-read fallback; the
     // id must be rejected before it can become a filesystem key.
     const evil = '../../../../etc/passwd';
     expect(store.pathFor(evil, '')).toBeUndefined();
     expect(store.pathFor(evil, '.png')).toBeUndefined();
-    await expect(store.read(evil, 'a.png')).resolves.toBeUndefined();
     await expect(store.read(evil)).resolves.toBeUndefined();
     await expect(store.materialize(input({ fileId: evil }))).resolves.toBeUndefined();
-    // The display path falls back to the caller's own hint, like a missing copy.
-    await expect(store.resolveDisplayPath(evil, '/hint/x.png')).resolves.toBe('/hint/x.png');
+    await expect(store.resolveDisplayPath(evil)).resolves.toBeUndefined();
     // Legit ids still work after the guard.
     expect(store.pathFor('f_1', '.mp4')).toBe(join(sessionDir, 'media', 'f_1.mp4'));
   });

@@ -440,7 +440,7 @@ describe('AgentPromptService daemon media intake', () => {
     opts: { id?: string; fileId: string; kind?: 'image' | 'video'; path?: string; withTag?: boolean },
   ) {
     const kind = opts.kind ?? 'image';
-    const url = buildDaemonFileUrl(opts.fileId, opts.path);
+    const url = buildDaemonFileUrl(opts.fileId);
     const ref: ContentPart =
       kind === 'video'
         ? { type: 'video_url', videoUrl: { url } }
@@ -479,13 +479,12 @@ describe('AgentPromptService daemon media intake', () => {
   function expectMediaRef(
     content: readonly ContentPart[],
     fileId: string,
-    target: string,
     kind: 'image' | 'video' = 'image',
   ): void {
     expect(content).toEqual([
       kind === 'video'
-        ? { type: 'video_url', videoUrl: { url: buildDaemonFileUrl(fileId, target) } }
-        : { type: 'image_url', imageUrl: { url: buildDaemonFileUrl(fileId, target) } },
+        ? { type: 'video_url', videoUrl: { url: buildDaemonFileUrl(fileId) } }
+        : { type: 'image_url', imageUrl: { url: buildDaemonFileUrl(fileId) } },
     ]);
   }
 
@@ -499,7 +498,7 @@ describe('AgentPromptService daemon media intake', () => {
 
     const target = join(sessionDir, 'media', 'f_1.png');
     expect(await readFile(target)).toEqual(PNG_BYTES);
-    expectMediaRef(handle.message.content, 'f_1', target);
+    expectMediaRef(handle.message.content, 'f_1');
   });
 
   it('materializes a bare video daemon reference into the session media dir', async () => {
@@ -512,7 +511,7 @@ describe('AgentPromptService daemon media intake', () => {
 
     const target = join(sessionDir, 'media', 'f_v.mp4');
     expect(await readFile(target)).toEqual(PNG_BYTES);
-    expectMediaRef(handle.message.content, 'f_v', target, 'video');
+    expectMediaRef(handle.message.content, 'f_v', 'video');
   });
 
   it('keeps the upload-backed reference when the session media store cannot write', async () => {
@@ -570,7 +569,7 @@ describe('AgentPromptService daemon media intake', () => {
     await (await handlePromise).launched;
   });
 
-  it('rewrites the reference of a client-submitted tag+ref pair, leaving the tag as text', async () => {
+  it('keeps a client-submitted tag+ref pair as-is while materializing the bytes', async () => {
     const sessionDir = await tmpSessionDir();
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
     const { prompt } = harness({ sessionDir, files });
@@ -585,13 +584,14 @@ describe('AgentPromptService daemon media intake', () => {
     await handle.launched;
 
     const target = join(sessionDir, 'media', 'f_1.png');
+    expect(await readFile(target)).toEqual(PNG_BYTES);
     expect(handle.message.content).toEqual([
       { type: 'text', text: `<image path="${clientPath}"></image>` },
-      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
+      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1') } },
     ]);
   });
 
-  it('keeps an already-normalized reference untouched when intake runs over it again', async () => {
+  it('keeps an already-materialized reference untouched when intake runs over it again', async () => {
     const sessionDir = await tmpSessionDir();
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
     const { prompt } = harness({ sessionDir, files });
@@ -601,19 +601,20 @@ describe('AgentPromptService daemon media intake', () => {
     await first.launched;
     const second = await prompt.enqueue({ message: mediaMessage(...first.message.content) });
 
-    expectMediaRef(first.message.content, 'f_1', target);
-    expectMediaRef(second.message.content, 'f_1', target);
+    expectMediaRef(first.message.content, 'f_1');
+    expectMediaRef(second.message.content, 'f_1');
     expect((await readFile(target)).length).toBe(PNG_BYTES.length);
   });
 
   it('keeps the original reference when the upload cannot be read', async () => {
     const sessionDir = await tmpSessionDir();
     const { prompt } = harness({ sessionDir, files: new Map() });
-    const url = buildDaemonFileUrl('f_missing', '/client-cache/x.png');
 
-    const handle = await enqueueMedia(prompt, { fileId: 'f_missing', path: '/client-cache/x.png' });
+    const handle = await enqueueMedia(prompt, { fileId: 'f_missing' });
 
-    expect(handle.message.content).toEqual([{ type: 'image_url', imageUrl: { url } }]);
+    expect(handle.message.content).toEqual([
+      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_missing') } },
+    ]);
   });
 
   it('keeps arrival order without making a queued text prompt wait for a slow media intake', async () => {
@@ -661,7 +662,7 @@ describe('AgentPromptService daemon media intake', () => {
     expect(prompt.list().pending).toEqual([]);
   });
 
-  it('normalizes a queued daemon reference before a steer consumes it', async () => {
+  it('materializes a queued daemon reference before a steer consumes it', async () => {
     const sessionDir = await tmpSessionDir();
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
     const { prompt, context, loop } = harness({ sessionDir, files });
@@ -673,10 +674,11 @@ describe('AgentPromptService daemon media intake', () => {
     loop.drainNextBatch(context);
 
     const target = join(sessionDir, 'media', 'f_1.png');
+    expect(await readFile(target)).toEqual(PNG_BYTES);
     const parts = context.get().flatMap((entry) => entry.content);
     const images = parts.filter((part) => part.type === 'image_url');
     expect(images).toEqual([
-      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1', target) } },
+      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1') } },
     ]);
   });
 

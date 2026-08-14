@@ -1141,10 +1141,10 @@ export class SessionEventBroadcaster {
       const { promptAttachments: _internal, ...wireFields } = event;
       wireEvent = { ...wireFields, agentId, sessionId } as unknown as Event;
     } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued') {
-      // `content` arrives as raw engine content parts: daemon references carry
-      // `kimi-file://…?path=<abs>`. Each self-contained ref projects to one
-      // `{kind:'session_media'}` part, so neither the transient upload, the
-      // internal URL, nor the materialization path leaves the process (for
+      // `content` arrives as raw engine content parts carrying internal
+      // `kimi-file://<id>` daemon references. Each self-contained ref
+      // projects to one `{kind:'session_media'}` part, so neither the
+      // transient upload nor the internal URL leaves the process (for
       // steered, the declared `promptSteeredEventSchema` content is
       // `messageContentSchema`).
       // Projecting before the journal write covers live fan-out and every

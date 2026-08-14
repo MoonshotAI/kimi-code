@@ -1103,7 +1103,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         type: 'turn.started',
         turnId: 1,
         origin: { kind: 'user' },
-        promptAttachments: [{ kind: 'image', fileId: 'f_upload', name: 'upload.png' }],
+        promptAttachments: [{ kind: 'image', fileId: 'f_upload' }],
       }),
     );
     bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
@@ -1157,7 +1157,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       expect.objectContaining({
         attachmentId: 'att_1',
         mediaType: 'image/*',
-        name: 'f_upload.png',
         source: { kind: 'session_media', fileId: 'f_upload' },
       }),
     ]);

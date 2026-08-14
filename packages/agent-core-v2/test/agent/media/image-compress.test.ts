@@ -770,12 +770,15 @@ describe('gateImageFormatParts', () => {
 
   it('passes daemon file references (kimi-file://) through untouched', () => {
     const fileId = 'f_9b2f7c1e4a2d4f3a8c1e0b6d5a493827';
-    // The gate's unsupported-extension check strips the `?path=` query before
-    // looking for an extension, so a daemon reference survives as-is — even
-    // one whose path suffix (`.heic`) a remote URL would be rejected for,
-    // because the resolver sniffs the real bytes downstream.
-    for (const path of ['/tmp/upload/photo.png', '/tmp/upload/photo.heic']) {
-      const part = { type: 'image_url' as const, imageUrl: { url: buildDaemonFileUrl(fileId, path) } };
+    // A daemon reference carries no extension for the gate to reject — the
+    // resolver sniffs the real bytes downstream, so the reference survives
+    // as-is, including a legacy `?path=` query whose suffix (`.heic`) a remote
+    // URL would be rejected for.
+    for (const url of [
+      buildDaemonFileUrl(fileId),
+      `kimi-file://${fileId}?path=${encodeURIComponent('/tmp/upload/photo.heic')}`,
+    ]) {
+      const part = { type: 'image_url' as const, imageUrl: { url } };
       expect(gateImageFormatParts([part])).toEqual([part]);
     }
   });

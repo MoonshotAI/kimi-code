@@ -14,16 +14,17 @@
  *
  * A user `image_url` / `video_url` part projects to a structured `image` /
  * `video` content part so REST consumers can render it: an internal
- * `kimi-file://<id>?path=…` reference becomes
- * `{ kind: 'session_media', file_id }` (the materialization path is stripped,
- * never leaked to clients); any other url becomes `{ kind: 'url' }` carrying
+ * `kimi-file://<id>` reference becomes
+ * `{ kind: 'session_media', file_id }` (the internal URL never reaches
+ * clients); any other url becomes `{ kind: 'url' }` carrying
  * the provider id. An `audio_url` part still flattens to a text marker.
  *
  * A daemon-ref media part is self-contained (`daemonFileRefFromPart`): the
- * part type carries the kind and the reference the path, so the projection
- * walks the raw parts directly — there is no tag+ref pairing to fold. A
- * standalone `<media path>` tag text part is user text or the legacy degrade
- * form and passes through verbatim. Assistant output passes through verbatim.
+ * part type carries the kind and the reference the file id, so the
+ * projection walks the raw parts directly — there is no tag+ref pairing to
+ * fold. A standalone `<media path>` tag text part is user text or the legacy
+ * degrade form and passes through verbatim. Assistant output passes through
+ * verbatim.
  */
 
 import { daemonFileRefFromPart, parseDaemonFileUrl, type ContentPart, type ContextMessage } from '@moonshot-ai/agent-core-v2';
@@ -128,9 +129,8 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
  * shape. Shared by every prompt-queue surface — the REST prompt list, the
  * `prompt.steered` session event, and the transcript prompt entity — so a
  * self-contained daemon-ref media part projects back to
- * `{ kind: 'session_media', file_id }`: neither the transient App upload, the
- * internal `kimi-file://` URL, nor the materialization path becomes the
- * stored read-model contract.
+ * `{ kind: 'session_media', file_id }`: neither the transient App upload nor
+ * the internal `kimi-file://` URL becomes the stored read-model contract.
  */
 export function projectPromptContentParts(content: readonly ContentPart[]): MessageContent[] {
   const parts: MessageContent[] = [];

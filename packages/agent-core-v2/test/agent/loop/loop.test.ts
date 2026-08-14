@@ -772,7 +772,7 @@ describe('Agent loop', () => {
               { type: 'text', text: 'what is this?' },
               {
                 type: 'image_url',
-                imageUrl: { url: 'kimi-file://f_123?path=%2Fcache%2Ff_123.png' },
+                imageUrl: { url: 'kimi-file://f_123' },
               },
             ],
             toolCalls: [],
@@ -788,7 +788,7 @@ describe('Agent loop', () => {
     expect(started).toEqual([
       {
         prompt: 'what is this?',
-        promptAttachments: [{ kind: 'image', fileId: 'f_123', name: 'f_123.png' }],
+        promptAttachments: [{ kind: 'image', fileId: 'f_123' }],
       },
     ]);
   });

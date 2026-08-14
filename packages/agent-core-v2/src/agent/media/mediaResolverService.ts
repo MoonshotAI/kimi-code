@@ -34,24 +34,23 @@
  * requester, so a successful inline is memoized per file id (size-bounded)
  * and reused across steps, retries, and media-recovery reprojections instead
  * of re-reading and re-encoding the same bytes on every request; the degrade
- * forms are never memoized, so a stale snapshot path is re-resolved through
- * the session media store on every request. The bytes are sniffed
+ * forms are never memoized, so the display path is re-derived through the
+ * session media store on every request. The bytes are sniffed
  * (`detectFileType`) and gated against the provider-accepted image formats
  * (`isModelAcceptedImageMime`) as defense in depth —
  * the ingest edges already refuse unaccepted formats. A reference that
  * cannot be inlined (model without `image_in`, unreadable bytes, non-image
- * or unaccepted sniff) degrades through the reference's materialization
- * path: the `<image path>` tag is SYNTHESIZED from the resolved path so the
- * model keeps a path to re-open; a reference without a path swaps in an
- * unavailable placeholder text. A message left with no parts at all keeps
- * one placeholder so its content never goes empty.
+ * or unaccepted sniff) degrades to the `<image path>` tag SYNTHESIZED from
+ * the store-derived display path so the model keeps a path to re-open; when
+ * no canonical copy exists it swaps in an unavailable placeholder text. A
+ * message left with no parts at all keeps one placeholder so its content
+ * never goes empty.
  *
- * The path offered to the model in any degrade form is resolved through the
- * session media store (`ISessionMediaStore`): the session-canonical copy
- * wins when it exists, the reference's persisted snapshot path is the
- * fallback, so a fork or a home relocation never hands the model a dead
- * path. A memoized video tag has its path refreshed on every hit for the
- * same reason.
+ * The path offered to the model in any degrade form is derived at request
+ * time from the session media store (`ISessionMediaStore`): the canonical
+ * copy is located by file id, so a fork or a home relocation never hands the
+ * model a dead path. A memoized video tag has its path refreshed on every
+ * hit for the same reason.
  *
  * The plain-data state (`resolved`, the video memo) is registered into
  * `agentState` (`IAgentStateService`) and read/written through it. Bound at
@@ -170,7 +169,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   }
 
   private displayPath(ref: DaemonFileRef): Promise<string | undefined> {
-    return this.mediaStore.resolveDisplayPath(ref.fileId, ref.path);
+    return this.mediaStore.resolveDisplayPath(ref.fileId);
   }
 
   // -------------------------------------------------------------------------
@@ -328,7 +327,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       return { bytes, filename: file.meta.name };
     } catch {
       signal?.throwIfAborted();
-      const canonical = await this.mediaStore.read(ref.fileId, ref.path);
+      const canonical = await this.mediaStore.read(ref.fileId);
       if (canonical === undefined) throw new Error(`media ${ref.fileId} is unavailable`);
       return { bytes: Buffer.from(canonical.data), filename: canonical.name };
     }

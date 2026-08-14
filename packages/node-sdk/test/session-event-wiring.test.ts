@@ -173,7 +173,7 @@ describe('SessionEventWiring status snapshot fold', () => {
         turnId: 1,
         origin: { kind: 'user' },
         prompt: 'describe this',
-        promptAttachments: [{ kind: 'image', fileId: 'f_1', name: 'f_1.png' }],
+        promptAttachments: [{ kind: 'image', fileId: 'f_1' }],
       });
     } finally {
       wiring.dispose();

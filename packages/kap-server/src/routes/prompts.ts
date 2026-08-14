@@ -51,7 +51,7 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import {
   assertPromptFileRefs,
-  resolvePromptSessionMediaRefs,
+  assertPromptSessionMediaRefs,
   contentToCoreParts,
   resolvePromptMediaFiles,
   type PromptMediaPreparation,
@@ -221,7 +221,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         // in session metadata, or touch the session's controls.
         await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
         const session = await resolveSession(core, session_id);
-        const sessionMediaPaths = await resolvePromptSessionMediaRefs(
+        await assertPromptSessionMediaRefs(
           req.body.content,
           session.accessor.get(ISessionMediaStore),
         );
@@ -235,9 +235,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         // `kimi-file://` references; the engine's prompt intake materializes
         // the session copy and resolves them to a provider form
         // (upload / inline / path tag) at request time, so the edge no longer
-        // uploads. Already-canonical
-        // `session_media` parts receive their private canonical path here;
-        // that path is never projected back to the client.
+        // uploads.
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
         preparedMedia = await resolvePromptMediaFiles(
           req.body.content,
@@ -286,7 +284,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             throw error;
           }
         }
-        const parts = contentToCoreParts(resolvedContent, sessionMediaPaths);
+        const parts = contentToCoreParts(resolvedContent);
         await applyPromptMetadataUpdate({
           metadata: session.accessor.get(ISessionMetadata),
           eventService: core.accessor.get(IEventService),
@@ -410,8 +408,8 @@ function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {
     : prompt.state === 'blocked' ? 'blocked' : 'queued';
   // The prompt queue holds user prompts only; the shared projection maps each
   // self-contained daemon-ref media part to its `{kind:'session_media'}` wire
-  // shape, mirroring the message projection: the internal URL and the
-  // materialization path never reach REST callers.
+  // shape, mirroring the message projection: the internal URL never reaches
+  // REST callers.
   return {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,

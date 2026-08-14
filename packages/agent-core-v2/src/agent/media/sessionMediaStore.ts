@@ -14,7 +14,6 @@ export interface SessionMediaMaterializeInput {
   readonly size: number;
   readonly name: string;
   readonly mimeType: string;
-  readonly hintPath?: string;
   readonly stream: () => NodeJS.ReadableStream;
   readonly signal?: AbortSignal;
 }
@@ -37,12 +36,9 @@ export interface ISessionMediaStore {
 
   pathFor(fileId: string, ext: string): string | undefined;
 
-  resolveDisplayPath(fileId: string, hint: string | undefined): Promise<string | undefined>;
+  resolveDisplayPath(fileId: string): Promise<string | undefined>;
 
-  read(
-    fileId: string,
-    hintPath?: string,
-  ): Promise<{ readonly data: Uint8Array; readonly name: string } | undefined>;
+  read(fileId: string): Promise<{ readonly data: Uint8Array; readonly name: string } | undefined>;
 
   open(fileId: string): Promise<SessionMediaFile | undefined>;
 

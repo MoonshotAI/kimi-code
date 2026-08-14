@@ -11,22 +11,21 @@
  * inverts the tables (first suffix wins) so every materialization path
  * derives the same file extension for an extensionless upload.
  *
- * A daemon file reference is the internal `kimi-file://<fileId>?path=<encoded
- * absolute path>` URL: `fileId` addresses the daemon upload the request-time
- * media resolver reads bytes from, and the optional `?path=` names the
- * materialized copy the model opens with `ReadMediaFile` when the media
- * cannot be uploaded or inlined. The reference lives in context memory and
- * never reaches the provider wire — the resolver rewrites it first. The kind
- * of a referenced file is carried by the enclosing content part (`image_url`
- * / `video_url`), never by the URL itself, so existing references stay valid.
+ * A daemon file reference is the internal `kimi-file://<fileId>` URL:
+ * `fileId` addresses the daemon upload the request-time media resolver reads
+ * bytes from. The reference lives in context memory and never reaches the
+ * provider wire — the resolver rewrites it first. The kind of a referenced
+ * file is carried by the enclosing content part (`image_url` / `video_url`),
+ * never by the URL itself, so existing references stay valid.
  *
  * The materialized copy lives at the session-canonical location
  * (`sessionMediaFilePath`: `<sessionDir>/media/<fileId><ext>`), written by
- * the session media store — prompt intake persists that absolute path. The
- * persisted path is a write-time snapshot: after a session fork or a home
- * relocation it goes stale, so readers prefer the canonical location when it
- * exists and treat the carried path as a fallback hint (see the request-time
- * media resolver).
+ * the session media store at prompt intake. The reference deliberately
+ * carries no path: a persisted absolute path would bind the durable record
+ * to one machine and one home directory (a fork or a home relocation would
+ * stale it), so the display path is derived from the session media store by
+ * file id at read time instead. A legacy `?path=` query (the retired
+ * write-time snapshot) is tolerated at parse time and ignored.
  *
  * The `<image|video|audio|file path="…">` tag is the model-facing
  * degradation form: the resolver swaps a media part for the tag when the
@@ -38,9 +37,8 @@
  * exactly one tag; tags embedded in larger user text are never matched,
  * because treating them as markup would eat user content.
  *
- * A daemon-ref media part is self-contained: the reference's `?path=`
- * carries the materialized copy's location, so read models derive the
- * attachment (kind from the part type, path from the reference) straight
+ * A daemon-ref media part is self-contained: read models derive the
+ * attachment (kind from the part type, file id from the reference) straight
  * from the part via `daemonFileRefFromPart` — there is no tag+ref pairing
  * to compute. A standalone tag in history is user-visible text or a legacy
  * degrade form and always stays a text part.
@@ -151,42 +149,25 @@ export function mediaKindOfPart(part: ContentPart): 'image' | 'video' | 'audio' 
 }
 
 const KIMI_FILE_SCHEME = 'kimi-file://';
-const PATH_QUERY = '?path=';
 
 export interface DaemonFileRef {
   readonly fileId: string;
-  readonly path?: string;
 }
 
 export function isDaemonFileUrl(url: string): boolean {
   return url.startsWith(KIMI_FILE_SCHEME);
 }
 
-export function buildDaemonFileUrl(fileId: string, path?: string): string {
-  const base = `${KIMI_FILE_SCHEME}${fileId}`;
-  return path === undefined || path.length === 0
-    ? base
-    : `${base}${PATH_QUERY}${encodeURIComponent(path)}`;
+export function buildDaemonFileUrl(fileId: string): string {
+  return `${KIMI_FILE_SCHEME}${fileId}`;
 }
 
 export function parseDaemonFileUrl(url: string): DaemonFileRef | undefined {
   if (!url.startsWith(KIMI_FILE_SCHEME)) return undefined;
   const rest = url.slice(KIMI_FILE_SCHEME.length);
-  const queryAt = rest.indexOf(PATH_QUERY);
-  if (queryAt === -1) {
-    return rest.length > 0 ? { fileId: rest } : undefined;
-  }
-  const fileId = rest.slice(0, queryAt);
-  if (fileId.length === 0) return undefined;
-  const encoded = rest.slice(queryAt + PATH_QUERY.length);
-  if (encoded.length === 0) return { fileId };
-  let path: string;
-  try {
-    path = decodeURIComponent(encoded);
-  } catch {
-    return { fileId };
-  }
-  return { fileId, path };
+  const queryAt = rest.indexOf('?');
+  const fileId = queryAt === -1 ? rest : rest.slice(0, queryAt);
+  return fileId.length > 0 ? { fileId } : undefined;
 }
 
 export function daemonFileRefFromPart(

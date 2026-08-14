@@ -325,7 +325,6 @@ export class AgentTranscriptProjector {
         const attachment: TranscriptAttachment = {
           attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
           mediaType: `${input.kind}/*`,
-          name: input.name,
           source: { kind: 'session_media', fileId: input.fileId },
         };
         ops.push({ op: 'attachment.upsert', attachment });
@@ -1345,10 +1344,9 @@ export class AgentTranscriptProjector {
    */
   private onPromptSteered(event: PromptSteeredEvent): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
-    // The event carries raw engine content parts (daemon refs with
-    // `kimi-file://…?path=<abs>`); the entity stores the Session-media wire
-    // projection, so the transient App upload, internal URL, and
-    // materialization path never reach consumers.
+    // The event carries raw engine content parts (internal `kimi-file://<id>`
+    // daemon refs); the entity stores the Session-media wire projection, so
+    // the transient App upload and internal URL never reach consumers.
     const active = this.upsertPrompt(event.activePromptId, (prev) => ({
       promptId: event.activePromptId,
       status: prev?.status ?? 'running',

@@ -5,8 +5,8 @@
  * Four stages, in the order both routes apply them:
  *   1. `assertPromptFileRefs` — fail fast on stale or mis-kinded `file_id`
  *      references before anything session-scoped is resolved or mutated.
- *   2. `resolvePromptSessionMediaRefs` — validate canonical session media and
- *      collect its private host paths for the inbound engine representation.
+ *   2. `assertPromptSessionMediaRefs` — validate canonical session media
+ *      references before anything session-scoped is resolved or mutated.
  *   3. `resolvePromptMediaFiles` — resolve uploads into their context form:
  *      arbitrary files become path-referenced attachments (a text notice the
  *      model opens with the Read tool), images are format-gated and
@@ -75,11 +75,15 @@ export async function assertPromptFileRefs(content: WireContent, store: IFileSer
   }
 }
 
-export async function resolvePromptSessionMediaRefs(
+/**
+ * Fail fast on stale `session_media` references: a file id with no canonical
+ * copy in this session must reject the request before anything is resolved
+ * or mutated.
+ */
+export async function assertPromptSessionMediaRefs(
   content: WireContent,
   store: ISessionMediaStore,
-): Promise<ReadonlyMap<string, string>> {
-  const paths = new Map<string, string>();
+): Promise<void> {
   for (const part of content) {
     if (
       (part.type !== 'image' && part.type !== 'video') ||
@@ -87,24 +91,19 @@ export async function resolvePromptSessionMediaRefs(
     ) continue;
     const file = await store.open(part.source.file_id);
     if (file === undefined) throw fileNotFoundError(part.source.file_id);
-    if (file.path !== undefined) paths.set(part.source.file_id, file.path);
   }
-  return paths;
 }
 
-export function contentToCoreParts(
-  content: WireContent,
-  sessionMediaPaths: ReadonlyMap<string, string>,
-): ContentPart[] {
+export function contentToCoreParts(content: WireContent): ContentPart[] {
   const parts: ContentPart[] = [];
   for (const part of content) {
     if (part.type === 'text') parts.push({ type: 'text', text: part.text });
     else if (part.type === 'image' && part.source.kind === 'url') parts.push({ type: 'image_url', imageUrl: { url: part.source.url, id: part.source.id } });
     else if (part.type === 'image' && part.source.kind === 'base64') parts.push({ type: 'image_url', imageUrl: { url: `data:${part.source.media_type};base64,${part.source.data}` } });
-    else if (part.type === 'image' && part.source.kind === 'session_media') parts.push({ type: 'image_url', imageUrl: { url: buildDaemonFileUrl(part.source.file_id, sessionMediaPaths.get(part.source.file_id)) } });
+    else if (part.type === 'image' && part.source.kind === 'session_media') parts.push({ type: 'image_url', imageUrl: { url: buildDaemonFileUrl(part.source.file_id) } });
     else if (part.type === 'video' && part.source.kind === 'url') parts.push({ type: 'video_url', videoUrl: { url: part.source.url, id: part.source.id } });
     else if (part.type === 'video' && part.source.kind === 'base64') parts.push({ type: 'video_url', videoUrl: { url: `data:${part.source.media_type};base64,${part.source.data}` } });
-    else if (part.type === 'video' && part.source.kind === 'session_media') parts.push({ type: 'video_url', videoUrl: { url: buildDaemonFileUrl(part.source.file_id, sessionMediaPaths.get(part.source.file_id)) } });
+    else if (part.type === 'video' && part.source.kind === 'session_media') parts.push({ type: 'video_url', videoUrl: { url: buildDaemonFileUrl(part.source.file_id) } });
   }
   return parts;
 }

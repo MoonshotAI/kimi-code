@@ -69,17 +69,17 @@ describe('media kind classification', () => {
 });
 
 describe('daemon file URL', () => {
-  it('round-trips fileId and path', () => {
-    const url = buildDaemonFileUrl('file_1', '/a b/clip.mp4');
-    expect(url).toBe('kimi-file://file_1?path=%2Fa%20b%2Fclip.mp4');
-    expect(parseDaemonFileUrl(url)).toEqual({ fileId: 'file_1', path: '/a b/clip.mp4' });
-  });
-
-  it('builds and parses a bare reference without path', () => {
+  it('builds and parses a bare reference', () => {
     expect(buildDaemonFileUrl('file_1')).toBe('kimi-file://file_1');
     expect(parseDaemonFileUrl('kimi-file://file_1')).toEqual({ fileId: 'file_1' });
-    expect(buildDaemonFileUrl('file_1', '')).toBe('kimi-file://file_1');
+  });
+
+  it('strips a legacy `?path=` query at parse time', () => {
+    expect(parseDaemonFileUrl('kimi-file://file_1?path=%2Fa%20b%2Fclip.mp4')).toEqual({
+      fileId: 'file_1',
+    });
     expect(parseDaemonFileUrl('kimi-file://file_1?path=')).toEqual({ fileId: 'file_1' });
+    expect(parseDaemonFileUrl('kimi-file://file_1?path=%E0%A4%A')).toEqual({ fileId: 'file_1' });
   });
 
   it('rejects non-daemon URLs and empty file ids', () => {
@@ -92,18 +92,14 @@ describe('daemon file URL', () => {
     expect(parseDaemonFileUrl('kimi-file://?path=%2Fa')).toBeUndefined();
   });
 
-  it('drops an undecodable path but keeps the file id', () => {
-    expect(parseDaemonFileUrl('kimi-file://file_1?path=%E0%A4%A')).toEqual({ fileId: 'file_1' });
-  });
-
   it('extracts references from media parts with the part-implied kind', () => {
-    const url = buildDaemonFileUrl('file_1', '/cache/a.png');
+    const url = buildDaemonFileUrl('file_1');
     expect(
       daemonFileRefFromPart({ type: 'image_url', imageUrl: { url } }),
-    ).toEqual({ kind: 'image', ref: { fileId: 'file_1', path: '/cache/a.png' } });
+    ).toEqual({ kind: 'image', ref: { fileId: 'file_1' } });
     expect(
       daemonFileRefFromPart({ type: 'video_url', videoUrl: { url } }),
-    ).toEqual({ kind: 'video', ref: { fileId: 'file_1', path: '/cache/a.png' } });
+    ).toEqual({ kind: 'video', ref: { fileId: 'file_1' } });
     expect(
       daemonFileRefFromPart({ type: 'image_url', imageUrl: { url: 'data:image/png;base64,AA' } }),
     ).toBeUndefined();

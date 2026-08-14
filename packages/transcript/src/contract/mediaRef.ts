@@ -6,11 +6,10 @@
  * because this package must not import the engine — keep the two in sync.
  *
  * A daemon-ref media part is self-contained: the part type carries the kind
- * and the reference's `?path=` the materialized copy's location, so read
- * models derive the attachment straight from the part via
- * `daemonFileRefFromPairingPart` — there is no tag+ref pairing to compute.
- * A standalone `<media path>` tag in history is user-visible text or the
- * legacy degrade form and always stays a text part.
+ * and the reference the daemon file id, so read models derive the attachment
+ * straight from the part via `daemonFileRefFromPairingPart` — there is no
+ * tag+ref pairing to compute. A standalone `<media path>` tag in history is
+ * user-visible text or the legacy degrade form and always stays a text part.
  */
 
 export type MediaPathTagKind = 'image' | 'video' | 'audio' | 'file';
@@ -45,40 +44,26 @@ function unescapeMediaAttribute(value: string): string {
 }
 
 const KIMI_FILE_SCHEME = 'kimi-file://';
-const PATH_QUERY = '?path=';
 
-/** The daemon upload reference behind a `kimi-file://<fileId>[?path=…]` url. */
+/** The daemon upload reference behind a `kimi-file://<fileId>` url. */
 export interface DaemonFileRef {
   readonly fileId: string;
-  readonly path?: string;
 }
 
 /**
- * Parse a `kimi-file://<fileId>[?path=<encoded absolute path>]` url — the
- * mirror of the engine's `parseDaemonFileUrl`. An undecodable path is dropped
- * but the file id keeps parsing.
+ * Parse a `kimi-file://<fileId>` url — the mirror of the engine's
+ * `parseDaemonFileUrl`. A legacy `?path=` query (the retired persisted
+ * materialization path) is stripped and ignored.
  */
 export function parseDaemonFileRef(url: string): DaemonFileRef | undefined {
   if (!url.startsWith(KIMI_FILE_SCHEME)) return undefined;
   const rest = url.slice(KIMI_FILE_SCHEME.length);
-  const queryAt = rest.indexOf(PATH_QUERY);
-  if (queryAt === -1) {
-    return rest.length > 0 ? { fileId: rest } : undefined;
-  }
-  const fileId = rest.slice(0, queryAt);
-  if (fileId.length === 0) return undefined;
-  const encoded = rest.slice(queryAt + PATH_QUERY.length);
-  if (encoded.length === 0) return { fileId };
-  let path: string;
-  try {
-    path = decodeURIComponent(encoded);
-  } catch {
-    return { fileId };
-  }
-  return { fileId, path };
+  const queryAt = rest.indexOf('?');
+  const fileId = queryAt === -1 ? rest : rest.slice(0, queryAt);
+  return fileId.length > 0 ? { fileId } : undefined;
 }
 
-/** The daemon upload id behind a `kimi-file://<fileId>[?path=…]` url. */
+/** The daemon upload id behind a `kimi-file://<fileId>` url. */
 export function parseDaemonFileRefFileId(url: string): string | undefined {
   return parseDaemonFileRef(url)?.fileId;
 }
@@ -98,9 +83,8 @@ export interface MediaRefPart {
 /**
  * The daemon reference behind a content part, if any — the mirror of the
  * engine's `daemonFileRefFromPart` (keep the two in sync): the kind comes
- * from the part type, the file id and materialization path from the
- * `kimi-file://` url. This is the single part → ref extraction read models
- * share.
+ * from the part type, the file id from the `kimi-file://` url. This is the
+ * single part → ref extraction read models share.
  */
 export function daemonFileRefFromPairingPart(
   part: MediaRefPart,

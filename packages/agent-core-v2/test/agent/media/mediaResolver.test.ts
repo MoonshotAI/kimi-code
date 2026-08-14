@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -31,8 +31,6 @@ import { IBlobStore } from '#/persistence/interface/blobStore';
 import { registerStateServices } from '../../state/stubs';
 
 const FILE_ID = 'file_abc';
-const FALLBACK_PATH = '/cache/file_abc.mp4';
-const IMAGE_FALLBACK_PATH = '/cache/file_abc.png';
 const VIDEO_BYTES = Buffer.from('tiny fake mp4 bytes');
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
 const BMP_BYTES = Buffer.from([0x42, 0x4d, 0x46, 0x00, 0x00, 0x00, 0x00, 0x00]);
@@ -40,8 +38,9 @@ const MP4_MAGIC_BYTES = Buffer.from([
   0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x00, 0x00,
 ]);
 const IMAGE_UNAVAILABLE_TEXT = '[image omitted: the uploaded file is no longer available]';
-const VIDEO_TAG = `<video path="${FALLBACK_PATH}"></video>`;
-const IMAGE_TAG = `<image path="${IMAGE_FALLBACK_PATH}"></image>`;
+const VIDEO_UNAVAILABLE_TEXT = '[video omitted: the uploaded file is no longer available]';
+const VIDEO_TAG = '<video path="/cache/file_abc.mp4"></video>';
+const IMAGE_TAG = '<image path="/cache/file_abc.png"></image>';
 const PNG_DATA_URL = `data:image/png;base64,${PNG_BYTES.toString('base64')}`;
 
 function videoMessage(url: string): Message {
@@ -130,19 +129,17 @@ const telemetry = { track2: () => {} } as unknown as ITelemetryService;
 
 /**
  * Store stub over a plain dir: the canonical copy exists only when a test
- * plants it (mirrors the real store's canonical-vs-hint rule without
- * materialization).
+ * plants it (mirrors the real store's by-id listing without materialization).
  */
 function stubMediaStore(sessionDir = '/nonexistent-session'): ISessionMediaStore {
   return {
     _serviceBrand: undefined,
     pathFor: (fileId, ext) => join(sessionDir, 'media', `${fileId}${ext}`),
-    resolveDisplayPath: async (fileId, hint) => {
-      if (hint === undefined || hint.length === 0) return undefined;
-      const canonical = join(sessionDir, 'media', `${fileId}${extname(hint)}`);
-      if (canonical === hint) return hint;
-      const own = await stat(canonical).catch(() => undefined);
-      return own === undefined ? hint : canonical;
+    resolveDisplayPath: async (fileId) => {
+      const dir = join(sessionDir, 'media');
+      const keys: string[] = await readdir(dir).catch(() => []);
+      const key = keys.find((name) => name === fileId || name.startsWith(`${fileId}.`));
+      return key === undefined ? undefined : join(dir, key);
     },
     read: async () => undefined,
     open: async () => undefined,
@@ -150,6 +147,15 @@ function stubMediaStore(sessionDir = '/nonexistent-session'): ISessionMediaStore
       throw new Error('unused');
     },
   };
+}
+
+let sessionDir: string;
+
+async function plantCanonical(fileId: string, ext: string, bytes: Buffer): Promise<string> {
+  const canonical = join(sessionDir, 'media', `${fileId}${ext}`);
+  await mkdir(join(sessionDir, 'media'), { recursive: true });
+  await writeFile(canonical, bytes);
+  return canonical;
 }
 
 function requester(opts: {
@@ -189,12 +195,14 @@ function msPart(id: string): VideoURLPart {
 
 let disposables: DisposableStore;
 
-beforeEach(() => {
+beforeEach(async () => {
   disposables = new DisposableStore();
+  sessionDir = await mkdtemp(join(tmpdir(), 'media-resolver-'));
 });
 
-afterEach(() => {
+afterEach(async () => {
   disposables.dispose();
+  await rm(sessionDir, { recursive: true, force: true });
 });
 
 function resolver(
@@ -220,7 +228,7 @@ describe('AgentMediaResolverService video strategy', () => {
     const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
     const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
     const req = requester({ uploadVideo: upload });
-    const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     const first = await res.resolve([message], req);
     const second = await res.resolve([message], req);
@@ -236,8 +244,9 @@ describe('AgentMediaResolverService video strategy', () => {
 
   it('degrades to the path tag when the current model cannot accept video, ignoring a memoized upload', async () => {
     const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
-    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
-    const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
+    const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]), sessionDir);
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     const capable = await res.resolve([message], requester({ uploadVideo: upload }));
     expect(firstPart(capable)).toEqual(msPart('prov-1'));
@@ -248,14 +257,17 @@ describe('AgentMediaResolverService video strategy', () => {
       [message],
       requester({ videoIn: false, uploadVideo: upload }),
     );
-    expect(firstPart(incapable)).toEqual({ type: 'text', text: VIDEO_TAG });
+    expect(firstPart(incapable)).toEqual({
+      type: 'text',
+      text: `<video path="${canonical}"></video>`,
+    });
     expect(upload).toHaveBeenCalledTimes(1);
   });
 
   it('reuses a persisted upload across resolver instances without re-uploading', async () => {
     const files = new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]);
     const blobs = blobStore();
-    const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     // Two independent instances over one shared blob store: the container
     // hands out a singleton per token and would share the state service (and
@@ -311,14 +323,19 @@ describe('AgentMediaResolverService video strategy', () => {
       fileId: 'missing',
       req: (upload) => requester({ uploadVideo: upload }),
     },
-  ])('tags with the materialization path when $name', async ({ files, fileId, req }) => {
+  ])('degrades when $name', async ({ files, fileId, req }) => {
     const upload = vi.fn();
-    const out = await resolver(files).resolve(
-      [videoMessage(buildKimiFileUrl(fileId, FALLBACK_PATH))],
+    const canonical =
+      fileId === FILE_ID ? await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES) : undefined;
+    const out = await resolver(files, sessionDir).resolve(
+      [videoMessage(buildKimiFileUrl(fileId))],
       req(upload),
     );
 
-    expect(firstPart(out)).toEqual({ type: 'text', text: VIDEO_TAG });
+    expect(firstPart(out)).toEqual({
+      type: 'text',
+      text: canonical === undefined ? VIDEO_UNAVAILABLE_TEXT : `<video path="${canonical}"></video>`,
+    });
     expect(upload).not.toHaveBeenCalled();
   });
 
@@ -329,7 +346,7 @@ describe('AgentMediaResolverService video strategy', () => {
     const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
 
     await expect(
-      res.resolve([videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH))], requester({ uploadVideo: upload })),
+      res.resolve([videoMessage(buildKimiFileUrl(FILE_ID))], requester({ uploadVideo: upload })),
     ).rejects.toThrow('unauthorized');
   });
 
@@ -340,7 +357,7 @@ describe('AgentMediaResolverService video strategy', () => {
       throw new Error('socket closed');
     });
     const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
-    const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     await expect(
       res.resolve([message], requester({ uploadVideo: interrupted }), controller.signal),
@@ -359,19 +376,23 @@ describe('AgentMediaResolverService video strategy', () => {
       if (uploadCalls === 1) throw new Error('files endpoint unavailable');
       return msPart('prov-1');
     });
-    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
-    const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
+    const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]), sessionDir);
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
     const req = requester({ uploadVideo: upload });
 
     const failed = await res.resolve([message], req);
-    expect(firstPart(failed)).toEqual({ type: 'text', text: VIDEO_TAG });
+    expect(firstPart(failed)).toEqual({
+      type: 'text',
+      text: `<video path="${canonical}"></video>`,
+    });
 
     const retried = await res.resolve([message], req);
     expect(firstPart(retried)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(2);
   });
 
-  it('emits an unavailable placeholder when a stale reference has no fallback path', async () => {
+  it('emits an unavailable placeholder when a stale reference has no canonical copy', async () => {
     const out = await resolver(new Map()).resolve(
       [videoMessage(buildKimiFileUrl('missing'))],
       requester({ uploadVideo: vi.fn() }),
@@ -379,7 +400,7 @@ describe('AgentMediaResolverService video strategy', () => {
 
     expect(firstPart(out)).toEqual({
       type: 'text',
-      text: '[video omitted: the uploaded file is no longer available]',
+      text: VIDEO_UNAVAILABLE_TEXT,
     });
   });
 });
@@ -390,7 +411,7 @@ describe('AgentMediaResolverService canonical session bytes', () => {
       kind: 'video',
       bytes: VIDEO_BYTES,
       fileName: `${FILE_ID}.mp4`,
-      message: videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH)),
+      message: videoMessage(buildKimiFileUrl(FILE_ID)),
       expected: msPart('prov-1'),
       uploads: 1,
     },
@@ -398,7 +419,7 @@ describe('AgentMediaResolverService canonical session bytes', () => {
       kind: 'image',
       bytes: PNG_BYTES,
       fileName: `${FILE_ID}.png`,
-      message: imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH)),
+      message: imageMessage(buildKimiFileUrl(FILE_ID)),
       expected: { type: 'image_url', imageUrl: { url: PNG_DATA_URL } },
       uploads: 0,
     },
@@ -426,7 +447,7 @@ describe('AgentMediaResolverService image strategy', () => {
       type: 'image_url',
       imageUrl: { url: 'https://example.com/pic.png' },
     };
-    const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH), tagPart, remotePart);
+    const message = imageMessage(buildKimiFileUrl(FILE_ID), tagPart, remotePart);
 
     const out = await res.resolve([message], requester({}));
 
@@ -475,7 +496,7 @@ describe('AgentMediaResolverService image strategy', () => {
 
     await expect(
       res.resolve(
-        [imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH))],
+        [imageMessage(buildKimiFileUrl(FILE_ID))],
         requester({}),
         controller.signal,
       ),
@@ -507,31 +528,32 @@ describe('AgentMediaResolverService image strategy', () => {
       fileId: FILE_ID,
       imageIn: true,
     },
-  ])('synthesizes the degrade tag when $name', async ({ files, fileId, imageIn }) => {
-    const message = imageMessage(buildKimiFileUrl(fileId, IMAGE_FALLBACK_PATH));
+  ])('degrades when $name', async ({ files, fileId, imageIn }) => {
+    const canonical =
+      fileId === FILE_ID ? await plantCanonical(FILE_ID, '.png', PNG_BYTES) : undefined;
+    const message = imageMessage(buildKimiFileUrl(fileId));
 
-    const out = await resolver(files).resolve([message], requester({ imageIn }));
+    const out = await resolver(files, sessionDir).resolve([message], requester({ imageIn }));
 
-    expect(out[0]!.content).toEqual([{ type: 'text', text: IMAGE_TAG }]);
+    expect(out[0]!.content).toEqual([
+      {
+        type: 'text',
+        text:
+          canonical === undefined ? IMAGE_UNAVAILABLE_TEXT : `<image path="${canonical}"></image>`,
+      },
+    ]);
   });
 
   it.each([
     {
-      name: 'a bare stale reference has no adjacent tag',
-      files: new Map<string, { name: string; bytes: Buffer }>(),
-      url: buildKimiFileUrl('missing', IMAGE_FALLBACK_PATH),
-      imageIn: true,
-      expected: IMAGE_TAG,
-    },
-    {
-      name: 'the model cannot ingest images and there is no path',
+      name: 'the model cannot ingest images and there is no canonical copy',
       files: new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]),
       url: buildKimiFileUrl(FILE_ID),
       imageIn: false,
       expected: IMAGE_UNAVAILABLE_TEXT,
     },
     {
-      name: 'a bare stale reference has no path',
+      name: 'a bare stale reference has no canonical copy',
       files: new Map<string, { name: string; bytes: Buffer }>(),
       url: buildKimiFileUrl('missing'),
       imageIn: true,
@@ -553,7 +575,7 @@ describe('AgentMediaResolverService image strategy', () => {
       new AgentStateService(),
       stubMediaStore(),
     );
-    const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
     const expected = { type: 'image_url', imageUrl: { url: PNG_DATA_URL } };
 
     const first = await res.resolve([message], requester({}));
@@ -582,7 +604,7 @@ describe('AgentMediaResolverService image strategy', () => {
       new AgentStateService(),
       stubMediaStore(),
     );
-    const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
     const first = await res.resolve([message], requester({}));
     const second = await res.resolve([message], requester({}));
@@ -610,20 +632,24 @@ describe('AgentMediaResolverService image strategy', () => {
       const files = new Map<string, { name: string; bytes: Buffer }>();
       if (present) files.set(FILE_ID, { name: 'pic.png', bytes: PNG_BYTES });
       const counting = countingFileService(files);
+      const canonical = await plantCanonical(FILE_ID, '.png', PNG_BYTES);
       const res = new AgentMediaResolverService(
         counting.service,
         blobStore(),
         telemetry,
         new AgentStateService(),
-        stubMediaStore(),
+        stubMediaStore(sessionDir),
       );
-      const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH));
+      const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
       const degraded = await res.resolve([message], requester({ imageIn }));
       if (!present) files.set(FILE_ID, { name: 'pic.png', bytes: PNG_BYTES });
       const out = await res.resolve([message], requester({}));
 
-      expect(firstPart(degraded)).toEqual({ type: 'text', text: IMAGE_TAG });
+      expect(firstPart(degraded)).toEqual({
+        type: 'text',
+        text: `<image path="${canonical}"></image>`,
+      });
       expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
       expect(counting.gets).toBe(reads);
     },
@@ -631,50 +657,37 @@ describe('AgentMediaResolverService image strategy', () => {
 });
 
 describe('AgentMediaResolverService session-canonical display path', () => {
-  let sessionDir: string;
-
-  beforeEach(async () => {
-    sessionDir = await mkdtemp(join(tmpdir(), 'media-resolver-'));
-  });
-
-  afterEach(async () => {
-    await rm(sessionDir, { recursive: true, force: true });
-  });
-
-  async function plantCanonical(fileId: string, ext: string, bytes: Buffer): Promise<string> {
-    const canonical = join(sessionDir, 'media', `${fileId}${ext}`);
-    await mkdir(join(sessionDir, 'media'), { recursive: true });
-    await writeFile(canonical, bytes);
-    return canonical;
-  }
-
   it.each([
     {
       name: 'synthesizes the degrade tag from the canonical path when it exists',
       canonical: true,
     },
     {
-      name: 'synthesizes the degrade tag from the snapshot path when no canonical file exists',
+      name: 'emits the unavailable placeholder when no canonical copy exists',
       canonical: false,
     },
   ])('$name', async ({ canonical: plant }) => {
     const canonical = plant ? await plantCanonical(FILE_ID, '.png', PNG_BYTES) : undefined;
-    const message = imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH));
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
     const out = await resolver(new Map(), sessionDir).resolve([message], requester({ imageIn: false }));
 
     expect(out[0]!.content).toEqual([
-      { type: 'text', text: `<image path="${canonical ?? IMAGE_FALLBACK_PATH}"></image>` },
+      {
+        type: 'text',
+        text:
+          canonical === undefined ? IMAGE_UNAVAILABLE_TEXT : `<image path="${canonical}"></image>`,
+      },
     ]);
   });
 
-  it('refreshes a memoized video tag path when the canonical copy appears', async () => {
+  it('refreshes the degrade form when the canonical copy appears', async () => {
     const res = resolver(new Map(), sessionDir);
-    const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
     const req = requester({ videoIn: false });
 
     const first = await res.resolve([message], req);
-    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_TAG });
+    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_UNAVAILABLE_TEXT });
 
     const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
     const second = await res.resolve([message], req);
@@ -688,7 +701,7 @@ describe('AgentMediaResolverService session-canonical display path', () => {
       toolCalls: [],
       content: [
         { type: 'text', text: VIDEO_TAG },
-        { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID, FALLBACK_PATH) } },
+        { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID) } },
       ],
     };
     const out = await resolver(new Map(), sessionDir).resolve(
@@ -701,31 +714,31 @@ describe('AgentMediaResolverService session-canonical display path', () => {
     ]);
   });
 
-  it('keeps a legacy persisted tag as text when the degrade was memoized from an earlier bare resolve', async () => {
+  it('keeps a legacy persisted tag as text when the reference degrades to the placeholder', async () => {
     const res = resolver(new Map(), sessionDir);
     const req = requester({ videoIn: false });
     const bare: Message = {
       role: 'user',
       toolCalls: [],
       content: [
-        { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID, FALLBACK_PATH) } },
+        { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID) } },
       ],
     };
     const first = await res.resolve([bare], req);
-    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_TAG });
+    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_UNAVAILABLE_TEXT });
 
     const withLegacyTag: Message = {
       role: 'user',
       toolCalls: [],
       content: [
         { type: 'text', text: VIDEO_TAG },
-        { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID, FALLBACK_PATH) } },
+        { type: 'video_url', videoUrl: { url: buildKimiFileUrl(FILE_ID) } },
       ],
     };
     const second = await res.resolve([withLegacyTag], req);
     expect(second[0]!.content).toEqual([
       { type: 'text', text: VIDEO_TAG },
-      { type: 'text', text: VIDEO_TAG },
+      { type: 'text', text: VIDEO_UNAVAILABLE_TEXT },
     ]);
   });
 });
@@ -765,7 +778,7 @@ describe('AgentMediaResolverService scoped registration', () => {
 
     const svc = agent.accessor.get(IAgentMediaResolverService);
     const out = await svc.resolve(
-      [imageMessage(buildKimiFileUrl(FILE_ID, IMAGE_FALLBACK_PATH))],
+      [imageMessage(buildKimiFileUrl(FILE_ID))],
       requester({}),
     );
 

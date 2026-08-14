@@ -42,8 +42,8 @@ describe('toProtocolMessage', () => {
 
   it('projects a daemon-ref image part to a session_media source', () => {
     // The persisted upload shape is a single self-contained daemon-ref part:
-    // the reference projects to the Session-owned copy, its materialization
-    // path never leaked.
+    // the reference projects to the Session-owned copy; a legacy `?path=`
+    // query is ignored, never leaked.
     const msg: ContextMessage = {
       role: 'user',
       content: [

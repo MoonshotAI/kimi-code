@@ -34,9 +34,8 @@ const URLS = [
   'kimi-file://f_1',
   'kimi-file://f_1?path=',
   'kimi-file://?path=%2Fcache%2Fshot.png',
-  // Escaped path characters round-trip.
+  // A legacy `?path=` query is stripped, however it was encoded.
   'kimi-file://f_1?path=%2Fcache%2Fa%20%26%20%22b%22%20%3Cc%3E.png',
-  // An undecodable path is dropped but the file id keeps parsing.
   'kimi-file://f_1?path=%zz',
   'kimi-file://',
   'https://example.com/shot.png',

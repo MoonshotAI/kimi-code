@@ -491,18 +491,18 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3']);
   });
 
-  it('maps persisted kimi-file media refs to attachments named from the ref path', () => {
+  it('maps persisted kimi-file media refs to attachments', () => {
     // The engine persists an uploaded medium as a self-contained kosong
-    // `image_url` / `video_url` part carrying a `kimi-file://<fileId>?path=…`
-    // ref: the part type gives the kind, and the `?path=` names the
-    // materialized session copy, whose basename becomes the attachment name.
+    // `image_url` / `video_url` part carrying a `kimi-file://<fileId>` ref:
+    // the part type gives the kind and the ref the file id. A legacy `?path=`
+    // query is tolerated and ignored.
     const snapshot = groupMessagesIntoSnapshot([
       {
         role: 'user',
         content: [
           {
             type: 'video_url',
-            videoUrl: { url: 'kimi-file://file_1?path=%2Fcache%2Fclip.mp4' },
+            videoUrl: { url: 'kimi-file://file_1' },
           } as HistoryContentPart,
         ],
         toolCalls: [],
@@ -526,13 +526,11 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       {
         attachmentId: 'att_1',
         mediaType: 'video/*',
-        name: 'clip.mp4',
         source: { kind: 'session_media', fileId: 'file_1' },
       },
       {
         attachmentId: 'att_2',
         mediaType: 'image/*',
-        name: 'shot.png',
         source: { kind: 'session_media', fileId: 'file_2' },
       },
     ]);
@@ -573,7 +571,6 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       {
         attachmentId: 'att_1',
         mediaType: 'image/*',
-        name: 'shot.png',
         source: { kind: 'session_media', fileId: 'file_4' },
       },
     ]);
@@ -587,7 +584,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(turn.attachmentIds).toEqual(['att_1']);
   });
 
-  it('keeps a pathless kimi-file ref as a nameless attachment and inline tags as user text', () => {
+  it('keeps a kimi-file ref as a nameless attachment and inline tags as user text', () => {
     const snapshot = snapshotOf(
       { type: 'text', text: 'open <image path="/tmp/other.png"></image> please' },
       {
@@ -596,13 +593,12 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       } as HistoryContentPart,
     );
 
-    // A ref without `?path=` has no path-derived name; the inline tag inside
-    // real user text stays verbatim (never stripped).
+    // The ref carries no display name; the inline tag inside real user text
+    // stays verbatim (never stripped).
     expect(snapshot.attachments).toEqual([
       {
         attachmentId: 'att_1',
         mediaType: 'image/*',
-        name: undefined,
         source: { kind: 'session_media', fileId: 'file_3' },
       },
     ]);
@@ -628,7 +624,6 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       {
         attachmentId: 'att_1',
         mediaType: 'image/*',
-        name: 'shot.png',
         source: { kind: 'session_media', fileId: 'file_5' },
       },
     ]);
