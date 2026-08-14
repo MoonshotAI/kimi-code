@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -56,7 +56,10 @@ describe('SessionMetadata', () => {
     ix.set(ISessionMetadata, new SyncDescriptor(SessionMetadata));
   });
 
-  afterEach(() => { disposables.dispose(); });
+  afterEach(() => {
+    disposables.dispose();
+    vi.restoreAllMocks();
+  });
 
   it('creates an initial document on first read', async () => {
     const meta = ix.get(ISessionMetadata);
@@ -94,7 +97,17 @@ describe('SessionMetadata', () => {
     const meta = ix.get(ISessionMetadata);
     await meta.setTitle('t');
     await meta.setArchived(true);
-    expect(await meta.read()).toMatchObject({ title: 't', archived: true });
+    expect(await meta.read()).toMatchObject({ title: 't', titleKind: 'custom', archived: true });
+  });
+
+  it('sets a generated title while the metadata remains uncustomized', async () => {
+    const meta = ix.get(ISessionMetadata);
+
+    await expect(meta.setGeneratedTitleIfUncustomized('generated title')).resolves.toBe(true);
+    await expect(meta.read()).resolves.toMatchObject({
+      title: 'generated title',
+      titleKind: 'generated',
+    });
   });
 
   it('setTitle keeps updatedAt (rename must not reorder listings)', async () => {
@@ -234,6 +247,264 @@ describe('SessionMetadata', () => {
     expect(healed.agents).toEqual({});
     expect(healed.custom).toEqual({});
     expect(healed.updatedAt).toBe(1700000000000);
+  });
+
+  it('normalizes the legacy customTitle field before callers read metadata', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      customTitle: 'legacy title',
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    await expect(meta.read()).resolves.toMatchObject({
+      title: 'legacy title',
+      titleKind: 'custom',
+    });
+
+    const fresh = createFreshMetadata(ix);
+    await expect(fresh.read()).resolves.toMatchObject({
+      title: 'legacy title',
+      titleKind: 'custom',
+    });
+  });
+
+  it('trusts modern custom title state over a stale legacy customTitle', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      title: 'renamed title',
+      isCustomTitle: true,
+      customTitle: 'legacy custom title',
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    await expect(meta.read()).resolves.toMatchObject({
+      title: 'renamed title',
+      titleKind: 'custom',
+    });
+
+    await meta.update({ archived: true });
+    const fresh = createFreshMetadata(ix);
+    await expect(fresh.read()).resolves.toMatchObject({
+      title: 'renamed title',
+      titleKind: 'custom',
+      archived: true,
+    });
+    const persisted = await store.get<Record<string, unknown>>(META_SCOPE, 'state.json');
+    // The v1-readable marker is double-written (derived from titleKind);
+    // only the pre-`isCustomTitle` legacy field is stripped.
+    expect(persisted).toMatchObject({ isCustomTitle: true });
+    expect(persisted).not.toHaveProperty('customTitle');
+  });
+
+  it('migrates a legacy non-custom title to replaceable title state', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      title: 'prompt title',
+      isCustomTitle: false,
+      agents: {},
+      custom: {},
+    });
+
+    const meta = ix.get(ISessionMetadata);
+
+    await expect(meta.read()).resolves.toMatchObject({
+      title: 'prompt title',
+      titleKind: 'replaceable',
+    });
+    const persisted = await store.get<Record<string, unknown>>(META_SCOPE, 'state.json');
+    expect(persisted).toMatchObject({
+      title: 'prompt title',
+      titleKind: 'replaceable',
+      isCustomTitle: false,
+    });
+  });
+
+  it('honors a legacy writer custom marker over the stale titleKind it left behind', async () => {
+    // The mixed-version round trip: v2 persists a replaceable title, then a
+    // released v1 build renames the session — its writer spreads the original
+    // document, so `isCustomTitle: true` lands next to the stale
+    // `titleKind: 'replaceable'`. The explicit custom marker must win, or the
+    // next auto generation would overwrite the user's title.
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      title: '用户手工标题',
+      titleKind: 'replaceable',
+      isCustomTitle: true,
+      agents: {},
+      custom: {},
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    await expect(meta.read()).resolves.toMatchObject({
+      title: '用户手工标题',
+      titleKind: 'custom',
+    });
+
+    // The heal persists the upgraded state — v1 keeps reading it as custom.
+    const persisted = await store.get<Record<string, unknown>>(META_SCOPE, 'state.json');
+    expect(persisted).toMatchObject({ titleKind: 'custom', isCustomTitle: true });
+
+    const fresh = createFreshMetadata(ix);
+    await expect(fresh.read()).resolves.toMatchObject({
+      title: '用户手工标题',
+      titleKind: 'custom',
+    });
+    // A generated title must not replace the upgraded custom title.
+    await expect(fresh.setGeneratedTitleIfUncustomized('generated title')).resolves.toBe(false);
+  });
+
+  it('double-writes the derived isCustomTitle marker for v1 readers', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    const meta = ix.get(ISessionMetadata);
+
+    await meta.setGeneratedTitleIfUncustomized('generated title');
+    await expect(store.get<Record<string, unknown>>(META_SCOPE, 'state.json')).resolves.toMatchObject(
+      { titleKind: 'generated', isCustomTitle: false },
+    );
+
+    await meta.setTitle('user title');
+    await expect(store.get<Record<string, unknown>>(META_SCOPE, 'state.json')).resolves.toMatchObject(
+      { titleKind: 'custom', isCustomTitle: true },
+    );
+  });
+
+  it('does not downgrade a modern titleKind on a legacy false marker', async () => {
+    // The double-written pair as this build persists it: the `false` marker
+    // is informational and must not demote the generated state.
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      title: 'generated title',
+      titleKind: 'generated',
+      isCustomTitle: false,
+      agents: {},
+      custom: {},
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    await expect(meta.read()).resolves.toMatchObject({
+      title: 'generated title',
+      titleKind: 'generated',
+    });
+  });
+
+  it.each([
+    // [document title fields, expected titleKind] — the mixed-version matrix.
+    [{ isCustomTitle: true, titleKind: 'generated' as const }, 'custom'],
+    [{ isCustomTitle: true, titleKind: 'replaceable' as const }, 'custom'],
+    [{ isCustomTitle: true }, 'custom'],
+    [{ isCustomTitle: false, titleKind: 'custom' as const }, 'custom'],
+    [{ isCustomTitle: false, titleKind: 'generated' as const }, 'generated'],
+    [{ isCustomTitle: false }, 'replaceable'],
+    [{ titleKind: 'generated' as const }, 'generated'],
+    [{ customTitle: 'legacy title' }, 'custom'],
+    [{}, 'replaceable'],
+  ])('normalizes title state %j to titleKind %s', async (fields, expectedKind) => {
+    const store = ix.get(IAtomicDocumentStore);
+    const title = 'customTitle' in fields ? undefined : 'some title';
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      ...(title === undefined ? {} : { title }),
+      ...fields,
+      agents: {},
+      custom: {},
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    expect((await meta.read()).titleKind).toBe(expectedKind);
+  });
+
+  it('migrates the title state once, not on every load', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      title: '用户手工标题',
+      titleKind: 'replaceable',
+      isCustomTitle: true,
+      agents: {},
+      custom: {},
+    });
+
+    const first = ix.get(ISessionMetadata);
+    await first.ready;
+    const setSpy = vi.spyOn(store, 'set');
+    const fresh = createFreshMetadata(ix);
+    await fresh.ready;
+
+    // The first load already healed the document; the second load sees a
+    // consistent pair and must not write again.
+    expect(setSpy).not.toHaveBeenCalled();
+    expect((await fresh.read()).titleKind).toBe('custom');
+  });
+
+  it('keeps a queued custom title when a generated title is enqueued afterward', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.ready;
+    const store = ix.get(IAtomicDocumentStore);
+    const set = store.set.bind(store);
+    let releaseWrite: (() => void) | undefined;
+    let markWriteStarted: (() => void) | undefined;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeReleased = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let shouldBlock = true;
+    vi.spyOn(store, 'set').mockImplementation(async (scope, key, value) => {
+      if (shouldBlock) {
+        shouldBlock = false;
+        markWriteStarted?.();
+        await writeReleased;
+      }
+      await set(scope, key, value);
+    });
+
+    const priorWrite = meta.update({ lastPrompt: 'hello' });
+    await writeStarted;
+    const rename = meta.setTitle('user title');
+    const generated = meta.setGeneratedTitleIfUncustomized('generated title');
+    releaseWrite?.();
+
+    await priorWrite;
+    await rename;
+    await expect(generated).resolves.toBe(false);
+    await expect(meta.read()).resolves.toMatchObject({
+      title: 'user title',
+      titleKind: 'custom',
+    });
   });
 
   it('leaves existing agents/custom maps untouched', async () => {

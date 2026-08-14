@@ -15,12 +15,12 @@
 
 import {
   Disposable,
-  getContributedServices,
   getScopedServiceDescriptors,
+  IFeatureManager,
   LifecycleScope,
 } from '@moonshot-ai/agent-core-v2';
 
-import type { ScopedEntry, ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
+import type { Scope, ScopedEntry, ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
 
 export interface ChannelMethodDescriptor {
   readonly name: string;
@@ -87,10 +87,16 @@ function scopedServiceNameIndex(): Map<string, ServiceIdentifier<unknown>> {
 }
 
 /** Resolve a wire name to its `ServiceIdentifier` anywhere in the DI registry. */
-export function resolveAnyScopedServiceId(name: string): ServiceIdentifier<unknown> | undefined {
+export function resolveAnyScopedServiceId(
+  core: Scope,
+  name: string,
+): ServiceIdentifier<unknown> | undefined {
   return (
     scopedServiceNameIndex().get(name) ??
-    getContributedServices().find((entry) => entry.id.toString() === name)?.id
+    core.accessor
+      .get(IFeatureManager)
+      .contributedServices()
+      .find((entry) => entry.id.toString() === name)?.id
   );
 }
 

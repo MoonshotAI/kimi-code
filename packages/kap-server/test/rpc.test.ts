@@ -357,7 +357,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(body.data.turn_id).toBe(0);
   });
 
-  it('maps a duplicate promptId to 40923 before metadata changes', async () => {
+  it('maps a duplicate promptId to 40924 before metadata changes', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const path = rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' });
@@ -372,7 +372,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       input: [{ type: 'text', text: 'must not become metadata' }],
       promptId: 'submission-1',
     });
-    expect(duplicate.body.code).toBe(40923);
+    expect(duplicate.body.code).toBe(40924);
 
     const metadata = await call<SessionMetaWire>(
       'POST',

@@ -35,6 +35,7 @@ import type {
   CreateGoalInput,
   FileMeta,
   ForkSessionInput,
+  GenerateSessionTitleInput,
   GetConfigOptions,
   GlobalMcpServerAuthStatus,
   McpServerConfig,
@@ -269,6 +270,18 @@ export abstract class SDKRpcClientBase {
       sessionId: input.id,
       title: input.title,
     });
+  }
+
+  /**
+   * v2-only capability (`ISessionTitleService`); the v1 engine has no title
+   * generation, so the base fails loudly and `SDKRpcClientV2` overrides it.
+   */
+  async generateSessionTitle(input: GenerateSessionTitleInput): Promise<string | undefined> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'generateSessionTitle is only available on the agent-core-v2 engine.',
+    );
   }
 
   async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {

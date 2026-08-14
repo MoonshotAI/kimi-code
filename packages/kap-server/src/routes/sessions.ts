@@ -8,6 +8,8 @@
  *   GET    /sessions/{session_id}     get
  *   GET    /sessions/{session_id}/profile
  *   POST   /sessions/{session_id}/profile      update title / metadata / agent_config
+ *   POST   /sessions/{session_id}/title/generate
+ *                                              regenerate title via chat_title
  *   POST   /sessions/{tail}                    action: fork / compact / undo /
  *                                              abort / btw / archive / restore
  *   GET    /sessions/{session_id}/children     list child sessions
@@ -88,6 +90,7 @@ import {
   ISessionIndex,
   ISessionMetadata,
   ISessionLegacyService,
+  ISessionTitleService,
   IEventService,
   IWorkspaceAliases,
   ISessionLifecycleService,
@@ -649,6 +652,65 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     updateProfileRoute.path,
     updateProfileRoute.options,
     updateProfileRoute.handler as Parameters<SessionRouteHost['post']>[2],
+  );
+
+  const generateTitleRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/title/generate',
+      params: sessionIdParamSchema,
+      // Optional body: `{ "force": true }` requests an explicit regeneration
+      // that overwrites an already-generated or user-customized title;
+      // `source` picks the conversation excerpt (`user_prompts` default,
+      // `first_turn`, `digest`).
+      body: z.preprocess(
+        (value) => (value === undefined ? {} : value),
+        z.object({
+          force: z.boolean().optional(),
+          source: z.enum(['user_prompts', 'first_turn', 'digest']).optional(),
+        }),
+      ),
+      success: { data: z.object({ title: z.string() }) },
+      errors: {
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.SESSION_TITLE_UNAVAILABLE]: {},
+      },
+      description: 'Generate the session title via the managed chat_title tool',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const handle = await resumeSessionById(core.accessor, session_id);
+        if (handle === undefined) {
+          reply.send(
+            errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} not found`, req.id),
+          );
+          return;
+        }
+        const title = await handle.accessor
+          .get(ISessionTitleService)
+          .generateTitle({ force: req.body.force === true, source: req.body.source });
+        if (title === undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.SESSION_TITLE_UNAVAILABLE,
+              'session title generation is unavailable (no managed OAuth login, no prompt yet, or the backend request failed)',
+              req.id,
+            ),
+          );
+          return;
+        }
+        reply.send(okEnvelope({ title }, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.post(
+    generateTitleRoute.path,
+    generateTitleRoute.options,
+    generateTitleRoute.handler as Parameters<SessionRouteHost['post']>[2],
   );
 
   const sessionActionRoute = defineRoute(

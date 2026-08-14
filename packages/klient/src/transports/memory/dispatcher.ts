@@ -60,7 +60,7 @@ export interface MemoryDispatcher {
 
 const REQUEST_INVALID = 40001;
 const NOT_FOUND = 40404;
-const PROMPT_ID_CONFLICT = 40923;
+const PROMPT_ID_CONFLICT = 40924;
 
 /**
  * Engine file errors cross the facade as public `RPCError`s, never as the

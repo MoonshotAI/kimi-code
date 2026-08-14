@@ -16,7 +16,7 @@
 | `/logout` | — | 清除当前所选账号的凭据 | 否 |
 | `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见[平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-—-交互式供应商管理) | 是 |
 | `/model` | — | 切换当前会话使用的 LLM 模型 | 是 |
-| `/secondary-model` | `/subagent-model` | 选择子 Agent 的默认模型（写入 `[secondary_model] default_model`，详见[子 Agent 模型池](../configuration/config-files.md#子-agent-模型池)）。在次主力模型实验功能启用时可见 | 是 |
+| `/secondary-model` | `/subagent-model` | 选择 subagent 的默认模型（写入 `[secondary_model] default_model`，详见[subagent 模型池](../configuration/config-files.md#subagent-模型池)）。在 subagent 模型池实验功能启用时可见 | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板 | 是 |
 | `/experiments` | `/experimental` | 打开实验功能面板 | 是 |
 | `/permission` | — | 选择权限模式 | 是 |
@@ -100,7 +100,7 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 | 命令 | 别名 | 说明 | 随时可用 |
 | --- | --- | --- | --- |
 | `/help` | `/h`、`/?` | 显示快捷键和所有可用命令 | 是 |
-| `/btw [问题]` | — | 在 fork 出的子 Agent 中打开旁路对话，不改变当前主 Agent 轮次；不带问题时会先打开面板等待输入 | 是 |
+| `/btw [问题]` | — | 在 fork 出的 subagent 中打开旁路对话，不改变当前 main agent 轮次；不带问题时会先打开面板等待输入 | 是 |
 | `/usage` | — | 显示 token 用量、上下文占用以及配额信息 | 是 |
 | `/status` | — | 显示当前会话运行时状态：版本、模型、工作目录、权限模式等 | 是 |
 | `/mcp` | — | 列出当前会话中的 MCP server 及连接状态 | 是 |

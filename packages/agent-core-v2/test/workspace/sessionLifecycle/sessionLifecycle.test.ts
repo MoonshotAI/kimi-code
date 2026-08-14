@@ -15,7 +15,6 @@ import {
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import type { Hooks } from '#/hooks';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
@@ -59,12 +58,11 @@ import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceT
 import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
-import {
-  ISessionLifecycleHooks,
-  type SessionLifecycleHookSlots,
-} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import {
+  ISessionMetadata,
+  type SessionMetaPatch,
+} from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
@@ -132,6 +130,7 @@ function metadataStub(): ISessionMetadata {
     read: () => Promise.resolve({} as never),
     update: () => Promise.resolve(),
     setTitle: () => Promise.resolve(),
+    setGeneratedTitleIfUncustomized: () => Promise.resolve(false),
     setArchived: () => Promise.resolve(),
     registerAgent: () => Promise.resolve(),
   };
@@ -517,19 +516,19 @@ class RecordingSessionExternalHooksService
 
   constructor(
     @ISessionContext private readonly context: ISessionContext,
-    @ISessionLifecycleHooks hooks: Hooks<SessionLifecycleHookSlots>,
+    @ISessionLifecycleService lifecycle: ISessionLifecycleService,
   ) {
     super();
     this._register(
-      hooks.onDidCreateSession.register('test', async (event, next) => {
+      lifecycle.onDidCreateSession((event) => {
+        if (event.sessionId !== this.context.sessionId) return;
         recordedSessionHookEvents.push(`create:${event.source}:${this.context.sessionId}`);
-        await next();
       }),
     );
     this._register(
-      hooks.onWillCloseSession.register('test', async (event, next) => {
+      lifecycle.onWillCloseSession((event) => {
+        if (event.sessionId !== this.context.sessionId) return;
         recordedSessionHookEvents.push(`close:${event.reason}:${this.context.sessionId}`);
-        await next();
       }),
     );
   }
@@ -1730,6 +1729,53 @@ describe('SessionLifecycleService', () => {
   });
 
   describe('fork session state', () => {
+    it('marks the default fork title as replaceable', async () => {
+      const updates: SessionMetaPatch[] = [];
+      const svc = await build([
+        stubPair(ISessionMetadata, {
+          ...metadataStub(),
+          read: () =>
+            Promise.resolve({
+              title: 'generated source',
+              titleKind: 'generated',
+              agents: {},
+            } as never),
+          update: (patch) => {
+            updates.push(patch);
+            return Promise.resolve();
+          },
+        }),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      expect(updates).toContainEqual(
+        expect.objectContaining({ title: 'Fork: generated source', titleKind: 'replaceable' }),
+      );
+    });
+
+    it('marks an explicit fork title as custom', async () => {
+      const updates: SessionMetaPatch[] = [];
+      const svc = await build([
+        stubPair(ISessionMetadata, {
+          ...metadataStub(),
+          read: () => Promise.resolve({ title: 'source', agents: {} } as never),
+          update: (patch) => {
+            updates.push(patch);
+            return Promise.resolve();
+          },
+        }),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst', title: 'user title' });
+
+      expect(updates).toContainEqual(
+        expect.objectContaining({ title: 'user title', titleKind: 'custom' }),
+      );
+    });
+
     it('fork inherits the source session\'s last turn outcome', async () => {
       const updates: { readonly lastTurnReason?: unknown }[] = [];
       const metaStub: ISessionMetadata = {

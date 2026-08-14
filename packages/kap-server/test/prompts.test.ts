@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
 import {
+  IAgentTitlePromptSource,
   IAgentContextMemoryService,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -271,7 +272,7 @@ describe('server-v2 /api/v1 prompts', () => {
       content: [{ type: 'text', text: 'must not become metadata' }],
       prompt_id: 'submission-1',
     });
-    expect(duplicate.body.code).toBe(40923);
+    expect(duplicate.body.code).toBe(40924);
 
     const session = getLiveSessionById(server!.core.accessor, id);
     expect((await session!.accessor.get(ISessionMetadata).read()).lastPrompt).toBe('first prompt');
@@ -283,9 +284,28 @@ describe('server-v2 /api/v1 prompts', () => {
       content: [{ type: 'text', text: 'must not survive a cold resume' }],
       prompt_id: 'submission-1',
     });
-    expect(afterResume.body.code).toBe(40923);
+    expect(afterResume.body.code).toBe(40924);
     const resumed = getLiveSessionById(server!.core.accessor, id);
     expect((await resumed!.accessor.get(ISessionMetadata).read()).lastPrompt).toBe('first prompt');
+  });
+
+  it('makes the first three REST prompts available to title generation', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const prompts = ['先搭一个 Vite 项目', '加上路由', '现在配一下 ESLint'];
+    for (const text of prompts) {
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text }],
+      });
+      expect(submitted.body.code).toBe(0);
+    }
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const agent = session?.accessor.get(IAgentLifecycleService).get('main');
+    const source = agent?.accessor.get(IAgentTitlePromptSource);
+    expect(source).toBeDefined();
+    await expect(source!.firstUserPrompts(3)).resolves.toEqual(prompts);
   });
 
   it('rejects a stale file reference without creating the agent or mutating the model', async () => {

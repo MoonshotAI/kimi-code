@@ -352,7 +352,7 @@ export function defineKlientConformance(
       }
     });
 
-    it('propagates prompt id conflicts with the same 40923 error', async () => {
+    it('propagates prompt id conflicts with the same 40924 error', async () => {
       const created = await target.klient.global.sessions.create({
         workDir: process.cwd(),
         title: 'conformance prompt conflict',
@@ -367,7 +367,7 @@ export function defineKlientConformance(
             input: [{ type: 'text', text: 'duplicate' }],
             promptId: 'submission-1',
           }),
-        ).rejects.toMatchObject({ name: 'RPCError', code: 40923 });
+        ).rejects.toMatchObject({ name: 'RPCError', code: 40924 });
       } finally {
         reservation.dispose();
         await target.klient.session(created.id).close();

@@ -27,7 +27,7 @@ outline: 2
     "kimi-code/k3" = "擅长复杂推理与深度调试，难题选它。"
     ```
 
-  详见 [子 Agent 模型池文档](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#子-agent-模型池)。
+  详见 [子 Agent 模型池文档](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#subagent-模型池)。
 - 新增实验性全屏 TUI 模式，设置 `KIMI_CODE_TUI_FULL_SCREEN=1` 环境变量即可启用。
 - TUI 支持渲染 LaTeX 数学公式（`$…$` 与 `$$…$$`），消息中的公式会显示为 Unicode 公式。
 

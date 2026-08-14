@@ -8,8 +8,8 @@ import { expect, vi } from 'vitest';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { getContributedServices } from '#/features/featureRegistry';
-import { Emitter, Event } from '#/_base/event';
+import { IFeatureManager } from '#/app/feature/featureManager';
+import { Emitter, Event, type IWaitUntil } from '#/_base/event';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
 import type { AgentTaskInfo } from '#/agent/task/task';
@@ -172,11 +172,11 @@ import {
   type ScopeSeed,
   type ServiceIdentifier,
 } from '#/index';
-import { createHooks } from '#/hooks';
 import {
-  ISessionLifecycleHooks,
-  type SessionLifecycleHookSlots,
-} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
+  ISessionLifecycleService,
+  type SessionCreatedEvent,
+  type SessionWillCloseEvent,
+} from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
@@ -910,7 +910,9 @@ function reassertServiceOverrides(
   instantiation: IInstantiationService,
 ): void {
   const contributed = new Set(
-    getContributedServices()
+    instantiation
+      .invokeFunction((accessor) => accessor.get(IFeatureManager))
+      .contributedServices()
       .filter((entry) => entry.scope === scope)
       .map((entry) => entry.id),
   );
@@ -1207,13 +1209,10 @@ export class AgentTestContext {
               scope: (subKey?: string): string =>
                 subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
             });
-            reg.defineInstance(
-              ISessionLifecycleHooks,
-              createHooks<SessionLifecycleHookSlots, keyof SessionLifecycleHookSlots>([
-                'onDidCreateSession',
-                'onWillCloseSession',
-              ]),
-            );
+            reg.definePartialInstance(ISessionLifecycleService, {
+              onDidCreateSession: Event.None as Event<SessionCreatedEvent & IWaitUntil>,
+              onWillCloseSession: Event.None as Event<SessionWillCloseEvent & IWaitUntil>,
+            });
             reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());

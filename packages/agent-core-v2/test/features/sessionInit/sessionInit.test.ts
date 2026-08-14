@@ -17,8 +17,8 @@ import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionInitService } from '#/session/sessionInit/sessionInit';
-import { SessionInitService } from '#/session/sessionInit/sessionInitService';
+import { ISessionInitService } from '#/features/sessionInit/sessionInit';
+import { SessionInitService } from '#/features/sessionInit/sessionInitService';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 
 const WORK_DIR = '/project';

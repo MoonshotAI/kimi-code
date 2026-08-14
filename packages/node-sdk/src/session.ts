@@ -94,6 +94,11 @@ export class Session {
     this.onClose = options.onClose;
   }
 
+  /** True once {@link close} began — the session may still be closing in the engine. */
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
   getResumeState(): ResumedSessionState | undefined {
     this.ensureOpen();
     return this.resumeState;
@@ -664,7 +669,7 @@ export class Session {
   }
 
   /** @internal */
-  emitMetaUpdated(patch: { readonly title?: string | undefined }): void {
+  emitMetaUpdated(patch: { readonly title?: string; readonly isCustomTitle?: boolean }): void {
     this.emit({
       type: 'session.meta.updated',
       sessionId: this.id,

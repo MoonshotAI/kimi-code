@@ -371,7 +371,7 @@ describe('FileSessionIndex (read model)', () => {
     await fsp.writeFile(join(dir, 'state.json'), JSON.stringify(meta));
   }
 
-  function summary(id: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
+  function summary(id: string, overrides: Partial<SessionSummary> = {}) {
     return {
       id,
       workspaceId,

@@ -118,8 +118,10 @@ export const ErrorCode = {
   PROVIDER_ALREADY_EXISTS: 40921,
   /** page_token 损坏 / 版本不符 / 与当前查询条件不匹配，需从首页重新拉取 */
   PAGE_TOKEN_MISMATCH: 40922,
+  /** 会话标题生成不可用（flag 未开 / 无 managed OAuth 登录 / 还没有 prompt / 后端失败） */
+  SESSION_TITLE_UNAVAILABLE: 40923,
   /** prompt_id 已在该 agent 的历史中使用 */
-  PROMPT_ID_CONFLICT: 40923,
+  PROMPT_ID_CONFLICT: 40924,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,

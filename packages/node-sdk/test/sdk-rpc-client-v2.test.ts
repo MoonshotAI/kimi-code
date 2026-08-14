@@ -4,13 +4,18 @@
  * Responsibilities: `getExperimentalFeatures` is migrated end-to-end; every
  * not-yet-migrated method fails loudly with `not_implemented` instead of
  * silently hitting a v1 core.
- * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; no provider calls.
+ * Wiring: real v2 engine bootstrapped on a temp KIMI_CODE_HOME; remote provider calls are stubbed.
  * Run: pnpm exec vitest run test/sdk-rpc-client-v2.test.ts
  */
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  FileTokenStorage,
+  resolveKimiCodeOAuthRef,
+  resolveKimiTokenStorageName,
+} from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -22,6 +27,7 @@ import {
   KimiHarness,
   removeProviderFromConfig,
   SDKRpcClientV2,
+  type Event,
   type KimiConfig,
 } from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
@@ -30,6 +36,8 @@ import {
   drainSessionIndexMirror,
   HostProcessError,
   IHostRequestHeaders,
+  ISessionLifecycleService,
+  IWorkspaceLifecycleService,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -258,6 +266,360 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring MVP)', () => {
       expect(isDaemonFileUrl(buildDaemonFileUrl(meta.id, '/tmp/pixel.png'))).toBe(true);
       await harness.deleteFile(meta.id);
       await expect(harness.deleteFile(meta.id)).rejects.toThrow(/file not found/);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('emits one complete metadata event when a generated title is applied', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const titleBaseUrl = 'https://api.example.test/coding/v1';
+    const titleOAuthRef = resolveKimiCodeOAuthRef({ baseUrl: titleBaseUrl });
+    // Storage names strip the `oauth/` prefix (FileTokenStorage rejects
+    // namespaced keys); the engine resolves the same name when reading.
+    await new FileTokenStorage(join(homeDir, 'credentials')).save(
+      resolveKimiTokenStorageName({ oauthKey: titleOAuthRef.key }),
+      {
+        accessToken: 'test-access-token',
+        refreshToken: 'test-refresh-token',
+        expiresAt: Math.floor(Date.now() / 1000) + 3600,
+        scope: '',
+        tokenType: 'Bearer',
+        expiresIn: 3600,
+      },
+    );
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+default_model = "stub"
+
+[experimental]
+auto_session_title = true
+
+[providers.stub]
+type = "openai"
+base_url = "https://model.example.test/v1"
+api_key = "stub"
+
+[models.stub]
+provider = "stub"
+model = "stub"
+max_context_size = 1000
+
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "${titleBaseUrl}"
+
+[providers."managed:kimi-code".oauth]
+storage = "file"
+key = "${titleOAuthRef.key}"
+`,
+      'utf-8',
+    );
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url === 'https://api.example.test/coding/v1/tools') {
+        return new Response(JSON.stringify({ title: 'Generated title' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_generated_title_event', workDir });
+      await session.importContext(
+        'Generate a concise title for this session',
+        "session 'source-session'",
+      );
+      await expect(
+        harness.auth.getCachedAccessToken('managed:kimi-code', {
+          storage: titleOAuthRef.storage,
+          key: titleOAuthRef.key,
+        }),
+      ).resolves.toBe('test-access-token');
+      await expect(session.getContext()).resolves.toMatchObject({
+        history: [
+          expect.objectContaining({
+            role: 'user',
+            origin: { kind: 'user' },
+          }),
+        ],
+      });
+      const events: Event[] = [];
+      const unsubscribe = session.onEvent((event) => {
+        if (event.type === 'session.meta.updated' && event.title === 'Generated title') {
+          events.push(event);
+        }
+      });
+
+      await expect(harness.generateSessionTitle({ id: session.id })).resolves.toBe(
+        'Generated title',
+      );
+      unsubscribe();
+
+      expect(events).toEqual([
+        expect.objectContaining({
+          type: 'session.meta.updated',
+          sessionId: session.id,
+          agentId: 'main',
+          title: 'Generated title',
+          patch: { title: 'Generated title', isCustomTitle: false },
+        }),
+      ]);
+    } finally {
+      await harness.close();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('serializes a temporary title-generation close against a public resume', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const titleBaseUrl = 'https://api.example.test/coding/v1';
+    const titleOAuthRef = resolveKimiCodeOAuthRef({ baseUrl: titleBaseUrl });
+    await new FileTokenStorage(join(homeDir, 'credentials')).save(
+      resolveKimiTokenStorageName({ oauthKey: titleOAuthRef.key }),
+      {
+        accessToken: 'test-access-token',
+        refreshToken: 'test-refresh-token',
+        expiresAt: Math.floor(Date.now() / 1000) + 3600,
+        scope: '',
+        tokenType: 'Bearer',
+        expiresIn: 3600,
+      },
+    );
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+default_model = "stub"
+
+[experimental]
+auto_session_title = true
+
+[providers.stub]
+type = "openai"
+base_url = "https://model.example.test/v1"
+api_key = "stub"
+
+[models.stub]
+provider = "stub"
+model = "stub"
+max_context_size = 1000
+
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "${titleBaseUrl}"
+
+[providers."managed:kimi-code".oauth]
+storage = "file"
+key = "${titleOAuthRef.key}"
+`,
+      'utf-8',
+    );
+    let markFetchStarted!: () => void;
+    let resolveFetch!: (response: Response) => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    const fetchResponse = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url === 'https://api.example.test/coding/v1/tools') {
+        markFetchStarted();
+        return fetchResponse;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await client.createSession({ id: 'ses_title_race', workDir });
+      await client.importContext({
+        sessionId: 'ses_title_race',
+        content: 'Generate a concise title for this session',
+        source: "session 'source-session'",
+      });
+      await client.closeSession({ sessionId: 'ses_title_race' });
+
+      // The cold session is temporarily resumed for generation; block its
+      // cleanup close inside the will-close hooks so the public resume below
+      // lands while the close is still in flight.
+      const titlePromise = client.generateSessionTitle({ id: 'ses_title_race' });
+      await fetchStarted;
+      const handler = await client.engineAccessor
+        .get(IWorkspaceLifecycleService)
+        .handlerFor({ root: workDir });
+      const tempHandle = handler.accessor.get(ISessionLifecycleService).get('ses_title_race');
+      expect(tempHandle).toBeDefined();
+      let markCloseStarted!: () => void;
+      let openCloseGate!: () => void;
+      const closeStarted = new Promise<void>((resolve) => {
+        markCloseStarted = resolve;
+      });
+      const closeGate = new Promise<void>((resolve) => {
+        openCloseGate = resolve;
+      });
+      handler.accessor.get(ISessionLifecycleService).onWillCloseSession((event) => {
+        if (event.sessionId !== 'ses_title_race') return;
+        markCloseStarted();
+        event.waitUntil(closeGate);
+      });
+
+      resolveFetch(
+        new Response(JSON.stringify({ title: 'Generated title' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      await closeStarted;
+
+      // The resume must queue behind the in-flight close instead of merging
+      // into the handle that is being torn down.
+      const order: string[] = [];
+      const resumePromise = client.resumeSession({ id: 'ses_title_race' }).then((summary) => {
+        order.push('resumed');
+        return summary;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(order).toEqual([]);
+
+      openCloseGate();
+      await expect(titlePromise).resolves.toBe('Generated title');
+      const summary = await resumePromise;
+      expect(summary.id).toBe('ses_title_race');
+      expect(order).toEqual(['resumed']);
+
+      // The resumed session is a fresh, fully usable scope — not the handle
+      // the temporary path just tore down.
+      await client.renameSession({ id: 'ses_title_race', title: 'Resumed title' });
+      const sessions = await client.listSessions({ workDir });
+      expect(sessions.find((item) => item.id === 'ses_title_race')?.title).toBe('Resumed title');
+    } finally {
+      await client.close();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('re-resumes a fresh session facade while the public close is in flight', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+
+    try {
+      const session = await harness.createSession({ id: 'ses_resume_race', workDir });
+      // close() flips `isClosed` synchronously; the engine close settles
+      // asynchronously. The public resume must not hand back the closing
+      // facade — it queues behind the close and materializes a fresh one.
+      const closing = session.close();
+      const resumed = await harness.resumeSession({ id: 'ses_resume_race' });
+      await closing;
+
+      expect(resumed).not.toBe(session);
+      expect(session.isClosed).toBe(true);
+      expect(resumed.isClosed).toBe(false);
+      expect(resumed.getResumeState()).toBeTruthy();
+      // The stale facade's late onClose must not evict the live session.
+      expect(harness.getSession('ses_resume_race')).toBe(resumed);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects one of two concurrent creates with the same explicit session id', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+
+    try {
+      const [first, second] = await Promise.allSettled([
+        harness.createSession({ id: 'ses_same_id', workDir }),
+        harness.createSession({ id: 'ses_same_id', workDir }),
+      ]);
+
+      const outcomes = [first, second].map((result) => result.status);
+      expect(outcomes.sort()).toEqual(['fulfilled', 'rejected']);
+      const rejection = [first, second].find((result) => result.status === 'rejected');
+      expect((rejection as PromiseRejectedResult).reason).toMatchObject({
+        code: 'session.already_exists',
+      });
+      await expect(harness.resumeSession({ id: 'ses_same_id' })).resolves.toMatchObject({
+        id: 'ses_same_id',
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('coalesces concurrent public resumes onto one session facade', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+
+    try {
+      const session = await harness.createSession({ id: 'ses_coalesce', workDir });
+      await session.close();
+
+      const [first, second] = await Promise.all([
+        harness.resumeSession({ id: 'ses_coalesce' }),
+        harness.resumeSession({ id: 'ses_coalesce' }),
+      ]);
+
+      // One engine handle, one facade: a later close on either reference
+      // must not strand a second live facade over the same handle.
+      expect(first).toBe(second);
+      expect(harness.getSession('ses_coalesce')).toBe(first);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('does not coalesce resumes with different options onto one facade', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+
+    try {
+      const session = await harness.createSession({ id: 'ses_no_coalesce', workDir });
+      await session.close();
+
+      const [plain, withReplay] = await Promise.all([
+        harness.resumeSession({ id: 'ses_no_coalesce' }),
+        harness.resumeSession({ id: 'ses_no_coalesce', replayTurnLimit: 3 }),
+      ]);
+
+      // Different options must not be silently dropped onto the first
+      // caller's facade — each gets its own resume.
+      expect(plain).not.toBe(withReplay);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('reports the title state in the resumed summary', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+
+    try {
+      const session = await harness.createSession({ id: 'ses_title_kind', workDir });
+      await harness.renameSession({ id: session.id, title: '我的标题' });
+
+      // The resumed summary is read off the live metadata document, so it
+      // carries the canonical title state; the list path (index projection)
+      // intentionally does not.
+      await session.close();
+      const resumed = await harness.resumeSession({ id: session.id });
+      expect(resumed.summary?.titleKind).toBe('custom');
     } finally {
       await harness.close();
     }

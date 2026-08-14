@@ -81,7 +81,6 @@ name: reviewer
 description: Strict code reviewer that reports severity-ranked findings
 whenToUse: Code reviews and PR checks
 override: false
-model_preference: primary
 tools:
   - Read
   - Grep
@@ -100,7 +99,6 @@ You are a strict code reviewer. Read the diff, then report findings grouped by s
 | `description` | yes | What the agent does. Shown to the main Agent when it picks a sub-agent, so write it to guide delegation decisions |
 | `whenToUse` | no | Extra hint describing when the agent should be used |
 | `override` | no | Whether this file may replace a same-name built-in Agent. Defaults to `false`; `--agent-file` is already explicit and does not require this field |
-| `model_preference` | no | Symbolic default used when `Agent` or `AgentSwarm` spawns this profile: `primary` selects the model the caller is currently running, while `secondary` selects [`[secondary_model] model`](../configuration/config-files.md#secondary-model). An explicit tool-call `model` (which likewise accepts only `"primary"` / `"secondary"`) wins over this field; without either setting, the configured secondary model remains the default. If no secondary model is configured, the subagent inherits the caller's model. Read only by the legacy `agent-core` engine selected with `KIMI_CODE_LEGACY_FLAG=1`; the default v2 engine ignores this field |
 | `tools` | no | Allowlist of tool names such as `Read` or `Bash`; MCP tools are matched with globs such as `mcp__github__*`. Accepts a YAML list or a comma-separated string (`tools: Read, Grep`). Omit to allow all tools; a lone `*` also allows all tools; an empty list (`tools: []`) disables all tools |
 | `disallowedTools` | no | Denylist with the same syntax and matching rules, applied after `tools` |
 | `subagents` | no | Allowlist of sub-agent names this agent may delegate to, with the same syntax as `tools` (YAML list or comma-separated string). Omit to allow every type; a lone `*` also allows all types |
@@ -110,8 +108,6 @@ Built-in and user tools match by exact, case-sensitive name; entries starting wi
 The body is the agent's system prompt, and it is rendered as a template each time the prompt is built: `${var}` placeholders substitute live context values — unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. `${base_prompt}` embeds the effective default system prompt (the built-in default, or your `SYSTEM.md` override when present), so a file can wrap the default behavior instead of replacing it. If the file replaces the default prompt but should still honor instructions contributed by enabled plugins, place `${plugin_sections}` where those instructions should appear. The available variables are listed in the SYSTEM.md section below.
 
 Unknown fields are ignored, so newer files stay readable by older versions. Fields from other agent tools (such as Claude Code's `model` or OpenCode's `mode`) are ignored the same way, the comma-separated `tools` form keeps Claude Code-style agent files loadable, and a missing `name` falls back to the file name so OpenCode-style files load too — a minimal file with `description` and a body works across tools.
-
-`model_preference` applies only to newly spawned subagents when the secondary-model experiment is enabled — set `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`, or the master `KIMI_CODE_EXPERIMENTAL_FLAG=1`. It takes effect in every launch mode, including the interactive TUI. The field never names a concrete model alias, and resumed subagents keep their existing model. The selected preference is shown to the main agent alongside the profile description so it can still pass an explicit `model` when a task needs a different choice.
 
 A file with invalid content discovered in a directory is skipped with a warning and does not affect other files. A file passed explicitly via `--agent-file` must be valid — otherwise the CLI reports the error and exits.
 

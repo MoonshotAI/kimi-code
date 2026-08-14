@@ -6,6 +6,7 @@ import { createDecorator, ScopeActivation } from '#/_base/di/instantiation';
 import { type InstantiationService } from '#/_base/di/instantiationService';
 import {
   _clearScopedRegistryForTests,
+  getScopedServiceDescriptors,
   registerScopedService,
   type Scope,
 } from '#/_base/di/scope';
@@ -20,7 +21,10 @@ import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { Feature } from '#/features/feature';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
-import { _clearFeatureRecipesForTests, registerFeature } from '#/features/featureRegistry';
+import {
+  _clearFeatureRecipesForTests,
+  registerFeature,
+} from '#/features/featureRegistry';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
 
 interface IGreeter {
@@ -136,6 +140,82 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     expect(() => agentOne.accessor.get(ITestTool)).toThrow();
 
     host.dispose();
+  });
+
+  it('rejects duplicate service contributions until the provider unloads', async () => {
+    class FirstFeature extends Feature {
+      static override readonly name = 'first-feature';
+
+      constructor() {
+        super();
+        this.contributeAgentService(IGreeter, GreeterService);
+      }
+    }
+    class SecondFeature extends Feature {
+      static override readonly name = 'second-feature';
+
+      constructor() {
+        super();
+        this.contributeAgentService(IGreeter, GreeterService);
+      }
+    }
+    registerFeature(FirstFeature);
+
+    const host = createScopedTestHost();
+    const manager = host.app.accessor.get(IFeatureManager);
+    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    const original = agent.accessor.get(IGreeter);
+    expect(() => manager.provideUnit(SecondFeature)).toThrow(
+      /Service test-feature-greeter is already contributed at scope agent/,
+    );
+    expect(manager.units().map((unit) => unit.name)).toEqual(['first-feature']);
+    expect(
+      manager
+        .contributedServices()
+        .filter((entry) => entry.scope === LifecycleScope.Agent && entry.id === IGreeter),
+    ).toHaveLength(1);
+    expect(collectionViewOf(host.app, ScopeUnits(LifecycleScope.Agent)).items).toHaveLength(1);
+    expect(agent.accessor.get(IGreeter)).toBe(original);
+
+    await manager.unprovideUnit('first-feature');
+    await host.app.instantiation.cascade.whenIdle();
+    expect(() => manager.provideUnit(SecondFeature)).not.toThrow();
+    expect(manager.units().map((unit) => unit.name)).toEqual(['second-feature']);
+    expect(agent.accessor.get(IGreeter).greet()).toBe('hi');
+
+    host.dispose();
+  });
+
+  it('isolates equal service contributions between App roots', async () => {
+    class SharedFeature extends Feature {
+      static override readonly name = 'shared-feature';
+
+      constructor() {
+        super();
+        this.contributeAgentService(IGreeter, GreeterService);
+      }
+    }
+    registerFeature(SharedFeature);
+
+    const first = createScopedTestHost();
+    const second = createScopedTestHost();
+    const firstManager = first.app.accessor.get(IFeatureManager);
+    const secondManager = second.app.accessor.get(IFeatureManager);
+    const firstAgent = first.child(LifecycleScope.Agent, 'agent-1');
+    const secondAgent = second.child(LifecycleScope.Agent, 'agent-1');
+    expect(firstManager.contributedServices()).toHaveLength(1);
+    expect(secondManager.contributedServices()).toHaveLength(1);
+    expect(firstAgent.accessor.get(IGreeter)).not.toBe(secondAgent.accessor.get(IGreeter));
+
+    await firstManager.unprovideUnit('shared-feature');
+    await first.app.instantiation.cascade.whenIdle();
+    expect(firstManager.contributedServices()).toHaveLength(0);
+    expect(secondManager.contributedServices()).toHaveLength(1);
+    expect(() => firstAgent.accessor.get(IGreeter)).toThrow();
+    expect(secondAgent.accessor.get(IGreeter).greet()).toBe('hi');
+
+    first.dispose();
+    second.dispose();
   });
 
   it('materializes a per-scope class recipe contributed through contribute()', () => {

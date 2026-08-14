@@ -16,15 +16,13 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContext,
   type ContextInjectionResult,
 } from '#/agent/contextInjector/contextInjector';
-import { pickDisclosureBaseline } from '#/agent/contextInjector/disclosureBaseline';
+import { pickDisclosureBaseline } from './disclosureBaseline';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IHostClock } from '#/os/interface/hostClock';
@@ -50,7 +48,7 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
     @ISessionContext private readonly sessionContext: ISessionContext,
   ) {
     super();
-    this.states.register(dateChangeSeedKey);
+    this._register(this.states.register(dateChangeSeedKey));
     this._register(
       injector.register<DateInjectionDisclosure>(
         DATE_CHANGE_INJECTION_VARIANT,
@@ -135,11 +133,3 @@ function currentDateDisclosure(clock: IHostClock): Omit<DateDisclosure, 'renderG
     timeZone,
   };
 }
-
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentDateChangeService,
-  AgentDateChangeService,
-  ScopeActivation.OnScopeCreated,
-  'dateChange',
-);

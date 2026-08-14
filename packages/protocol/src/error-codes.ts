@@ -102,7 +102,7 @@ export const ErrorCode = {
   /** goal 只允许主 agent 使用 */
   GOAL_UNSUPPORTED_AGENT: 40920,
   /** prompt_id 已在该 agent 的历史中使用 */
-  PROMPT_ID_CONFLICT: 40923,
+  PROMPT_ID_CONFLICT: 40924,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,
