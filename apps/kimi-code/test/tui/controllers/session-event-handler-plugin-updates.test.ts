@@ -197,12 +197,56 @@ describe('SessionEventHandler malformed assistant.delta', () => {
     ui['scheduleFlush'] = vi.fn();
     const handler = new SessionEventHandler(host, makeNotifier() as unknown as PluginUpdateNotifier);
 
-    expect(() =>
+    expect(() => {
       handler.handleEvent(
         { type: 'assistant.delta', sessionId: 's1', agentId: 'main', turnId: 1 } as never,
         sendQueued,
-      ),
-    ).not.toThrow();
+      );
+    }).not.toThrow();
     expect(ui['appendAssistantDelta']).toHaveBeenCalledWith('');
+  });
+});
+
+describe('SessionEventHandler malformed thinking.delta', () => {
+  it('coerces a missing delta payload to an empty delta instead of throwing', () => {
+    const { host, streamingUI } = makeHost();
+    const ui = streamingUI as unknown as Record<string, unknown>;
+    ui['hasThinkingDraft'] = vi.fn(() => true);
+    ui['appendThinkingDelta'] = vi.fn();
+    ui['scheduleFlush'] = vi.fn();
+    const handler = new SessionEventHandler(host, makeNotifier() as unknown as PluginUpdateNotifier);
+
+    expect(() => {
+      handler.handleEvent(
+        { type: 'thinking.delta', sessionId: 's1', agentId: 'main', turnId: 1 } as never,
+        sendQueued,
+      );
+    }).not.toThrow();
+    expect(ui['appendThinkingDelta']).toHaveBeenCalledWith('');
+  });
+});
+
+describe('SessionEventHandler malformed hook.result', () => {
+  it('coerces a missing content payload instead of throwing', () => {
+    const { host, streamingUI } = makeHost();
+    const ui = streamingUI as unknown as Record<string, unknown>;
+    ui['hasThinkingDraft'] = vi.fn(() => false);
+    ui['flushThinkingToTranscript'] = vi.fn();
+    ui['finalizeAssistantStream'] = vi.fn();
+    const handler = new SessionEventHandler(host, makeNotifier() as unknown as PluginUpdateNotifier);
+    const h = host as unknown as { appendTranscriptEntry: ReturnType<typeof vi.fn> };
+
+    expect(() => {
+      handler.handleEvent(
+        { type: 'hook.result', sessionId: 's1', agentId: 'main', turnId: 1, hookEvent: 'pre-tool-use' } as never,
+        sendQueued,
+      );
+    }).not.toThrow();
+    // The rendered markdown must still be produced, falling back to the empty
+    // placeholder instead of crashing on `event.content.trim()`.
+    expect(h.appendTranscriptEntry).toHaveBeenCalledTimes(1);
+    const entry = h.appendTranscriptEntry.mock.calls[0]?.[0] as { content: string };
+    expect(entry.content).toContain('pre-tool-use hook');
+    expect(entry.content).toContain('(empty)');
   });
 });

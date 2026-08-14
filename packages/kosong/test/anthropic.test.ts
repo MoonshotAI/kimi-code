@@ -2846,6 +2846,87 @@ describe('AnthropicChatProvider', () => {
       ]);
     });
 
+    it('generate() drops empty text parts while keeping tool calls intact', async () => {
+      // End-to-end through the contract generate(): a stream whose text block
+      // omits `text` (coerced to an empty string by the adapter) must not leak
+      // an empty text part into the final assistant message — convertMessage
+      // would re-send it verbatim and strict Anthropic endpoints reject empty
+      // text blocks (400), aborting the tool-use loop.
+      const { generate } = await import('#/generate');
+
+      const provider = createStreamProvider();
+      const stream = mockStream([
+        {
+          type: 'message_start',
+          message: { id: 'msg_stream_tool', usage: { input_tokens: 10 } },
+        },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta' } },
+        { type: 'content_block_stop', index: 0 },
+        {
+          type: 'content_block_start',
+          index: 1,
+          content_block: { type: 'tool_use', id: 'toolu_x', name: 'add', input: {} },
+        },
+        {
+          type: 'content_block_delta',
+          index: 1,
+          delta: { type: 'input_json_delta', partial_json: '{"a":2,"b":3}' },
+        },
+        { type: 'content_block_stop', index: 1 },
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } },
+        { type: 'message_stop' },
+      ]);
+
+      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(stream) as never;
+
+      const { message } = await generate(
+        provider,
+        '',
+        [],
+        [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] }],
+      );
+
+      expect(message.content.filter((p) => p.type === 'text')).toEqual([]);
+      expect(message.toolCalls).toHaveLength(1);
+      expect(message.toolCalls[0]!.id).toBe('toolu_x');
+      expect(message.toolCalls[0]!.name).toBe('add');
+      expect(message.toolCalls[0]!.arguments).toBe('{"a":2,"b":3}');
+    });
+
+    it('generate() leaves an all-empty response intact for downstream removal', async () => {
+      // A response that is entirely an empty text block (no tool calls) keeps
+      // its existing flow: generate() returns it instead of throwing
+      // APIEmptyResponseError, and the transcript's settleStep removes the
+      // vacuous step downstream. Only empty text parts riding alongside real
+      // content or tool calls are filtered.
+      const { generate } = await import('#/generate');
+
+      const provider = createStreamProvider();
+      const stream = mockStream([
+        {
+          type: 'message_start',
+          message: { id: 'msg_stream_empty', usage: { input_tokens: 10 } },
+        },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta' } },
+        { type: 'message_delta', delta: {}, usage: { output_tokens: 5 } },
+        { type: 'message_stop' },
+      ]);
+
+      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(stream) as never;
+
+      const { message } = await generate(
+        provider,
+        '',
+        [],
+        [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] }],
+      );
+
+      expect(message.content).toEqual([{ type: 'text', text: '' }]);
+      expect(message.toolCalls).toEqual([]);
+    });
+
     it('yields thinking delta and signature from stream events', async () => {
       const provider = createStreamProvider();
       const stream = mockStream([

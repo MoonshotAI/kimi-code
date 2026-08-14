@@ -46,7 +46,7 @@ function createMockProvider(stream: StreamedMessage): ChatProvider {
 
 describe('regression', () => {
   describe('empty text parts', () => {
-    it('standalone empty TextPart is kept in content', async () => {
+    it('standalone empty TextPart is filtered out of content', async () => {
       const stream = createMockStream([
         { type: 'text', text: 'before' },
         { type: 'image_url', imageUrl: { url: 'https://example.com/img.png' } },
@@ -56,10 +56,12 @@ describe('regression', () => {
 
       const result = await generate(provider, '', [], []);
 
+      // Empty text parts carry nothing and would be rejected verbatim by
+      // strict Anthropic endpoints when re-sent on a tool-use turn, so the
+      // assembly layer drops them.
       expect(result.message.content).toEqual([
         { type: 'text', text: 'before' },
         { type: 'image_url', imageUrl: { url: 'https://example.com/img.png' } },
-        { type: 'text', text: '' },
       ]);
     });
   });

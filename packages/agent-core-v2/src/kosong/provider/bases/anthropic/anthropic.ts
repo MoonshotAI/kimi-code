@@ -668,7 +668,7 @@ class AnthropicStreamedMessage implements StreamedMessage {
       switch (block.type) {
         case 'text':
           if (block.text !== undefined) {
-            yield { type: 'text', text: block.text ?? '' };
+            yield { type: 'text', text: block.text };
           }
           break;
         case 'thinking':
