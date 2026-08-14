@@ -535,6 +535,56 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     expect(blob.loadCalls).toBe(1);
   });
 
+  it('rehydrates media in the legacy compaction tail that stays visible', async () => {
+    const tailMedia: ContextMessage = {
+      role: 'assistant',
+      content: [
+        { type: 'image', source: { url: `${BLOBREF}image/png;shaTail` } } as unknown as ContentPart,
+      ],
+      toolCalls: [],
+    };
+    const hiddenMedia: ContextMessage = {
+      role: 'tool',
+      content: [
+        { type: 'image', source: { url: `${BLOBREF}image/png;shaGone` } } as unknown as ContentPart,
+      ],
+      toolCalls: [],
+      toolCallId: 'call_1',
+    };
+    blob.store.set('shaTail', 'TAIL');
+    blob.store.set('shaGone', 'GONE');
+    // No keptUserMessageCount → legacyTail: the window keeps
+    // `[summary, …messages.slice(compactedCount)]`, so the assistant media
+    // message before the marker remains model-visible.
+    const records: WireRecord[] = [
+      { type: 'context.append_message', message: hiddenMedia },
+      { type: 'context.append_message', message: tailMedia },
+      {
+        type: 'context.apply_compaction',
+        summary: 's',
+        contextSummary: 'S',
+        compactedCount: 1,
+        tokensBefore: 10,
+        tokensAfter: 5,
+      },
+    ];
+
+    const replay = buildHost(REPLAY_KEY);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
+
+    const visible = replay.svc.get();
+    expect(visible.map((message) => message.role)).toEqual(['user', 'assistant']);
+    expect(mediaUrl(visible[1]!)).toBe('data:image/png;base64,TAIL');
+    const log = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    expect(mediaUrl(log[0]!)).toBe(`${BLOBREF}image/png;shaGone`);
+    expect(blob.loadCalls).toBe(1);
+  });
+
   it('publishes context.spliced on live dispatch and is silent on replay', async () => {
     const host = buildHost(KEY);
     const live: { start: number; deleteCount: number }[] = [];

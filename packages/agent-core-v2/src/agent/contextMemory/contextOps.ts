@@ -64,7 +64,6 @@ import type { WireRecord } from '#/wire/record';
 
 import {
   createCompactionMarkerMessage,
-  isRealUserInput,
   type ContextCompactionShapeInput,
 } from './compactionHandoff';
 import {
@@ -140,28 +139,26 @@ async function dehydrateRecord(
   return record;
 }
 
-/** Replay-time blob loading skips messages no window derivation can surface:
- *  everything after the last compaction marker survives, and before it only
- *  real user input (the derivation's selection pool) and the marker itself
- *  do. Compacted-away assistant / tool media stays as `blobref:` strings, so
- *  resume I/O stays proportional to the surviving window — the same bound the
- *  pre-append-only state gave by construction. The derivation itself is
- *  blob-invariant (media parts estimate flat), so the mixed log derives
- *  exactly the window a fully rehydrated log would. */
+/** Replay-time blob loading transforms exactly the log entries that surface
+ *  in the derived visible window (by identity), plus the markers themselves.
+ *  Everything else — compacted-away assistant / tool media above all — stays
+ *  as `blobref:` strings, so resume I/O stays proportional to the surviving
+ *  window. Identity membership covers every derivation branch at once: the
+ *  kept head/tail user messages, the legacy `[summary, …tail]` survivors,
+ *  and the post-last-marker tail. The derivation itself is blob-invariant
+ *  (media parts estimate flat), so the mixed log derives exactly the window
+ *  a fully rehydrated log would. */
 async function rehydrateSurvivingMessages(
   messages: readonly ContextMessage[],
   transform: PartsTransformer,
 ): Promise<{ changed: boolean; result: ContextMessage[] }> {
-  let lastMarker = messages.length - 1;
-  for (; lastMarker >= 0; lastMarker--) {
-    if (messages[lastMarker]!.compaction !== undefined) break;
-  }
-  if (lastMarker < 0) return dehydrateMessages(messages, transform);
+  const visible = deriveVisibleMessages(messages);
+  if (visible === messages) return dehydrateMessages(messages, transform);
+  const survivors = new Set<ContextMessage>(visible);
   let changed = false;
   const result: ContextMessage[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    const message = messages[i]!;
-    if (i > lastMarker || message.compaction !== undefined || isRealUserInput(message)) {
+  for (const message of messages) {
+    if (survivors.has(message) || message.compaction !== undefined) {
       const parts = await transform(message.content);
       if (parts !== message.content) {
         changed = true;
