@@ -729,6 +729,8 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         approvalId: w.payload.approval_id,
         decision: w.payload.decision,
         resolvedAt: w.payload.resolved_at,
+        feedback: w.payload.feedback,
+        selectedLabel: w.payload.selected_label,
       };
 
     case 'event.approval.expired':

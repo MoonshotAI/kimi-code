@@ -346,10 +346,12 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
    *  fetch an authenticated blob URL so the thumbnail doesn't 401. Replaces any
    *  unsent draft attachments (mirroring loadForEdit(text), which overwrites) so
    *  a later submit sends exactly the edited message's files, not a mix. */
-  function loadAttachments(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
-    const sid = sessionId() ?? '';
-    for (const existing of attachmentsBySession.value[sid] ?? []) revokeAttachment(existing);
-    setForSession(sid, []);
+  function loadAttachments(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[], targetSid?: string, opts?: { append?: boolean }): void {
+    const sid = targetSid ?? sessionId() ?? '';
+    if (opts?.append !== true) {
+      for (const existing of attachmentsBySession.value[sid] ?? []) revokeAttachment(existing);
+      setForSession(sid, []);
+    }
     for (const att of atts) {
       const localId = nextLocalId();
       const isData = /^data:/i.test(att.url);

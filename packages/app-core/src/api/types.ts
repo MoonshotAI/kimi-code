@@ -648,7 +648,7 @@ export type AppEvent =
   | { type: 'agentTurnEnded'; sessionId: string; agentId: string; reason?: string }
   | { type: 'toolOutput'; sessionId: string; toolCallId: string; outputChunk: string; stream: 'stdout' | 'stderr' }
   | { type: 'approvalRequested'; sessionId: string; approval: AppApprovalRequest }
-  | { type: 'approvalResolved'; sessionId: string; approvalId: string; decision: ApprovalDecision; resolvedAt: string }
+  | { type: 'approvalResolved'; sessionId: string; approvalId: string; decision: ApprovalDecision; resolvedAt: string; feedback?: string; selectedLabel?: string }
   | { type: 'approvalExpired'; sessionId: string; approvalId: string }
   | { type: 'questionRequested'; sessionId: string; question: AppQuestionRequest }
   | { type: 'questionAnswered'; sessionId: string; questionId: string; resolvedAt: string }

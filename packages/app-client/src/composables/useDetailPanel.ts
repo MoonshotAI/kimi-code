@@ -39,7 +39,7 @@ export interface DetailPanelClient {
   loadFileDiff(path: string): Promise<void>;
   clearFileDiff(): void;
   startSessionAndOpenSideChat(workspaceId: string, prompt?: string): Promise<string | null>;
-  openSideChat(prompt?: string): Promise<void>;
+  openSideChat(prompt?: string): Promise<boolean>;
   closeSideChat(): void;
 }
 

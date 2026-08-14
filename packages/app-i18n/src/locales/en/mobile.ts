@@ -15,6 +15,7 @@ export default {
   permAutoSub: 'fully autonomous, never asks',
   permYoloSub: 'auto-approve tools, may still ask',
   planModeSub: 'Plan mode',
+  goalModeSub: 'Goal mode',
   swarmModeSub: 'Swarm mode',
   archivedSessions: 'Archived sessions',
   archivedSessionsSub: 'Browse and restore archived sessions',

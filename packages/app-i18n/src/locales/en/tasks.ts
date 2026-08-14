@@ -25,6 +25,7 @@ export default {
   filterAll: 'All',
   running: 'running',
   closePanel: 'Close panel',
+  openPanel: 'Open in the side panel',
   timingRunning: 'Running · {time}',
   timingDone: 'Done · {time}',
   emptyTasks: 'No background tasks running',

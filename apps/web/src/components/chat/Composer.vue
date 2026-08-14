@@ -31,7 +31,7 @@ import type { ManagedMembership, PromptAttachment } from '../../composables/useK
 import AttachmentChip from './AttachmentChip.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';
-import { Button, ContextRing, Icon, IconButton, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/app-ui';
+import { ContextRing, Icon, IconButton, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -55,6 +55,10 @@ const props = withDefaults(defineProps<{
   status?: ConversationStatus;
   thinking?: ThinkingLevel;
   planMode?: boolean;
+  /** The user's not-yet-cashed plan intent (armed): "the next send enters
+      plan mode". Shown as the in-input directive pill; the daemon-fact plan
+      mode rides the dock workbar instead. */
+  planArmed?: boolean;
   swarmMode?: boolean;
   goalMode?: boolean;
   goal?: AppGoal | null;
@@ -96,7 +100,11 @@ const placeholder = computed(() =>
       ? t('composer.placeholderRunning')
       : props.goalMode
         ? t('status.goalPlaceholder')
-        : t('composer.placeholder')
+        // The plan hint rides the intent too: armed (not yet sent) shows the
+        // plan prompt, exactly like the daemon-fact active mode.
+        : props.planArmed || props.planMode
+          ? t('status.planPlaceholder')
+          : t('composer.placeholder')
 );
 
 const emit = defineEmits<{
@@ -113,11 +121,9 @@ const emit = defineEmits<{
   togglePlan: [];
   toggleSwarm: [];
   toggleGoal: [];
-  openBtw: [];
   createGoal: [objective: string];
   controlGoal: [action: 'pause' | 'resume' | 'cancel'];
   focusGoal: [];
-  focusSwarm: [];
   compact: [];
   pickModel: [];
   selectModel: [modelId: string];
@@ -220,6 +226,28 @@ const history = useInputHistory({ text, editorRef: textareaRef, sessionId: () =>
 // keeps the keydown orchestration (arrow keys / Enter / Escape) because it also
 // juggles the mention menu and history recall.
 // ---------------------------------------------------------------------------
+// Arm/disarm the primary work mode. Shared by the typed `/plan` and `/goal`
+// commands and the slash menu's selection path, so both arming routes behave
+// identically.
+function armPlanMode(): void {
+  // Enable-only: selecting /plan while plan is already on must NOT toggle it
+  // off — the pill's × is the only exit (same contract as the add menu).
+  if (planOn.value) return;
+  if (props.goalMode) emit('toggleGoal');
+  emit('togglePlan');
+}
+function armGoalMode(): void {
+  // A live goal owns the mode — focus its panel instead of arming a new one.
+  if (goalActive.value) {
+    emit('focusGoal');
+    return;
+  }
+  // Enable-only, same as above.
+  if (props.goalMode) return;
+  if (planOn.value) emit('togglePlan');
+  emit('toggleGoal');
+}
+
 const {
   open: slashOpen,
   items: slashItems,
@@ -234,7 +262,23 @@ const {
   // Menu-selected bare commands never carry attachments (skills all take
   // `acceptsInput`, so they leave the command in the composer instead of
   // firing; any pending chips stay put for the eventual submit).
-  emitCommand: (cmd) => emit('command', { cmd, attachments: [] }),
+  emitCommand: (cmd) => {
+    if (cmd === '/plan') {
+      armPlanMode();
+      return;
+    }
+    if (cmd === '/goal') {
+      armGoalMode();
+      return;
+    }
+    if (cmd === '/swarm') {
+      // A menu-picked /swarm arms the toggle (enable-only — the chip's × is
+      // the off switch). Typed `/swarm <task>` still travels as a command.
+      if (!swarmOn.value) emit('toggleSwarm');
+      return;
+    }
+    emit('command', { cmd, attachments: [] });
+  },
   historyPush: (entry) => history.push(entry),
   clearDraft,
   // Built-in descs are i18n keys — resolve them so filtering (and its pinyin
@@ -248,9 +292,9 @@ const slashQuery = computed(() =>
   text.value.startsWith('/') && !text.value.includes(' ') ? text.value.slice(1) : '',
 );
 
-// Combobox semantics for the autocomplete menus (slash / mention): the
-// textarea keeps focus while a menu is open, so it must advertise expansion,
-// the open menu, and the active row for assistive tech.
+// Combobox semantics for the three autocomplete menus (slash / mention / add):
+// the textarea keeps focus while the menus are open, so it must advertise
+// expansion, the open menu, and the active row for assistive tech.
 const menuAriaControls = computed(() => {
   if (slashOpen.value) return 'composer-slash-menu';
   if (mentionOpen.value) return 'composer-mention-menu';
@@ -317,6 +361,12 @@ function handleInput(): void {
   history.resetBrowsing();
   updateSlashMenu();
   updateMentionMenu();
+  // Popups are exclusive: a freshly opened slash/mention menu displaces the
+  // add menu (the textarea kept focus when it was opened by mouse). ANY real
+  // typing closes it too — the add menu has no typeahead, so leaving it open
+  // would keep Enter and the arrow keys captured by its rows while the user
+  // writes (an accidental File/Goal pick instead of a send).
+  if (slashOpen.value || mentionOpen.value || addMenuOpen.value) closeAddMenu();
 }
 
 // ---------------------------------------------------------------------------
@@ -450,7 +500,6 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  document.removeEventListener('mousedown', onModesDocClick);
   clearCompositionEndTimer();
 });
 
@@ -467,6 +516,7 @@ function focus(): void {
 function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
   loadAttachments(atts);
 }
+
 // defineExpose lives below the toolbar dropdown refs (see anyPopupOpen).
 
 // Build the wire-bound attachment payload: images/videos only need the fileId,
@@ -529,6 +579,37 @@ function handleSubmit(): void {
   // args) are recallable too, not just plain messages. `push` ignores empty /
   // whitespace, so an image-only send adds nothing.
   history.push(trimmed);
+
+  // Bare work-mode commands are consumed locally — they toggle the composer's
+  // mode pill instead of traveling as a slash command. `/plan` and `/goal`
+  // swap each other out; with a live goal, `/goal` just focuses its panel.
+  if (trimmed === '/plan') {
+    text.value = '';
+    clearDraft();
+    slashOpen.value = false;
+    collapseAndRefit();
+    armPlanMode();
+    return;
+  }
+  if (trimmed === '/goal') {
+    text.value = '';
+    clearDraft();
+    slashOpen.value = false;
+    collapseAndRefit();
+    armGoalMode();
+    return;
+  }
+  if (trimmed === '/swarm') {
+    // Same enable-only consumption as the menu pick — the chip's × is the
+    // off switch, so a click-send must not toggle the mode off (the App's
+    // bare-/swarm handler would). `/swarm off` still travels as a command.
+    text.value = '';
+    clearDraft();
+    slashOpen.value = false;
+    collapseAndRefit();
+    if (!swarmOn.value) emit('toggleSwarm');
+    return;
+  }
 
   // If it's a known slash command, keep the optional tail as command input
   // instead of submitting it as normal chat text. This covers `/goal <task>`,
@@ -643,8 +724,24 @@ function isComposingKeyEvent(e: KeyboardEvent): boolean {
 function handleKeydown(e: KeyboardEvent): void {
   if (isComposingKeyEvent(e)) return;
 
+  // Backspace at the very start of the text deletes the mode pill (chip-style
+  // dismissal), rather than doing nothing.
+  if (workMode.value && e.key === 'Backspace' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+    const el = textareaRef.value;
+    if (el && el.selectionStart === 0 && el.selectionEnd === 0) {
+      e.preventDefault();
+      clearWorkMode();
+      return;
+    }
+  }
+
   // Close dropdowns on Escape
   if (e.key === 'Escape') {
+    if (addMenuOpen.value) {
+      e.preventDefault();
+      closeAddMenu();
+      return;
+    }
     if (dropdownOpen.value) {
       e.preventDefault();
       closeDropdown();
@@ -799,10 +896,58 @@ const hasUpload = computed(() => !!props.uploadImage);
 
 const dropdownOpen = ref(false);
 const permDropdownOpen = ref(false);
-const modesOpen = ref(false);
+const addMenuOpen = ref(false);
 const toolbarRef = ref<HTMLElement | null>(null);
+const addMenuRef = ref<HTMLElement | null>(null);
 const permPillRef = ref<HTMLElement | null>(null);
 const modelPillRef = ref<HTMLElement | null>(null);
+
+// Add-menu overlay scroll thumb (same vocabulary as the slash/mention
+// menus): the native bar is hidden so rows keep their full width.
+const addScrollRef = ref<HTMLElement | null>(null);
+const addThumb = ref<{ top: number; height: number } | null>(null);
+let addScrollObserver: ResizeObserver | null = null;
+
+function updateAddScrollState(): void {
+  const el = addScrollRef.value;
+  if (!el) return;
+  const { scrollTop, scrollHeight, clientHeight } = el;
+  if (scrollHeight <= clientHeight + 1) {
+    addThumb.value = null;
+    return;
+  }
+  const menuStyle = getComputedStyle(el);
+  const inset =
+    parseFloat(menuStyle.getPropertyValue('--menu-scrollbar-track-inset')) || 0;
+  const minThumb =
+    parseFloat(menuStyle.getPropertyValue('--menu-scrollbar-thumb-min')) || 24;
+  const track = clientHeight - inset * 2;
+  const height = Math.max(minThumb, (clientHeight / scrollHeight) * track);
+  const maxScroll = scrollHeight - clientHeight;
+  const top = el.offsetTop + inset + (scrollTop / maxScroll) * (track - height);
+  addThumb.value = { top, height };
+}
+
+function onAddMenuScroll(): void {
+  updateAddScrollState();
+}
+
+watch(addMenuOpen, async (open) => {
+  addScrollObserver?.disconnect();
+  addScrollObserver = null;
+  addThumb.value = null;
+  if (!open) return;
+  await nextTick();
+  updateAddScrollState();
+  if (typeof ResizeObserver === 'function' && addScrollRef.value) {
+    addScrollObserver = new ResizeObserver(updateAddScrollState);
+    addScrollObserver.observe(addScrollRef.value);
+  }
+});
+onUnmounted(() => {
+  addScrollObserver?.disconnect();
+  addScrollObserver = null;
+});
 const modelMenuRight = ref('');
 const modelMenuStyle = computed<Record<string, string>>(() => {
   const style: Record<string, string> = {};
@@ -810,12 +955,12 @@ const modelMenuStyle = computed<Record<string, string>>(() => {
   return style;
 });
 
-// Any transient popup above the composer (model / permission / work-mode
-// dropdown, slash or mention menu). ConversationPane reads this to keep its Esc-to-interrupt
+// Any transient popup above the composer (model / permission dropdown, slash
+// or mention menu). ConversationPane reads this to keep its Esc-to-interrupt
 // quiet while a popup owns Escape — e.g. a dropdown opened from the toolbar,
 // where focus is outside the textarea and its Esc never reaches handleKeydown.
 const anyPopupOpen = computed(
-  () => dropdownOpen.value || permDropdownOpen.value || modesOpen.value || slashOpen.value || mentionOpen.value,
+  () => dropdownOpen.value || permDropdownOpen.value || addMenuOpen.value || slashOpen.value || mentionOpen.value,
 );
 
 const isEmpty = () => text.value.trim().length === 0 && attachments.value.length === 0;
@@ -827,7 +972,7 @@ function toggleDropdown(): void {
   if (dropdownOpen.value) {
     updateModelMenuPosition();
     permDropdownOpen.value = false;
-    closeModes();
+    addMenuOpen.value = false;
     document.addEventListener('click', onDocClick, true);
   } else {
     document.removeEventListener('click', onDocClick, true);
@@ -836,7 +981,7 @@ function toggleDropdown(): void {
 
 function closeDropdown(): void {
   dropdownOpen.value = false;
-  if (!permDropdownOpen.value) {
+  if (!permDropdownOpen.value && !addMenuOpen.value) {
     document.removeEventListener('click', onDocClick, true);
   }
 }
@@ -846,7 +991,7 @@ function togglePermDropdown(): void {
   if (permDropdownOpen.value) {
     updatePermissionMenuPosition();
     dropdownOpen.value = false;
-    closeModes();
+    addMenuOpen.value = false;
     document.addEventListener('click', onDocClick, true);
   } else {
     document.removeEventListener('click', onDocClick, true);
@@ -855,15 +1000,112 @@ function togglePermDropdown(): void {
 
 function closePermDropdown(): void {
   permDropdownOpen.value = false;
-  if (!dropdownOpen.value) {
+  if (!dropdownOpen.value && !addMenuOpen.value) {
     document.removeEventListener('click', onDocClick, true);
   }
 }
 
+function toggleAddMenu(): void {
+  addMenuOpen.value = !addMenuOpen.value;
+  if (addMenuOpen.value) {
+    dropdownOpen.value = false;
+    permDropdownOpen.value = false;
+    // Popups are exclusive in both directions — an open slash/mention list
+    // would overlap the add menu at the same spot with stale aria-controls.
+    slashOpen.value = false;
+    mentionOpen.value = false;
+    document.addEventListener('click', onDocClick, true);
+    // A real menu takes DOM focus on open (the textarea's combobox ARIA never
+    // points at it); Escape and selection hand focus back to the textarea.
+    void nextTick(() => {
+      addMenuRef.value?.querySelector<HTMLElement>('.am-row')?.focus();
+    });
+  } else {
+    document.removeEventListener('click', onDocClick, true);
+  }
+}
+
+function closeAddMenu(): void {
+  addMenuOpen.value = false;
+  if (!dropdownOpen.value && !permDropdownOpen.value) {
+    document.removeEventListener('click', onDocClick, true);
+  }
+}
+
+// Add-menu items — files first (upload-capable only), then the work modes,
+// then the swarm toggle (enable-only here; its off switch is the chip's ×).
+const addItems = computed(() => {
+  const items: { id: string; icon: IconName; nameKey: string; descKey?: string; action: () => void }[] = [];
+  if (hasUpload.value) {
+    items.push({ id: 'files', icon: 'attachment', nameKey: 'composer.addFiles', action: onAddFiles });
+  }
+  items.push({ id: 'goal', icon: 'target', nameKey: 'status.goalLabel', descKey: 'composer.addGoalDesc', action: onAddGoalMode });
+  items.push({ id: 'plan', icon: 'file-edit', nameKey: 'status.planLabel', descKey: 'composer.addPlanDesc', action: onAddPlanMode });
+  items.push({ id: 'swarm', icon: 'sparkles', nameKey: 'status.swarmLabel', descKey: 'composer.addSwarmDesc', action: onAddSwarmMode });
+  return items;
+});
+
+function selectAddItem(item: { action: () => void }): void {
+  item.action(); // every action closes the menu
+  textareaRef.value?.focus();
+}
+
+// Menu-pattern keys on the menu surface: arrows move DOM focus between rows,
+// Escape closes and returns to the textarea, Tab closes and lets focus move.
+function onAddMenuKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeAddMenu();
+    textareaRef.value?.focus();
+    return;
+  }
+  if (e.key === 'Tab') {
+    closeAddMenu();
+    return;
+  }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  e.preventDefault();
+  const items = Array.from(addMenuRef.value?.querySelectorAll<HTMLElement>('.am-row') ?? []);
+  if (items.length === 0) return;
+  const index = items.indexOf(document.activeElement as HTMLElement);
+  const next = e.key === 'ArrowDown' ? (index + 1) % items.length : (index - 1 + items.length) % items.length;
+  items[next]?.focus();
+}
+
+function onAddFiles(): void {
+  closeAddMenu();
+  openFilePicker();
+}
+
+function onAddGoalMode(): void {
+  closeAddMenu();
+  // Enable-only — the armed pill's × is the off switch. (A live goal still
+  // focuses its panel via armGoalMode.)
+  if (!props.goalMode) armGoalMode();
+}
+
+function onAddPlanMode(): void {
+  closeAddMenu();
+  if (!planOn.value) armPlanMode();
+}
+
+function onAddSwarmMode(): void {
+  closeAddMenu();
+  // Enable-only: the off switch is the toolbar chip's hover ×.
+  if (!swarmOn.value) emit('toggleSwarm');
+}
+
 function onDocClick(e: MouseEvent): void {
-  if (toolbarRef.value && !toolbarRef.value.contains(e.target as Node)) {
+  // The add menu lives in .cin-wrap, not in the toolbar — and this capture
+  // listener runs before the menu item's own click, so closing it here would
+  // unmount the target button and swallow the selection entirely.
+  const target = e.target as Node;
+  const insideToolbar = toolbarRef.value?.contains(target) ?? false;
+  const insideAddMenu = addMenuRef.value?.contains(target) ?? false;
+  if (!insideToolbar && !insideAddMenu) {
     closeDropdown();
     closePermDropdown();
+    closeAddMenu();
   }
 }
 
@@ -933,63 +1175,76 @@ const thinkingOptions = computed(() =>
   thinkingSegments.value.map((seg) => ({ value: seg, label: thinkingSegmentLabel(seg) })),
 );
 
-// Plan toggle
-const planOn = computed(() => props.planMode === true);
+// Plan toggle — lit for the intent (armed) and the daemon fact alike.
+const planOn = computed(() => props.planArmed === true || props.planMode === true);
 const swarmOn = computed(() => props.swarmMode === true);
 const goalStatus = computed(() => props.goal?.status ?? props.activationBadges?.goal?.status ?? null);
 const goalActive = computed(() => goalStatus.value !== null && goalStatus.value !== 'complete');
-const goalArmed = computed(() => goalActive.value || props.goalMode === true);
-const goalCanPause = computed(() => goalStatus.value === 'active');
-const goalCanResume = computed(() => goalStatus.value === 'paused' || goalStatus.value === 'blocked');
 
-// Modes selector (plan / goal / swarm) — the popover that replaces the bare
-// "plan" pill. Plan/Swarm are real client toggles; goal reflects agent-driven
-// state and focuses its card when active.
-const modesRef = ref<HTMLElement | null>(null);
-const modesMenuRef = ref<HTMLElement | null>(null);
-// The menu is position:fixed (so no composer stacking context can paint over
-// it); these coords anchor it just above the pill, computed on open.
-const modesMenuStyle = ref<Record<string, string>>({});
-const anyModeActive = computed(() => planOn.value || swarmOn.value || goalArmed.value);
-function closeModes(): void {
-  modesOpen.value = false;
-  document.removeEventListener('mousedown', onModesDocClick);
+// The primary work mode is exclusive: the goal ARMED flag or plan ARMED
+// intent, shown as a single leading pill inside the input row — a directive
+// ("the next send enters this mode"), never a status. An active goal or an
+// active plan (daemon facts) live on the dock workbar instead, so this pill
+// hides once the intent is cashed. Swarm is an orthogonal agent-usage toggle
+// with its own toolbar chip.
+const workMode = computed<'plan' | 'goal' | null>(() =>
+  props.goalMode ? 'goal' : props.planArmed ? 'plan' : null,
+);
+function clearWorkMode(): void {
+  if (workMode.value === 'goal') emit('toggleGoal');
+  else if (workMode.value === 'plan') emit('togglePlan');
 }
-function onModesDocClick(e: MouseEvent): void {
-  const t = e.target as Node;
-  if (modesRef.value?.contains(t) || modesMenuRef.value?.contains(t)) return;
-  closeModes();
+
+// The pill floats over the textarea's first line — text-indent makes its
+// room, measured from the pill itself (label width varies by mode/locale).
+const wmPillRef = ref<HTMLElement | null>(null);
+const wmIndent = ref('');
+const wmTextStyle = computed(() => (wmIndent.value ? { textIndent: wmIndent.value } : undefined));
+let wmResizeObserver: ResizeObserver | null = null;
+
+function syncWmIndent(): void {
+  const el = wmPillRef.value;
+  // Indent = pill width + the --space-1-5 gap − the --space-05 the pill is
+  // pulled left (.wm-pill's margin-left) — calc keeps the tokens in the
+  // geometry, so a scale change moves the first line's room with it.
+  wmIndent.value = el ? `calc(${el.offsetWidth}px + var(--space-1-5) - var(--space-05))` : '';
 }
-function toggleModes(): void {
-  if (modesOpen.value) {
-    closeModes();
-    return;
-  }
-  // Keep the toolbar menus mutually exclusive so they never overlap.
-  closeDropdown();
-  closePermDropdown();
-  const r = modesRef.value?.getBoundingClientRect();
-  if (r) {
-    modesMenuStyle.value = {
-      left: `${Math.round(r.left)}px`,
-      bottom: `${Math.round(window.innerHeight - r.top + 8)}px`,
-    };
-  }
-  modesOpen.value = true;
-  setTimeout(() => document.addEventListener('mousedown', onModesDocClick), 0);
-}
+
+watch(
+  workMode,
+  async (mode) => {
+    wmResizeObserver?.disconnect();
+    wmResizeObserver = null;
+    if (!mode) {
+      wmIndent.value = '';
+      return;
+    }
+    await nextTick();
+    syncWmIndent();
+    // Width also moves with locale, font scale and responsive rules — track
+    // the element, not just the mode transition.
+    if (typeof ResizeObserver === 'function' && wmPillRef.value) {
+      wmResizeObserver = new ResizeObserver(syncWmIndent);
+      wmResizeObserver.observe(wmPillRef.value);
+    }
+  },
+  { immediate: true },
+);
+onUnmounted(() => {
+  wmResizeObserver?.disconnect();
+  wmResizeObserver = null;
+});
+
 // Permission modes
 const PERM_MODES: { mode: PermissionMode; icon: IconName; color: string; labelKey: string; descKey: string }[] = [
   { mode: 'manual', icon: 'hand', color: 'var(--color-text)', labelKey: 'status.permissionManual', descKey: 'status.permissionManualDesc' },
   { mode: 'yolo', icon: 'shield-question', color: 'var(--color-warning)', labelKey: 'status.permissionYolo', descKey: 'status.permissionYoloDesc' },
   { mode: 'auto', icon: 'full-access', color: 'var(--color-danger)', labelKey: 'status.permissionAuto', descKey: 'status.permissionAutoDesc' },
 ];
-const MODE_DESC_KEYS = ['status.planDesc', 'status.swarmDesc', 'status.goalDesc'] as const;
 
 const menuMeasureRef = ref<HTMLElement | null>(null);
 const permissionDescriptionWidth = ref('');
 const permissionMenuLeft = ref('');
-const modeDescriptionWidth = ref('');
 function menuDescStyle(width: string): Record<string, string> {
   const style: Record<string, string> = {};
   if (width) style['--composer-menu-desc-width'] = width;
@@ -998,11 +1253,6 @@ function menuDescStyle(width: string): Record<string, string> {
 const permissionMenuStyle = computed<Record<string, string>>(() => ({
   ...menuDescStyle(permissionDescriptionWidth.value),
   ...(permissionMenuLeft.value ? { left: permissionMenuLeft.value } : {}),
-}));
-const modeMenuMeasureStyle = computed<Record<string, string>>(() => menuDescStyle(modeDescriptionWidth.value));
-const modesMenuInlineStyle = computed<Record<string, string>>(() => ({
-  ...modesMenuStyle.value,
-  ...modeMenuMeasureStyle.value,
 }));
 
 function updatePermissionMenuPosition(): void {
@@ -1055,12 +1305,7 @@ function measureMenuDescriptions(): void {
     0,
     ...PERM_MODES.map((opt) => measureTextWidth(t(opt.descKey), style)),
   );
-  const modeWidth = Math.max(
-    0,
-    ...MODE_DESC_KEYS.map((key) => measureTextWidth(t(key), style)),
-  );
   permissionDescriptionWidth.value = permissionWidth > 0 ? `${Math.ceil(permissionWidth)}px` : '';
-  modeDescriptionWidth.value = modeWidth > 0 ? `${Math.ceil(modeWidth)}px` : '';
 }
 
 function scheduleMenuDescriptionMeasure(): void {
@@ -1273,11 +1518,48 @@ function selectModel(modelId: string): void {
           @hover="mentionActive = $event"
         />
 
+        <!-- Add menu: the composer's action list — the autocomplete family's
+             surface and rows, with real menu semantics (focus moves in,
+             arrows navigate, Enter activates, Escape closes). -->
+        <Transition name="composer-menu-pop">
+          <div v-if="addMenuOpen" ref="addMenuRef" class="add-menu" @click.stop @keydown="onAddMenuKeydown">
+            <div ref="addScrollRef" class="am-scroll" role="menu" @scroll="onAddMenuScroll">
+              <button
+                v-for="item in addItems"
+                :key="item.id"
+                type="button"
+                class="am-row"
+                role="menuitem"
+                @mousedown.prevent
+                @click="selectAddItem(item)"
+              >
+                <span class="am-icon"><Icon :name="item.icon" size="sm" /></span>
+                <span class="am-name">{{ t(item.nameKey) }}</span>
+                <span v-if="item.descKey" class="am-desc">{{ t(item.descKey) }}</span>
+              </button>
+            </div>
+            <!-- Overlay scroll indicator (the native bar is hidden — it ate row width) -->
+            <div v-if="addThumb" class="scroll-thumb" :style="{ top: `${addThumb.top}px`, height: `${addThumb.height}px` }" />
+          </div>
+        </Transition>
+
         <div class="input-row">
+          <!-- The primary work mode (plan XOR goal-armed) as a leading pill —
+               × disarms it; an active goal lives on the dock pill instead.
+               One text-line tall, floating over the textarea's first line
+               (text-indent makes the room). -->
+          <span v-if="workMode" ref="wmPillRef" class="wm-pill">
+            <Icon :name="workMode === 'goal' ? 'target' : 'file-edit'" size="sm" />
+            <span>{{ workMode === 'goal' ? t('status.goalLabel') : t('status.planLabel') }}</span>
+            <IconButton class="wm-x" size="sm" :label="t('status.workModeDismiss')" :tooltip="t('status.workModeDismiss')" @mousedown.prevent @click="clearWorkMode">
+              <Icon name="close" size="sm" />
+            </IconButton>
+          </span>
           <textarea
             ref="textareaRef"
             v-model="text"
             class="ph"
+            :style="wmTextStyle"
             :placeholder="placeholder"
             :disabled="starting"
             autocomplete="off"
@@ -1326,17 +1608,20 @@ function selectModel(modelId: string): void {
           <span class="pd-desc" />
         </div>
 
-        <!-- Left: attach + permission + plan -->
+        <!-- Left: attach + permission + swarm -->
         <div class="toolbar-left">
+          <!-- Add menu: files + work modes (goal / plan). -->
           <IconButton
-            v-if="hasUpload"
             class="composer-attach"
             size="md"
-            :label="t('composer.attachFile')"
-            :tooltip="t('composer.attachFile')"
-            @click="openFilePicker"
+            :label="t('composer.addMenu')"
+            :tooltip="t('composer.addMenu')"
+            aria-haspopup="menu"
+            :aria-expanded="addMenuOpen"
+            @mousedown.prevent
+            @click.stop="toggleAddMenu"
           >
-            <Icon name="attachment" />
+            <Icon name="plus" />
           </IconButton>
 
           <!-- Permission pill — click to open dropdown -->
@@ -1383,90 +1668,23 @@ function selectModel(modelId: string): void {
             </div>
           </Transition>
 
-          <!-- Modes selector (plan / goal / swarm) — replaces the plan pill. -->
-          <div v-if="status" ref="modesRef" class="modes">
-            <button
-              type="button"
-              class="mode-pill"
-              :class="{ on: anyModeActive, open: modesOpen }"
-              @click.stop="toggleModes"
+          <!-- Swarm — an agent-usage toggle, deliberately NOT a work mode.
+               Enabled only via the add menu or /swarm; while on, this state
+               chip sits in the toolbar and its hover × switches it off. -->
+          <span v-if="swarmOn" class="swarm-chip">
+            <Icon class="swarm-ic" name="sparkles" size="md" />
+            <span class="swarm-label">{{ t('status.swarmLabel') }}</span>
+            <IconButton
+              class="swarm-x"
+              size="sm"
+              :label="t('status.swarmDismiss')"
+              :tooltip="t('status.swarmDismiss')"
+              @mousedown.prevent
+              @click.stop="emit('toggleSwarm')"
             >
-              <span class="mode-label">{{ t('status.modesLabel') }}</span>
-              <span v-if="planOn" class="mode-tag">{{ t('status.planLabel') }}</span>
-              <span v-if="swarmOn" class="mode-tag">{{ t('status.swarmLabel') }}</span>
-              <span v-if="goalArmed" class="mode-tag">{{ t('status.goalLabel') }}</span>
-            </button>
-
-            <Transition name="composer-menu-pop">
-              <div v-if="modesOpen" ref="modesMenuRef" class="modes-menu" :style="modesMenuInlineStyle" role="menu">
-              <!-- Plan — functional client toggle -->
-              <button type="button" class="mode-row" :class="{ on: planOn }" role="menuitem" @click="emit('togglePlan')">
-                <span class="mode-row-icon"><Icon name="file-edit" size="sm" /></span>
-                <span class="mode-row-info">
-                  <span class="mode-row-name">{{ t('status.planLabel') }}</span>
-                  <span class="mode-row-desc">{{ t('status.planDesc') }}</span>
-                </span>
-                <span class="mode-switch" :class="{ on: planOn }"><span class="mode-knob" /></span>
-              </button>
-              <!-- Swarm — functional client toggle -->
-              <button type="button" class="mode-row" :class="{ on: swarmOn }" role="menuitem" @click="emit('toggleSwarm')">
-                <span class="mode-row-icon"><Icon name="sparkles" size="sm" /></span>
-                <span class="mode-row-info">
-                  <span class="mode-row-name">{{ t('status.swarmLabel') }}</span>
-                  <span class="mode-row-desc">{{ t('status.swarmDesc') }}</span>
-                </span>
-                <span class="mode-switch" :class="{ on: swarmOn }"><span class="mode-knob" /></span>
-              </button>
-              <!-- Goal — lifecycle controls when active; switch is on when active or armed. -->
-              <div class="mode-row mode-row-goal" :class="{ on: goalActive || props.goalMode }">
-                <button
-                  type="button"
-                  class="mode-row-main"
-                  role="menuitem"
-                  @click="goalActive ? emit('focusGoal') : emit('toggleGoal')"
-                >
-                  <span class="mode-row-icon"><Icon name="target" size="sm" /></span>
-                  <span class="mode-row-info">
-                    <span class="mode-row-name">{{ t('status.goalLabel') }}</span>
-                    <span class="mode-row-desc">{{ t('status.goalDesc') }}</span>
-                  </span>
-                  <span v-if="!goalActive" class="mode-switch" :class="{ on: props.goalMode }"><span class="mode-knob" /></span>
-                </button>
-                <div v-if="goalActive" class="mode-row-actions">
-                  <Button
-                    v-if="goalCanPause"
-                    size="sm"
-                    variant="secondary"
-                    class="mode-row-action"
-                    @click="emit('controlGoal', 'pause')"
-                  >
-                    <Icon name="pause" size="sm" />
-                    <span>{{ t('status.goalPause') }}</span>
-                  </Button>
-                  <Button
-                    v-if="goalCanResume"
-                    size="sm"
-                    variant="primary"
-                    class="mode-row-action"
-                    @click="emit('controlGoal', 'resume')"
-                  >
-                    <Icon name="play" size="sm" />
-                    <span>{{ t('status.goalResume') }}</span>
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="danger-soft"
-                    class="mode-row-action"
-                    @click="emit('controlGoal', 'cancel')"
-                  >
-                    <Icon name="close" size="sm" />
-                    <span>{{ t('status.goalCancel') }}</span>
-                  </Button>
-                </div>
-              </div>
-              </div>
-            </Transition>
-          </div>
+              <Icon name="close" size="sm" />
+            </IconButton>
+          </span>
 
         </div>
 
@@ -1765,7 +1983,7 @@ function selectModel(modelId: string): void {
   position: absolute;
   left: var(--space-4);
   bottom: var(--space-1);
-  z-index: 1;
+  z-index: var(--z-raised);
   display: inline-flex;
   align-items: center;
   height: 18px;
@@ -1802,7 +2020,7 @@ function selectModel(modelId: string): void {
   position: absolute;
   top: calc(var(--space-4) + var(--space-05));
   right: var(--space-4);
-  z-index: 1;
+  z-index: var(--z-raised);
 }
 
 /* Hidden file input */
@@ -1818,6 +2036,7 @@ function selectModel(modelId: string): void {
 
 /* Input row */
 .input-row {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
@@ -1916,6 +2135,120 @@ function selectModel(modelId: string): void {
   width: var(--composer-control-size);
   height: var(--composer-control-size);
   border-radius: var(--radius-full);
+}
+
+/* Add menu — a composer-wide action list above the composer (the
+   autocomplete menus' spot), sharing the dock panel's frosted material and
+   the composer card's own corner geometry. */
+.add-menu {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 0;
+  right: 0;
+  z-index: var(--z-dropdown);
+  background: var(--color-menu-bg-frost);
+  -webkit-backdrop-filter: var(--p-menu-backdrop);
+  backdrop-filter: var(--p-menu-backdrop);
+  border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-composer);
+  corner-shape: var(--corner-shape-composer);
+  box-shadow: var(--shadow-menu);
+  padding: var(--space-1-5) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--menu-rows-seam);
+  font-family: var(--font-ui);
+  transform-origin: bottom left;
+}
+/* The scroll container (caps long menus — e.g. short viewports — at the
+   shared add-menu height). Same scrollport trick as the slash/mention menus:
+   margin −6 / padding 6 puts the horizontal clip exactly on the rows' outer
+   edge. The native bar stays hidden — it would eat 6px of row width and skew
+   the rows' right inset; the overlay thumb is the scroll affordance. */
+.am-scroll {
+  max-height: var(--p-add-menu-h);
+  margin: 0 calc(-1 * var(--menu-row-hug));
+  padding: 0 var(--menu-row-hug);
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--menu-rows-seam);
+}
+.am-scroll::-webkit-scrollbar { display: none; }
+/* The overlay thumb (same vocabulary as the slash/mention menus): floats at
+   the menu's right edge, pointer-transparent, deeper on menu hover. Geometry
+   is computed in updateAddScrollState. */
+.scroll-thumb {
+  position: absolute;
+  right: var(--menu-scrollbar-edge);
+  width: var(--menu-scrollbar-width);
+  border-radius: var(--radius-full);
+  background: var(--color-menu-scrollbar);
+  transition: background var(--duration-base) var(--ease-out);
+  pointer-events: none;
+  z-index: var(--z-raised);
+}
+.add-menu:hover .scroll-thumb {
+  background: var(--color-menu-scrollbar-hover);
+}
+.am-row {
+  display: flex;
+  align-items: center;
+  gap: var(--menu-row-gap-icon);
+  /* NO width: 100% — a fixed percentage width pins the row to the wrapper's
+     content box and the scrollport swallows the right negative margin
+     (inline-end outreach never counts as scrollable overflow), leaving the
+     row 6px from the left edge but 18px from the right. Stretch (width auto)
+     lets the flex algorithm fold BOTH margins into the cross size, so the
+     row hugs 6px from each edge — same as the slash/mention rows. Box hugs
+     6px from the menu edge while the content lands on the composer's 16px
+     text column; radius = composer radius − 6 stays concentric with the menu
+     frame. The 0.5px transparent border is a workaround: without a border,
+     Chromium paints the corner-shaped background as a plain rect and the
+     menu frame's corner shears the row's ends off. Padding is narrowed by
+     the border width so neither the text column nor the row height moves. */
+  margin: 0 calc(-1 * var(--menu-row-hug));
+  padding: var(--menu-row-padding-block) var(--menu-row-padding-inline);
+  border: 0.5px solid transparent;
+  border-radius: var(--radius-menu-row);
+  corner-shape: superellipse(1.5);
+  background: none;
+  cursor: pointer;
+  font-size: var(--ui-font-size);
+  color: var(--color-text);
+  text-align: left;
+  transition: background var(--duration-base) var(--ease-out);
+}
+.am-row:hover { background: var(--color-hover); }
+/* Keyboard-driven focus (the menu takes DOM focus on open) carries the
+   selected wash — same recipe as the autocomplete rows' active state. */
+.am-row:focus-visible { background: var(--color-selected); outline: none; }
+/* Touch: menu rows meet the 44px minimum hit height. */
+@media (hover: none) {
+  .am-row {
+    padding-top: var(--menu-row-touch-padding-block);
+    padding-bottom: var(--menu-row-touch-padding-block);
+  }
+}
+.am-row:hover .am-icon,
+.am-row:focus-visible .am-icon { color: var(--color-text); }
+.am-icon {
+  flex: none;
+  width: var(--p-ic-sm);
+  display: flex;
+  justify-content: center;
+  color: var(--color-text-muted);
+  transition: color var(--duration-base) var(--ease-out);
+}
+.am-name {
+  flex: none;
+  font-weight: var(--weight-medium);
+}
+.am-desc {
+  margin-left: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--ui-font-size-sm);
 }
 
 /* Send button — circular icon. Always "send"; while running it enqueues
@@ -2049,7 +2382,7 @@ function selectModel(modelId: string): void {
 /* Quiet, full-round 32px controls. Their chrome appears only on hover/open,
    leaving the circular Send as the toolbar's sole persistent filled action. */
 .perm-pill,
-.mode-pill,
+.swarm-chip,
 .model-pill {
   position: relative;
   display: inline-flex;
@@ -2071,14 +2404,13 @@ function selectModel(modelId: string): void {
   transition: background var(--duration-base) var(--ease-out),
     color var(--duration-base) var(--ease-out);
 }
-.perm-pill,
-.mode-pill {
+.perm-pill {
   font-size: var(--ui-font-size-sm);
 }
 /* The hover wash floats over the fill as its own layer so it can fade in and
    out (the dock work pills' recipe — background gradients can't transition). */
 .perm-pill::after,
-.mode-pill::after,
+.swarm-chip::after,
 .model-pill::after {
   content: "";
   position: absolute;
@@ -2090,16 +2422,53 @@ function selectModel(modelId: string): void {
   pointer-events: none;
 }
 .perm-pill:hover::after,
-.mode-pill:hover::after,
+.swarm-chip:hover::after,
 .model-pill:hover::after {
   opacity: 1;
 }
 .perm-pill.open,
-.mode-pill.open,
-.mode-pill.on,
 .model-pill.open {
   background: var(--color-accent-soft);
 }
+/* The swarm state chip keeps the plain control chrome — no fill, no accent
+   ink — and is inert except for its ×. */
+.swarm-chip {
+  cursor: default;
+}
+/* The × stays hidden until the chip is hovered (or the × itself holds
+   keyboard focus). Its circle nests concentrically in the pill's rounded
+   end — the negative margin lands the IconButton's centre on the cap's
+   centre: cap centre (control-size/2) − padding-right (--space-3) − button
+   radius (--icon-button-sm/2), all on tokens, so the hover ring sits at an
+   even inset from the cap. */
+.swarm-x {
+  margin-right: calc(var(--composer-control-size) / 2 - var(--space-3) - var(--icon-button-sm) / 2);
+  color: inherit;
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+.swarm-chip:hover .swarm-x,
+.swarm-x:focus-visible {
+  opacity: 1;
+}
+/* Touch (no hover): the × stays visible — an invisible button that still
+   hit-tests is an accidental-dismiss trap — with a --touch-target-min hit
+   ring around the --icon-button-sm button. */
+@media (hover: none) {
+  .swarm-x {
+    opacity: 1;
+    position: relative;
+  }
+  .swarm-x::before {
+    content: '';
+    position: absolute;
+    /* The hit area spans --touch-target-min around the --icon-button-sm
+       button: expand by half the difference, so it stays centered and on
+       spec at any scale. */
+    inset: calc(-1 * (var(--touch-target-min) - var(--icon-button-sm)) / 2);
+  }
+}
+
 
 /* Permission pill — per-state label colors. */
 .perm-pill.perm-manual {
@@ -2124,6 +2493,64 @@ function selectModel(modelId: string): void {
     flex: none;
   }
   .perm-pill-label { display: none; }
+  /* Collapsed swarm chip: icon-only circle like the permission pill; hover
+     cross-fades the glyph into the dismiss ×, which covers the whole chip. */
+  .swarm-chip {
+    position: relative;
+    width: var(--composer-control-size);
+    height: var(--composer-control-size);
+    padding: 0;
+    justify-content: center;
+  }
+  .swarm-label { display: none; }
+  .swarm-ic { transition: opacity var(--duration-base) var(--ease-out); }
+  .swarm-chip:hover .swarm-ic { opacity: 0; }
+  .swarm-x {
+    position: absolute;
+    inset: 0;
+    width: auto;
+    height: auto;
+    margin-right: 0;
+  }
+  /* Touch: no hover morph — the swarm icon stays (it IS the on-state
+     indicator) and the dismiss rides as a small corner badge. The chip
+     grows to the touch minimum so the dismiss button covering it is a full
+     44×44 hit INSIDE toolbar-left's box — an outreaching ::before ring
+     would be clipped by its overflow. */
+  @media (hover: none) {
+    .swarm-chip {
+      width: var(--touch-target-min);
+      height: var(--touch-target-min);
+    }
+    .swarm-chip:hover .swarm-ic { opacity: 1; }
+    .swarm-x {
+      inset: 0;
+      width: auto;
+      height: auto;
+      opacity: 1;
+      background: transparent;
+    }
+    /* The visible badge: a dot pinned inside the chip's corner, the close
+       glyph centred in it. */
+    .swarm-x::before {
+      inset: auto;
+      top: 0;
+      right: 0;
+      width: var(--p-ic-md);
+      height: var(--p-ic-md);
+      border-radius: var(--radius-full);
+      background: var(--color-selected);
+    }
+    /* Glyph = badge − --space-1-5 total inset, so size and offset both track
+       the badge token and the cross stays centred at any icon scale. */
+    .swarm-x :deep(svg) {
+      position: absolute;
+      top: calc(var(--space-1-5) / 2);
+      right: calc(var(--space-1-5) / 2);
+      width: calc(var(--p-ic-md) - var(--space-1-5));
+      height: calc(var(--p-ic-md) - var(--space-1-5));
+    }
+  }
 }
 
 /* Context group — circular ring. Focusable for keyboard / switch access to its
@@ -2458,191 +2885,57 @@ function selectModel(modelId: string): void {
   line-height: var(--leading-tight);
 }
 
-/* Modes selector (plan / goal / swarm) — replaces the old plan pill + badges.
-   z-index lifts the whole control (incl. its upward-opening menu) above the
-   composer input row, which otherwise paints over the menu. The pill itself
-   shares the toolbar-pill base above. */
-.modes { position: relative; display: inline-flex; z-index: var(--z-sticky); }
-.mode-pill.on { color: var(--color-accent-hover); }
-.mode-label { flex: none; }
-.mode-tag {
-  flex: none;
-  font-family: var(--font-ui);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--color-accent-hover);
-  background: var(--bg);
-  border: 0.5px solid var(--color-accent-bd);
-  border-radius: 999px;
-  padding: 0 6px;
-  line-height: 16px;
-}
-.mode-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-accent); flex: none; }
-
-.modes-menu {
-  position: fixed;
-  z-index: var(--z-dropdown);
-  min-width: 220px;
-  width: max-content;
-  max-width: calc(100vw - var(--space-8));
-  background: var(--color-menu-bg);
-  -webkit-backdrop-filter: var(--p-menu-backdrop);
-  backdrop-filter: var(--p-menu-backdrop);
-  border: 0.5px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-menu);
-  padding: 5px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  transform-origin: bottom left;
-}
-.mode-row {
-  display: grid;
-  grid-template-columns: 14px var(--composer-menu-desc-width, max-content);
-  column-gap: 7px;
-  row-gap: 2px;
-  align-items: start;
-  width: 100%;
-  padding: 6px 7px;
-  border: none;
-  background: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-family: var(--font-ui);
-  text-align: left;
-}
-.mode-row:hover:not(:disabled) { background: var(--color-hover); }
-.mode-row:hover:not(:disabled) .mode-row-icon,
-.mode-row:hover:not(:disabled) .mode-row-name { color: var(--color-text-strong); }
-.mode-row:disabled { cursor: not-allowed; opacity: 0.45; }
-.mode-row-info {
-  display: contents;
-}
-.mode-row-icon {
-  grid-column: 1;
-  grid-row: 1;
-  width: 14px;
-  min-height: 1lh;
-  display: flex;
+/* The work-mode pill floats over the textarea's first line (text-indent
+   makes the room) — exactly one line box tall, so it never clips the second
+   line, and it borrows the textarea's font-size and line-height so its
+   label shares the first line's baseline. The negative --space-05 left
+   margin keeps the inset concentric (14px on both sides). */
+.wm-pill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin-left: calc(-1 * var(--space-05));
+  z-index: var(--z-raised);
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  color: var(--muted);
-  transition: color var(--duration-base) var(--ease-out);
-  font-size: var(--ui-font-size);
-  line-height: var(--leading-tight);
-}
-.mode-row-name {
-  grid-column: 2;
-  grid-row: 1;
-  transition: color var(--duration-base) var(--ease-out);
+  gap: var(--space-1);
+  height: calc(var(--content-font-size) * 1.5);
+  padding: 0 calc((var(--content-font-size) * 1.5 - var(--wm-x-size)) / 2) 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-ui);
   font-size: var(--ui-font-size-sm);
   font-weight: var(--weight-medium);
-  color: var(--color-text);
-  line-height: var(--leading-tight);
+  line-height: calc(var(--content-font-size) * 1.5);
+  white-space: nowrap;
+  user-select: none;
 }
-.mode-row-desc {
-  grid-column: 2;
-  grid-row: 2;
-  width: var(--composer-menu-desc-width, auto);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-caption);
-  color: var(--muted);
-  line-height: var(--leading-tight);
-}
-.mode-row-not-supported {
-  margin-left: auto;
-  font-size: var(--ui-font-size-xs);
-  color: var(--muted);
-}
-.mode-row.on {
-  background: var(--color-hover);
-}
-.mode-row.on .mode-row-name { color: var(--color-text); }
-.mode-row.on .mode-row-icon { color: var(--color-text); }
-.mode-row-meta { font-family: var(--mono); font-size: calc(var(--ui-font-size) - 3px); color: var(--muted); }
-.mode-row:disabled .mode-row-meta { color: var(--faint); }
-.mode-switch {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
-  width: 34px;
-  height: 19px;
-  border-radius: 999px;
-  /* Colors mirror the design-system Switch (app-ui Switch.vue): a track that
-     stays visible on the menu surface in dark mode, and an always-white knob. */
-  background: var(--color-line-strong);
+/* The IconButton's own chrome handles hover/focus; the clickable area grows
+   past its box via a transparent ring — on desktop only, where the ring's
+   7px reach stays inside the textarea's indent reserve. On touch the ring
+   would protrude past the pill into the text column (the indent reserves
+   only pill + 4px), so the button itself takes the shared IconButton touch
+   size and the pill's measured width includes the full hit area. */
+.wm-x {
   position: relative;
-  transition: background 0.15s;
+  /* Sized to the pill's right-end reserve (--wm-x-size) — below the sm
+     default so the hover wash never outgrows the pill's rounded end. */
+  width: var(--wm-x-size);
+  height: var(--wm-x-size);
+  border-radius: var(--radius-full);
 }
-.mode-switch.on { background: var(--color-accent); }
-.mode-knob {
+.wm-x::before {
+  content: '';
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  background: var(--color-text-on-accent);
-  box-shadow: var(--shadow-xs);
-  transition: transform 0.15s;
+  inset: calc(-1 * var(--wm-x-ring));
 }
-.mode-switch.on .mode-knob { transform: translateX(15px); }
-
-.mode-row-goal {
-  --mode-row-icon-col: 14px;
-  --mode-row-col-gap: 7px;
-  --mode-row-pad-x: 7px;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  cursor: default;
-  padding: 0;
-  gap: 0;
-}
-.mode-row-goal:hover { background: transparent; }
-.mode-row-goal.on {
-  background: var(--color-hover);
-}
-.mode-row-main {
-  display: grid;
-  grid-template-columns: var(--mode-row-icon-col) var(--composer-menu-desc-width, max-content);
-  column-gap: var(--mode-row-col-gap);
-  row-gap: 2px;
-  align-items: start;
-  width: 100%;
-  padding: 6px var(--mode-row-pad-x);
-  border: none;
-  background: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-family: var(--font-ui);
-  text-align: left;
-}
-.mode-row-main:hover { background: var(--color-hover); }
-.mode-row-main:hover .mode-row-icon,
-.mode-row-main:hover .mode-row-name { color: var(--color-text-strong); }
-.mode-row-goal.on .mode-row-main .mode-row-name { color: var(--color-text); }
-.mode-row-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  justify-content: flex-start;
-  padding: 0 var(--mode-row-pad-x) var(--mode-row-pad-x)
-    calc(var(--mode-row-pad-x) + var(--mode-row-icon-col) + var(--mode-row-col-gap));
-}
-.mode-row-action {
-  flex: none;
-}
-.mode-row-action :deep(.ui-button__content) { gap: var(--space-1); }
-.mode-row-input {
-  flex: 1;
-  min-width: 0;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  border: 0.5px solid var(--line);
-  background: var(--bg);
-  color: var(--color-text);
-  font-size: var(--ui-font-size-xs);
+@media (hover: none) {
+  /* The pill's fixed height can't absorb a 44px box — keep the layout box at
+     --wm-x-size and let the transparent hit ring reach the touch floor
+     instead (nothing outside the pill intercepts taps). */
+  .wm-x::before { inset: calc((var(--wm-x-size) - var(--touch-target-min)) / 2); }
 }
 
 /* ---- Narrow composer toolbar ----------------------------------------------
@@ -2734,7 +3027,7 @@ function selectModel(modelId: string): void {
      tooltip). The /compact chip also stays so compaction is one tap away at
      ≥80% usage. */
   .perm-pill,
-  .modes {
+  .wm-pill {
     display: none;
   }
 

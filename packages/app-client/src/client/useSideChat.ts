@@ -8,6 +8,7 @@
 // connection) are injected by the facade.
 
 import { computed, ref } from 'vue';
+import { DaemonApiError } from '@moonshot-ai/app-core/api';
 import type { AppApprovalRequest, AppMessage, KimiEventConnection, KimiWebApi, ThinkingLevel } from '@moonshot-ai/app-core/api';
 import { createTurnsProjector } from '@moonshot-ai/app-core/client';
 import { ackThinkingPending } from '@moonshot-ai/app-core/lib';
@@ -218,24 +219,26 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
   }
 
   /** Open (creating if needed) the side chat for the active session; optionally send a first prompt. */
-  async function openSideChat(initialPrompt?: string): Promise<void> {
+  async function openSideChat(initialPrompt?: string): Promise<boolean> {
     const parent = rawState.activeSessionId;
-    if (!parent) return;
-    await openSideChatOn(parent, initialPrompt);
+    if (!parent) return false;
+    return openSideChatOn(parent, initialPrompt);
   }
 
   /** Low-level: open the side chat on an explicit parent session id.
    *  Used when the parent was just created from the empty composer so the call
    *  can target it directly instead of reading the active session (which could
    *  race with a concurrent session switch). */
-  async function openSideChatOn(parent: string, initialPrompt?: string): Promise<void> {
+  /** Resolves false when the initial prompt provably never left, so the
+   *  caller can restore the text (the composer consumed the /btw command). */
+  async function openSideChatOn(parent: string, initialPrompt?: string): Promise<boolean> {
     if (!sideChatTargetBySession.value[parent]) {
       let agentId: string;
       try {
         ({ agentId } = await api.startBtw(parent));
       } catch (err) {
         pushOperationFailure('openSideChat', err, { sessionId: parent });
-        return;
+        return false;
       }
       rawState.sideChatMessagesByAgent = {
         ...rawState.sideChatMessagesByAgent,
@@ -249,18 +252,23 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       getEventConn()?.markSideChannelAgent(parent, agentId);
     }
     if (initialPrompt && initialPrompt.trim()) {
-      await sendSideChatPromptOn(parent, initialPrompt.trim());
+      return sendSideChatPromptOn(parent, initialPrompt.trim());
     }
+    return true;
   }
 
   /** Low-level: send a prompt to the side-chat child of an explicit parent session.
    *  Always uses `parent` as the session id, carrying model / thinking /
-   *  permissionMode / plan / swarm so the turn matches the UI regardless of
-   *  parent /profile inheritance or race. */
-  async function sendSideChatPromptOn(parent: string, text: string): Promise<void> {
+   *  permissionMode so the turn matches the UI regardless of parent /profile
+   *  inheritance or race. BTW never touches the work-mode chain: it sends
+   *  plain, and the daemon applies whatever the session profile holds. */
+  /** Resolves true once the prompt was accepted by the daemon; false when
+   *  it provably never left (a failure before the submit POST) — the panel
+   *  restores the user's draft on false. */
+  async function sendSideChatPromptOn(parent: string, text: string): Promise<boolean> {
     const target = sideChatTargetBySession.value[parent];
     const trimmed = text.trim();
-    if (!target || !trimmed) return;
+    if (!target || !trimmed) return false;
     const sid = parent;
     const agentId = target.agentId;
     rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: true };
@@ -276,6 +284,11 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     appendSideChatMessage(agentId, userMsg);
     // Set right before the submit POST; shared by the success ack and the catch.
     let thinkingToken: number | undefined;
+    // Set only at the submit POST itself: a failure thrown earlier provably
+    // never reached the daemon, so the catch can hand the draft back; a
+    // submit-stage failure is ambiguous (the response may have been lost) and
+    // must NOT — a retried draft would duplicate the question.
+    let submitAttempted = false;
     try {
       // Carry the parent's current model, thinking, and permission so a BTW
       // first-turn reflects the same draft/runtime controls the UI shows — the
@@ -293,6 +306,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
           : rawState.defaultModel) ?? undefined;
       const thinking = (await resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
       thinkingToken = rawState.pendingThinkingBySession[sid];
+      submitAttempted = true;
       const result = await api.submitPrompt(sid, {
         content: [{ type: 'text', text: trimmed }],
         agentId,
@@ -311,6 +325,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
         result.userMessageId,
       );
       rememberSideChatUserMessageId(sid, result.userMessageId);
+      return true;
     } catch (err) {
       // A failed submit may never have reached the daemon: stop shielding the
       // pick this prompt carried and re-fold the daemon's actual level.
@@ -318,6 +333,9 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       pushOperationFailure('sendSideChatPrompt', err, { sessionId: sid });
       removeSideChatUserMessage(agentId, tempId);
       rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: false };
+      // Only a provably-unsent failure — or a definitive daemon refusal,
+      // which provably accepted nothing — lets the panel restore the draft.
+      return !submitAttempted || err instanceof DaemonApiError ? false : true;
     }
   }
 
@@ -330,13 +348,12 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
   }
 
   /** Send a plain prompt to the active session's side chat, carrying the
-   *  controls (model, thinking, permissionMode, plan/swarm) the UI shows so a
-   *  BTW first turn matches them even if the parent's /profile is still in
-   *  flight. */
-  async function sendSideChatPrompt(text: string): Promise<void> {
+   *  controls (model, thinking, permissionMode) the UI shows so a BTW first
+   *  turn matches them even if the parent's /profile is still in flight. */
+  async function sendSideChatPrompt(text: string): Promise<boolean> {
     const target = activeSideChatTarget.value;
-    if (!target) return;
-    await sendSideChatPromptOn(target.parentId, text);
+    if (!target) return false;
+    return sendSideChatPromptOn(target.parentId, text);
   }
 
   // When a session is deleted, drop its side-chat target so it cannot leak into a

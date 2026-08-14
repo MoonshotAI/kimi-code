@@ -57,6 +57,7 @@ export default {
       cancelled: 'Cancelled',
     },
     selectedOption: 'Selected',
+    pathOnlyHint: 'No inline content — open it in the side panel:',
     feedback: 'Feedback',
   },
   summary: {

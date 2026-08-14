@@ -40,6 +40,10 @@ const props = withDefaults(
     status: ConversationStatus;
     thinking?: ThinkingLevel;
     planMode?: boolean;
+    goalMode?: boolean;
+    /** A goal is live in this session (active/paused/blocked) — the goal row
+        then focuses its panel instead of arming a new one. */
+    goalActive?: boolean;
     swarmMode?: boolean;
     colorScheme?: ColorScheme;
     fontScale?: FontScale;
@@ -70,6 +74,8 @@ const emit = defineEmits<{
   pickModel: [];
   setThinking: [level: ThinkingLevel];
   togglePlan: [];
+  toggleGoal: [];
+  focusGoal: [];
   toggleSwarm: [];
   setPermission: [mode: PermissionMode];
   setColorScheme: [colorScheme: ColorScheme];
@@ -105,6 +111,25 @@ const thinkingOptions = computed(() =>
   thinkingSegments.value.map((seg) => ({ value: seg, label: effortLabel(seg) })),
 );
 const planOn = computed<boolean>(() => props.planMode === true);
+const goalOn = computed<boolean>(() => props.goalMode === true);
+
+// The two primary work modes are mutually exclusive — arming one disarms the
+// other, mirroring Composer's armPlanMode/armGoalMode.
+function onToggleGoal(): void {
+  // Mirror Composer.armGoalMode further: a live goal owns the mode — focus
+  // its panel instead of starting a new one.
+  if (props.goalActive) {
+    emit('focusGoal');
+    return;
+  }
+  if (!goalOn.value && planOn.value) emit('togglePlan');
+  emit('toggleGoal');
+}
+function onTogglePlan(): void {
+  // Mirror Composer.armPlanMode: the two primary modes swap each other out.
+  if (!planOn.value && goalOn.value) emit('toggleGoal');
+  emit('togglePlan');
+}
 const swarmOn = computed<boolean>(() => props.swarmMode === true);
 
 // A broken avatar URL falls back to the placeholder glyph; a new profile
@@ -321,21 +346,39 @@ watch(
     <div class="cache-note">{{ t('status.cacheNote') }}</div>
 
     <!-- Plan mode → real toggle switch -->
-    <button type="button" class="srow" @click="emit('togglePlan')">
+    <button type="button" class="srow" role="switch" :aria-checked="planOn" @click="onTogglePlan">
       <span class="srow-main">
         <span class="srow-label">{{ t('status.statusPlanMode') }}</span>
         <span class="srow-sub">{{ t('mobile.planModeSub') }}</span>
       </span>
-      <span class="toggle" :class="{ on: planOn }" role="switch" :aria-checked="planOn" />
+      <span class="toggle" :class="{ on: planOn }" aria-hidden="true" />
+    </button>
+
+    <!-- Goal: a switch only while genuinely toggleable (armed, no live goal);
+         with a live goal the row navigates to the goal's panel instead — a
+         switch that "doesn't switch" would lie to AT. -->
+    <button v-if="!goalActive" type="button" class="srow" role="switch" :aria-checked="goalOn" @click="onToggleGoal">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('status.goalLabel') }}</span>
+        <span class="srow-sub">{{ t('mobile.goalModeSub') }}</span>
+      </span>
+      <span class="toggle" :class="{ on: goalOn }" aria-hidden="true" />
+    </button>
+    <button v-else type="button" class="srow" @click="onToggleGoal">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('status.goalLabel') }}</span>
+        <span class="srow-sub">{{ t('mobile.goalModeSub') }}</span>
+      </span>
+      <Icon class="srow-chevron" name="chevron-right" size="sm" aria-hidden="true" />
     </button>
 
     <!-- Swarm mode → real toggle switch -->
-    <button type="button" class="srow" @click="emit('toggleSwarm')">
+    <button type="button" class="srow" role="switch" :aria-checked="swarmOn" @click="emit('toggleSwarm')">
       <span class="srow-main">
         <span class="srow-label">{{ t('status.statusSwarmMode') }}</span>
         <span class="srow-sub">{{ t('mobile.swarmModeSub') }}</span>
       </span>
-      <span class="toggle" :class="{ on: swarmOn }" role="switch" :aria-checked="swarmOn" />
+      <span class="toggle" :class="{ on: swarmOn }" aria-hidden="true" />
     </button>
 
     <!-- Permission → cycle (sub-line + chevron) -->
@@ -502,6 +545,10 @@ watch(
   color: var(--color-text-faint);
 }
 
+.srow:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .srow {
   display: flex;
   align-items: center;

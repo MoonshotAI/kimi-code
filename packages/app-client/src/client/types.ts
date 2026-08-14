@@ -91,9 +91,15 @@ export interface ExtendedState extends KimiClientState {
    *  yet — while present, daemon reports are dropped (markThinkingPending /
    *  foldDaemonThinkingLevel). */
   pendingThinkingBySession: Record<string, number>;
-  /** Plan-mode toggle per session. Bound to a session (not global) so toggling
-   *  it in one session does not affect another. */
+  /** Plan mode per session — the DAEMON FACT ONLY: written by /status folds
+   *  and the status.updated projection (the model may also enter plan on its
+   *  own via EnterPlanMode). The user's not-yet-sent toggle never lands here;
+   *  that intent lives in planArmedBySession. */
   planModeBySession: Record<string, boolean>;
+  /** Plan-mode ARMED flag per session: the user's intent — "the next send
+   *  cashes this into the profile write that activates plan on the daemon".
+   *  Persisted to storage (an unsent intent survives a reload). */
+  planArmedBySession: Record<string, boolean>;
   /** Swarm-mode toggle per session. */
   swarmModeBySession: Record<string, boolean>;
   /** Goal-mode (one-shot "next send creates a goal") toggle per session. */

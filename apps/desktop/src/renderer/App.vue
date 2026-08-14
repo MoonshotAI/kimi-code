@@ -159,14 +159,15 @@ function migrateDraftTerminals(fromKey: string, createdId: string | null): void 
 
 // `/goal`, `/btw` and the side-chat toggle create the first session INSIDE
 // the client — they need the same draft-bucket migration.
-async function runSessionCreatingAction(run: () => Promise<string | null>): Promise<void> {
+async function runSessionCreatingAction<T extends string | null | { createdId: string | null }>(run: () => Promise<T>): Promise<T> {
   const workspaceId = client.activeWorkspaceId.value;
   if (client.activeSessionId.value || !workspaceId) {
-    void run();
-    return;
+    return run();
   }
   const draftKey = terminalBucketKey('', workspaceId);
-  migrateDraftTerminals(draftKey, await run());
+  const result = await run();
+  migrateDraftTerminals(draftKey, typeof result === 'object' && result !== null ? result.createdId : result);
+  return result;
 }
 
 // The composer goal UI emits createGoal directly — route it through the same
@@ -717,6 +718,18 @@ function onTerminalWindowResize(): void {
 // Reference to ConversationPane so we can imperatively switch tabs
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
 
+// The mobile settings sheet's goal row mirrors the composer's arm guard: an
+// active goal owns the mode, so it focuses the goal's panel instead of
+// starting a new one.
+const mobileGoalActive = computed(() => {
+  const s = client.goal.value?.status;
+  return s === 'active' || s === 'paused' || s === 'blocked';
+});
+function onMobileFocusGoal(): void {
+  showMobileSettings.value = false;
+  conversationPaneRef.value?.focusGoal();
+}
+
 // Dialog visibility refs
 const showModelPicker = ref(false);
 
@@ -1015,10 +1028,21 @@ async function handleEditMessage(payload: {
   text: string;
   attachments?: TurnAttachment[];
 }): Promise<void> {
+  // Capture the undone session BEFORE the async boundary — a mid-flight
+  // switch must not refresh the session we merely landed on.
+  const undoneSid = client.activeSessionId.value;
   const result = await client.undo(1);
   // Failure already surfaced via pushOperationFailure — don't refill the
   // composer or claim success for a rewind that didn't happen.
   if (result === null) return;
+  // The rewind may have removed the turn that carried the latest plan —
+  // invalidate the cached receipts FIRST (a transient refresh failure must
+  // not keep the rewound plan on display; the transcript fallback still
+  // recovers what remains), then let the sidecar refresh refill them.
+  if (undoneSid) {
+    client.invalidateSessionPlans(undoneSid);
+    void client.refreshSessionPlans(undoneSid);
+  }
   await nextTick();
   conversationPaneRef.value?.loadComposerForEdit(payload.text, payload.attachments);
   conversationPaneRef.value?.notifyUndone();
@@ -1185,12 +1209,18 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
     case '/export':
       void exportSessionWithToast();
       break;
-    case '/undo':
-      void client.undo();
+    case '/undo': {
+      const undoneSid = client.activeSessionId.value;
+      void client.undo().then((result) => {
+        if (result && undoneSid) {
+          // Same invalidation as the edit-resend path: a transient refresh
+          // failure must not keep the rewound plan on display.
+          client.invalidateSessionPlans(undoneSid);
+          void client.refreshSessionPlans(undoneSid);
+        }
+      });
       break;
-    case '/plan':
-      client.togglePlanMode();
-      break;
+    }
     case '/auto':
       client.setPermission('auto');
       break;
@@ -1569,10 +1599,12 @@ function openPr(url: string): void {
       :tasks="client.tasks.value"
       :todos="client.todos.value"
       :goal="client.goal.value"
+      :session-plans="client.sessionPlans.value"
       :activation-badges="client.activationBadges.value"
       :status="client.status.value"
       :thinking="client.thinking.value"
       :plan-mode="client.planMode.value"
+      :plan-armed="client.planArmed.value"
       :swarm-mode="client.swarmMode.value"
       :goal-mode="client.goalMode.value"
       :models="client.models.value"
@@ -1739,7 +1771,7 @@ function openPr(url: string): void {
         :turns="client.sideChatTurns.value"
         :running="client.sideChatRunning.value"
         :sending="client.sideChatSending.value"
-        @send="client.sendSideChatPrompt($event)"
+        :on-send="client.sendSideChatPrompt"
         @close="closeSideChat"
         @open-media="onOpenMedia"
       />
@@ -1942,7 +1974,9 @@ function openPr(url: string): void {
       :status="client.status.value"
       :thinking="client.thinking.value"
       :models="client.models.value"
-      :plan-mode="client.planMode.value"
+      :plan-mode="client.planArmed.value || client.planMode.value"
+      :goal-mode="client.goalMode.value"
+      :goal-active="mobileGoalActive"
       :swarm-mode="client.swarmMode.value"
       :color-scheme="client.colorScheme.value"
       :font-scale="client.fontScale.value"
@@ -1952,6 +1986,8 @@ function openPr(url: string): void {
       @pick-model="openModelPicker()"
       @set-thinking="client.setThinking($event)"
       @toggle-plan="client.togglePlanMode()"
+      @toggle-goal="client.toggleGoalMode()"
+      @focus-goal="onMobileFocusGoal"
       @toggle-swarm="client.toggleSwarmMode()"
       @set-permission="client.setPermission($event)"
       @set-color-scheme="setColorSchemeFromSettings($event, 'mobile_settings')"

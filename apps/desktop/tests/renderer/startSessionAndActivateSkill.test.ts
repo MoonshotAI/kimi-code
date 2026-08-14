@@ -58,8 +58,10 @@ function createWorkspaceState() {
     thinkingBySession: {} as Record<string, string>,
     pendingThinkingBySession: {} as Record<string, number>,
     planModeBySession: {} as Record<string, boolean>,
+    planArmedBySession: {} as Record<string, boolean>,
     swarmModeBySession: {} as Record<string, boolean>,
     goalModeBySession: {} as Record<string, boolean>,
+    goalBySession: {} as Record<string, unknown>,
     permission: 'auto',
     defaultModel: 'kimi-k3',
   };
@@ -73,6 +75,7 @@ function createWorkspaceState() {
     createSession: vi.fn(async () => createdSession('session-1')),
     getSession: vi.fn(async () => createdSession('session-1')),
     getGitStatus: vi.fn().mockRejectedValue(new Error('not needed')),
+    updateSession: vi.fn(async (..._args: unknown[]) => ({})),
     submitPrompt: vi.fn(async () => ({ promptId: 'p_1', userMessageId: 'u_1' })),
   };
   getKimiWebApiMock.mockReturnValue(api);
@@ -108,7 +111,7 @@ function createWorkspaceState() {
       async (sessionId: string | null | undefined) =>
         sessionId == null ? undefined : rawState.thinkingBySession[sessionId],
     ),
-    activateSkill: vi.fn(async () => {}),
+    activateSkill: vi.fn(async () => true),
   };
 
   const deps = {
@@ -183,9 +186,9 @@ describe('startSessionAndActivateSkill', () => {
   it('persists the seeded draft thinking level so the profile /status fold cannot clobber it', async () => {
     const { rawState, modelProvider, persistSessionProfile, ws } = createWorkspaceState();
 
-    const sid = await ws.startSessionAndActivateSkill('workspace', 'agent-browser', undefined);
+    const result = await ws.startSessionAndActivateSkill('workspace', 'agent-browser', undefined);
 
-    expect(sid).toBe('session-1');
+    expect(result).toBe('session-1');
     expect(rawState.thinkingBySession['session-1']).toBe(DRAFT_PICK_LEVEL);
     expect(persistSessionProfile).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'kimi-k3', thinking: DRAFT_PICK_LEVEL }),
@@ -203,16 +206,34 @@ describe('startSessionAndActivateSkill', () => {
     expect(rawState.pendingThinkingBySession['session-1']).toBeUndefined();
   });
 
-  it('forwards composer attachments to the activation', async () => {
-    const { modelProvider, ws } = createWorkspaceState();
+  it('cashes an armed plan intent through the profile patch and consumes it', async () => {
+    const { rawState, modelProvider, persistSessionProfile, ws } = createWorkspaceState();
+    rawState.planArmedBySession['session-1'] = true;
+
+    const result = await ws.startSessionAndActivateSkill('workspace', 'agent-browser', undefined);
+
+    expect(result).toBe('session-1');
+    expect(persistSessionProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ planMode: true }),
+      'session-1',
+    );
+    // The successful persist cashed the intent: consumed, and the fact mirrored.
+    expect(rawState.planArmedBySession['session-1']).toBe(false);
+    expect(rawState.planModeBySession['session-1']).toBe(true);
+    expect(modelProvider.activateSkill).toHaveBeenCalledWith('agent-browser', undefined, undefined, 'session-1', {
+      skipThinkingPersist: true,
+    });
+  });
+
+  it('forwards composer attachments to the activation', async () => {    const { modelProvider, ws } = createWorkspaceState();
     const attachments = [
       { fileId: 'f_1', kind: 'image' as const, name: 'shot.png', mediaType: 'image/png', size: 10 },
       { fileId: 'f_2', kind: 'file' as const, name: 'notes.txt', mediaType: 'text/plain', size: 20 },
     ];
 
-    const sid = await ws.startSessionAndActivateSkill('workspace', 'agent-browser', 'go', attachments);
+    const result = await ws.startSessionAndActivateSkill('workspace', 'agent-browser', 'go', attachments);
 
-    expect(sid).toBe('session-1');
+    expect(result).toBe('session-1');
     expect(modelProvider.activateSkill).toHaveBeenCalledWith('agent-browser', 'go', attachments, 'session-1', {
       skipThinkingPersist: true,
     });

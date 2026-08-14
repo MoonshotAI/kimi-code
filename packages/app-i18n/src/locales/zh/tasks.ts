@@ -25,6 +25,7 @@ export default {
   filterAll: '全部',
   running: '运行中',
   closePanel: '关闭面板',
+  openPanel: '在侧边栏打开',
   timingRunning: '运行中 · {time}',
   timingDone: '完成 · {time}',
   emptyTasks: '暂无后台任务',

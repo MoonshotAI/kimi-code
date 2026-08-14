@@ -296,7 +296,7 @@ html[data-color-scheme="dark"] {
      scale. */
   --menu-scroll-fade: var(--space-5);
 
-  /* -- composer menu row geometry (slash / mention menus) -------------------
+  /* -- composer menu row geometry (slash / mention / add menus) ---------------
      The frame pads --space-1-5 × --space-3; rows hug the frame's block edge
      while their content lands on the composer's --space-4 text column, and
      each row's 0.5px transparent border (the Chromium corner-shape
@@ -309,7 +309,7 @@ html[data-color-scheme="dark"] {
   /* 9.5px = text column (--space-4) − frame padding (--space-3) + hug − border. */
   --menu-row-padding-inline: calc(var(--space-4) - var(--space-3) + var(--menu-row-hug) - var(--p-hairline));
   --menu-row-touch-padding-block: 11px; /* pads the row to the 44px touch hit height */
-  /* Overlay scroll thumb (slash / mention menus): floats at the frame's
+  /* Overlay scroll thumb (slash / mention / add menus): floats at the frame's
      right edge with its OUTER side on the rows' hug line — never in the
      layout, so rows keep their full width — and its travel clamps to the
      straight band past the frame's corner arc (the scrollport already starts
@@ -327,6 +327,14 @@ html[data-color-scheme="dark"] {
      pulls the icon tile left by this + --space-05 (a 2px bleed past the chip's
      left edge), so the offset tracks the chip instead of hardcoding a sum. */
   --att-chip-pad-left: 5px;
+
+  /* Workbar-mode pill close button: sized to the pill's right-end reserve —
+     below the IconButton sm default so the hover wash never outgrows the
+     pill's rounded end. The desktop hit ring reaches this far past the box on
+     each side, staying inside the textarea's indent reserve. Both track the
+     icon/spacing scales — no ad-hoc numbers. */
+  --wm-x-size: calc(var(--p-ic-sm) + var(--space-1)); /* 18px at the default scale */
+  --wm-x-ring: var(--space-1-5);
 
   /* -- elevation / z-index ------------------------------------------------- */
   --z-base: 0;
@@ -526,6 +534,9 @@ html[data-color-scheme="dark"] {
   /* Slash / mention menu scrollport caps. */
   --p-slash-menu-h: 228px;
   --p-mention-menu-h: 208px;
+  /* Add menu's scrollport cap — shared with the slash menu's (above this
+     its rows scroll with the overlay thumb, same as the slash/mention menus). */
+  --p-add-menu-h: var(--p-slash-menu-h);
   --p-bp-sm: 640px;
   --p-bp-md: 980px;
 }

@@ -93,7 +93,7 @@ import type {
   AppQuestionRequest,
   AppSession,
   AppSessionRuntimeStatus,
-  SessionPlan,
+  SessionPlan, SessionPlanReview,
   AppSkill,
   AppTask,
   AppTurnError,
@@ -149,7 +149,7 @@ import type {
 
 const PERMISSION_STORAGE_KEY = STORAGE_KEYS.permission;
 const ACTIVE_WORKSPACE_KEY = STORAGE_KEYS.activeWorkspace;
-const PLAN_MODE_STORAGE_KEY = STORAGE_KEYS.planMode;
+const PLAN_ARMED_STORAGE_KEY = STORAGE_KEYS.planArmed;
 const SWARM_MODE_STORAGE_KEY = STORAGE_KEYS.swarmMode;
 const GOAL_MODE_STORAGE_KEY = STORAGE_KEYS.goalMode;
 const SESSION_NOT_FOUND_CODE = 40401;
@@ -173,6 +173,13 @@ safeRemove(STORAGE_KEYS.theme);
 // The per-model thinking pick store was dropped in favor of the daemon's
 // per-session thinking state — clear the old key so stale picks can't linger.
 safeRemove(STORAGE_KEYS.thinking);
+// The pre-intent planMode key mirrored the daemon FACT; the armed intent now
+// persists under planArmed and the fact re-folds from /status. A stale true
+// loaded as an INTENT would cash planMode:true into the next plain send —
+// but as a FACT fallback it is the only persisted record of a daemon-side
+// plan across a reload, so it seeds planModeBySession and is only removed
+// once a successful /status fold replaces it (see the initializer and
+// refreshSessionStatus).
 // The three per-kind notification preferences were merged into a single
 // notifyEnabled master switch, and the WebAudio completion sound was dropped
 // in favor of the system notification sound — clear the old keys.
@@ -234,7 +241,7 @@ function saveModeMapToStorage(key: string, map: Record<string, boolean>): void {
 }
 
 function savePlanModeToStorage(): void {
-  saveModeMapToStorage(PLAN_MODE_STORAGE_KEY, rawState.planModeBySession);
+  saveModeMapToStorage(PLAN_ARMED_STORAGE_KEY, rawState.planArmedBySession);
 }
 
 function saveSwarmModeToStorage(): void {
@@ -325,7 +332,15 @@ const rawState: ExtendedState = reactive({
   thinking: undefined,
   thinkingBySession: {},
   pendingThinkingBySession: {},
-  planModeBySession: loadModeMapFromStorage(PLAN_MODE_STORAGE_KEY),
+  // The daemon fact starts empty and is fed by /status folds + the
+  // status.updated projection — never from storage. The ARMED intent is the
+  // persisted one (an unsent intent survives a reload).
+  // Seeded from the deprecated planMode map: the daemon's plan profile
+  // survives a reload, so the last mirrored fact is better than blank while
+  // /status is unreachable (an old daemon or a transient failure). The first
+  // successful /status fold replaces it.
+  planModeBySession: loadModeMapFromStorage(STORAGE_KEYS.planMode),
+  planArmedBySession: loadModeMapFromStorage(PLAN_ARMED_STORAGE_KEY),
   swarmModeBySession: loadModeMapFromStorage(SWARM_MODE_STORAGE_KEY),
   goalModeBySession: loadModeMapFromStorage(GOAL_MODE_STORAGE_KEY),
   loading: false,
@@ -367,6 +382,12 @@ const rawState: ExtendedState = reactive({
 });
 
 const plansBySession = reactive<Record<string, Record<string, SessionPlan>>>({});
+/** Terminal review outcomes keyed by toolCallId — the freshest local word for
+    plans the persisted receipts may not cover (old daemons without the plans
+    endpoint, or a transient bulk-read failure). The sessionPlans transcript
+    fallback merges these so the panel settles instead of showing "pending"
+    forever. */
+const settledPlanReviewByToolCallId = reactive<Record<string, SessionPlanReview>>({});
 const planRequestSerialByKey = new Map<string, number>();
 const planBulkVersionBySession = new Map<string, number>();
 
@@ -374,7 +395,28 @@ function planRequestKey(sessionId: string, toolCallId?: string): string {
   return `${sessionId}\0${toolCallId ?? '*'}`;
 }
 
+/** Record a terminal review outcome locally: the outcome map (merged by the
+ *  transcript fallback) plus the cached receipt when one exists. Shared by
+ *  the WS-event settle and respondApproval's POST-first settle. */
+function settlePlanReviewLocally(sid: string, toolCallId: string, review: SessionPlanReview): void {
+  settledPlanReviewByToolCallId[toolCallId] = review;
+  // A cached PENDING receipt carries no review field at all — check the
+  // record's existence, not its review, or the settle never reaches the
+  // record sessionPlans actually prefers.
+  const cached = plansBySession[sid]?.[toolCallId];
+  if (cached) {
+    plansBySession[sid] = { ...plansBySession[sid], [toolCallId]: { ...cached, review } };
+  }
+}
+
 async function refreshSessionPlans(sessionId: string, toolCallId?: string): Promise<void> {
+  // The bulk endpoint returns plans in transcript order; a targeted merge
+  // would append in HTTP completion order and could crown an older plan
+  // "latest". A targeted event is therefore just a cue to re-read the bulk.
+  if (toolCallId !== undefined) {
+    void refreshSessionPlans(sessionId);
+    return;
+  }
   const key = planRequestKey(sessionId, toolCallId);
   const requestSerial = (planRequestSerialByKey.get(key) ?? 0) + 1;
   planRequestSerialByKey.set(key, requestSerial);
@@ -397,6 +439,15 @@ async function refreshSessionPlans(sessionId: string, toolCallId?: string): Prom
       return;
     }
     const fetched = Object.fromEntries(plans.map((plan) => [plan.toolCallId, plan]));
+    // A locally settled terminal outcome (POST-first answer / WS event) is
+    // fresher than a bulk read that hasn't projected the review yet — keep
+    // it over a fetched record that is still pending or reviewless.
+    for (const [id, plan] of Object.entries(fetched)) {
+      const settled = settledPlanReviewByToolCallId[id];
+      if (settled && (!plan.review || plan.review.state === 'pending')) {
+        fetched[id] = { ...plan, review: settled };
+      }
+    }
     plansBySession[sessionId] =
       toolCallId === undefined
         ? fetched
@@ -412,6 +463,14 @@ function forgetSessionPlans(sessionId: string): void {
     if (key.startsWith(prefix)) planRequestSerialByKey.delete(key);
   }
   planBulkVersionBySession.delete(sessionId);
+  delete plansBySession[sessionId];
+}
+
+/** Drop the session's cached plan receipts after a rewind. A successful
+ *  refresh replaces them anyway; when the sidecar fetch fails transiently
+ *  the pill/panel must NOT keep showing a possibly-rewound plan — the
+ *  transcript fallback in sessionPlans still recovers what remains. */
+function invalidateSessionPlans(sessionId: string): void {
   delete plansBySession[sessionId];
 }
 
@@ -615,6 +674,7 @@ function forgetSession(sessionId: string): void {
   // Drop per-session mode toggles and re-persist so a deleted session's entry
   // doesn't linger in localStorage.
   delete rawState.planModeBySession[sessionId];
+  delete rawState.planArmedBySession[sessionId];
   delete rawState.swarmModeBySession[sessionId];
   delete rawState.goalModeBySession[sessionId];
   delete rawState.thinkingBySession[sessionId];
@@ -677,6 +737,8 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   }));
   rawState.swarmModeBySession[sessionId] = st.swarmMode;
   rawState.planModeBySession[sessionId] = st.planMode;
+  // The authoritative fold supersedes the deprecated-map seed — drop it.
+  safeRemove(STORAGE_KEYS.planMode);
   // Fold the session's own thinking level too — per-session state wins over the
   // per-model storage pick (see thinkingBySession on ExtendedState).
   if (st.thinkingEffort.length > 0) {
@@ -731,7 +793,6 @@ async function refreshSessionGoal(sessionId: string): Promise<void> {
   if (goal === null || goal.status === 'complete') delete rawState.goalBySession[sessionId];
   else rawState.goalBySession[sessionId] = goal;
 }
-
 /** Persist runtime controls to a session via POST /profile, then re-read
  *  /status. `sessionId` overrides the active session — used when creating a
  *  session and immediately persisting its draft modes, so a concurrent session
@@ -844,6 +905,7 @@ function nextOptimisticMsgId(): string {
 }
 
 // Helper: mutate rawState by applying a reducer on a snapshot then re-assigning fields
+
 function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq: number): void {
   const snapshot: KimiClientState = {
     sessions: rawState.sessions,
@@ -1121,6 +1183,23 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
     onApprovalRequested(appEvent.sessionId, appEvent.approval);
   }
   if (settledPlanToolCallId !== undefined) {
+    // Record the terminal outcome regardless of whether a persisted receipt
+    // exists — old daemons without /transcript/plan (or a transient bulk
+    // failure) otherwise drop the decision entirely, and a fallback-built
+    // plan would show "pending" forever.
+    const outcome: SessionPlanReview =
+      appEvent.type === 'approvalResolved'
+        ? {
+            state: appEvent.decision,
+            selectedOption: appEvent.selectedLabel,
+            feedback: appEvent.feedback,
+          }
+        : { state: 'cancelled' };
+    // Settle locally FIRST (the cached receipt when present, plus the
+    // outcome map the transcript fallback merges): a transient failure of
+    // the bulk re-read below must not leave the panel showing "pending"
+    // until an unrelated refresh.
+    settlePlanReviewLocally(meta.sessionId, settledPlanToolCallId, outcome);
     void refreshSessionPlans(meta.sessionId, settledPlanToolCallId);
   }
 }
@@ -2668,6 +2747,13 @@ const planMode = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
   return sid ? (rawState.planModeBySession[sid] ?? false) : draftModes.planMode;
 });
+// The user's not-yet-cashed plan intent for the ACTIVE session (or draft).
+// The composer's in-input directive pill reads this; the dock's plan pill
+// reads the daemon fact (planMode) instead.
+const planArmed = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? (rawState.planArmedBySession[sid] ?? false) : draftModes.planMode;
+});
 const swarmMode = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
   return sid ? (rawState.swarmModeBySession[sid] ?? false) : draftModes.swarmMode;
@@ -2676,6 +2762,69 @@ const goalMode = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
   return sid ? (rawState.goalModeBySession[sid] ?? false) : draftModes.goalMode;
 });
+
+/** The active session's persisted plans (ExitPlanMode receipts), keyed by
+    toolCallId — the plan panel reads the latest one from here. Old daemons
+    without /transcript/plan (or a transient sidecar failure) leave the bulk
+    map empty even though the transcript still carries the ExitPlanMode
+    payload, so recover those from the turns as a fallback. The merge keeps
+    transcript order (a recovered newer plan stays last for latestPlan); the
+    persisted record always wins per toolCallId. */
+const sessionPlans = computed<Record<string, SessionPlan>>(() => {
+  const sid = rawState.activeSessionId;
+  const persisted = (sid ? plansBySession[sid] : undefined) ?? {};
+  const byTurn: Record<string, SessionPlan> = {};
+  const inTurns = new Set<string>();
+  for (const turn of turns.value) {
+    for (const tool of turn.tools ?? []) {
+      if (tool.name !== 'ExitPlanMode') continue;
+      inTurns.add(tool.id);
+      const persistedPlan = persisted[tool.id];
+      if (persistedPlan) {
+        byTurn[tool.id] = persistedPlan;
+        continue;
+      }
+      const review = rawState.planReviewByToolCallId[tool.id];
+      const argPayload = parseExitPlanModeArg(tool.arg);
+      const planText = review?.plan ?? argPayload?.plan;
+      const path = tool.planPath ?? review?.path;
+      if (!planText && !path) continue;
+      byTurn[tool.id] = {
+        agentId: 'main',
+        toolCallId: tool.id,
+        turnId: turn.id,
+        source: 'interaction',
+        plan: planText ?? '',
+        path,
+        options: argPayload?.options,
+        // No persisted receipt covers this record — the settle event's
+        // locally recorded outcome is the only review truth.
+        review: settledPlanReviewByToolCallId[tool.id],
+      };
+    }
+  }
+  // Persisted records whose tool calls fall outside the loaded turns predate
+  // the window — keep them ahead so at(-1) really is the transcript's last.
+  const older = Object.fromEntries(Object.entries(persisted).filter(([id]) => !inTurns.has(id)));
+  return { ...older, ...byTurn };
+});
+
+/** Read the ExitPlanMode tool input: the plan text and its option list. */
+function parseExitPlanModeArg(
+  arg: string,
+): { plan?: string; options?: { label: string; description?: string }[] } | undefined {
+  try {
+    const input = JSON.parse(arg) as Record<string, unknown>;
+    return {
+      plan: typeof input['plan'] === 'string' ? input['plan'] : undefined,
+      options: Array.isArray(input['options'])
+        ? (input['options'] as { label: string; description?: string }[])
+        : undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
 
 const activationBadges = computed<ActivationBadges>(() => {
   const swarmCounts = countSwarmMembers(swarms.value);
@@ -2775,6 +2924,7 @@ const modelProvider = useModelProviderState(rawState, {
   pushOperationFailure,
   refreshSessionStatus,
   persistSessionProfile,
+  savePlanModeToStorage,
   activity,
   updateSession,
   updateSessionMessages,
@@ -3502,6 +3652,7 @@ const workspaceState = useWorkspaceState(rawState, {
   refreshSessionGoal,
   refillSessionGoalOnReload,
   refreshSessionPlans,
+  settlePlanReviewLocally,
   persistSessionProfile,
   mergedWorkspaces,
   workspacesView,
@@ -3702,6 +3853,9 @@ export function useKimiWebClient() {
     getFileUrl: getFileUrlById,
     todos,
     goal,
+    sessionPlans,
+    refreshSessionPlans,
+    invalidateSessionPlans,
     swarms,
     swarmMembersByToolCallId,
     activationBadges,
@@ -3738,6 +3892,7 @@ export function useKimiWebClient() {
     permission,
     thinking,
     planMode,
+    planArmed,
     swarmMode,
     goalMode,
     queued,

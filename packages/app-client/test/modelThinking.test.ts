@@ -322,8 +322,15 @@ describe('useModelProviderState thinking on model selection', () => {
       thinking: 'off',
       thinkingBySession: {},
       pendingThinkingBySession: {},
+      planModeBySession: {},
+      planArmedBySession: {},
+      goalModeBySession: {},
+      goalBySession: {},
       defaultModel: options.defaultModel,
       inFlightBySession: {},
+      // The real ExtendedState always carries a permission mode; the skill
+      // activation pre-write reads it for the retry payload.
+      permission: 'auto',
     } as ExtendedState;
   }
 
@@ -335,6 +342,7 @@ describe('useModelProviderState thinking on model selection', () => {
       pushOperationFailure: vi.fn(),
       refreshSessionStatus: vi.fn().mockResolvedValue(undefined),
       persistSessionProfile: persistSessionProfileMock,
+      savePlanModeToStorage: vi.fn(),
       activity: computed(() => 'idle'),
       updateSession: (id, update) => {
         state.sessions = state.sessions.map((session) =>
@@ -410,7 +418,7 @@ describe('useModelProviderState thinking on model selection', () => {
 
     await provider.activateSkill('gen-changesets');
 
-    expect(persistSessionProfileMock).toHaveBeenCalledWith({ thinking: 'high' }, 'session-1');
+    expect(persistSessionProfileMock).toHaveBeenCalledWith({ thinking: 'high', swarmMode: false, permissionMode: 'auto' }, 'session-1');
     expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined, []);
     // The profile write precedes the activation, mirroring the new-session path.
     const persistOrder = persistSessionProfileMock.mock.invocationCallOrder[0]!;
@@ -450,6 +458,28 @@ describe('useModelProviderState thinking on model selection', () => {
     expect(state.inFlightBySession['session-1']).toBe(false);
   });
 
+  it('cashes an armed plan intent through the activation persist and consumes it', async () => {
+    // The activation's pre-write is the cashing point for an armed plan intent
+    // (no composer send happens): planMode:true rides the same profile patch,
+    // and a successful persist consumes the intent + mirrors the fact.
+    const state = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.id },
+      defaultModel: booleanAppModel.id,
+    });
+    state.planArmedBySession = { 'session-1': true };
+    const provider = createModelProvider(state);
+
+    await provider.activateSkill('gen-changesets');
+
+    expect(persistSessionProfileMock).toHaveBeenCalledWith(
+      expect.objectContaining({ planMode: true }),
+      'session-1',
+    );
+    expect(state.planArmedBySession['session-1']).toBe(false);
+    expect(state.planModeBySession['session-1']).toBe(true);
+    expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined, []);
+  });
+
   it('resolves an empty session model through the default model before activating a skill', async () => {
     // The daemon's profile echo can leave session.model '' — the same fallback
     // the prompt/BTW/steer paths apply must hold here too, or the profile gets
@@ -462,7 +492,7 @@ describe('useModelProviderState thinking on model selection', () => {
 
     await provider.activateSkill('gen-changesets');
 
-    expect(persistSessionProfileMock).toHaveBeenCalledWith({ thinking: 'high' }, 'session-1');
+    expect(persistSessionProfileMock).toHaveBeenCalledWith({ thinking: 'high', swarmMode: false, permissionMode: 'auto' }, 'session-1');
     expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined, []);
   });
 

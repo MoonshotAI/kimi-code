@@ -3,7 +3,7 @@
 import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, OpenMediaRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
-import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
+import type { AppGoal, AppModel, AppSkill, QuestionResponse, SessionPlan, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
 import ChatPane from './ChatPane.vue';
@@ -41,6 +41,12 @@ const props = defineProps<{
   status: ConversationStatus;
   thinking?: ThinkingLevel;
   planMode?: boolean;
+  /** The user's not-yet-cashed plan intent (armed) — forwarded to the
+      composer's in-input directive pill via the dock. */
+  planArmed?: boolean;
+  /** The session's persisted plans keyed by toolCallId — forwarded to the
+      dock's plan panel. */
+  sessionPlans?: Record<string, SessionPlan>;
   swarmMode?: boolean;
   goalMode?: boolean;
   questions?: UIQuestion[];
@@ -346,18 +352,18 @@ provide('resolveAgentModel', resolveAgentModel);
 provide('pinScroll', pinScrollFor);
 const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
 // The goal rides the dock as one more work pill, so it keeps the workbar (and
-// the panel) alive even without task/todo items.
+// the panel) alive even without task/todo items. Queued prompts don't count —
+// they render inline in the transcript and own no pill.
 const hasDockWork = computed(() =>
   props.goal != null ||
   bashTasks.value.length > 0 ||
   subagentTasks.value.length > 0 ||
-  (props.todos?.length ?? 0) > 0 ||
-  (props.queued?.length ?? 0) > 0,
+  (props.todos?.length ?? 0) > 0,
 );
-const dockPanel = ref<'bash' | 'subagent' | 'todos' | 'goal' | null>(null);
+const dockPanel = ref<'bash' | 'subagent' | 'todos' | 'goal' | 'plan' | null>(null);
 const changesCount = computed(() => (props.gitInfo ? props.changes?.length ?? 0 : 0));
 
-function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos' | 'goal'): void {
+function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos' | 'goal' | 'plan'): void {
   dockPanel.value = dockPanel.value === panel ? null : panel;
 }
 
@@ -375,7 +381,7 @@ function focusGoal(): void {
 // would otherwise linger empty after a cancel/complete while other dock work
 // remains (hasDockWork only watches the aggregate).
 watch(
-  () => [props.goal, bashTasks.value.length, subagentTasks.value.length, props.todos?.length] as const,
+  () => [props.goal, bashTasks.value.length, subagentTasks.value.length, props.todos?.length, props.planMode, props.sessionPlans] as const,
   () => {
     const panel = dockPanel.value;
     if (panel === null) return;
@@ -383,7 +389,9 @@ watch(
       (panel === 'goal' && props.goal != null) ||
       (panel === 'bash' && bashTasks.value.length > 0) ||
       (panel === 'subagent' && subagentTasks.value.length > 0) ||
-      (panel === 'todos' && (props.todos?.length ?? 0) > 0);
+      (panel === 'todos' && (props.todos?.length ?? 0) > 0) ||
+      (panel === 'plan' &&
+        (props.planMode === true || Object.keys(props.sessionPlans ?? {}).length > 0));
     if (!backed) closeDockPanel();
   },
 );
@@ -2144,7 +2152,7 @@ function toggleTerminalPanel(): void {
   terminalStore.toggle(props.workspaceRoot);
 }
 
-defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome, selectAllRegion });
+defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome, selectAllRegion, focusGoal });
 </script>
 
 <template>
@@ -2265,6 +2273,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
               :status="status"
               :thinking="thinking"
               :plan-mode="planMode"
+              :plan-armed="planArmed"
               :swarm-mode="swarmMode"
               :goal-mode="goalMode"
               :goal="goal"
@@ -2416,6 +2425,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
         :status="status"
         :thinking="thinking"
         :plan-mode="planMode"
+        :plan-armed="planArmed"
         :swarm-mode="swarmMode"
         :goal-mode="goalMode"
         :activation-badges="activationBadges"
@@ -2426,6 +2436,7 @@ defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome,
         :starred-ids="starredIds"
         :skills="skills"
         :goal="goal"
+        :session-plans="sessionPlans"
         :dock-panel="dockPanel"
         :overlay-open="overlayOpen"
         :bash-tasks="bashTasks"

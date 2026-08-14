@@ -25,6 +25,7 @@ import type {
   FsEntry,
   KimiEventConnection,
   QuestionResponse,
+  SessionPlanReview,
   V2SessionsPage,
 } from '../../api/types';
 import {
@@ -324,6 +325,9 @@ export interface UseWorkspaceStateDeps {
    *  suppresses the per-turn unread/notification for an active goal. */
   refillSessionGoalOnReload: (sessionId: string) => void;
   refreshSessionPlans: (sessionId: string, toolCallId?: string) => Promise<void>;
+  /** Record a terminal ExitPlanMode review outcome locally (the facade's
+   *  settlePlanReviewLocally): the outcome map plus any cached receipt. */
+  settlePlanReviewLocally: (sessionId: string, toolCallId: string, review: SessionPlanReview) => void;
   /** Persist profile fields to the daemon. Resolves false (after surfacing the
    *  failure itself) when the daemon rejected the patch — awaited callers that
    *  order strictly after the profile must NOT proceed on false. */
@@ -389,6 +393,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     refreshSessionGoal,
     refillSessionGoalOnReload,
     refreshSessionPlans,
+    settlePlanReviewLocally,
     persistSessionProfile,
     mergedWorkspaces,
     workspacesView,
@@ -1659,7 +1664,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // awaiting the snapshot, the setters would otherwise read the then-current
     // activeSessionId and pollute that session while this one loses the modes.
     if (draftModes.planMode) {
-      rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
+      rawState.planArmedBySession = { ...rawState.planArmedBySession, [sid]: true };
       savePlanModeToStorage();
     }
     if (draftModes.swarmMode) {
@@ -1746,7 +1751,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // applyAgentState and run at daemon defaults while the UI shows
       // otherwise. Goal mode is a one-shot flag consumed per send, not a
       // profile field, so there is nothing to persist for it.
-      const planMode = rawState.planModeBySession[sid] ?? false;
+      // The skill's first turn IS the cashing point for the armed plan
+      // intent (activation starts a turn without a composer send), so the
+      // profile write carries it and a successful persist consumes it.
+      const planMode = rawState.planArmedBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
       const promptSession = rawState.sessions.find((s) => s.id === sid);
       const model =
@@ -1770,6 +1778,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // effort is worse than not activating (the finally still re-arms below).
       // The session itself exists either way — return it regardless.
       if (!persisted) return sid;
+      if (planMode) {
+        // The persist landed planMode:true — the armed intent is cashed.
+        // Consume it and mirror the fact locally at once: a /status refetch
+        // or the activation below may fail without any event echoing the
+        // daemon's planMode:true, and the UI would otherwise hide the Plan
+        // entry while the next plain send still runs in server-side plan mode.
+        rawState.planArmedBySession = { ...rawState.planArmedBySession, [sid]: false };
+        savePlanModeToStorage();
+        rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
+      }
       // The patch above already carried (and awaited) the thinking level —
       // skip the redundant second write inside activateSkill.
       await modelProvider.activateSkill(skillName, args, attachments, sid, { skipThinkingPersist: true });
@@ -2100,25 +2118,37 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
       // Modes are per-session: read this session's own toggles (not the global
       // active-session value), so a prompt enqueued for a background session uses
-      // that session's settings.
-      const planMode = rawState.planModeBySession[sid] ?? false;
+      // that session's settings. Plan reads the ARMED intent (not-yet-cashed
+      // toggle) — cashing happens just below; the daemon fact lives in
+      // planModeBySession.
+      const planArmed = rawState.planArmedBySession[sid] ?? false;
+      const planMode = planArmed || (rawState.planModeBySession[sid] ?? false);
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
       const goalMode = rawState.goalModeBySession[sid] ?? false;
 
-      if (goalMode && text) {
-        try {
-          await api.updateSession(sid, { goalObjective: text.trim() });
-        } catch (err) {
-          // No thinking write ever reached the daemon — release the shield and
-          // re-fold the daemon's actual level.
-          if (ackThinkingPending(rawState, sid, thinkingToken)) void refreshSessionStatus(sid);
-          pushOperationFailure('createGoal', err, { sessionId: sid });
-          rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
-          updateSessionMessages(sid, (msgs) =>
-            msgs.some((m) => m.id === tempId) ? msgs.filter((m) => m.id !== tempId) : msgs,
-          );
-          return 'rejected';
+      // Cash an armed plan intent NOW: the daemon enters plan mode only via a
+      // profile write (the prompt's plan_mode wire field is schema-dead), so
+      // the intent must ride ahead of this prompt. The intent is consumed
+      // either way; a failed write surfaces through the shared submit-failure
+      // catch below like any other send failure. Already live daemon-side
+      // (the fact reads true): just consume the intent, no write.
+      if (planArmed) {
+        rawState.planArmedBySession = { ...rawState.planArmedBySession, [sid]: false };
+        savePlanModeToStorage();
+        if (!(rawState.planModeBySession[sid] ?? false)) {
+          await api.updateSession(sid, { planMode: true });
+          rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
         }
+      }
+
+      if (goalMode && text) {
+        // The plan disarm rides the SAME write as the goal itself — atomic:
+        // no separate profile call that could fail silently and resurrect
+        // plan on the next load. A failed write surfaces through the shared
+        // submit-failure catch below like any other send failure.
+        await api.updateSession(sid, { goalObjective: text.trim(), planMode: false });
+        // Mirror the atomic disarm locally — the daemon fact echo may lag.
+        rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: false };
       }
 
       // Resolved against THIS prompt's session + model: the session's own
@@ -2135,14 +2165,18 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         model,
         thinking,
         permissionMode: rawState.permission,
-        planMode,
+        // A goal-creating send just disarmed plan atomically above — don't
+        // pass the stale captured true or the goal's first turn runs as plan.
+        planMode: planMode && !(goalMode && text),
         swarmMode,
       });
       // The daemon consumed this prompt's thinking — ack the write it carried.
       if (thinking !== undefined) ackThinkingPending(rawState, sid, thinkingToken);
 
-      // Goal mode is a one-shot flag: consumed by this send, then cleared.
-      if (goalMode) {
+      // Goal mode is a one-shot intent, consumed once this send carried it.
+      // An attachment-only send does NO goalObjective write, so the intent
+      // stays armed for the next text message instead of being silently lost.
+      if (goalMode && text) {
         rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: false };
         saveGoalModeToStorage();
       }
@@ -2649,6 +2683,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Remove from local approvals immediately (WS event will confirm)
       removePendingApproval(sid, approvalId);
       if (planToolCallId !== undefined) {
+        // The POST answered before the WS event: the event handler's settled
+        // lookup finds nothing once the approval is removed above — settle
+        // the receipt HERE from the response.
+        settlePlanReviewLocally(sid, planToolCallId, {
+          state: response.decision,
+          selectedOption: response.selectedLabel,
+          feedback: response.feedback,
+        });
         void refreshSessionPlans(sid, planToolCallId);
       }
     } catch (err) {
@@ -2760,15 +2802,24 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  /** Persist and apply plan mode for the active session (pushed to its profile
-   *  + sent per-prompt). With no active session the toggle is staged on the
-   *  draft and transferred when the first prompt creates the session. */
+  /** Persist and apply plan mode for the active session. Arming stages an
+   *  INTENT only (the composer's in-input pill; persisted to storage) — the
+   *  daemon learns plan mode via the profile write at send time (see
+   *  submitPromptInternal), never on toggle. Disarming drops the intent, and
+   *  when the daemon fact is live also writes the off through to the profile
+   *  (fire-and-forget: a failure is surfaced by persistSessionProfile's own
+   *  toast, and the next /status fold re-syncs the fact). With no active
+   *  session the toggle is staged on the draft and transferred when the
+   *  first prompt creates the session. */
   function setPlanMode(on: boolean): void {
     const sid = rawState.activeSessionId;
     if (sid) {
-      rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: on };
+      rawState.planArmedBySession = { ...rawState.planArmedBySession, [sid]: on };
       savePlanModeToStorage();
-      void persistSessionProfile({ planMode: on });
+      if (!on && (rawState.planModeBySession[sid] ?? false)) {
+        rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: false };
+        void persistSessionProfile({ planMode: false }, sid);
+      }
     } else {
       draftModes.planMode = on;
     }
@@ -2777,7 +2828,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   /** Flip plan mode on/off for the active session (or the draft). */
   function togglePlanMode(): void {
     const sid = rawState.activeSessionId;
-    const current = sid ? (rawState.planModeBySession[sid] ?? false) : draftModes.planMode;
+    const current = sid
+      ? (rawState.planArmedBySession[sid] ?? false) || (rawState.planModeBySession[sid] ?? false)
+      : draftModes.planMode;
     setPlanMode(!current);
   }
 
@@ -2876,7 +2929,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (!sid) return null;
     }
     try {
-      await getKimiWebApi().updateSession(sid, { goalObjective: trimmed });
+      // Plan and goal are mutually exclusive primary modes, so the plan
+      // disarm rides the SAME write as the goal itself — atomic: no separate
+      // profile call that could fail silently and resurrect plan on the next
+      // load.
+      await getKimiWebApi().updateSession(sid, { goalObjective: trimmed, planMode: false });
+      // Mirror the atomic disarm locally — the daemon fact echo may lag.
+      rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: false };
     } catch (err) {
       pushOperationFailure('createGoal', err, { sessionId: sid, message: goalErrorMessage(err) });
       return createdId;

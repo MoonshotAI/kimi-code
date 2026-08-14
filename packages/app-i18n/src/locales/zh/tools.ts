@@ -57,6 +57,7 @@ export default {
       cancelled: '已取消',
     },
     selectedOption: '已选择',
+    pathOnlyHint: '该计划未保存内联内容,可在侧边栏打开:',
     feedback: '反馈',
   },
   summary: {

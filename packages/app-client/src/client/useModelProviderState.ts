@@ -74,6 +74,8 @@ export interface UseModelProviderStateDeps {
    *  failure itself) when the daemon rejected the patch — awaited callers that
    *  order strictly after the profile must NOT proceed on false. */
   persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<boolean>;
+  /** Persist the per-session armed-plan intent map after consuming one. */
+  savePlanModeToStorage: () => void;
   activity: ComputedRef<ActivityState>;
   /** Replace one session in place (matched by id). Owned by the facade so the
    *  model module never assigns rawState.sessions directly. */
@@ -107,6 +109,7 @@ export function useModelProviderState(
     pushOperationFailure,
     refreshSessionStatus,
     persistSessionProfile,
+    savePlanModeToStorage,
     activity,
     updateSession,
     updateSessionMessages,
@@ -437,13 +440,16 @@ export function useModelProviderState(
     attachments?: PromptAttachment[],
     sessionId?: string,
     opts?: { skipThinkingPersist?: boolean },
-  ): Promise<void> {
+  ): Promise<boolean> {
     const sid = sessionId ?? rawState.activeSessionId;
-    if (!sid) return;
+    if (!sid) return false;
     const guarded = activity.value === 'idle' && !rawState.inFlightBySession[sid];
     const tempId = `msg_skill_opt_${Date.now().toString(36)}`;
 
     const localTurnToken = guarded ? beginLocalTurn(sid) : undefined;
+    // Set only at the activation POST itself: a failure thrown earlier (the
+    // profile pre-write) provably started nothing.
+    let activationAttempted = false;
     if (guarded) {
       // Share the local-turn-start lifecycle with prompt submits: a racing
       // terminal snapshot must not clear this skill's turn either.
@@ -484,13 +490,32 @@ export function useModelProviderState(
         // the prompt/BTW/steer paths, before selecting the thinking level.
         const rawModel = rawState.sessions.find((s) => s.id === sid)?.model;
         const skillModel = (rawModel && rawModel.length > 0 ? rawModel : rawState.defaultModel) ?? undefined;
+        // Carry the session's swarm/permission along with thinking: the
+        // activation runs at the session profile, and a retry after a failed
+        // new-session patch would otherwise run at daemon defaults while the
+        // UI shows the user's picks. An armed plan intent rides the same
+        // write (the daemon learns plan mode only via the session profile)
+        // and is consumed on success.
+        const cashArmedPlan = rawState.planArmedBySession[sid] ?? false;
         const persisted = await persistSessionProfile(
-          { thinking: (await resolveThinkingForPrompt(sid, skillModel)) ?? rawState.thinking },
+          {
+            thinking: (await resolveThinkingForPrompt(sid, skillModel)) ?? rawState.thinking,
+            swarmMode: rawState.swarmModeBySession?.[sid] ?? false,
+            permissionMode: rawState.permission,
+            ...(cashArmedPlan ? { planMode: true } : {}),
+          },
           sid,
         );
         if (!persisted) throw PROFILE_PERSIST_FAILED;
+        if (cashArmedPlan) {
+          rawState.planArmedBySession = { ...rawState.planArmedBySession, [sid]: false };
+          savePlanModeToStorage();
+          rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
+        }
       }
+      activationAttempted = true;
       await api.activateSkill(sid, skillName, args, attachmentsToContent(attachments));
+      return true;
     } catch (err) {
       if (guarded) {
         rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
@@ -498,6 +523,11 @@ export function useModelProviderState(
       }
       // The persist failure was already surfaced by persistSessionProfile.
       if (err !== PROFILE_PERSIST_FAILED) pushOperationFailure('activateSkill', err, { sessionId: sid });
+      // Pre-submit failures and definitive daemon refusals provably started
+      // nothing — the caller restores the command. Only an ambiguous
+      // post-submit failure (lost response) reports success, so a retry
+      // can't double-activate.
+      return !activationAttempted || err instanceof DaemonApiError ? false : true;
     } finally {
       // The daemon answered the activation (accepted or rejected) — the
       // pending window in which a snapshot can't reflect this turn is over.

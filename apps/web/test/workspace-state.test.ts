@@ -74,7 +74,7 @@ function createSession(): AppSession {
 }
 
 function createState(): ExtendedState {
-  return {
+  const state: ExtendedState = {
     ...createInitialState(),
     sessions: [createSession()],
     activeSessionId: 'sess_1',
@@ -89,6 +89,7 @@ function createState(): ExtendedState {
     thinkingBySession: {},
     pendingThinkingBySession: {},
     planModeBySession: {},
+    planArmedBySession: {},
     swarmModeBySession: {},
     goalModeBySession: {},
     loading: false,
@@ -122,6 +123,7 @@ function createState(): ExtendedState {
     messagesHasMoreBySession: {},
     messagesLoadMoreErrorBySession: {},
   };
+  return state;
 }
 
 function createDeps(): UseWorkspaceStateDeps {
@@ -148,6 +150,7 @@ function createDeps(): UseWorkspaceStateDeps {
     refreshSessionGoal: vi.fn(),
     refillSessionGoalOnReload: vi.fn(),
     persistSessionProfile: vi.fn().mockResolvedValue(true),
+    notify: vi.fn(),
     mergedWorkspaces: computed(() => []),
     workspacesView: computed(() => []),
     status: computed(() => ({})),
@@ -1106,7 +1109,11 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
 
     expect(apiMock.createSession).toHaveBeenCalledOnce();
     // Profile is updated on the new session: that's what marks the prompt as a goal.
-    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', { goalObjective: 'improve test coverage' });
+    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', {
+      goalObjective: 'improve test coverage',
+      // The goal write always carries the plan disarm (plan/goal exclusivity).
+      planMode: false,
+    });
     // And the objective is sent as the first user prompt on the new session.
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
       'sess_new',
@@ -1129,7 +1136,11 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     await ws.createGoal('improve test coverage');
 
     expect(apiMock.createSession).toHaveBeenCalledOnce();
-    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', { goalObjective: 'improve test coverage' });
+    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', {
+      goalObjective: 'improve test coverage',
+      // The goal write always carries the plan disarm (plan/goal exclusivity).
+      planMode: false,
+    });
     expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
   });
 
@@ -1147,13 +1158,62 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
 
     // Didn't create a session: we targeted the existing one.
     expect(apiMock.createSession).not.toHaveBeenCalled();
-    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_1', { goalObjective: 'improve test coverage' });
+    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_1', {
+      goalObjective: 'improve test coverage',
+      planMode: false,
+    });
     // And because the session is running (createDeps' default activity is
     // 'running'), sendPrompt queues rather than posting immediately.
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
     expect(state.queuedBySession['sess_1']).toEqual([
       expect.objectContaining({ text: 'improve test coverage', attachments: undefined }),
     ]);
+  });
+
+  it('surfaces a structured refusal of the goal write without submitting the objective', async () => {
+    const state = createState();
+    state.permission = 'auto';
+    apiMock.updateSession.mockReset();
+    apiMock.updateSession.mockRejectedValue(
+      new DaemonApiError({ code: 40913, msg: 'goal already exists', requestId: 'r' }),
+    );
+    apiMock.submitPrompt.mockReset();
+    const deps = goalDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.createGoal('improve test coverage');
+
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'createGoal',
+      expect.anything(),
+      expect.objectContaining({ sessionId: 'sess_1' }),
+    );
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(apiMock.updateSession).toHaveBeenCalledTimes(1); // no objective replay
+  });
+
+  it('surfaces an ambiguous goal-write failure the same way, without submitting', async () => {
+    // A lost response leaves the write's outcome unknown — the failure is
+    // reported like any other send failure and the objective prompt is not
+    // submitted (no blind retry of a non-idempotent write).
+    const state = createState();
+    state.permission = 'auto';
+    apiMock.updateSession.mockReset();
+    apiMock.updateSession.mockRejectedValue(new TypeError('fetch failed'));
+    apiMock.submitPrompt.mockReset();
+    const deps = goalDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.createGoal('improve test coverage');
+
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'createGoal',
+      expect.anything(),
+      expect.objectContaining({ sessionId: 'sess_1' }),
+    );
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
   });
 
   it('is a no-op when there is no active session and no usable workspace', async () => {
@@ -1200,7 +1260,11 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     await ws.createGoal('improve test coverage');
 
     // The explicit goal objective went through...
-    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', { goalObjective: 'improve test coverage' });
+    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', {
+      goalObjective: 'improve test coverage',
+      // The goal write always carries the plan disarm (plan/goal exclusivity).
+      planMode: false,
+    });
     // ...and the objective prompt itself was submitted exactly once as a user prompt.
     expect(apiMock.submitPrompt).toHaveBeenCalledTimes(1);
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
@@ -2190,6 +2254,10 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => 'idle') }));
 
     await ws.sendPrompt('next');
+    // flushQueueHead is fire-and-forget, and the send path now waits one more
+    // microtask hop (the profile-chain no-op) — give the flush a macrotask
+    // to reach the submit before asserting.
+    await new Promise((r) => setTimeout(r, 0));
 
     expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
@@ -2199,6 +2267,130 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(state.queuedBySession.sess_1).toEqual([
       expect.objectContaining({ text: 'next', attachments: undefined }),
     ]);
+  });
+
+  it('arms plan locally without a profile write, and cashes it on send', async () => {
+    // Plan-as-intent: the toggle writes NO profile — the daemon learns plan
+    // mode via the profile write riding ahead of the next prompt.
+    apiMock.updateSession.mockReset();
+    apiMock.updateSession.mockResolvedValue({});
+    const state = createState();
+    const deps = promptDeps({ activity: computed(() => 'idle') });
+    const ws = useWorkspaceState(state, deps);
+
+    ws.setPlanMode(true);
+    expect(state.planArmedBySession.sess_1).toBe(true);
+    expect(deps.persistSessionProfile).not.toHaveBeenCalled();
+
+    await ws.sendPrompt('make a plan');
+
+    // Cashed: the profile write ran ahead of the prompt, intent consumed.
+    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_1', { planMode: true });
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(apiMock.updateSession.mock.invocationCallOrder[0]!).toBeLessThan(
+      apiMock.submitPrompt.mock.invocationCallOrder[0]!,
+    );
+    expect(state.planArmedBySession.sess_1).toBe(false);
+  });
+
+  it('disarming a live plan mode writes the daemon at once', async () => {
+    // Toggle-off is the opposite asymmetry: it terminates the FACT, not an
+    // intent, so it goes straight to the profile.
+    const state = createState();
+    state.planModeBySession = { sess_1: true }; // daemon fact: plan active
+    const deps = promptDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    ws.setPlanMode(false);
+
+    expect(deps.persistSessionProfile).toHaveBeenCalledWith({ planMode: false }, 'sess_1');
+    expect(state.planArmedBySession.sess_1).toBe(false);
+  });
+
+  it('keeps a mid-flight re-arm when the toggle goes off then back on', async () => {
+    // Cash in flight, user toggles off then back on: the armed flag simply
+    // ends up true — the in-flight cash lands, no disarm ever fires, and the
+    // intent stays armed for the next send.
+    apiMock.updateSession.mockReset();
+    let resolveCash!: (value: unknown) => void;
+    apiMock.updateSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCash = resolve; }),
+    );
+    apiMock.updateSession.mockResolvedValue({});
+    const state = createState();
+    const deps = promptDeps({ activity: computed(() => 'idle') });
+    const ws = useWorkspaceState(state, deps);
+
+    ws.setPlanMode(true);
+    const send = ws.sendPrompt('make a plan');
+    await vi.waitFor(() =>
+      expect(apiMock.updateSession).toHaveBeenCalledWith('sess_1', { planMode: true }),
+    );
+
+    // Off, then back on, all within the cash flight.
+    ws.setPlanMode(false);
+    ws.setPlanMode(true);
+
+    resolveCash({});
+    await send;
+
+    // No disarm fired; the re-armed intent survives for the next send, and
+    // this send's cash stays landed.
+    expect(deps.persistSessionProfile).not.toHaveBeenCalledWith({ planMode: false }, 'sess_1');
+    expect(state.planArmedBySession.sess_1).toBe(true);
+    expect(state.planModeBySession.sess_1).toBe(true);
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the re-armed intent when a second send queues mid-cash (off→on→send)', async () => {
+    // Cash in flight, user toggles off then back on, then sends a second
+    // message — the second send enqueues behind the in-flight first one and
+    // the re-armed flag stays put; nothing ever fires a disarm.
+    apiMock.updateSession.mockReset();
+    let resolveCash!: (value: unknown) => void;
+    apiMock.updateSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCash = resolve; }),
+    );
+    apiMock.updateSession.mockResolvedValue({});
+    const state = createState();
+    const deps = promptDeps({ activity: computed(() => 'idle') });
+    const ws = useWorkspaceState(state, deps);
+
+    ws.setPlanMode(true);
+    const send = ws.sendPrompt('first');
+    await vi.waitFor(() =>
+      expect(apiMock.updateSession).toHaveBeenCalledWith('sess_1', { planMode: true }),
+    );
+
+    ws.setPlanMode(false);
+    ws.setPlanMode(true);
+    await ws.sendPrompt('second'); // enqueued — the re-armed flag stays armed
+
+    resolveCash({});
+    await send;
+
+    // No disarm: the first message keeps its plan and the intent rides the
+    // second entry.
+    expect(deps.persistSessionProfile).not.toHaveBeenCalledWith({ planMode: false }, 'sess_1');
+    expect(state.planModeBySession.sess_1).toBe(true);
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+  });
+
+  it('skips the cashing write when the daemon fact is already active', async () => {
+    // The daemon already runs plan mode (e.g. the model auto-entered via
+    // EnterPlanMode): an armed send needs no PATCH — the intent just folds
+    // into the live fact.
+    apiMock.updateSession.mockReset();
+    const state = createState();
+    state.planModeBySession = { sess_1: true };
+    state.planArmedBySession = { sess_1: true };
+    const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => 'idle') }));
+
+    await ws.sendPrompt('continue planning');
+
+    expect(apiMock.updateSession).not.toHaveBeenCalled();
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.planArmedBySession.sess_1).toBe(false);
   });
 
   it('re-queues a failed flush at the head and drops it after repeated failures', async () => {
@@ -2242,8 +2434,8 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     await ws.steerPrompt('live text', [{ fileId: 'f_live', kind: 'image' }]);
 
     expect(state.queuedBySession.sess_1).toEqual([
-      { text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
-    );
+      { text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] },
+    ]);
   });
 
   it('does NOT restore merged queue entries when a steer failure is network-ambiguous', async () => {
@@ -2262,7 +2454,23 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
   });
 
-  it('restores the queue when an idle steer falls back to a normal send that fails', async () => {
+  it('consumes the armed plan intent when an idle steer falls back to a normal send', async () => {
+    // The idle fallback goes through the same send chain, so the armed plan
+    // intent is cashed there and the pill clears with the send.
+    const state = createState();
+    state.planArmedBySession = { sess_1: true };
+    apiMock.updateSession.mockReset();
+    apiMock.updateSession.mockResolvedValue({});
+    const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => 'idle') }));
+
+    await ws.steerPrompt('live text');
+
+    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_1', { planMode: true });
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.planArmedBySession.sess_1).toBe(false);
+  });
+
+  it('restores the merged queue entries when an idle steer falls back to a normal send that fails', async () => {
     const state = createState();
     state.queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
     apiMock.submitPrompt.mockRejectedValue(
@@ -2272,7 +2480,9 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
     await ws.steerPrompt('live text');
 
-    expect(state.queuedBySession.sess_1).toEqual([{ text: 'queued', attachments: undefined }]);
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'queued', attachments: undefined },
+    ]);
   });
 
   // A background session's drained prompt must not inherit the thinking level

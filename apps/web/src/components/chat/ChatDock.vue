@@ -7,11 +7,12 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../../types';
-import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
+import type { AppGoal, AppModel, AppSkill, QuestionResponse, SessionPlan, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { ManagedMembership, PromptAttachment } from '../../composables/useKimiWebClient';
 import Composer from './Composer.vue';
 import GoalPanel from './dock/GoalPanel.vue';
+import PlanPanel from './dock/PlanPanel.vue';
 import QuestionCard from './QuestionCard.vue';
 import ApprovalCard from './ApprovalCard.vue';
 import TasksPane from './dock/TasksPane.vue';
@@ -40,6 +41,9 @@ const props = defineProps<{
   status: ConversationStatus;
   thinking?: ThinkingLevel;
   planMode?: boolean;
+  /** The user's not-yet-cashed plan intent — forwarded to the Composer's
+      in-input directive pill. */
+  planArmed?: boolean;
   swarmMode?: boolean;
   goalMode?: boolean;
   activationBadges?: ActivationBadges;
@@ -56,11 +60,14 @@ const props = defineProps<{
   starredIds?: string[];
   skills?: AppSkill[];
   goal?: AppGoal | null;
-  dockPanel: 'bash' | 'subagent' | 'todos' | 'goal' | null;
+  dockPanel: 'bash' | 'subagent' | 'todos' | 'goal' | 'plan' | null;
   /** A modal/overlay layer is open above the dock (any dialog, sheet, or
       picker tracked by App's anyOverlayOpen) — it owns Escape, so the work
       panel's document capture stays quiet while it is open. */
   overlayOpen?: boolean;
+  /** The session's persisted plans keyed by toolCallId — the plan panel
+      shows the latest. */
+  sessionPlans?: Record<string, SessionPlan>;
   bashTasks: TaskItem[];
   subagentTasks: TaskItem[];
   bashRunning: number;
@@ -89,11 +96,9 @@ const emit = defineEmits<{
   togglePlan: [];
   toggleSwarm: [];
   toggleGoal: [];
-  openBtw: [];
   createGoal: [objective: string];
   controlGoal: [action: 'pause' | 'resume' | 'cancel'];
   focusGoal: [];
-  focusSwarm: [];
   compact: [];
   pickModel: [];
   selectModel: [modelId: string];
@@ -103,7 +108,7 @@ const emit = defineEmits<{
   dismiss: [questionId: string];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string; selectedLabel?: string }];
   cancelTask: [taskId: string];
-  'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos' | 'goal'];
+  'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos' | 'goal' | 'plan'];
   'close-dock-panel': [];
   /** A background subagent chip was clicked — open its live detail panel. */
   openAgent: [taskId: string];
@@ -234,6 +239,23 @@ const subagentPillLabel = computed(() =>
 const todosPillLabel = computed(
   () => `${t('tasks.todoProgressTitle')} ${props.todoDoneCount}/${props.todos?.length ?? 0}`,
 );
+/** The session's latest persisted plan (insertion order = fetch order). */
+const latestPlan = computed(() => Object.values(props.sessionPlans ?? {}).at(-1));
+/** The plan head's trailing note: the latest plan's review outcome. */
+const planReviewLabel = computed(() => {
+  const state = latestPlan.value?.review?.state;
+  return state ? t(`tools.plan.review.${state}`) : '';
+});
+
+function openLatestPlan(): void {
+  const plan = latestPlan.value;
+  if (!plan?.path) return;
+  // Inline content opens the out-of-workspace file directly (a bare path
+  // link would 403); a path-only record (recovered from an old daemon's
+  // transcript, no plan text) instead READS the trusted plan path via the
+  // daemon — never an empty inline "file".
+  props.openFile?.(plan.plan ? { path: plan.path, content: plan.plan } : { path: plan.path });
+}
 
 const composerRef = ref<{
   loadForEdit: (value: string) => boolean;
@@ -259,7 +281,7 @@ const compactPills = ref(false);
 // motion) — remember its x so the panel can scale from there.
 const panelOriginX = ref('50%');
 
-function onPillClick(panel: 'bash' | 'subagent' | 'todos' | 'goal', e: MouseEvent): void {
+function onPillClick(panel: 'bash' | 'subagent' | 'todos' | 'goal' | 'plan', e: MouseEvent): void {
   const pillEl = e.currentTarget as HTMLElement | null;
   if (pillEl && dockRef.value) {
     const pr = pillEl.getBoundingClientRect();
@@ -493,6 +515,44 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
               </template>
             </template>
           </WorkPanelHead>
+          <WorkPanelHead
+            v-else-if="dockPanel === 'plan'"
+            icon="file-edit"
+            :title="t('status.planLabel')"
+            :meta="planReviewLabel"
+          >
+            <template #actions>
+              <IconButton
+                v-if="latestPlan?.path"
+                size="sm"
+                :label="t('tasks.openPanel')"
+                :tooltip="t('tasks.openPanel')"
+                @click.stop="openLatestPlan"
+              >
+                <Icon name="external-link" size="md" />
+              </IconButton>
+              <!-- Cancelling the live mode lives in the panel head — the plan
+                   pill only opens the panel. (An armed-only directive never
+                   reaches this panel; the composer inline pill's × cancels it.) -->
+              <IconButton
+                v-if="planArmed || planMode"
+                size="sm"
+                :label="t('status.workModeDismiss')"
+                :tooltip="t('status.workModeDismiss')"
+                @click.stop="emit('togglePlan')"
+              >
+                <Icon name="power" size="md" />
+              </IconButton>
+              <IconButton
+                size="sm"
+                :label="t('tasks.closePanel')"
+                :tooltip="t('tasks.closePanel')"
+                @click.stop="emit('close-dock-panel')"
+              >
+                <Icon name="close" size="md" />
+              </IconButton>
+            </template>
+          </WorkPanelHead>
         </div>
         <div ref="workBodyRef" class="dock-work-body" @scroll="onWorkBodyScroll">
           <TasksPane
@@ -518,11 +578,17 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
             :goal="goal"
             :open-file="openFile"
           />
+          <PlanPanel
+            v-else-if="dockPanel === 'plan'"
+            :plan="latestPlan"
+            :plan-mode-on="planMode"
+            :open-file="openFile"
+          />
         </div>
       </div>
     </Transition>
 
-    <div v-if="hasDockWork" class="dock-workbar">
+    <div v-if="hasDockWork || planMode || latestPlan" class="dock-workbar">
       <WorkPill
         v-if="goal"
         icon="target"
@@ -534,6 +600,20 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
         <template #meta>
           <span class="dw-goal-status" :class="`dw-goal-status--${goal.status}`">{{ goalStatusLabel }}</span>
         </template>
+      </WorkPill>
+      <!-- The plan entry: shown once plan mode is live server-side or a
+           persisted plan exists (the pill then stays as the plan viewer even
+           after disarm). A merely ARMED directive never lands here — it is
+           local intent, carried solely by the composer's inline pill, whose ×
+           cancels it. Cancelling the live mode lives in the panel head. -->
+      <WorkPill
+        v-if="planMode || latestPlan"
+        icon="file-edit"
+        :label="t('status.planLabel')"
+        :active="dockPanel === 'plan'"
+        @click="onPillClick('plan', $event)"
+      >
+        {{ t('status.planLabel') }}
       </WorkPill>
       <WorkPill
         v-if="bashTasks.length > 0"
@@ -602,6 +682,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
       :status="status"
       :thinking="thinking"
       :plan-mode="planMode"
+      :plan-armed="planArmed"
       :swarm-mode="swarmMode"
       :goal-mode="goalMode"
       :goal="goal"
@@ -622,11 +703,9 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
       @toggle-plan="emit('togglePlan')"
       @toggle-swarm="emit('toggleSwarm')"
       @toggle-goal="emit('toggleGoal')"
-      @open-btw="emit('openBtw')"
       @create-goal="emit('createGoal', $event)"
       @control-goal="emit('controlGoal', $event)"
       @focus-goal="emit('focusGoal')"
-      @focus-swarm="emit('focusSwarm')"
       @compact="emit('compact')"
       @pick-model="emit('pickModel')"
       @select-model="emit('selectModel', $event)"
@@ -736,6 +815,50 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
 .dock-work-panel.panel-subagent,
 .dock-work-panel.panel-bash {
   height: min(var(--p-dock-panel-h), 50vh);
+}
+/* Todos, goal, subagent, and bash panels per the redesign: uniform 16px
+   inset (the head tab's own padding is zeroed so its content lands exactly
+   on it), no head hairline. */
+.dock-work-panel.panel-todos .dock-work-head,
+.dock-work-panel.panel-goal .dock-work-head,
+.dock-work-panel.panel-plan .dock-work-head,
+.dock-work-panel.panel-subagent .dock-work-head,
+.dock-work-panel.panel-bash .dock-work-head {
+  padding: var(--space-4) var(--space-4) 0;
+  border-bottom: none;
+}
+.dock-work-panel.panel-todos .dock-work-tab,
+.dock-work-panel.panel-goal .dock-work-tab,
+.dock-work-panel.panel-plan .dock-work-tab,
+.dock-work-panel.panel-subagent .dock-work-tab,
+.dock-work-panel.panel-bash .dock-work-tab {
+  padding: 0;
+  line-height: var(--leading-solid);
+}
+.dock-work-panel.panel-goal .gh-time {
+  color: var(--color-text-muted);
+}
+.dock-work-panel.panel-todos .dock-work-body,
+.dock-work-panel.panel-goal .dock-work-body,
+.dock-work-panel.panel-plan .dock-work-body,
+.dock-work-panel.panel-subagent .dock-work-body,
+.dock-work-panel.panel-bash .dock-work-body {
+  /* margin, not padding: the 12px gap below the head stays put when the
+     body scrolls — top padding would scroll away with the content. */
+  margin-top: var(--space-3);
+  padding: 0 var(--space-4) var(--space-4);
+}
+/* Filtered panels change height with the filter — pin them (two card rows
+   / a dozen rows plus a sliver) so the panel never resizes; the body
+   scrolls inside. */
+.dock-work-panel.panel-subagent,
+.dock-work-panel.panel-bash {
+  height: min(var(--p-dock-panel-h), 50vh);
+}
+.dock-work-tab.tab-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 .dock-work-head {
   display: flex;
@@ -885,6 +1008,16 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
   .dock-work-panel {
     left: 10px;
     right: calc(10px + var(--panes-scrollbar-width, 0px));
+  }
+  /* Touch targets: the panel head's icon actions (goal pause / resume /
+     cancel / close) and the segmented filter's items meet the 44px minimum;
+     glyph sizes are unchanged. */
+  .dock-work-head-actions :deep(.ui-seg__item) {
+    height: var(--touch-target-min);
+  }
+  .dock-work-head-actions :deep(.ui-icon-button) {
+    width: var(--touch-target-min);
+    height: var(--touch-target-min);
   }
 }
 .chat-dock:not(.align-mobile) :deep(.composer) {

@@ -8,6 +8,7 @@ import type { ExtendedState } from '../src/client/types';
 const apiMock = {
   startBtw: vi.fn(),
   submitPrompt: vi.fn(),
+  updateSession: vi.fn(),
 };
 const api = apiMock as unknown as KimiWebApi;
 
@@ -44,6 +45,7 @@ function createState(): ExtendedState {
     thinking: 'high',
     pendingThinkingBySession: {},
     planModeBySession: { sess_1: true },
+    planArmedBySession: {},
     swarmModeBySession: {},
     sideChatMessagesByAgent: {},
     sideChatSendingByAgent: {},
@@ -245,5 +247,36 @@ describe('useSideChat — sendSideChatPromptOn', () => {
     expect(
       state.sideChatMessagesByAgent.agent_btw_1?.map((message) => message.userMessageId),
     ).toEqual(['message_btw_1', 'message_btw_2']);
+  });
+
+  it('cleans up the optimistic echo and sending flag when the send fails before the submit', async () => {
+    // Regression: a failure thrown before the submit POST (here the thinking
+    // resolve) must still run the catch's cleanup — an early return used to
+    // skip it, so the side chat kept the optimistic message and stayed
+    // "sending" forever (no terminal event ever arrives for an unsubmitted
+    // prompt).
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    const state = createState();
+    const sideChat = useSideChat(state, {
+      api,
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
+      resolveThinkingForPrompt: async () => {
+        throw new TypeError('offline');
+      },
+    });
+    await sideChat.openSideChatOn('sess_1');
+
+    const sent = await sideChat.sendSideChatPrompt('repeat');
+
+    expect(sent).toBe(false);
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(state.sideChatMessagesByAgent.agent_btw_1 ?? []).toHaveLength(0);
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(false);
   });
 });

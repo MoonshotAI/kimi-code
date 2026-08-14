@@ -12,7 +12,11 @@ export const STORAGE_KEYS = {
   // useKimiWebClient
   permission: 'kimi-web.permission',
   activeWorkspace: 'kimi-active-workspace',
-  planMode: 'kimi-web.plan-mode',
+  // The ARMED plan intent (unsent toggle, cashed on the next send) — versioned
+  // away from planMode, whose pre-intent values mirrored the daemon FACT and
+  // must never be loaded as an intent (a stale true would cash planMode:true
+  // into the next plain message).
+  planArmed: 'kimi-web.plan-armed',
   swarmMode: 'kimi-web.swarm-mode',
   goalMode: 'kimi-web.goal-mode',
   fontScale: 'kimi-web.font-scale',
@@ -51,6 +55,9 @@ export const STORAGE_KEYS = {
   // Desktop auto-update: version the user chose to skip (renderer-local).
   updateSkippedVersion: 'kimi-web.update-skipped-version',
   // deprecated cleanups (kept so the removals still fire for old users)
+  // planMode mirrored the daemon FACT pre-intent; the armed intent now lives
+  // in planArmed and the fact re-folds from /status — never load the old map.
+  planMode: 'kimi-web.plan-mode',
   codeFont: 'kimi-web.code-font',
   contentAlign: 'kimi-web.content-align',
   theme: 'kimi-web.theme',

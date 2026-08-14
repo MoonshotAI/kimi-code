@@ -17,10 +17,12 @@ const props = defineProps<{
   sending: boolean;
   title?: string;
   subtitle?: string;
+  /** Resolves false when the prompt provably never left (a pre-submit
+      failure) — the draft stays in the box for a retry. */
+  onSend: (text: string) => Promise<boolean>;
 }>();
 
 const emit = defineEmits<{
-  send: [text: string];
   close: [];
   openMedia: [payload: OpenMediaRequest];
 }>();
@@ -42,15 +44,28 @@ const draft = ref('');
 const inputRef = ref<HTMLTextAreaElement | null>(null);
 const bodyRef = ref<HTMLDivElement | null>(null);
 
-function submit(): void {
-  const text = draft.value.trim();
-  if (!text) return;
-  emit('send', text);
-  draft.value = '';
-  void nextTick(() => {
-    if (inputRef.value) inputRef.value.style.height = 'auto';
-    scrollToBottom();
-  });
+const submitting = ref(false);
+
+async function submit(): Promise<void> {
+  const raw = draft.value;
+  const text = raw.trim();
+  if (!text || submitting.value) return;
+  submitting.value = true;
+  try {
+    const sent = await props.onSend(text);
+    // Unsent (the failure already toasted) — keep the draft for a retry.
+    if (!sent) return;
+    // The box stayed editable while the send was in flight — clear only when
+    // nothing new was typed since, never eat in-progress typing.
+    if (draft.value !== raw) return;
+    draft.value = '';
+    void nextTick(() => {
+      if (inputRef.value) inputRef.value.style.height = 'auto';
+      scrollToBottom();
+    });
+  } finally {
+    submitting.value = false;
+  }
 }
 
 function scrollToBottom(): void {

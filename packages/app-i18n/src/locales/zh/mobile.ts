@@ -15,6 +15,7 @@ export default {
   permAutoSub: '完全自主，不再提问',
   permYoloSub: '自动批准工具，仍可能提问',
   planModeSub: '计划模式',
+  goalModeSub: '目标模式',
   swarmModeSub: 'Swarm 模式',
   archivedSessions: '已归档会话',
   archivedSessionsSub: '查看并恢复已归档会话',
