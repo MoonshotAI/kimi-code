@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   dispatchInput,
   goalArgumentCompletions,
+  goalObjectiveLengthWarning,
   handleGoalCommand,
   parseGoalCommand,
   setExperimentalFeatures,
@@ -213,8 +214,47 @@ describe('parseGoalCommand', () => {
     });
   });
 
-  it('rejects objectives longer than 4000 characters', () => {
-    expect(parseGoalCommand('x'.repeat(4001))).toMatchObject({ kind: 'error' });
+  it('rejects objectives longer than 4000 characters with a file-reference hint', () => {
+    expect(parseGoalCommand('x'.repeat(4001))).toEqual({
+      kind: 'error',
+      restoreInput: true,
+      message:
+        'Goal objective is too long (max 4000 characters). Put long content in a file and reference the file path.',
+    });
+    expect(parseGoalCommand(`next ${'x'.repeat(4001)}`)).toEqual({
+      kind: 'error',
+      restoreInput: true,
+      message:
+        'Goal objective is too long (max 4000 characters). Put long content in a file and reference the file path.',
+    });
+  });
+});
+
+describe('goalObjectiveLengthWarning', () => {
+  it('warns once the typed /goal objective exceeds the limit', () => {
+    const warning = goalObjectiveLengthWarning(`/goal ${'x'.repeat(4001)}`);
+    expect(warning).toContain('(4001/4000 characters)');
+    expect(warning).toContain('reference the file path');
+  });
+
+  it('warns for over-limit /goal next and /goal replace objectives', () => {
+    expect(goalObjectiveLengthWarning(`/goal next ${'x'.repeat(4001)}`)).toBeDefined();
+    expect(goalObjectiveLengthWarning(`/goal replace ${'x'.repeat(4001)}`)).toBeDefined();
+    expect(goalObjectiveLengthWarning(`/goal -- ${'x'.repeat(4001)}`)).toBeDefined();
+  });
+
+  it('stays quiet for valid objectives and non-goal input', () => {
+    expect(goalObjectiveLengthWarning(`/goal ${'x'.repeat(4000)}`)).toBeUndefined();
+    expect(goalObjectiveLengthWarning('/goal Ship feature X')).toBeUndefined();
+    expect(goalObjectiveLengthWarning('Ship feature X')).toBeUndefined();
+  });
+
+  it('stays quiet for control forms and lookalike commands', () => {
+    expect(goalObjectiveLengthWarning('/goal')).toBeUndefined();
+    expect(goalObjectiveLengthWarning('/goal status')).toBeUndefined();
+    expect(goalObjectiveLengthWarning('/goal pause')).toBeUndefined();
+    expect(goalObjectiveLengthWarning('/goal next manage')).toBeUndefined();
+    expect(goalObjectiveLengthWarning(`/goalie ${'x'.repeat(4001)}`)).toBeUndefined();
   });
 });
 
@@ -264,6 +304,25 @@ describe('handleGoalCommand', () => {
     await handleGoalCommand(host, 'Ship feature X');
 
     expect(calls).toEqual([{ receiver: host, text: 'Ship feature X' }]);
+  });
+
+  it('rejects an over-limit objective before sending and restores the typed input', async () => {
+    const args = 'x'.repeat(4001);
+    await handleGoalCommand(host, args);
+
+    expect(session.createGoal).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.showError).toHaveBeenCalledWith(
+      'Goal objective is too long (max 4000 characters). Put long content in a file and reference the file path.',
+    );
+    expect(host.restoreInputText).toHaveBeenCalledWith(`/goal ${args}`);
+  });
+
+  it('does not restore input for the empty-objective usage hint', async () => {
+    await handleGoalCommand(host, 'replace');
+
+    expect(host.showStatus).toHaveBeenCalled();
+    expect(host.restoreInputText).not.toHaveBeenCalled();
   });
 
   it('asks before starting a goal in Manual mode', async () => {

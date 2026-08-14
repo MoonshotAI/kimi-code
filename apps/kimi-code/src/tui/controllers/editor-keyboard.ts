@@ -44,6 +44,8 @@ export interface EditorKeyboardHost {
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
+  /** `undefined` means the input cannot be a `/goal` command (clear without measuring). */
+  updateGoalLengthWarning(text: string | undefined): void;
   updateQueueDisplay(): void;
   toggleToolOutputExpansion(): void;
   toggleTodoPanelExpansion(): void;
@@ -80,6 +82,15 @@ export class EditorKeyboardController {
     editor.onChange = (text: string) => {
       if (this.pendingExit) this.clearPendingExit();
       host.updateEditorBorderHighlight(text);
+      // Expanding paste markers costs a full-text pass, and only `/goal`
+      // input can trip the objective length limit — so skip the expansion
+      // for ordinary prompts. A leading paste marker may itself expand
+      // into a `/goal ...` line, so it must pass the gate too.
+      if (editor.inputMode !== 'bash' && (text.startsWith('/goal') || text.startsWith('[paste #'))) {
+        host.updateGoalLengthWarning(editor.getExpandedText());
+      } else {
+        host.updateGoalLengthWarning(undefined);
+      }
     };
 
     // bash mode recalls only shell (`!`-prefixed) history entries; prompt mode

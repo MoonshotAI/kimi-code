@@ -46,6 +46,8 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
     btwPanelController: { cancelRunning: btwCancelRunning, closeOrCancel: btwCloseOrCancel },
     openUndoSelector,
     cancelRunningShellCommand,
+    updateEditorBorderHighlight: vi.fn(),
+    updateGoalLengthWarning: vi.fn(),
   } as unknown as EditorKeyboardHost;
 
   const controller = new EditorKeyboardController(
@@ -283,6 +285,76 @@ describe('EditorKeyboardController shell history recall', () => {
     restore('prompt');
 
     expect(editor['setInputMode'] as unknown as Mock).toHaveBeenCalledWith('prompt');
+  });
+});
+
+describe('EditorKeyboardController input changes', () => {
+  function installExpandedText(
+    editor: Harness['editor'],
+    expanded: string,
+  ): ReturnType<typeof vi.fn> {
+    const getExpandedText = vi.fn(() => expanded);
+    editor['getExpandedText'] = getExpandedText as unknown as (...args: never[]) => unknown;
+    return getExpandedText;
+  }
+
+  it('forwards text changes to the border highlight and goal length warning', () => {
+    const { host, editor } = createHarness();
+    installExpandedText(editor, '/goal Ship feature X');
+    const onChange = editor['onChange'] as unknown as (text: string) => void;
+
+    onChange('/goal Ship feature X');
+
+    expect(host.updateEditorBorderHighlight).toHaveBeenCalledWith('/goal Ship feature X');
+    expect(host.updateGoalLengthWarning).toHaveBeenCalledWith('/goal Ship feature X');
+  });
+
+  it('measures the goal length warning on paste-expanded text, not the collapsed marker', () => {
+    const { host, editor } = createHarness();
+    const expanded = `/goal ${'x'.repeat(4001)}`;
+    installExpandedText(editor, expanded);
+    const onChange = editor['onChange'] as unknown as (text: string) => void;
+
+    // The visible text only holds the collapsed paste marker.
+    onChange('/goal [paste #1 +4000 chars]');
+
+    expect(host.updateGoalLengthWarning).toHaveBeenCalledWith(expanded);
+  });
+
+  it('expands a leading paste marker because its content may start with /goal', () => {
+    const { host, editor } = createHarness();
+    const expanded = `/goal ${'x'.repeat(4001)}`;
+    const getExpandedText = installExpandedText(editor, expanded);
+    const onChange = editor['onChange'] as unknown as (text: string) => void;
+
+    onChange('[paste #1 +4000 chars]');
+
+    expect(getExpandedText).toHaveBeenCalled();
+    expect(host.updateGoalLengthWarning).toHaveBeenCalledWith(expanded);
+  });
+
+  it('skips paste expansion entirely for non-goal input', () => {
+    const { host, editor } = createHarness();
+    const getExpandedText = installExpandedText(editor, 'whatever');
+    const onChange = editor['onChange'] as unknown as (text: string) => void;
+
+    onChange('just a normal prompt');
+    onChange('/help');
+
+    expect(getExpandedText).not.toHaveBeenCalled();
+    expect(host.updateGoalLengthWarning).toHaveBeenCalledWith(undefined);
+  });
+
+  it('skips the goal length warning in bash mode', () => {
+    const { host, editor } = createHarness();
+    const getExpandedText = installExpandedText(editor, '/goal x');
+    (editor as unknown as { inputMode: string }).inputMode = 'bash';
+    const onChange = editor['onChange'] as unknown as (text: string) => void;
+
+    onChange('/goal x');
+
+    expect(getExpandedText).not.toHaveBeenCalled();
+    expect(host.updateGoalLengthWarning).toHaveBeenCalledWith(undefined);
   });
 });
 
