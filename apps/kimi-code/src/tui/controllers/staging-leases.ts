@@ -18,6 +18,11 @@
  * a dispatch RPC that failed before any turn claimed the lease) is deleted
  * immediately, whatever form it takes.
  *
+ * A submission diverted before dispatch hands its lease back via `defer`:
+ * the media stays staged under raw (ids, paths) ownership — a queued message
+ * re-leases at dequeue dispatch, and the cache-hint stash's restore/resend
+ * exits release it through `releaseRecalled` / a fresh lease.
+ *
  * The tracker holds one lease per submission, binds it to the consuming turn
  * (explicitly at dispatch, by exact submission id when the turn echoes the
  * client-chosen prompt id, or heuristically when a matching-origin turn
@@ -220,14 +225,29 @@ export class StagingLeaseTracker {
   }
 
   /**
-   * Release a queued item recalled into the editor: the restored draft still
-   * references its attachments, so this is not a discard — daemon uploads stay
-   * staged (only the retain is consumed; the next submit re-retains them) and
-   * cache copies retire to session lifetime instead of being deleted.
+   * Release a queued item (or a cache-hint stash's extraction) recalled into
+   * the editor: the restored draft still references its attachments, so this
+   * is not a discard — daemon uploads stay staged (only the retain is
+   * consumed; the next submit re-retains them) and cache copies retire to
+   * session lifetime instead of being deleted.
    */
-  releaseRecalled(item: QueuedMessage): void {
+  releaseRecalled(item: {
+    imageAttachmentIds?: readonly number[];
+    stagingPaths?: readonly string[];
+  }): void {
     this.effects.releaseRetains(item.imageAttachmentIds ?? []);
     for (const path of item.stagingPaths ?? []) this.retiredPaths.add(path);
+  }
+
+  /**
+   * Hand a lease's staged media back to raw (ids, paths) ownership without
+   * consuming retains or deleting files: the lease is simply unbound. Used
+   * when a submission is diverted before dispatch — queued behind a running
+   * turn or swallowed by the cache-hint stash; see the header note.
+   */
+  defer(lease: StagingLease | undefined): void {
+    if (lease === undefined || lease.released) return;
+    this.unbind(lease);
   }
 
   /** Track an in-flight staging-related promise so {@link drain} can await it. */

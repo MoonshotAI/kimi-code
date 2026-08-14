@@ -53,6 +53,7 @@ function makeHost(
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     restoreInputText: vi.fn(),
+    recallStashedMedia: vi.fn(),
     showError: vi.fn(),
     createNewSession: vi.fn(async () => {
       if (overrides.createNewSessionFails !== true) state.appState.sessionId = 's2';
@@ -224,6 +225,34 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     // Nothing was sent; both inputs are back in the editor, newline-joined.
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
     expect(host.restoreInputText).toHaveBeenLastCalledWith('hello\nworld');
+  });
+
+  it('releases stashed media with recall semantics when the dialog is dismissed', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const extraction = uploadedExtraction('file-1', 1);
+
+    expect(controller.maybeInterceptOnSubmit('describe [image #1 (1×1)]', extraction)).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalled();
+    });
+    vi.restoreAllMocks();
+
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('\u001B'); // dismiss
+    await flush();
+
+    // Nothing was sent; the draft is back in the editor and the stash's
+    // retains/staged copies go through recall — without this the retain count
+    // never returns to zero and the upload can never be lease-deleted.
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.restoreInputText).toHaveBeenCalledWith('describe [image #1 (1×1)]');
+    expect(host.recallStashedMedia).toHaveBeenCalledWith('describe [image #1 (1×1)]', extraction);
   });
 
   it('hands the stashed input back when the session switched during the fetch', async () => {

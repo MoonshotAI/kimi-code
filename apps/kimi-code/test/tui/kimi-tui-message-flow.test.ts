@@ -60,6 +60,10 @@ import {
 } from '#/tui/commands/prompts';
 import type { QueuedMessage } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
+import {
+  extractMediaAttachments,
+  type ExtractionResult,
+} from '#/tui/utils/image-placeholder';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
@@ -120,6 +124,7 @@ interface MessageDriver {
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
   recallLastQueued(): QueuedMessage | undefined;
+  recallStashedMedia(text: string, extraction: ExtractionResult | undefined): void;
   clearQueuedMessages(): void;
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
@@ -2687,6 +2692,33 @@ command = "vim"
     });
     expect(attachment.fileId).toBeUndefined();
     expect(attachment.bytes).toEqual(new Uint8Array([0xaa, 0xbb]));
+  });
+
+  it('still deletes the staging upload when a cache-hint dismissal precedes the resend', async () => {
+    const { driver, session, harness } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-dismissed');
+    const text = `describe ${attachment.placeholder}`;
+
+    // Simulate a cache-hint interception dismissed back into the editor: the
+    // submit's extraction is stashed, then restored with recall semantics
+    // (retain consumed, staged files kept for the restored draft).
+    const extraction = extractMediaAttachments(text, imageStore);
+    driver.recallStashedMedia(text, extraction);
+
+    // The restored draft resubmits and re-retains; the consuming turn must
+    // still delete the daemon upload — a retain leaked by the dismissal would
+    // keep the count above zero and pin the upload until its TTL.
+    driver.handleUserInput(text);
+
+    expect(session.prompt).toHaveBeenCalledOnce();
+    emitTurn(driver, 1, () => {
+      expect(harness.deleteFile).not.toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-dismissed');
+    });
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
   });
 
   it('waits briefly for a pending paste ingestion so the submit uses the daemon-ref form', async () => {

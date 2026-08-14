@@ -123,7 +123,7 @@ import { ClipboardImageHintController } from './controllers/clipboard-image-hint
 import { EditorKeyboardController } from './controllers/editor-keyboard';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import { SessionReplayRenderer } from './controllers/session-replay';
-import { StagingLeaseTracker } from './controllers/staging-leases';
+import { StagingLeaseTracker, type StagingLease } from './controllers/staging-leases';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController } from './controllers/tasks-browser';
 import { installRainbowDance } from './easter-eggs/dance';
@@ -288,6 +288,12 @@ interface SendMessageOptions {
   readonly imageAttachmentIds?: readonly number[];
   readonly stagingPaths?: readonly string[];
   readonly hasMedia?: boolean;
+  /**
+   * Lease pre-created at extraction time by `sendNormalUserInput`. Dispatch
+   * reuses it (carrying its exact-binding submission id); enqueueing defers
+   * it — the queue item owns the raw ids/paths and re-leases at dequeue.
+   */
+  readonly lease?: StagingLease;
 }
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
@@ -1352,24 +1358,47 @@ export class KimiTUI {
       this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
       return;
     }
+    // Create the staging lease right after extraction, so every exit below
+    // releases through the tracker instead of open-coding ids/paths — a
+    // forgotten exit degrades to an unclaimed lease (swept by `releaseAll`)
+    // instead of a permanently retained upload. The lease carries the
+    // exact-binding submission id: the consuming turn's `turn.started` echoes
+    // it as `promptId`. A goal-active submission is steered and binds its
+    // lease explicitly in sendMessageInternal, so it gets no id.
+    const stagingLease = this.staging.create(
+      // One retain per unique id per extraction: dedupe repeated placeholder
+      // occurrences so the lease's id multiplicity matches the retain count.
+      [...new Set(extraction.imageAttachmentIds)],
+      extraction.stagingPaths,
+      'user',
+      extraction.hasMedia && this.state.appState.goal?.status !== 'active'
+        ? randomUUID()
+        : undefined,
+    );
     if (!this.validateMediaCapabilities(extraction)) {
-      this.releaseStagingMedia(extraction.imageAttachmentIds, extraction.stagingPaths);
+      this.staging.release(stagingLease);
       return;
     }
     // Idle cache-hint interception sits before session creation; it is
     // synchronous unless a hint actually fires. Aside from the bounded
     // ingestion wait above, the send path stays await-free up to sendMessage.
-    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction)) return;
+    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction)) {
+      // The stash owns the extraction from here: its resend re-leases inside
+      // the re-entered send path, its restore goes through releaseRecalled
+      // (see CacheHintController). Detach so the stash is not double-owned.
+      this.staging.defer(stagingLease);
+      return;
+    }
     let session = this.session;
     if (session === undefined) {
       if (!this.engineV2) {
         this.showError(LLM_NOT_SET_MESSAGE);
-        this.releaseStagingMedia(extraction.imageAttachmentIds, extraction.stagingPaths);
+        this.staging.release(stagingLease);
         return;
       }
       session = await this.ensureSession();
       if (session === undefined) {
-        this.releaseStagingMedia(extraction.imageAttachmentIds, extraction.stagingPaths);
+        this.staging.release(stagingLease);
         return;
       }
     }
@@ -1379,6 +1408,7 @@ export class KimiTUI {
         parts: extraction.parts,
         imageAttachmentIds: extraction.imageAttachmentIds,
         stagingPaths: extraction.stagingPaths,
+        lease: stagingLease,
       });
     } else {
       this.sendMessage(session, text);
@@ -1454,12 +1484,34 @@ export class KimiTUI {
     // `releaseRecalled`), and rebases recalled videos onto their staged cache
     // copies so a vanished original source cannot lose the media.
     this.staging.releaseRecalled(last);
-    const videoIds = videoAttachmentIdsInText(last.text, this.imageStore);
-    last.stagingPaths?.forEach((path, index) => {
+    this.rebaseRecalledVideoSources(last.text, last.stagingPaths);
+    return last;
+  }
+
+  /**
+   * Cache-hint restore: a dismissed/hand-back interception returns its draft
+   * to the editor — same semantics as a queue recall (consume the stash
+   * extraction's retains, retire its staged copies, rebase videos onto them).
+   */
+  recallStashedMedia(text: string, extraction: ExtractionResult | undefined): void {
+    if (extraction === undefined) return;
+    this.staging.releaseRecalled({
+      imageAttachmentIds: extraction.imageAttachmentIds,
+      stagingPaths: extraction.stagingPaths,
+    });
+    this.rebaseRecalledVideoSources(text, extraction.stagingPaths);
+  }
+
+  private rebaseRecalledVideoSources(
+    text: string,
+    stagingPaths: readonly string[] | undefined,
+  ): void {
+    if (stagingPaths === undefined || stagingPaths.length === 0) return;
+    const videoIds = videoAttachmentIdsInText(text, this.imageStore);
+    stagingPaths.forEach((path, index) => {
       const id = videoIds[index];
       if (id !== undefined) this.imageStore.rebaseVideoSource(id, path);
     });
-    return last;
   }
 
   // =========================================================================
@@ -1578,23 +1630,26 @@ export class KimiTUI {
 
     const sdkInput = options?.parts ?? input;
     const goalActive = this.state.appState.goal?.status === 'active';
-    // A plain prompt submission carrying staged media gets a client-chosen
-    // prompt id: the engine echoes it on the consuming turn's `turn.started`
-    // (`promptId`), so the lease binds exactly instead of through the origin
-    // heuristic. The goal-steer path binds its lease explicitly below, so it
-    // gets no id.
-    const submissionId =
-      !goalActive && (imageAttachmentIds !== undefined || (options?.stagingPaths?.length ?? 0) > 0)
-        ? randomUUID()
-        : undefined;
-    const stagingLease = this.staging.create(
-      // One retain per unique id per extraction: dedupe repeated placeholder
-      // occurrences so the lease's id multiplicity matches the retain count.
-      imageAttachmentIds === undefined ? [] : [...new Set(imageAttachmentIds)],
-      options?.stagingPaths ?? [],
-      'user',
-      submissionId,
-    );
+    // The lease normally arrives pre-created by sendNormalUserInput (carrying
+    // its exact-binding submission id). Queued dispatches and steer batches
+    // arrive with raw ids/paths instead: a prompt submission carrying staged
+    // media gets a client-chosen prompt id minted here — the engine echoes it
+    // on the consuming turn's `turn.started` (`promptId`), so the lease binds
+    // exactly instead of through the origin heuristic. The goal-steer path
+    // binds its lease explicitly below, so it gets no id.
+    const stagingLease =
+      options?.lease ??
+      this.staging.create(
+        // One retain per unique id per extraction: dedupe repeated placeholder
+        // occurrences so the lease's id multiplicity matches the retain count.
+        imageAttachmentIds === undefined ? [] : [...new Set(imageAttachmentIds)],
+        options?.stagingPaths ?? [],
+        'user',
+        !goalActive && (imageAttachmentIds !== undefined || (options?.stagingPaths?.length ?? 0) > 0)
+          ? randomUUID()
+          : undefined,
+      );
+    const submissionId = stagingLease?.submissionId;
     // While a goal is being pursued the engine holds its active turn across the
     // whole continuation loop, so a fresh prompt races the goal driver at every
     // continuation boundary and is rejected with `turn.agent_busy`, dropping
@@ -1630,16 +1685,16 @@ export class KimiTUI {
       this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
       return;
     }
-    if (!this.validateMediaCapabilities(rewrite)) {
-      this.releaseStagingMedia(rewrite.imageAttachmentIds, rewrite.stagingPaths);
-      return;
-    }
-    this.beginSessionRequest();
     const stagingLease = this.staging.create(
       [...new Set(rewrite.imageAttachmentIds)],
       rewrite.stagingPaths,
       'skill_activation',
     );
+    if (!this.validateMediaCapabilities(rewrite)) {
+      this.staging.release(stagingLease);
+      return;
+    }
+    this.beginSessionRequest();
     this.staging.trackDispatch(
       stagingLease,
       session.activateSkill(skillName, rewrite.text),
@@ -1665,16 +1720,16 @@ export class KimiTUI {
       this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
       return;
     }
-    if (!this.validateMediaCapabilities(rewrite)) {
-      this.releaseStagingMedia(rewrite.imageAttachmentIds, rewrite.stagingPaths);
-      return;
-    }
-    this.beginSessionRequest();
     const stagingLease = this.staging.create(
       [...new Set(rewrite.imageAttachmentIds)],
       rewrite.stagingPaths,
       'plugin_command',
     );
+    if (!this.validateMediaCapabilities(rewrite)) {
+      this.staging.release(stagingLease);
+      return;
+    }
+    this.beginSessionRequest();
     this.staging.trackDispatch(
       stagingLease,
       session.activatePluginCommand(pluginId, commandName, rewrite.text),
@@ -1692,6 +1747,9 @@ export class KimiTUI {
       this.state.appState.streamingPhase !== 'idle' ||
       this.state.appState.isCompacting
     ) {
+      // A queued message re-leases its staged media at dequeue dispatch; the
+      // pre-dispatch lease defers to the queue item's raw ids/paths.
+      this.staging.defer(options?.lease);
       this.enqueueMessage(input, options);
       return;
     }

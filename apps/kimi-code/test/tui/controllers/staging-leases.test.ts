@@ -259,8 +259,6 @@ describe('StagingLeaseTracker', () => {
       // daemon upload stays staged (only the retain is consumed) and the
       // cache copy retires to session lifetime.
       tracker.releaseRecalled({
-        text: 'q',
-        agentId: 'main',
         imageAttachmentIds: [2],
         stagingPaths: ['/cache/b'],
       });
@@ -272,6 +270,27 @@ describe('StagingLeaseTracker', () => {
       tracker.releaseAll();
       expect(deleted.fileIds).toEqual([]);
       expect(deleted.paths).toEqual(['/cache/b']);
+    });
+  });
+
+  describe('defer', () => {
+    it('unbinds the lease without consuming retains or deleting files', () => {
+      const { tracker, takeFileIds, releaseRetains, deleted } = makeTracker();
+      const lease = tracker.create([1], ['/cache/a'], 'user', 'sub-1');
+
+      tracker.defer(lease);
+
+      expect(lease?.released).toBe(true);
+      expect(takeFileIds).not.toHaveBeenCalled();
+      expect(releaseRetains).not.toHaveBeenCalled();
+      expect(deleted).toEqual({ fileIds: [], paths: [] });
+
+      // A deferred lease is gone for good: turn events cannot claim it and
+      // releaseAll does not sweep its media.
+      tracker.handleTurnStarted(turnStarted(1, 'user', 'sub-1'));
+      expect(lease?.turnId).toBeUndefined();
+      tracker.releaseAll();
+      expect(deleted).toEqual({ fileIds: [], paths: [] });
     });
   });
 
