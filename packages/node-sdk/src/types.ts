@@ -16,6 +16,11 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type Unsubscribe = () => void;
 
+export interface AgentRuntimeBinding {
+  readonly workspaceId: string;
+  readonly runtimeId: string;
+}
+
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
 export type {

@@ -17,17 +17,15 @@
  * Workspace scope.
  */
 
-import { Service } from '#/_base/di/service';
+import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { agentsMdWatchRoots, loadAgentsMdForRoots } from '#/agent/profile/context';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostEnvironment, type HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import type { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -47,7 +45,7 @@ export const workspaceInstructionsCurrentKey = defineState<WorkspaceInstructions
 );
 
 export class WorkspaceInstructionsService
-  extends Service
+  extends Disposable
   implements IWorkspaceInstructionsService
 {
   declare readonly _serviceBrand: undefined;
@@ -61,7 +59,7 @@ export class WorkspaceInstructionsService
   constructor(
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
+    @IHostEnvironment private readonly env: HostEnvironmentInfo,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
     @ILogService private readonly log: ILogService,
@@ -157,10 +155,3 @@ export class WorkspaceInstructionsService
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceInstructionsService,
-  WorkspaceInstructionsService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceInstructions',
-);

@@ -85,6 +85,11 @@ export const setModelResultSchema = z.object({
   providerName: z.string().optional(),
 });
 
+export const runtimeBindingSchema = z.object({
+  workspaceId: z.string(),
+  runtimeId: z.string(),
+});
+
 export const permissionModeSchema = z.enum(['manual', 'yolo', 'auto']);
 
 export const setPermissionPayloadSchema = z.object({

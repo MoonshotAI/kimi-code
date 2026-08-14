@@ -187,23 +187,20 @@ import {
   ISessionIndex,
   ISessionIndexMirror,
   ISessionInitService,
+  ISessionManager,
   ISessionMcpHandle,
   ISessionMetadata,
   ISessionSkillCatalog,
   ISessionWorkspaceContext,
   ITelemetryService,
   IWorkspaceAliases,
-  IWorkspaceDirs,
-  IWorkspaceMcpService,
   ISessionActivityView,
-  ISessionLifecycleService,
-  IWorkspaceLifecycleService,
-  IWorkspaceSkillCatalog,
-  IWorkspaceTrust,
+  IRuntimeResolver,
+  IWorkspaceInstanceManager,
   closeSessionById,
-  followWorkspaceHandlers,
+  followSessionLifecycles,
   getLiveSessionById,
-  handlerForSession,
+  programForSession,
   resumeSessionById,
   sessionDirOf,
   workspacePersistenceScope,
@@ -242,6 +239,7 @@ import {
   type ReloadSessionRpcInput,
   type RunCommandRpcInput,
   type SessionIdRpcInput,
+  type SwitchSessionRuntimeRpcInput,
   type SessionPromptRpcInput,
   type SetSessionModelRpcInput,
   type SetSessionModelRpcResult,
@@ -255,6 +253,7 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
+  AgentRuntimeBinding,
   BackgroundTaskInfo,
   CapabilityStatus,
   CompactOptions,
@@ -479,7 +478,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       // engine-initiated close) drops its wiring with the scope. Close events
       // fire per workspace handler, so follow every handler — present and
       // future — through the App-scope registry.
-      followWorkspaceHandlers(this.app.accessor, (service) =>
+      followSessionLifecycles(this.app.accessor, (service) =>
         service.onDidCloseSession((closed) => {
           this.unwireSession(closed.sessionId);
         }),
@@ -573,9 +572,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     const handler = await this.engineAccessor
-      .get(IWorkspaceLifecycleService)
-      .handlerFor({ root: normalizeRequiredWorkDir('listWorkspaceSkills', workDir) });
-    const catalog = handler.accessor.get(IWorkspaceSkillCatalog);
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: normalizeRequiredWorkDir('listWorkspaceSkills', workDir) });
+    const catalog = handler.program.skills;
     await catalog.ready;
     return catalog.catalog.listSkills().map(summarizeSkill);
   }
@@ -592,9 +591,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
     const handler = await this.engineAccessor
-      .get(IWorkspaceLifecycleService)
-      .handlerFor({ root: workDir });
-    const trusted = await handler.accessor.get(IWorkspaceTrust).get();
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: workDir });
+    const trusted = await handler.program.trust.get();
     if (trusted) return { trusted: true, gatedMcpServers: [] };
     try {
       const fs = this.engineAccessor.get(IHostFileSystem);
@@ -620,9 +619,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async trustWorkspace(workDir: string): Promise<void> {
     const handler = await this.engineAccessor
-      .get(IWorkspaceLifecycleService)
-      .handlerFor({ root: workDir });
-    await handler.accessor.get(IWorkspaceTrust).trust();
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: workDir });
+    await handler.program.trust.trust();
   }
 
   /**
@@ -1210,10 +1209,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       }
     }
-    const handler = await this.engineAccessor
-      .get(IWorkspaceLifecycleService)
-      .handlerFor({ root: workDir });
-    const handle = await handler.accessor.get(ISessionLifecycleService).create({
+    const handle = await this.engineAccessor.get(ISessionManager).create({
       sessionId: input.id,
       workDir,
       additionalDirs: input.additionalDirs,
@@ -1297,9 +1293,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.runSessionAccessAll(
       input.forkId === undefined ? [input.id] : [input.id, input.forkId],
       async () => {
-        const forkHandler = await handlerForSession(this.engineAccessor, input.id);
-        if (forkHandler === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
-        const handle = await forkHandler.accessor.get(ISessionLifecycleService).fork({
+        const program = await programForSession(this.engineAccessor, input.id);
+        if (program === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
+        const handle = await this.engineAccessor.get(ISessionManager).fork({
           sourceSessionId: input.id,
           newSessionId: input.forkId,
           title: input.title,
@@ -1332,10 +1328,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // Same per-session queue as close/reload: a delete serializes against
     // every other lifecycle operation on the session.
     return this.runSessionAccess(input.sessionId, async () => {
-      const handler = await handlerForSession(this.engineAccessor, input.sessionId);
-      if (handler === undefined) throw SDKRpcClientV2.sessionNotFound(input.sessionId);
       try {
-        await handler.accessor.get(ISessionLifecycleService).delete(input.sessionId);
+        await this.engineAccessor.get(ISessionManager).delete(input.sessionId);
       } catch (error) {
         // The session vanished between the index check and the delete: the
         // engine's own not-found crosses as an Error2 — restate it in v1's shape.
@@ -1421,11 +1415,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {
-    const workspaceLifecycle = this.engineAccessor.get(IWorkspaceLifecycleService);
+    const workspaces = this.engineAccessor.get(IWorkspaceInstanceManager);
     await Promise.all(
-      workspaceLifecycle.handlers.list().map(async (handler) => {
-        await handler.accessor.get(IWorkspaceSkillCatalog).reload();
-        const sessions = handler.accessor.get(ISessionLifecycleService).list();
+      workspaces.list().map(async (handler) => {
+        await handler.program.skills.reload();
+        const sessions = this.engineAccessor
+          .get(ISessionManager)
+          .list()
+          .filter(
+            (session) => session.accessor.get(ISessionContext).workspaceId === handler.id,
+          );
         await Promise.all(
           sessions.map(async (session) => {
             if (session.id === excludedSessionId) return;
@@ -1462,9 +1461,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
     const handle = this.requireLiveSession(input.id);
-    return handle.accessor
-      .get(IWorkspaceDirs)
-      .addDir({ path: input.path, persist: input.persist });
+    const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
+    const workspace = await this.engineAccessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ workspaceId });
+    return workspace.program.dirs.addDir({ path: input.path, persist: input.persist });
   }
 
   /**
@@ -1637,6 +1638,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async runCommand(input: RunCommandRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
     return agent.runCommand({ name: input.name, args: input.args });
+  }
+
+  override async getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.getRuntime();
+  }
+
+  override async switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding> {
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.switchRuntime(input.runtimeId);
   }
 
   /**
@@ -2370,8 +2381,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   ): Promise<T> {
     await this.configReady;
     const section = this.engineAccessor.get(IConfigService).get<McpSection | undefined>(MCP_SECTION);
+    const runtimeResolver = this.engineAccessor.get(IRuntimeResolver);
+    let workspaceId: string | undefined;
+    let stdioCwd = cwd;
+    if (server.transport === 'stdio') {
+      stdioCwd = normalizeWorkDir(cwd ?? process.cwd());
+      const workspace = await this.engineAccessor
+        .get(IWorkspaceInstanceManager)
+        .getOrCreate({ root: stdioCwd });
+      workspaceId = workspace.id;
+    }
     const manager = new McpConnectionManager({
-      stdioCwd: cwd,
+      stdioCwd,
+      runtimeResolver,
+      workspaceId,
+      runtimeId: workspaceId === undefined ? undefined : 'local',
       oauthService: await this.globalMcpOAuthService(),
       resolveClientName: () => this.resolveMcpClientName(),
       resolveDefaultTimeouts: () => ({
@@ -2426,9 +2450,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
     const handler = await this.engineAccessor
-      .get(IWorkspaceLifecycleService)
-      .handlerFor({ root: normalizeRequiredWorkDir('listWorkspaceMcpServers', workDir) });
-    const mcp = handler.accessor.get(IWorkspaceMcpService);
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: normalizeRequiredWorkDir('listWorkspaceMcpServers', workDir) });
+    const mcp = handler.program.mcp;
     await mcp.ready;
     return mcp.connectionManager().list() as readonly McpServerInfo[];
   }

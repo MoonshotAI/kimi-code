@@ -58,8 +58,6 @@ const FsWireErrorCode = {
 } as const;
 import ignore, { type Ignore } from 'ignore';
 
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { decodeUtfText, detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
 import {
   buildEtag,
@@ -72,7 +70,7 @@ import {
 import { ErrorCodes, Error2, isError2, unwrapErrorCause } from '#/errors';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
-import { ISessionProcessRunner } from '#/session/process/processRunner';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
@@ -108,15 +106,18 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   private realRootsCache: { readonly key: string; readonly roots: readonly string[] } | undefined =
     undefined;
   private readonly workDir: string;
+  private readonly workspaceId: string;
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
-    @ISessionProcessRunner private readonly runner: ISessionProcessRunner,
+    @IRuntimeResolver private readonly resolver: IRuntimeResolver,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWorkspaceGitService private readonly git: IWorkspaceGitService,
+    private readonly runtimeId = 'local',
   ) {
+    this.workspaceId = workspace.workspaceId;
     this.workDir = resolve(workspace.cwd);
   }
 
@@ -577,7 +578,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     args.push(req.pattern);
     args.push('.');
 
-    const proc = await this.runner.exec([rgPath, ...args], { cwd: this.workDir });
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
+    const proc = await lease.runtime.process!.spawn(rgPath, args, { cwd: this.workDir });
 
     const acc = new RgJsonAccumulator(req);
     let killed = false;
@@ -621,6 +623,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         void proc.dispose();
       } catch {
       }
+      lease.dispose();
     }
 
     return acc.finish(signal.aborted, Date.now() - startedAt);
@@ -753,13 +756,16 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private async resolveRg(): Promise<RgResolution | null> {
     if (this.rgResolution !== undefined) return this.rgResolution;
+    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
     const probe: RgProbe = {
-      exec: (args) => runCommand(this.runner, args, { cwd: this.workDir }),
+      exec: (args) => runCommand(lease.runtime.process!, args, { cwd: this.workDir }),
     };
     try {
       this.rgResolution = await ensureRgPath(probe);
     } catch {
       this.rgResolution = null;
+    } finally {
+      lease.dispose();
     }
     return this.rgResolution;
   }
@@ -1063,10 +1069,3 @@ function toWireError(err: unknown): { code: number; msg: string } {
   };
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceFsService,
-  WorkspaceFsService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceFs',
-);

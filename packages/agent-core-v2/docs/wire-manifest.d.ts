@@ -21,7 +21,7 @@
 // owning model offloads inline media to blob storage), cross-reducers
 // (foreign models that also reduce this record on dispatch and replay).
 
-// Index (51 record types)
+// Index (52 record types)
 //   config.update                      profile                     persisted  src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory               persisted  src/agent/contextMemory/contextOps.ts
 //   context.append_message             contextMemory               persisted  src/agent/contextMemory/contextOps.ts
@@ -53,6 +53,7 @@
 //   plan.revision                      plan                        persisted  src/features/plan/planOps.ts
 //   plugin.session_start               pluginSessionStartSnapshot  persisted  src/agent/plugin/agentPluginOps.ts
 //   profile.bind                       profile                     persisted  src/agent/profile/profileOps.ts
+//   runtime.set_binding                runtimeBinding              persisted  src/agent/runtimeBinding/runtimeBindingOps.ts
 //   skill.activate                     skill                       transient  src/agent/skill/skillOps.ts
 //   swarm_mode.enter                   swarm                       persisted  src/features/swarm/swarmOps.ts
 //   swarm_mode.exit                    swarm                       persisted  src/features/swarm/swarmOps.ts
@@ -484,6 +485,16 @@ interface ProfileBindPayload {
 }
 
 /**
+ * model: runtimeBinding · persisted
+ * owner: src/agent/runtimeBinding/runtimeBindingOps.ts
+ */
+interface RuntimeSetBindingPayload {
+  _name: 'runtime.set_binding';
+  workspaceId: string;
+  runtimeId: string;
+}
+
+/**
  * model: skill · toEvent
  * owner: src/agent/skill/skillOps.ts
  */
@@ -776,6 +787,7 @@ interface WirePayloadMap {
   "plan.revision": PlanRevisionPayload;
   "plugin.session_start": PluginSessionStartPayload;
   "profile.bind": ProfileBindPayload;
+  "runtime.set_binding": RuntimeSetBindingPayload;
   "skill.activate": SkillActivatePayload;
   "swarm_mode.enter": SwarmModeEnterPayload;
   "swarm_mode.exit": SwarmModeExitPayload;

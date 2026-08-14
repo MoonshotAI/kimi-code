@@ -23,7 +23,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 69 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 70 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -101,6 +101,7 @@
 //     profile.emittedThinkingEffortWarnings           src/agent/profile/profileService.ts
 //     profile.emittedToolPatternWarnings              src/agent/profile/profileService.ts
 //     prompt.launching                                src/agent/prompt/promptService.ts
+//     runtime.binding                                 src/agent/runtimeBinding/runtimeBindingService.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     stepRetry.failedAttempts                        src/agent/stepRetry/stepRetryService.ts
 //     stepRetry.lastFailedDriverId                    src/agent/stepRetry/stepRetryService.ts
@@ -1112,6 +1113,11 @@ export interface AgentStateSnapshot {
   'profile.emittedToolPatternWarnings': Set<string>;
   // src/agent/prompt/promptService.ts
   'prompt.launching': boolean;
+  // src/agent/runtimeBinding/runtimeBindingService.ts
+  'runtime.binding': /* RuntimeBinding — packages/agent-core-v2/src/runtime/runtime.ts */ {
+    readonly workspaceId: string;
+    readonly runtimeId: string;
+  };
   // src/agent/shellCommand/shellCommandService.ts
   'shellCommand.tasks': Map<string, string>;
   // src/agent/stepRetry/stepRetryService.ts

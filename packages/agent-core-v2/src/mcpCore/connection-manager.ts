@@ -23,6 +23,7 @@ import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
 import type { Tool } from '#/kosong/contract/tool';
+import { HostProcessError, HostProcessErrorCode } from '#/os/interface/hostProcess';
 
 import { abortable } from '#/_base/utils/abort';
 import { HttpMcpClient } from './client-http';
@@ -104,6 +105,10 @@ export interface McpDefaultTimeouts {
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   readonly stdioCwd?: string;
+  readonly runtimeResolver?: import('#/workspace/workspaceInstance/workspaceInstanceManager').IRuntimeResolver;
+  readonly workspaceId?: string;
+  readonly runtimeId?: string;
+  readonly requireStdioRuntimeId?: boolean;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
   readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
@@ -397,11 +402,20 @@ export class McpConnectionManager implements McpConnectionView {
       config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
     const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
+      const runtimeResolver = this.options.runtimeResolver;
+      const workspaceId = this.options.workspaceId;
+      const runtimeId = config.runtime_id ?? this.options.runtimeId;
+      if (runtimeResolver === undefined || workspaceId === undefined || runtimeId === undefined || (this.options.requireStdioRuntimeId === true && config.runtime_id === undefined)) {
+        throw new Error('MCP stdio requires runtime_id and runtime binding');
+      }
       return new StdioMcpClient(config, {
         startupTimeoutMs,
         toolCallTimeoutMs,
         defaultCwd: this.options.stdioCwd,
         clientName,
+        runtimeResolver,
+        workspaceId,
+        runtimeId,
       });
     }
     if (config.transport === 'sse') {
@@ -532,7 +546,12 @@ function isUnauthorizedLikeError(error: unknown): boolean {
 }
 
 function formatStartupError(error: unknown, client: RuntimeMcpClient | undefined): string {
-  const base = error instanceof Error ? error.message : String(error);
+  const source = error instanceof HostProcessError &&
+    error.code === HostProcessErrorCode.SpawnFailed &&
+    error.cause instanceof Error
+    ? error.cause
+    : error;
+  const base = source instanceof Error ? source.message : String(source);
   const tail = stderrTail(client);
   if (tail === undefined) return base;
   return `${base}\nstderr: ${tail}`;

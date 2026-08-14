@@ -17,9 +17,6 @@ import type { ScopeSeed } from '#/_base/di/scope';
 
 export type WorkspaceSource = 'local';
 
-export const LOCAL_OS_BACKEND_ID = 'local';
-export const LOCAL_PERSISTENCE_BACKEND_ID = 'local';
-
 export interface WorkspaceMeta {
   readonly id: string;
   readonly root: string;
@@ -37,8 +34,6 @@ export interface IWorkspaceContext {
   readonly remoteCwd?: string;
   readonly meta: WorkspaceMeta;
   readonly persistenceScope: string;
-  readonly osBackendId: string;
-  readonly persistenceBackendId: string;
 }
 
 export const IWorkspaceContext: ServiceIdentifier<IWorkspaceContext> =

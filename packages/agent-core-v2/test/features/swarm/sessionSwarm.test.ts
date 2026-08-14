@@ -36,8 +36,9 @@ import {
   type AgentMeta,
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ILogService } from '#/_base/log/log';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import type { Runtime } from '#/runtime/runtime';
 import {
   AgentRunBatch,
   resolveSwarmMaxConcurrency,
@@ -933,11 +934,13 @@ describe('SessionSwarmService metadata compatibility', () => {
         agents[agentId] = meta;
       },
     });
-    ix.stub(ISessionProcessRunner, {
+    ix.stub(IRuntimeResolver, {
       _serviceBrand: undefined,
-      exec: async () => {
-        throw new Error('unexpected process exec');
-      },
+      acquire: () => ({
+        runtime: { process: { spawn: async () => { throw new Error('unexpected process exec'); } } } as unknown as Runtime,
+        track: (resource) => resource,
+        dispose: () => {},
+      }),
     });
     ix.stub(ILogService, stubLog());
     ix.stub(IConfigService, new StubConfigService({}));

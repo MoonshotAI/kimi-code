@@ -31,7 +31,8 @@ import { TodoModel, todoSet } from '#/session/todo/todoOps';
 import { defineModel } from '#/wire/model';
 import { IWireService } from '#/wire/wire';
 
-import { createTestAgent, telemetryServices, type TestAgentContext } from '../../harness';
+import { createTestAgent, execEnvServices, telemetryServices, type TestAgentContext } from '../../harness';
+import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 describe('AgentConversationUndoService', () => {
@@ -48,7 +49,10 @@ describe('AgentConversationUndoService', () => {
 
   function setup() {
     records = [];
-    ctx = createTestAgent(telemetryServices(recordingTelemetry(records)));
+    ctx = createTestAgent(
+      telemetryServices(recordingTelemetry(records)),
+      execEnvServices({ hostFs: createFakeHostFs({ mkdir: async () => {} }) }),
+    );
     ctx.get(IAgentContextMemoryService);
     return ctx;
   }

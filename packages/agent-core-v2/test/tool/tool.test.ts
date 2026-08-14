@@ -21,6 +21,7 @@ import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting'
 import { makeHookRunner } from '../agent/externalHooks/runner-stub';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -59,7 +60,7 @@ import type {
   SessionSwarmRunArgs,
   SessionSwarmRunResult,
 } from '#/features/swarm/session/sessionSwarm';
-import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
+import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { IWireService } from '#/wire/wire';
 import { createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import { StubConfigService } from '../kosong/stubs';
@@ -185,6 +186,10 @@ function modelCatalogResolving(...aliases: readonly string[]): IModelCatalog {
       }
       return { id: alias } as Model;
     },
+    getRequester: (alias: string) => ({
+      model: { id: alias } as Model,
+      request: async function* () {},
+    }),
     notifyConfigChanged: () => {},
   } as unknown as IModelCatalog;
 }
@@ -1081,6 +1086,28 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('Subagent type "coder" is not allowed for this agent');
     expect(result.output).toContain('explore');
     expect(lifecycle.create).not.toHaveBeenCalled();
+  });
+
+  it('does not create a subagent when process disappears after tool activation', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(lifecycle);
+    vi.spyOn(context.get(IAgentRuntimeService), 'acquire').mockImplementation(() => {
+      throw new Error('process capability is no longer available');
+    });
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'explore',
+    });
+
+    expect(result).toEqual({
+      output: 'subagent error: process capability is no longer available',
+      isError: true,
+    });
+    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(lifecycle.run).not.toHaveBeenCalled();
+    expect(lifecycle.list()).toHaveLength(1);
   });
 
   it('spawns a subagent type inside the caller allowlist', async () => {
@@ -2966,7 +2993,7 @@ describe('Agent tools', () => {
     let triggered: Array<[string, string, number]>;
 
     beforeEach(() => {
-      exec = vi.fn<ISessionProcessRunner['exec']>().mockRejectedValue(new Error('Bash should not execute'));
+      exec = vi.fn<IHostProcessService['spawn']>().mockRejectedValue(new Error('Bash should not execute'));
       triggered = [];
       const hookEngine = makeHookRunner(
         [
@@ -2988,7 +3015,7 @@ describe('Agent tools', () => {
         },
       );
       ctx = createTestAgent(
-        execEnvServices({ processRunner: createFakeProcessRunner({ exec: exec as unknown as ISessionProcessRunner['exec'] }) }),
+        execEnvServices({ processRunner: createFakeProcessRunner({ spawn: exec as unknown as IHostProcessService['spawn'] }) }),
         externalHookServices(hookEngine),
       );
       context = ctx.get(IAgentContextMemoryService);
@@ -3534,21 +3561,22 @@ function bashCall(): ToolCall {
   };
 }
 
-function createFailingCommandRunner(stdout: string): ISessionProcessRunner {
-  function createProcess(): IProcess {
+function createFailingCommandRunner(stdout: string): IHostProcessService {
+  function createProcess(): IHostProcess {
     return {
+      _serviceBrand: undefined,
       stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
       stdout: Readable.from([stdout]),
       stderr: Readable.from(['']),
       pid: 42,
       exitCode: 2,
-      wait: vi.fn().mockResolvedValue(2) as IProcess['wait'],
-      kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-      dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+      wait: vi.fn().mockResolvedValue(2) as IHostProcess['wait'],
+      kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
     };
   }
   return createFakeProcessRunner({
-    exec: vi.fn().mockImplementation(async () => createProcess()),
+    spawn: vi.fn().mockImplementation(async () => createProcess()),
   });
 }
 

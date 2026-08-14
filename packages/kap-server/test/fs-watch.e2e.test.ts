@@ -185,7 +185,7 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_add',
         id: 'w1',
-        payload: { session_id: sid, paths: ['src'] },
+        payload: { session_id: sid, runtime_id: 'local', paths: ['src'] },
       }),
     );
     const ack = await receiveType(conn, 'ack', 1000);
@@ -211,6 +211,42 @@ describe('WS fs watch (kap-server)', () => {
     conn.ws.close();
   });
 
+  it('watch_fs_add without runtime_id defaults to the local runtime', async () => {
+    const r = await boot();
+    const sid = await createSession(r);
+    const conn = await openConn(wsUrl(r));
+    await helloAndSubscribe(conn, 'A', sid);
+
+    conn.ws.send(
+      JSON.stringify({
+        type: 'watch_fs_add',
+        id: 'w1',
+        payload: { session_id: sid, paths: ['src'] },
+      }),
+    );
+    const ack = await receiveType(conn, 'ack', 1000);
+    expect(ack.code).toBe(0);
+    expect(ack.payload).toMatchObject({ watched_paths: ['src'] });
+
+    await sleep(WATCH_SETTLE_MS);
+    writeFileSync(join(workspace, 'src', 'compat.ts'), 'export const y = 2;\n');
+
+    const ev = await receiveType(conn, 'event.fs.changed', 2000);
+    expect(ev.session_id).toBe(sid);
+
+    conn.ws.send(
+      JSON.stringify({
+        type: 'watch_fs_remove',
+        id: 'w2',
+        payload: { session_id: sid, paths: ['src'] },
+      }),
+    );
+    const removeAck = await receiveType(conn, 'ack', 1000);
+    expect(removeAck.code).toBe(0);
+
+    conn.ws.close();
+  });
+
   it.skipIf(process.platform === 'win32')(
     'burst > 500 changes inside 200ms window → truncated:true',
     { timeout: 15000 },
@@ -231,7 +267,7 @@ describe('WS fs watch (kap-server)', () => {
         JSON.stringify({
           type: 'watch_fs_add',
           id: 'w2',
-          payload: { session_id: sid, paths: ['.'] },
+          payload: { session_id: sid, runtime_id: 'local', paths: ['.'] },
         }),
       );
       await receiveType(conn, 'ack', 1000);
@@ -272,11 +308,11 @@ describe('WS fs watch (kap-server)', () => {
     await helloAndSubscribe(b, 'B', sid);
 
     a.ws.send(
-      JSON.stringify({ type: 'watch_fs_add', id: 'wA', payload: { session_id: sid, paths: ['src'] } }),
+      JSON.stringify({ type: 'watch_fs_add', id: 'wA', payload: { session_id: sid, runtime_id: 'local', paths: ['src'] } }),
     );
     await receiveType(a, 'ack', 1000);
     b.ws.send(
-      JSON.stringify({ type: 'watch_fs_add', id: 'wB', payload: { session_id: sid, paths: ['docs'] } }),
+      JSON.stringify({ type: 'watch_fs_add', id: 'wB', payload: { session_id: sid, runtime_id: 'local', paths: ['docs'] } }),
     );
     await receiveType(b, 'ack', 1000);
 
@@ -315,7 +351,7 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_add',
         id: 'w100',
-        payload: { session_id: sid, paths: paths.slice(0, 100) },
+        payload: { session_id: sid, runtime_id: 'local', paths: paths.slice(0, 100) },
       }),
     );
     const ack100 = await receiveType(conn, 'ack', 2000);
@@ -326,7 +362,7 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_add',
         id: 'w101',
-        payload: { session_id: sid, paths: [paths[100]!] },
+        payload: { session_id: sid, runtime_id: 'local', paths: [paths[100]!] },
       }),
     );
     const ack101 = await receiveType(conn, 'ack', 2000);
@@ -342,11 +378,11 @@ describe('WS fs watch (kap-server)', () => {
     await helloAndSubscribe(conn, 'A', sid);
 
     conn.ws.send(
-      JSON.stringify({ type: 'watch_fs_add', id: 'w1', payload: { session_id: sid, paths: ['src'] } }),
+      JSON.stringify({ type: 'watch_fs_add', id: 'w1', payload: { session_id: sid, runtime_id: 'local', paths: ['src'] } }),
     );
     await receiveType(conn, 'ack', 1000);
     conn.ws.send(
-      JSON.stringify({ type: 'watch_fs_add', id: 'w2', payload: { session_id: sid, paths: ['src'] } }),
+      JSON.stringify({ type: 'watch_fs_add', id: 'w2', payload: { session_id: sid, runtime_id: 'local', paths: ['src'] } }),
     );
     const ack = await receiveType(conn, 'ack', 1000);
     expect((ack.payload as { current_count: number }).current_count).toBe(1);
@@ -364,7 +400,7 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_add',
         id: 'wadd',
-        payload: { session_id: sid, paths: ['src', 'docs'] },
+        payload: { session_id: sid, runtime_id: 'local', paths: ['src', 'docs'] },
       }),
     );
     await receiveType(conn, 'ack', 1000);
@@ -373,7 +409,7 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_remove',
         id: 'wrm',
-        payload: { session_id: sid, paths: ['src'] },
+        payload: { session_id: sid, runtime_id: 'local', paths: ['src'] },
       }),
     );
     const ack = await receiveType(conn, 'ack', 1000);
@@ -394,7 +430,7 @@ describe('WS fs watch (kap-server)', () => {
       JSON.stringify({
         type: 'watch_fs_add',
         id: 'wbad',
-        payload: { session_id: sid, paths: ['../escape'] },
+        payload: { session_id: sid, runtime_id: 'local', paths: ['../escape'] },
       }),
     );
     const ack = await receiveType(conn, 'ack', 1000);

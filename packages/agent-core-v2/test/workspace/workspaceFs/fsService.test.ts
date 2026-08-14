@@ -12,9 +12,12 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
 import { ErrorCodes, Error2 } from '#/errors';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
-import { ISessionProcessRunner, type IProcess } from '#/session/process/processRunner';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/telemetry';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -30,8 +33,6 @@ function stubWorkspaceContext(): IWorkspaceContext {
     source: 'local',
     meta: { id: 'w', root: WORK_DIR, name: 'proj', createdAt: 1, lastOpenedAt: 1 },
     persistenceScope: 'sessions/w',
-    osBackendId: 'local',
-    persistenceBackendId: 'local',
   };
 }
 
@@ -227,8 +228,9 @@ function fakeFs(
   };
 }
 
-function fakeProcess(stdout: string, stderr: string, exitCode: number): IProcess {
+function fakeProcess(stdout: string, stderr: string, exitCode: number): IHostProcess {
   return {
+    _serviceBrand: undefined,
     stdin: new Writable({ write(_c, _e, cb) { cb(); } }),
     stdout: Readable.from([stdout]),
     stderr: Readable.from([stderr]),
@@ -246,18 +248,18 @@ type RunHandler = (args: readonly string[]) => {
   exitCode: number;
 };
 
-function fakeRunner(handler: RunHandler): ISessionProcessRunner {
+function fakeRunner(handler: RunHandler): IHostProcessService {
   return {
     _serviceBrand: undefined,
-    exec: async (args) => {
-      const r = handler(args);
+    spawn: async (command, args) => {
+      const r = handler([command, ...(args ?? [])]);
       return fakeProcess(r.stdout, r.stderr ?? '', r.exitCode);
     },
   };
 }
 
 function makeStreamingProcess(lines: readonly string[]): {
-  proc: IProcess;
+  proc: IHostProcess;
   wasKilled: () => boolean;
   yieldedLines: () => number;
 } {
@@ -276,7 +278,8 @@ function makeStreamingProcess(lines: readonly string[]): {
     }
     resolveWait(0);
   }
-  const proc: IProcess = {
+  const proc: IHostProcess = {
+    _serviceBrand: undefined,
     stdin: new Writable({ write(_c, _e, cb) { cb(); } }),
     stdout: Readable.from(gen()),
     stderr: Readable.from(['']),
@@ -315,7 +318,7 @@ function telemetryStub(events: Array<{ event: string; properties: Record<string,
 beforeEach(() => {
   _clearScopedRegistryForTests();
   registerScopedService(
-    LifecycleScope.Workspace,
+    'program',
     IWorkspaceFsService,
     WorkspaceFsService,
     ScopeActivation.OnDemand,
@@ -353,15 +356,34 @@ function makeSession(
   events: Array<{ event: string; properties: Record<string, unknown> }> = [],
   git: IGitService = defaultGitStub(),
   symlinks: readonly string[] = [],
-  runner?: ISessionProcessRunner,
+  runner?: IHostProcessService,
   symlinkTargets: Record<string, string> = {},
 ): IWorkspaceFsService {
-  host = createScopedTestHost();
-  const workspace = host.child(LifecycleScope.Workspace, 'w1', [
+  host = createScopedTestHost([
+    stubPair(IHostEnvironment, {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: 'test',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir: '/home/test',
+      ready: Promise.resolve(),
+    }),
+  ]);
+  const runtime = new FakeRuntime({ workspaceId: 'w', runtimeId: 'local', generation: 'test' }, { capabilities: ['process'] });
+  Object.defineProperty(runtime, 'process', { value: runner ?? fakeRunner(handler) });
+  host.app.instantiation.provide(IRuntimeResolver, {
+    _serviceBrand: undefined,
+    inspect: () => runtime,
+    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+  });
+  const workspace = host.child('program', 'w1', [
     stubPair(IWorkspaceContext, stubWorkspaceContext()),
     stubPair(IWorkspaceDirs, stubWorkspaceDirs()),
     stubPair(IHostFileSystem, fakeFs(files, symlinks, symlinkTargets)),
-    stubPair(ISessionProcessRunner, runner ?? fakeRunner(handler)),
+    stubPair(IHostProcessService, runner ?? fakeRunner(handler)),
     stubPair(ITelemetryService, telemetryStub(events)),
     stubPair(IWorkspaceGitService, workspaceGitStub(git)),
   ]);
@@ -599,10 +621,11 @@ describe('WorkspaceFsService.grep', () => {
     lines.push(JSON.stringify({ type: 'end', data: { path: { text: 'big.ts' } } }));
 
     let streaming: ReturnType<typeof makeStreamingProcess> | undefined;
-    const runner: ISessionProcessRunner = {
+    const runner: IHostProcessService = {
       _serviceBrand: undefined,
-      exec: async (args) => {
-        if (args[0] === 'rg' && args[1] === '--version') {
+      spawn: async (command, args) => {
+        const allArgs = [command, ...(args ?? [])];
+        if (allArgs[0] === 'rg' && allArgs[1] === '--version') {
           return fakeProcess('ripgrep 14.1.0', '', 0);
         }
         streaming = makeStreamingProcess(lines);

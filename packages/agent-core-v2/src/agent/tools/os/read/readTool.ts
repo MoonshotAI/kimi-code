@@ -22,8 +22,10 @@
  * load.
  */
 
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -232,27 +234,30 @@ export class ReadTool implements IReadTool {
   readonly description = READ_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
-    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
   ) {}
 
-  private get workspaceConfig(): WorkspaceConfig {
+  private workspaceConfig(view: RuntimeWorkspaceView, env: IHostEnvironment): WorkspaceConfig {
     return extendWorkspaceWithSkillRoots(
       {
-        workspaceDir: this.workspaceCtx.workDir,
-        additionalDirs: this.workspaceCtx.additionalDirs,
+        workspaceDir: view.workDir,
+        additionalDirs: view.additionalDirs,
       },
-      this.skillCatalog?.catalog.getSkillRoots() ?? [],
-      this.env.pathClass,
+      this.skillCatalog.catalog.getSkillRoots(),
+      env.pathClass,
     );
   }
 
   resolveExecution(args: ReadInput): ToolExecution {
+    const inspected = inspectAgentRuntime(this.runtime);
+    const view = new RuntimeWorkspaceView(inspected, this.workspaceCtx);
+    const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
+    const workspace = this.workspaceConfig(view, env);
     const path = resolvePathAccessPath(args.path, {
-      env: this.env,
-      workspace: this.workspaceConfig,
+      env,
+      workspace,
       operation: 'read',
     });
     return {
@@ -262,19 +267,29 @@ export class ReadTool implements IReadTool {
       approvalRule: literalRulePattern(this.name, path),
       matchesRule: (ruleArgs) =>
         matchesPathRuleSubject(ruleArgs, path, {
-          cwd: this.workspaceConfig.workspaceDir,
-          pathClass: this.env.pathClass,
-          homeDir: this.env.homeDir,
+          cwd: workspace.workspaceDir,
+          pathClass: env.pathClass,
+          homeDir: env.homeDir,
         }),
-      execute: () => this.execution(args, path),
+      execute: async () => {
+        const lease = this.runtime.acquire(['fs']);
+        try {
+          if (lease.runtime.identity.generation !== inspected.identity.generation) {
+            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+          }
+          return await this.execution(lease.runtime.fs!, args, path);
+        } finally {
+          lease.dispose();
+        }
+      },
     };
   }
 
-  private async execution(args: ReadInput, safePath: string): Promise<ExecutableToolResult> {
+  private async execution(fs: IHostFileSystem, args: ReadInput, safePath: string): Promise<ExecutableToolResult> {
     try {
       let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
       try {
-        stat = await this.fs.stat(safePath);
+        stat = await fs.stat(safePath);
       } catch (error) {
         if (isFileNotFoundError(error)) {
           return { isError: true, output: `"${args.path}" does not exist.` };
@@ -285,7 +300,7 @@ export class ReadTool implements IReadTool {
         return { isError: true, output: `"${args.path}" is not a file.` };
       }
 
-      const header = await this.fs.readBytes(safePath, MEDIA_SNIFF_BYTES);
+      const header = await fs.readBytes(safePath, MEDIA_SNIFF_BYTES);
       const fileType = detectFileType(safePath, header);
       if (fileType.kind === 'image' || fileType.kind === 'video') {
         return {
@@ -312,7 +327,7 @@ export class ReadTool implements IReadTool {
               'Convert it to UTF-8 first (e.g. `iconv` via Bash).',
           };
         }
-        const decoded = decodeUtfText(await this.fs.readBytes(safePath), detection.encoding);
+        const decoded = decodeUtfText(await fs.readBytes(safePath), detection.encoding);
         detectedEncoding = detection.encoding;
         lines = decodedLines(splitLinesKeepingTerminator(decoded));
       } else if (fileType.kind === 'unknown') {
@@ -321,7 +336,7 @@ export class ReadTool implements IReadTool {
           output: notReadableFileOutput(args.path),
         };
       } else {
-        lines = this.fs.readLines(safePath, { errors: 'strict' });
+        lines = fs.readLines(safePath, { errors: 'strict' });
       }
 
       const lineOffset = args.line_offset ?? 1;
@@ -552,4 +567,8 @@ export class ReadTool implements IReadTool {
   }
 }
 
-registerAgentToolService(IReadTool, ReadTool, { name: 'Read', domain: 'os/backends' });
+registerAgentToolService(IReadTool, ReadTool, {
+  name: 'Read',
+  domain: 'os/backends',
+  requiredRuntimeCapabilities: ['fs'],
+});

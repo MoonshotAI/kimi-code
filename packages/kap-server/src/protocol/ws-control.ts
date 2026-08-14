@@ -236,6 +236,7 @@ export const unsubscribeAckMessageSchema = wsAckEnvelopeSchema(unsubscribeAckPay
 
 export const watchFsAddPayloadSchema = z.object({
   session_id: z.string(),
+  runtime_id: z.string().min(1).optional(),
   paths: z.array(z.string()),
   recursive: z.boolean().optional(),
 });
@@ -250,6 +251,7 @@ export type WatchFsAddMessage = z.infer<typeof watchFsAddMessageSchema>;
 
 export const watchFsRemovePayloadSchema = z.object({
   session_id: z.string(),
+  runtime_id: z.string().min(1).optional(),
   paths: z.array(z.string()),
 });
 

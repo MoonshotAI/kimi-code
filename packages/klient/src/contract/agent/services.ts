@@ -19,6 +19,7 @@ import {
   promptLaunchResultSchema,
   promptPayloadSchema,
   runShellCommandPayloadSchema,
+  runtimeBindingSchema,
   setModelResultSchema,
   shellCommandResultSchema,
   steerPayloadSchema,
@@ -51,6 +52,12 @@ export const agentPermissionModeContract = {
 export const agentCommandContract = {
   list: { input: z.tuple([]), output: z.array(agentCommandInfoSchema) },
   run: { input: z.tuple([z.string(), z.string().optional()]), output: noResult },
+} satisfies ServiceContract;
+
+export const agentRuntimeBindingContract = {
+  get: { input: z.tuple([]), output: runtimeBindingSchema },
+  set: { input: z.tuple([runtimeBindingSchema]), output: runtimeBindingSchema },
+  switch: { input: z.tuple([z.string()]), output: runtimeBindingSchema },
 } satisfies ServiceContract;
 
 /** `history` items are full `ContextMessage`s, mirrored as `unknown`. */

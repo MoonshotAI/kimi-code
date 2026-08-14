@@ -27,6 +27,7 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
+  AgentRuntimeBinding,
   BackgroundTaskInfo,
   ConfigDiagnostics,
   CreateSessionOptions,
@@ -130,6 +131,10 @@ export interface ActivatePluginCommandRpcInput extends SessionIdRpcInput {
 export interface RunCommandRpcInput extends SessionIdRpcInput {
   readonly name: string;
   readonly args?: string | undefined;
+}
+
+export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
+  readonly runtimeId: string;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
@@ -893,6 +898,16 @@ export abstract class SDKRpcClientBase {
       ErrorCodes.NOT_IMPLEMENTED,
       'This SDK client does not support contributed commands.',
     );
+  }
+
+  async getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {
+    void input;
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'This SDK client does not support runtimes.');
+  }
+
+  async switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding> {
+    void input;
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'This SDK client does not support runtimes.');
   }
 
   onEvent(listener: (event: Event) => void): Unsubscribe {

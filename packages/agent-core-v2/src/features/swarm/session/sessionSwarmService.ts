@@ -43,7 +43,7 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { wrapSubagentModelError } from '#/session/subagent/configSection';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionProcessRunner } from '#/session/process/processRunner';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { ILogService } from '#/_base/log/log';
 
 import {
@@ -86,7 +86,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
-    @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
+    @IRuntimeResolver private readonly runtimeResolver: IRuntimeResolver,
     @ILogService private readonly log: ILogService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {}
@@ -188,11 +188,17 @@ export class SessionSwarmService implements ISessionSwarmService {
       runInBackground: options.runInBackground,
       model: binding.model,
     });
-    const promptText = await applyProfilePromptPrefix(profile, options.prompt, {
-      cwd: this.sessionContext.cwd,
-      runner: this.processRunner,
-      log: this.log,
-    });
+    const lease = this.runtimeResolver.acquire({ workspaceId: this.sessionContext.workspaceId, runtimeId: 'local' }, ['process']);
+    let promptText: string;
+    try {
+      promptText = await applyProfilePromptPrefix(profile, options.prompt, {
+        cwd: this.sessionContext.cwd,
+        process: lease.runtime.process!,
+        log: this.log,
+      });
+    } finally {
+      lease.dispose();
+    }
     return this.observe(caller, child.id, options.profileName, {
       kind: 'prompt',
       prompt: promptText,

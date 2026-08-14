@@ -173,7 +173,7 @@ describe('Agent resume', () => {
     const ctx = testAgent(
       execEnvServices({
         hostFs: createFakeHostFs({ readText: vi.fn().mockResolvedValue('') }),
-        processRunner: createFakeProcessRunner({ exec: execWithEnv }),
+        processRunner: createFakeProcessRunner({ spawn: execWithEnv }),
       }),
       { autoConfigure: false, persistence },
     );

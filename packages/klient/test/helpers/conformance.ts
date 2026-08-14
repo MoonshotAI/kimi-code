@@ -268,6 +268,23 @@ export function defineKlientConformance(
       expect(typeof status.loggedIn).toBe('boolean');
     });
 
+    it('agent runtime binding is available through every transport', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance runtime',
+      });
+      try {
+        const agent = target.klient.session(created.id).agent('main');
+        const binding = await agent.getRuntime();
+        expect(binding.runtimeId).toBe('local');
+        expect(binding.workspaceId.length).toBeGreaterThan(0);
+        await expect(agent.switchRuntime('missing-runtime')).rejects.toThrow(/missing-runtime/);
+        expect(await agent.getRuntime()).toEqual(binding);
+      } finally {
+        await target.klient.session(created.id).close();
+      }
+    });
+
     it('agent commands list and run a contributed command', async () => {
       const created = await target.klient.global.sessions.create({
         workDir: process.cwd(),

@@ -30,7 +30,8 @@ import {
   ISessionInteractionService,
   ISessionMetadata,
   ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
+  IWorkspaceInstanceManager,
   MAIN_AGENT_ID,
   SessionInteractionService,
   StateRegistry,
@@ -373,7 +374,7 @@ function makeCore(
   };
   const handler = {
     id: 'wd',
-    kind: LifecycleScope.Workspace,
+    kind: 'program',
     accessor: {
       get: (t: unknown) => (t === ISessionLifecycleService ? sessionLifecycle : undefined),
     },
@@ -382,11 +383,16 @@ function makeCore(
   const accessor = {
     get(token: unknown): unknown {
       if (token === IEventService) return eventBus;
-      if (token === IWorkspaceLifecycleService) {
+      if (token === ISessionManager) {
         return {
-          handlers: { list: () => [handler] },
-          sessions: { list: () => [] },
-          onDidMaterializeHandler: () => ({ dispose: () => {} }),
+          get: sessionFor,
+          list: () => [...sessions.keys()].map((sessionId) => sessionFor(sessionId)),
+        };
+      }
+      if (token === IWorkspaceInstanceManager) {
+        return {
+          list: () => [{ program: { accessor: handler.accessor } }],
+          onDidChange: () => ({ dispose: () => {} }),
         };
       }
       return undefined;

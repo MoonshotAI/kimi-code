@@ -49,6 +49,7 @@ import {
   type BuiltinSlashCommandName,
 } from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
+import { handleRuntimeCommand } from './runtime';
 import type { SkillListSession } from './skills';
 import {
   canRestoreSubmittedInput,
@@ -94,6 +95,7 @@ export { handleSwarmCommand } from './swarm';
 export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
+export { handleRuntimeCommand } from './runtime';
 export { handleGoalCommand } from './goal';
 export {
   handleExportDebugZipCommand,
@@ -452,6 +454,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'model':
       await handleModelCommand(host, args);
+      return;
+    case 'runtime':
+      await handleRuntimeCommand(host, args);
       return;
     case 'secondary-model':
       await handleSecondaryModelCommand(host, args);

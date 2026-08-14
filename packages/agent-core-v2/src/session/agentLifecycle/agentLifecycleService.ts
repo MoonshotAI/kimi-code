@@ -51,6 +51,8 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
+import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
@@ -159,6 +161,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         seeds: [
           [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })],
           [ITelemetryService, this.telemetry.withContext({ agent_id: agentId })],
+          [IAgentRuntimeBindingSeed, {
+            _serviceBrand: undefined,
+            binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? 'local' },
+          }],
         ],
       },
     ) as IAgentScopeHandle;
@@ -215,7 +221,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         details: { agentId: opts.agentId },
       });
     }
-    const child = await this.create({ agentId: opts?.agentId, forkedFrom: source.id });
+    const child = await this.create({
+      agentId: opts?.agentId,
+      runtimeId: source.accessor.get(IAgentRuntimeBindingService).current.runtimeId,
+      forkedFrom: source.id,
+    });
 
     const sourceData = source.accessor.get(IAgentProfileService).data();
     const childProfile = child.accessor.get(IAgentProfileService);

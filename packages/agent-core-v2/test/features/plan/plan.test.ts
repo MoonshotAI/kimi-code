@@ -15,7 +15,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ISessionProcessRunner } from '#/session/process/processRunner';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
 import {
   createCommandRunner,
@@ -26,7 +26,7 @@ import {
 
 interface PlanFakes {
   readonly fs: IHostFileSystem;
-  readonly runner: ISessionProcessRunner;
+  readonly runner: IHostProcessService;
 }
 
 function createPlanFakes(overrides: Partial<IHostFileSystem> = {}): PlanFakes {
@@ -119,13 +119,13 @@ describe('Plan service', () => {
     }) as IHostFileSystem;
   }
 
-  function delegatingRunner(): ISessionProcessRunner {
+  function delegatingRunner(): IHostProcessService {
     return new Proxy(createPlanFakes().runner, {
       get(_target, prop, receiver) {
         const value = Reflect.get(activeFakes.runner, prop, receiver);
         return typeof value === 'function' ? value.bind(activeFakes.runner) : value;
       },
-    }) as ISessionProcessRunner;
+    }) as IHostProcessService;
   }
 
   function useFakes(fakes: PlanFakes): void {
@@ -499,7 +499,7 @@ describe('Plan service', () => {
       const { files, fakes: baseFakes } = createPlanFileFakes(undefined);
       const fakes: PlanFakes = {
         fs: baseFakes.fs,
-        runner: createFakeProcessRunner({ exec }),
+        runner: createFakeProcessRunner({ spawn: exec }),
       };
       useFakes(fakes);
       useTools(['ExitPlanMode', 'Bash']);
