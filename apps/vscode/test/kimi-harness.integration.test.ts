@@ -496,6 +496,43 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     ]);
   });
 
+  it("keeps project-layer servers in the list refreshed after every mutation", async () => {
+    const rig = await createMcpHandlerRig();
+    const project = await mkdtemp(join(tmpdir(), "kimi-vscode-mcp-project-"));
+    cleanups.push(() => rm(project, { recursive: true, force: true }));
+    await mkdir(join(project, ".git"), { recursive: true });
+    await writeFile(
+      join(project, ".mcp.json"),
+      JSON.stringify({
+        mcpServers: { "project-api": { transport: "http", url: "https://example.test/project" } },
+      }),
+    );
+    const ctx = { ...mcpHandlerContext(rig), workDir: project } as HandlerContext;
+    const call = <T>(handler: string, params: unknown) =>
+      mcpHandlers[handler]!(params, ctx) as Promise<T>;
+
+    // The initial workspace-aware list shows the project entry as read-only,
+    // and every mutation's refreshed list keeps showing it (the mutation RPCs
+    // return a cwd-less list, so the handler must re-list with the workspace).
+    const assertList = (servers: MCPServerConfig[]): void => {
+      const projectEntry = servers.find((server) => server.name === "project-api");
+      expect(projectEntry).toMatchObject({ mutable: false, url: "https://example.test/project" });
+    };
+    assertList(await call(Methods.GetMCPServers, undefined));
+
+    const added = await call<MCPServerConfig[]>(Methods.AddMCPServer, {
+      name: "user-api",
+      transport: "http",
+      url: "https://example.test/user",
+    });
+    assertList(added);
+    assertList(rig.broadcasts.at(-1)!.data as MCPServerConfig[]);
+
+    const removed = await call<MCPServerConfig[]>(Methods.RemoveMCPServer, { name: "user-api" });
+    assertList(removed);
+    assertList(rig.broadcasts.at(-1)!.data as MCPServerConfig[]);
+  });
+
   it("logs a failed MCP test without returning credential values to the Webview", async () => {
     const rig = await createMcpHandlerRig();
     vi.spyOn(rig.harness, "testMcpServer").mockResolvedValue({
