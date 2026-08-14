@@ -1,6 +1,6 @@
 import { createDecorator } from "#/_base/di/instantiation";
 
-import type { UndoCut } from './contextOps';
+import type { UndoCut } from './conversationTime';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 

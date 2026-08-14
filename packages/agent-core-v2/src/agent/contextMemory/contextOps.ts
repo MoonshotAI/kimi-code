@@ -28,10 +28,11 @@
  * `popSwarmModeReminder`) so the pop replays from the `swarm_mode.exit` record
  * itself.
  *
- * `context.undo` counts conversation ticks with the single `isUndoAnchor`
- * predicate — the same definition the checkpoint
- * protocol pushes with, so anchor counting and checkpoint pushing can never
- * drift apart.
+ * `context.undo` applies the single undo-cut decision owned by
+ * `conversationTime` (`computeUndoCut` over `isUndoAnchor`) — the same walk
+ * the display transcript applies and the same predicate the checkpoint
+ * protocol pushes with, so the model, the display, and checkpoint pushing
+ * can never drift apart.
  *
  * Blob handling is declared as a `ModelBlobCodec` on `ContextModel.blobs`:
  * - `dehydrate(record, transform)`: at dispatch time, traverses message content
@@ -56,8 +57,8 @@ import {
   type ContextCompactionShapeInput,
 } from './compactionHandoff';
 import {
-  isPromptOwnedInjection,
-  isUndoAnchor,
+  computeUndoCut,
+  isFullyUndoable,
   isValidUndoCount,
 } from './conversationTime';
 import { foldAppendMessage, foldLoopEvent, type LoopRecordedEvent } from './loopEventFold';
@@ -332,43 +333,6 @@ function isContextMessage(value: unknown): value is ContextMessage {
   if (value === null || typeof value !== 'object') return false;
   const message = value as { role?: unknown; content?: unknown };
   return typeof message.role === 'string' && Array.isArray(message.content);
-}
-
-export interface UndoCut {
-  readonly cutIndex: number;
-  readonly removedCount: number;
-  readonly stoppedAtCompaction: boolean;
-}
-
-export function computeUndoCut(state: readonly ContextMessage[], count: number): UndoCut {
-  let remaining = count;
-  let cutIndex = -1;
-  let removedCount = 0;
-  let stoppedAtCompaction = false;
-  for (let i = state.length - 1; i >= 0 && remaining > 0; i--) {
-    const message = state[i];
-    if (message === undefined || message.origin?.kind === 'injection') continue;
-    if (message.origin?.kind === 'compaction_summary') {
-      stoppedAtCompaction = true;
-      break;
-    }
-    if (isUndoAnchor(message)) {
-      remaining--;
-      removedCount++;
-      cutIndex = i;
-      while (
-        cutIndex > 0 &&
-        isPromptOwnedInjection(state[cutIndex - 1]!, message)
-      ) {
-        cutIndex--;
-      }
-    }
-  }
-  return { cutIndex, removedCount, stoppedAtCompaction };
-}
-
-export function isFullyUndoable(cut: UndoCut, count: number): boolean {
-  return cut.cutIndex >= 0 && cut.removedCount >= count;
 }
 
 export type UndoUnavailableReason =

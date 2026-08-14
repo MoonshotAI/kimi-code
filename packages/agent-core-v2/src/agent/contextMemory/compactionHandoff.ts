@@ -9,6 +9,13 @@
  * wire-replay / reducer paths keep the same heuristics — their estimate
  * fallback only fires when a record lacks `tokensAfter`, so the measured
  * chain is unaffected.
+ *
+ * The result layout is `[kept user messages…, elision?, summary]` (legacy
+ * records: `[summary, …tail]`), so its message COUNT is fully described by
+ * the persisted kept-user counts: `compactionResultMessageCount` is the
+ * read-side mirror for projections that need only the length (the display
+ * transcript's `foldedLength`). Both live in this file so a layout change
+ * lands in one place.
  */
 
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/kosong/contract/tokens';
@@ -136,6 +143,14 @@ export function buildContextCompactionShape(
     droppedCount: input.droppedCount,
     messages: [...keptMessages, createCompactionSummaryMessage(contextSummary)],
   };
+}
+
+export function compactionResultMessageCount(
+  keptUserMessageCount: number | undefined,
+  keptHeadUserMessageCount: number | undefined,
+): number | undefined {
+  if (keptUserMessageCount === undefined) return undefined;
+  return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 1 : 2);
 }
 
 export function buildCompactionSummaryText(summary: string): string {

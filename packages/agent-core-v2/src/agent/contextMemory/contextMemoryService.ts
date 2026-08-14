@@ -30,16 +30,18 @@ import {
 } from './contextMemory';
 import { buildContextCompactionShape, type TokenEstimate } from './compactionHandoff';
 import {
-  computeUndoCut,
   ContextModel,
   contextAppendLoopEvent,
   contextAppendMessage,
   contextApplyCompaction,
   contextClear,
   contextUndo,
+} from './contextOps';
+import {
+  computeUndoCut,
   isFullyUndoable,
   type UndoCut,
-} from './contextOps';
+} from './conversationTime';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 

@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   computeUndoCut,
-  contextUndo,
+  computeUndoCutFrom,
   isFullyUndoable,
-} from '#/agent/contextMemory/contextOps';
+} from '#/agent/contextMemory/conversationTime';
+import { contextUndo } from '#/agent/contextMemory/contextOps';
 import {
   EMPTY_FOLD,
   type ContextMessage,
@@ -51,7 +52,7 @@ const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
 describe('computeUndoCut', () => {
   it('finds the cut for the last real user prompt', () => {
     const cut = computeUndoCut([user(USER_ORIGIN), assistant()], 1);
-    expect(cut).toEqual({ cutIndex: 0, removedCount: 1, stoppedAtCompaction: false });
+    expect(cut).toEqual({ cutIndex: 0, anchorIndex: 0, removedCount: 1, stoppedAtCompaction: false });
     expect(isFullyUndoable(cut, 1)).toBe(true);
   });
 
@@ -69,7 +70,7 @@ describe('computeUndoCut', () => {
 
   it('finds nothing when the history has no real user prompt', () => {
     const cut = computeUndoCut([], 1);
-    expect(cut).toEqual({ cutIndex: -1, removedCount: 0, stoppedAtCompaction: false });
+    expect(cut).toEqual({ cutIndex: -1, anchorIndex: -1, removedCount: 0, stoppedAtCompaction: false });
     expect(isFullyUndoable(cut, 1)).toBe(false);
   });
 
@@ -88,7 +89,7 @@ describe('computeUndoCut', () => {
 
   it('stops at a compaction summary', () => {
     const cut = computeUndoCut([user(USER_ORIGIN), compaction(), assistant()], 1);
-    expect(cut).toEqual({ cutIndex: -1, removedCount: 0, stoppedAtCompaction: true });
+    expect(cut).toEqual({ cutIndex: -1, anchorIndex: -1, removedCount: 0, stoppedAtCompaction: true });
     expect(isFullyUndoable(cut, 1)).toBe(false);
   });
 
@@ -97,6 +98,20 @@ describe('computeUndoCut', () => {
     const cut = computeUndoCut(history, 2);
     expect(cut.removedCount).toBe(1);
     expect(cut.stoppedAtCompaction).toBe(true);
+    expect(isFullyUndoable(cut, 2)).toBe(false);
+  });
+
+  it('computeUndoCutFrom walks wrapped entries and stops at the given floor', () => {
+    const entries = [user(USER_ORIGIN), user(USER_ORIGIN), assistant()].map((message) => ({
+      message,
+    }));
+    const cut = computeUndoCutFrom(entries, 2, (entry) => entry.message, 1);
+    expect(cut).toEqual({
+      cutIndex: 1,
+      anchorIndex: 1,
+      removedCount: 1,
+      stoppedAtCompaction: false,
+    });
     expect(isFullyUndoable(cut, 2)).toBe(false);
   });
 });

@@ -1,9 +1,11 @@
 /**
  * Tests for `reduceContextTranscript` — the wire-transcript reducer used by the
  * snapshot and messages endpoints. Mirrors v1 `reduceWireRecords` expectations:
- * compaction keeps the prefix and appends a summary marker; undo removes the
- * tail but stops at compaction summaries / clear floors; clear keeps the
- * transcript but resets the folded view.
+ * compaction keeps the prefix and appends a summary marker; undo splices the
+ * tail along the shared `conversationTime` cut decision — a blocked undo
+ * (compaction summary / clear floor / too few anchors) leaves the transcript
+ * unchanged, exactly as the model Op no-ops; clear keeps the transcript but
+ * resets the folded view.
  *
  * The `transcript/model fold parity` block replays one record stream through
  * both the transcript reducer and the model fold (`foldAppendMessage` /
@@ -217,7 +219,7 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['keep me', 'kept answer']);
   });
 
-  it('undo stops at a compaction summary', () => {
+  it('undo blocked at a compaction summary leaves the transcript unchanged', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('old')),
       compaction('SUM', 1, 1),
@@ -225,7 +227,20 @@ describe('reduceContextTranscript', () => {
       appendMessage(assistantMessage('answer')),
       undo(2),
     ]);
+    expect(texts(result)).toEqual(['old', 'SUM', 'recent', 'answer']);
+    expect(result.foldedLength).toBe(4);
+  });
+
+  it('undo up to a compaction summary still applies', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('old')),
+      compaction('SUM', 1, 1),
+      appendMessage(userMessage('recent')),
+      appendMessage(assistantMessage('answer')),
+      undo(1),
+    ]);
     expect(texts(result)).toEqual(['old', 'SUM']);
+    expect(result.foldedLength).toBe(2);
   });
 
   it('clear keeps prior transcript entries but resets the folded view', () => {
@@ -249,6 +264,18 @@ describe('reduceContextTranscript', () => {
     ]);
     expect(texts(result)).toEqual(['u1']);
     expect(result.foldedLength).toBe(0);
+  });
+
+  it('undo blocked at a clear floor leaves the transcript unchanged', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      { type: 'context.clear' },
+      appendMessage(userMessage('u2')),
+      appendMessage(assistantMessage('a2')),
+      undo(2),
+    ]);
+    expect(texts(result)).toEqual(['u1', 'u2', 'a2']);
+    expect(result.foldedLength).toBe(2);
   });
 
   it('folds tool calls and results from loop events', () => {

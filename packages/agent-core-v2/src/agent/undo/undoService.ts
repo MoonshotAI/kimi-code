@@ -15,12 +15,12 @@ import { ILogService } from '#/_base/log/log';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import {
-  computeUndoCut,
   formatUndoUnavailableMessage,
   precheckUndo,
 } from '#/agent/contextMemory/contextOps';
 import {
   CHECKPOINTED_MODELS,
+  computeUndoCut,
   isUndoAnchor,
   isValidUndoCount,
   type Checkpointed,

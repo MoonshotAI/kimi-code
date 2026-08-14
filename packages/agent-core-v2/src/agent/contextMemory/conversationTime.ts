@@ -2,11 +2,23 @@
  * `contextMemory` domain — shared conversation clock and checkpointed
  * wire-Model factory.
  *
- * Defines the undo anchor vocabulary and registers conversation-time Models
- * for undo validation. `CHECKPOINTED_MODELS` stays the undo domain's read
- * path; the `WireModelContribution` fold also drains it into the built-in
- * layer so the checkpointed list is part of the folded wire vocabulary.
- * Scope-agnostic.
+ * Owns the undo anchor vocabulary and the single undo-cut decision:
+ * `computeUndoCutFrom` walks entries backwards counting `isUndoAnchor`
+ * ticks — skipping injections, stopping at a compaction summary, extending
+ * the cut over the anchor's prompt-owned injections — bounded by an optional
+ * floor, and generic over the entry type so any read model whose entries
+ * carry a `ContextMessage` can run the same walk. The returned `UndoCut`
+ * separates `anchorIndex` (the counted anchor) from `cutIndex` (extended
+ * over its prompt-owned injections). The wire-model Op
+ * (`contextOps.contextUndo`) applies the cut destructively; the display
+ * transcript (`contextTranscript`) applies the same decision as a
+ * non-destructive splice — so a blocked undo (compaction boundary /
+ * insufficient anchors / floor) reads identically on both sides.
+ *
+ * Also registers conversation-time Models for undo validation:
+ * `CHECKPOINTED_MODELS` stays the undo domain's read path; the
+ * `WireModelContribution` fold also drains it into the built-in layer so the
+ * checkpointed list is part of the folded wire vocabulary. Scope-agnostic.
  */
 
 import { defineModel, type ModelDef } from '#/wire/model';
@@ -16,11 +28,29 @@ import type { ContextMessage } from './types';
 export function isUndoAnchor(message: ContextMessage): boolean {
   if (message.role !== 'user') return false;
   const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  return (
-    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
-    origin.trigger === 'user-slash'
-  );
+  if (origin === undefined) return true;
+  switch (origin.kind) {
+    case 'user':
+      return true;
+    case 'skill_activation':
+    case 'plugin_command':
+      return origin.trigger === 'user-slash';
+    case 'injection':
+    case 'shell_command':
+    case 'compaction_summary':
+    case 'system_trigger':
+    case 'task':
+    case 'cron_job':
+    case 'cron_missed':
+    case 'hook_result':
+    case 'retry':
+      return false;
+    default: {
+      const exhaustive: never = origin;
+      void exhaustive;
+      return false;
+    }
+  }
 }
 
 export function isPromptOwnedInjection(
@@ -37,6 +67,60 @@ export function isPromptOwnedInjection(
 
 export function isValidUndoCount(count: number): boolean {
   return Number.isSafeInteger(count) && count > 0;
+}
+
+export interface UndoCut {
+  readonly cutIndex: number;
+  readonly anchorIndex: number;
+  readonly removedCount: number;
+  readonly stoppedAtCompaction: boolean;
+}
+
+export function computeUndoCut(
+  messages: readonly ContextMessage[],
+  count: number,
+): UndoCut {
+  return computeUndoCutFrom(messages, count, (message) => message);
+}
+
+export function computeUndoCutFrom<E>(
+  entries: readonly E[],
+  count: number,
+  messageOf: (entry: E) => ContextMessage,
+  floor: number = 0,
+): UndoCut {
+  let remaining = count;
+  let cutIndex = -1;
+  let anchorIndex = -1;
+  let removedCount = 0;
+  let stoppedAtCompaction = false;
+  for (let i = entries.length - 1; i >= floor && remaining > 0; i--) {
+    const entry = entries[i];
+    if (entry === undefined) continue;
+    const message = messageOf(entry);
+    if (message.origin?.kind === 'injection') continue;
+    if (message.origin?.kind === 'compaction_summary') {
+      stoppedAtCompaction = true;
+      break;
+    }
+    if (isUndoAnchor(message)) {
+      remaining--;
+      removedCount++;
+      anchorIndex = i;
+      cutIndex = i;
+      while (
+        cutIndex > floor &&
+        isPromptOwnedInjection(messageOf(entries[cutIndex - 1]!), message)
+      ) {
+        cutIndex--;
+      }
+    }
+  }
+  return { cutIndex, anchorIndex, removedCount, stoppedAtCompaction };
+}
+
+export function isFullyUndoable(cut: UndoCut, count: number): boolean {
+  return cut.cutIndex >= 0 && cut.removedCount >= count;
 }
 
 export interface Checkpointed<T> {

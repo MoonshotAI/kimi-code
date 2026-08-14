@@ -488,4 +488,44 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     expect(replay.wire.getModel(ContextModel).messages as readonly ContextMessage[]).toHaveLength(2);
   });
 
+  it('pairs prompt-owned injections with their prompt by persisted id, live and on replay', async () => {
+    const host = buildHost(KEY);
+    const model = () => host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+
+    const reminder: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'caption' }],
+      toolCalls: [],
+      origin: { kind: 'injection', variant: 'image_compression', ownerPromptId: 'prompt-1' },
+    };
+    const prompt: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'undo me' }],
+      toolCalls: [],
+      id: 'prompt-1',
+      origin: { kind: 'user' },
+    };
+    const answer: ContextMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'answer' }],
+      toolCalls: [],
+    };
+
+    host.svc.append(reminder, prompt, answer);
+    host.svc.undo(1);
+    expect(model()).toHaveLength(0);
+
+    await host.wire.flush();
+    const records = await readRecords(host.log);
+
+    const replay = buildHost(REPLAY_KEY);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
+    expect(replay.wire.getModel(ContextModel).messages).toHaveLength(0);
+  });
+
 });

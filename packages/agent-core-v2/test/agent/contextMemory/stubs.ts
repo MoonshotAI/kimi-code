@@ -14,7 +14,7 @@ import {
   type ContextCompactionInput,
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
-import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/contextOps';
+import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/conversationTime';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IEventBus } from '#/app/event/eventBus';

@@ -6,11 +6,18 @@
  *
  * Loop events and plain appends are reduced by the shared fold kernel
  * (`loopEventFold.ts`) over time-stamped entries, so the display view can
- * never drift from the live/replay fold; this reducer only adds the display
- * bookkeeping the kernel does not own — per-entry record times, `clearFloor`,
- * and `foldedLength` — plus the transcript-specific meaning of undo (splice
- * the tail, keep injections with their owner), clear (keep entries, move the
- * floor), and compaction (append the summary marker, keep the folded prefix).
+ * never drift from the live/replay fold; undo applies the shared cut
+ * decision from `conversationTime` (a blocked undo — compaction boundary,
+ * insufficient anchors, clear floor — is a no-op here exactly as in the
+ * model Op); and the post-compaction `foldedLength` comes from
+ * `compactionHandoff`'s result-count mirror rather than a local
+ * re-derivation of the compaction shape. What stays local is the display
+ * bookkeeping the shared pieces do not own — per-entry record times,
+ * `clearFloor`, and `foldedLength` — plus the transcript-specific
+ * application of those decisions: undo splices the tail but keeps orphan
+ * injections (prompt-owned ones leave with their prompt), clear keeps
+ * entries and moves the floor, and compaction appends the summary marker
+ * while keeping the folded prefix.
  */
 
 import type { WireRecord } from '#/wire/record';
@@ -18,9 +25,10 @@ import type { WireRecord } from '#/wire/record';
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   collectCompactableUserMessages,
+  compactionResultMessageCount,
   selectRecentUserMessages,
 } from './compactionHandoff';
-import { isPromptOwnedInjection, isUndoAnchor } from './conversationTime';
+import { computeUndoCutFrom, isFullyUndoable } from './conversationTime';
 import {
   appendMessageTo,
   applyLoopEventTo,
@@ -68,32 +76,21 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
 
   const applyUndo = (count: number): void => {
     if (count <= 0) return;
-    const entries = state.messages.slice();
-    let removedUserCount = 0;
+    const cut = computeUndoCutFrom(state.messages, count, entryAdapter.messageOf, clearFloor);
+    if (!isFullyUndoable(cut, count)) return;
+    const entries = state.messages;
     let removed = 0;
-    for (let i = entries.length - 1; i >= clearFloor; i--) {
-      const message = entries[i]!.message;
-      if (message.origin?.kind === 'injection') continue;
-      if (message.origin?.kind === 'compaction_summary') break;
-      entries.splice(i, 1);
-      removed++;
-      if (isUndoAnchor(message)) {
-        removedUserCount++;
-        if (removedUserCount >= count) {
-          while (
-            i > clearFloor &&
-            isPromptOwnedInjection(entries[i - 1]!.message, message)
-          ) {
-            entries.splice(i - 1, 1);
-            i--;
-            removed++;
-          }
-          break;
-        }
+    const kept: TranscriptEntry[] = [];
+    for (let i = cut.cutIndex; i < entries.length; i++) {
+      const entry = entries[i]!;
+      if (i > cut.anchorIndex && entry.message.origin?.kind === 'injection') {
+        kept.push(entry);
+      } else {
+        removed++;
       }
     }
     foldedLength = Math.max(0, foldedLength - removed);
-    state = { messages: entries, fold: EMPTY_FOLD };
+    state = { messages: [...entries.slice(0, cut.cutIndex), ...kept], fold: EMPTY_FOLD };
   };
 
   const add = (record: WireRecord): void => {
@@ -162,12 +159,12 @@ function recoverFoldedLength(
   clearFloor: number,
   foldedLength: number,
 ): number {
-  const keptUserMessageCount = readNumber(record, 'keptUserMessageCount');
-  const keptHeadUserMessageCount = readNumber(record, 'keptHeadUserMessageCount');
+  const resultCount = compactionResultMessageCount(
+    readNumber(record, 'keptUserMessageCount'),
+    readNumber(record, 'keptHeadUserMessageCount'),
+  );
+  if (resultCount !== undefined) return resultCount;
   const compactedCount = readNumber(record, 'compactedCount');
-  if (keptUserMessageCount !== undefined) {
-    return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 1 : 2);
-  }
   if (compactedCount !== undefined && compactedCount < foldedLength) {
     return 1 + (foldedLength - compactedCount);
   }
