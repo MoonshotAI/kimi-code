@@ -99,7 +99,6 @@ export class SessionExportService implements ISessionExportService {
           : undefined,
       webLog: options.webLog,
       signal: options.signal,
-      maxArchiveBytes: options.maxArchiveBytes,
     });
   }
 
@@ -185,7 +184,6 @@ export async function exportSessionDirectory(input: {
   readonly desktopLogPath?: string | undefined;
   readonly webLog?: string;
   readonly signal?: AbortSignal;
-  readonly maxArchiveBytes?: number;
 }): Promise<ExportSessionResult> {
   input.signal?.throwIfAborted();
   const sessionDir = input.summary.sessionDir;
@@ -265,7 +263,6 @@ export async function exportSessionDirectory(input: {
       sessionFiles: selectedSessionFiles,
       extraEntries: extras,
       signal: input.signal,
-      maxArchiveBytes: input.maxArchiveBytes,
     });
     sessionLogSourceTransferred = sessionLogSource !== undefined;
     globalSourceTransferred = globalSource !== undefined;

@@ -336,11 +336,13 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
     expect(body.code).toBe(40405);
   });
 
-  it('resolves a question whose id contains a colon (provider tool_call id)', async () => {
+  it('resolves a question whose id contains a colon', async () => {
     const sid = await createSession();
-    // Real-world shape: no explicit id, so the question id falls back to the
-    // tool_call id — which some providers emit as `{function_name}:{index}`.
+    // Colon-bearing interaction ids still arrive from explicit-id callers
+    // (older engines parked the provider tool_call id, shaped
+    // `{function_name}:{index}`); the action-suffix parse must not reject them.
     const resultPromise: Promise<QuestionResult> = questionService(sid).request({
+      id: 'AskUserQuestion:0',
       toolCallId: 'AskUserQuestion:0',
       questions: [
         {
@@ -362,6 +364,32 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
     await expect(resultPromise).resolves.toEqual({ answers: { 'Pick one': 'Yes' } });
   });
 
+  it('mints the question id instead of deriving it from the provider tool_call id', async () => {
+    const sid = await createSession();
+    const resultPromise: Promise<QuestionResult> = questionService(sid).request({
+      toolCallId: 'AskUserQuestion:0',
+      questions: [
+        {
+          question: 'Pick one',
+          options: [{ label: 'Yes' }, { label: 'No' }],
+        },
+      ],
+    });
+
+    const list = await getJson<ListWire>(`/api/v1/sessions/${sid}/questions?status=pending`);
+    const item = list.body.data.items[0]!;
+    expect(item.tool_call_id).toBe('AskUserQuestion:0');
+    expect(item.question_id).not.toBe('AskUserQuestion:0');
+
+    const { body } = await postJson<ResolveWire>(
+      `/api/v1/sessions/${sid}/questions/${encodeURIComponent(item.question_id)}`,
+      { answers: { q_0: { kind: 'single', option_id: 'opt_0_0' } } },
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.resolved).toBe(true);
+    await expect(resultPromise).resolves.toEqual({ answers: { 'Pick one': 'Yes' } });
+  });
+
   it('keeps 40001 for a colon tail that matches no pending question', async () => {
     const sid = await createSession();
     const { body } = await postJson<null>(`/api/v1/sessions/${sid}/questions/q-9:0`, {
@@ -373,6 +401,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
   it('returns 40902 on a duplicate resolve of a colon-id question', async () => {
     const sid = await createSession();
     questionService(sid).enqueue({
+      id: 'AskUserQuestion:1',
       toolCallId: 'AskUserQuestion:1',
       questions: [{ question: 'Pick one', options: [{ label: 'Yes' }] }],
     });

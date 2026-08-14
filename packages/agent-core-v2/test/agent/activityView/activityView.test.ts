@@ -216,4 +216,60 @@ describe('AgentActivityView', () => {
     bus.publish({ type: 'turn.ended', turnId: 2, reason: 'completed' });
     expect(view.state().lastTurn).toMatchObject({ turnId: 2, reason: 'completed' });
   });
+
+  it('exposes the engine-minted interaction id as the approval id', () => {
+    const { bus, view } = harness();
+
+    bus.publish({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+    bus.publish({
+      type: 'permission.approval.requested',
+      id: 'approval_1',
+      sessionId: 's',
+      agentId: 'main',
+      turnId: 1,
+      toolCallId: 'tc-1',
+      toolName: 'Bash',
+      action: 'run',
+      toolInput: {},
+      display: { kind: 'command', command: 'ls' },
+    });
+    expect(view.state().turn?.pendingApprovals).toEqual([
+      { approvalId: 'approval_1', toolCallId: 'tc-1', since: expect.any(Number) },
+    ]);
+
+    bus.publish({
+      type: 'permission.approval.resolved',
+      id: 'approval_1',
+      sessionId: 's',
+      agentId: 'main',
+      turnId: 1,
+      toolCallId: 'tc-1',
+      toolName: 'Bash',
+      action: 'run',
+      toolInput: {},
+      display: { kind: 'command', command: 'ls' },
+      decision: 'approved',
+    });
+    expect(view.state().turn?.pendingApprovals).toEqual([]);
+  });
+
+  it('falls back to the tool call id when the approval event carries no interaction id', () => {
+    const { bus, view } = harness();
+
+    bus.publish({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+    bus.publish({
+      type: 'permission.approval.requested',
+      sessionId: 's',
+      agentId: 'main',
+      turnId: 1,
+      toolCallId: 'tc-1',
+      toolName: 'Bash',
+      action: 'run',
+      toolInput: {},
+      display: { kind: 'command', command: 'ls' },
+    });
+    expect(view.state().turn?.pendingApprovals).toEqual([
+      { approvalId: 'tc-1', toolCallId: 'tc-1', since: expect.any(Number) },
+    ]);
+  });
 });

@@ -642,6 +642,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const questions = session!.accessor.get(ISessionQuestionService);
     const pending = questions.request(
       {
+        id: 'call_q',
         turnId: 0,
         toolCallId: 'call_q',
         questions: [{ question: 'Pick?', options: [{ label: 'A' }] }],
@@ -812,6 +813,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const questions = session!.accessor.get(ISessionQuestionService);
     const pending = questions.request(
       {
+        id: 'call_q',
         turnId: 0,
         toolCallId: 'call_q',
         questions: [{ question: 'Pick one?', options: [{ label: 'A' }, { label: 'B' }] }],

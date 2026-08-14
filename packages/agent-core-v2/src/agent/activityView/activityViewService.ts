@@ -140,12 +140,12 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     );
     this._register(
       this.eventBus.subscribe('permission.approval.requested', (e) =>
-        this.onApprovalRequested(e.toolCallId),
+        this.onApprovalRequested(e.id ?? e.toolCallId, e.toolCallId),
       ),
     );
     this._register(
       this.eventBus.subscribe('permission.approval.resolved', (e) =>
-        this.onApprovalResolved(e.toolCallId),
+        this.onApprovalResolved(e.id ?? e.toolCallId),
       ),
     );
     this._register(
@@ -336,15 +336,15 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     });
   }
 
-  private onApprovalRequested(toolCallId: string): void {
+  private onApprovalRequested(approvalId: string, toolCallId: string): void {
     this.mutateTurn((t) => {
-      t.pendingApprovals.set(toolCallId, { approvalId: toolCallId, toolCallId, since: Date.now() });
+      t.pendingApprovals.set(approvalId, { approvalId, toolCallId, since: Date.now() });
     });
   }
 
-  private onApprovalResolved(toolCallId: string): void {
+  private onApprovalResolved(approvalId: string): void {
     this.mutateTurn((t) => {
-      t.pendingApprovals.delete(toolCallId);
+      t.pendingApprovals.delete(approvalId);
     });
   }
 

@@ -710,23 +710,6 @@ describe('sessionExport', () => {
     expect((await readdir(tmp)).toSorted()).toEqual(['export.zip', 'safe-output', 'state.json']);
   });
 
-  it('rejects with a coded error when compressed output exceeds the configured limit', async () => {
-    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
-
-    await expect(
-      writeExportZip({
-        outputPath: join(tmp, 'too-large.zip'),
-        manifest: testManifest('ses_too_large'),
-        sessionDir: tmp,
-        sessionFiles: [],
-        maxArchiveBytes: 1,
-      }),
-    ).rejects.toMatchObject({
-      code: 'session.export_too_large',
-      details: { maxArchiveBytes: 1 },
-    });
-  });
-
   it('throws a coded error when the session is unknown', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
     ix = createTestServices(tmp, {

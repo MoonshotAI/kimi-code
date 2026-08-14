@@ -165,6 +165,24 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     expect(body.code).toBe(40404);
   });
 
+  it('mints distinct approval ids when the provider reuses a tool_call id', async () => {
+    const sid = await createSession();
+    const first = enqueueApproval(sid, 'Bash_0');
+    const second = enqueueApproval(sid, 'Bash_0');
+    expect(first).not.toBe(second);
+
+    const { body } = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
+    expect(body.data.items.map((i) => i.approval_id).sort()).toEqual([first, second].sort());
+    expect(body.data.items.every((i) => i.tool_call_id === 'Bash_0')).toBe(true);
+
+    for (const aid of [first, second]) {
+      const resolved = await postJson<ResolveWire>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
+        decision: 'approved',
+      });
+      expect(resolved.body.code).toBe(0);
+    }
+  });
+
   it('returns 40401 for an unknown session', async () => {
     const { body } = await getJson<null>('/api/v1/sessions/nope/approvals?status=pending');
     expect(body.code).toBe(40401);
