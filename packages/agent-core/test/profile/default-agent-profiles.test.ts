@@ -116,41 +116,6 @@ describe('default agent profiles', () => {
     expect(prompt).not.toContain('# Plugin Instructions');
   });
 
-  it('wires the tower-worker profile into the default set', () => {
-    const agent = DEFAULT_AGENT_PROFILES['agent'];
-    expect(agent?.tools).toContain('TowerInit');
-    expect(Object.keys(agent?.subagents ?? {})).toContain('tower-worker');
-
-    const tools = DEFAULT_AGENT_PROFILES['tower-worker']?.tools ?? [];
-    expect(tools).toEqual(
-      expect.arrayContaining([
-        'TowerSend',
-        'TowerInbox',
-        'TowerFinding',
-        'TowerReview',
-        'TowerMission',
-        'TowerStatus',
-      ]),
-    );
-    // Tower tools stay with the main agent; workers get the shared set only.
-    for (const name of ['TowerInit', 'TowerPlan', 'TowerSpawn', 'TowerMerge', 'TowerTeardown']) {
-      expect(tools).not.toContain(name);
-    }
-    // Workers never fan out a swarm: the tower is the sole orchestrator, and
-    // swarm children would run unbudgeted on the main checkout, bypassing the
-    // worktree/roster discipline and the review-gated merge protocol.
-    expect(tools).not.toContain('AgentSwarm');
-    // v1's subagent declarations are descriptive (not enforced), so the only
-    // lever against write-capable delegation — a coder child would run on the
-    // main checkout, outside the worktree/roster discipline — is dropping the
-    // Agent tool entirely.
-    expect(tools).not.toContain('Agent');
-
-    const prompt = DEFAULT_AGENT_PROFILES['tower-worker']?.systemPrompt(promptContext) ?? '';
-    expect(prompt).toContain('tower worker/reviewer');
-    expect(prompt).toContain('Tower* tools ONLY');
-  });
-
   it('keeps optional-tool guidance out of the shared system prompt entirely', () => {
     // Tool-coupled guidance now lives in each tool's own description, which the schema
     // layer ships ONLY when the tool is registered — that is the availability gate, for

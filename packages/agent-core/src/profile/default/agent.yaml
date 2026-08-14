@@ -32,7 +32,6 @@ tools:
   - GetGoal
   - SetGoalBudget
   - UpdateGoal
-  - TowerInit
   - mcp__*
 
 subagents:
@@ -42,5 +41,3 @@ subagents:
     description: Fast codebase exploration with prompt-enforced read-only behavior.
   plan:
     description: Read-only implementation planning and architecture design.
-  tower-worker:
-    description: Tower worker/reviewer agent — executes one tower mission in its own git worktree (or reviews one branch), coordinating only through Tower* tools. Spawned via the TowerSpawn tool.

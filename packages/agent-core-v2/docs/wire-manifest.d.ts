@@ -66,8 +66,8 @@
 //   tools.set_active_tools             profile.activeTools         persisted  src/agent/profile/profileOps.ts
 //   tools.unregister_user_tool         userTool                    persisted  src/agent/userTool/userToolOps.ts
 //   tools.update_store                 todo                        persisted  src/session/todo/todoOps.ts
-//   tower_mode.enter                   tower                       persisted  src/agent/tower/towerOps.ts
-//   tower_mode.exit                    tower                       persisted  src/agent/tower/towerOps.ts
+//   tower_mode.enter                   tower                       persisted  src/features/tower/towerOps.ts
+//   tower_mode.exit                    tower                       persisted  src/features/tower/towerOps.ts
 //   turn.cancel                        turn                        persisted  src/agent/loop/turnOps.ts
 //   turn.ended                         turn                        persisted  src/agent/loop/turnOps.ts
 //   turn.prompt                        turn                        persisted  src/agent/loop/turnOps.ts
@@ -623,7 +623,7 @@ interface ToolsUpdateStorePayload {
 
 /**
  * model: tower · persisted · toEvent
- * owner: src/agent/tower/towerOps.ts
+ * owner: src/features/tower/towerOps.ts
  */
 interface TowerModeEnterPayload {
   _name: 'tower_mode.enter';
@@ -631,7 +631,7 @@ interface TowerModeEnterPayload {
 
 /**
  * model: tower · persisted · toEvent
- * owner: src/agent/tower/towerOps.ts
+ * owner: src/features/tower/towerOps.ts
  */
 interface TowerModeExitPayload {
   _name: 'tower_mode.exit';

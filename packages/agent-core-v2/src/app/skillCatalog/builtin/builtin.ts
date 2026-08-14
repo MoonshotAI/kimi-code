@@ -22,7 +22,7 @@ import {
   SUB_SKILL_PARENT,
   SUB_SKILL_REVIEW,
 } from './sub-skill';
-import { TOWER_SKILL } from './tower';
+import { TOWER_SKILL } from '#/features/tower/skill/skill';
 import { UPDATE_CONFIG_SKILL } from './update-config';
 import { WRITE_GOAL_SKILL } from './write-goal';
 

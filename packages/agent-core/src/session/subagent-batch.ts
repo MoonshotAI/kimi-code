@@ -1,7 +1,6 @@
 import { isProviderRateLimitError, type TokenUsage } from '@moonshot-ai/kosong';
 import * as retry from 'retry';
 
-import { RateLimitCapacityGovernor } from '../loop/rate-limiter';
 import type {
   RunSubagentOptions,
   SpawnSubagentOptions,
@@ -35,6 +34,8 @@ const INITIAL_LAUNCH_LIMIT = 5;
 const INITIAL_LAUNCH_INTERVAL_MS = 700;
 const RATE_LIMIT_RETRY_BASE_MS = 3000;
 const RATE_LIMIT_RETRY_FACTOR = 2;
+const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2000;
+const RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS = 3 * 60 * 1000;
 const RATE_LIMIT_SUSPENDED_REASON = 'Provider rate limit; subagent requeued for retry.';
 
 const AGENT_SWARM_MAX_CONCURRENCY_ENV = 'KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY';
@@ -144,8 +145,10 @@ export class SubagentBatch<T> {
   private started = false;
   private rateLimitMode = false;
   private startedSuccessCount = 0;
+  private rateLimitCapacity = 1;
   private lastRateLimitAt: number | undefined;
-  private readonly capacityGovernor = new RateLimitCapacityGovernor();
+  private lastCapacityShrinkAt: number | undefined;
+  private lastCapacityRecoveryAt: number | undefined;
   private globalRetryIntervalMs = RATE_LIMIT_RETRY_BASE_MS;
   private nextRateLimitLaunchAt = 0;
 
@@ -251,10 +254,8 @@ export class SubagentBatch<T> {
     if (this.pending.length === 0) return;
 
     const now = Date.now();
-    if (this.capacityGovernor.maybeRecover()) {
-      this.nextRateLimitLaunchAt = Math.min(this.nextRateLimitLaunchAt, now);
-    }
-    if (this.active.size >= this.capacityGovernor.getCapacity()) {
+    this.recoverRateLimitCapacity(now);
+    if (this.active.size >= this.rateLimitCapacity) {
       this.scheduleRateLimitWakeup(this.nextRateLimitCapacityRecoveryAt(), now);
       return;
     }
@@ -466,21 +467,50 @@ export class SubagentBatch<T> {
     if (!this.rateLimitMode) {
       this.rateLimitMode = true;
       this.clearNormalTimer();
+      this.rateLimitCapacity = Math.max(1, this.startedSuccessCount);
       this.nextRateLimitLaunchAt = Math.max(
         this.nextRateLimitLaunchAt,
         now + RATE_LIMIT_RETRY_BASE_MS,
       );
+      this.shrinkRateLimitCapacity(now, true);
+      return;
     }
-    // Capacity tracking lives in the shared governor: first 429 anchors to
-    // (ready launches − 1), later ones shave one more off (throttled).
-    this.capacityGovernor.noteRateLimited(Math.max(1, this.startedSuccessCount));
+
+    this.shrinkRateLimitCapacity(now, false);
+  }
+
+  private shrinkRateLimitCapacity(now: number, force: boolean): void {
+    if (
+      !force &&
+      this.lastCapacityShrinkAt !== undefined &&
+      now - this.lastCapacityShrinkAt < RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    this.rateLimitCapacity = Math.max(1, this.rateLimitCapacity - 1);
+    this.lastCapacityShrinkAt = now;
+  }
+
+  private recoverRateLimitCapacity(now: number): void {
+    const nextRecoveryAt = this.nextRateLimitCapacityRecoveryAt();
+    if (nextRecoveryAt > now) return;
+
+    this.rateLimitCapacity += 1;
+    this.lastCapacityRecoveryAt = now;
+    this.nextRateLimitLaunchAt = Math.min(this.nextRateLimitLaunchAt, now);
   }
 
   private nextRateLimitCapacityRecoveryAt(): number {
     if (this.pending.length === 0 || this.lastRateLimitAt === undefined) {
       return Number.POSITIVE_INFINITY;
     }
-    return this.capacityGovernor.nextRecoveryAt();
+
+    const latestCapacityChangeAt = Math.max(
+      this.lastRateLimitAt,
+      this.lastCapacityRecoveryAt ?? 0,
+    );
+    return latestCapacityChangeAt + RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS;
   }
 
   private scheduleRateLimitWakeup(wakeupAt: number, now: number): void {
@@ -495,7 +525,7 @@ export class SubagentBatch<T> {
     if (this.pending.length === 0) return;
 
     const nextWakeupAt =
-      this.active.size >= this.capacityGovernor.getCapacity()
+      this.active.size >= this.rateLimitCapacity
         ? this.nextRateLimitCapacityRecoveryAt()
         : Math.min(
             Math.max(this.nextRateLimitLaunchAt, this.nextPendingReadyAt()),

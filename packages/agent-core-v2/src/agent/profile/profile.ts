@@ -154,7 +154,6 @@ export interface IAgentProfileService {
   getActiveToolNames(): readonly string[] | undefined;
   addActiveTool(name: string): void;
   removeActiveTool(name: string): void;
-  activateTools(names: readonly string[]): void;
 }
 
 export const IAgentProfileService = createDecorator<IAgentProfileService>('agentProfileService');

@@ -552,11 +552,6 @@ export class ToolManager {
     }
   }
 
-  /** Current allowlist: exact builtin/user tool names plus MCP glob patterns. */
-  getActiveToolNames(): readonly string[] {
-    return [...this.enabledTools, ...this.mcpAccessPatterns];
-  }
-
   copyLoopToolsFrom(source: ToolManager): void {
     this.loopToolsOverride = source.loopTools;
   }
@@ -833,22 +828,6 @@ export class ToolManager {
         goalToolsEnabled && new b.GetGoalTool(this.agent),
         goalToolsEnabled && new b.SetGoalBudgetTool(this.agent),
         goalToolsEnabled && new b.UpdateGoalTool(this.agent),
-        // Tower comms tools are shared: the tower profile enables them via
-        // TowerInit, workers/reviewers via the tower-worker profile. The
-        // tower-only tools follow the goal tools' main-agent gating.
-        new b.TowerSendTool(this.agent),
-        new b.TowerInboxTool(this.agent),
-        new b.TowerFindingTool(this.agent),
-        new b.TowerReviewTool(this.agent),
-        new b.TowerMissionTool(this.agent),
-        new b.TowerStatusTool(this.agent),
-        goalToolsEnabled && new b.TowerInitTool(this.agent),
-        goalToolsEnabled && new b.TowerPlanTool(this.agent),
-        goalToolsEnabled &&
-          this.agent.subagentHost &&
-          new b.TowerSpawnTool(this.agent, this.agent.subagentHost, background),
-        goalToolsEnabled && new b.TowerMergeTool(this.agent),
-        goalToolsEnabled && new b.TowerTeardownTool(this.agent),
         this.agent.rpc?.requestQuestion && new b.AskUserQuestionTool(this.agent),
         new b.TodoListTool(this.toolStore),
         new b.TaskListTool(background),

@@ -334,9 +334,14 @@ const KNOWN_DIFFS = {
   },
   // Session skills: `path`s point into each engine's own home (user skills)
   // or the shared packages (builtins) — after the home-prefix scrub the
-  // summaries compare in full.
+  // summaries compare in full. The builtin `tower` skill is v2-only (the v1
+  // tower implementation was removed ahead of v1's deprecation), so it is
+  // projected out — an engine gap, not catalog data.
   listSkills: (skills: readonly SkillSummary[], home: HomePair): unknown =>
-    scrubHomePrefixes(skills, home),
+    scrubHomePrefixes(
+      skills.filter((skill) => skill.name !== 'tower'),
+      home,
+    ),
 } satisfies Record<string, (value: never, other: never) => unknown>;
 
 /** See the KNOWN_DIFFS goal note above for what this projects and why. */
@@ -399,24 +404,6 @@ function projectResumedAgents(
 }
 
 /**
- * The tower tools v1 constructs for every agent but keeps inactive until
- * TowerInit runs (TowerInit itself is active on both engines and compares).
- * See the `tools` bullet on `projectResumedAgent`.
- */
-const V1_INACTIVE_TOWER_TOOLS = new Set([
-  'TowerPlan',
-  'TowerSpawn',
-  'TowerMerge',
-  'TowerTeardown',
-  'TowerSend',
-  'TowerInbox',
-  'TowerFinding',
-  'TowerReview',
-  'TowerMission',
-  'TowerStatus',
-]);
-
-/**
  * The per-agent projections of the resume comparison, each a genuinely
  * accepted engine gap rather than resume data:
  * - `config.provider`: v1 resolves the full runtime ProviderConfig into the
@@ -454,14 +441,11 @@ const V1_INACTIVE_TOWER_TOOLS = new Set([
  *   DESCRIPTIONS are engine-owned constants that legitimately drift between
  *   the engines (the subagent/cron docs embed engine-specific facts), and
  *   v1 additionally registers the `select_tools` meta tool v2 has no
- *   counterpart for — both are engine design, not resume data. A model-less
+ *   counterpart for — both are engine design, not resume data. v2's default
+ *   profile also carries `TowerInit` (the tower-mode entry point); tower is
+ *   v2-only, so the tool is projected out of both rosters. A model-less
  *   agent's roster is not compared at all (v1 initializes builtin tools
- *   only on a profiled agent; v2 exposes them unbound). v1 also constructs
- *   the ten non-init tower tools for every agent and reports them with
- *   `active: false`; v2 only surfaces a tool once the profile activates it
- *   (TowerInit extends the active set at runtime), so the never-activated
- *   tower tools exist only on the v1 roster — registration semantics, not
- *   resume data.
+ *   only on a profiled agent; v2 exposes them unbound).
  */
 function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown {
   const projected = scrubHomePrefixes(agent, home) as Record<string, unknown>;
@@ -477,13 +461,7 @@ function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown 
     const tools = projected['tools'] as readonly Record<string, unknown>[];
     projected['tools'] = tools
       .filter((tool) => tool['name'] !== 'select_tools')
-      .filter(
-        (tool) =>
-          !(
-            tool['active'] === false &&
-            V1_INACTIVE_TOWER_TOOLS.has(tool['name'] as string)
-          ),
-      )
+      .filter((tool) => tool['name'] !== 'TowerInit')
       .map((tool) => ({ name: tool['name'], active: tool['active'], source: tool['source'] }))
       .toSorted((a, b) => String(a.name).localeCompare(String(b.name)));
   }
@@ -701,7 +679,13 @@ describe('v1↔v2 return-value parity', () => {
         v1.listWorkspaceSkills(workDir),
         v2.listWorkspaceSkills(workDir),
       ]);
-      expect(normalize(v2Skills, 'name')).toEqual(normalize(v1Skills, 'name'));
+      // The builtin `tower` skill is v2-only (the v1 tower implementation
+      // was removed ahead of v1's deprecation) — project it out.
+      const withoutTower = (skills: readonly SkillSummary[]): readonly SkillSummary[] =>
+        skills.filter((skill) => skill.name !== 'tower');
+      expect(normalize(withoutTower(v2Skills), 'name')).toEqual(
+        normalize(withoutTower(v1Skills), 'name'),
+      );
     } finally {
       await closeAll(v1, v2);
     }

@@ -67,8 +67,6 @@ const METADATA_ALIASES: Readonly<Record<string, string>> = {
   when_to_use: 'whenToUse',
   'disable-model-invocation': 'disableModelInvocation',
   disable_model_invocation: 'disableModelInvocation',
-  'allow-activation-while-busy': 'allowActivationWhileBusy',
-  allow_activation_while_busy: 'allowActivationWhileBusy',
 };
 
 export async function parseSkillFromFile(options: ParseSkillOptions): Promise<SkillDefinition> {
