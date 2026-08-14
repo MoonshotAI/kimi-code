@@ -3592,6 +3592,12 @@ describe('v1↔v2 global MCP parity', () => {
           url: authorizedUrl,
           auth: 'oauth',
         },
+        'disabled-oauth': {
+          transport: 'http',
+          url: 'https://disabled.example.test/mcp',
+          auth: 'oauth',
+          enabled: false,
+        },
       },
     });
     for (const homeDir of [pair.v1HomeDir, pair.v2HomeDir]) {
@@ -3619,6 +3625,7 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'bearer', authStatus: 'bearer-token' },
         { name: 'oauth-required', authStatus: 'oauth-required' },
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+        { name: 'disabled-oauth', authStatus: 'not-applicable' },
       ]);
     } finally {
       await closeGlobalMcpPair(pair);

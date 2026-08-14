@@ -2539,6 +2539,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     cwd: string | undefined,
     verify: boolean,
   ): Promise<GlobalMcpServerAuthState> {
+    // Parity with v1: a disabled server never participates in OAuth.
+    if (server.enabled === false) return 'not-applicable';
     if (server.transport === 'stdio') return 'not-applicable';
     if (server.bearerTokenEnvVar !== undefined) return 'bearer-token';
     // Keep status classification aligned with the existing connection manager:
