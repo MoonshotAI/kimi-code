@@ -1,11 +1,10 @@
 /**
  * `media` domain — `ISessionMediaStore` contract.
  *
- * Owns the per-session canonical media blobs and shared-cache fallback through
- * the persistence byte store. It materializes daemon uploads, exposes a host
- * path only when the selected backend has one, and opens canonical bytes with
- * download metadata after a transient daemon upload has been released. Bound
- * at Session scope.
+ * Owns the per-session canonical media blobs through the persistence byte
+ * store. It materializes daemon uploads, exposes a host path only when the
+ * selected backend has one, and opens canonical bytes with download metadata
+ * after a transient daemon upload has been released. Bound at Session scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -48,8 +47,6 @@ export interface ISessionMediaStore {
   open(fileId: string): Promise<SessionMediaFile | undefined>;
 
   materialize(input: SessionMediaMaterializeInput): Promise<string | undefined>;
-
-  materializeFallback(input: SessionMediaMaterializeInput): Promise<string | undefined>;
 }
 
 export const ISessionMediaStore: ServiceIdentifier<ISessionMediaStore> =

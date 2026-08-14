@@ -177,23 +177,6 @@ async function materializeUploadedFile(
   });
 }
 
-async function materializeUploadedFileAtFallback(
-  r: RunningServer,
-  sessionId: string,
-  meta: { id: string; name: string; media_type: string; size: number },
-): Promise<void> {
-  const session = getLiveSessionById(r.core.accessor, sessionId);
-  if (session === undefined) throw new Error(`session ${sessionId} is not live`);
-  const uploaded = await r.core.accessor.get(IFileService).get(meta.id);
-  await session.accessor.get(ISessionMediaStore).materializeFallback({
-    fileId: meta.id,
-    name: meta.name,
-    mimeType: meta.media_type,
-    size: meta.size,
-    stream: () => uploaded.stream(),
-  });
-}
-
 describe('POST /api/v1/files (server-v2)', () => {
   it('upload → GET stream → DELETE → re-GET 40407', async () => {
     const r = await boot();
@@ -435,27 +418,6 @@ describe('GET /api/v1/sessions/{session_id}/media/{file_id} (server-v2)', () => 
     expect(res.headers['content-length']).toBe(String(data.length));
     expect(String(res.headers['content-disposition'])).toMatch(
       /inline; filename="pasted image\.png"/,
-    );
-    expect(res.rawPayload).toEqual(data);
-  });
-
-  it('serves the fallback copy when canonical materialization was unavailable', async () => {
-    const r = await boot();
-    const data = Buffer.from('fallback image bytes');
-    const sessionId = await createSession(r);
-    const meta = await uploadFile(r, data, 'fallback image.png', 'image/png');
-    await materializeUploadedFileAtFallback(r, sessionId, meta);
-
-    await appOf(r).inject({ method: 'DELETE', url: `/api/v1/files/${meta.id}` });
-    const res = await appOf(r).inject({
-      method: 'GET',
-      url: `/api/v1/sessions/${sessionId}/media/${meta.id}`,
-    });
-
-    expect(res.statusCode).toBe(200);
-    expect(res.headers['content-type']).toBe('image/png');
-    expect(String(res.headers['content-disposition'])).toMatch(
-      /inline; filename="fallback image\.png"/,
     );
     expect(res.rawPayload).toEqual(data);
   });

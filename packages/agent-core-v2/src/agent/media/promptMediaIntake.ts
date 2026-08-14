@@ -6,19 +6,18 @@
  * store (`ISessionMediaStore`) and carries that absolute path, so the
  * persisted reference always points into the session's own `media/` dir —
  * whichever edge (REST prompt route, SDK prompt, steer, …) the message
- * arrived through. When the canonical write fails, the session media store
- * places the bytes in its shared-cache fallback — a read-only session dir must
- * not reject a submittable prompt — with the extension derived like the
- * canonical copy's: hint path, then upload name, then MIME.
+ * arrived through. The copy's extension is derived from the hint path, then
+ * the upload name, then MIME.
  *
  * Intake rewrites only the reference itself; no `<image|video path="…">`
  * tag is authored — the reference's `?path=` makes the part self-contained,
  * and the request-time resolver synthesizes the degrade tag when needed.
  * Normalization is idempotent (a reference already carrying the canonical
- * path passes through untouched) and best effort (an unreadable upload keeps
- * its original reference; the request-time resolver degrades it instead).
- * Reads the referenced bytes through the `file` domain (`IFileService`).
- * Pure orchestration; no scoped service of its own.
+ * path passes through untouched) and best effort (an unreadable upload or a
+ * failed canonical write keeps its original reference; the request-time
+ * resolver serves it from the daemon upload while it lives and degrades it
+ * afterwards). Reads the referenced bytes through the `file` domain
+ * (`IFileService`). Pure orchestration; no scoped service of its own.
  */
 
 import type { IFileService } from '#/app/file/fileService';
@@ -77,28 +76,20 @@ async function materializeRef(
     deps.signal === undefined
       ? await deps.files.get(fileId)
       : await abortable(deps.files.get(fileId), deps.signal);
-  const input = {
-    fileId,
-    size: file.meta.size,
-    name: file.meta.name,
-    mimeType: file.meta.media_type,
-    hintPath,
-  };
   try {
-    const path = await deps.mediaStore.materialize({
-      ...input,
+    return await deps.mediaStore.materialize({
+      fileId,
+      size: file.meta.size,
+      name: file.meta.name,
+      mimeType: file.meta.media_type,
+      hintPath,
       stream: () => file.stream(),
       signal: deps.signal,
     });
-    if (path !== undefined) return path;
   } catch {
     deps.signal?.throwIfAborted();
+    return undefined;
   }
-  return deps.mediaStore.materializeFallback({
-    ...input,
-    stream: () => file.stream(),
-    signal: deps.signal,
-  });
 }
 
 function rewriteRefPath(part: ContentPart, fileId: string, path: string): ContentPart {

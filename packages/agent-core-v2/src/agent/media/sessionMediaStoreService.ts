@@ -3,18 +3,16 @@
  *
  * Materializes and reads session-canonical media through the `storage` byte
  * backend, persists download metadata through the atomic-document store, and
- * addresses both through `sessionContext`; the shared cache remains a fallback
- * when the session media directory is unavailable. Filesystem deployments
- * expose an absolute host path for model readback; non-filesystem deployments
- * retain canonical bytes without inventing one. Every entry point rejects ids
- * that are not minted upload ids (`isFileId`) before using them as storage
- * keys. Bound at Session scope.
+ * addresses both through `sessionContext`. Filesystem deployments expose an
+ * absolute host path for model readback; non-filesystem deployments retain
+ * canonical bytes without inventing one. Every entry point rejects ids that
+ * are not minted upload ids (`isFileId`) before using them as storage keys.
+ * Bound at Session scope.
  */
 
 import { extname } from 'node:path';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { LifecycleScope } from '#/app/scopes';
 import { isFileId } from '#/app/file/fileService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -40,24 +38,16 @@ interface SessionMediaMetadata {
   readonly mediaType: string;
 }
 
-interface StoredMediaLocation {
-  readonly scope: string;
-  readonly key: string;
-}
-
 export class SessionMediaStoreService implements ISessionMediaStore {
   declare readonly _serviceBrand: undefined;
   private readonly scope: string;
-  private readonly fallbackScope: string;
 
   constructor(
     @ISessionContext sessionContext: ISessionContext,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     @IAtomicDocumentStore private readonly documents: IAtomicDocumentStore,
-    @IBootstrapService bootstrap: IBootstrapService,
   ) {
     this.scope = sessionContext.scope('media');
-    this.fallbackScope = bootstrap.scope('cache');
   }
 
   pathFor(fileId: string, ext: string): string | undefined {
@@ -71,9 +61,9 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     // and must never become a storage key (path traversal guard). Treat it
     // like a missing copy: the caller's own hint stands.
     if (!isFileId(fileId)) return hint;
-    const location = await this.findLocation(fileId, hint);
-    if (location === undefined) return hint;
-    return this.storage.pathFor(location.scope, location.key) ?? hint;
+    const key = await this.findKey(fileId, hint);
+    if (key === undefined) return hint;
+    return this.storage.pathFor(this.scope, key) ?? hint;
   }
 
   async read(
@@ -81,74 +71,54 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     hintPath?: string,
   ): Promise<{ readonly data: Uint8Array; readonly name: string } | undefined> {
     if (!isFileId(fileId)) return undefined;
-    const location = await this.findLocation(fileId, hintPath);
-    if (location === undefined) return undefined;
-    const data = await this.storage.read(location.scope, location.key);
-    return data === undefined ? undefined : { data, name: location.key };
+    const key = await this.findKey(fileId, hintPath);
+    if (key === undefined) return undefined;
+    const data = await this.storage.read(this.scope, key);
+    return data === undefined ? undefined : { data, name: key };
   }
 
   async open(fileId: string): Promise<SessionMediaFile | undefined> {
     if (!isFileId(fileId)) return undefined;
-    for (const scope of this.readScopes()) {
-      const storedMetadata = await this.documents.get<unknown>(scope, this.metadataKey(fileId));
-      const metadata = this.isMetadataFor(storedMetadata, fileId) ? storedMetadata : undefined;
-      const key =
-        metadata !== undefined && (await this.storage.size(scope, metadata.key)) !== undefined
-          ? metadata.key
-          : await this.findKey(scope, fileId, undefined);
-      if (key === undefined) continue;
-      const size = await this.storage.size(scope, key);
-      if (size === undefined) continue;
-      return {
-        path: this.storage.pathFor(scope, key),
-        name: metadata?.name ?? key,
-        mediaType: metadata?.mediaType ?? this.mediaTypeForKey(key),
-        size,
-        stream: (range) => this.storage.readStream(scope, key, range),
-      };
-    }
-    return undefined;
+    const storedMetadata = await this.documents.get<unknown>(this.scope, this.metadataKey(fileId));
+    const metadata = this.isMetadataFor(storedMetadata, fileId) ? storedMetadata : undefined;
+    const key =
+      metadata !== undefined && (await this.storage.size(this.scope, metadata.key)) !== undefined
+        ? metadata.key
+        : await this.findKey(fileId, undefined);
+    if (key === undefined) return undefined;
+    const size = await this.storage.size(this.scope, key);
+    if (size === undefined) return undefined;
+    return {
+      path: this.storage.pathFor(this.scope, key),
+      name: metadata?.name ?? key,
+      mediaType: metadata?.mediaType ?? this.mediaTypeForKey(key),
+      size,
+      stream: (range) => this.storage.readStream(this.scope, key, range),
+    };
   }
 
   async materialize(input: SessionMediaMaterializeInput): Promise<string | undefined> {
-    return this.materializeAt(this.scope, input);
-  }
-
-  async materializeFallback(input: SessionMediaMaterializeInput): Promise<string | undefined> {
-    return this.materializeAt(this.fallbackScope, input);
-  }
-
-  private async materializeAt(
-    scope: string,
-    input: SessionMediaMaterializeInput,
-  ): Promise<string | undefined> {
     if (!isFileId(input.fileId)) return undefined;
     const ext =
       (input.hintPath === undefined ? '' : extname(input.hintPath)) ||
       extname(input.name) ||
       (mediaExtensionForMime(input.mimeType) ?? '.bin');
     const key = this.keyFor(input.fileId, ext);
-    const existingSize = await this.storage.size(scope, key);
+    const existingSize = await this.storage.size(this.scope, key);
     if (existingSize !== input.size) {
       const source = input.stream() as NodeJS.ReadableStream & AsyncIterable<Uint8Array>;
-      await this.storage.writeStream(scope, key, source, {
+      await this.storage.writeStream(this.scope, key, source, {
         atomic: true,
         signal: input.signal,
       });
     }
-    await this.documents.set(scope, this.metadataKey(input.fileId), {
+    await this.documents.set(this.scope, this.metadataKey(input.fileId), {
       version: 1,
       key,
       name: input.name,
       mediaType: input.mimeType,
     });
-    return this.storage.pathFor(scope, key);
-  }
-
-  private readScopes(): readonly string[] {
-    return this.scope === this.fallbackScope
-      ? [this.scope]
-      : [this.scope, this.fallbackScope];
+    return this.storage.pathFor(this.scope, key);
   }
 
   private keyFor(fileId: string, ext: string): string {
@@ -185,27 +155,12 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     );
   }
 
-  private async findLocation(
-    fileId: string,
-    hintPath: string | undefined,
-  ): Promise<StoredMediaLocation | undefined> {
-    for (const scope of this.readScopes()) {
-      const key = await this.findKey(scope, fileId, hintPath);
-      if (key !== undefined) return { scope, key };
-    }
-    return undefined;
-  }
-
-  private async findKey(
-    scope: string,
-    fileId: string,
-    hintPath: string | undefined,
-  ): Promise<string | undefined> {
+  private async findKey(fileId: string, hintPath: string | undefined): Promise<string | undefined> {
     if (hintPath !== undefined) {
       const hinted = this.keyFor(fileId, extname(hintPath));
-      if ((await this.storage.size(scope, hinted)) !== undefined) return hinted;
+      if ((await this.storage.size(this.scope, hinted)) !== undefined) return hinted;
     }
-    const keys = await this.storage.list(scope, fileId);
+    const keys = await this.storage.list(this.scope, fileId);
     return keys.find((key) => key === fileId || key.startsWith(`${fileId}.`));
   }
 }

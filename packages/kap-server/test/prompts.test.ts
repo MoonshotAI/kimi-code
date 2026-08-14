@@ -582,7 +582,7 @@ describe('server-v2 /api/v1 prompts', () => {
     });
   });
 
-  it('falls back to the shared cache dir when the session media dir is not writable', async () => {
+  it('keeps the upload-backed reference when the session media dir is not writable', async () => {
     // Root bypasses permission checks, so the read-only dir never triggers.
     if (process.getuid?.() === 0) return;
     const id = await createSession(home as string);
@@ -591,7 +591,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const uploaded = await uploadFile(smallPng, 'image/png', 'small.png');
 
     // A read-only session media dir must not reject an otherwise-submittable
-    // prompt: the materialized copy falls back to the shared cache dir.
+    // prompt: the reference stays upload-backed, without a materialized copy.
     const mediaDir = sessionMediaDir(server!, id);
     await mkdir(mediaDir, { recursive: true });
     await chmod(mediaDir, 0o555);
@@ -601,9 +601,23 @@ describe('server-v2 /api/v1 prompts', () => {
       });
       expect(submitted.body.code).toBe(0);
 
+      const session = getLiveSessionById(server!.core.accessor, id);
+      const main = session!.accessor.get(IAgentLifecycleService).get('main')!;
+      await vi.waitFor(() => {
+        const message = main.accessor
+          .get(IAgentContextMemoryService)
+          .get()
+          .find((m) => m.role === 'user' && m.content.some((part) => part.type === 'image_url'));
+        expect(message).toBeDefined();
+        expect(message!.content).toContainEqual({
+          type: 'image_url',
+          imageUrl: { url: `kimi-file://${uploaded.id}` },
+        });
+      });
+
+      // No fallback copy lands outside the session media dir.
       const cacheDir = server!.core.accessor.get(IBootstrapService).cacheDir;
-      const mediaPath = join(cacheDir, `${uploaded.id}.png`);
-      expect(await readFileEventually(mediaPath)).toEqual(smallPng);
+      await expect(readFile(join(cacheDir, `${uploaded.id}.png`))).rejects.toThrow();
     } finally {
       await chmod(mediaDir, 0o755);
     }

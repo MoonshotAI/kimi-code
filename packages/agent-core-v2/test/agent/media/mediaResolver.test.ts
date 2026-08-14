@@ -149,9 +149,6 @@ function stubMediaStore(sessionDir = '/nonexistent-session'): ISessionMediaStore
     materialize: async () => {
       throw new Error('unused');
     },
-    materializeFallback: async () => {
-      throw new Error('unused');
-    },
   };
 }
 

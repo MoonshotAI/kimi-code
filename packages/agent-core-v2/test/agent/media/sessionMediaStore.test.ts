@@ -13,15 +13,12 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
-
-import { stubBootstrap } from '../../app/bootstrap/stubs';
 
 const BYTES = Buffer.from('media bytes');
 
@@ -51,7 +48,6 @@ describe('SessionMediaStoreService', () => {
           sessionScope: join('sessions', 's1'),
           cwd: '/tmp',
         }));
-        reg.defineInstance(IBootstrapService, stubBootstrap(homeDir));
         reg.defineInstance(IFileSystemStorageService, new FileStorageService(homeDir));
         reg.define(IAtomicDocumentStore, JsonAtomicDocumentStore);
         reg.define(ISessionMediaStore, SessionMediaStoreService);
@@ -87,43 +83,6 @@ describe('SessionMediaStoreService', () => {
     expect(target).toBe(pathFor('f_1', '.mp4'));
     expect(target).toBe(join(sessionDir, 'media', 'f_1.mp4'));
     expect(await readFile(target!)).toEqual(BYTES);
-  });
-
-  it('materializes at the shared cache fallback through the storage boundary', async () => {
-    const target = await store.materializeFallback(input());
-    expect(target).toBe(join(homeDir, 'cache', 'f_1.mp4'));
-    expect(await readFile(target!)).toEqual(BYTES);
-  });
-
-  it('reads fallback bytes when the canonical copy is unavailable', async () => {
-    const target = await store.materializeFallback(input());
-
-    await expect(store.read('f_1', target)).resolves.toEqual({
-      data: BYTES,
-      name: 'f_1.mp4',
-    });
-  });
-
-  it('opens fallback media with its persisted download metadata', async () => {
-    await store.materializeFallback(
-      input({ name: 'original clip.mp4', mimeType: 'video/mp4' }),
-    );
-
-    const file = await store.open('f_1');
-
-    expect(file).toMatchObject({
-      path: join(homeDir, 'cache', 'f_1.mp4'),
-      name: 'original clip.mp4',
-      mediaType: 'video/mp4',
-      size: BYTES.length,
-    });
-    expect(file === undefined ? undefined : Buffer.from(await collect(file.stream()))).toEqual(BYTES);
-  });
-
-  it('resolves the display path to the fallback copy when the canonical copy is unavailable', async () => {
-    const target = await store.materializeFallback(input());
-
-    await expect(store.resolveDisplayPath('f_1', '/stale/elsewhere.mp4')).resolves.toBe(target);
   });
 
   it('keeps a same-size copy without re-reading the stream', async () => {
@@ -263,7 +222,6 @@ it('retains canonical bytes without inventing a path for a non-filesystem backen
         sessionScope: 'sessions/w1/s1',
         cwd: '/tmp',
       }));
-      reg.defineInstance(IBootstrapService, stubBootstrap('/unused-home'));
       reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
       reg.define(IAtomicDocumentStore, JsonAtomicDocumentStore);
       reg.define(ISessionMediaStore, SessionMediaStoreService);

@@ -515,7 +515,7 @@ describe('AgentPromptService daemon media intake', () => {
     expectMediaRef(handle.message.content, 'f_v', target, 'video');
   });
 
-  it('falls back to the shared cache dir when the session media store cannot write', async () => {
+  it('keeps the upload-backed reference when the session media store cannot write', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'prompt-intake-home-'));
     onTestFinished(() => rm(homeDir, { recursive: true, force: true }));
     const sessionDir = join(homeDir, 'sessions', 's1');
@@ -525,12 +525,15 @@ describe('AgentPromptService daemon media intake', () => {
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);
     const { prompt } = harness({ sessionDir, homeDir, files });
 
-    const handle = await enqueueMedia(prompt, { id: 'prompt-fallback', fileId: 'f_1' });
+    const handle = await enqueueMedia(prompt, { id: 'prompt-unwritable', fileId: 'f_1' });
     await handle.launched;
 
-    const target = join(homeDir, 'cache', 'f_1.png');
-    expect(await readFile(target)).toEqual(PNG_BYTES);
-    expectMediaRef(handle.message.content, 'f_1', target);
+    // No fallback copy: the reference stays bare, so the request-time
+    // resolver keeps serving the bytes from the daemon upload while it lives.
+    expect(handle.message.content).toEqual([
+      { type: 'image_url', imageUrl: { url: buildDaemonFileUrl('f_1') } },
+    ]);
+    await expect(readFile(join(homeDir, 'cache', 'f_1.png'))).rejects.toThrow();
   });
 
   it('returns the first idle media prompt before intake resolves', async () => {

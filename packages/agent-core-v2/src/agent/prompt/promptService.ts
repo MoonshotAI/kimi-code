@@ -6,8 +6,8 @@
  * steers, settles lifecycle handles, and keeps system input outside the prompt
  * resource model. Daemon file references in submissions are normalized through
  * the `media` domain's intake (`materializePromptDaemonRefs` — materialize
- * into the session media store and author the paired media-path tag); the media
- * store owns canonical and shared-cache persistence. `submit` /
+ * into the session media store so the reference's `?path=` carries the
+ * session-canonical location); the media store owns the canonical persistence. `submit` /
  * `submitSteer` are the wire-facing user entry
  * points: they track `input_steer` through `telemetry`, persist the derived
  * title/lastPrompt through `sessionMetadata` for the main agent only
