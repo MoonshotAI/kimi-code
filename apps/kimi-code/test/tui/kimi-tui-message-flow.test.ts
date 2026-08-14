@@ -711,6 +711,116 @@ describe('KimiTUI message flow', () => {
     expect(session.promptWithSkills).not.toHaveBeenCalled();
   });
 
+  it('queues an inline-skill prompt while a goal is active (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+    // Materialize the lazy session first: an active goal only exists inside a
+    // live session, and lazy creation would refresh (and clear) the goal
+    // snapshot set up below.
+    await (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession();
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+
+    driver.handleUserInput('check /skill:review');
+
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({
+        text: 'check /skill:review',
+        inlineSkillActivations: [{ skillName: 'review' }],
+      }),
+    ]);
+  });
+
+  it('appends the user entry after the skill cards for a grouped submission (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    // Hold the RPC open so the skill.activated event can land mid-flight,
+    // exactly how the in-process wiring delivers it during the call.
+    let release!: () => void;
+    (session.promptWithSkills as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    driver.handleUserInput('please /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalled();
+    });
+    const submissionId = (
+      (session.promptWithSkills as ReturnType<typeof vi.fn>).mock.calls[0]![2] as {
+        submissionId: string;
+      }
+    ).submissionId;
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        sessionId: 'ses-lazy',
+        agentId: 'main',
+        activationId: 'act-1',
+        skillName: 'review',
+        trigger: 'user-slash',
+        submissionId,
+      } as Event,
+      () => {},
+    );
+    release();
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries.map((entry) => entry.kind)).toEqual([
+        'skill_activation',
+        'user',
+      ]);
+    });
+  });
+
   it('serializes concurrent lazy session creation (v2 engine)', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {

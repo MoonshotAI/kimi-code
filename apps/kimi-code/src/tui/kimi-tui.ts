@@ -1399,6 +1399,7 @@ export class KimiTUI {
     }
     if (
       this.deferUserMessages ||
+      this.state.appState.goal?.status === 'active' ||
       this.state.appState.streamingPhase !== 'idle' ||
       this.state.appState.isCompacting
     ) {
@@ -1432,21 +1433,28 @@ export class KimiTUI {
     extraction: ReturnType<typeof extractMediaAttachments>,
   ): Promise<void> {
     const submissionId = randomUUID();
-    this.appendTranscriptEntry({
-      id: nextTranscriptId(),
-      kind: 'user',
-      turnId: undefined,
-      renderMode: 'plain',
-      content: text,
-      imageAttachmentIds:
-        extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
-      promptSubmissionId: submissionId,
-    });
-    await session.promptWithSkills(
-      extraction.hasMedia ? extraction.parts : text,
-      activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
-      { submissionId },
-    );
+    try {
+      await session.promptWithSkills(
+        extraction.hasMedia ? extraction.parts : text,
+        activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
+        { submissionId },
+      );
+    } finally {
+      // The engine records the skill activations before the prompt, and the
+      // `skill.activated` events land synchronously during the call — so
+      // appending the user entry afterwards keeps the live transcript in the
+      // same order as a resumed replay (skill cards first, prompt last).
+      this.appendTranscriptEntry({
+        id: nextTranscriptId(),
+        kind: 'user',
+        turnId: undefined,
+        renderMode: 'plain',
+        content: text,
+        imageAttachmentIds:
+          extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
+        promptSubmissionId: submissionId,
+      });
+    }
   }
 
   validateMediaCapabilities(extraction: {
