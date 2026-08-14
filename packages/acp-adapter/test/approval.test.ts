@@ -246,10 +246,10 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
     const clientConn = new ClientSideConnection(() => client, clientStream);
 
     // Open the session so AcpServer constructs the AcpSession (which
-    // registers our approval handler).
+    // registers the approval handler and persistent event listener).
     await clientConn.newSession({ cwd: '/tmp/x', mcpServers: [] });
 
-    // Kick off a prompt so the in-prompt onEvent subscription is live.
+    // Kick off a prompt so the prompt waiter is live.
     // The scripted session's `prompt()` parks until we call
     // `resolvePrompt`, giving us a window to drive events + approval.
     const pending = clientConn.prompt({
@@ -257,7 +257,7 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
       prompt: [textBlock('hi')],
     });
 
-    // Wait one tick for prompt() to subscribe via onEvent.
+    // Wait one tick for prompt() to register its waiter.
     await new Promise((r) => setTimeout(r, 5));
 
     // Fire a tool-call-started event so the adapter learns the

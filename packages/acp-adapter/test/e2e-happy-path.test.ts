@@ -89,7 +89,7 @@ function makeInMemoryStreamPair(): {
  * Build a scripted Session whose `prompt()` synchronously emits a
  * pre-recorded sequence of `Event`s through any subscribed listener.
  * `onEvent` tracks listener registrations so the test can assert
- * the AcpSession unsubscribes after `turn.ended`.
+ * the AcpSession keeps its listener until transport cleanup.
  */
 function makeScriptedSession(
   sessionId: string,
@@ -252,8 +252,8 @@ describe('AcpServer end-to-end happy path', () => {
       expect(note.sessionId).toBe(sessionId);
     }
 
-    // Listener was unsubscribed when turn.ended landed.
-    expect(unsubscribeCount()).toBe(1);
+    // The listener remains active until ACP transport cleanup.
+    expect(unsubscribeCount()).toBe(0);
   });
 
   it('cancel mid-stream resolves with stopReason cancelled', async () => {

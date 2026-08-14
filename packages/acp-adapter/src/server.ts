@@ -302,6 +302,14 @@ export class AcpServer implements Agent {
     return this.sessions.get(sessionId);
   }
 
+  /** Release all per-session event subscriptions when the ACP transport closes. */
+  dispose(): void {
+    for (const session of this.sessions.values()) {
+      session.dispose();
+    }
+    this.sessions.clear();
+  }
+
   async initialize(params: InitializeRequest): Promise<InitializeResponse> {
     this.negotiated = negotiateVersion(params.protocolVersion);
     this.clientCapabilities = params.clientCapabilities;
@@ -401,6 +409,7 @@ export class AcpServer implements Agent {
       this.harness,
       currentThinkingEffort,
     );
+    this.sessions.get(session.id)?.dispose();
     this.sessions.set(session.id, acpSession);
     // Phase 14 (PLAN D11) advertises both the model and mode pickers as
     // a unified `configOptions: SessionConfigOption[]` surface. The
@@ -605,6 +614,7 @@ export class AcpServer implements Agent {
       this.harness,
       currentThinkingEffort,
     );
+    this.sessions.get(session.id)?.dispose();
     this.sessions.set(session.id, acpSession);
     const configOptions = await buildSessionConfigOptions(
       this.harness,
@@ -1055,8 +1065,16 @@ export async function runAcpServerWithStream(
     slashCommands?: SlashCommandsResolver;
   },
 ): Promise<void> {
-  const conn = new AgentSideConnection((c) => new AcpServer(harness, c, opts), stream);
-  await conn.closed;
+  let server: AcpServer | undefined;
+  const conn = new AgentSideConnection((c) => {
+    server = new AcpServer(harness, c, opts);
+    return server;
+  }, stream);
+  try {
+    await conn.closed;
+  } finally {
+    server?.dispose();
+  }
 }
 
 /**
