@@ -641,6 +641,7 @@ export class StreamingUIController {
         true,
         'live',
         state.ui,
+        state.appState.thinkingLiveDisplay ?? 'preview',
       );
       if (state.toolOutputExpanded) this._activeThinkingComponent.setExpanded(true);
       state.transcriptContainer.addChild(this._activeThinkingComponent);

@@ -89,4 +89,73 @@ describe('ThinkingComponent', () => {
       expect(visibleWidth(line)).toBeLessThanOrEqual(37);
     }
   });
+
+  it('shows approx tokens and elapsed time instead of content in live stats mode', () => {
+    const component = new ThinkingComponent(longThinking, true, 'live', undefined, 'stats');
+    const out = strip(component.render(80).join('\n'));
+
+    expect(out).toContain('⠋ thinking...');
+    // longThinking is 41 chars → ceil(41 / 4) = 11 approximate tokens.
+    expect(out).toContain('~11 tokens');
+    expect(out).toContain('0s');
+    expect(out).not.toContain('line6');
+    expect(out).not.toContain('line7');
+  });
+
+  it('ticks the elapsed time in live stats mode', () => {
+    vi.useFakeTimers();
+    const component = new ThinkingComponent('working it out', true, 'live', undefined, 'stats');
+
+    vi.advanceTimersByTime(72_000);
+    component.invalidate();
+    expect(strip(component.render(80).join('\n'))).toContain('1m12s');
+
+    vi.advanceTimersByTime(18_213_000 - 72_000);
+    component.invalidate();
+    expect(strip(component.render(80).join('\n'))).toContain('5h3m33s');
+
+    vi.useRealTimers();
+  });
+
+  it('finalizes stats mode into a "Thought for" summary line', () => {
+    const component = new ThinkingComponent(longThinking, true, 'live', undefined, 'stats');
+
+    component.finalize();
+
+    const out = strip(component.render(80).join('\n'));
+    expect(out).toContain(`${STATUS_BULLET}Thought for 0s`);
+    expect(out).toContain('(ctrl+o to expand)');
+    expect(out).not.toContain('line1');
+    expect(out).not.toContain('line7');
+  });
+
+  it('freezes the elapsed time in the stats summary on finalize', () => {
+    vi.useFakeTimers();
+    const component = new ThinkingComponent('working it out', true, 'live', undefined, 'stats');
+
+    vi.advanceTimersByTime(72_000);
+    component.finalize();
+    expect(strip(component.render(80).join('\n'))).toContain('Thought for 1m12s');
+
+    vi.advanceTimersByTime(60_000);
+    component.invalidate();
+    expect(strip(component.render(80).join('\n'))).toContain('Thought for 1m12s');
+
+    vi.useRealTimers();
+  });
+
+  it('expands a finalized stats summary into the full thinking text', () => {
+    const component = new ThinkingComponent(longThinking, true, 'live', undefined, 'stats');
+    component.finalize();
+
+    component.setExpanded(true);
+    const expanded = strip(component.render(80).join('\n'));
+    expect(expanded).toContain('line7');
+    expect(expanded).not.toContain('Thought for');
+
+    component.setExpanded(false);
+    const collapsed = strip(component.render(80).join('\n'));
+    expect(collapsed).toContain('Thought for 0s');
+    expect(collapsed).not.toContain('line7');
+  });
 });

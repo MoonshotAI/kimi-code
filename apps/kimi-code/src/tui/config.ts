@@ -33,6 +33,9 @@ export const UpgradePreferencesSchema = z.object({
 export const STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'git', 'tips'] as const;
 export type StatusLineItem = (typeof STATUS_LINE_ITEMS)[number];
 
+export const ThinkingLiveDisplaySchema = z.enum(['preview', 'stats']);
+export type ThinkingLiveDisplay = z.infer<typeof ThinkingLiveDisplaySchema>;
+
 export const StatusLineFileConfigSchema = z.object({
   items: z.array(z.string()).optional(),
   command: z.string().optional(),
@@ -56,6 +59,7 @@ export const TuiConfigFileSchema = z.object({
   render_latex: z.boolean().optional(),
   disable_paste_burst: z.boolean().optional(),
   cache_expiry_hint: z.boolean().optional(),
+  thinking_live_display: ThinkingLiveDisplaySchema.optional(),
   editor: z
     .object({
       command: z.string().optional(),
@@ -84,6 +88,9 @@ export const TuiConfigSchema = z.object({
   /** Present in every normalized config; optional only so hand-built test
    * fixtures from before this field existed still typecheck. */
   cacheExpiryHint: z.boolean().optional(),
+  /** Present in every normalized config; optional only so hand-built test
+   * fixtures from before this field existed still typecheck. */
+  thinkingLiveDisplay: ThinkingLiveDisplaySchema.optional(),
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
@@ -111,6 +118,7 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   renderLatex: true,
   disablePasteBurst: false,
   cacheExpiryHint: true,
+  thinkingLiveDisplay: 'preview',
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
@@ -198,6 +206,8 @@ export function normalizeTuiConfig(
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
+    thinkingLiveDisplay:
+      config.thinking_live_display ?? DEFAULT_TUI_CONFIG.thinkingLiveDisplay,
     editorCommand: command === undefined || command.length === 0 ? null : command,
     notifications: {
       enabled: config.notifications?.enabled ?? DEFAULT_NOTIFICATIONS_CONFIG.enabled,
@@ -248,6 +258,7 @@ theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | c
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
+thinking_live_display = "${config.thinkingLiveDisplay ?? 'preview'}" # "preview" scrolls the last lines while thinking streams; "stats" shows ~tokens and elapsed time
 
 [editor]
 command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $VISUAL / $EDITOR

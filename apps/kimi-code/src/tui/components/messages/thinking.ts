@@ -3,10 +3,16 @@
  * Supports live in-place updates while thinking streams, then finalizes
  * without replacing the component.
  * Supports expand/collapse via Ctrl+O (shared with tool output).
+ *
+ * The live display has two modes (tui.toml `thinking_live_display`):
+ * 'preview' scrolls the last few streamed lines; 'stats' hides the text and
+ * shows an approximate token count plus the elapsed thinking time instead,
+ * leaving a one-line "Thought for …" summary once thinking finishes.
  */
 
 import { Text, truncateToWidth, type Component, type TUI } from '@moonshot-ai/pi-tui';
 
+import type { ThinkingLiveDisplay } from '#/tui/config';
 import {
   BRAILLE_SPINNER_FRAMES,
   BRAILLE_SPINNER_INTERVAL_MS,
@@ -16,6 +22,7 @@ import {
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
+import { formatTokenCount } from '#/utils/usage/usage-format';
 
 export type ThinkingRenderMode = 'live' | 'finalized';
 
@@ -23,6 +30,9 @@ export class ThinkingComponent implements Component {
   private text: string;
   private showMarker: boolean;
   private mode: ThinkingRenderMode;
+  private readonly liveDisplay: ThinkingLiveDisplay;
+  private readonly startedAt: number;
+  private finalizedElapsedSeconds: number | undefined;
   private expanded = false;
   private readonly ui: TUI | undefined;
   private spinnerFrame = 0;
@@ -40,11 +50,14 @@ export class ThinkingComponent implements Component {
     showMarker: boolean = true,
     mode: ThinkingRenderMode = 'finalized',
     ui?: TUI,
+    liveDisplay: ThinkingLiveDisplay = 'preview',
   ) {
     this.text = text;
     this.showMarker = showMarker;
     this.mode = mode;
     this.ui = ui;
+    this.liveDisplay = liveDisplay;
+    this.startedAt = Date.now();
     this.textComponent = new Text(this.styled(text), 0, 0);
     if (mode === 'live') {
       this.startSpinner();
@@ -73,6 +86,7 @@ export class ThinkingComponent implements Component {
 
   finalize(): void {
     this.mode = 'finalized';
+    this.finalizedElapsedSeconds = Math.floor((Date.now() - this.startedAt) / 1000);
     this.markRenderDirty();
     this.stopSpinner();
   }
@@ -97,22 +111,46 @@ export class ThinkingComponent implements Component {
     }
 
     const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
-    const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
+    // Stats mode hides the text unless explicitly expanded, so skip the re-wrap.
+    const showContent = this.liveDisplay === 'preview' || this.expanded;
+    const contentLines =
+      showContent && this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
 
     let rendered: string[];
     if (this.mode === 'live') {
-      const visibleLines =
-        contentLines.length > THINKING_PREVIEW_LINES
-          ? contentLines.slice(contentLines.length - THINKING_PREVIEW_LINES)
-          : contentLines;
       const spinner = currentTheme.fg(
         'textDim',
         `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
       );
+      if (this.liveDisplay === 'stats') {
+        // No tokenizer is available to the client, and reasoning-token usage
+        // only arrives at step end — so the live count is a chars/4 estimate.
+        const approxTokens = Math.ceil(this.text.length / 4);
+        const elapsedSeconds = Math.floor((Date.now() - this.startedAt) / 1000);
+        const stats = `(~${formatTokenCount(approxTokens)} tokens · ${formatThinkingDuration(elapsedSeconds)})`;
+        rendered = ['', spinner + currentTheme.fg('textDim', `thinking... ${stats}`)];
+      } else {
+        const visibleLines =
+          contentLines.length > THINKING_PREVIEW_LINES
+            ? contentLines.slice(contentLines.length - THINKING_PREVIEW_LINES)
+            : contentLines;
+        rendered = [
+          '',
+          spinner + currentTheme.fg('textDim', 'thinking...'),
+          ...visibleLines.map((line) => MESSAGE_INDENT + line),
+        ];
+      }
+    } else if (this.liveDisplay === 'stats' && !this.expanded) {
+      // Stats mode leaves a one-line summary instead of the content preview;
+      // ctrl+o expands into the full text.
+      const p = this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
+      const hint = this.text.length > 0 ? ' (ctrl+o to expand)' : '';
+      const summary = `Thought for ${formatThinkingDuration(this.finalizedElapsedSeconds ?? 0)}${hint}`;
+      // Both prefixes occupy two cells (STATUS_BULLET is '● ').
+      const summaryWidth = Math.max(0, width - MESSAGE_INDENT.length);
       rendered = [
         '',
-        spinner + currentTheme.fg('textDim', 'thinking...'),
-        ...visibleLines.map((line) => MESSAGE_INDENT + line),
+        p + currentTheme.fg('textDim', truncateToWidth(summary, summaryWidth, '…')),
       ];
     } else {
       const lines: string[] = [''];
@@ -157,4 +195,14 @@ export class ThinkingComponent implements Component {
     clearInterval(this.spinnerInterval);
     this.spinnerInterval = undefined;
   }
+}
+
+/** Compact elapsed time for the live stats line: 10s, 1m12s, 5h3m33s. */
+function formatThinkingDuration(totalSeconds: number): string {
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  if (hours > 0) return `${String(hours)}h${String(minutes)}m${String(seconds)}s`;
+  if (minutes > 0) return `${String(minutes)}m${String(seconds)}s`;
+  return `${String(seconds)}s`;
 }
