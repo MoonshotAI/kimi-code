@@ -5,11 +5,15 @@
  * `ChatProvider.generate` and normalize the event stream": it merges streamed
  * deltas into a complete assistant `Message`, fires the caller's callbacks,
  * enforces the abort contract (standard abort DOMException, stream cancelled
- * on abort), and rejects empty or thinking-only responses with
- * `APIEmptyResponseError`.
+ * on abort), bounds response-header and between-part idle waits, and rejects
+ * empty or thinking-only responses with `APIEmptyResponseError`.
  */
 
-import { APIEmptyResponseError, createAbortError } from './errors';
+import {
+  APIEmptyResponseError,
+  APITimeoutError,
+  createAbortError,
+} from './errors';
 import {
   isContentPart,
   isToolCall,
@@ -24,6 +28,23 @@ import type { Tool } from './tool';
 import type { TokenUsage } from './usage';
 
 type StoredToolCall = Omit<ToolCall, '_streamIndex'>;
+
+export const DEFAULT_RESPONSE_TIMEOUT_MS = 300_000;
+export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 30_000;
+
+const MAX_TIMER_DELAY_MS = 0x7fffffff;
+const NEVER_ACTIVITY = new Promise<never>(() => {});
+
+export type ScheduleStreamIdleTimeout = (
+  callback: () => void,
+  timeoutMs: number,
+) => () => void;
+
+export interface GenerateDriverOptions extends GenerateOptions {
+  readonly responseTimeoutMs?: number;
+  readonly streamIdleTimeoutMs?: number;
+  readonly scheduleStreamIdleTimeout?: ScheduleStreamIdleTimeout;
+}
 
 export interface GenerateResult {
   readonly id: string | null;
@@ -45,7 +66,7 @@ export async function generate(
   tools: Tool[],
   history: Message[],
   callbacks?: GenerateCallbacks,
-  options?: GenerateOptions,
+  options?: GenerateDriverOptions,
 ): Promise<GenerateResult> {
   const message: Message = { role: 'assistant', content: [], toolCalls: [] };
   let pendingPart: StreamedMessagePart | null = null;
@@ -60,20 +81,84 @@ export async function generate(
     ? tools.filter((tool) => tool.deferred !== true)
     : tools;
 
+  const responseTimeoutMs = options?.responseTimeoutMs ?? DEFAULT_RESPONSE_TIMEOUT_MS;
+  const streamIdleTimeoutMs = options?.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+  const scheduleIdleTimeout =
+    options?.scheduleStreamIdleTimeout ?? scheduleStreamIdleTimeout;
+  const requestController = new AbortController();
+  const requestSignal =
+    options?.signal === undefined
+      ? requestController.signal
+      : AbortSignal.any([options.signal, requestController.signal]);
+  let streamCancelled = false;
+  const stopRequest = (stream?: StreamedMessage, iterator?: AsyncIterator<StreamedMessagePart>) => {
+    if (!requestController.signal.aborted) {
+      requestController.abort(createAbortError());
+    }
+    if (stream === undefined || streamCancelled) return;
+    streamCancelled = true;
+    cancelStream(stream, iterator);
+  };
+
   options?.onRequestStart?.();
-  const stream = await provider.generate(systemPrompt, wireTools, history, options);
+  const streamPromise = provider.generate(
+    systemPrompt,
+    wireTools,
+    history,
+    toProviderOptions(options, requestSignal),
+  );
+  void streamPromise.then(
+    (lateStream) => {
+      if (requestSignal.aborted) {
+        stopRequest(lateStream);
+      }
+    },
+    () => {},
+  );
+  const stream = await waitForActivity(
+    streamPromise,
+    {
+      timeoutMs: responseTimeoutMs,
+      scheduleTimeout: scheduleIdleTimeout,
+      signal: options?.signal,
+      stop: stopRequest,
+      timeoutError: idleTimeoutError(provider, responseTimeoutMs, 'response'),
+    },
+  );
   if (stream.traceId !== undefined) {
     options?.onTraceId?.(stream.traceId);
   }
 
-  await throwIfAborted(options?.signal, stream);
+  throwIfAborted(options?.signal, () => {
+    stopRequest(stream);
+  });
 
   let serverDecodeMs = 0;
   let clientConsumeMs = 0;
   let firstPartAt: number | undefined;
   let lastResumeAt = 0;
+  let receivedPart = false;
+  const iterator = stream[Symbol.asyncIterator]();
+  const stopStream = () => {
+    stopRequest(stream, iterator);
+  };
 
-  for await (const part of stream) {
+  for (;;) {
+    const timeoutMs = receivedPart ? streamIdleTimeoutMs : responseTimeoutMs;
+    const next = await waitForActivity(Promise.resolve(iterator.next()), {
+      timeoutMs,
+      scheduleTimeout: scheduleIdleTimeout,
+      signal: options?.signal,
+      stop: stopStream,
+      timeoutError: idleTimeoutError(
+        provider,
+        timeoutMs,
+        receivedPart ? 'stream' : 'firstPart',
+      ),
+    });
+    if (next.done === true) break;
+    receivedPart = true;
+    const part = next.value;
     const arrivedAt = Date.now();
     if (firstPartAt === undefined) {
       firstPartAt = arrivedAt;
@@ -82,11 +167,11 @@ export async function generate(
     }
 
     try {
-      await throwIfAborted(options?.signal, stream);
+      throwIfAborted(options?.signal, stopStream);
 
       if (callbacks?.onMessagePart !== undefined) {
         await callbacks.onMessagePart(deepCopyPart(part));
-        await throwIfAborted(options?.signal, stream);
+        throwIfAborted(options?.signal, stopStream);
       }
 
       if (
@@ -113,13 +198,16 @@ export async function generate(
         flushPart(message, pendingPart, toolCallIndexMap);
         pendingPart = part;
       }
+    } catch (error) {
+      stopStream();
+      throw error;
     } finally {
       lastResumeAt = Date.now();
       clientConsumeMs += lastResumeAt - arrivedAt;
     }
   }
 
-  await throwIfAborted(options?.signal, stream);
+  throwIfAborted(options?.signal, stopStream);
   if (firstPartAt !== undefined) {
     serverDecodeMs += Date.now() - lastResumeAt;
   }
@@ -163,7 +251,7 @@ export async function generate(
 
   if (callbacks?.onToolCall !== undefined) {
     for (const toolCall of message.toolCalls) {
-      await throwIfAborted(options?.signal, stream);
+      throwIfAborted(options?.signal, stopStream);
       await callbacks.onToolCall(toolCall);
     }
   }
@@ -186,28 +274,126 @@ type CancelableStream = StreamedMessage & {
   return?: () => unknown;
 };
 
-async function cancelStream(stream: StreamedMessage): Promise<void> {
+function cancelStream(
+  stream?: StreamedMessage,
+  iterator?: AsyncIterator<StreamedMessagePart>,
+): void {
+  if (stream === undefined) return;
   const cancelable = stream as CancelableStream;
+  invokeCancellation(() => cancelable.cancel?.());
+  if (iterator !== undefined) {
+    invokeCancellation(() => iterator.return?.());
+  }
+  if ((iterator as unknown) !== stream) {
+    invokeCancellation(() => cancelable.return?.());
+  }
+}
 
+function invokeCancellation(cancel: () => unknown): void {
   try {
-    await cancelable.cancel?.();
-  } catch {}
-
-  try {
-    await cancelable.return?.();
+    void Promise.resolve(cancel()).catch(() => {});
   } catch {}
 }
 
-async function throwIfAborted(signal?: AbortSignal, stream?: StreamedMessage): Promise<void> {
+function throwIfAborted(
+  signal: AbortSignal | undefined,
+  stop: () => void,
+): void {
   if (!signal?.aborted) {
     return;
   }
 
-  if (stream !== undefined) {
-    await cancelStream(stream);
+  stop();
+  throw createAbortError();
+}
+
+interface ActivityWaitOptions {
+  readonly timeoutMs: number;
+  readonly scheduleTimeout: ScheduleStreamIdleTimeout;
+  readonly signal?: AbortSignal;
+  readonly stop: () => void;
+  readonly timeoutError: APITimeoutError;
+}
+
+async function waitForActivity<T>(
+  work: Promise<T>,
+  options: ActivityWaitOptions,
+): Promise<T> {
+  if (options.signal?.aborted === true) {
+    options.stop();
+    throw createAbortError();
   }
 
-  throw createAbortError();
+  const abortError = createAbortError();
+  let clearTimeout = () => {};
+  const timeout: Promise<never> =
+    options.timeoutMs <= 0
+      ? NEVER_ACTIVITY
+      : new Promise((_resolve, reject) => {
+          clearTimeout = options.scheduleTimeout(() => {
+            reject(options.timeoutError);
+          }, Math.min(options.timeoutMs, MAX_TIMER_DELAY_MS));
+        });
+
+  let removeAbortListener = () => {};
+  const aborted: Promise<never> =
+    options.signal === undefined
+      ? NEVER_ACTIVITY
+      : new Promise((_resolve, reject) => {
+          const onAbort = () => {
+            reject(abortError);
+          };
+          options.signal?.addEventListener('abort', onAbort, { once: true });
+          removeAbortListener = () => options.signal?.removeEventListener('abort', onAbort);
+        });
+
+  try {
+    return await Promise.race([work, timeout, aborted]);
+  } catch (error) {
+    if (error === abortError || error === options.timeoutError) {
+      options.stop();
+    }
+    throw error;
+  } finally {
+    clearTimeout();
+    removeAbortListener();
+  }
+}
+
+function scheduleStreamIdleTimeout(callback: () => void, timeoutMs: number): () => void {
+  const handle = setTimeout(callback, timeoutMs);
+  return () => {
+    clearTimeout(handle);
+  };
+}
+
+function toProviderOptions(
+  options: GenerateDriverOptions | undefined,
+  signal: AbortSignal,
+): GenerateOptions {
+  const {
+    responseTimeoutMs: _responseTimeoutMs,
+    streamIdleTimeoutMs: _streamIdleTimeoutMs,
+    scheduleStreamIdleTimeout: _scheduleStreamIdleTimeout,
+    ...providerOptions
+  } = options ?? {};
+  return { ...providerOptions, signal };
+}
+
+function idleTimeoutError(
+  provider: ChatProvider,
+  timeoutMs: number,
+  phase: 'response' | 'firstPart' | 'stream',
+): APITimeoutError {
+  const activity =
+    phase === 'response'
+      ? 'response headers'
+      : phase === 'firstPart'
+        ? 'the first streamed response part'
+        : 'the next streamed response part';
+  return new APITimeoutError(
+    `Timed out after ${String(timeoutMs)}ms waiting for ${activity} from provider "${provider.name}" model "${provider.modelName}".`,
+  );
 }
 
 function isPendingToolCallAtIndex(

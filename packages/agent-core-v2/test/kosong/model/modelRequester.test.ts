@@ -3,9 +3,9 @@
  * ChatProvider (the adapter registry is stubbed to return it, so no wire I/O
  * happens):
  *
- *  - `ModelRequestParams` map 1:1 onto `GenerateOptions` (cacheKey / sampling /
- *    thinking effort+keep / budget + window-clamp companions), with auth
- *    threaded per attempt;
+ *  - `ModelRequestParams` intent fields map onto `GenerateOptions` (cacheKey /
+ *    sampling / thinking effort+keep / budget + window-clamp companions),
+ *    with auth and caller cancellation threaded per attempt;
  *  - the event stream carries parts, usage, finish, and timing;
  *  - a 401 against a refreshable auth provider forces one token refresh and
  *    exactly one replay; a 401 that survives the replay surfaces as
@@ -144,15 +144,14 @@ async function collect(stream: AsyncIterable<ModelRequestEvent>): Promise<ModelR
 const INPUT = { systemPrompt: 'sys', tools: [], messages: [] };
 
 describe('ModelRequesterImpl request execution', () => {
-  it('maps ModelRequestParams onto GenerateOptions 1:1', async () => {
+  it('maps ModelRequestParams onto provider options for one request', async () => {
     const provider = new FakeChatProvider();
     const requester = new ModelRequesterImpl(modelWith(staticAuth('sk-1')), registryReturning(provider));
-    const signal = AbortSignal.timeout(1000);
 
     await collect(
       requester.request(
         { ...INPUT, responseFormat: { type: 'json_object' } },
-        signal,
+        undefined,
         {
           cacheKey: 'session-1',
           sampling: { temperature: 0.5, topP: 0.9 },
@@ -167,7 +166,6 @@ describe('ModelRequesterImpl request execution', () => {
 
     expect(provider.calls).toHaveLength(1);
     const options = provider.calls[0]!.options;
-    expect(options?.signal).toBe(signal);
     expect(options?.auth).toEqual({ apiKey: 'sk-1' });
     expect(options?.cacheKey).toBe('session-1');
     expect(options?.sampling).toEqual({ temperature: 0.5, topP: 0.9 });
@@ -176,6 +174,19 @@ describe('ModelRequesterImpl request execution', () => {
     expect(options?.usedContextTokens).toBe(5000);
     expect(options?.maxContextTokens).toBe(128000);
     expect(options?.responseFormat).toEqual({ type: 'json_object' });
+  });
+
+  it('preserves the caller reason when cancellation reaches the provider signal', async () => {
+    const provider = new FakeChatProvider();
+    const requester = new ModelRequesterImpl(modelWith(staticAuth()), registryReturning(provider));
+    const controller = new AbortController();
+
+    await collect(requester.request(INPUT, controller.signal));
+
+    const reason = new Error('caller cancelled');
+    controller.abort(reason);
+
+    expect(provider.calls[0]?.options?.signal).toMatchObject({ aborted: true, reason });
   });
 
   it('omits the thinking intent when no effort is requested', async () => {

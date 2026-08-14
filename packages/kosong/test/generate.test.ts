@@ -1,10 +1,58 @@
-import { APIEmptyResponseError } from '#/errors';
-import { generate } from '#/generate';
+/**
+ * Scenario: the public generate() driver normalizes provider streams.
+ *
+ * Covers response assembly, callbacks, cancellation, idle deadlines, and
+ * decode accounting. Provider streams and the timeout scheduler are the only
+ * stubbed external boundaries. Run with `pnpm --filter @moonshot-ai/kosong
+ * test -- generate.test.ts`.
+ */
+
+import { APIEmptyResponseError, APITimeoutError } from '#/errors';
+import { generate, type ScheduleStreamIdleTimeout } from '#/generate';
 import type { Message, StreamedMessagePart, ToolCall } from '#/message';
 import type { ChatProvider, StreamedMessage, ThinkingEffort } from '#/provider';
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import { describe, expect, it, vi } from 'vitest';
+
+interface ManualTimeoutScheduler {
+  readonly schedule: ScheduleStreamIdleTimeout;
+  readonly lastDelayMs: () => number | undefined;
+  readonly waitUntilScheduled: () => Promise<void>;
+  readonly fire: () => void;
+}
+
+function createManualTimeoutScheduler(): ManualTimeoutScheduler {
+  let pending: (() => void) | undefined;
+  let delayMs: number | undefined;
+  let resolveScheduled: (() => void) | undefined;
+
+  return {
+    schedule: (callback, timeoutMs) => {
+      pending = callback;
+      delayMs = timeoutMs;
+      resolveScheduled?.();
+      resolveScheduled = undefined;
+      return () => {
+        if (pending === callback) pending = undefined;
+      };
+    },
+    lastDelayMs: () => delayMs,
+    waitUntilScheduled: () =>
+      pending === undefined
+        ? new Promise((resolve) => {
+            resolveScheduled = resolve;
+          })
+        : Promise.resolve(),
+    fire: () => {
+      const callback = pending;
+      pending = undefined;
+      if (callback === undefined) throw new Error('No idle timeout is scheduled.');
+      callback();
+    },
+  };
+}
+
 function createMockStream(
   parts: StreamedMessagePart[],
   opts?: {
@@ -46,6 +94,40 @@ function createMockProvider(stream: StreamedMessage): ChatProvider {
     },
   };
 }
+
+function createStallingStream(): StreamedMessage & {
+  readonly cancel: ReturnType<typeof vi.fn>;
+  readonly stalled: Promise<void>;
+} {
+  const cancel = vi.fn();
+  let markStalled = () => {};
+  const stalled = new Promise<void>((resolve) => {
+    markStalled = resolve;
+  });
+  return {
+    cancel,
+    stalled,
+    id: null,
+    usage: null,
+    finishReason: null,
+    rawFinishReason: null,
+    [Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
+      let emitted = false;
+      return {
+        next: () => {
+          if (!emitted) {
+            emitted = true;
+            return Promise.resolve({ done: false, value: { type: 'text', text: 'first' } });
+          }
+          markStalled();
+          return new Promise(() => {});
+        },
+        return: () => Promise.resolve({ done: true, value: undefined }),
+      };
+    },
+  };
+}
+
 describe('generate()', () => {
   it('omits trace metadata when the provider does not expose it', async () => {
     const onTraceId = vi.fn();
@@ -879,6 +961,89 @@ describe('generate()', () => {
     ).rejects.toMatchObject({ name: 'AbortError' });
 
     expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels the provider stream when onMessagePart throws', async () => {
+    const stream = createStallingStream();
+    const provider = createMockProvider(stream);
+
+    await expect(
+      generate(provider, '', [], [], {
+        onMessagePart: () => {
+          throw new Error('callback failed');
+        },
+      }),
+    ).rejects.toThrow('callback failed');
+
+    expect(stream.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts the provider request with APITimeoutError when response headers remain idle', async () => {
+    const scheduler = createManualTimeoutScheduler();
+    let providerSignal: AbortSignal | undefined;
+    const provider: ChatProvider = {
+      name: 'mock',
+      modelName: 'mock-model',
+      thinkingEffort: null,
+      generate: async (_systemPrompt, _tools, _history, options) => {
+        providerSignal = options?.signal;
+        return new Promise(() => {});
+      },
+      withThinking(): ChatProvider {
+        return this;
+      },
+    };
+
+    const pending = generate(provider, '', [], [], undefined, {
+      responseTimeoutMs: 321,
+      scheduleStreamIdleTimeout: scheduler.schedule,
+    });
+    await scheduler.waitUntilScheduled();
+    scheduler.fire();
+    const caughtError = await pending.catch((error: unknown) => error);
+
+    expect(caughtError).toBeInstanceOf(APITimeoutError);
+    expect(caughtError).toMatchObject({ message: expect.stringContaining('321ms') });
+    expect(providerSignal?.aborted).toBe(true);
+    expect(scheduler.lastDelayMs()).toBe(321);
+  });
+
+  it('cancels the stream when the next response part exceeds the idle deadline', async () => {
+    const scheduler = createManualTimeoutScheduler();
+    const stream = createStallingStream();
+    const provider = createMockProvider(stream);
+
+    const pending = generate(provider, '', [], [], undefined, {
+      streamIdleTimeoutMs: 654,
+      scheduleStreamIdleTimeout: scheduler.schedule,
+    });
+    await stream.stalled;
+    await scheduler.waitUntilScheduled();
+    scheduler.fire();
+    const caughtError = await pending.catch((error: unknown) => error);
+
+    expect(caughtError).toBeInstanceOf(APITimeoutError);
+    expect(stream.cancel).toHaveBeenCalledTimes(1);
+    expect(scheduler.lastDelayMs()).toBe(654);
+  });
+
+  it('preserves AbortError when the user cancels a stalled response stream', async () => {
+    const scheduler = createManualTimeoutScheduler();
+    const stream = createStallingStream();
+    const provider = createMockProvider(stream);
+    const controller = new AbortController();
+
+    const pending = generate(provider, '', [], [], undefined, {
+      signal: controller.signal,
+      streamIdleTimeoutMs: 987,
+      scheduleStreamIdleTimeout: scheduler.schedule,
+    });
+    await stream.stalled;
+    controller.abort();
+    const caughtError = await pending.catch((error: unknown) => error);
+
+    expect(caughtError).toMatchObject({ name: 'AbortError' });
+    expect(caughtError).not.toBeInstanceOf(APITimeoutError);
   });
 
   it('onToolCall receives tool calls in message order', async () => {

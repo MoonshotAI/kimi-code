@@ -3,14 +3,21 @@
  *
  * Covers event normalization (text/think deltas merged, tool-call argument
  * deltas routed by stream index), the empty/thinking-only response
- * rejections, the abort contract (standard DOMException, stream cancelled),
- * callback plumbing, and per-turn intent passthrough via GenerateOptions.
+ * rejections, the abort and idle-deadline contracts, callback plumbing, and
+ * per-turn intent passthrough via GenerateOptions. Provider streams and the
+ * timeout scheduler are the only stubbed external boundaries. Run with
+ * `pnpm --filter @moonshot-ai/agent-core-v2 test --
+ * test/kosong/contract/generate.test.ts`.
  */
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { APIEmptyResponseError } from '#/kosong/contract/errors';
-import { generate, type GenerateResult } from '#/kosong/contract/generate';
+import { APIEmptyResponseError, APITimeoutError } from '#/kosong/contract/errors';
+import {
+  generate,
+  type GenerateResult,
+  type ScheduleStreamIdleTimeout,
+} from '#/kosong/contract/generate';
 import type { Message, StreamedMessagePart, ToolCall } from '#/kosong/contract/message';
 import type {
   ChatProvider,
@@ -22,6 +29,44 @@ import type { Tool } from '#/kosong/contract/tool';
 import type { TokenUsage } from '#/kosong/contract/usage';
 
 const USAGE: TokenUsage = { inputOther: 10, output: 5, inputCacheRead: 2, inputCacheCreation: 1 };
+
+interface ManualTimeoutScheduler {
+  readonly schedule: ScheduleStreamIdleTimeout;
+  readonly lastDelayMs: () => number | undefined;
+  readonly waitUntilScheduled: () => Promise<void>;
+  readonly fire: () => void;
+}
+
+function createManualTimeoutScheduler(): ManualTimeoutScheduler {
+  let pending: (() => void) | undefined;
+  let delayMs: number | undefined;
+  let resolveScheduled: (() => void) | undefined;
+
+  return {
+    schedule: (callback, timeoutMs) => {
+      pending = callback;
+      delayMs = timeoutMs;
+      resolveScheduled?.();
+      resolveScheduled = undefined;
+      return () => {
+        if (pending === callback) pending = undefined;
+      };
+    },
+    lastDelayMs: () => delayMs,
+    waitUntilScheduled: () =>
+      pending === undefined
+        ? new Promise((resolve) => {
+            resolveScheduled = resolve;
+          })
+        : Promise.resolve(),
+    fire: () => {
+      const callback = pending;
+      pending = undefined;
+      if (callback === undefined) throw new Error('No idle timeout is scheduled.');
+      callback();
+    },
+  };
+}
 
 class FakeStreamedMessage implements StreamedMessage {
   readonly id: string | null = 'gen-1';
@@ -53,6 +98,37 @@ class FakeStreamedMessage implements StreamedMessage {
 
   cancel(): void {
     this.cancelCalls++;
+  }
+}
+
+class StallingStreamedMessage implements StreamedMessage {
+  readonly id: string | null = null;
+  readonly usage: TokenUsage | null = null;
+  readonly finishReason: FinishReason | null = null;
+  readonly rawFinishReason: string | null = null;
+  readonly stalled: Promise<void>;
+  readonly cancel = vi.fn();
+  private markStalled = () => {};
+
+  constructor() {
+    this.stalled = new Promise((resolve) => {
+      this.markStalled = resolve;
+    });
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
+    let emitted = false;
+    return {
+      next: () => {
+        if (!emitted) {
+          emitted = true;
+          return Promise.resolve({ done: false, value: { type: 'text', text: 'first' } });
+        }
+        this.markStalled();
+        return new Promise(() => {});
+      },
+      return: () => Promise.resolve({ done: true, value: undefined }),
+    };
   }
 }
 
@@ -296,6 +372,88 @@ describe('generate() abort contract', () => {
     expect((caught as DOMException).name).toBe('AbortError');
     expect(stream.cancelCalls).toBeGreaterThan(0);
   });
+
+  it('cancels the provider stream when onMessagePart throws', async () => {
+    const stream = new StallingStreamedMessage();
+    const { provider } = createFakeProvider(stream);
+
+    await expect(
+      generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, {
+        onMessagePart: () => {
+          throw new Error('callback failed');
+        },
+      }),
+    ).rejects.toThrow('callback failed');
+
+    expect(stream.cancel).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('generate() idle deadline', () => {
+  it('aborts the provider request with APITimeoutError when response headers remain idle', async () => {
+    const scheduler = createManualTimeoutScheduler();
+    let providerSignal: AbortSignal | undefined;
+    const provider: ChatProvider = {
+      name: 'fake',
+      modelName: 'fake-model',
+      thinkingEffort: null,
+      generate: async (_systemPrompt, _tools, _history, options) => {
+        providerSignal = options?.signal;
+        return new Promise(() => {});
+      },
+    };
+
+    const pending = generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+      responseTimeoutMs: 321,
+      scheduleStreamIdleTimeout: scheduler.schedule,
+    });
+    await scheduler.waitUntilScheduled();
+    scheduler.fire();
+    const caughtError = await pending.catch((error: unknown) => error);
+
+    expect(caughtError).toBeInstanceOf(APITimeoutError);
+    expect(caughtError).toMatchObject({ message: expect.stringContaining('321ms') });
+    expect(providerSignal?.aborted).toBe(true);
+    expect(scheduler.lastDelayMs()).toBe(321);
+  });
+
+  it('cancels the stream when the next response part exceeds the idle deadline', async () => {
+    const scheduler = createManualTimeoutScheduler();
+    const stream = new StallingStreamedMessage();
+    const { provider } = createFakeProvider(stream);
+
+    const pending = generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+      streamIdleTimeoutMs: 654,
+      scheduleStreamIdleTimeout: scheduler.schedule,
+    });
+    await stream.stalled;
+    await scheduler.waitUntilScheduled();
+    scheduler.fire();
+    const caughtError = await pending.catch((error: unknown) => error);
+
+    expect(caughtError).toBeInstanceOf(APITimeoutError);
+    expect(stream.cancel).toHaveBeenCalledTimes(1);
+    expect(scheduler.lastDelayMs()).toBe(654);
+  });
+
+  it('preserves AbortError when the user cancels a stalled response stream', async () => {
+    const scheduler = createManualTimeoutScheduler();
+    const stream = new StallingStreamedMessage();
+    const { provider } = createFakeProvider(stream);
+    const controller = new AbortController();
+
+    const pending = generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+      signal: controller.signal,
+      streamIdleTimeoutMs: 987,
+      scheduleStreamIdleTimeout: scheduler.schedule,
+    });
+    await stream.stalled;
+    controller.abort();
+    const caughtError = await pending.catch((error: unknown) => error);
+
+    expect(caughtError).toMatchObject({ name: 'AbortError' });
+    expect(caughtError).not.toBeInstanceOf(APITimeoutError);
+  });
 });
 
 describe('generate() per-turn intent passthrough', () => {
@@ -314,6 +472,6 @@ describe('generate() per-turn intent passthrough', () => {
     await generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, options);
 
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    expect(generateSpy.mock.calls[0]?.[3]).toBe(options);
+    expect(generateSpy.mock.calls[0]?.[3]).toMatchObject(options);
   });
 });
