@@ -23,6 +23,59 @@ class StrictStrikethroughTokenizer extends Tokenizer {
 	}
 }
 
+// Local divergence (not upstream; keep StrictStrikethroughTokenizer untouched
+// for re-vendoring): marked's GFM autolink accepts any non-space characters
+// after the domain and its backpedal only strips ASCII trailing punctuation,
+// so CJK/full-width punctuation right after a bare URL is absorbed into the
+// link text and href (`.../pull/232（本地` becomes one anchor). Cut the match
+// at the first CJK punctuation character BEFORE the ASCII backpedal so trailing
+// ASCII punctuation left by the cut is still normalized away. Guarded by the
+// "CJK punctuation after bare URLs" tests in test/markdown.test.ts.
+const CJK_URL_TERMINATOR_REGEX =
+	/[\u3000-\u303f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65\u2013\u2014\u2018\u2019\u201c\u201d\u2026]/;
+
+class CjkBoundaryUrlTokenizer extends StrictStrikethroughTokenizer {
+	override url(src: string): Tokens.Link | undefined {
+		const cap = this.rules.inline.url.exec(src);
+		if (!cap) {
+			return undefined;
+		}
+		// Autolinked emails (cap[2] === "@") skip the backpedal upstream; keep
+		// that behavior exactly.
+		if (cap[2] === "@") {
+			const text = cap[0];
+			return {
+				type: "link",
+				raw: text,
+				text,
+				href: `mailto:${text}`,
+				tokens: [{ type: "text", raw: text, text }],
+			};
+		}
+		const terminator = CJK_URL_TERMINATOR_REGEX.exec(cap[0]);
+		if (terminator) {
+			cap[0] = cap[0].slice(0, terminator.index);
+		}
+		if (!cap[0]) {
+			return undefined;
+		}
+		let previous: string;
+		do {
+			previous = cap[0];
+			cap[0] = this.rules.inline._backpedal.exec(cap[0])?.[0] ?? "";
+		} while (previous !== cap[0]);
+		const text = cap[0];
+		const href = cap[1] === "www." ? `http://${text}` : text;
+		return {
+			type: "link",
+			raw: text,
+			text,
+			href,
+			tokens: [{ type: "text", raw: text, text }],
+		};
+	}
+}
+
 interface LatexToken extends Tokens.Generic {
 	type: "latex" | "latexBlock";
 	text: string;
@@ -170,7 +223,7 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 
 const markdownParser = new Marked();
 markdownParser.setOptions({
-	tokenizer: new StrictStrikethroughTokenizer(),
+	tokenizer: new CjkBoundaryUrlTokenizer(),
 });
 markdownParser.use({ extensions: [...LATEX_MARKDOWN_EXTENSIONS] });
 
