@@ -213,4 +213,20 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     await expect(first).resolves.toBeNull();
     await expect(second).resolves.toEqual({ answers: { q_0: 'Yes' } });
   });
+
+  it('listPending surfaces the minted interaction id so hosts can answer', async () => {
+    const questions = session.accessor.get(ISessionQuestionService);
+
+    const parked = questions.request({
+      toolCallId: 'AskUserQuestion:0',
+      questions: [{ question: 'Pick one', options: [{ label: 'Yes' }, { label: 'No' }] }],
+    });
+    const pending = questions.listPending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.id).toMatch(/^question_/);
+    expect(pending[0]!.toolCallId).toBe('AskUserQuestion:0');
+
+    questions.answer(pending[0]!.id!, { answers: { q_0: 'Yes' } });
+    await expect(parked).resolves.toEqual({ answers: { q_0: 'Yes' } });
+  });
 });

@@ -111,4 +111,17 @@ describe('SessionApprovalService', () => {
     svc.decide(secondId, { decision: 'approved' });
     await expect(second).resolves.toEqual({ decision: 'approved' });
   });
+
+  it('listPending surfaces the minted interaction id so hosts can decide', async () => {
+    const svc = ix.get(ISessionApprovalService);
+
+    const parked = svc.request({ toolCallId: 'Bash_0', toolName: 'bash', action: 'run', display });
+    const pending = svc.listPending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.id).toMatch(/^approval_/);
+    expect(pending[0]!.toolCallId).toBe('Bash_0');
+
+    svc.decide(pending[0]!.id!, { decision: 'approved' });
+    await expect(parked).resolves.toEqual({ decision: 'approved' });
+  });
 });

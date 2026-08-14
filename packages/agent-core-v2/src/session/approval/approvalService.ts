@@ -5,7 +5,9 @@
  * pending state of its own (the kernel holds it). Interaction ids are minted
  * here (`approval_<uuid>`) — never derived from the provider's toolCallId,
  * which is not unique across responses on some self-hosted endpoints and stays
- * on the payload for correlation only. Bound at Session scope.
+ * on the payload for correlation only. `listPending` merges the parked id back
+ * into each returned request so hosts can `decide` without kernel access.
+ * Bound at Session scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -53,7 +55,7 @@ export class SessionApprovalService implements ISessionApprovalService {
   listPending(): readonly ApprovalRequest[] {
     return this.interaction
       .listPending('approval')
-      .map((i) => i.payload as ApprovalRequest);
+      .map((i) => ({ ...(i.payload as ApprovalRequest), id: i.id }));
   }
 }
 
