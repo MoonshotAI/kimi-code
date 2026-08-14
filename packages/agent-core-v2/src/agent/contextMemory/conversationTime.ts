@@ -12,21 +12,16 @@
 import { defineModel, type ModelDef } from '#/wire/model';
 import type { ModelReducers } from '#/wire/types';
 
-import type { ContextMessage, PromptOrigin } from './types';
+import type { ContextMessage } from './types';
 
 export function isUndoAnchor(message: ContextMessage): boolean {
   if (message.role !== 'user') return false;
   const origin = message.origin;
   if (origin === undefined || origin.kind === 'user') return true;
-  if (origin.kind === 'skill_activation') {
-    return origin.trigger === 'user-slash' && origin.submissionId === undefined;
-  }
-  return origin.kind === 'plugin_command' && origin.trigger === 'user-slash';
-}
-
-export function promptSubmissionId(origin: PromptOrigin | undefined): string | undefined {
-  if (origin?.kind !== 'user' && origin?.kind !== 'skill_activation') return undefined;
-  return origin.submissionId;
+  return (
+    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
+    origin.trigger === 'user-slash'
+  );
 }
 
 export function isPromptOwnedInjection(

@@ -77,7 +77,6 @@ declare module '#/app/event/eventBus' {
 interface Deferred<T> { readonly promise: Promise<T>; resolve(value: T): void; reject(reason: unknown): void }
 interface Record extends PromptSnapshot {
   state: PromptState;
-  readonly messagesBefore: readonly ContextMessage[];
   readonly launchedDeferred: Deferred<Turn | undefined>;
   readonly completionDeferred: Deferred<PromptCompletion>;
   handle: PromptHandle;
@@ -131,7 +130,6 @@ export class AgentPromptService implements IAgentPromptService {
     const record = {} as Record;
     Object.assign(record, {
       id, userMessageId: id, createdAt: new Date().toISOString(), state: 'pending', message,
-      messagesBefore: input.messagesBefore ?? [],
       launchedDeferred, completionDeferred,
     });
     record.handle = {
@@ -274,20 +272,12 @@ export class AgentPromptService implements IAgentPromptService {
     try {
       if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') { this.pending.unshift(item); return; }
       const { message, captions } = this.extractCompressionCaptions(item.message);
-      let blocked = false;
-      for (const before of item.messagesBefore) {
-        blocked = (await this.blockedByHook(before, false)) || blocked;
-      }
-      blocked = (await this.blockedByHook(message, false)) || blocked;
-      if (blocked) {
-        for (const before of item.messagesBefore) this.appendPrompt(before, []);
+      if (await this.blockedByHook(message, false)) {
         this.appendPrompt(message, captions); item.state = 'blocked'; item.launchedDeferred.resolve(undefined);
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
         this.publishCompleted(item.id, 'blocked'); return;
       }
-      const turn = (await this.loop.enqueue(
-        new PromptStepRequest(message, captions, this.reminders, item.messagesBefore),
-      ).assigned).turn;
+      const turn = (await this.loop.enqueue(new PromptStepRequest(message, captions, this.reminders)).assigned).turn;
       if (turn === undefined) { this.pending.unshift(item); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
       void turn.result.then((result) => this.settle(item, result));

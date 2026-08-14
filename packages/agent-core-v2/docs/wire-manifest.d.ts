@@ -510,7 +510,6 @@ interface SkillActivatePayload {
     skillType?: string | undefined;
     skillPath?: string | undefined;
     skillSource?: 'project' | 'user' | 'extra' | 'builtin' | undefined;
-    // …
   };
 }
 

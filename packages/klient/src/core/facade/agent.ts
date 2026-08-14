@@ -47,11 +47,12 @@ export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
 export interface AgentFacade {
   prompt(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
   /**
-   * Submit one prompt preceded by one or more skill activations sharing the
-   * prompt's `submissionId`: the skills are validated up front (an unknown
-   * name rejects the whole submission), rendered ahead of the prompt in the
-   * same turn, and the group undoes as one unit. Resolves with the launched
-   * turn id, or `undefined` when the submission queued behind a running turn.
+   * Submit one prompt with one or more skill activations bundled into the
+   * same user message: the skills are validated up front (an unknown name or
+   * an empty list rejects the whole submission), rendered ahead of the
+   * caller's parts in the same turn, and the bundle undoes as a single
+   * anchor. Resolves with the launched turn id, or `undefined` when the
+   * submission queued behind a running turn.
    */
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult>;
   steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;

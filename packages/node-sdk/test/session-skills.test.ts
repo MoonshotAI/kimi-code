@@ -135,7 +135,6 @@ describe('Session skills', () => {
       await session.promptWithSkills(
         'Review this change.',
         [{ name: 'review' }, { name: 'security' }],
-        { submissionId: 'submission-sdk' },
       );
       await ended;
       unsubscribe();
@@ -145,10 +144,6 @@ describe('Session skills', () => {
           event.type === 'skill.activated',
       );
       expect(activations.map((event) => event.skillName)).toEqual(['review', 'security']);
-      expect(activations.map((event) => event.submissionId)).toEqual([
-        'submission-sdk',
-        'submission-sdk',
-      ]);
       expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(1);
     } finally {
       await harness.close();
@@ -394,7 +389,6 @@ describe('Session skills', () => {
   it('exposes public skill event and summary types', () => {
     expectTypeOf<SkillSummary['name']>().toEqualTypeOf<string>();
     expectTypeOf<SkillActivatedEvent['skillName']>().toEqualTypeOf<string>();
-    expectTypeOf<SkillActivatedEvent['submissionId']>().toEqualTypeOf<string | undefined>();
   });
 });
 

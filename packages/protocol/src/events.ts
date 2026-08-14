@@ -46,11 +46,21 @@ export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 export interface UserPromptOrigin {
   readonly kind: 'user';
   /**
-   * Groups one prompt with the skill activations submitted alongside it:
-   * every message of the submission carries the same id, so undo / replay
-   * treat the group as a single turn.
+   * Skill activations bundled into this prompt: the rendered skill blocks
+   * precede the caller's parts in the message content, and every activation
+   * is listed here so resume / replay can rebuild the per-skill view from
+   * the single bundled message.
    */
-  readonly submissionId?: string;
+  readonly skillActivations?: readonly BundledSkillActivation[];
+}
+
+export interface BundledSkillActivation {
+  readonly activationId: string;
+  readonly skillName: string;
+  readonly skillArgs?: string;
+  readonly skillType?: string;
+  readonly skillPath?: string;
+  readonly skillSource?: SkillSource;
 }
 
 export interface SkillActivationOrigin {
@@ -62,11 +72,6 @@ export interface SkillActivationOrigin {
   readonly skillType?: string;
   readonly skillPath?: string;
   readonly skillSource?: SkillSource;
-  /**
-   * Set when the activation rode a grouped prompt submission: it is part of
-   * the prompt's group and is not an undo anchor of its own.
-   */
-  readonly submissionId?: string;
 }
 
 export interface PluginCommandOrigin {
@@ -640,8 +645,6 @@ export interface SkillActivatedEvent {
   readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
   readonly skillPath?: string;
   readonly skillSource?: SkillSource;
-  /** Present when the activation belongs to a grouped prompt submission. */
-  readonly submissionId?: string;
 }
 
 export interface PluginCommandActivatedEvent {
@@ -1055,9 +1058,18 @@ export const permissionModeSchema = z.enum(['manual', 'yolo', 'auto']) satisfies
 
 export const skillSourceSchema = z.enum(['project', 'user', 'extra', 'builtin']) satisfies z.ZodType<SkillSource>;
 
+export const bundledSkillActivationSchema = z.object({
+  activationId: z.string(),
+  skillName: z.string(),
+  skillArgs: z.string().optional(),
+  skillType: z.string().optional(),
+  skillPath: z.string().optional(),
+  skillSource: skillSourceSchema.optional(),
+}) satisfies z.ZodType<BundledSkillActivation>;
+
 export const userPromptOriginSchema = z.object({
   kind: z.literal('user'),
-  submissionId: z.string().optional(),
+  skillActivations: z.array(bundledSkillActivationSchema).optional(),
 }) satisfies z.ZodType<UserPromptOrigin>;
 
 export const skillActivationOriginSchema = z.object({
@@ -1069,7 +1081,6 @@ export const skillActivationOriginSchema = z.object({
   skillType: z.string().optional(),
   skillPath: z.string().optional(),
   skillSource: skillSourceSchema.optional(),
-  submissionId: z.string().optional(),
 }) satisfies z.ZodType<SkillActivationOrigin>;
 
 export const pluginCommandOriginSchema = z.object({
@@ -1593,7 +1604,6 @@ export const skillActivatedEventSchema = z.object({
   trigger: z.enum(['user-slash', 'model-tool', 'nested-skill']),
   skillPath: z.string().optional(),
   skillSource: skillSourceSchema.optional(),
-  submissionId: z.string().optional(),
 }) satisfies z.ZodType<SkillActivatedEvent>;
 
 export const pluginCommandActivatedEventSchema = z.object({

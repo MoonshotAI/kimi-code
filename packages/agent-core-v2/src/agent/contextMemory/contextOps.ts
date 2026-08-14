@@ -24,9 +24,7 @@
  * `context.undo` counts conversation ticks with the single `isUndoAnchor`
  * predicate — the same definition the checkpoint
  * protocol pushes with, so anchor counting and checkpoint pushing can never
- * drift apart. Messages that share the cut anchor's `promptSubmissionId` are
- * part of the same grouped submission and cut together with it, while
- * injection and hook-result messages never anchor or interrupt a cut.
+ * drift apart.
  *
  * Blob handling is declared as a `ModelBlobCodec` on `ContextModel.blobs`:
  * - `dehydrate(record, transform)`: at dispatch time, traverses message content
@@ -54,7 +52,6 @@ import {
   isPromptOwnedInjection,
   isUndoAnchor,
   isValidUndoCount,
-  promptSubmissionId,
 } from './conversationTime';
 import {
   foldAppendMessage,
@@ -340,21 +337,9 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
   let cutIndex = -1;
   let removedCount = 0;
   let stoppedAtCompaction = false;
-  let completingSubmissionId: string | undefined;
-  let groupAnchor: ContextMessage | undefined;
-  for (let i = state.length - 1; i >= 0; i--) {
+  for (let i = state.length - 1; i >= 0 && remaining > 0; i--) {
     const message = state[i];
-    if (message === undefined) continue;
-    if (message.origin?.kind === 'injection' || message.origin?.kind === 'hook_result') continue;
-    if (remaining <= 0) {
-      if (
-        completingSubmissionId === undefined ||
-        promptSubmissionId(message.origin) !== completingSubmissionId ||
-        isUndoAnchor(message)
-      ) {
-        break;
-      }
-    }
+    if (message === undefined || message.origin?.kind === 'injection') continue;
     if (message.origin?.kind === 'compaction_summary') {
       stoppedAtCompaction = true;
       break;
@@ -369,20 +354,6 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
       ) {
         cutIndex--;
       }
-      if (remaining <= 0) {
-        completingSubmissionId = promptSubmissionId(message.origin);
-        groupAnchor = message;
-      }
-    } else if (
-      completingSubmissionId !== undefined &&
-      promptSubmissionId(message.origin) === completingSubmissionId
-    ) {
-      cutIndex = i;
-    }
-  }
-  if (completingSubmissionId !== undefined && groupAnchor !== undefined) {
-    while (cutIndex > 0 && isPromptOwnedInjection(state[cutIndex - 1]!, groupAnchor)) {
-      cutIndex--;
     }
   }
   return { cutIndex, removedCount, stoppedAtCompaction };

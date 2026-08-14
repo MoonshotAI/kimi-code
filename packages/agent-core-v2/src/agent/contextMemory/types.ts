@@ -6,10 +6,19 @@ export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
-  readonly submissionId?: string;
+  readonly skillActivations?: readonly BundledSkillActivation[] | undefined;
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
+
+export interface BundledSkillActivation {
+  readonly activationId: string;
+  readonly skillName: string;
+  readonly skillArgs?: string | undefined;
+  readonly skillType?: string | undefined;
+  readonly skillPath?: string | undefined;
+  readonly skillSource?: SkillSource | undefined;
+}
 
 export interface SkillActivationOrigin {
   readonly kind: 'skill_activation';
@@ -20,7 +29,6 @@ export interface SkillActivationOrigin {
   readonly skillType?: string | undefined;
   readonly skillPath?: string | undefined;
   readonly skillSource?: SkillSource | undefined;
-  readonly submissionId?: string;
 }
 
 export interface PluginCommandOrigin {

@@ -50,7 +50,6 @@ export const promptSkillActivationSchema = z.object({
 /** Same shape as `PromptWithSkillsInput` in the engine. */
 export const promptWithSkillsPayloadSchema = promptPayloadSchema.extend({
   skills: z.array(promptSkillActivationSchema).min(1),
-  submissionId: z.string().optional(),
 });
 
 /** Same shape as `SteerPayload` in the engine. */

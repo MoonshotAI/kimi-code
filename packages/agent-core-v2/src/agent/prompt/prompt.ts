@@ -13,7 +13,6 @@ export interface PromptSubmitContext {
 export interface PromptInput {
   readonly id?: string;
   readonly message: ContextMessage;
-  readonly messagesBefore?: readonly ContextMessage[];
 }
 
 export type PromptState =

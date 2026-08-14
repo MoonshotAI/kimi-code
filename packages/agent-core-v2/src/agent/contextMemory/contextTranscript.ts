@@ -13,7 +13,7 @@ import {
   collectCompactableUserMessages,
   selectRecentUserMessages,
 } from './compactionHandoff';
-import { isPromptOwnedInjection, isUndoAnchor, promptSubmissionId } from './conversationTime';
+import { isPromptOwnedInjection, isUndoAnchor } from './conversationTime';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 import { isVacuousContentPart } from './vacuousContent';
@@ -167,21 +167,9 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const applyUndo = (count: number): void => {
     if (count <= 0) return;
     let removedUserCount = 0;
-    let completingSubmissionId: string | undefined;
-    let groupAnchor: ContextMessage | undefined;
-    let i = transcript.length - 1;
-    for (; i >= clearFloor; i--) {
+    for (let i = transcript.length - 1; i >= clearFloor; i--) {
       const message = transcript[i]!.message;
-      if (message.origin?.kind === 'injection' || message.origin?.kind === 'hook_result') continue;
-      if (removedUserCount >= count) {
-        if (
-          completingSubmissionId === undefined ||
-          promptSubmissionId(message.origin) !== completingSubmissionId ||
-          isUndoAnchor(message)
-        ) {
-          break;
-        }
-      }
+      if (message.origin?.kind === 'injection') continue;
       if (message.origin?.kind === 'compaction_summary') break;
       transcript.splice(i, 1);
       foldedLength = Math.max(0, foldedLength - 1);
@@ -196,18 +184,8 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
             i--;
             foldedLength = Math.max(0, foldedLength - 1);
           }
-          completingSubmissionId = promptSubmissionId(message.origin);
-          groupAnchor = message;
+          break;
         }
-      }
-    }
-    if (completingSubmissionId !== undefined && groupAnchor !== undefined) {
-      while (
-        i + 1 < transcript.length &&
-        isPromptOwnedInjection(transcript[i + 1]!.message, groupAnchor)
-      ) {
-        transcript.splice(i + 1, 1);
-        foldedLength = Math.max(0, foldedLength - 1);
       }
     }
     resetOpenState();

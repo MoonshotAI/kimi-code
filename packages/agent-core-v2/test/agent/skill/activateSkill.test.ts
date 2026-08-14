@@ -74,27 +74,43 @@ describe('promptWithSkills', () => {
     return createTestAgent(skillServices(catalog));
   }
 
-  it('activates every skill and launches exactly one turn for the group', async () => {
+  it('bundles every skill into the prompt message and launches exactly one turn', async () => {
     ctx = agentWithSkills();
     ctx.mockNextResponse({ type: 'text', text: 'done' });
 
     const launched = await ctx.rpc.promptWithSkills({
       input: [{ type: 'text', text: 'Review this change.' }],
       skills: [{ name: 'review' }, { name: 'security' }],
-      submissionId: 'submission-1',
     });
     expect(launched?.turn_id).toBe(0);
     await ctx.untilTurnEnd();
 
-    // Both rendered skills precede the prompt in the single LLM call.
+    // Both rendered skills precede the prompt text in the single LLM call.
     expect(ctx.llmCalls).toHaveLength(1);
     const llmInput = JSON.stringify(ctx.llmInputs());
     expect(llmInput).toContain('# Review body');
     expect(llmInput).toContain('# Security body');
     expect(llmInput).toContain('Review this change.');
 
-    // skill.activated fires per skill, tagged with the shared submission id,
-    // before the single turn.started.
+    // The bundle is one user message: rendered skill blocks precede the
+    // caller's text, and every activation rides the prompt origin.
+    const messages = ctx.context.get();
+    const promptMessage = messages.find((message) => message.origin?.kind === 'user');
+    expect(messages.filter((message) => message.origin?.kind === 'skill_activation')).toHaveLength(
+      0,
+    );
+    expect(promptMessage?.origin).toMatchObject({
+      kind: 'user',
+      skillActivations: [{ skillName: 'review' }, { skillName: 'security' }],
+    });
+    const texts = promptMessage?.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text);
+    expect(texts?.[0]).toContain('# Review body');
+    expect(texts?.[1]).toContain('# Security body');
+    expect(texts?.[2]).toContain('Review this change.');
+
+    // skill.activated fires per skill before the single turn.started.
     const events = ctx.allEvents.filter(
       (event) =>
         event.type === '[rpc]' &&
@@ -108,8 +124,8 @@ describe('promptWithSkills', () => {
     expect(
       events
         .slice(0, 2)
-        .map((event) => (event.args as { readonly submissionId?: string }).submissionId),
-    ).toEqual(['submission-1', 'submission-1']);
+        .map((event) => (event.args as { readonly skillName?: string }).skillName),
+    ).toEqual(['review', 'security']);
   });
 
   it('rejects the whole submission when any skill is unknown', async () => {
@@ -163,13 +179,12 @@ describe('promptWithSkills', () => {
     ).toBe(false);
   });
 
-  it('undoes the prompt and its skill activations as one unit', async () => {
+  it('undoes the bundled prompt as a single anchor', async () => {
     ctx = agentWithSkills();
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     await ctx.rpc.promptWithSkills({
       input: [{ type: 'text', text: 'Review this change.' }],
       skills: [{ name: 'review' }, { name: 'security' }],
-      submissionId: 'submission-1',
     });
     await ctx.untilTurnEnd();
     expect(ctx.context.get().length).toBeGreaterThan(0);

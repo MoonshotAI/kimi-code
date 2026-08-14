@@ -194,7 +194,6 @@ describe('agent skill routing', () => {
       agent.promptWithSkills({
         input: [{ type: 'text', text: 'Review this change.' }],
         skills: [{ name: 'review' }, { name: 'security', args: 'src/app.ts' }],
-        submissionId: 'submission-1',
       }),
     ).resolves.toEqual({ turn_id: 7 });
     expect(channel.calls[0]).toEqual({
@@ -205,7 +204,6 @@ describe('agent skill routing', () => {
         {
           input: [{ type: 'text', text: 'Review this change.' }],
           skills: [{ name: 'review' }, { name: 'security', args: 'src/app.ts' }],
-          submissionId: 'submission-1',
         },
       ],
     });

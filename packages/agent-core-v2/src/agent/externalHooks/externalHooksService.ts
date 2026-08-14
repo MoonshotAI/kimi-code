@@ -353,11 +353,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   private async runPromptSubmitHook(
     ctx: PromptSubmitContext,
   ): Promise<boolean> {
-    const origin = ctx.promptMessage.origin ?? USER_PROMPT_ORIGIN;
-    const isUserSubmittedContent =
-      origin.kind === 'user' ||
-      (origin.kind === 'skill_activation' && origin.trigger === 'user-slash');
-    if (!isUserSubmittedContent) return false;
+    if ((ctx.promptMessage.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return false;
 
     const signal = new AbortController().signal;
     const input = ctx.promptMessage.content;
