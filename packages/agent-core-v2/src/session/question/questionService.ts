@@ -2,8 +2,13 @@
  * `question` domain — `ISessionQuestionService` implementation.
  *
  * Typed facade over the `interaction` kernel for ask-user requests; owns no
- * pending state of its own (the kernel holds it). Bound at Session scope.
+ * pending state of its own (the kernel holds it). Interaction ids are minted
+ * here (`question_<uuid>`) — never derived from the provider's toolCallId,
+ * which is not unique across responses on some self-hosted endpoints and stays
+ * on the payload for correlation only. Bound at Session scope.
  */
+
+import { randomUUID } from 'node:crypto';
 
 import { LifecycleScope } from '#/app/scopes';
 
@@ -74,7 +79,7 @@ export class SessionQuestionService implements ISessionQuestionService {
 }
 
 function requestId(req: QuestionRequest): string {
-  return req.id ?? req.toolCallId ?? `question:${String(Date.now())}`;
+  return req.id ?? `question_${randomUUID()}`;
 }
 
 registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, ScopeActivation.OnScopeCreated, 'question');
