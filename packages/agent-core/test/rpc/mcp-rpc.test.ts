@@ -991,4 +991,46 @@ describe('KimiCore unified MCP management plane', () => {
       config: { args: [STDIO_FIXTURE, '--healed'] },
     });
   }, 30000);
+
+  it('rejects a persisted session add when the project config is unreadable', async () => {
+    const { core, rpc, workDir } = await makeCore();
+    await writeJson(join(workDir, '.git', 'keep'), {});
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+    // The project config breaks while the session is live.
+    await writeFile(join(workDir, '.mcp.json'), '{not json', 'utf8');
+
+    await expect(
+      rpc.addSessionMcpServer({
+        sessionId: created.id,
+        server: {
+          name: 'kept',
+          transport: 'stdio',
+          command: process.execPath,
+          args: [STDIO_FIXTURE],
+        },
+        persist: true,
+      }),
+    ).rejects.toMatchObject({ code: 'config.invalid' });
+    // The unreadable state must not be papered over with a user-level write.
+    await expect(core.getGlobalMcpServer({ name: 'kept' })).rejects.toMatchObject({
+      code: 'mcp.server_not_found',
+    });
+  }, 30000);
+
+  it('rejects a name-only connection test under a runtime-name collision', async () => {
+    const plain = await startMcpHttpServer();
+    const { core, home } = await makeCore();
+    const pluginRoot = await makePlugin('demo', {
+      api: { transport: 'http', url: plain.url },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: { 'plugin-demo:api': { transport: 'http', url: plain.url } },
+    });
+
+    await expect(core.testGlobalMcpServer({ name: 'plugin-demo:api' })).rejects.toMatchObject({
+      code: 'request.invalid',
+      message: expect.stringContaining('shared by multiple enabled servers'),
+    });
+  }, 20000);
 });

@@ -1296,7 +1296,20 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       );
     }
     await this.awaitMcpRegistryReady();
-    const entry = await this.mcpRegistry.get(name, { cwd });
+    // A name-only probe is only meaningful when one enabled entry owns the
+    // runtime name; under a collision the UI cannot tell which server Test
+    // acts on, so reject like the auth paths do.
+    const matches = (await this.mcpRegistry.list({ cwd })).filter((entry) => entry.name === name);
+    if (matches.length === 0) {
+      throw new KimiError(ErrorCodes.MCP_SERVER_NOT_FOUND, `MCP server "${name}" was not found`);
+    }
+    if (matches.filter((entry) => entry.config.enabled !== false).length > 1) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        `MCP runtime name "${name}" is shared by multiple enabled servers`,
+      );
+    }
+    const entry = matches[0]!;
     return { name: entry.name, ...entry.config };
   }
 
@@ -1872,12 +1885,24 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return { servers, sources };
   }
 
-  /** Registry lookup for a session's config resolver; misses stay `undefined`. */
+  /**
+   * Registry lookup for management guards: a name that is not configured
+   * anywhere resolves to `undefined`, but a resolution error (e.g. a
+   * malformed project config file) propagates — writing over an unknown
+   * state is worse than surfacing the error to the caller.
+   */
   private async resolveMcpRegistryEntry(
     name: string,
     cwd: string | undefined,
   ): Promise<McpRegistryEntry | undefined> {
-    return this.mcpRegistry.get(name, { cwd }).catch(() => undefined);
+    try {
+      return await this.mcpRegistry.get(name, { cwd });
+    } catch (error) {
+      if (error instanceof KimiError && error.code === ErrorCodes.MCP_SERVER_NOT_FOUND) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   /**
