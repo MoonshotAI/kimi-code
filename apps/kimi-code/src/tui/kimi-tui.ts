@@ -2798,12 +2798,15 @@ export class KimiTUI {
   appendTranscriptEntry(entry: TranscriptEntry): void {
     this.state.transcriptEntries.push(entry);
     const component = this.createTranscriptComponent(entry);
+    let advancesTurn = false;
     if (component) {
       markTranscriptComponent(component, entry);
+      advancesTurn = this.isTurnBoundaryComponent(component);
       this.state.transcriptContainer.addChild(component);
     }
     const trimmed = this.trimTranscriptWindow();
     const merged = this.mergeCurrentTurnSteps();
+    if (advancesTurn) this.applyToolOutputExpansionState();
     if (component || trimmed || merged) {
       this.state.ui.requestRender();
     }
@@ -3383,6 +3386,14 @@ export class KimiTUI {
 
   toggleToolOutputExpansion(): void {
     this.state.toolOutputExpanded = !this.state.toolOutputExpanded;
+    this.applyToolOutputExpansionState();
+    // Differential render only — no destructive full redraw on expand/collapse.
+    // (When the expanded region reaches above the viewport, the engine's own
+    // fallback may still do a full render; that path is not forced from here.)
+    this.state.ui.requestRender();
+  }
+
+  private applyToolOutputExpansionState(): void {
     const children = this.state.transcriptContainer.children;
 
     // A component is expandable only if it sits at or after the start of the
@@ -3405,10 +3416,6 @@ export class KimiTUI {
       if (!isExpandable(child)) continue;
       child.setExpanded(this.state.toolOutputExpanded && i >= expandCutoff);
     }
-    // Differential render only — no destructive full redraw on expand/collapse.
-    // (When the expanded region reaches above the viewport, the engine's own
-    // fallback may still do a full render; that path is not forced from here.)
-    this.state.ui.requestRender();
   }
 
   toggleTodoPanelExpansion(): void {
