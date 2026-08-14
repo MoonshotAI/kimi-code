@@ -366,3 +366,63 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
     expect(handlePlanToggle).not.toHaveBeenCalled();
   });
 });
+
+describe('EditorKeyboardController Ctrl-S steering', () => {
+  it('steers plain queued messages but keeps grouped inline-skill submissions queued', () => {
+    const steerMessage = vi.fn();
+    const updateQueueDisplay = vi.fn();
+    const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
+      setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
+      setInputMode: vi.fn() as unknown as (...args: never[]) => unknown,
+      getText: vi.fn(() => '') as unknown as (...args: never[]) => unknown,
+      setText: vi.fn() as unknown as (...args: never[]) => unknown,
+      inputMode: 'prompt' as unknown as (...args: never[]) => unknown,
+    };
+    const host = {
+      state: {
+        editor,
+        activeDialog: null,
+        queuedMessages: [
+          { text: 'plain note', agentId: 'main' },
+          {
+            text: 'check /skill:review',
+            agentId: 'main',
+            inlineSkillActivations: [{ skillName: 'review' }],
+          },
+        ],
+        appState: { streamingPhase: 'waiting', isCompacting: false, model: 'k2' },
+        footer: { setTransientHint: vi.fn() },
+        ui: { requestRender: vi.fn() },
+      },
+      session: { id: 's1' },
+      steerMessage,
+      updateQueueDisplay,
+      validateMediaCapabilities: vi.fn(() => true),
+      btwPanelController: {
+        cancelRunning: vi.fn(() => false),
+        closeOrCancel: vi.fn(() => false),
+      },
+    } as unknown as EditorKeyboardHost;
+    const controller = new EditorKeyboardController(
+      host,
+      undefined as unknown as ImageAttachmentStore,
+    );
+    controller.install();
+
+    const onCtrlS = editor['onCtrlS'];
+    if (onCtrlS === undefined) throw new Error('onCtrlS handler not installed');
+    (onCtrlS as () => void)();
+
+    expect(steerMessage).toHaveBeenCalledWith(host.session, [
+      { text: 'plain note', parts: undefined, imageAttachmentIds: undefined },
+    ]);
+    expect(host.state.queuedMessages).toEqual([
+      {
+        text: 'check /skill:review',
+        agentId: 'main',
+        inlineSkillActivations: [{ skillName: 'review' }],
+      },
+    ]);
+    expect(updateQueueDisplay).toHaveBeenCalled();
+  });
+});

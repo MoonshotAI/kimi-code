@@ -815,7 +815,11 @@ export class Editor implements Component, Focusable {
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
 
-					if (this.autocompletePrefix.startsWith("/")) {
+					// Slash-command completions submit on confirm (Enter runs the
+					// command); inline completions marked by the provider (e.g. an
+					// inline skill token mid-prompt) are content edits, so confirm
+					// behaves like Tab and never submits.
+					if (this.autocompletePrefix.startsWith("/") && selected.data?.["inlineSkill"] !== true) {
 						this.cancelAutocomplete();
 						// Fall through to submit
 					} else {

@@ -3183,6 +3183,58 @@ describe("Editor component", () => {
 
 			assert.strictEqual(editor.isShowingAutocomplete(), false);
 		});
+
+		function inlineProviderWith(item: { value: string; label: string; data?: Record<string, unknown> }): AutocompleteProvider {
+			return {
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+					if (!beforeCursor.endsWith("/")) return null;
+					return { items: [item], prefix: "/" };
+				},
+				applyCompletion,
+			};
+		}
+
+		it("does not submit when confirming an inline-marked completion with Enter", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let submitted: string | undefined;
+			editor.onSubmit = (text) => {
+				submitted = text;
+			};
+			editor.setAutocompleteProvider(
+				inlineProviderWith({ value: "skill:review", label: "skill:review", data: { inlineSkill: true } }),
+			);
+
+			for (const ch of "hello ") editor.handleInput(ch);
+			editor.handleInput("/");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+			editor.handleInput("\r");
+			await flushAutocomplete();
+
+			assert.strictEqual(submitted, undefined);
+			assert.strictEqual(editor.getText(), "hello skill:review");
+		});
+
+		it("still submits when confirming an unmarked slash completion with Enter", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let submitted: string | undefined;
+			editor.onSubmit = (text) => {
+				submitted = text;
+			};
+			editor.setAutocompleteProvider(inlineProviderWith({ value: "help", label: "help" }));
+
+			for (const ch of "hello ") editor.handleInput(ch);
+			editor.handleInput("/");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+			editor.handleInput("\r");
+			await flushAutocomplete();
+
+			assert.strictEqual(submitted, "hello help");
+		});
 	});
 
 	describe("Character jump (Ctrl+])", () => {

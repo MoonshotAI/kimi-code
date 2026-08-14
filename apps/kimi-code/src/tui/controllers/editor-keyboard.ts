@@ -272,8 +272,13 @@ export class EditorKeyboardController {
 
       // Bash commands (`! …`) are not steerable: keep them queued so they run
       // after the current task instead of being injected into the turn as text.
+      // Grouped inline-skill submissions are not steerable either — steer
+      // carries no skill activations, so they stay queued and submit intact
+      // when the session drains.
       const queued = host.state.queuedMessages;
-      const steerable = queued.filter((m) => m.mode !== 'bash');
+      const steerable = queued.filter(
+        (m) => m.mode !== 'bash' && m.inlineSkillActivations === undefined,
+      );
 
       const items: SteerInputItem[] = [];
       for (const m of steerable) {
@@ -314,7 +319,9 @@ export class EditorKeyboardController {
         ) {
           return;
         }
-        host.state.queuedMessages = queued.filter((m) => m.mode === 'bash');
+        host.state.queuedMessages = queued.filter(
+          (m) => m.mode === 'bash' || m.inlineSkillActivations !== undefined,
+        );
         if (!editorIsBash) editor.setText('');
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
