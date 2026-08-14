@@ -235,6 +235,9 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
     case 'blocked':
       host.track('input_command_invalid', { reason: 'blocked', command: intent.commandName });
       host.showError(slashBusyMessage(intent.commandName, intent.reason));
+      // The editor buffer was already cleared on submit; give the rejected
+      // command line back so hand-typed input is not lost.
+      host.restoreInputText(input);
       return;
     case 'invalid':
       host.track('input_command_invalid', {

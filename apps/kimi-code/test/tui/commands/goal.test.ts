@@ -786,6 +786,20 @@ describe('dispatchInput /goal integration', () => {
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
     expect(host.sendNormalUserInput).not.toHaveBeenCalledWith('/goal Ship feature X');
   });
+
+  it('restores the input when /goal is rejected by the busy gate while streaming', async () => {
+    const { host, session } = makeHost({ streaming: true });
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(host.showError).toHaveBeenCalledWith(
+        'Cannot /goal while streaming — press Esc or Ctrl-C first.',
+      );
+    });
+    expect(session.createGoal).not.toHaveBeenCalled();
+    expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X');
+  });
 });
 
 describe('goalArgumentCompletions', () => {
