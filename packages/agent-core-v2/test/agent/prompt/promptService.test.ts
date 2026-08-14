@@ -549,6 +549,24 @@ describe('AgentPromptService daemon media intake', () => {
     await expect(handle.launched).resolves.toBeDefined();
   });
 
+  it('counts a launching media prompt as queued in the prompt.queued event', async () => {
+    const sessionDir = await tmpSessionDir();
+    const { files, open } = gatedImage();
+    const { prompt, eventBus } = harness({ sessionDir, files });
+    const queued: Array<{ promptId: string; queueLength: number }> = [];
+    eventBus.subscribe('prompt.queued', (e) => {
+      queued.push({ promptId: e.promptId, queueLength: e.queueLength });
+    });
+
+    // startNext shifts the record into `launchingItem` before the event is
+    // published — the count must still include it.
+    const handlePromise = enqueueMedia(prompt, { id: 'media-launching', fileId: 'f_slow' });
+    expect(queued).toEqual([{ promptId: 'media-launching', queueLength: 1 }]);
+
+    open();
+    await (await handlePromise).launched;
+  });
+
   it('rewrites the reference of a client-submitted tag+ref pair, leaving the tag as text', async () => {
     const sessionDir = await tmpSessionDir();
     const files = new Map([['f_1', { name: 'pic.png', bytes: PNG_BYTES }]]);

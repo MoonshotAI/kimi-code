@@ -571,7 +571,11 @@ export class AgentPromptService extends Disposable implements IAgentPromptServic
   private publishCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked'): void { this.eventBus.publish({ type: 'prompt.completed', promptId, finishedAt: new Date().toISOString(), reason }); }
   private publishQueued(record: Record): void {
     if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
-    this.eventBus.publish({ type: 'prompt.queued', promptId: record.id, content: record.message.content, queueLength: this.pending.length });
+    // Count from the same snapshot `list()` exposes: a record startNext
+    // already shifted into `launchingItem` (media intake still running) is
+    // still queued.
+    const queueLength = this.pending.length + (this.launchingItem === undefined ? 0 : 1);
+    this.eventBus.publish({ type: 'prompt.queued', promptId: record.id, content: record.message.content, queueLength });
   }
   private publishAborted(promptId: string): void { this.eventBus.publish({ type: 'prompt.aborted', promptId, abortedAt: new Date().toISOString() }); }
 }
