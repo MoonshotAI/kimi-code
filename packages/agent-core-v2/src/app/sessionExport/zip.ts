@@ -8,7 +8,7 @@
 
 import { createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
-import { Readable, Transform } from 'node:stream';
+import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import { dirname, join, relative, resolve } from 'pathe';
@@ -49,7 +49,6 @@ export async function writeExportZip(args: {
   readonly sessionFiles: readonly SessionZipEntry[];
   readonly extraEntries?: readonly ExtraZipEntry[];
   readonly signal?: AbortSignal;
-  readonly maxArchiveBytes?: number;
 }): Promise<readonly string[]> {
   const unusedSources = new Set<ZipSource>([
     ...args.sessionFiles.flatMap((entry) => (typeof entry === 'string' ? [] : [entry.source])),
@@ -110,12 +109,7 @@ export async function writeExportZip(args: {
     args.signal?.addEventListener('abort', onAbort, { once: true });
 
     const destination = createWriteStream(tempOutputPath, { flags: 'wx' });
-    writing =
-      args.maxArchiveBytes === undefined
-        ? pipeline(output, destination, { signal: args.signal })
-        : pipeline(output, createArchiveLimit(args.maxArchiveBytes), destination, {
-            signal: args.signal,
-          });
+    writing = pipeline(output, destination, { signal: args.signal });
 
     const activate = (source: ZipSource): Readable => {
       unusedSources.delete(source);
@@ -261,26 +255,6 @@ function abortReason(signal: AbortSignal): Error {
   return signal.reason instanceof Error
     ? signal.reason
     : new DOMException('The operation was aborted.', 'AbortError');
-}
-
-function createArchiveLimit(maxArchiveBytes: number): Transform {
-  let archiveBytes = 0;
-  return new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      archiveBytes += chunk.length;
-      if (archiveBytes > maxArchiveBytes) {
-        callback(
-          new Error2(
-            ErrorCodes.SESSION_EXPORT_TOO_LARGE,
-            `Session export exceeds the ${maxArchiveBytes} byte archive limit.`,
-            { details: { archiveBytes, maxArchiveBytes } },
-          ),
-        );
-        return;
-      }
-      callback(null, chunk);
-    },
-  });
 }
 
 async function findConflictingSource(args: {
