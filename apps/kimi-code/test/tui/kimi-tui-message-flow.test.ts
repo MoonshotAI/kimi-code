@@ -119,6 +119,7 @@ interface MessageDriver {
   handleUserInput(text: string): void;
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
+  recallLastQueued(): QueuedMessage | undefined;
   clearQueuedMessages(): void;
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
@@ -3216,6 +3217,66 @@ command = "vim"
       expect(harness.deleteFile).toHaveBeenCalledWith('file-shared');
     });
     expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps staged media when a queued message is recalled into the editor', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-recall');
+
+    driver.handleUserInput(`look ${attachment.placeholder}`);
+    expect(driver.state.queuedMessages).toHaveLength(1);
+
+    const recalled = driver.recallLastQueued();
+    expect(recalled?.text).toContain(attachment.placeholder);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Recalled, not discarded: the daemon upload stays staged for the
+    // restored draft.
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+    expect(attachment.fileId).toBe('file-recall');
+
+    // Re-queueing the restored draft reuses the daemon-ref form, and the
+    // consuming turn's end releases the upload exactly once.
+    driver.handleUserInput(recalled!.text);
+    const requeued = driver.state.queuedMessages[0]!;
+    expect(requeued.parts).toContainEqual({
+      type: 'image_url',
+      imageUrl: { url: 'kimi-file://file-recall' },
+    });
+
+    driver.sendQueuedMessage(session, requeued);
+    emitTurn(driver, 1);
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-recall');
+    });
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('rebases a recalled video onto its staged cache copy', async () => {
+    process.env['KIMI_CODE_HOME'] = await makeTempHome();
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    await withTempVideo(async (srcVideo) => {
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+      driver.state.appState.streamingPhase = 'waiting';
+
+      driver.handleUserInput(`describe ${attachment.placeholder}`);
+      const queued = driver.state.queuedMessages[0]!;
+      const cachePath = queued.stagingPaths![0]!;
+      expect(existsSync(cachePath)).toBe(true);
+
+      const recalled = driver.recallLastQueued();
+      expect(recalled?.text).toContain(attachment.placeholder);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      // The cache copy survives the recall and becomes the video's source, so
+      // a vanished original cannot lose the media on resubmit.
+      expect(existsSync(cachePath)).toBe(true);
+      expect(attachment.sourcePath).toBe(cachePath);
+    });
   });
 
   it('steers consecutive image-only messages without a whitespace-only separator part', async () => {

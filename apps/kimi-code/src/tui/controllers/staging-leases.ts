@@ -65,6 +65,8 @@ export interface StagingLease {
 export interface StagingLeaseEffects {
   /** Resolve attachment ids to the staged daemon file ids, consuming the mapping. */
   readonly takeFileIds: (imageAttachmentIds: readonly number[]) => readonly string[];
+  /** Consume retains without taking the staged files (queue recall keeps them). */
+  readonly releaseRetains: (imageAttachmentIds: readonly number[]) => void;
   /** Delete staged files (daemon uploads + local cache copies); never rejects. */
   readonly deleteFiles: (fileIds: readonly string[], paths: readonly string[]) => Promise<void>;
   /**
@@ -215,6 +217,17 @@ export class StagingLeaseTracker {
     );
     const paths = items.flatMap((item) => item.stagingPaths ?? []);
     this.deleteStaged(fileIds, paths);
+  }
+
+  /**
+   * Release a queued item recalled into the editor: the restored draft still
+   * references its attachments, so this is not a discard — daemon uploads stay
+   * staged (only the retain is consumed; the next submit re-retains them) and
+   * cache copies retire to session lifetime instead of being deleted.
+   */
+  releaseRecalled(item: QueuedMessage): void {
+    this.effects.releaseRetains(item.imageAttachmentIds ?? []);
+    for (const path of item.stagingPaths ?? []) this.retiredPaths.add(path);
   }
 
   /** Track an in-flight staging-related promise so {@link drain} can await it. */

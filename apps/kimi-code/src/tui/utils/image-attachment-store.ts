@@ -81,6 +81,10 @@ type MutableImageAttachment = {
   -readonly [Property in keyof ImageAttachment]: ImageAttachment[Property];
 };
 
+type MutableVideoAttachment = {
+  -readonly [Property in keyof VideoAttachment]: VideoAttachment[Property];
+};
+
 export class ImageAttachmentStore {
   private nextId = 1;
   private readonly byId = new Map<number, MediaAttachment>();
@@ -229,6 +233,34 @@ export class ImageAttachmentStore {
       attachment.fileExpiresAt = undefined;
     }
     return fileIds;
+  }
+
+  /**
+   * Consume the retains a recalled submission held WITHOUT taking the staged
+   * files: the recalled draft still references the attachments, so their
+   * daemon uploads stay alive and the next submit re-retains them. Used by
+   * queue recall; every other release path goes through {@link takeFileIds}.
+   */
+  releaseRetains(ids: Iterable<number>): void {
+    const released = new Set<number>();
+    for (const id of ids) {
+      if (released.has(id)) continue;
+      released.add(id);
+      const uses = this.stagingUses.get(id) ?? 0;
+      if (uses > 1) this.stagingUses.set(id, uses - 1);
+      else this.stagingUses.delete(id);
+    }
+  }
+
+  /**
+   * Repoint a recalled video at its staged cache copy: the original source
+   * (e.g. a clipboard temp file) may be gone by the time the restored draft
+   * is resubmitted, and re-extraction re-materializes from `sourcePath`.
+   */
+  rebaseVideoSource(id: number, sourcePath: string): void {
+    const attachment = this.byId.get(id);
+    if (attachment?.kind !== 'video') return;
+    (attachment as MutableVideoAttachment).sourcePath = sourcePath;
   }
 
   private fileIds(): readonly string[] {

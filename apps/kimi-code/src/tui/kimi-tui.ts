@@ -160,6 +160,7 @@ import {
   pendingImageIngestions,
   refreshExpiringImageFileRefs,
   rewriteMediaPlaceholders,
+  videoAttachmentIdsInText,
 } from './utils/image-placeholder';
 import type { ExtractionResult } from './utils/image-placeholder';
 import { installInputLatencyProbe } from './utils/input-latency';
@@ -389,6 +390,9 @@ export class KimiTUI {
     this.harness = harness;
     this.staging = new StagingLeaseTracker({
       takeFileIds: (ids) => this.imageStore.takeFileIds(ids),
+      releaseRetains: (ids) => {
+        this.imageStore.releaseRetains(ids);
+      },
       deleteFiles: async (fileIds, paths) => {
         await Promise.all([
           ...fileIds.map((fileId) => this.harness.deleteFile(fileId).catch(() => undefined)),
@@ -1445,7 +1449,16 @@ export class KimiTUI {
     if (this.state.queuedMessages.length === 0) return undefined;
     const last = this.state.queuedMessages.at(-1)!;
     this.state.queuedMessages = this.state.queuedMessages.slice(0, -1);
-    this.staging.releaseQueued([last]);
+    // A recall restores the draft into the editor — it is not a discard:
+    // consumes the retains only, keeping staged files alive (see
+    // `releaseRecalled`), and rebases recalled videos onto their staged cache
+    // copies so a vanished original source cannot lose the media.
+    this.staging.releaseRecalled(last);
+    const videoIds = videoAttachmentIdsInText(last.text, this.imageStore);
+    last.stagingPaths?.forEach((path, index) => {
+      const id = videoIds[index];
+      if (id !== undefined) this.imageStore.rebaseVideoSource(id, path);
+    });
     return last;
   }
 

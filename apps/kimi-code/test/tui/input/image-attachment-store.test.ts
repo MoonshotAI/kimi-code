@@ -149,4 +149,46 @@ describe('ImageAttachmentStore', () => {
     expect(s.takeFileIds([att.id])).toEqual(['file-1']);
     expect(att.fileId).toBeUndefined();
   });
+
+  it('releaseRetains consumes the retain but keeps the staged upload on the attachment', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 10, undefined, 'file-1');
+
+    s.retainFileIds([att.id]);
+    s.releaseRetains([att.id]);
+    expect(att.fileId).toBe('file-1');
+    // The retain is gone: a later take consumes the upload immediately.
+    expect(s.takeFileIds([att.id])).toEqual(['file-1']);
+    expect(att.fileId).toBeUndefined();
+  });
+
+  it('releaseRetains leaves retains held by other submissions untouched', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 10, undefined, 'file-1');
+
+    s.retainFileIds([att.id]); // submission A queues
+    s.retainFileIds([att.id]); // submission B queues
+    s.releaseRetains([att.id]); // A is recalled into the editor
+    s.retainFileIds([att.id]); // A's restored draft resubmits
+    // A's consuming turn ends: one retain (B's) is still outstanding, so the
+    // upload survives.
+    expect(s.takeFileIds([att.id])).toEqual([]);
+    expect(att.fileId).toBe('file-1');
+    // B's turn ends: the last retain is gone, the upload is taken.
+    expect(s.takeFileIds([att.id])).toEqual(['file-1']);
+    expect(att.fileId).toBeUndefined();
+  });
+
+  it('rebaseVideoSource repoints a recalled video at its staged cache copy', () => {
+    const s = new ImageAttachmentStore();
+    const att = s.addVideo('video/mp4', '/tmp/original.mp4');
+
+    s.rebaseVideoSource(att.id, '/cache/original.mp4');
+    expect(att.sourcePath).toBe('/cache/original.mp4');
+
+    // Images and unknown ids are ignored.
+    const image = s.addImage(new Uint8Array([1]), 'image/png', 10, 10);
+    s.rebaseVideoSource(image.id, '/cache/nope');
+    expect(s.get(image.id)).toBe(image);
+  });
 });

@@ -169,6 +169,24 @@ export function extractMediaAttachments(
 }
 
 /**
+ * The video attachment ids referenced by `text`, in placeholder order — the
+ * same order extraction staged their cache copies in, so callers can zip the
+ * result with a submission's `stagingPaths`.
+ */
+export function videoAttachmentIdsInText(text: string, store: ImageAttachmentStore): number[] {
+  const ids: number[] = [];
+  PLACEHOLDER_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PLACEHOLDER_REGEX.exec(text)) !== null) {
+    const [, kind, idStr] = match;
+    if (kind !== 'video' || idStr === undefined) continue;
+    const id = Number.parseInt(idStr, 10);
+    if (store.get(id)?.kind === 'video') ids.push(id);
+  }
+  return ids;
+}
+
+/**
  * Give images referenced by `text` a bounded moment to finish their
  * background paste ingestion (compression/upload — see `ImageAttachment.pending`)
  * before extraction, so a paste-then-immediately-submit still expands to the

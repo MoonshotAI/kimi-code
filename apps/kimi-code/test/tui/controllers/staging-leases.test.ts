@@ -18,6 +18,7 @@ function turnEnded(turnId: number | string): TurnEndedEvent {
 function makeEffects(): {
   effects: StagingLeaseEffects;
   takeFileIds: ReturnType<typeof vi.fn<(ids: readonly number[]) => readonly string[]>>;
+  releaseRetains: ReturnType<typeof vi.fn<(ids: readonly number[]) => void>>;
   deleteFiles: ReturnType<
     typeof vi.fn<(fileIds: readonly string[], paths: readonly string[]) => Promise<void>>
   >;
@@ -26,13 +27,21 @@ function makeEffects(): {
 } {
   const deleted = { fileIds: [] as string[], paths: [] as string[] };
   const takeFileIds = vi.fn((ids: readonly number[]) => ids.map((id) => `file-${id}`));
+  const releaseRetains = vi.fn((ids: readonly number[]) => void ids);
   const deleteFiles = vi.fn((fileIds: readonly string[], paths: readonly string[]) => {
     deleted.fileIds.push(...fileIds);
     deleted.paths.push(...paths);
     return Promise.resolve();
   });
   const warn = vi.fn((message: string) => void message);
-  return { effects: { takeFileIds, deleteFiles, warn }, takeFileIds, deleteFiles, warn, deleted };
+  return {
+    effects: { takeFileIds, releaseRetains, deleteFiles, warn },
+    takeFileIds,
+    releaseRetains,
+    deleteFiles,
+    warn,
+    deleted,
+  };
 }
 
 function makeTracker(): ReturnType<typeof makeEffects> & { tracker: StagingLeaseTracker } {
@@ -239,6 +248,30 @@ describe('StagingLeaseTracker', () => {
 
       expect(deleted.fileIds).toEqual(['file-1', 'file-2']);
       expect(deleted.paths).toEqual(['/cache/a', '/cache/b']);
+    });
+  });
+
+  describe('queue recall', () => {
+    it('consumes only the retain and retires cache copies instead of deleting', () => {
+      const { tracker, releaseRetains, deleted } = makeTracker();
+
+      // A recall restores the draft into the editor — not a discard: the
+      // daemon upload stays staged (only the retain is consumed) and the
+      // cache copy retires to session lifetime.
+      tracker.releaseRecalled({
+        text: 'q',
+        agentId: 'main',
+        imageAttachmentIds: [2],
+        stagingPaths: ['/cache/b'],
+      });
+
+      expect(releaseRetains).toHaveBeenCalledWith([2]);
+      expect(deleted.fileIds).toEqual([]);
+      expect(deleted.paths).toEqual([]);
+
+      tracker.releaseAll();
+      expect(deleted.fileIds).toEqual([]);
+      expect(deleted.paths).toEqual(['/cache/b']);
     });
   });
 
