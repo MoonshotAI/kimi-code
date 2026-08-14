@@ -1965,6 +1965,10 @@ export const VOLATILE_EVENT_TYPES = [
   'shell.started',
   'shell.completed',
   'agent.status.updated',
+  // Live-only capability install progress (per-chunk ticks); kap-server
+  // classifies it volatile (never journaled), so shared-protocol clients must
+  // not treat it as durable/replayable either.
+  'event.capability.changed',
 ] as const satisfies readonly AgentEvent['type'][];
 
 export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];
