@@ -383,8 +383,6 @@ export class KimiTUI {
 
   /** Timer that auto-clears the one-shot "moved to background" footer hint. */
   private detachHintClearTimer: ReturnType<typeof setTimeout> | undefined;
-  /** Footer hint currently owned by the goal-objective length warning. */
-  private goalLengthWarningHint: string | undefined;
 
   // The currently-mounted approval panel, if any. Kept so the full-screen
   // preview viewer can restore focus to the exact same instance (and its
@@ -3129,23 +3127,14 @@ export class KimiTUI {
    * exceeds the length limit, so the user can trim it (or move it into a
    * file) before submitting instead of losing the input to a rejection.
    * `undefined` input means the text cannot be a `/goal` command and is not
-   * measured at all. Clears only the hint it set itself, leaving other
-   * transient hints (exit confirm, detach, image paste) untouched.
+   * measured at all. The footer keeps this warning in its own slot, so
+   * transient hints (exit confirm, detach, image paste) only displace it
+   * temporarily.
    */
   updateGoalLengthWarning(text: string | undefined): void {
     const warning = text === undefined ? undefined : goalObjectiveLengthWarning(text);
-    if (warning !== undefined) {
-      this.goalLengthWarningHint = warning;
-      this.state.footer.setTransientHint(warning);
-      this.state.ui.requestRender();
-      return;
-    }
-    const owned = this.goalLengthWarningHint;
-    this.goalLengthWarningHint = undefined;
-    if (owned !== undefined && this.state.footer.getTransientHint() === owned) {
-      this.state.footer.setTransientHint(null);
-      this.state.ui.requestRender();
-    }
+    this.state.footer.setWarningHint(warning ?? null);
+    this.state.ui.requestRender();
   }
 
   async applyTheme(themeName: ThemeName, resolved?: ResolvedTheme): Promise<void> {
