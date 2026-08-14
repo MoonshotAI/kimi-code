@@ -75,7 +75,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
       policy.wire === 'strict' ? projectStrict : project,
     );
     const media = policy.media;
-    if (media === undefined || media === 'keep') return projected;
+    if (media === undefined) return projected;
     if (media === 'degraded') return degradeOlderMediaParts(projected, MEDIA_DEGRADE_KEEP_RECENT);
     return stripMediaPartsBySnapshot(projected, media.strip);
   }

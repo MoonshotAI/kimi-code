@@ -26,8 +26,8 @@ export interface MediaStripSnapshot {
 }
 
 export interface ProjectionPolicy {
-  readonly wire?: 'default' | 'strict';
-  readonly media?: 'keep' | 'degraded' | { readonly strip: MediaStripSnapshot };
+  readonly wire?: 'strict';
+  readonly media?: 'degraded' | { readonly strip: MediaStripSnapshot };
 }
 
 export interface IAgentContextProjectorService {

@@ -68,7 +68,7 @@ export const llmRequest = LlmRequestTraceModel.defineOp('llm.request', {
     messageCount: z.number(),
     turnStep: z.string().optional(),
     attempt: z.string().optional(),
-    projection: z.enum(['strict', 'media-degraded', 'media-stripped']).optional(),
+    projection: z.enum(['strict', 'media-degraded', 'media-stripped', 'strict-media-degraded', 'strict-media-stripped']).optional(),
     droppedCount: z.number().optional(),
   }),
   apply: (s) => s,

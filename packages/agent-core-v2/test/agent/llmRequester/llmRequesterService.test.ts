@@ -2,7 +2,8 @@
  * Scenario: LLM requester uses bounded recovery projections after a
  * deterministic provider rejection — strict projection for tool-use
  * adjacency, degraded media followed by full stripping for body-size 413s,
- * and media stripping for image-format rejections.
+ * and media stripping for image-format rejections — with each axis's repair
+ * accumulating on top of the repairs already applied.
  *
  * Responsibilities: assert retry eligibility, projection order and bounds,
  * per-turn recovery stickiness, request recording, and usage accounting.
@@ -22,6 +23,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   IAgentContextProjectorService,
   type MediaStripSnapshot,
+  type ProjectionPolicy,
 } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
@@ -589,6 +591,82 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
       expect(calls.value).toBe(1);
       expect(degradedCalls).toBe(0);
     }
+  });
+});
+
+describe('AgentLLMRequesterService combined recovery projections', () => {
+  const BODY_TOO_LARGE_413 = new APIRequestTooLargeError(413, 'Request Entity Too Large');
+  const IMAGE_FORMAT_400 = new APIStatusError(
+    400,
+    'unsupported image format: image/avif is not supported',
+  );
+  const STRUCTURAL_400 = new APIStatusError(400, 'messages: `tool_use` ids must be unique');
+
+  function policyRecorder(sink: {
+    policies: (ProjectionPolicy | undefined)[];
+  }): Pick<IAgentContextProjectorService, 'project'> {
+    return {
+      project: (messages: readonly ContextMessage[], policy) => {
+        sink.policies.push(policy);
+        return messages;
+      },
+    };
+  }
+
+  it('accumulates media repairs on top of strict across repeated rejections', async () => {
+    const calls = { value: 0 };
+    const policies: (ProjectionPolicy | undefined)[] = [];
+    const { service, wire, records } = createService(
+      createRequester(calls, STRUCTURAL_400, [BODY_TOO_LARGE_413, BODY_TOO_LARGE_413]),
+      policyRecorder({ policies }),
+    );
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+
+    expect(calls.value).toBe(4);
+    expect(policies).toEqual([
+      undefined,
+      { wire: 'strict' },
+      { wire: 'strict', media: 'degraded' },
+      { wire: 'strict', media: { strip: expect.anything() } },
+    ]);
+    await wire.flush();
+    expect(
+      records.filter((record) => record.type === 'llm.request').map((record) => record['projection']),
+    ).toEqual([undefined, 'strict', 'strict-media-degraded', 'strict-media-stripped']);
+  });
+
+  it('strips rejected images on top of strict after an image-format rejection on the strict resend', async () => {
+    const calls = { value: 0 };
+    const policies: (ProjectionPolicy | undefined)[] = [];
+    const { service } = createService(
+      createRequester(calls, STRUCTURAL_400, [IMAGE_FORMAT_400]),
+      policyRecorder({ policies }),
+    );
+
+    await service.request();
+
+    expect(calls.value).toBe(3);
+    expect(policies.map((policy) => policy?.wire)).toEqual([undefined, 'strict', 'strict']);
+    expect(typeof policies[2]?.media).toBe('object');
+  });
+
+  it('applies the strict repair on top of degraded media when a structural 400 follows a 413', async () => {
+    const calls = { value: 0 };
+    const policies: (ProjectionPolicy | undefined)[] = [];
+    const { service } = createService(
+      createRequester(calls, BODY_TOO_LARGE_413, [STRUCTURAL_400]),
+      policyRecorder({ policies }),
+    );
+
+    await service.request();
+
+    expect(calls.value).toBe(3);
+    expect(policies).toEqual([
+      undefined,
+      { media: 'degraded' },
+      { wire: 'strict', media: 'degraded' },
+    ]);
   });
 });
 
