@@ -333,6 +333,19 @@ describe('EditorKeyboardController input changes', () => {
     expect(host.updateGoalLengthWarning).toHaveBeenCalledWith(expanded);
   });
 
+  it('expands a paste that can complete a partially typed /goal command', () => {
+    const { host, editor } = createHarness();
+    const expanded = `/goal ${'x'.repeat(4001)}`;
+    const getExpandedText = installExpandedText(editor, expanded);
+    const onChange = editor['onChange'] as unknown as (text: string) => void;
+
+    // Visible text is `/go[paste #1 …]`; the paste completes the command.
+    onChange('/go[paste #1 +3999 chars]');
+
+    expect(getExpandedText).toHaveBeenCalled();
+    expect(host.updateGoalLengthWarning).toHaveBeenCalledWith(expanded);
+  });
+
   it('skips paste expansion entirely for non-goal input', () => {
     const { host, editor } = createHarness();
     const getExpandedText = installExpandedText(editor, 'whatever');

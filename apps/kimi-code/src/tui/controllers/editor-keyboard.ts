@@ -85,13 +85,17 @@ export class EditorKeyboardController {
       // Expanding paste markers costs a full-text pass, and only `/goal`
       // input can trip the objective length limit — so skip the expansion
       // for ordinary prompts. Submitted text is trimmed before dispatch, so
-      // gate on the trimmed text too. A leading paste marker may itself
-      // expand into a `/goal ...` line, so it must pass the gate as well.
+      // gate on the trimmed text too. A paste marker may itself expand into
+      // part of the command (`[paste #…]` → `/goal …`, or completing a
+      // partial prefix like `/go[paste #1 …]` → `/goal …`), so any input
+      // containing a marker that can still become a `/goal` command must
+      // pass the gate as well.
       const trimmed = text.trimStart();
-      if (
-        editor.inputMode !== 'bash' &&
-        (trimmed.startsWith('/goal') || trimmed.startsWith('[paste #'))
-      ) {
+      const mightBeGoal =
+        trimmed.startsWith('/goal') ||
+        trimmed.startsWith('[paste #') ||
+        (trimmed.startsWith('/') && trimmed.includes('[paste #'));
+      if (editor.inputMode !== 'bash' && mightBeGoal) {
         host.updateGoalLengthWarning(editor.getExpandedText());
       } else {
         host.updateGoalLengthWarning(undefined);

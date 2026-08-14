@@ -358,7 +358,12 @@ async function handleBuiltInSlashCommand(
 ): Promise<void> {
   if (host.session === undefined && SESSION_REQUIRING_COMMANDS.has(name)) {
     const session = await ensureSessionForCommand(host);
-    if (session === undefined) return;
+    if (session === undefined) {
+      // Creation failed after submit cleared the buffer; give the input
+      // back unless the user already typed a new draft meanwhile.
+      if (host.state.editor.getText().length === 0) host.restoreInputText(input);
+      return;
+    }
     // A first prompt may have started a turn while the session was being
     // created; re-check the availability gate that was resolved before the
     // await (idle-only commands are blocked while a turn is active).
@@ -373,8 +378,9 @@ async function handleBuiltInSlashCommand(
       resolveSlashCommandAvailability(command, args) === 'idle-only'
     ) {
       host.showError(slashBusyMessage(name, busyReason));
-      // Same as the dispatch blocked branch: give the cleared input back.
-      host.restoreInputText(input);
+      // Same as the dispatch blocked branch: give the cleared input back,
+      // guarded the same way — session creation awaited above.
+      if (host.state.editor.getText().length === 0) host.restoreInputText(input);
       return;
     }
   }

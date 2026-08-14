@@ -107,6 +107,7 @@ function makeHost(
         streamingPhase: overrides.streaming ? 'streaming' : 'idle',
         isCompacting: false,
       },
+      editor: { getText: vi.fn(() => '') },
       transcriptContainer,
       ui: { requestRender: vi.fn() },
       theme: { palette: getBuiltInPalette('dark') },
@@ -326,6 +327,15 @@ describe('handleGoalCommand', () => {
     await handleGoalCommand(host, 'replace');
 
     expect(host.showStatus).toHaveBeenCalled();
+    expect(host.restoreInputText).not.toHaveBeenCalled();
+  });
+
+  it('does not restore over a draft typed while validation was pending', async () => {
+    vi.mocked(host.state.editor.getText).mockReturnValue('a newer draft');
+
+    await handleGoalCommand(host, 'x'.repeat(4001));
+
+    expect(host.showError).toHaveBeenCalled();
     expect(host.restoreInputText).not.toHaveBeenCalled();
   });
 
@@ -821,6 +831,44 @@ describe('dispatchInput /goal integration', () => {
     });
     expect(session.createGoal).not.toHaveBeenCalled();
     expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X');
+  });
+
+  it('does not restore over a draft typed while lazy session creation was pending', async () => {
+    const { host, session } = makeHost({ hasSession: false });
+    Object.assign(host, {
+      engineV2: true,
+      ensureSession: vi.fn(async () => {
+        host.state.appState.streamingPhase = 'thinking';
+        // The user kept typing after submitting /goal.
+        vi.mocked(host.state.editor.getText).mockReturnValue('a newer draft');
+        return session;
+      }),
+    });
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(host.showError).toHaveBeenCalledWith(
+        'Cannot /goal while streaming — press Esc or Ctrl-C first.',
+      );
+    });
+    expect(session.createGoal).not.toHaveBeenCalled();
+    expect(host.restoreInputText).not.toHaveBeenCalled();
+  });
+
+  it('restores the input when lazy session creation fails before /goal runs', async () => {
+    const { host, session } = makeHost({ hasSession: false });
+    Object.assign(host, {
+      engineV2: true,
+      ensureSession: vi.fn(async () => undefined),
+    });
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X');
+    });
+    expect(session.createGoal).not.toHaveBeenCalled();
   });
 });
 
