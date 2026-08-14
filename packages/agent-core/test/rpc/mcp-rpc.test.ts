@@ -896,6 +896,43 @@ describe('KimiCore unified MCP management plane', () => {
     ).rejects.toMatchObject({ code: 'request.invalid' });
   }, 30000);
 
+  it('normalizes global mutation names so live sessions follow the stored key', async () => {
+    const { core, rpc, workDir } = await makeCore();
+    const created = await rpc.createSession({ workDir, model: 'default-mock' });
+    const session = core.sessions.get(created.id)!;
+
+    // A padded global add persists trimmed and reconciles the trimmed name:
+    // the live session connects the server under its stored identity.
+    await core.addGlobalMcpServer({
+      server: {
+        name: '  padded-global  ',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [STDIO_FIXTURE],
+      },
+    });
+    await expect(core.getGlobalMcpServer({ name: 'padded-global' })).resolves.toMatchObject({
+      name: 'padded-global',
+    });
+    expect(session.mcp.get('padded-global')?.status).toBe('connected');
+    expect(session.mcp.get('  padded-global  ')).toBeUndefined();
+
+    // Padded remove drops the trimmed entry and tears the session entry down.
+    await core.removeGlobalMcpServer({ name: ' padded-global ' });
+    expect(session.mcp.get('padded-global')).toBeUndefined();
+
+    // A padded name still hits the read-only guard for plugin owners.
+    const pluginRoot = await makePlugin('demo', {
+      api: { transport: 'http', url: 'https://example.com/mcp' },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    await expect(
+      core.addGlobalMcpServer({
+        server: { name: ' plugin-demo:api ', transport: 'http', url: 'https://example.com/mcp' },
+      }),
+    ).rejects.toMatchObject({ code: 'request.invalid' });
+  }, 30000);
+
   it('keeps caller-injected servers when a plugin collides on the runtime name', async () => {
     const http = await startMcpHttpServer();
     const { core, rpc, workDir } = await makeCore();

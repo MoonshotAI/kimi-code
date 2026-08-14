@@ -297,6 +297,26 @@ describe('McpConnectionManager', () => {
     }
   });
 
+  it('rejects a disabled replacement config without touching the live entry', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      const original = stdioConfig();
+      await cm.connectAll({ live: original });
+      expect(cm.get('live')).toMatchObject({ status: 'connected', toolCount: 3 });
+
+      // The rejection happens before the swap: the entry keeps the original
+      // config and the running client instead of a half-applied disabled one.
+      await expect(
+        cm.reconnect('live', { ...stdioConfig(), enabled: false }),
+      ).rejects.toMatchObject({ code: 'mcp.server_disabled' });
+      expect(cm.get('live')).toMatchObject({ status: 'connected', toolCount: 3 });
+      // Full internal view: any pre-rejection mutation would leak through here.
+      expect(cm.getRawEntry('live')?.config).toEqual(original);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
   it('reconnectAndJoin joins an in-flight reconnect instead of starting a second one', async () => {
     const cm = new McpConnectionManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];

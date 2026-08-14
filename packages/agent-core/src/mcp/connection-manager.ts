@@ -370,6 +370,12 @@ export class McpConnectionManager {
           `MCP server "${name}" is contributed by a plugin; update the plugin manifest instead`,
         );
       }
+      // Reject a disabled replacement before touching the entry: the caller
+      // gets the error and the running connection/config stay consistent
+      // instead of a half-applied swap that reports disabled but stays live.
+      if (config.enabled === false) {
+        throw new KimiError(ErrorCodes.MCP_SERVER_DISABLED, `MCP server is disabled: ${name}`);
+      }
       entry.config = config;
     } else if (this.options.configResolver !== undefined && entry.source !== 'caller') {
       // Caller-injected config intentionally shadows the on-disk layers for
