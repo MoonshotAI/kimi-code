@@ -200,8 +200,9 @@ export function goalObjectiveLengthWarning(text: string): string | undefined {
   const trimmed = text.trimStart();
   if (!trimmed.startsWith('/goal')) return undefined;
   const args = trimmed.slice('/goal'.length);
-  // `/goalfoo` is a different (probably unknown) command, not `/goal`.
-  if (args.length > 0 && !/\s/.test(args.charAt(0))) return undefined;
+  // parseSlashInput splits the command name at a literal space only, so a
+  // newline/tab boundary (`/goal⏎…`, `/goalfoo`) is not the goal command.
+  if (args.length > 0 && args.charAt(0) !== ' ') return undefined;
   const objective = extractGoalObjective(args);
   if (objective === undefined || objective.length <= MAX_GOAL_OBJECTIVE_LENGTH) return undefined;
   return `Goal objective is too long (${objective.length}/${MAX_GOAL_OBJECTIVE_LENGTH} characters); put long content in a file and reference the file path.`;

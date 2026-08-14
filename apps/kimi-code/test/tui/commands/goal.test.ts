@@ -261,6 +261,16 @@ describe('goalObjectiveLengthWarning', () => {
     expect(goalObjectiveLengthWarning('/goal next manage')).toBeUndefined();
     expect(goalObjectiveLengthWarning(`/goalie ${'x'.repeat(4001)}`)).toBeUndefined();
   });
+
+  it('stays quiet when the boundary is a newline or tab (dispatch sends those as plain messages)', () => {
+    expect(goalObjectiveLengthWarning(`/goal\n${'x'.repeat(4001)}`)).toBeUndefined();
+    expect(goalObjectiveLengthWarning(`/goal\t${'x'.repeat(4001)}`)).toBeUndefined();
+  });
+
+  it('still warns for multiline objectives after a literal-space boundary', () => {
+    const objective = `${'x'.repeat(2000)}\n${'x'.repeat(2001)}`;
+    expect(goalObjectiveLengthWarning(`/goal ${objective}`)).toBeDefined();
+  });
 });
 
 describe('handleGoalCommand', () => {
