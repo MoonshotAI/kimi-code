@@ -140,6 +140,7 @@ interface MessageDriver {
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
   getCurrentSessionId(): string;
+  toggleToolOutputExpansion(): void;
 }
 
 interface FeedbackDriver extends MessageDriver {
@@ -8341,6 +8342,14 @@ describe('transcript step and assistant folding', () => {
       (entry) => entry.kind === 'assistant',
     );
     expect(assistantEntries).toHaveLength(cycles);
+
+    const collapsed = stripSgr(renderTranscript(driver));
+    expect(collapsed).not.toContain('msg-0');
+
+    driver.toggleToolOutputExpansion();
+    const expanded = stripSgr(renderTranscript(driver));
+    expect(expanded).toContain('msg-0');
+    expect(expanded.indexOf('msg-0')).toBeLessThan(expanded.indexOf('msg-1'));
   });
 
   it('does not fold a turn within the caps', async () => {
@@ -8392,5 +8401,9 @@ describe('transcript step and assistant folding', () => {
     // The conclusion stays mounted.
     const lastAssistant = assistants.at(-1)!;
     expect(stripSgr(lastAssistant.render(120).join('\n'))).toContain(`msg-${cycles - 1}`);
+
+    expect(stripSgr(renderTranscript(driver))).not.toContain('msg-0');
+    driver.toggleToolOutputExpansion();
+    expect(stripSgr(renderTranscript(driver))).toContain('msg-0');
   });
 });
