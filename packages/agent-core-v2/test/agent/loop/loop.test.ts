@@ -405,11 +405,6 @@ describe('Agent loop', () => {
   });
 
   it('preserves tool call extras (Gemini thought_signature) through to context', async () => {
-    // Regression: Gemini 3 requires the thought_signature returned on a
-    // functionCall to be echoed back when the call is re-sent in the next
-    // step. The signature travels as ToolCall.extras.thought_signature_b64; it
-    // must survive loopService's tool.call event recording so the fold
-    // rebuilds the assistant message with extras for the provider to echo.
     const sigCall: ToolCall = {
       type: 'function',
       id: 'call_sig',
