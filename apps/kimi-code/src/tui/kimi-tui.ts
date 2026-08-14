@@ -1433,28 +1433,27 @@ export class KimiTUI {
     extraction: ReturnType<typeof extractMediaAttachments>,
   ): Promise<void> {
     const submissionId = randomUUID();
-    try {
-      await session.promptWithSkills(
-        extraction.hasMedia ? extraction.parts : text,
-        activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
-        { submissionId },
-      );
-    } finally {
-      // The engine records the skill activations before the prompt, and the
-      // `skill.activated` events land synchronously during the call — so
-      // appending the user entry afterwards keeps the live transcript in the
-      // same order as a resumed replay (skill cards first, prompt last).
-      this.appendTranscriptEntry({
-        id: nextTranscriptId(),
-        kind: 'user',
-        turnId: undefined,
-        renderMode: 'plain',
-        content: text,
-        imageAttachmentIds:
-          extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
-        promptSubmissionId: submissionId,
-      });
-    }
+    await session.promptWithSkills(
+      extraction.hasMedia ? extraction.parts : text,
+      activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
+      { submissionId },
+    );
+    // The engine records the skill activations before the prompt, and the
+    // `skill.activated` events land synchronously during the call — so
+    // appending the user entry afterwards keeps the live transcript in the
+    // same order as a resumed replay (skill cards first, prompt last). Only
+    // appended once the submission was accepted: a rejected group must not
+    // leave a local undo anchor the engine never recorded.
+    this.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'user',
+      turnId: undefined,
+      renderMode: 'plain',
+      content: text,
+      imageAttachmentIds:
+        extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
+      promptSubmissionId: submissionId,
+    });
   }
 
   validateMediaCapabilities(extraction: {

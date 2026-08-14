@@ -355,7 +355,9 @@ export class SessionReplayRenderer {
       // the group's turn instead.
       this.advanceTurn(context);
     }
-    context.groupSubmissionId = submissionId;
+    // The prompt closes its group: clear the marker so a later group reusing
+    // the same submission id starts a fresh turn of its own.
+    context.groupSubmissionId = undefined;
     this.host.appendTranscriptEntry({
       ...replayEntry(context, 'user', contentPartsToText(message.content), 'plain'),
       promptSubmissionId: submissionId,

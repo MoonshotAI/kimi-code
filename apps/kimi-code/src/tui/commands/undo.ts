@@ -112,20 +112,32 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
   const children = host.state.transcriptContainer.children;
   const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);
   if (lastUserComponentIndex !== undefined) {
-    // Structural removal only: the container's ref-checked render cache
-    // detects the child-list change; no tree-wide invalidate needed.
-    removeUndoContextComponents(children, lastUserComponentIndex, submissionId);
+    // The group's skill cards sit immediately before the anchor; only the
+    // contiguous run is part of this submission, so a reused submission id on
+    // an earlier, separate group is not swept up here. Structural removal
+    // only: the container's ref-checked render cache detects the child-list
+    // change; no tree-wide invalidate needed.
+    let removeFromIndex = lastUserComponentIndex;
+    if (submissionId !== undefined) {
+      while (removeFromIndex > 0) {
+        const entry = getTranscriptComponentEntry(children[removeFromIndex - 1]!);
+        if (entry?.promptSubmissionId !== submissionId) break;
+        removeFromIndex--;
+      }
+    }
+    removeUndoContextComponents(children, removeFromIndex);
   }
 
-  const preservedEntries = entries.filter(
-    (entry, index) =>
-      !(
-        (index >= lastUserIndex ||
-          (submissionId !== undefined && entry.promptSubmissionId === submissionId)) &&
-        isUndoContextEntry(entry)
-      ),
+  let removeFromIndex = lastUserIndex;
+  if (submissionId !== undefined) {
+    while (removeFromIndex > 0 && entries[removeFromIndex - 1]?.promptSubmissionId === submissionId) {
+      removeFromIndex--;
+    }
+  }
+  const preservedEntries = entries.slice(removeFromIndex).filter(
+    (entry) => !isUndoContextEntry(entry),
   );
-  entries.splice(0, entries.length, ...preservedEntries);
+  entries.splice(removeFromIndex, entries.length - removeFromIndex, ...preservedEntries);
 
   if (entries.length === 0) {
     renderWelcome(host);
@@ -460,15 +472,10 @@ function findUndoAnchorComponentIndex(
 function removeUndoContextComponents(
   children: Component[],
   startIndex: number,
-  submissionId: string | undefined,
 ): void {
-  for (let i = children.length - 1; i >= 0; i--) {
+  for (let i = children.length - 1; i >= startIndex; i--) {
     const child = children[i];
-    if (child === undefined) continue;
-    const entry = getTranscriptComponentEntry(child);
-    const belongsToSubmission =
-      submissionId !== undefined && entry?.promptSubmissionId === submissionId;
-    if ((i >= startIndex || belongsToSubmission) && isUndoContextComponent(child)) {
+    if (child !== undefined && isUndoContextComponent(child)) {
       children.splice(i, 1);
     }
   }

@@ -757,6 +757,47 @@ describe('KimiTUI message flow', () => {
     ]);
   });
 
+  it('does not append a user entry when the grouped submission is rejected (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+      promptWithSkills: vi.fn(async () => {
+        throw new Error('Skill "review" was not found');
+      }),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('please /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    // A rejected group leaves no local undo anchor the engine never recorded.
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toHaveLength(0);
+  });
+
   it('renders a grouped replay submission as a single turn', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
@@ -843,6 +884,26 @@ describe('KimiTUI message flow', () => {
                 toolCalls: [],
               },
             },
+            {
+              type: 'message',
+              time: 7,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'skill card C' }],
+                toolCalls: [],
+                origin: groupedOrigin('act-3', 'commit'),
+              },
+            },
+            {
+              type: 'message',
+              time: 8,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'please /commit' }],
+                toolCalls: [],
+                origin: { kind: 'user', submissionId: 'sub-1' },
+              },
+            },
           ],
         },
       },
@@ -852,13 +913,14 @@ describe('KimiTUI message flow', () => {
     expect(replayed).toBe(true);
 
     const turns = groupTurns(driver.state.transcriptEntries);
-    expect(turns).toHaveLength(2);
+    expect(turns).toHaveLength(3);
     expect(turns[1]!.entries.map((entry) => entry.kind)).toEqual([
       'skill_activation',
       'skill_activation',
       'user',
       'assistant',
     ]);
+    expect(turns[2]!.entries.map((entry) => entry.kind)).toEqual(['skill_activation', 'user']);
   });
 
   it('appends the user entry after the skill cards for a grouped submission (v2 engine)', async () => {
