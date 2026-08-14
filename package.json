@@ -14,7 +14,7 @@
     "dev:web": "pnpm --filter kimi-code-web run dev",
     "sync:web": "node scripts/sync-web-to-kimi-code.mjs",
     "package:macos": "bash apps/desktop/scripts/package-local-macos.sh",
-    "typecheck": "pnpm --filter kimi-code-app run typecheck && pnpm --filter kimi-code-web run typecheck",
+    "typecheck": "pnpm --filter kimi-code-app run typecheck && pnpm --filter kimi-code-web run typecheck && pnpm --filter kimi-code-auth-login run typecheck",
     "lint": "oxlint --type-aware --config .oxlintrc.json",
     "test": "vitest run"
   },

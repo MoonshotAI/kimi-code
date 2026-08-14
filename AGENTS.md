@@ -27,6 +27,7 @@
 
 - `apps/desktop`：Electron 壳（`kimi-code-app`）；简介见 `apps/desktop/README.md`，原生功能分叉清单见 `apps/desktop/docs/native-todos.md`。新测试：主进程进 `tests/main/`，renderer 进 `tests/renderer/`。
 - `apps/web`：浏览器 Web UI（`kimi-code-web`，Vue 3 + Vite + vue-i18n）。dev 时 Vite 把 `/api/v1`（REST + WS）代理到 `KIMI_SERVER_URL`（默认 `http://127.0.0.1:58627`）。
+- `apps/auth-login`：Remote Control 鉴权中间页（`kimi-code-auth-login`，单页、移动端优先）：OAuth device flow 经 `@moonshot-ai/kimi-code-oauth/device` 直连 auth.kimi.com（CORS 直连，无 dev proxy），token 写 `kimi-auth` cookie；`redirect_uri` 可选，有则登录后回跳。方案见 `docs/plans/2026-08-13-rc-auth-login.md`。
 - `packages/*`：`@moonshot-ai/{app-core,app-i18n,app-markdown,app-ui,app-client}` + `vite-preset`（exports→src，被 apps/web 与 desktop renderer 复用）——app-core 是无 Vue 依赖的纯层（api 客户端 / lib 纯函数 / client 渲染类型与热路径纯模块），app-client 是 Vue composables 层（注入 api / t / tracker）；共享字体产物在 `app-ui/src/assets/fonts`（gitignored），由 `scripts/prepare-fonts.mjs` 自动准备。
 - `kimi-code/`：git submodule（核心仓）。`kimi-code/packages/*` 提供 `kap-server`、`agent-core-v2`、`kimi-code-sdk` 等源码。
 - `scripts/sync-web-to-kimi-code.mjs`：`apps/web/dist` → `<kimi-code checkout>/apps/kimi-code/dist-web`（`KIMI_CODE_REPO` 必传，指定目标 checkout）。

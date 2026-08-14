@@ -1,0 +1,29 @@
+/* Self-hosted variable fonts, generated once into ./assets/fonts by
+   scripts/prepare-fonts.mjs (gitignored) and fingerprinted by Vite into each
+   final build. Kept as a separate entry from style.css so font-free consumers
+   (e.g. apps/auth-login, which falls back to platform fonts) don't ship
+   ~7.5MB of CJK. Consumers that want the Kimi typefaces import this once,
+   alongside style.css. */
+@font-face {
+  font-family: "Noto Sans SC Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("./assets/fonts/NotoSansSC[wght].woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400 900;
+  src: url("./assets/fonts/SchibstedGrotesk[wght].woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk Variable";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400 900;
+  src: url("./assets/fonts/SchibstedGrotesk-Italic[wght].woff2") format("woff2-variations");
+}

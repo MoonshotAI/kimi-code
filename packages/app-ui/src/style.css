@@ -1,29 +1,6 @@
-/* UI variable fonts are generated once in app-ui so both renderer builds
-   resolve the same local assets. Vite fingerprints them into each final build. */
-@font-face {
-  font-family: "Noto Sans SC Variable";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 100 900;
-  src: url("./assets/fonts/NotoSansSC[wght].woff2") format("woff2-variations");
-}
-
-@font-face {
-  font-family: "Schibsted Grotesk Variable";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 400 900;
-  src: url("./assets/fonts/SchibstedGrotesk[wght].woff2") format("woff2-variations");
-}
-
-@font-face {
-  font-family: "Schibsted Grotesk Variable";
-  font-style: italic;
-  font-display: swap;
-  font-weight: 400 900;
-  src: url("./assets/fonts/SchibstedGrotesk-Italic[wght].woff2") format("woff2-variations");
-}
-
+/* Design tokens + shared styles. The self-hosted variable fonts live in
+   ./fonts.css, a separate entry so font-free consumers don't ship ~7.5MB of
+   CJK — consumers that want the Kimi typefaces import it alongside this file. */
 :root {
   --dim: rgba(0, 0, 0, 0.6);
   --muted: rgba(0, 0, 0, 0.45);

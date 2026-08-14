@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./style.css": "./src/style.css"
+    "./style.css": "./src/style.css",
+    "./fonts.css": "./src/fonts.css"
   },
   "dependencies": {
     "@moonshot-ai/app-i18n": "workspace:*"

@@ -14,6 +14,7 @@
   "updateInternalDependencies": "patch",
   "ignore": [
     "kimi-code-web",
+    "kimi-code-auth-login",
     "@moonshot-ai/vite-preset",
     "@moonshot-ai/app-core",
     "@moonshot-ai/app-i18n",

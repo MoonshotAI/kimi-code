@@ -1,4 +1,5 @@
 @import '@moonshot-ai/app-ui/style.css';
+@import '@moonshot-ai/app-ui/fonts.css';
 
 /* ---- Minimal reset (replaces Tailwind preflight) ----
    Just enough normalization so UA defaults don't leak through; the app's own

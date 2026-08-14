@@ -30,4 +30,15 @@ export default {
   // Send gating (signed-in free account, no usable models)
   upgradeRequiredTitle: '请升级会员',
   upgradeRequiredMessage: '当前为免费账户，升级会员后即可使用 Kimi 模型开始对话。',
+  // Remote Control auth-login page (apps/auth-login)
+  rcSubtitle: '远程控制会话',
+  rcChecking: '正在检查登录状态…',
+  rcLead: '此远程控制会话需要授权。使用 Kimi 账号登录后即可继续。',
+  rcAuthorize: '打开授权页',
+  rcUserCodeLabel: '授权码',
+  rcSuccessHint: '正在跳转…',
+  rcExpiredTitle: '授权已过期或被取消',
+  rcStartErrorTitle: '无法开始登录',
+  rcConnectionErrorHint: '请检查网络连接后重试。',
+  rcSuccessNoRedirect: '现在可以关闭本页了。',
 } as const;

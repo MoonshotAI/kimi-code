@@ -53,6 +53,52 @@ importers:
         specifier: 2.0.0
         version: 2.0.0
 
+  apps/auth-login:
+    dependencies:
+      '@moonshot-ai/app-client':
+        specifier: workspace:*
+        version: link:../../packages/app-client
+      '@moonshot-ai/app-core':
+        specifier: workspace:*
+        version: link:../../packages/app-core
+      '@moonshot-ai/app-i18n':
+        specifier: workspace:*
+        version: link:../../packages/app-i18n
+      '@moonshot-ai/app-ui':
+        specifier: workspace:*
+        version: link:../../packages/app-ui
+      '@moonshot-ai/kimi-code-oauth':
+        specifier: workspace:*
+        version: link:../../kimi-code/packages/oauth
+      vue:
+        specifier: ^3.5.35
+        version: 3.5.39(typescript@6.0.2)
+      vue-i18n:
+        specifier: ^11.4.5
+        version: 11.4.6(vue@3.5.39(typescript@6.0.2))
+    devDependencies:
+      '@moonshot-ai/vite-preset':
+        specifier: workspace:*
+        version: link:../../packages/vite-preset
+      '@vitejs/plugin-vue':
+        specifier: ^5.2.4
+        version: 5.2.4(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))(vue@3.5.39(typescript@6.0.2))
+      typescript:
+        specifier: 6.0.2
+        version: 6.0.2
+      unplugin-icons:
+        specifier: ^23.0.0
+        version: 23.0.1(@vue/compiler-sfc@3.5.39)
+      vite:
+        specifier: ^6.3.3
+        version: 6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
+      vitest:
+        specifier: 4.1.4
+        version: 4.1.4(@types/node@24.13.3)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))
+      vue-tsc:
+        specifier: ~3.2.0
+        version: 3.2.9(typescript@6.0.2)
+
   apps/desktop:
     dependencies:
       '@xterm/addon-web-links':

@@ -30,4 +30,15 @@ export default {
   // Send gating (signed-in free account, no usable models)
   upgradeRequiredTitle: 'Upgrade required',
   upgradeRequiredMessage: 'Your account is on the free plan. Upgrade to a membership to start chatting with Kimi models.',
+  // Remote Control auth-login page (apps/auth-login)
+  rcSubtitle: 'Remote Control session',
+  rcChecking: 'Checking sign-in status…',
+  rcLead: 'This Remote Control session requires authorization. Sign in with your Kimi account to continue.',
+  rcAuthorize: 'Open authorization page',
+  rcUserCodeLabel: 'Authorization code',
+  rcSuccessHint: 'Redirecting…',
+  rcExpiredTitle: 'Authorization expired or declined',
+  rcStartErrorTitle: 'Could not start sign-in',
+  rcConnectionErrorHint: 'Check your connection and try again.',
+  rcSuccessNoRedirect: 'You can close this page now.',
 } as const;
