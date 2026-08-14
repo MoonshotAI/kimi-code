@@ -1148,9 +1148,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   ): Promise<AppMcpServerRuntimeDescriptor> {
     await this.awaitMcpRegistryReady();
     // get() first, preserving its not-found error for unknown names.
-    const entry = await this.mcpRegistry.get(name);
-    const descriptor = this.appMcpServerDescriptor(entry);
+    await this.mcpRegistry.get(name);
     const catalog = await this.appMcpServerDescriptors();
+    const matches = catalog.filter((candidate) => candidate.runtimeName === name);
+    // The sole enabled owner wins over disabled shadows (matching the runtime
+    // and the connection-test path); ambiguity is then judged among the
+    // remaining enabled entries.
+    const descriptor = matches.find((candidate) => candidate.enabled) ?? matches[0]!;
     this.requireUnambiguousRuntimeName(catalog, descriptor);
     return descriptor;
   }

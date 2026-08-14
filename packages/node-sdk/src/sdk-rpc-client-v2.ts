@@ -335,6 +335,7 @@ import {
   isOAuthProbeCandidate,
   mcpConfigWithoutName,
   mcpServerId,
+  normalizeServerName,
   parseInlineMcpServer,
   parseReconnectMcpServerConfig,
   requireOAuthMcpConfig,
@@ -2429,12 +2430,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     server: McpServerConfig,
     cwd: string | undefined,
     inspect: (manager: McpConnectionManager) => T,
+    oauth?: McpOAuthService,
   ): Promise<T> {
     await this.configReady;
     const section = this.engineAccessor.get(IConfigService).get<McpSection | undefined>(MCP_SECTION);
     const manager = new McpConnectionManager({
       stdioCwd: cwd,
-      oauthService: await this.globalMcpOAuthService(),
+      // Callers that just read a fresh token snapshot pass their service in;
+      // the cached one may have been built before the grant landed on disk.
+      oauthService: oauth ?? (await this.globalMcpOAuthService()),
       resolveClientName: () => this.resolveMcpClientName(),
       resolveDefaultTimeouts: () => ({
         startupTimeoutMs: section?.startupTimeoutMs,
@@ -2609,14 +2613,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       return server.auth === 'oauth' ? 'oauth-required' : 'not-applicable';
     };
     const probe = (): Promise<GlobalMcpServerAuthState> =>
-      this.withGlobalMcpServerProbe(server, cwd, (manager) => {
-        const status = manager.get(server.name)?.status;
-        // A clean connect only proves OAuth-authorized when a grant exists;
-        // a server that never challenges is simply not applicable.
-        if (status === 'connected') return tokens.hasTokens ? 'oauth-authorized' : 'not-applicable';
-        if (status === 'needs-auth') return tokens.hasTokens ? 'oauth-expired' : 'oauth-required';
-        return offline();
-      });
+      this.withGlobalMcpServerProbe(
+        server,
+        cwd,
+        (manager) => {
+          const status = manager.get(server.name)?.status;
+          // A clean connect only proves OAuth-authorized when a grant exists;
+          // a server that never challenges is simply not applicable.
+          if (status === 'connected') return tokens.hasTokens ? 'oauth-authorized' : 'not-applicable';
+          if (status === 'needs-auth') return tokens.hasTokens ? 'oauth-expired' : 'oauth-required';
+          return offline();
+        },
+        oauth,
+      );
 
     if (verify) {
       // Online verification: a real connection probe settles states the
@@ -2627,8 +2636,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (server.auth === 'oauth') return 'oauth-required';
     // Unpinned auth with no stored grant: probe once to detect whether the
     // server challenges at all.
-    return this.withGlobalMcpServerProbe(server, cwd, (manager) =>
-      manager.get(server.name)?.status === 'needs-auth' ? 'oauth-required' : 'not-applicable',
+    return this.withGlobalMcpServerProbe(
+      server,
+      cwd,
+      (manager) =>
+        manager.get(server.name)?.status === 'needs-auth' ? 'oauth-required' : 'not-applicable',
+      oauth,
     );
   }
 
@@ -2736,15 +2749,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       );
     }
     const parsed = parseInlineMcpServer(input.server);
+    // The store trims names; keep the manager entry and the persisted key on
+    // the same normalized identity, like v1's addSessionMcpServer does.
+    const target = { ...parsed, name: normalizeServerName(parsed.name) };
     if (input.persist === true) {
-      await this.globalMcpConfig.add(input.server);
+      await this.globalMcpConfig.add(target);
     }
-    await manager.connect(parsed.name, mcpConfigWithoutName(parsed));
-    const entry = manager.get(parsed.name);
+    await manager.connect(target.name, mcpConfigWithoutName(target));
+    const entry = manager.get(target.name);
     if (entry === undefined) {
       throw new KimiError(
         ErrorCodes.MCP_SERVER_NOT_FOUND,
-        `MCP server "${parsed.name}" was not connected`,
+        `MCP server "${target.name}" was not connected`,
       );
     }
     return entry as McpServerInfo;

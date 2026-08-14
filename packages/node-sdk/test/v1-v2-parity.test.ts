@@ -3626,6 +3626,42 @@ describe('v1↔v2 global MCP parity', () => {
     }
   }, 15_000);
 
+  it('picks up a grant saved after the first probe when verifying', async () => {
+    const statusServer = await startMcpAuthStatusServer();
+    const pair = await makeGlobalMcpParityPair({
+      mcpServers: {
+        gated: { transport: 'http', url: statusServer.oauthUrl, auth: 'oauth' },
+      },
+    });
+    try {
+      // The first verified read happens before any grant exists — on the v2
+      // engine this also materializes the cached OAuth service/providers.
+      const [v1Before, v2Before] = await Promise.all([
+        pair.v1.listGlobalMcpServerAuthStatuses({ verify: true }),
+        pair.v2.listGlobalMcpServerAuthStatuses({ verify: true }),
+      ]);
+      expect(v2Before).toEqual(v1Before);
+      expect(v1Before).toEqual([{ name: 'gated', authStatus: 'oauth-required' }]);
+
+      // The grant lands on disk afterwards (another process completed the
+      // OAuth flow); a fresh verification must see it on both engines.
+      for (const homeDir of [pair.v1HomeDir, pair.v2HomeDir]) {
+        await new McpOAuthService({ kimiHomeDir: homeDir })
+          .getProvider('gated', statusServer.oauthUrl)
+          .saveTokens({ access_token: statusServer.authToken, token_type: 'Bearer' });
+      }
+      const [v1After, v2After] = await Promise.all([
+        pair.v1.listGlobalMcpServerAuthStatuses({ verify: true }),
+        pair.v2.listGlobalMcpServerAuthStatuses({ verify: true }),
+      ]);
+      expect(v2After).toEqual(v1After);
+      expect(v1After).toEqual([{ name: 'gated', authStatus: 'oauth-authorized' }]);
+    } finally {
+      await closeGlobalMcpPair(pair);
+      await statusServer.close();
+    }
+  }, 20_000);
+
   it('CRUD round-trips identically and writes byte-identical mcp.json files', async () => {
     const pair = await makeGlobalMcpParityPair({
       custom: { keep: true },
@@ -4137,6 +4173,33 @@ describe('v1↔v2 session MCP parity', () => {
         readFile(join(pair.v2Home.raw, 'mcp.json'), 'utf-8'),
       ]);
       expect(v2File).toBe(v1File);
+      // Names are normalized once up front: a padded persist add lands under
+      // the trimmed key in the file and the live manager on both engines.
+      const paddedServer: McpServerConfig = {
+        name: '  padded-live  ',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [MCP_STDIO_FIXTURE],
+      };
+      const [v1Padded, v2Padded] = await Promise.all([
+        pair.v1.addSessionMcpServer({ ...input, server: paddedServer, persist: true }),
+        pair.v2.addSessionMcpServer({ ...input, server: paddedServer, persist: true }),
+      ]);
+      expect(v1Padded).toMatchObject({ name: 'padded-live', status: 'connected' });
+      expect(v2Padded).toMatchObject({ name: 'padded-live', status: 'connected' });
+      const [v1PaddedFile, v2PaddedFile] = await Promise.all([
+        readFile(join(pair.v1Home.raw, 'mcp.json'), 'utf-8'),
+        readFile(join(pair.v2Home.raw, 'mcp.json'), 'utf-8'),
+      ]);
+      expect(v2PaddedFile).toBe(v1PaddedFile);
+      expect(v1PaddedFile).toContain('"padded-live"');
+      // A blank name is rejected before anything connects on both engines.
+      await expect(
+        pair.v1.addSessionMcpServer({ ...input, server: { ...liveServer, name: '   ' } }),
+      ).rejects.toMatchObject({ code: 'request.invalid' });
+      await expect(
+        pair.v2.addSessionMcpServer({ ...input, server: { ...liveServer, name: '   ' } }),
+      ).rejects.toMatchObject({ code: 'request.invalid' });
       // The "name + full config" reconnect channel replaces the running
       // config — the narrowed tool filter shows up in the entry on both.
       const replacement: McpServerConfig = { ...liveServer, enabledTools: ['echo'] };

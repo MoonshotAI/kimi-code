@@ -1027,6 +1027,33 @@ describe('KimiCore unified MCP management plane', () => {
     });
   }, 20000);
 
+  it('resolves legacy name-based auth to the sole enabled entry under a disabled shadow', async () => {
+    const { core, home } = await makeCore();
+    const pluginRoot = await makePlugin('demo', {
+      api: { transport: 'http', url: 'https://example.com/mcp', auth: 'oauth' },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    // The disabled file-layer entry lists first in registry order, but the
+    // enabled plugin is the only runtime target: a name-only auth action must
+    // act on it, not reject on a disabled "conflict".
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        'plugin-demo:api': {
+          transport: 'http',
+          url: 'https://example.com/other',
+          auth: 'oauth',
+          enabled: false,
+        },
+      },
+    });
+
+    // Reset is a no-network credential invalidate, so it deterministically
+    // proves the legacy resolver completed without an ambiguity rejection.
+    await expect(
+      core.resetGlobalMcpServerAuth({ name: 'plugin-demo:api' }),
+    ).resolves.toBeUndefined();
+  }, 20000);
+
   it('surfaces registry config errors during sync instead of tearing down live servers', async () => {
     const { core, rpc, home, workDir } = await makeCore();
     await writeJson(join(workDir, '.git', 'keep'), {});
