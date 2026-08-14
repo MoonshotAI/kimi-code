@@ -2283,6 +2283,20 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
+   * A fresh per-call service whose providers re-read the token store. The v2
+   * providers snapshot tokens at construction, so the cached `globalMcpOAuth`
+   * can keep serving a grant another process has since removed — or stay blind
+   * to one just saved. Same options as the cached service.
+   */
+  private async freshGlobalMcpOAuthService(): Promise<McpOAuthService> {
+    await this.engineAccessor.get(IAgentIdentity).resolved();
+    return new McpOAuthService({
+      store: createMcpOAuthStore(this.engineAccessor.get(IAtomicDocumentStore)),
+      resolveClientName: () => this.resolveMcpClientName(),
+    });
+  }
+
+  /**
    * The unified management view's `McpManagedServerInfo` tag. Plugin and
    * project-layer entries are a v1-only addition for now — every entry on
    * this surface comes from the user-level file, so all are `global`,
@@ -2304,9 +2318,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     options: { readonly cwd?: string; readonly verify?: boolean } = {},
   ): Promise<readonly GlobalMcpServerAuthStatus[]> {
     const servers = await this.globalMcpConfig.list();
-    const oauth = new McpOAuthService({
-      store: createMcpOAuthStore(this.engineAccessor.get(IAtomicDocumentStore)),
-    });
+    const oauth = await this.freshGlobalMcpOAuthService();
     const verify = options.verify === true;
     return Promise.all(
       servers.map(async (server) => ({
@@ -2364,7 +2376,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const server = await this.resolveAppMcpServer(locator);
     const config = requireOAuthMcpConfig(server.runtimeName, server.config);
     try {
-      const oauth = await this.globalMcpOAuthService();
+      // Fresh service: a grant saved or reset by another process after the
+      // cached one was built must decide whether a browser flow is even
+      // needed.
+      const oauth = await this.freshGlobalMcpOAuthService();
       const flow = await oauth.beginAuthorization(server.runtimeName, config.url);
       const flowId = randomUUID();
       this.globalMcpOAuthFlows.set(flowId, { flow });

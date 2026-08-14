@@ -3662,6 +3662,46 @@ describe('v1↔v2 global MCP parity', () => {
     }
   }, 20_000);
 
+  it('sees a grant saved after the OAuth cache was built when beginning auth', async () => {
+    const statusServer = await startMcpAuthStatusServer();
+    const pair = await makeGlobalMcpParityPair({
+      mcpServers: {
+        gated: { transport: 'http', url: statusServer.oauthUrl, auth: 'oauth' },
+      },
+    });
+    try {
+      // Warm each engine's cached OAuth machinery while no grant exists: the
+      // v2 begin path used to keep reading this token snapshot.
+      await Promise.all([
+        pair.v1.testGlobalMcpServer('gated'),
+        pair.v2.testGlobalMcpServer('gated'),
+      ]);
+
+      // Another process completed the flow in the meantime: a grant with a
+      // good refresh token lands on disk. A fresh begin must short-circuit on
+      // both engines instead of re-opening a browser flow.
+      for (const homeDir of [pair.v1HomeDir, pair.v2HomeDir]) {
+        await new McpOAuthService({ kimiHomeDir: homeDir })
+          .getProvider('gated', statusServer.oauthUrl)
+          .saveTokens({
+            access_token: 'stale-access-token',
+            refresh_token: statusServer.refreshToken,
+            token_type: 'Bearer',
+            expires_in: 0,
+          });
+      }
+      const [v1Second, v2Second] = await Promise.all([
+        pair.v1.beginGlobalMcpServerAuth('gated'),
+        pair.v2.beginGlobalMcpServerAuth('gated'),
+      ]);
+      expect(v1Second).toEqual({ status: 'already-authorized' });
+      expect(v2Second).toEqual(v1Second);
+    } finally {
+      await closeGlobalMcpPair(pair);
+      await statusServer.close();
+    }
+  }, 20_000);
+
   it('CRUD round-trips identically and writes byte-identical mcp.json files', async () => {
     const pair = await makeGlobalMcpParityPair({
       custom: { keep: true },
