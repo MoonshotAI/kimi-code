@@ -320,6 +320,11 @@ export interface AppMessage {
   parentMessageId?: string;
   /** Client-side measured duration from turn.started to turn.ended (ms). */
   durationMs?: number;
+  /** Live-settle stamp: the reducer sets it when the daemon's turn duration
+      lands (turn.ended) — the true turn end even for a resync-seeded message
+      whose createdAt is the resync time, not the turn start. History-loaded
+      messages lack it. */
+  endedAt?: string;
   metadata?: Record<string, unknown>;
 }
 

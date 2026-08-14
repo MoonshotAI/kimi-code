@@ -200,6 +200,52 @@ describe('reduceAppEvent thinking-part timing on user interactions', () => {
   });
 });
 
+describe('reduceAppEvent settle stamp (endedAt)', () => {
+  it('stamps endedAt when the daemon turn duration lands', () => {
+    const before = Date.now();
+    let state = reduceAppEvent(createInitialState(), { type: 'messageCreated', message: assistantMessage('m_1') }, meta());
+    state = reduceAppEvent(
+      state,
+      { type: 'messageUpdated', sessionId: SID, messageId: 'm_1', content: [{ type: 'text', text: 'done' }], status: 'completed', durationMs: 12_000 },
+      meta(),
+    );
+    const msg = state.messagesBySession[SID]!.find((m) => m.id === 'm_1')!;
+    expect(msg.durationMs).toBe(12_000);
+    expect(msg.endedAt).toBeTypeOf('string');
+    expect(Date.parse(msg.endedAt!)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(msg.endedAt!)).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('leaves endedAt unset when the update carries no daemon duration', () => {
+    let state = reduceAppEvent(createInitialState(), { type: 'messageCreated', message: assistantMessage('m_1') }, meta());
+    state = reduceAppEvent(
+      state,
+      { type: 'messageUpdated', sessionId: SID, messageId: 'm_1', content: [{ type: 'text', text: 'partial' }], status: 'pending' },
+      meta(),
+    );
+    expect(state.messagesBySession[SID]!.find((m) => m.id === 'm_1')!.endedAt).toBeUndefined();
+  });
+
+  it('keeps the first settle stamp when a duration update replays', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(5_000_000);
+    let state = reduceAppEvent(createInitialState(), { type: 'messageCreated', message: assistantMessage('m_1') }, meta());
+    state = reduceAppEvent(
+      state,
+      { type: 'messageUpdated', sessionId: SID, messageId: 'm_1', content: [], status: 'completed', durationMs: 12_000 },
+      meta(),
+    );
+    const first = state.messagesBySession[SID]!.find((m) => m.id === 'm_1')!.endedAt;
+    vi.setSystemTime(5_060_000);
+    state = reduceAppEvent(
+      state,
+      { type: 'messageUpdated', sessionId: SID, messageId: 'm_1', content: [], status: 'completed', durationMs: 12_000 },
+      meta(),
+    );
+    expect(state.messagesBySession[SID]!.find((m) => m.id === 'm_1')!.endedAt).toBe(first);
+  });
+});
+
 describe('reduceAppEvent optimistic echo reconciliation', () => {
   function optimisticUser(id: string): AppMessage {
     return {

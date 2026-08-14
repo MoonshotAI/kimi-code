@@ -20,11 +20,10 @@ import AttachmentChip from './AttachmentChip.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
 import { Icon, Kbd, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
-import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, formatMessageTime } from '@moonshot-ai/app-core/lib';
 import { openFileAttachment } from '@moonshot-ai/app-client/lib';
 import { getKimiWebApi } from '../../api';
 import {
-  formatDuration,
   formatTokens,
   isoMs,
   renderBlockKey,
@@ -431,10 +430,19 @@ function compactionDividerLabel(turn: ChatTurn): string {
 // Per-turn copy button state (keyed by turn id)
 const copiedTurn = ref<string | null>(null);
 
-/** The assistant footer's duration label; '' (no stamp or a sub-second span)
-    hides both the label and an otherwise-empty footer. */
-function turnDurationLabel(turn: ChatTurn): string {
-  return turn.durationMs === undefined ? '' : formatDuration(turn.durationMs);
+/** The assistant footer's message-time label — when the reply finished.
+    endedAt only lands once a LATER message is absorbed; a single-message
+    reply (text streamed in place) carries just createdAt + durationMs, so
+    derive its completion stamp from those before falling back to the bare
+    start. '' (no stamp) hides both the label and an otherwise-empty footer. */
+function turnTimeLabel(turn: ChatTurn): string {
+  const startMs = turn.createdAt === undefined ? NaN : Date.parse(turn.createdAt);
+  const stamp =
+    turn.endedAt ??
+    (Number.isFinite(startMs) && turn.durationMs !== undefined
+      ? new Date(startMs + turn.durationMs).toISOString()
+      : turn.createdAt);
+  return stamp === undefined ? '' : formatMessageTime(stamp, t('conversation.yesterday'));
 }
 
 // Undo in-flight guard (keyed by turn id) — set while the server rewinds the
@@ -1023,8 +1031,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           @open-diff="onOpenTurnDiff"
           @open-file="onOpenFile"
         />
-        <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turnDurationLabel(turn))" class="a-msg-ft">
-          <span v-if="turnDurationLabel(turn)" class="a-duration">{{ turnDurationLabel(turn) }}</span>
+        <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turnTimeLabel(turn))" class="a-msg-ft">
+          <span v-if="turnTimeLabel(turn)" class="a-time">{{ turnTimeLabel(turn) }}</span>
           <Tooltip :text="t('filePreview.copy')">
           <button
             v-if="assistantRunFinalText(ti).trim().length > 0"
@@ -1591,7 +1599,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   margin-top: var(--chat-block-gap);
   overflow: visible;
 }
-.a-duration {
+.a-time {
   display: inline-flex;
   align-items: center;
   font-size: var(--text-base);

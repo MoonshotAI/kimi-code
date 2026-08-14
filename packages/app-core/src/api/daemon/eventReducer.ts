@@ -630,6 +630,10 @@ export function reduceAppEvent(
           ...m,
           content,
           durationMs: event.durationMs ?? m.durationMs,
+          // The daemon's turn duration landing IS the settle moment — stamp the
+          // turn end here (first stamp wins). A resync-seeded message's
+          // createdAt is the resync time, so this is its only trustworthy end.
+          endedAt: event.durationMs !== undefined ? (m.endedAt ?? new Date(nowMs).toISOString()) : m.endedAt,
         };
       });
       break;

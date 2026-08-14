@@ -302,12 +302,16 @@ export interface ChatTurn {
       prior turns and renders this as a separator line; `text` holds the
       LLM-generated summary, opened in the right-side panel on click. */
   compaction?: { trigger?: 'manual' | 'auto'; tokensBefore?: number; tokensAfter?: number };
-  /** ISO timestamp when the message was created (used for the user bubble timestamp). */
+  /** ISO timestamp when the message was created (user bubble timestamp; for
+      assistant turns without `endedAt`, the footer derives the completion
+      stamp from createdAt + durationMs). */
   createdAt?: string;
-  /** Server `created_at` of the turn's last absorbed message — the stamped
-      end of its work span (thinking stamps cover the start; this covers the
-      end, immune to renderer throttling). Present for assistant turns whose
-      messages carry server timestamps, absent otherwise. */
+  /** Stamped end of the turn's work span (thinking stamps cover the start;
+      this covers the end, immune to renderer throttling): the reducer's live
+      settle stamp when the daemon's duration lands, else the server
+      `created_at` of the turn's last absorbed message (history). Feeds the
+      fold's settle fallback and the assistant footer's message time; absent
+      when nothing is stamped. */
   endedAt?: string;
   /** Client-side measured duration from turn.started to turn.ended (ms). */
   durationMs?: number;

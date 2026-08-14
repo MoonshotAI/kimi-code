@@ -61,6 +61,38 @@ describe('messagesToTurns', () => {
     expect(turns.map((turn) => turn.text)).toEqual(['one', 'two']);
   });
 
+  it('takes the turn end from a live settle stamp (endedAt), even on the opener message', () => {
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [{ type: 'text', text: 'hi' }]),
+        message('a1', 'assistant', [{ type: 'text', text: 'done' }], {
+          durationMs: 20_000,
+          endedAt: '2026-01-01T00:00:20.000Z',
+        }),
+      ],
+      [],
+      undefined,
+      false,
+    );
+
+    expect(turns[1]?.endedAt).toBe('2026-01-01T00:00:20.000Z');
+  });
+
+  it('leaves the turn end unset for a single history message without a settle stamp', () => {
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [{ type: 'text', text: 'hi' }]),
+        message('a1', 'assistant', [{ type: 'text', text: 'done' }], { durationMs: 20_000 }),
+      ],
+      [],
+      undefined,
+      false,
+    );
+
+    expect(turns[1]?.endedAt).toBeUndefined();
+    expect(turns[1]?.durationMs).toBe(20_000);
+  });
+
   it('renders compaction summaries as divider turns', () => {
     const turns = messagesToTurns(
       [

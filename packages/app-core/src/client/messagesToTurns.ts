@@ -1159,8 +1159,12 @@ export function messagesToTurns(
     absorbContent(group, msg.content);
     // Only a LATER message proves the turn spanned time — stamping the end
     // from the opener itself would read as Worked 0s for single-message turns
-    // (an in-place completed reply shares one created_at).
-    if (msg.id !== group.id) group.endedAt = msg.createdAt;
+    // (an in-place completed reply shares one created_at). A live settle stamp
+    // (reducer-set endedAt) overrides either branch: it marks the true turn
+    // end even on the opener, and stays correct when the opener's createdAt is
+    // a resync-time seed.
+    if (msg.endedAt !== undefined) group.endedAt = msg.endedAt;
+    else if (msg.id !== group.id) group.endedAt = msg.createdAt;
   }
 
   flushGroup(true);
