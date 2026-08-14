@@ -31,9 +31,11 @@
  * Image: inlines the bytes as a base64 `data:` `image_url` part — kosong has
  * no image upload channel, so there is no provider reference to persist. The
  * inline part depends only on the immutable upload bytes, not on the
- * requester, so a successful inline is memoized per file id (size-bounded)
- * and reused across steps, retries, and media-recovery reprojections instead
- * of re-reading and re-encoding the same bytes on every request; the degrade
+ * requester, so a successful inline is memoized per file id in a private
+ * byte-budgeted LRU (per-entry cap plus a total budget; the least-recently
+ * hit entries are evicted, and a miss simply re-reads the bytes) and reused
+ * across steps, retries, and media-recovery reprojections instead of
+ * re-reading and re-encoding the same bytes on every request; the degrade
  * forms are never memoized, so the display path is re-derived through the
  * session media store on every request. The bytes are sniffed
  * (`detectFileType`) and gated against the provider-accepted image formats
@@ -53,8 +55,10 @@
  * hit for the same reason.
  *
  * The plain-data state (`resolved`, the video memo) is registered into
- * `agentState` (`IAgentStateService`) and read/written through it. Bound at
- * Agent scope.
+ * `agentState` (`IAgentStateService`) and read/written through it. The image
+ * memo stays a private field instead: a memoized inline part is a multi-MB
+ * base64 string, and the state registry's snapshot/inspect path serializes
+ * every registered state in full. Bound at Agent scope.
  */
 
 import { createHash } from 'node:crypto';
@@ -94,11 +98,14 @@ const VIDEO_UNAVAILABLE_TEXT =
 const IMAGE_UNAVAILABLE_TEXT =
   '[image omitted: the uploaded file is no longer available]';
 /**
- * A memoized inline image keeps its base64 form alive in agent state for the
- * agent's lifetime; skip the memo for outsized uploads so a rare huge paste
- * is re-read from disk per request instead of pinning memory.
+ * A memoized inline image pins its base64 form in the resolver's memory;
+ * skip the memo for outsized uploads so a rare huge paste is re-read from
+ * disk per request instead of pinning memory. The total budget caps the
+ * whole memo — at least eight full-size entries — and once it is exceeded
+ * the least-recently hit entries are evicted.
  */
 const IMAGE_MEMO_MAX_BYTES = 8 * 1024 * 1024;
+const IMAGE_MEMO_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -124,6 +131,9 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   private get resolved(): Map<string, ContentPart> {
     return this.states.get(mediaResolvedKey);
   }
+
+  private readonly imageMemo = new Map<string, { part: ContentPart; bytes: number }>();
+  private imageMemoBytes = 0;
 
   async resolve(
     messages: readonly Message[],
@@ -188,7 +198,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     // Memo hit: the inline part is requester-independent, so a previous
     // successful resolve is reused without touching the bytes again.
     const cacheKey = `image\0${ref.fileId}`;
-    const memoed = this.resolved.get(cacheKey);
+    const memoed = this.memoedImage(cacheKey);
     if (memoed !== undefined) return memoed;
     const path = await this.displayPath(ref);
 
@@ -214,8 +224,30 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         url: `data:${normalizeImageMime(fileType.mimeType)};base64,${source.bytes.toString('base64')}`,
       },
     };
-    if (source.bytes.length <= IMAGE_MEMO_MAX_BYTES) this.resolved.set(cacheKey, part);
+    if (source.bytes.length <= IMAGE_MEMO_MAX_BYTES) {
+      this.memoizeImage(cacheKey, part, source.bytes.length);
+    }
     return part;
+  }
+
+  private memoedImage(cacheKey: string): ContentPart | undefined {
+    const entry = this.imageMemo.get(cacheKey);
+    if (entry === undefined) return undefined;
+    // A hit refreshes recency (a Map iterates in insertion order).
+    this.imageMemo.delete(cacheKey);
+    this.imageMemo.set(cacheKey, entry);
+    return entry.part;
+  }
+
+  private memoizeImage(cacheKey: string, part: ContentPart, bytes: number): void {
+    this.imageMemo.set(cacheKey, { part, bytes });
+    this.imageMemoBytes += bytes;
+    // Evict least-recently hit entries until the total budget holds again.
+    for (const [key, entry] of this.imageMemo) {
+      if (this.imageMemoBytes <= IMAGE_MEMO_MAX_TOTAL_BYTES) return;
+      this.imageMemo.delete(key);
+      this.imageMemoBytes -= entry.bytes;
+    }
   }
 
   // -------------------------------------------------------------------------

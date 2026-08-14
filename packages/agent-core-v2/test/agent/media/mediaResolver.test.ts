@@ -593,7 +593,7 @@ describe('AgentMediaResolverService image strategy', () => {
     expect(counting.gets).toBe(1);
   });
 
-  it('re-reads an oversized image instead of pinning its base64 in agent state', async () => {
+  it('re-reads an oversized image instead of memoizing its base64', async () => {
     const bigBytes = Buffer.concat([PNG_BYTES, Buffer.alloc(8 * 1024 * 1024)]);
     const files = new Map([[FILE_ID, { name: 'pic.png', bytes: bigBytes }]]);
     const counting = countingFileService(files);
@@ -611,6 +611,39 @@ describe('AgentMediaResolverService image strategy', () => {
 
     expect(firstPart(first)).toEqual(firstPart(second));
     expect(counting.gets).toBe(2);
+  });
+
+  it('evicts the least-recently-hit memo entry once the total byte budget is exceeded', async () => {
+    // Nine 8MB images overfill the 64MB total budget; each one is under the
+    // per-image cap, so every resolve memoizes.
+    const bigPng = (): Buffer =>
+      Buffer.concat([PNG_BYTES, Buffer.alloc(8 * 1024 * 1024 - PNG_BYTES.length)]);
+    const ids = Array.from({ length: 9 }, (_, i) => `file_${i}`);
+    const files = new Map(ids.map((id) => [id, { name: 'pic.png', bytes: bigPng() }]));
+    const counting = countingFileService(files);
+    const res = new AgentMediaResolverService(
+      counting.service,
+      blobStore(),
+      telemetry,
+      new AgentStateService(),
+      stubMediaStore(),
+    );
+    const req = requester({});
+
+    // Eight entries fill the budget exactly; a hit on file_0 makes it the
+    // most-recently-hit, so the ninth insert evicts file_1 instead.
+    for (const id of ids.slice(0, 8)) {
+      await res.resolve([imageMessage(buildKimiFileUrl(id))], req);
+    }
+    await res.resolve([imageMessage(buildKimiFileUrl('file_0'))], req);
+    await res.resolve([imageMessage(buildKimiFileUrl('file_8'))], req);
+    expect(counting.gets).toBe(9);
+
+    // file_0 survives as a memo hit; the evicted file_1 is re-read.
+    await res.resolve([imageMessage(buildKimiFileUrl('file_0'))], req);
+    expect(counting.gets).toBe(9);
+    await res.resolve([imageMessage(buildKimiFileUrl('file_1'))], req);
+    expect(counting.gets).toBe(10);
   });
 
   it.each([
