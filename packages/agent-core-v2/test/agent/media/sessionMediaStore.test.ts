@@ -183,6 +183,21 @@ describe('SessionMediaStoreService', () => {
     await expect(store.resolveDisplayPath('f_1')).resolves.toBe(extless);
   });
 
+  it('skips in-progress atomic temp siblings when resolving by id', async () => {
+    // The fs backend's atomic write stages bytes at `<key>.tmp.<pid>.<hex>`
+    // next to the target key; a lookup racing the write must not mistake the
+    // partial copy for the canonical one.
+    await mkdir(join(sessionDir, 'media'), { recursive: true });
+    await writeFile(join(sessionDir, 'media', 'f_1.mp4.tmp.1234.deadbeef'), 'partial');
+    await expect(store.resolveDisplayPath('f_1')).resolves.toBeUndefined();
+    await expect(store.read('f_1')).resolves.toBeUndefined();
+    await expect(store.open('f_1')).resolves.toBeUndefined();
+
+    const target = await store.materialize(input());
+    await expect(store.resolveDisplayPath('f_1')).resolves.toBe(target);
+    await expect(store.read('f_1')).resolves.toEqual({ data: BYTES, name: 'f_1.mp4' });
+  });
+
   it('never turns a non-upload id into a storage key (path traversal guard)', async () => {
     // A crafted daemon reference (`kimi-file://../../…`) reaches the
     // store through the request-time resolver's canonical-read fallback; the

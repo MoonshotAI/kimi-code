@@ -7,7 +7,10 @@
  * absolute host path for model readback; non-filesystem deployments retain
  * canonical bytes without inventing one. Every entry point rejects ids that
  * are not minted upload ids (`isFileId`) before using them as storage keys.
- * Bound at Session scope.
+ * By-id resolution lists the scope prefix and skips the backend's
+ * in-progress atomic-write temp siblings (`*.tmp.*`), so a lookup racing an
+ * unfinished materialize never returns the partial copy. Bound at Session
+ * scope.
  */
 
 import { extname } from 'node:path';
@@ -149,7 +152,10 @@ export class SessionMediaStoreService implements ISessionMediaStore {
 
   private async findKey(fileId: string): Promise<string | undefined> {
     const keys = await this.storage.list(this.scope, fileId);
-    return keys.find((key) => key === fileId || key.startsWith(`${fileId}.`));
+    return keys.find(
+      (key) =>
+        key === fileId || (key.startsWith(`${fileId}.`) && !key.includes('.tmp.')),
+    );
   }
 }
 
