@@ -171,6 +171,35 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['message A', 'reply A']);
   });
 
+  it('undo removes a grouped submission (skill activations + prompt) whole', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('message A', { kind: 'user' })),
+      appendMessage(assistantMessage('reply A')),
+      appendMessage(
+        userMessage('skill card 1', {
+          kind: 'skill_activation',
+          activationId: 'act-1',
+          skillName: 'review',
+          trigger: 'user-slash',
+          submissionId: 'sub-1',
+        }),
+      ),
+      appendMessage(
+        userMessage('skill card 2', {
+          kind: 'skill_activation',
+          activationId: 'act-2',
+          skillName: 'security',
+          trigger: 'user-slash',
+          submissionId: 'sub-1',
+        }),
+      ),
+      appendMessage(userMessage('message B', { kind: 'user', submissionId: 'sub-1' })),
+      appendMessage(assistantMessage('reply B')),
+      undo(1),
+    ]);
+    expect(texts(result)).toEqual(['message A', 'reply A']);
+  });
+
   it('removes a pre-anchor image compression reminder owned by the undone prompt', () => {
     const result = reduceContextTranscript([
       appendMessage(

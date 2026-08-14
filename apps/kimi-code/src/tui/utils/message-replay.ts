@@ -44,6 +44,7 @@ export interface SkillActivationProjection {
   readonly skillName: string;
   readonly skillArgs?: string;
   readonly trigger: SkillActivationTrigger;
+  readonly submissionId?: string;
 }
 
 export interface PluginCommandProjection {
@@ -252,7 +253,19 @@ export function skillActivationFromOrigin(
     skillName: origin.skillName,
     skillArgs: origin.skillArgs,
     trigger: origin.trigger,
+    submissionId: originSubmissionId(origin),
   };
+}
+
+/**
+ * `submissionId` groups one prompt with its inline skill activations on the
+ * v2 engine. The SDK's origin union is typed from the v1 engine, which never
+ * sets the field, so read it structurally here instead of widening the
+ * deprecated v1 package's types.
+ */
+export function originSubmissionId(origin: PromptOrigin | undefined): string | undefined {
+  if (origin?.kind !== 'user' && origin?.kind !== 'skill_activation') return undefined;
+  return (origin as { readonly submissionId?: string }).submissionId;
 }
 
 export function pluginCommandFromOrigin(

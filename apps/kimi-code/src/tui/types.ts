@@ -236,6 +236,8 @@ export interface TranscriptEntry {
   skillName?: string;
   skillArgs?: string;
   skillTrigger?: SkillActivationTrigger;
+  /** Submission group id shared by a prompt and its inline skill activations. */
+  promptSubmissionId?: string;
   pluginCommandData?: PluginCommandTranscriptData;
 }
 
@@ -252,6 +254,15 @@ export interface LivePaneState {
   pendingQuestion: PendingQuestion | null;
 }
 
+export interface InlineSkillActivation {
+  readonly skillName: string;
+  /**
+   * Skill arguments. Only set for a leading `/skill:<name> args` command that
+   * is combined with further inline skills; inline tokens carry no args.
+   */
+  readonly args?: string;
+}
+
 export interface QueuedMessage {
   readonly text: string;
   readonly agentId?: string;
@@ -260,6 +271,8 @@ export interface QueuedMessage {
   /** `bash` for a `!` shell command queued while another command is running;
    *  undefined (=`prompt`) for a normal message. */
   readonly mode?: 'prompt' | 'bash';
+  /** Skills to activate together with this queued message's prompt. */
+  readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
 
 /**

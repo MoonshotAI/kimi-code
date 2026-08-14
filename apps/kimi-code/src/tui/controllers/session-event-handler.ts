@@ -1066,6 +1066,7 @@ export class SessionEventHandler {
       skillName: event.skillName,
       skillArgs: event.skillArgs,
       skillTrigger: event.trigger,
+      promptSubmissionId: event.submissionId,
     });
   }
 

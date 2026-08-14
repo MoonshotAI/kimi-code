@@ -215,6 +215,7 @@ describe('SkillTool', () => {
     return {
       _serviceBrand: undefined,
       activate: () => Promise.reject(new Error('not implemented')),
+      promptWithSkills: () => Promise.reject(new Error('not implemented')),
       recordModelToolActivation: () => {},
     };
   }

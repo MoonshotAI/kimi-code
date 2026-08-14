@@ -246,6 +246,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     reloadPlugins: vi.fn(async () => ({ added: [], removed: [], errors: [] })),
     reloadSession: vi.fn(async () => ({})),
     activateSkill: vi.fn(async () => {}),
+    promptWithSkills: vi.fn(async () => {}),
     getPluginInfo: vi.fn(async (id: string) => ({
       id,
       displayName: id,
@@ -585,6 +586,96 @@ describe('KimiTUI message flow', () => {
     });
     expect(harness.createSession).toHaveBeenCalledTimes(1);
     expect(driver.getCurrentSessionId()).toBe('ses-lazy');
+  });
+
+  it('submits inline skill tokens with the prompt as one grouped submission (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('please /skill:review and /skill:security this change');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        'please /skill:review and /skill:security this change',
+        [{ name: 'review' }, { name: 'security' }],
+        { submissionId: expect.any(String) },
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(session.activateSkill).not.toHaveBeenCalled();
+  });
+
+  it('combines a leading skill command with later inline skills into one submission (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/skill:review check this /skill:security');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/skill:review check this /skill:security',
+        [
+          { name: 'review', args: 'check this /skill:security' },
+          { name: 'security' },
+        ],
+        { submissionId: expect.any(String) },
+      );
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
+  });
+
+  it('keeps inline skill tokens as plain text on the legacy engine', async () => {
+    const session = makeSession({ id: 'ses-1' });
+    const { driver } = await makeDriver(session, {
+      listSkills: undefined,
+      listPluginCommands: vi.fn(async () => []),
+    });
+    (
+      driver as unknown as { skillCommandMap: Map<string, string> }
+    ).skillCommandMap.set('skill:review', 'review');
+
+    driver.handleUserInput('please /skill:review this');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('please /skill:review this');
+    });
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
   });
 
   it('serializes concurrent lazy session creation (v2 engine)', async () => {

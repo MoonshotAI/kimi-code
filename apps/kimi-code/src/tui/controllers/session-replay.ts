@@ -39,6 +39,7 @@ import {
   replayBackgroundProjection,
   replayEntry,
   skillActivationFromOrigin,
+  originSubmissionId,
   pluginCommandFromOrigin,
   toolCallFromReplayMessage,
   toolResultOutput,
@@ -340,9 +341,10 @@ export class SessionReplayRenderer {
     }
 
     this.advanceTurn(context);
-    this.host.appendTranscriptEntry(
-      replayEntry(context, 'user', contentPartsToText(message.content), 'plain'),
-    );
+    this.host.appendTranscriptEntry({
+      ...replayEntry(context, 'user', contentPartsToText(message.content), 'plain'),
+      promptSubmissionId: originSubmissionId(message.origin),
+    });
   }
 
   private renderToolCalls(context: ReplayRenderContext, toolCalls: readonly ToolCall[]): void {
@@ -432,6 +434,7 @@ export class SessionReplayRenderer {
       skillName: skill.skillName,
       skillArgs: skill.skillArgs,
       skillTrigger: skill.trigger,
+      promptSubmissionId: skill.submissionId,
     });
   }
 

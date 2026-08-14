@@ -77,6 +77,7 @@ declare module '#/app/event/eventBus' {
 interface Deferred<T> { readonly promise: Promise<T>; resolve(value: T): void; reject(reason: unknown): void }
 interface Record extends PromptSnapshot {
   state: PromptState;
+  readonly messagesBefore: readonly ContextMessage[];
   readonly launchedDeferred: Deferred<Turn | undefined>;
   readonly completionDeferred: Deferred<PromptCompletion>;
   handle: PromptHandle;
@@ -130,6 +131,7 @@ export class AgentPromptService implements IAgentPromptService {
     const record = {} as Record;
     Object.assign(record, {
       id, userMessageId: id, createdAt: new Date().toISOString(), state: 'pending', message,
+      messagesBefore: input.messagesBefore ?? [],
       launchedDeferred, completionDeferred,
     });
     record.handle = {
@@ -277,7 +279,9 @@ export class AgentPromptService implements IAgentPromptService {
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
         this.publishCompleted(item.id, 'blocked'); return;
       }
-      const turn = (await this.loop.enqueue(new PromptStepRequest(message, captions, this.reminders)).assigned).turn;
+      const turn = (await this.loop.enqueue(
+        new PromptStepRequest(message, captions, this.reminders, item.messagesBefore),
+      ).assigned).turn;
       if (turn === undefined) { this.pending.unshift(item); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
       void turn.result.then((result) => this.settle(item, result));

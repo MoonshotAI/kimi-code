@@ -9,7 +9,11 @@
  * the rendered prompt), settles `{turn_id}` for the caller, persists the
  * derived title/lastPrompt through `sessionMetadata` for the main agent only
  * (publishing the live update through `event`), and reports `skill_invoked` /
- * `flow_invoked` through `telemetry`. `wire.replay` reapplies the fact as a
+ * `flow_invoked` through `telemetry`. `promptWithSkills` submits one prompt
+ * preceded by one or more skill activations that share the prompt's
+ * `submissionId`, so the group launches as a single turn and undoes as one
+ * unit; every skill is validated before anything is recorded, so an invalid
+ * name rejects the whole submission. `wire.replay` reapplies the fact as a
  * no-op, so neither the event nor telemetry fires on resume (matching the
  * former `restoring` guard). Bound at Agent scope.
  */
@@ -22,15 +26,19 @@ import type { ContentPart } from '#/kosong/contract/message';
 
 import type { ContextMessage, SkillActivationOrigin } from '#/agent/contextMemory/types';
 import { promptMetadataTextFromSkill, renderUserSlashSkillPrompt } from './prompt';
+import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { Service } from '#/_base/di/service';
 import { ErrorCodes, Error2 } from '#/errors';
 import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCatalog/types';
 import { IAgentPromptService, type PromptLaunchResult } from '#/agent/prompt/prompt';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { Turn } from '#/agent/loop/loop';
 import { IWireService } from '#/wire/wire';
-import { IAgentSkillService, type SkillActivationInput } from './skill';
+import {
+  IAgentSkillService,
+  type PromptWithSkillsInput,
+  type SkillActivationInput,
+} from './skill';
 import { skillActivate } from './skillOps';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { IEventService } from '#/app/event/event';
@@ -38,6 +46,11 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
+
+interface PreparedActivation {
+  readonly origin: SkillActivationOrigin;
+  readonly message: ContextMessage;
+}
 
 export class AgentSkillService extends Service implements IAgentSkillService {
   declare readonly _serviceBrand: undefined;
@@ -57,6 +70,55 @@ export class AgentSkillService extends Service implements IAgentSkillService {
 
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
     await this.skillCatalog.ready;
+    // No submissionId: a lone slash activation stays its own undo anchor.
+    const prepared = this.prepare(input);
+    this.recordActivation(prepared.origin);
+    const turn = await (await this.prompt.enqueue({ message: prepared.message })).launched;
+    if (turn === undefined) {
+      throw new Error2(
+        ErrorCodes.TURN_AGENT_BUSY,
+        'Cannot activate skill while another turn is active',
+      );
+    }
+    // Awaited (not fire-and-forget): the caller gets the launched turn id and
+    // activation failures (unknown skill, busy) surface instead of vanishing.
+    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
+      await this.updatePromptMetadata(promptMetadataTextFromSkill(input));
+    }
+    return { turn_id: turn.id };
+  }
+
+  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult | undefined> {
+    await this.skillCatalog.ready;
+    const submissionId = input.submissionId ?? randomUUID();
+    // Validate and render every skill before any activation is recorded, so an
+    // unknown name rejects the whole submission with no side effects.
+    const prepared = input.skills.map((skill) => this.prepare(skill, submissionId));
+    for (const activation of prepared) {
+      this.recordActivation(activation.origin);
+    }
+    const handle = await this.prompt.enqueue({
+      message: {
+        role: 'user',
+        content: [...input.input],
+        toolCalls: [],
+        origin: { kind: 'user', submissionId },
+      },
+      messagesBefore: prepared.map((activation) => activation.message),
+    });
+    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
+      await this.updatePromptMetadata(promptMetadataTextFromContentParts(input.input));
+    }
+    if (handle.state === 'pending') return undefined;
+    const turn = await handle.launched;
+    return turn === undefined ? undefined : { turn_id: turn.id };
+  }
+
+  recordModelToolActivation(origin: SkillActivationOrigin): void {
+    this.recordActivation(origin);
+  }
+
+  private prepare(input: SkillActivationInput, submissionId?: string): PreparedActivation {
     const skill = this.skillCatalog.catalog.getSkill(input.name);
     if (skill === undefined) {
       throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
@@ -84,68 +146,28 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       ...(input.content ?? []),
     ];
 
-    const turn = await this.recordActivation(
-      {
-        kind: 'skill_activation',
-        activationId: randomUUID(),
-        skillName: skill.name,
-        trigger: 'user-slash',
-        skillType: skill.metadata.type,
-        skillPath: skill.path,
-        skillSource: skill.source,
-        skillArgs: input.args,
-      },
-      content,
-    );
-    if (turn === undefined) {
-      throw new Error2(
-        ErrorCodes.TURN_AGENT_BUSY,
-        'Cannot activate skill while another turn is active',
-      );
-    }
-    // Awaited (not fire-and-forget): the caller gets the launched turn id and
-    // activation failures (unknown skill, busy) surface instead of vanishing.
-    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
-      await applyPromptMetadataUpdate(
-        {
-          metadata: this.metadata,
-          eventService: this.eventService,
-          sessionId: this.sessionContext.sessionId,
-        },
-        promptMetadataTextFromSkill(input),
-      );
-    }
-    return { turn_id: turn.id };
-  }
-
-  recordModelToolActivation(origin: SkillActivationOrigin): void {
-    void this.recordActivation(origin);
-  }
-
-  private async recordActivation(
-    origin: SkillActivationOrigin,
-    input?: readonly ContentPart[],
-  ): Promise<Turn | undefined> {
-    this.wire.dispatch(skillActivate({ origin }));
-    this.publishActivation(origin);
-
-    if (input === undefined) return undefined;
+    const origin: SkillActivationOrigin = {
+      kind: 'skill_activation',
+      activationId: randomUUID(),
+      skillName: skill.name,
+      trigger: 'user-slash',
+      skillType: skill.metadata.type,
+      skillPath: skill.path,
+      skillSource: skill.source,
+      skillArgs: input.args,
+      submissionId,
+    };
     const message: ContextMessage = {
       role: 'user',
-      content: [...input],
+      content,
       toolCalls: [],
       origin,
     };
-    return (await this.prompt.enqueue({ message })).launched;
+    return { origin, message };
   }
 
-  private renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {
-    return this.skillCatalog.catalog.renderSkillPrompt(skill, rawArgs, {
-      sessionId: this.sessionContext.sessionId,
-    });
-  }
-
-  private publishActivation(origin: SkillActivationOrigin): void {
+  private recordActivation(origin: SkillActivationOrigin): void {
+    this.wire.dispatch(skillActivate({ origin }));
     this.telemetry.track2('skill_invoked', {
       skill_name: origin.skillName,
       trigger: origin.trigger,
@@ -155,6 +177,23 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         flow_name: origin.skillName,
       });
     }
+  }
+
+  private renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {
+    return this.skillCatalog.catalog.renderSkillPrompt(skill, rawArgs, {
+      sessionId: this.sessionContext.sessionId,
+    });
+  }
+
+  private async updatePromptMetadata(text: string | undefined): Promise<void> {
+    await applyPromptMetadataUpdate(
+      {
+        metadata: this.metadata,
+        eventService: this.eventService,
+        sessionId: this.sessionContext.sessionId,
+      },
+      text,
+    );
   }
 }
 

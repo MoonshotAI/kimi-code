@@ -22,6 +22,7 @@ import { UserMessageComponent } from '../components/messages/user-message';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import type { TranscriptEntry } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
+import { originSubmissionId } from '../utils/message-replay';
 import { getTranscriptComponentEntry } from '../utils/transcript-component-metadata';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { SlashCommandHost } from './dispatch';
@@ -90,6 +91,9 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
     showUndoLimitStatus(host, 'Nothing to undo.');
     return false;
   }
+  // When the anchor belongs to a grouped submission, the group's skill
+  // activation cards sit before it and are removed together with it.
+  const submissionId = entries[lastUserIndex]?.promptSubmissionId;
 
   try {
     await session.undoHistory(count);
@@ -110,13 +114,18 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
   if (lastUserComponentIndex !== undefined) {
     // Structural removal only: the container's ref-checked render cache
     // detects the child-list change; no tree-wide invalidate needed.
-    removeUndoContextComponents(children, lastUserComponentIndex);
+    removeUndoContextComponents(children, lastUserComponentIndex, submissionId);
   }
 
-  const preservedEntries = entries.slice(lastUserIndex).filter(
-    (entry) => !isUndoContextEntry(entry),
+  const preservedEntries = entries.filter(
+    (entry, index) =>
+      !(
+        (index >= lastUserIndex ||
+          (submissionId !== undefined && entry.promptSubmissionId === submissionId)) &&
+        isUndoContextEntry(entry)
+      ),
   );
-  entries.splice(lastUserIndex, entries.length - lastUserIndex, ...preservedEntries);
+  entries.splice(0, entries.length, ...preservedEntries);
 
   if (entries.length === 0) {
     renderWelcome(host);
@@ -238,7 +247,7 @@ function isContextUndoAnchor(message: ContextMessage): boolean {
   const origin = message.origin;
   if (origin === undefined || origin.kind === 'user') return true;
   if (origin.kind === 'skill_activation') {
-    return origin.trigger === 'user-slash';
+    return origin.trigger === 'user-slash' && originSubmissionId(origin) === undefined;
   }
   if (origin.kind === 'plugin_command') {
     return origin.trigger === 'user-slash';
@@ -393,7 +402,9 @@ function undoLimitFromError(
 function isUndoAnchorEntry(entry: TranscriptEntry): boolean {
   return (
     entry.kind === 'user' ||
-    (entry.kind === 'skill_activation' && entry.skillTrigger === 'user-slash') ||
+    (entry.kind === 'skill_activation' &&
+      entry.skillTrigger === 'user-slash' &&
+      entry.promptSubmissionId === undefined) ||
     entry.kind === 'plugin_command'
   );
 }
@@ -449,19 +460,27 @@ function findUndoAnchorComponentIndex(
 function removeUndoContextComponents(
   children: Component[],
   startIndex: number,
+  submissionId: string | undefined,
 ): void {
-  for (let i = children.length - 1; i >= startIndex; i--) {
+  for (let i = children.length - 1; i >= 0; i--) {
     const child = children[i];
-    if (child !== undefined && isUndoContextComponent(child)) {
+    if (child === undefined) continue;
+    const entry = getTranscriptComponentEntry(child);
+    const belongsToSubmission =
+      submissionId !== undefined && entry?.promptSubmissionId === submissionId;
+    if ((i >= startIndex || belongsToSubmission) && isUndoContextComponent(child)) {
       children.splice(i, 1);
     }
   }
 }
 
 function isUndoAnchorComponent(child: Component): boolean {
+  const entry = getTranscriptComponentEntry(child);
   return (
     child instanceof UserMessageComponent ||
-    (child instanceof SkillActivationComponent && child.trigger === 'user-slash') ||
+    (child instanceof SkillActivationComponent &&
+      child.trigger === 'user-slash' &&
+      entry?.promptSubmissionId === undefined) ||
     child instanceof PluginCommandComponent
   );
 }

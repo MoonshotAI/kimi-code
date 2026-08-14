@@ -13,7 +13,7 @@ import {
   collectCompactableUserMessages,
   selectRecentUserMessages,
 } from './compactionHandoff';
-import { isPromptOwnedInjection, isUndoAnchor } from './conversationTime';
+import { isPromptOwnedInjection, isUndoAnchor, promptSubmissionId } from './conversationTime';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 import { isVacuousContentPart } from './vacuousContent';
@@ -167,9 +167,21 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const applyUndo = (count: number): void => {
     if (count <= 0) return;
     let removedUserCount = 0;
+    // Set once the last needed anchor of a submission group is removed: the
+    // scan keeps removing the group's remaining (non-anchor) messages so a
+    // grouped submission is projected as undone whole.
+    let completingSubmissionId: string | undefined;
     for (let i = transcript.length - 1; i >= clearFloor; i--) {
       const message = transcript[i]!.message;
       if (message.origin?.kind === 'injection') continue;
+      if (removedUserCount >= count) {
+        if (
+          completingSubmissionId === undefined ||
+          promptSubmissionId(message.origin) !== completingSubmissionId
+        ) {
+          break;
+        }
+      }
       if (message.origin?.kind === 'compaction_summary') break;
       transcript.splice(i, 1);
       foldedLength = Math.max(0, foldedLength - 1);
@@ -184,7 +196,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
             i--;
             foldedLength = Math.max(0, foldedLength - 1);
           }
-          break;
+          completingSubmissionId = promptSubmissionId(message.origin);
         }
       }
     }

@@ -6,6 +6,12 @@ export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  /**
+   * Groups one prompt with the skill activations submitted alongside it
+   * (`promptWithSkills`): every message of the submission carries the same id,
+   * so undo / replay treat the group as a single turn.
+   */
+  readonly submissionId?: string;
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
@@ -19,6 +25,12 @@ export interface SkillActivationOrigin {
   readonly skillType?: string | undefined;
   readonly skillPath?: string | undefined;
   readonly skillSource?: SkillSource | undefined;
+  /**
+   * Set when the activation rode a `promptWithSkills` submission: the
+   * activation is part of the prompt's group and is not an undo anchor of its
+   * own.
+   */
+  readonly submissionId?: string;
 }
 
 export interface PluginCommandOrigin {

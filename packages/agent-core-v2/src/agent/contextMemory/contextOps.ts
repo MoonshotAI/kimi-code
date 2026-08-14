@@ -52,6 +52,7 @@ import {
   isPromptOwnedInjection,
   isUndoAnchor,
   isValidUndoCount,
+  promptSubmissionId,
 } from './conversationTime';
 import {
   foldAppendMessage,
@@ -337,9 +338,21 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
   let cutIndex = -1;
   let removedCount = 0;
   let stoppedAtCompaction = false;
-  for (let i = state.length - 1; i >= 0 && remaining > 0; i--) {
+  // Set once the last needed anchor of a submission group is cut: the scan
+  // keeps cutting the group's remaining (non-anchor) messages, so a grouped
+  // submission (skill activations + their prompt) is removed whole.
+  let completingSubmissionId: string | undefined;
+  for (let i = state.length - 1; i >= 0; i--) {
     const message = state[i];
     if (message === undefined || message.origin?.kind === 'injection') continue;
+    if (remaining <= 0) {
+      if (
+        completingSubmissionId === undefined ||
+        promptSubmissionId(message.origin) !== completingSubmissionId
+      ) {
+        break;
+      }
+    }
     if (message.origin?.kind === 'compaction_summary') {
       stoppedAtCompaction = true;
       break;
@@ -354,6 +367,14 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
       ) {
         cutIndex--;
       }
+      if (remaining <= 0) {
+        completingSubmissionId = promptSubmissionId(message.origin);
+      }
+    } else if (
+      completingSubmissionId !== undefined &&
+      promptSubmissionId(message.origin) === completingSubmissionId
+    ) {
+      cutIndex = i;
     }
   }
   return { cutIndex, removedCount, stoppedAtCompaction };
