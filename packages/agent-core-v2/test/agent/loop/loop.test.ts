@@ -404,6 +404,49 @@ describe('Agent loop', () => {
   `);
   });
 
+  it('preserves tool call extras (Gemini thought_signature) through to context', async () => {
+    // Regression: Gemini 3 requires the thought_signature returned on a
+    // functionCall to be echoed back when the call is re-sent in the next
+    // step. The signature travels as ToolCall.extras.thought_signature_b64; it
+    // must survive loopService's tool.call event recording so the fold
+    // rebuilds the assistant message with extras for the provider to echo.
+    const sigCall: ToolCall = {
+      type: 'function',
+      id: 'call_sig',
+      name: 'Lookup',
+      arguments: '{"query":"moon"}',
+      extras: { thought_signature_b64: 'c2lnbmF0dXJl' },
+    };
+    const lookupTool: ExecutableTool<{ query: string }> = {
+      name: 'Lookup',
+      description: 'Look up a short test value.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+      resolveExecution: () => ({
+        approvalRule: 'Lookup',
+        execute: async () => ({ output: 'lookup-result' }),
+      }),
+    };
+
+    profile.update({ activeToolNames: ['Lookup'] });
+    ctx.get(IAgentToolRegistryService).register(lookupTool);
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, sigCall);
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
+    ctx.mockNextResponse({ type: 'text', text: 'The lookup result is lookup-result.' });
+    await ctx.untilApproval(true);
+    await ctx.untilTurnEnd();
+
+    const assistant = ctx.contextData().history.find((m) => m.role === 'assistant');
+    expect(assistant?.toolCalls[0]?.extras).toEqual({ thought_signature_b64: 'c2lnbmF0dXJl' });
+  });
+
   it('lets non-external stop hooks continue a turn more than once', async () => {
     profile.update({ activeToolNames: [] });
     let continuations = 0;

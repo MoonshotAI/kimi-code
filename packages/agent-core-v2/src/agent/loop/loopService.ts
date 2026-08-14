@@ -947,6 +947,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       onToolCall: ({ toolCallId, name, args }) => {
         const callUuid = randomUUID();
         toolCallUuids.set(toolCallId, callUuid);
+        const extras = response.message.toolCalls.find((t) => t.id === toolCallId)?.extras;
         this.context.appendLoopEvent({
           type: 'tool.call',
           uuid: callUuid,
@@ -956,6 +957,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           toolCallId,
           name,
           args,
+          extras,
         });
       },
     })) {
