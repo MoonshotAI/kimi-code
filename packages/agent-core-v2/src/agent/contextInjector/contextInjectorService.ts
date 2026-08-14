@@ -1,9 +1,11 @@
 /**
  * `contextInjector` domain — `IAgentContextInjectorService` implementation.
  *
- * Injects registered context providers through `loop` and `systemReminder`,
- * tracks their positions in `contextMemory` through `eventBus`, and reconciles
- * those positions after `wire` restoration. Each provider call receives the
+ * Injects registered context providers through `loop` and `systemReminder`.
+ * Injection positions are NOT tracked state: they are a pure read-time scan
+ * (`findInjections`) over the model-visible window served by `contextMemory`,
+ * so splices, compaction derivation, undo, and wire restoration can never
+ * desync them. Each provider call receives the
  * newest surviving injection of its own variant (`lastInjection`) and the
  * typed disclosure recorded on it (`lastDisclosure`), so providers never read
  * context layout or position indexes themselves. The plain-data `isNewTurn`
@@ -24,7 +26,6 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IWireService } from '#/wire/wire';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContent,
@@ -35,7 +36,6 @@ import {
 interface ContextInjectionEntry {
   readonly provider: ContextInjectionProvider;
   readonly name: string;
-  readonly positions: number[];
 }
 
 export const contextInjectorIsNewTurnKey = defineState<boolean>(
@@ -52,7 +52,6 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     @IAgentLoopService loopService: IAgentLoopService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
-    @IWireService wire: IWireService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
@@ -66,17 +65,6 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     this._register(
       this.eventBus.subscribe('turn.started', () => {
         this.isNewTurn = true;
-      }),
-    );
-    this._register(
-      this.eventBus.subscribe('context.spliced', (e) => {
-        this.handleSplice(e);
-      }),
-    );
-    this._register(
-      wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
-        this.resyncPositions();
-        await next();
       }),
     );
   }
@@ -93,12 +81,7 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     name: string,
     provider: ContextInjectionProvider,
   ) {
-    const positions = findInjections(this.context.get(), name);
-    const entry: ContextInjectionEntry = {
-      provider,
-      name,
-      positions,
-    };
+    const entry: ContextInjectionEntry = { provider, name };
     this.entries.add(entry);
     return toDisposable(() => {
       this.entries.delete(entry);
@@ -115,7 +98,7 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     this.isNewTurn = false;
     const history = this.context.get();
     for (const entry of this.entries) {
-      const injectedPositions: readonly number[] = [...entry.positions];
+      const injectedPositions: readonly number[] = findInjections(history, entry.name);
       const lastInjectedAt = injectedPositions.at(-1) ?? null;
       const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
       const content = await entry.provider({
@@ -153,53 +136,7 @@ export class AgentContextInjectorService extends Service implements IAgentContex
       });
     }
   }
-
-  private resyncPositions(): void {
-    const history = this.context.get();
-    for (const entry of this.entries) {
-      const found = findInjections(history, entry.name);
-      entry.positions.length = 0;
-      entry.positions.push(...found);
-    }
-  }
-
-  private handleSplice(splice: ContextSplice): void {
-    let insertedInjections: Map<string, number[]> | undefined;
-    splice.messages.forEach((message, offset) => {
-      if (message.origin?.kind !== 'injection') return;
-      insertedInjections ??= new Map();
-      const positions = insertedInjections.get(message.origin.variant);
-      if (positions === undefined) {
-        insertedInjections.set(message.origin.variant, [splice.start + offset]);
-      } else {
-        positions.push(splice.start + offset);
-      }
-    });
-    if (insertedInjections === undefined && splice.deleteCount === 0) return;
-
-    const deletedEnd = splice.start + splice.deleteCount;
-    const delta = splice.messages.length - splice.deleteCount;
-    for (const entry of this.entries) {
-      const adopted = insertedInjections?.get(entry.name) ?? [];
-      const positions = entry.positions;
-      if (adopted.length === 0 && positions.length === 0) continue;
-      let lo = 0;
-      while (lo < positions.length && positions[lo]! < splice.start) lo++;
-      let hi = lo;
-      while (hi < positions.length && positions[hi]! < deletedEnd) hi++;
-      for (let index = hi; index < positions.length; index++) {
-        positions[index] = positions[index]! + delta;
-      }
-      positions.splice(lo, hi - lo, ...adopted);
-    }
-  }
 }
-
-type ContextSplice = {
-  readonly start: number;
-  readonly deleteCount: number;
-  readonly messages: readonly ContextMessage[];
-};
 
 function findInjections(
   history: readonly ContextMessage[],

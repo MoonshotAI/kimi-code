@@ -2,8 +2,11 @@
  * `contextMemory` domain — `IAgentContextMemoryService` implementation.
  *
  * Owns per-agent conversation history through `wire`, maintains measurements
- * with `tokenCounting`, and broadcasts live mutations through `event`. Every
- * splice-shaped mutation (`clear` / `applyCompaction` / `undo`) publishes
+ * with `tokenCounting`, and broadcasts live mutations through `event`. The
+ * wire state is an append-only folded log; `get()` serves the model-visible
+ * window derived by `visibleWindow.deriveVisibleMessages`, while `getLog()`
+ * exposes the raw log for integrity checks. Every splice-shaped mutation
+ * (`clear` / `applyCompaction` / `undo`) publishes
  * `context.spliced` from the live path only — replay rebuilds silently — and
  * `undo` additionally truncates the measured-anchor ledger when the cut
  * crosses an anchor, letting `tokenCounting` restore the surviving prefix's
@@ -44,6 +47,7 @@ import {
 } from './conversationTime';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
+import { deriveVisibleMessages } from './visibleWindow';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -77,6 +81,10 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   }
 
   get(): readonly ContextMessage[] {
+    return deriveVisibleMessages(this.getLog());
+  }
+
+  getLog(): readonly ContextMessage[] {
     return this.wire.getModel(ContextModel).messages as readonly ContextMessage[];
   }
 

@@ -13,6 +13,12 @@
  * Generic over the entry type: the wire model folds `ContextMessage`s, while
  * the display transcript folds time-stamped entries through the same kernel.
  *
+ * `messages` is an APPEND-ONLY log: `context.apply_compaction` appends a
+ * summary marker message carrying a `CompactionMeta` instead of replacing the
+ * history, so pre-compaction messages stay in the state. The model-visible
+ * window is a read-time derivation (`visibleWindow.deriveVisibleMessages`)
+ * over this log — only undo / clear / the swarm-mode pop still cut it.
+ *
  * `freezeContextState` deeply freezes a `ContextState` (the wire service only
  * shallow-freezes the top-level object, which covered the consumer view back
  * when the state WAS the messages array). `Object.freeze` returns the same
@@ -126,12 +132,33 @@ export type PromptOrigin =
   | HookResultOrigin
   | RetryOrigin;
 
+/**
+ * Marker metadata the `context.apply_compaction` fold attaches to the summary
+ * message it appends — the persisted record fields mirrored onto the message
+ * so the append-only log stays self-describing. `visibleWindow` finds markers
+ * by this field; the derivation itself needs only `legacyTail` +
+ * `compactedCount`, the rest is informational (telemetry / debugging). Never
+ * persisted inside an `append_message` record — the fold strips it from
+ * appended messages (see `foldAppendMessage`).
+ */
+export interface CompactionMeta {
+  readonly compactedCount: number;
+  readonly tokensBefore: number;
+  readonly tokensAfter?: number;
+  readonly summaryOutputTokens?: number;
+  readonly keptUserMessageCount?: number;
+  readonly keptHeadUserMessageCount?: number;
+  readonly droppedCount?: number;
+  readonly legacyTail?: boolean;
+}
+
 export type ContextMessage = Message & {
   readonly id?: string;
   readonly providerMessageId?: string;
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
   readonly note?: string;
+  readonly compaction?: CompactionMeta;
 };
 
 export interface UserMessageRecord {

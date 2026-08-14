@@ -47,6 +47,10 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       return messages;
     },
     get: () => [...messages],
+    // The stub keeps no append-only log — its array IS the visible window —
+    // so the log view is the same array. Integrity checks built on log
+    // identity still work: appends only ever push to the tail.
+    getLog: () => [...messages],
     append: (...inserted) => {
       const start = messages.length;
       messages.push(...inserted);
@@ -96,6 +100,9 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   }
   get(): readonly ContextMessage[] {
     return this.impl.get();
+  }
+  getLog(): readonly ContextMessage[] {
+    return this.impl.getLog();
   }
   append(...messages: readonly ContextMessage[]): void {
     this.impl.append(...messages);

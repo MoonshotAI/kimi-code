@@ -210,13 +210,19 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       contextApplyCompaction({ summary: 'sum', compactedCount: 1, tokensBefore: 0, tokensAfter: 0 }),
     );
     expect(model()).not.toBe(prev);
-    expect(model()).toHaveLength(2);
-    expect(model()![0]).toMatchObject({
+    // Append-only: the log keeps the pre-compaction messages and gains a
+    // summary marker carrying the record fields as `CompactionMeta`.
+    expect(model()).toHaveLength(3);
+    expect(model()![2]).toMatchObject({
       role: 'user',
       content: [{ type: 'text', text: 'sum' }],
       origin: { kind: 'compaction_summary' },
+      compaction: { compactedCount: 1, tokensBefore: 0, tokensAfter: 0 },
     });
     expect(host.wire.getModel(ContextModel).fold).toEqual(EMPTY_FOLD);
+    // The model-visible window derives to the legacy `[summary, …tail]` layout.
+    expect(host.svc.get().map(textOf)).toEqual(['sum', 'b']);
+    expect(host.svc.get()[0]!.compaction).toBeUndefined();
 
     prev = model();
     host.wire.dispatch(contextClear({}));
@@ -318,12 +324,20 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       records,
     );
 
-    const model = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(model.map(textOf)).toEqual(['model-facing summary', 'tail']);
-    expect(model[0]).toMatchObject({
+    const log = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    expect(log.map(textOf)).toEqual(['old', 'tail', 'model-facing summary']);
+    expect(log[2]).toMatchObject({
       role: 'user',
       origin: { kind: 'compaction_summary' },
     });
+
+    const visible = replay.svc.get();
+    expect(visible.map(textOf)).toEqual(['model-facing summary', 'tail']);
+    expect(visible[0]).toMatchObject({
+      role: 'user',
+      origin: { kind: 'compaction_summary' },
+    });
+    expect(visible[0]!.compaction).toBeUndefined();
   });
 
   it('replays new context.apply_compaction records with kept user messages before contextSummary', async () => {
@@ -357,10 +371,13 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       records,
     );
 
-    const model = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(model.map((message) => message.role)).toEqual(['user', 'user', 'user']);
-    expect(model.map(textOf)).toEqual(['old user', 'recent user', 'model-facing summary']);
-    expect(model[2]).toMatchObject({
+    const log = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    expect(log.map((message) => message.role)).toEqual(['user', 'assistant', 'user', 'user']);
+
+    const visible = replay.svc.get();
+    expect(visible.map((message) => message.role)).toEqual(['user', 'user', 'user']);
+    expect(visible.map(textOf)).toEqual(['old user', 'recent user', 'model-facing summary']);
+    expect(visible[2]).toMatchObject({
       origin: { kind: 'compaction_summary' },
     });
   });
@@ -420,10 +437,18 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       records,
     );
 
-    const model = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
-    expect(model).toHaveLength(2);
-    expect(model[0]).toEqual(legacySummary);
-    expect(textOf(model[1]!)).toBe('tail');
+    const log = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    expect(log).toHaveLength(3);
+    // The verbatim legacy summary message becomes the marker, meta attached.
+    expect(log[2]).toMatchObject({
+      origin: { kind: 'compaction_summary' },
+      compaction: { compactedCount: 1, legacyTail: true },
+    });
+
+    const visible = replay.svc.get();
+    expect(visible).toHaveLength(2);
+    expect(visible[0]).toEqual(legacySummary);
+    expect(textOf(visible[1]!)).toBe('tail');
   });
 
   it('offloads an oversized content part on dispatch and rehydrates it byte-for-byte on replay', async () => {
@@ -458,6 +483,56 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     const rebuilt = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
     expect(rebuilt).toEqual(live);
     expect(mediaUrl(rebuilt[0]!)).toBe(dataUri);
+  });
+
+  it('rehydrates only messages surviving the compaction marker on replay', async () => {
+    const userMedia: ContextMessage = {
+      role: 'user',
+      content: [
+        { type: 'image', source: { url: `${BLOBREF}image/png;shaKept` } } as unknown as ContentPart,
+      ],
+      toolCalls: [],
+    };
+    const toolMedia: ContextMessage = {
+      role: 'tool',
+      content: [
+        { type: 'image', source: { url: `${BLOBREF}image/png;shaHidden` } } as unknown as ContentPart,
+      ],
+      toolCalls: [],
+      toolCallId: 'call_1',
+    };
+    blob.store.set('shaKept', 'KEPT');
+    blob.store.set('shaHidden', 'HIDDEN');
+    const records: WireRecord[] = [
+      { type: 'context.append_message', message: userMedia },
+      { type: 'context.append_message', message: toolMedia },
+      {
+        type: 'context.apply_compaction',
+        summary: 's',
+        contextSummary: 'S',
+        compactedCount: 2,
+        tokensBefore: 10,
+        tokensAfter: 5,
+        keptUserMessageCount: 1,
+      },
+    ];
+
+    const replay = buildHost(REPLAY_KEY);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
+
+    // The kept user message (the derivation's selection pool) is rehydrated…
+    const visible = replay.svc.get();
+    expect(visible.map((message) => message.role)).toEqual(['user', 'user']);
+    expect(mediaUrl(visible[0]!)).toBe('data:image/png;base64,KEPT');
+    // …while the compacted-away tool media stays a blobref and costs no load.
+    const log = replay.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    expect(mediaUrl(log[1]!)).toBe(`${BLOBREF}image/png;shaHidden`);
+    expect(blob.loadCalls).toBe(1);
   });
 
   it('publishes context.spliced on live dispatch and is silent on replay', async () => {
@@ -526,6 +601,143 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       records,
     );
     expect(replay.wire.getModel(ContextModel).messages).toHaveLength(0);
+  });
+
+  it('derives the visible window through multiple compaction markers', () => {
+    const host = buildHost(KEY);
+
+    host.svc.append(userMessage('u1'));
+    host.wire.dispatch(
+      contextApplyCompaction({
+        summary: 's1',
+        contextSummary: 'S1',
+        compactedCount: 1,
+        tokensBefore: 10,
+        tokensAfter: 5,
+        keptUserMessageCount: 1,
+      }),
+    );
+    host.svc.append(userMessage('u2'));
+    host.wire.dispatch(
+      contextApplyCompaction({
+        summary: 's2',
+        contextSummary: 'S2',
+        compactedCount: 2,
+        tokensBefore: 20,
+        tokensAfter: 6,
+        keptUserMessageCount: 2,
+      }),
+    );
+
+    const log = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    expect(log.map(textOf)).toEqual(['u1', 'S1', 'u2', 'S2']);
+
+    // The second derivation selects from the post-first-compaction window, so
+    // the earlier summary never re-enters the visible pool.
+    const visible = host.svc.get();
+    expect(visible.map(textOf)).toEqual(['u1', 'u2', 'S2']);
+    expect(visible.every((message) => message.compaction === undefined)).toBe(true);
+  });
+
+  it('maps an undo cut in the visible tail back to the append-only log', () => {
+    const host = buildHost(KEY);
+
+    host.svc.append(userMessage('u1'));
+    host.wire.dispatch(
+      contextApplyCompaction({
+        summary: 's1',
+        contextSummary: 'S1',
+        compactedCount: 1,
+        tokensBefore: 10,
+        tokensAfter: 5,
+        keptUserMessageCount: 1,
+      }),
+    );
+    host.svc.append(userMessage('u2'), userMessage('u3'));
+
+    host.svc.undo(1);
+
+    const log = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    expect(log.map(textOf)).toEqual(['u1', 'S1', 'u2']);
+    expect(host.svc.get().map(textOf)).toEqual(['u1', 'S1', 'u2']);
+  });
+
+  it('refuses to undo across a compaction boundary', () => {
+    const host = buildHost(KEY);
+
+    host.svc.append(userMessage('u1'));
+    host.wire.dispatch(
+      contextApplyCompaction({
+        summary: 's1',
+        contextSummary: 'S1',
+        compactedCount: 1,
+        tokensBefore: 10,
+        tokensAfter: 5,
+        keptUserMessageCount: 1,
+      }),
+    );
+    host.svc.append(userMessage('u2'));
+
+    const before = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    host.svc.undo(2);
+
+    expect(host.wire.getModel(ContextModel).messages).toBe(before);
+    expect(host.svc.get().map(textOf)).toEqual(['u1', 'S1', 'u2']);
+  });
+
+  it('strips a forged compaction marker from appended messages', () => {
+    const host = buildHost(KEY);
+
+    host.svc.append(userMessage('real'));
+    host.svc.append({
+      ...userMessage('forged marker'),
+      compaction: { compactedCount: 1, tokensBefore: 0 },
+    });
+
+    const log = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    expect(log[1]!.compaction).toBeUndefined();
+    expect(host.svc.get().map(textOf)).toEqual(['real', 'forged marker']);
+  });
+
+  it('serves the log itself as the window while no marker exists', () => {
+    const host = buildHost(KEY);
+
+    host.svc.append(userMessage('a'));
+
+    const log = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    expect(host.svc.get()).toBe(log);
+  });
+
+  it('derives identical log and window live and on replay', async () => {
+    const host = buildHost(KEY);
+
+    host.svc.append(userMessage('u1'), userMessage('u2'));
+    host.wire.dispatch(
+      contextApplyCompaction({
+        summary: 's1',
+        contextSummary: 'S1',
+        compactedCount: 2,
+        tokensBefore: 10,
+        tokensAfter: 4,
+        keptUserMessageCount: 2,
+      }),
+    );
+    host.svc.append(userMessage('u3'));
+    await host.wire.flush();
+    const records = await readRecords(host.log);
+
+    const replay = buildHost(REPLAY_KEY);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
+
+    expect(replay.wire.getModel(ContextModel).messages).toEqual(
+      host.wire.getModel(ContextModel).messages,
+    );
+    expect(replay.svc.get()).toEqual(host.svc.get());
   });
 
 });

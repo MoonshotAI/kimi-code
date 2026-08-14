@@ -9,9 +9,9 @@
  * `ContextModel`: dispatching `swarm_mode.exit` pops the
  * reminder when it is the last message, both live and on replay — exactly like
  * v1's restore-time `popMatchedMessage`. The service only publishes the
- * live-only `context.spliced` event for that pop (so injector bookkeeping
- * stays in step) and appends the exit reminder when nothing was
- * popped. Bound at Agent scope. The service also guards AgentSwarm batch
+ * live-only `context.spliced` event for that pop (so consumers that rescan
+ * the visible window on splices stay in step) and appends the exit reminder
+ * when nothing was popped. Bound at Agent scope. The service also guards AgentSwarm batch
  * exclusivity through an `onBeforeExecuteTool` veto
  * listener: an AgentSwarm call must be the only tool call in its batch,
  * anything else is vetoed with a `toolApproval.formatDenyMessage`-formatted

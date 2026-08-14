@@ -16,7 +16,9 @@
  * `wire.dispatch(tokenCountingMeasured(...))` after each measured LLM
  * exchange. The context is read from the wire `ContextModel` directly (not
  * via `IAgentContextMemoryService`) so `contextMemory` can depend on this
- * service without a constructor cycle. Bound at Agent scope.
+ * service without a constructor cycle; the model-visible window is derived
+ * through the pure `visibleWindow.deriveVisibleMessages`, which carries no
+ * service dependency. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -25,6 +27,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
 import { ContextModel } from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { deriveVisibleMessages } from '#/agent/contextMemory/visibleWindow';
 import type { Message } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import {
@@ -134,7 +137,9 @@ export class AgentTokenCountingService extends Disposable implements IAgentToken
   }
 
   private context(): readonly ContextMessage[] {
-    return this.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    return deriveVisibleMessages(
+      this.wire.getModel(ContextModel).messages as readonly ContextMessage[],
+    );
   }
 
   /** Latest anchor still valid for the live context: anchors beyond it are

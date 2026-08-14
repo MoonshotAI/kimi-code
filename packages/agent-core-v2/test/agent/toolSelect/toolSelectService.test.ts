@@ -254,6 +254,10 @@ class FakeContextMemory implements IAgentContextMemoryService {
     return this.history;
   }
 
+  getLog(): readonly ContextMessage[] {
+    return this.history;
+  }
+
   append(...messages: readonly ContextMessage[]): void {
     this.appended.push(...messages);
   }

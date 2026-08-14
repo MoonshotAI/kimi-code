@@ -10,7 +10,8 @@
  * carry a `ContextMessage` can run the same walk. The returned `UndoCut`
  * separates `anchorIndex` (the counted anchor) from `cutIndex` (extended
  * over its prompt-owned injections). The wire-model Op
- * (`contextOps.contextUndo`) applies the cut destructively; the display
+ * (`contextOps.contextUndo`) applies the cut to the append-only log (mapping
+ * the visible-window cut back to a log position); the display
  * transcript (`contextTranscript`) applies the same decision as a
  * non-destructive splice — so a blocked undo (compaction boundary /
  * insufficient anchors / floor) reads identically on both sides.

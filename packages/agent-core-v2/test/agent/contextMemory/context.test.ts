@@ -7,6 +7,9 @@ import {
   buildContextCompactionShape,
   COMPACT_USER_MESSAGE_HEAD_TOKENS,
   COMPACT_USER_MESSAGE_MAX_TOKENS,
+  COMPACTION_ELISION_VARIANT,
+  createCompactionMarkerMessage,
+  deriveCompactionWindow,
   selectCompactionUserMessages,
   type TokenEstimate,
 } from '#/agent/contextMemory/compactionHandoff';
@@ -745,8 +748,7 @@ describe('Agent context', () => {
     });
   });
 
-  describe('compaction handoff under a zero estimator', () => {
-    const zero: TokenEstimate = { text: () => 0, message: () => 0, messages: () => 0 };
+  describe('compaction handoff under a zero estimator', () => {    const zero: TokenEstimate = { text: () => 0, message: () => 0, messages: () => 0 };
 
     it('keeps every user message without elision', () => {
       const messages = Array.from({ length: 300 }, (_, i) =>
@@ -838,6 +840,66 @@ describe('Agent context', () => {
       expect(withOverhead.messages).toEqual(withoutOverhead.messages);
     });
   });
+
+  describe('append-only derivation parity', () => {
+    it('deriveCompactionWindow reproduces the eager shape layout', () => {
+      const history = [
+        userMessage('u1'),
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'a1' }],
+          toolCalls: [],
+        } as ContextMessage,
+        userMessage('u2'),
+      ];
+      const input = {
+        summary: 'summary',
+        contextSummary: 'PREFIX\nsummary',
+        compactedCount: 3,
+        tokensBefore: 100,
+        tokensAfter: 20,
+        keptUserMessageCount: 2,
+      };
+
+      const shape = buildContextCompactionShape(history, input);
+      const marker = createCompactionMarkerMessage(input);
+      const derived = deriveCompactionWindow(history, marker);
+
+      expect(marker.compaction).toMatchObject({ compactedCount: 3, tokensBefore: 100 });
+      expect(derived).toEqual(shape.messages);
+      expect(derived.every((message) => message.compaction === undefined)).toBe(true);
+    });
+
+    it('deriveCompactionWindow reproduces the legacy tail layout', () => {
+      const history = [userMessage('old'), userMessage('tail')];
+      const input = {
+        summary: 'legacy summary',
+        compactedCount: 1,
+        tokensBefore: 100,
+        tokensAfter: 20,
+        legacyTail: true,
+      };
+
+      const shape = buildContextCompactionShape(history, input);
+      const derived = deriveCompactionWindow(history, createCompactionMarkerMessage(input));
+
+      expect(derived).toEqual(shape.messages);
+      expect(derived.map(textOf)).toEqual(['legacy summary', 'tail']);
+    });
+
+    it('deriveCompactionWindow re-derives the elided head/tail selection', () => {
+      const history = Array.from({ length: 300 }, (_, i) =>
+        userMessage(`user ${i} ${'x'.repeat(400)}`),
+      );
+      const input = { summary: 'summary', compactedCount: 300, tokensBefore: 100 };
+
+      const shape = buildContextCompactionShape(history, input);
+      const derived = deriveCompactionWindow(history, createCompactionMarkerMessage(input));
+
+      expect(shape.messages.some(isCompactionElision)).toBe(true);
+      expect(derived).toEqual(shape.messages);
+    });
+  });
 });
 
 function userMessage(text: string, origin?: ContextMessage['origin']): ContextMessage {
@@ -854,4 +916,11 @@ function textOf(message: Message): string {
     .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
     .map((part) => part.text)
     .join('');
+}
+
+function isCompactionElision(message: ContextMessage): boolean {
+  return (
+    message.origin?.kind === 'injection' &&
+    message.origin.variant === COMPACTION_ELISION_VARIANT
+  );
 }

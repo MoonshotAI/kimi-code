@@ -14,6 +14,15 @@
  * `swarm_mode.exit` pop) reset it by returning `EMPTY_FOLD` — there is no
  * out-of-band reset to forget.
  *
+ * `messages` is an APPEND-ONLY folded log: `context.apply_compaction` appends
+ * a summary marker message carrying the record's fields as `CompactionMeta`
+ * and leaves the pre-compaction history in place; what the model sees is the
+ * read-time derivation `visibleWindow.deriveVisibleMessages` over this log
+ * (the same `[head, elision?, tail, summary]` layout the pre-append-only
+ * rewrite used to store). Only undo / clear / the swarm-mode pop still cut
+ * the log — undo maps its visible-window cut back to a log position through
+ * `mapVisibleIndexToLog`.
+ *
  * The live write path emits the v1 Ops: non-loop appends (user prompts,
  * injections, hook/task notices) go on the wire as `append_message` (the
  * message persists whole, local ids included — undo pairs prompt-owned
@@ -41,8 +50,9 @@
  *   URIs.
  * - `rehydrate(state, transform)`: after replay, traverses the surviving final
  *   state (including still-deferred messages in the fold cursor) and loads
- *   `blobref:` URLs back to inline data — skipping I/O for
- *   data that was compacted away during the session.
+ *   `blobref:` URLs back to inline data — with the append-only log, "surviving"
+ *   means messages the window derivation can still surface (see
+ *   `rehydrateSurvivingMessages`), so compacted-away media costs no I/O.
  */
 
 import { z } from 'zod';
@@ -53,7 +63,8 @@ import { defineModel, type PartsTransformer } from '#/wire/model';
 import type { WireRecord } from '#/wire/record';
 
 import {
-  buildContextCompactionShape,
+  createCompactionMarkerMessage,
+  isRealUserInput,
   type ContextCompactionShapeInput,
 } from './compactionHandoff';
 import {
@@ -68,6 +79,7 @@ import {
   type ContextMessage,
   type ContextState,
 } from './types';
+import { deriveVisibleMessages, mapVisibleIndexToLog } from './visibleWindow';
 
 async function dehydrateMessages(
   messages: readonly ContextMessage[],
@@ -128,6 +140,40 @@ async function dehydrateRecord(
   return record;
 }
 
+/** Replay-time blob loading skips messages no window derivation can surface:
+ *  everything after the last compaction marker survives, and before it only
+ *  real user input (the derivation's selection pool) and the marker itself
+ *  do. Compacted-away assistant / tool media stays as `blobref:` strings, so
+ *  resume I/O stays proportional to the surviving window — the same bound the
+ *  pre-append-only state gave by construction. The derivation itself is
+ *  blob-invariant (media parts estimate flat), so the mixed log derives
+ *  exactly the window a fully rehydrated log would. */
+async function rehydrateSurvivingMessages(
+  messages: readonly ContextMessage[],
+  transform: PartsTransformer,
+): Promise<{ changed: boolean; result: ContextMessage[] }> {
+  let lastMarker = messages.length - 1;
+  for (; lastMarker >= 0; lastMarker--) {
+    if (messages[lastMarker]!.compaction !== undefined) break;
+  }
+  if (lastMarker < 0) return dehydrateMessages(messages, transform);
+  let changed = false;
+  const result: ContextMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i]!;
+    if (i > lastMarker || message.compaction !== undefined || isRealUserInput(message)) {
+      const parts = await transform(message.content);
+      if (parts !== message.content) {
+        changed = true;
+        result.push({ ...message, content: [...parts] as ContentPart[] });
+        continue;
+      }
+    }
+    result.push(message);
+  }
+  return { changed, result };
+}
+
 export const ContextModel = defineModel<ContextState>(
   'contextMemory',
   () => freezeContextState({ messages: [], fold: EMPTY_FOLD }),
@@ -135,7 +181,7 @@ export const ContextModel = defineModel<ContextState>(
     blobs: {
       dehydrate: dehydrateRecord,
       rehydrate: async (state, transform) => {
-        const messages = await dehydrateMessages(state.messages, transform);
+        const messages = await rehydrateSurvivingMessages(state.messages, transform);
         const deferred = await dehydrateMessages(state.fold.deferred, transform);
         if (!messages.changed && !deferred.changed) return state;
         return freezeContextState({
@@ -230,8 +276,8 @@ type ContextCompactionPayload = z.infer<typeof contextApplyCompactionSchema>;
 export const contextApplyCompaction = ContextModel.defineOp('context.apply_compaction', {
   schema: contextApplyCompactionSchema,
   apply: (state, p) => {
-    const result = buildContextCompactionShape(state.messages, readContextCompactionShapeInput(p));
-    return freezeContextState({ messages: [...result.messages], fold: EMPTY_FOLD });
+    const marker = createCompactionMarkerMessage(readContextCompactionShapeInput(p));
+    return freezeContextState({ messages: [...state.messages, marker], fold: EMPTY_FOLD });
   },
 });
 
@@ -382,10 +428,22 @@ export const contextUndo = ContextModel.defineOp('context.undo', {
   }),
   apply: (state, p) => {
     if (!isValidUndoCount(p.count) || state.messages.length === 0) return state;
-    const cut = computeUndoCut(state.messages, p.count);
+    const visible = deriveVisibleMessages(state.messages);
+    const cut = computeUndoCut(visible, p.count);
     if (!isFullyUndoable(cut, p.count)) return state;
+    const logCutIndex = mapVisibleIndexToLog(state.messages, visible, cut.cutIndex);
+    if (logCutIndex === undefined) {
+      // The cut landed inside a derived compaction prefix — only reachable
+      // when a verbatim legacy summary message without the compaction origin
+      // let the undo walk pass its marker. Such a cut is not a log suffix;
+      // reproduce the pre-append-only destructive cut verbatim.
+      return freezeContextState({
+        messages: visible.slice(0, cut.cutIndex),
+        fold: EMPTY_FOLD,
+      });
+    }
     return freezeContextState({
-      messages: state.messages.slice(0, cut.cutIndex),
+      messages: state.messages.slice(0, logCutIndex),
       fold: EMPTY_FOLD,
     });
   },

@@ -1,6 +1,7 @@
 /**
- * `contextMemory` domain helper — derives the v1-compatible full-compaction
- * handoff shape for live rewrites, wire replay, and snapshot reducers.
+ * `contextMemory` domain helper — owns the v1-compatible full-compaction
+ * shape vocabulary: the marker message the fold appends, the read-time
+ * window derivation, and the live metadata computation.
  *
  * Token budgeting runs through an injectable {@link TokenEstimate}: the live
  * path (`AgentContextMemoryService.applyCompaction`) passes the estimator
@@ -11,17 +12,19 @@
  * chain is unaffected.
  *
  * The result layout is `[kept user messages…, elision?, summary]` (legacy
- * records: `[summary, …tail]`), so its message COUNT is fully described by
- * the persisted kept-user counts: `compactionResultMessageCount` is the
- * read-side mirror for projections that need only the length (the display
- * transcript's `foldedLength`). Both live in this file so a layout change
- * lands in one place.
+ * records: `[summary, …tail]`). `buildContextCompactionShape` computes that
+ * layout eagerly for the live metadata path; `createCompactionMarkerMessage`
+ * + `deriveCompactionWindow` are its append-only counterparts — the fold
+ * appends the marker verbatim and `visibleWindow` re-derives the same layout
+ * at read time, so a layout change still lands in this one file.
+ * `compactionResultMessageCount` is the read-side mirror for projections that
+ * need only the length (the display transcript's `foldedLength`).
  */
 
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/kosong/contract/tokens';
 import type { ContentPart } from '#/kosong/contract/message';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
-import type { ContextMessage, PromptOrigin } from './types';
+import type { CompactionMeta, ContextMessage, PromptOrigin } from './types';
 
 export const COMPACTION_SUMMARY_PREFIX = summaryPrefixTemplate.trimEnd();
 export const COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000;
@@ -151,6 +154,71 @@ export function compactionResultMessageCount(
 ): number | undefined {
   if (keptUserMessageCount === undefined) return undefined;
   return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 1 : 2);
+}
+
+/**
+ * The message the `context.apply_compaction` fold appends: the summary
+ * message the destructive rewrite used to synthesize, plus the record fields
+ * mirrored as {@link CompactionMeta} so the append-only log stays
+ * self-describing. Legacy records carrying a verbatim summary message keep it
+ * (meta attached) exactly as the rewrite kept it.
+ */
+export function createCompactionMarkerMessage(input: ContextCompactionShapeInput): ContextMessage {
+  const meta: CompactionMeta = {
+    compactedCount: input.compactedCount,
+    tokensBefore: input.tokensBefore,
+    tokensAfter: input.tokensAfter,
+    summaryOutputTokens: input.summaryOutputTokens,
+    keptUserMessageCount: input.keptUserMessageCount,
+    keptHeadUserMessageCount: input.keptHeadUserMessageCount,
+    droppedCount: input.droppedCount,
+    legacyTail: input.legacyTail === true ? true : undefined,
+  };
+  const base =
+    usesLegacyTailShape(input) && input.legacySummaryMessage !== undefined
+      ? input.legacySummaryMessage
+      : createCompactionSummaryMessage(input.contextSummary ?? input.summary);
+  return { ...base, compaction: meta };
+}
+
+/**
+ * Read-time counterpart of {@link buildContextCompactionShape}: folds one
+ * marker into the pre-compaction visible `window`, returning the new visible
+ * window. The marker enters the window stripped of its `CompactionMeta` (the
+ * meta is log bookkeeping, not conversation content), making the result
+ * byte-identical to what the destructive rewrite produced. Selection is
+ * re-derived deterministically from the window — the media-flat token
+ * heuristics make it dehydrate/rehydrate-invariant, and the persisted
+ * kept-user counts stay informational.
+ */
+export function deriveCompactionWindow(
+  window: readonly ContextMessage[],
+  marker: ContextMessage,
+): readonly ContextMessage[] {
+  const meta = marker.compaction;
+  const summary = stripCompactionMeta(marker);
+  if (meta?.legacyTail === true) {
+    return [summary, ...window.slice(meta.compactedCount)];
+  }
+  const selection = selectCompactionUserMessages(
+    collectCompactableUserMessages(window),
+    COMPACT_USER_MESSAGE_MAX_TOKENS,
+    COMPACT_USER_MESSAGE_HEAD_TOKENS,
+    defaultTokenEstimate.message,
+  );
+  const elision = selection.elided
+    ? createCompactionElisionMessage(selection.omittedTokens)
+    : undefined;
+  return elision === undefined
+    ? [...selection.head, ...selection.tail, summary]
+    : [...selection.head, elision, ...selection.tail, summary];
+}
+
+function stripCompactionMeta(message: ContextMessage): ContextMessage {
+  if (message.compaction === undefined) return message;
+  const { compaction: _meta, ...stripped } = message;
+  void _meta;
+  return stripped;
 }
 
 export function buildCompactionSummaryText(summary: string): string {

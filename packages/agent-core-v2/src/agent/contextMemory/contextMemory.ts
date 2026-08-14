@@ -38,7 +38,17 @@ export interface ContextCompactionResult {
 export interface IAgentContextMemoryService {
   readonly _serviceBrand: undefined;
 
+  /** The model-visible window: the append-only folded log derived through
+   *  `visibleWindow.deriveVisibleMessages` (compaction markers folded away).
+   *  This is the history every consumer — LLM requests, token counting, undo,
+   *  injections — should read. */
   get(): readonly ContextMessage[];
+
+  /** The raw append-only folded log, pre-compaction history and summary
+   *  markers included. Log entries keep stable identities across appends —
+   *  use it for integrity checks (e.g. the compaction safety check), never
+   *  for model-facing content. */
+  getLog(): readonly ContextMessage[];
 
   append(...messages: readonly ContextMessage[]): void;
 

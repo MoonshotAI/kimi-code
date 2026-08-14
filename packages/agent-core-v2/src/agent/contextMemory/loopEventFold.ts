@@ -126,7 +126,18 @@ const messageAdapter: FoldEntryAdapter<ContextMessage> = {
 };
 
 export function foldAppendMessage(state: ContextState, message: ContextMessage): ContextState {
-  return appendMessageTo(state, message);
+  return appendMessageTo(state, stripCompactionMarker(message));
+}
+
+/** `CompactionMeta` is fold-internal bookkeeping produced only by the
+ *  `context.apply_compaction` Op; an `append_message` record carrying it (a
+ *  fork copying the visible window, an external writer) must not mint a real
+ *  marker — strip it so the log can only gain markers through the Op. */
+function stripCompactionMarker(message: ContextMessage): ContextMessage {
+  if (message.compaction === undefined) return message;
+  const { compaction: _meta, ...stripped } = message;
+  void _meta;
+  return stripped;
 }
 
 export function foldLoopEvent(state: ContextState, event: LoopRecordedEvent): ContextState {

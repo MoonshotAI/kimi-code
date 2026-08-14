@@ -595,6 +595,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   ): Promise<CompactionResult> {
     const startedAt = Date.now();
     const originalHistory = [...this.context.get()];
+    const originalLog = this.context.getLog();
     const tokensBefore = this.requestTokens(originalHistory);
     let retryCount = 0;
     let thinkingEffort = this.profile.data().thinkingLevel;
@@ -704,7 +705,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         );
       }
 
-      if (!historySafeToCompact(this.context.get(), originalHistory)) {
+      if (!historySafeToCompact(this.context.getLog(), originalLog)) {
         const active = this._compacting;
         if (active !== null) {
           this.cancelActive(active);
@@ -820,6 +821,16 @@ function collectSummary(finish: AgentLLMRequestFinish): CompactionAttemptResult 
   return { summary, usage: finish.usage, traceId: finish.traceId };
 }
 
+/**
+ * The compaction round is async while the log keeps accepting appends, so the
+ * summary must not land when the history moved underneath it. The folded log
+ * is append-only between compactions (entries keep stable identities — no
+ * derivation recreates them), so an identity-prefix check against the log
+ * captured at round start is exact: it fails if anything rewrote or cut the
+ * history (undo / clear / another compaction / the swarm-mode pop), and the
+ * tail beyond the prefix must hold only real user input (anything else —
+ * injections, task notices — invalidates the pending handoff).
+ */
 function historySafeToCompact(
   current: readonly ContextMessage[],
   original: readonly ContextMessage[],
