@@ -82,6 +82,38 @@ function unescapeBashXml(text: string): string {
     .replaceAll('&amp;', '&');
 }
 
+/**
+ * Index just past a run of grouped skill-activation records that starts at
+ * `from`, when the run is closed by the group's prompt. Returns undefined
+ * when the records ahead are not a complete grouped submission.
+ */
+function groupedCardsEnd(
+  records: readonly AgentReplayRecord[],
+  from: number,
+): number | undefined {
+  let submissionId: string | undefined;
+  let j = from;
+  for (; j < records.length; j++) {
+    const record = records[j]!;
+    if (record.type !== 'message') return undefined;
+    const origin = record.message.origin;
+    const recordSubmissionId = originSubmissionId(origin);
+    if (origin?.kind !== 'skill_activation' || recordSubmissionId === undefined) break;
+    submissionId ??= recordSubmissionId;
+    if (recordSubmissionId !== submissionId) break;
+  }
+  if (submissionId === undefined || j === from) return undefined;
+  const next = records[j];
+  if (
+    next?.type === 'message' &&
+    next.message.origin?.kind === 'user' &&
+    originSubmissionId(next.message.origin) === submissionId
+  ) {
+    return j;
+  }
+  return undefined;
+}
+
 export class SessionReplayRenderer {
   constructor(private readonly host: SessionReplayHost) {}
 
@@ -193,11 +225,36 @@ export class SessionReplayRenderer {
 
   private renderRecords(agent: ResumedAgentState): void {
     const context = createReplayRenderContext();
-    for (const record of limitReplayRecordsByTurn(agent.replay, REPLAY_TURN_LIMIT)) {
-      this.renderRecord(context, record);
+    const records = [...limitReplayRecordsByTurn(agent.replay, REPLAY_TURN_LIMIT)];
+    for (let i = 0; i < records.length; i++) {
+      i = this.renderRecordWithGroupLookahead(context, records, i);
     }
     this.flushAssistant(context);
     this.cleanupRuntime(context);
+  }
+
+  private renderRecordWithGroupLookahead(
+    context: ReplayRenderContext,
+    records: readonly AgentReplayRecord[],
+    index: number,
+  ): number {
+    const record = records[index]!;
+    // A hook result directly ahead of a grouped submission is projected
+    // inside the group's window — after its skill cards, before the prompt —
+    // matching the live event order instead of attaching it to the previous
+    // turn.
+    if (record.type === 'message' && record.message.origin?.kind === 'hook_result') {
+      const cardsEnd = groupedCardsEnd(records, index + 1);
+      if (cardsEnd !== undefined) {
+        for (let j = index + 1; j < cardsEnd; j++) {
+          this.renderRecord(context, records[j]!);
+        }
+        this.renderHookResult(context, record.message);
+        return cardsEnd - 1;
+      }
+    }
+    this.renderRecord(context, record);
+    return index;
   }
 
   private renderRecord(context: ReplayRenderContext, record: AgentReplayRecord): void {

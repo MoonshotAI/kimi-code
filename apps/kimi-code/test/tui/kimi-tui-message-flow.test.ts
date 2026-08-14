@@ -850,6 +850,16 @@ describe('KimiTUI message flow', () => {
               time: 3,
               message: {
                 role: 'user',
+                content: [{ type: 'text', text: 'hook note' }],
+                toolCalls: [],
+                origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
+              },
+            },
+            {
+              type: 'message',
+              time: 4,
+              message: {
+                role: 'user',
                 content: [{ type: 'text', text: 'skill card A' }],
                 toolCalls: [],
                 origin: groupedOrigin('act-1', 'review'),
@@ -857,7 +867,7 @@ describe('KimiTUI message flow', () => {
             },
             {
               type: 'message',
-              time: 4,
+              time: 5,
               message: {
                 role: 'user',
                 content: [{ type: 'text', text: 'skill card B' }],
@@ -867,7 +877,7 @@ describe('KimiTUI message flow', () => {
             },
             {
               type: 'message',
-              time: 5,
+              time: 6,
               message: {
                 role: 'user',
                 content: [{ type: 'text', text: 'please /skill:review and /skill:security' }],
@@ -877,7 +887,7 @@ describe('KimiTUI message flow', () => {
             },
             {
               type: 'message',
-              time: 6,
+              time: 7,
               message: {
                 role: 'assistant',
                 content: [{ type: 'text', text: 'grouped answer' }],
@@ -886,7 +896,7 @@ describe('KimiTUI message flow', () => {
             },
             {
               type: 'message',
-              time: 7,
+              time: 8,
               message: {
                 role: 'user',
                 content: [{ type: 'text', text: 'skill card C' }],
@@ -896,7 +906,7 @@ describe('KimiTUI message flow', () => {
             },
             {
               type: 'message',
-              time: 8,
+              time: 9,
               message: {
                 role: 'user',
                 content: [{ type: 'text', text: 'please /commit' }],
@@ -914,12 +924,16 @@ describe('KimiTUI message flow', () => {
 
     const turns = groupTurns(driver.state.transcriptEntries);
     expect(turns).toHaveLength(3);
+    // The hook result is projected inside the group's window (after the skill
+    // cards, before the prompt), matching the live event order.
     expect(turns[1]!.entries.map((entry) => entry.kind)).toEqual([
       'skill_activation',
       'skill_activation',
+      'assistant',
       'user',
       'assistant',
     ]);
+    expect(turns[1]!.entries[2]!.hookResult).toBe(true);
     expect(turns[2]!.entries.map((entry) => entry.kind)).toEqual(['skill_activation', 'user']);
   });
 

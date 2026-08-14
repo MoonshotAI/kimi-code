@@ -273,10 +273,6 @@ export class AgentPromptService implements IAgentPromptService {
     this.launching = true;
     try {
       if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') { this.pending.unshift(item); return; }
-      // A grouped submission's leading messages (rendered skills) land ahead
-      // of the submit hook, so a hook result sits between them and the prompt
-      // — the same order the live event stream produces.
-      for (const before of item.messagesBefore) this.appendPrompt(before, []);
       const { message, captions } = this.extractCompressionCaptions(item.message);
       let blocked = false;
       for (const before of item.messagesBefore) {
@@ -284,12 +280,13 @@ export class AgentPromptService implements IAgentPromptService {
       }
       blocked = (await this.blockedByHook(message, false)) || blocked;
       if (blocked) {
+        for (const before of item.messagesBefore) this.appendPrompt(before, []);
         this.appendPrompt(message, captions); item.state = 'blocked'; item.launchedDeferred.resolve(undefined);
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
         this.publishCompleted(item.id, 'blocked'); return;
       }
       const turn = (await this.loop.enqueue(
-        new PromptStepRequest(message, captions, this.reminders),
+        new PromptStepRequest(message, captions, this.reminders, item.messagesBefore),
       ).assigned).turn;
       if (turn === undefined) { this.pending.unshift(item); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
