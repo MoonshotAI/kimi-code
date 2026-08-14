@@ -164,6 +164,8 @@ import {
   promptLaunchResultSchema,
   promptPartSchema,
   promptPayloadSchema,
+  promptSkillActivationSchema,
+  promptWithSkillsPayloadSchema,
   runCommandPayloadSchema,
   runShellCommandPayloadSchema,
   runtimeBindingSchema,
@@ -533,6 +535,8 @@ type PromptPayload = Parameters<IAgentPromptService['submit']>[0];
 type PromptLaunchResult = NonNullable<Awaited<ReturnType<IAgentPromptService['submit']>>>;
 type SteerPayload = Parameters<IAgentPromptService['submitSteer']>[0];
 type ActivateSkillPayload = Parameters<IAgentSkillService['activate']>[0];
+type PromptWithSkillsPayload = Parameters<IAgentSkillService['promptWithSkills']>[0];
+type PromptSkillActivation = PromptWithSkillsPayload['skills'][number];
 type AgentCommandInfo = ReturnType<IAgentCommandService['list']>[number];
 type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
 type RunShellCommandPayload = Parameters<IAgentShellCommandService['run']>[0];
@@ -558,6 +562,16 @@ const _promptPart: AssertWire<typeof promptPartSchema, PromptPart> = true;
 // the full `ContentPart` union (also think/audio parts); the wire mirrors the
 // `PromptPart` subset clients may send, so the reverse direction fails.
 const _promptPayload: AssertWireToEngine<typeof promptPayloadSchema, PromptPayload> = true;
+const _promptSkillActivation: AssertWire<
+  typeof promptSkillActivationSchema,
+  PromptSkillActivation
+> = true;
+// Same one-directional rule as `promptPayload`: the engine's `input` accepts
+// the full `ContentPart` union; the wire mirrors the `PromptPart` subset.
+const _promptWithSkillsPayload: AssertWireToEngine<
+  typeof promptWithSkillsPayloadSchema,
+  PromptWithSkillsPayload
+> = true;
 const _steerPayload: AssertWireToEngine<typeof steerPayloadSchema, SteerPayload> = true;
 const _activateSkillPayload: AssertWire<typeof activateSkillPayloadSchema, ActivateSkillPayload> =
   true;

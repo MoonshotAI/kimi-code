@@ -11,9 +11,16 @@
  * message after the rendered prompt). It settles `{turn_id}` for the caller,
  * persists the derived title/lastPrompt through `sessionMetadata` for the
  * main agent only (publishing the live update through `event`), and reports
- * `skill_invoked` / `flow_invoked` through `telemetry`. `wire.replay`
- * reapplies the fact as a no-op, so neither the event nor telemetry fires on
- * resume (matching the former `restoring` guard). Bound at Agent scope.
+ * `skill_invoked` / `flow_invoked` through `telemetry`. `promptWithSkills`
+ * bundles one or more skill activations into the prompt's own user message:
+ * the rendered skill blocks precede the caller's parts in the content and
+ * each activation's metadata rides the prompt origin's `skillActivations`,
+ * so the bundle launches as a single turn and undoes as a single anchor;
+ * every skill is validated before anything is recorded, so an invalid name
+ * or an empty skill list rejects the whole submission. The fact is transient
+ * (`persist: false`), so neither the event nor telemetry fires on resume —
+ * bundled activations are rebuilt from the prompt origin instead. Bound at
+ * Agent scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -22,8 +29,13 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import type { ContentPart } from '#/kosong/contract/message';
 
-import type { ContextMessage, SkillActivationOrigin } from '#/agent/contextMemory/types';
+import type {
+  BundledSkillActivation,
+  ContextMessage,
+  SkillActivationOrigin,
+} from '#/agent/contextMemory/types';
 import { promptMetadataTextFromSkill, renderUserSlashSkillPrompt } from './prompt';
+import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { Service } from '#/_base/di/service';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -32,7 +44,12 @@ import { IAgentPromptService, type PromptLaunchResult } from '#/agent/prompt/pro
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { IWireService } from '#/wire/wire';
-import { IAgentSkillService, type SkillActivationInput } from './skill';
+import {
+  IAgentSkillService,
+  type PromptSkillActivation,
+  type PromptWithSkillsInput,
+  type SkillActivationInput,
+} from './skill';
 import { skillActivate } from './skillOps';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { IEventService } from '#/app/event/event';
@@ -106,8 +123,6 @@ export class AgentSkillService extends Service implements IAgentSkillService {
         'Cannot activate skill while another turn is active',
       );
     }
-    // Awaited (not fire-and-forget): the caller gets the launched turn id and
-    // activation failures (unknown skill, busy) surface instead of vanishing.
     if (this.scopeContext.agentId === MAIN_AGENT_ID) {
       await applyPromptMetadataUpdate(
         {
@@ -121,8 +136,100 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     return { turn_id: turn.id };
   }
 
+  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult | undefined> {
+    if (input.input.length === 0) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'promptWithSkills requires a non-empty prompt');
+    }
+    if (input.skills.length === 0) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'promptWithSkills requires at least one skill',
+      );
+    }
+    await this.skillCatalog.ready;
+    const prepared = input.skills.map((skill) => this.prepareBundled(skill));
+    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
+      await applyPromptMetadataUpdate(
+        {
+          metadata: this.metadata,
+          eventService: this.eventService,
+          sessionId: this.sessionContext.sessionId,
+        },
+        promptMetadataTextFromContentParts(input.input),
+      );
+    }
+    for (const activation of prepared) {
+      void this.recordActivation(activation.origin);
+    }
+    const handle = await this.prompt.enqueue({
+      message: {
+        role: 'user',
+        content: [...prepared.map((activation) => activation.part), ...input.input],
+        toolCalls: [],
+        origin: {
+          kind: 'user',
+          skillActivations: prepared.map((activation) => activation.entry),
+        },
+      },
+    });
+    if (handle.state === 'pending') return undefined;
+    const turn = await handle.launched;
+    return turn === undefined ? undefined : { turn_id: turn.id };
+  }
+
   recordModelToolActivation(origin: SkillActivationOrigin): void {
     void this.recordActivation(origin);
+  }
+
+  private prepareBundled(input: PromptSkillActivation): {
+    readonly origin: SkillActivationOrigin;
+    readonly part: ContentPart;
+    readonly entry: BundledSkillActivation;
+  } {
+    const skill = this.skillCatalog.catalog.getSkill(input.name);
+    if (skill === undefined) {
+      throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
+    }
+    if (!isUserActivatableSkillType(skill.metadata.type)) {
+      throw new Error2(
+        ErrorCodes.SKILL_TYPE_UNSUPPORTED,
+        `Skill "${skill.name}" cannot be activated by the user`,
+      );
+    }
+
+    const skillArgs = input.args ?? '';
+    const skillContent = this.renderSkillPrompt(skill, skillArgs);
+    const origin: SkillActivationOrigin = {
+      kind: 'skill_activation',
+      activationId: randomUUID(),
+      skillName: skill.name,
+      trigger: 'user-slash',
+      skillType: skill.metadata.type,
+      skillPath: skill.path,
+      skillSource: skill.source,
+      skillArgs: input.args,
+    };
+    return {
+      origin,
+      part: {
+        type: 'text',
+        text: renderUserSlashSkillPrompt({
+          skillName: skill.name,
+          skillArgs,
+          skillContent,
+          skillSource: skill.source,
+          skillDir: skill.dir,
+        }),
+      },
+      entry: {
+        activationId: origin.activationId,
+        skillName: origin.skillName,
+        skillArgs: origin.skillArgs,
+        skillType: origin.skillType,
+        skillPath: origin.skillPath,
+        skillSource: origin.skillSource,
+      },
+    };
   }
 
   private async recordActivation(

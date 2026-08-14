@@ -44,6 +44,25 @@ function compaction(): ContextMessage {
 
 const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
 
+function skillActivation(submissionId?: string): ContextMessage {
+  return {
+    role: 'user',
+    content: [text('s')],
+    toolCalls: [],
+    origin: {
+      kind: 'skill_activation',
+      activationId: 'activation-1',
+      skillName: 'review',
+      trigger: 'user-slash',
+      ...(submissionId === undefined ? {} : { submissionId }),
+    },
+  };
+}
+
+function groupedPrompt(submissionId: string): ContextMessage {
+  return user({ kind: 'user', submissionId });
+}
+
 describe('computeUndoCut', () => {
   it('finds the cut for the last real user prompt', () => {
     const cut = computeUndoCut([user(USER_ORIGIN), assistant()], 1);
@@ -95,6 +114,88 @@ describe('computeUndoCut', () => {
     expect(cut.stoppedAtCompaction).toBe(true);
     expect(isFullyUndoable(cut, 2)).toBe(false);
   });
+
+  it('cuts a grouped submission whole: the skill activations ride their prompt', () => {
+    const history = [
+      user(USER_ORIGIN),
+      skillActivation('sub-1'),
+      skillActivation('sub-1'),
+      groupedPrompt('sub-1'),
+      assistant(),
+    ];
+    const cut = computeUndoCut(history, 1);
+    expect(cut).toEqual({ cutIndex: 1, removedCount: 1, stoppedAtCompaction: false });
+    expect(isFullyUndoable(cut, 1)).toBe(true);
+  });
+
+  it('does not bleed a grouped cut into an earlier submission', () => {
+    const history = [
+      skillActivation('sub-1'),
+      groupedPrompt('sub-1'),
+      assistant(),
+      skillActivation('sub-2'),
+      groupedPrompt('sub-2'),
+      assistant(),
+    ];
+    const cut = computeUndoCut(history, 1);
+    expect(cut).toEqual({ cutIndex: 3, removedCount: 1, stoppedAtCompaction: false });
+  });
+
+  it('keeps a lone skill activation as its own undo anchor', () => {
+    const history = [user(USER_ORIGIN), skillActivation(), assistant()];
+    const cut = computeUndoCut(history, 1);
+    expect(cut).toEqual({ cutIndex: 1, removedCount: 1, stoppedAtCompaction: false });
+    expect(isFullyUndoable(cut, 1)).toBe(true);
+  });
+
+  it('cuts a grouped submission together with its prompt-owned injections', () => {
+    const history = [
+      user(USER_ORIGIN),
+      {
+        role: 'user',
+        content: [text('caption')],
+        toolCalls: [],
+        origin: { kind: 'injection', variant: 'image_compression', ownerPromptId: 'prompt-1' },
+      } as ContextMessage,
+      skillActivation('sub-1'),
+      { ...groupedPrompt('sub-1'), id: 'prompt-1' },
+      assistant(),
+    ];
+    const cut = computeUndoCut(history, 1);
+    expect(cut).toEqual({ cutIndex: 1, removedCount: 1, stoppedAtCompaction: false });
+    expect(isFullyUndoable(cut, 1)).toBe(true);
+  });
+
+  it('stops a grouped cut at the next undo anchor when submission ids collide', () => {
+    const history = [
+      skillActivation('sub-1'),
+      groupedPrompt('sub-1'),
+      skillActivation('sub-1'),
+      groupedPrompt('sub-1'),
+    ];
+    const cut = computeUndoCut(history, 1);
+    // Only the second group is cut, even though both share the id.
+    expect(cut).toEqual({ cutIndex: 2, removedCount: 1, stoppedAtCompaction: false });
+    expect(isFullyUndoable(cut, 1)).toBe(true);
+  });
+
+  it('skips a hook result inside a grouped submission and keeps it', () => {
+    const history = [
+      user(USER_ORIGIN),
+      skillActivation('sub-1'),
+      {
+        role: 'user',
+        content: [text('hook note')],
+        toolCalls: [],
+        origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
+      } as ContextMessage,
+      groupedPrompt('sub-1'),
+      assistant(),
+    ];
+    const cut = computeUndoCut(history, 1);
+    expect(cut).toEqual({ cutIndex: 1, removedCount: 1, stoppedAtCompaction: false });
+    expect(isFullyUndoable(cut, 1)).toBe(true);
+  });
 });
 
 describe('contextUndo op', () => {
@@ -108,6 +209,16 @@ describe('contextUndo op', () => {
     ];
     const next = contextUndo.apply(state, { count: 1 });
     expect(next).toEqual([user(USER_ORIGIN), assistant()]);
+  });
+
+  it('removes a grouped submission (skill activations + prompt) whole', () => {
+    const state = [
+      user(USER_ORIGIN),
+      skillActivation('sub-1'),
+      groupedPrompt('sub-1'),
+      assistant(),
+    ];
+    expect(contextUndo.apply(state, { count: 1 })).toEqual([user(USER_ORIGIN)]);
   });
 
   it('returns the same reference when not fully undoable', () => {

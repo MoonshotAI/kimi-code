@@ -55,3 +55,110 @@ describe('activateSkill', () => {
     await expect(ctx.rpc.activateSkill({ name: 'missing' })).rejects.toThrow(/not found/i);
   });
 });
+
+describe('promptWithSkills', () => {
+  let ctx: TestAgentContext;
+
+  afterEach(async () => {
+    try {
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  function agentWithSkills(): TestAgentContext {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(stubSkill('review', { content: '# Review body' }));
+    catalog.register(stubSkill('security', { content: '# Security body' }));
+    return createTestAgent(skillServices(catalog));
+  }
+
+  it('activates every skill and launches exactly one turn for the group', async () => {
+    ctx = agentWithSkills();
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    const launched = await ctx.rpc.promptWithSkills({
+      input: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'review' }, { name: 'security' }],
+      submissionId: 'submission-1',
+    });
+    expect(launched?.turn_id).toBe(0);
+    await ctx.untilTurnEnd();
+
+    // Both rendered skills precede the prompt in the single LLM call.
+    expect(ctx.llmCalls).toHaveLength(1);
+    const llmInput = JSON.stringify(ctx.llmInputs());
+    expect(llmInput).toContain('# Review body');
+    expect(llmInput).toContain('# Security body');
+    expect(llmInput).toContain('Review this change.');
+
+    // skill.activated fires per skill, tagged with the shared submission id,
+    // before the single turn.started.
+    const events = ctx.allEvents.filter(
+      (event) =>
+        event.type === '[rpc]' &&
+        (event.event === 'skill.activated' || event.event === 'turn.started'),
+    );
+    expect(events.map((event) => event.event)).toEqual([
+      'skill.activated',
+      'skill.activated',
+      'turn.started',
+    ]);
+    expect(
+      events
+        .slice(0, 2)
+        .map((event) => (event.args as { readonly submissionId?: string }).submissionId),
+    ).toEqual(['submission-1', 'submission-1']);
+  });
+
+  it('rejects the whole submission when any skill is unknown', async () => {
+    ctx = agentWithSkills();
+
+    await expect(
+      ctx.rpc.promptWithSkills({
+        input: [{ type: 'text', text: 'Review this change.' }],
+        skills: [{ name: 'review' }, { name: 'missing' }],
+      }),
+    ).rejects.toThrow(/not found/i);
+
+    expect(ctx.llmCalls).toHaveLength(0);
+    expect(ctx.context.get()).toHaveLength(0);
+    expect(
+      ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'skill.activated'),
+    ).toBe(false);
+  });
+
+  it('rejects a grouped submission with an empty prompt message', async () => {
+    ctx = agentWithSkills();
+
+    await expect(
+      ctx.rpc.promptWithSkills({
+        input: [],
+        skills: [{ name: 'review' }],
+      }),
+    ).rejects.toThrow(/non-empty prompt/i);
+
+    expect(ctx.llmCalls).toHaveLength(0);
+    expect(ctx.context.get()).toHaveLength(0);
+    expect(
+      ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'skill.activated'),
+    ).toBe(false);
+  });
+
+  it('undoes the prompt and its skill activations as one unit', async () => {
+    ctx = agentWithSkills();
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.promptWithSkills({
+      input: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'review' }, { name: 'security' }],
+      submissionId: 'submission-1',
+    });
+    await ctx.untilTurnEnd();
+    expect(ctx.context.get().length).toBeGreaterThan(0);
+
+    const undone = await ctx.rpc.undoHistory({ count: 1 });
+    expect(undone).toBe(1);
+    expect(ctx.context.get()).toHaveLength(0);
+  });
+});

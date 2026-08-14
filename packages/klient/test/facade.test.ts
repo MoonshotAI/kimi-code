@@ -183,6 +183,35 @@ describe('agent profile routing', () => {
   });
 });
 
+describe('agent skill routing', () => {
+  it('promptWithSkills routes to agentSkillService.promptWithSkills with the agent scope', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const agent = klient.session('s1').agent('main');
+
+    channel.result = { turn_id: 7 };
+    await expect(
+      agent.promptWithSkills({
+        input: [{ type: 'text', text: 'Review this change.' }],
+        skills: [{ name: 'review' }, { name: 'security', args: 'src/app.ts' }],
+        submissionId: 'submission-1',
+      }),
+    ).resolves.toEqual({ turn_id: 7 });
+    expect(channel.calls[0]).toEqual({
+      scope: { sessionId: 's1', agentId: 'main' },
+      service: 'agentSkillService',
+      method: 'promptWithSkills',
+      args: [
+        {
+          input: [{ type: 'text', text: 'Review this change.' }],
+          skills: [{ name: 'review' }, { name: 'security', args: 'src/app.ts' }],
+          submissionId: 'submission-1',
+        },
+      ],
+    });
+  });
+});
+
 describe('session skills routing', () => {
   it('skills.list routes to sessionSkillCatalog.list with the session scope', async () => {
     const channel = new FakeChannel();

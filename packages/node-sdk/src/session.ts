@@ -27,6 +27,8 @@ import type {
   PluginInfo,
   PluginSummary,
   PromptInput,
+  PromptSkillActivation,
+  PromptWithSkillsOptions,
   ReloadSessionOptions,
   ReloadSummary,
   ResumedSessionState,
@@ -140,6 +142,26 @@ export class Session {
     await this.rpc.prompt({
       sessionId: this.id,
       input: normalizePromptInput(input),
+    });
+  }
+
+  /**
+   * Submit one prompt preceded by one or more skill activations: the skills
+   * are validated up front (an unknown name rejects the whole submission),
+   * rendered ahead of the prompt in the same turn, and the group undoes as
+   * one unit. Requires the agent-core-v2 engine.
+   */
+  async promptWithSkills(
+    input: string | PromptInput,
+    skills: readonly PromptSkillActivation[],
+    options?: PromptWithSkillsOptions,
+  ): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.promptWithSkills({
+      sessionId: this.id,
+      input: normalizePromptInput(input),
+      skills,
+      submissionId: options?.submissionId,
     });
   }
 

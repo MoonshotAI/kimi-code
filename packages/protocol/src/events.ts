@@ -45,6 +45,12 @@ export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  /**
+   * Groups one prompt with the skill activations submitted alongside it:
+   * every message of the submission carries the same id, so undo / replay
+   * treat the group as a single turn.
+   */
+  readonly submissionId?: string;
 }
 
 export interface SkillActivationOrigin {
@@ -56,6 +62,11 @@ export interface SkillActivationOrigin {
   readonly skillType?: string;
   readonly skillPath?: string;
   readonly skillSource?: SkillSource;
+  /**
+   * Set when the activation rode a grouped prompt submission: it is part of
+   * the prompt's group and is not an undo anchor of its own.
+   */
+  readonly submissionId?: string;
 }
 
 export interface PluginCommandOrigin {
@@ -629,6 +640,8 @@ export interface SkillActivatedEvent {
   readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
   readonly skillPath?: string;
   readonly skillSource?: SkillSource;
+  /** Present when the activation belongs to a grouped prompt submission. */
+  readonly submissionId?: string;
 }
 
 export interface PluginCommandActivatedEvent {
@@ -1044,6 +1057,7 @@ export const skillSourceSchema = z.enum(['project', 'user', 'extra', 'builtin'])
 
 export const userPromptOriginSchema = z.object({
   kind: z.literal('user'),
+  submissionId: z.string().optional(),
 }) satisfies z.ZodType<UserPromptOrigin>;
 
 export const skillActivationOriginSchema = z.object({
@@ -1055,6 +1069,7 @@ export const skillActivationOriginSchema = z.object({
   skillType: z.string().optional(),
   skillPath: z.string().optional(),
   skillSource: skillSourceSchema.optional(),
+  submissionId: z.string().optional(),
 }) satisfies z.ZodType<SkillActivationOrigin>;
 
 export const pluginCommandOriginSchema = z.object({
@@ -1578,6 +1593,7 @@ export const skillActivatedEventSchema = z.object({
   trigger: z.enum(['user-slash', 'model-tool', 'nested-skill']),
   skillPath: z.string().optional(),
   skillSource: skillSourceSchema.optional(),
+  submissionId: z.string().optional(),
 }) satisfies z.ZodType<SkillActivatedEvent>;
 
 export const pluginCommandActivatedEventSchema = z.object({
