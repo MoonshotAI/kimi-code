@@ -224,9 +224,26 @@ export function registerPluginsRoutes(
       marketplace = await withLatestVersions(marketplace, fetchImpl);
       const installed = await core.accessor.get(IPluginService).listPlugins();
       const byId = new Map(installed.map((p) => [p.id, p]));
-      const entries: PluginMarketplaceEntryWire[] = marketplace.plugins.map((entry) => {
+      // Capability rows unsupported on this host are hidden entirely (the CLI
+      // does the same for its built-in rows) — never marked, never offered.
+      const supportedCapabilityIds = new Set<string>(
+        core.accessor
+          .get(ICapabilityService)
+          .describeCapabilities()
+          .filter((descriptor) => descriptor.supported)
+          .map((descriptor) => descriptor.id),
+      );
+      const entries: PluginMarketplaceEntryWire[] = [];
+      for (const entry of marketplace.plugins) {
         const capabilityRow =
           opts.marketplaceIsDefault === true ? CAPABILITY_ROW_IDS[entry.id] : undefined;
+        if (
+          capabilityRow !== undefined &&
+          !supportedCapabilityIds.has(capabilityRow.capabilityId)
+        ) {
+          continue;
+        }
+
         // Capability rows join through the wiring plugin ids (platform order)
         // BEFORE the bare catalog id — a stale same-id record must not win.
         const record =
@@ -242,7 +259,7 @@ export function registerPluginsRoutes(
         const updateAvailable =
           computeUpdateStatus(entry.version, record?.version, record !== undefined).kind ===
           'update';
-        return {
+        entries.push({
           id: entry.id,
           tier: entry.tier ?? 'third-party',
           displayName: entry.displayName,
@@ -254,8 +271,8 @@ export function registerPluginsRoutes(
           installed: installedInfo,
           updateAvailable: updateAvailable ? true : undefined,
           capabilityId: capabilityRow?.capabilityId,
-        };
-      });
+        });
+      }
       reply.send(okEnvelope({ entries }, req.id));
     },
   );

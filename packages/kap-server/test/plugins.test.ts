@@ -423,6 +423,17 @@ describe('server-v2 /api/v1 plugins', () => {
       'kimi-webbridge',
     );
 
+    // kimi-cu row assertions: on unsupported platforms the row is hidden
+    // entirely (never marked, never offered).
+    const cuSupported = process.platform === 'darwin' || (process.platform === 'win32' && process.arch === 'x64');
+    const after0 = await call<{
+      entries: { id: string; capabilityId?: string; installed?: { version?: string } }[];
+    }>('GET', '/api/v1/plugins/marketplace');
+    if (!cuSupported) {
+      expect(after0.body.data.entries.find((e) => e.id === 'kimi-cu')).toBeUndefined();
+      return;
+    }
+
     // A plugin installed under the Windows wiring id still marks the
     // kimi-cu row installed (the join follows the capability's plugin ids).
     const winSource = await makePluginDir('kimi-cu-win', '0.5.4');
