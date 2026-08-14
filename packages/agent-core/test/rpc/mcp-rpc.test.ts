@@ -1033,4 +1033,28 @@ describe('KimiCore unified MCP management plane', () => {
       message: expect.stringContaining('shared by multiple enabled servers'),
     });
   }, 20000);
+
+  it('tests the enabled entry when the name collides with a disabled shadow', async () => {
+    const plain = await startMcpHttpServer();
+    const { core, home } = await makeCore();
+    const pluginRoot = await makePlugin('demo', {
+      api: { transport: 'http', url: plain.url },
+    });
+    await core.installPlugin({ source: pluginRoot });
+    // The disabled file entry lists before the plugin in registry order, but
+    // the enabled plugin is what a live session would actually run.
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        'plugin-demo:api': {
+          transport: 'http',
+          url: 'http://127.0.0.1:1/unreachable',
+          enabled: false,
+        },
+      },
+    });
+
+    const result = await core.testGlobalMcpServer({ name: 'plugin-demo:api' });
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('echo');
+  }, 20000);
 });

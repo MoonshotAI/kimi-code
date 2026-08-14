@@ -1303,13 +1303,18 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     if (matches.length === 0) {
       throw new KimiError(ErrorCodes.MCP_SERVER_NOT_FOUND, `MCP server "${name}" was not found`);
     }
-    if (matches.filter((entry) => entry.config.enabled !== false).length > 1) {
+    const enabled = matches.filter((entry) => entry.config.enabled !== false);
+    if (enabled.length > 1) {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
         `MCP runtime name "${name}" is shared by multiple enabled servers`,
       );
     }
-    const entry = matches[0]!;
+    // Probe the entry the runtime would actually run: the sole enabled match
+    // owns the name (an enabled plugin outranks the file layers, which list
+    // first). When every match is disabled, fall back to the first entry so
+    // the probe reports it as disabled.
+    const entry = enabled[0] ?? matches[0]!;
     return { name: entry.name, ...entry.config };
   }
 
