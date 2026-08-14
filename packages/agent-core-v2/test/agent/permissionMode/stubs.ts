@@ -23,6 +23,7 @@ export function stubPermissionModeService(
       return mode();
     },
     setMode: () => {},
+    setModeAndBroadcast: () => {},
     onDidChangeMode: Event.None as Event<PermissionModeChangedContext>,
   };
 }

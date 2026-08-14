@@ -918,6 +918,7 @@ function registerSessionExportServices(
                 _serviceBrand: undefined,
                 onWillCreateSession: noopEvent,
                 onDidCreateSession: noopEvent,
+                onWillCloseSession: noopEvent,
                 onDidCloseSession: noopEvent,
                 onDidArchiveSession: noopEvent,
                 onDidForkSession: noopEvent,
@@ -1021,6 +1022,7 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
     read: async () => meta,
     update: async () => {},
     setTitle: async () => {},
+    setGeneratedTitleIfUncustomized: async () => false,
     setArchived: async () => {},
     registerAgent: async () => {},
   };

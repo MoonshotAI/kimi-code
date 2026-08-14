@@ -16,8 +16,7 @@
  * Wire shape note: the signals are still named `subagent.spawned / started /
  * completed / failed` and telemetry still tracks `subagent_created` so existing
  * session recordings and dashboards stay valid. The spawned signal also
- * reports the child's display-normalized model alias (the derived secondary
- * entry resolves to its base alias) and its effective thinking effort, so
+ * reports the child's bound model alias and its effective thinking effort, so
  * clients can render both at spawn instead of waiting for the first
  * `agent.status.updated` frame.
  */

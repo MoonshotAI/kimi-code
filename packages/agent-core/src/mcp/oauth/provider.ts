@@ -21,12 +21,14 @@ import type {
   OAuthClientProvider,
   OAuthDiscoveryState,
 } from '@modelcontextprotocol/sdk/client/auth.js';
-import type {
-  OAuthClientInformationFull,
-  OAuthClientInformationMixed,
-  OAuthClientMetadata,
-  OAuthTokens,
+import {
+  OAuthTokensSchema,
+  type OAuthClientInformationFull,
+  type OAuthClientInformationMixed,
+  type OAuthClientMetadata,
+  type OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { OAuthTokenTransaction } from '@moonshot-ai/kimi-code-oauth';
 
 import { JsonFileStore, canonicalMcpOAuthResource, mcpOAuthStoreKey } from './store';
 
@@ -57,12 +59,25 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   private _codeVerifier: string | undefined;
   private _state: string | undefined;
   private _lastAuthorizationUrl: URL | undefined;
+  private readonly tokenTransaction: OAuthTokenTransaction<OAuthTokens>;
 
   constructor(options: McpOAuthProviderOptions) {
     this.serverUrl = canonicalMcpOAuthResource(options.serverUrl);
     this.storeKey = mcpOAuthStoreKey(options.serverName, this.serverUrl);
     this.store = options.store;
     this.clientLabel = options.clientLabel ?? `kimi-code (${options.serverName})`;
+    const tokensFile = `${this.storeKey}${TOKENS_SUFFIX}`;
+    this.tokenTransaction = new OAuthTokenTransaction({
+      key: this.storeKey,
+      read: async () => this.store.read<OAuthTokens>(tokensFile),
+      write: async (tokens) => {
+        this.store.write(tokensFile, tokens);
+      },
+      remove: async () => {
+        this.store.remove(tokensFile);
+      },
+      parse: (value) => OAuthTokensSchema.safeParse(value).data,
+    });
   }
 
   // ── flow-scoped state, set by McpOAuthService before invoking auth() ────
@@ -123,8 +138,17 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     return this.store.read<OAuthTokens>(`${this.storeKey}${TOKENS_SUFFIX}`);
   }
 
-  saveTokens(tokens: OAuthTokens): void {
-    this.store.write(`${this.storeKey}${TOKENS_SUFFIX}`, tokens);
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
+    await this.tokenTransaction.save(tokens);
+  }
+
+  /**
+   * Wrap the fetch used by the SDK's OAuth flow. Refresh-token grants for the
+   * same MCP identity are serialized, re-read from durable storage inside the
+   * lock, and committed before the lock is released.
+   */
+  createOAuthFetch(fetchFn: typeof fetch = globalThis.fetch): typeof fetch {
+    return this.tokenTransaction.createFetch(fetchFn);
   }
 
   redirectToAuthorization(url: URL): void {
@@ -166,23 +190,42 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
    * never comes. Dropping the registration lets the next `auth()` call
    * re-register with the current callback URI.
    */
-  invalidateStaleRegistration(redirectUri: string): boolean {
+  async invalidateStaleRegistration(redirectUri: string): Promise<boolean> {
     const info = this.clientInformation();
     if (info === undefined || !('redirect_uris' in info)) return false;
     const uris = info.redirect_uris;
     if (!Array.isArray(uris) || uris.length === 0) return false;
     if (uris.includes(redirectUri)) return false;
-    this.invalidateCredentials('client');
+    await this.clearCredentials('client');
     return true;
   }
 
-  invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'): void {
+  async invalidateCredentials(
+    scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery',
+  ): Promise<void> {
+    if (scope !== 'tokens' && scope !== 'all') {
+      await this.clearCredentials(scope);
+      return;
+    }
+    const shouldClearRelatedCredentials = await this.tokenTransaction.invalidateFromSdk(scope);
+    if (!shouldClearRelatedCredentials) return;
+    if (scope === 'all') {
+      await this.clearCredentials('client');
+      await this.clearCredentials('discovery');
+      this._codeVerifier = undefined;
+    }
+  }
+
+  /** Explicit user-driven reset; unlike the SDK invalidation hook, never preserves tokens. */
+  async clearCredentials(
+    scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery',
+  ): Promise<void> {
     if (scope === 'verifier') {
       this._codeVerifier = undefined;
       return;
     }
     if (scope === 'tokens' || scope === 'all') {
-      this.store.remove(`${this.storeKey}${TOKENS_SUFFIX}`);
+      await this.tokenTransaction.clear();
     }
     if (scope === 'client' || scope === 'all') {
       this.store.remove(`${this.storeKey}${CLIENT_SUFFIX}`);
@@ -202,6 +245,13 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     const registered = registeredRedirectUri(this.clientInformation());
     return registered ?? PASSIVE_REDIRECT_URI;
   }
+}
+
+export function createMcpOAuthFetch(
+  provider: OAuthClientProvider | undefined,
+  fetchFn: typeof fetch | undefined,
+): typeof fetch | undefined {
+  return provider instanceof McpOAuthClientProvider ? provider.createOAuthFetch(fetchFn) : fetchFn;
 }
 
 function registeredRedirectUri(info: OAuthClientInformationMixed | undefined): string | undefined {

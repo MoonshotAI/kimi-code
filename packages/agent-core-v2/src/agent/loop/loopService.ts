@@ -250,6 +250,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
+  cancelFromUser(turnId?: number): void {
+    const status = this.status();
+    if (status.state === 'running') {
+      this.telemetry.track2('cancel', {
+        from: 'streaming',
+        trace_id: status.activeTraceId,
+      });
+    }
+    this.cancel(turnId);
+  }
+
   tryAcquireQuiescence(): IDisposable | undefined {
     if (this.disposing) throw abortError('Agent loop disposed');
     if (

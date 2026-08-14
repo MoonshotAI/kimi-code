@@ -51,7 +51,7 @@ File names derive from the interface / class names so that scope and role are vi
 | Shared-types file | `<domain>.types.ts` | `log.types.ts` |
 | Errors file | `<name>.errors.ts` | `appendLogStore.errors.ts` |
 
-Acronym-aware lowerCamelCase lowercases a leading acronym as a group: `ILLMRequester` → `llmRequester.ts`, `IWSGateway` → `wsGateway.ts`, `IOAuthToolkit` → `oauthToolkit.ts`, `IAgentRPCService` → `agentRpcService.ts`.
+Acronym-aware lowerCamelCase lowercases a leading acronym as a group: `ILLMRequester` → `llmRequester.ts`, `IWSGateway` → `wsGateway.ts`, `IOAuthToolkit` → `oauthToolkit.ts`, `IMcpServerService` → `mcpServerService.ts`.
 
 Because the impl class always ends in `Service` and the interface file never does, the two files of one service never collide — even for `Store` / `Registry` / `Resolver` interfaces (`IAppendLogStore` → `appendLogStore.ts` + `appendLogStoreService.ts`).
 

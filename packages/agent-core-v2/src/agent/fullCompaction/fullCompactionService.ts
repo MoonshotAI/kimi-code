@@ -247,6 +247,17 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     return this._compacting;
   }
 
+  cancel(): void {
+    const active = this._compacting;
+    if (active !== null) {
+      this.telemetry.track2('cancel', {
+        from: 'compacting',
+        trace_id: active.traceId,
+      });
+    }
+    active?.abortController.abort();
+  }
+
   private getEffectiveMaxContextTokens(): number {
     const capability = this.profile.data().modelCapabilities;
     const configured = capability.max_input_tokens ?? capability.max_context_tokens;

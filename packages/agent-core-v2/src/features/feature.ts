@@ -28,6 +28,7 @@ import {
   AgentProfileContribution,
   AGENT_PROFILE_SOURCE_PRIORITY,
 } from '#/app/agentProfileCatalog/agentProfileContribution';
+import { FeatureServiceContribution } from '#/app/feature/featureServiceContribution';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ConfigSchema, RegisterSectionOptions } from '#/app/config/config';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
@@ -42,8 +43,6 @@ import {
   type AgentToolCtor,
   type AnyAgentTool,
 } from '#/agent/toolRegistry/toolContribution';
-
-import { recordContributedService } from './featureRegistry';
 
 export abstract class Feature extends Service {
   contribute<T>(token: CollectionToken<T>, value: T): FiberHandle {
@@ -68,7 +67,7 @@ export abstract class Feature extends Service {
     ctor: ServiceClassRecipe,
     opts?: FiberProvideOptions,
   ): FiberHandle {
-    recordContributedService(scope, id);
+    this.provide(FeatureServiceContribution, { scope, id });
     return this.provide(ScopeUnits(scope), {
       name: `${this.name}:${String(id)}`,
       apply(fiber: Fiber): void {

@@ -71,6 +71,14 @@ export interface PluginMcpServerInfo {
   readonly headerKeys?: readonly string[];
 }
 
+export interface PluginMcpServerRuntimeConfig {
+  readonly pluginId: string;
+  readonly serverName: string;
+  readonly runtimeName: string;
+  readonly enabled: boolean;
+  readonly config: McpServerConfig;
+}
+
 export interface PluginCommandDef {
   readonly pluginId: string;
   readonly name: string;

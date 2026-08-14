@@ -29,9 +29,12 @@ import { makeErrorPayload } from '../errors';
 import {
   McpConnectionManager,
   McpOAuthService,
+  canonicalMcpOAuthResource,
   resolveMcpStartupTimeoutMs,
   resolveMcpToolTimeoutMs,
   type McpServerEntry,
+  type McpOAuthCredentialsChangedEvent,
+  type McpOAuthCredentialsCoordinator,
   type SessionMcpConfig,
 } from '../mcp';
 import type { EnabledPluginSessionStart, EnabledPluginSystemPrompt, PluginCommandDef } from '../plugin';
@@ -89,6 +92,7 @@ export interface SessionOptions {
   readonly skills?: SessionSkillConfig;
   readonly agents?: SessionAgentCatalogConfig;
   readonly mcpConfig?: SessionMcpConfig;
+  readonly mcpOAuthCoordinator?: McpOAuthCredentialsCoordinator;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly pluginCommands?: readonly PluginCommandDef[];
@@ -218,6 +222,7 @@ export class Session {
   readonly mcp: McpConnectionManager;
   readonly log: Logger;
   private readonly logHandle: SessionLogHandle | undefined;
+  private readonly unsubscribeMcpOAuthCredentials: (() => void) | undefined;
   readonly hookEngine: HookEngine;
   readonly experimentalFlags: ExperimentalFlagResolver;
   readonly imageLimits: ImageLimits;
@@ -288,7 +293,10 @@ export class Session {
       sessionId: options.id,
     });
     this.mcp = new McpConnectionManager({
-      oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
+      oauthService: new McpOAuthService({
+        kimiHomeDir: options.kimiHomeDir,
+        coordinator: options.mcpOAuthCoordinator,
+      }),
       log: this.log,
       stdioCwd: options.kaos.getcwd(),
       defaultStartupTimeoutMs: resolveMcpStartupTimeoutMs(options.config?.mcp?.startupTimeoutMs),
@@ -297,6 +305,16 @@ export class Session {
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);
     });
+    this.unsubscribeMcpOAuthCredentials = options.mcpOAuthCoordinator?.onCredentialsChanged(
+      (event) => {
+        void this.reconnectMcpAfterCredentialsChanged(event).catch((error: unknown) => {
+          this.log.warn('mcp reconnect after credentials change failed', {
+            server: event.serverName,
+            error,
+          });
+        });
+      },
+    );
     this.agentCatalog =
       options.agents?.catalog ??
       new SessionAgentProfileCatalog({
@@ -325,6 +343,33 @@ export class Session {
     void this.loadMcpServers().catch((error: unknown) => {
       this.emitInitialMcpLoadError(error);
     });
+  }
+
+  async reconnectMcpAfterCredentialsChanged(
+    event: McpOAuthCredentialsChangedEvent,
+  ): Promise<void> {
+    const entry = this.mcp.get(event.serverName);
+    if (entry === undefined) return;
+    const serverUrl = this.mcp.getRemoteServerUrl(event.serverName);
+    if (serverUrl === undefined || canonicalMcpOAuthResource(serverUrl) !== event.serverUrl) return;
+    this.mcp.oauthService?.forgetProvider(event.serverName, event.serverUrl);
+    if (entry.status === 'disabled') return;
+    if (entry.status === 'pending') {
+      await new Promise<void>((resolve, reject) => {
+        const unsubscribe = this.mcp.onStatusChange((next) => {
+          if (next.name !== event.serverName || next.status === 'pending') return;
+          unsubscribe();
+          if (next.status === 'disabled') {
+            resolve();
+            return;
+          }
+          void this.mcp.reconnectAfterCurrent(event.serverName).then(resolve, reject);
+        });
+      });
+      return;
+    }
+    if (event.kind !== 'invalidated' && entry.status !== 'needs-auth') return;
+    await this.mcp.reconnectAndJoin(event.serverName);
   }
 
 
@@ -481,6 +526,7 @@ export class Session {
   }
 
   async close(): Promise<void> {
+    this.unsubscribeMcpOAuthCredentials?.();
     try {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
@@ -499,6 +545,7 @@ export class Session {
   }
 
   async closeForReload(): Promise<void> {
+    this.unsubscribeMcpOAuthCredentials?.();
     try {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
@@ -810,7 +857,7 @@ export class Session {
    * `[secondary_model]` change: the spawn
    * binding (`subagent-host`), the startup-warning computation, and every live
    * agent's `kimiConfig` (tool descriptions, loop control) all read the
-   * session snapshot, so a mid-session `/secondary_model` switch takes effect
+   * session snapshot, so a mid-session `/secondary-model` switch takes effect
    * for the next subagent spawn without recreating the session. The core owns
    * config reload, environment overlays, and derived-model synthesis. Copying
    * that complete recipe and its model entries keeps spawn binding and provider

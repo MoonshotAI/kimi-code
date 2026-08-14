@@ -29,6 +29,10 @@
  *    registries therefore never pass through a halfway-removed state — that
  *    intermediate state was the source of the "provider/model not
  *    configured" startup race against profile binding.
+ *    A write that replaces the models table also folds the
+ *    `[secondary_model]` subagent pool through `cascadeSubagentModelPool`
+ *    into the same transition, so a refresh that drops an alias can never
+ *    leave a dangling pool for the session-start validation to trip on.
  *  - The env-synthesized `__kimi_env__` slice is never written to config:
  *    it lives in the effective overlay, and the bridge's event-driven sync
  *    carries it into the registries on its own. `defaultModel` / `thinking`
@@ -70,6 +74,11 @@ import {
   PROVIDERS_SECTION,
   THINKING_SECTION,
 } from './configSection';
+import {
+  SECONDARY_MODEL_SECTION,
+  cascadeSubagentModelPool,
+  type SecondaryModelConfig,
+} from '#/session/subagent/configSection';
 import {
   IProviderDiscoveryService,
   type RefreshProviderModelsOptions,
@@ -253,6 +262,16 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     }
     if ('thinking' in patch) {
       sections[THINKING_SECTION] = restoreDefault ? exclusion.thinking : patch.thinking;
+    }
+    const nextModels = sections[MODELS_SECTION] as Record<string, ModelRecord> | undefined;
+    if (nextModels !== undefined) {
+      const cascadedPool = cascadeSubagentModelPool(
+        this.config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue,
+        nextModels,
+      );
+      if (cascadedPool !== undefined) {
+        sections[SECONDARY_MODEL_SECTION] = cascadedPool ?? undefined;
+      }
     }
     await this.config.replaceSections(sections);
     return {

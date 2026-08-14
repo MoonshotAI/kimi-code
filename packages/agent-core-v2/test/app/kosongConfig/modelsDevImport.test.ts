@@ -254,6 +254,62 @@ describe('IModelsDevImportService', () => {
     expect(config.get('defaultModel')).toBe('k2');
   });
 
+  it('filters pool entries a catalog import drops, keeping a surviving default', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const { config, imports } = createHost({
+      providers: { openai: { type: 'openai', apiKey: 'sk-old' } },
+      models: {
+        'openai/gpt-4o': { provider: 'openai', model: 'gpt-4o', maxContextSize: 128000 },
+        k2: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 131072 },
+      },
+      secondaryModel: {
+        defaultModel: 'k2',
+        models: { k2: 'fast', 'openai/gpt-4o': 'smart' },
+      },
+    });
+
+    await imports.importModelsDevProvider({ catalogId: 'openai' });
+
+    // The import rebuilt openai's alias set (gpt-4o → gpt-4.1): the dropped
+    // alias leaves the pool, the surviving default stays.
+    expect(config.get('secondaryModel')).toEqual({
+      defaultModel: 'k2',
+      models: { k2: 'fast' },
+    });
+  });
+
+  it('clears the pool when a catalog import orphans its default', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const { config, imports } = createHost({
+      providers: { openai: { type: 'openai', apiKey: 'sk-old' } },
+      models: {
+        'openai/gpt-4o': { provider: 'openai', model: 'gpt-4o', maxContextSize: 128000 },
+      },
+      secondaryModel: { defaultModel: 'openai/gpt-4o' },
+    });
+
+    await imports.importModelsDevProvider({ catalogId: 'openai' });
+
+    expect(config.get('secondaryModel')).toBeUndefined();
+  });
+
+  it('cascades the pool on custom-registry imports too', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(REGISTRY_DOC) });
+    const { config, imports } = createHost({
+      providers: { 'acme-gpt': { type: 'openai', apiKey: 'sk-old' } },
+      models: {
+        'acme-gpt/gpt-old': { provider: 'acme-gpt', model: 'gpt-old', maxContextSize: 64000 },
+      },
+      secondaryModel: { defaultModel: 'acme-gpt/gpt-old' },
+    });
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    // The registry rebuild replaced acme-gpt's only alias (gpt-old → gpt-x),
+    // orphaning the pool default.
+    expect(config.get('secondaryModel')).toBeUndefined();
+  });
+
   it('seeds default_model from the first imported model only when none is configured', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
     const { config, imports } = createHost({ providers: {}, models: {} });

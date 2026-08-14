@@ -7,7 +7,7 @@
  * current model catalog.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
@@ -19,7 +19,7 @@ import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting'
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentSwarmService } from '#/agent/swarm/swarm';
+import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { IModelService } from '#/kosong/model/model';
@@ -30,9 +30,7 @@ import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLi
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 function accessor(
   entries: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>,
@@ -364,48 +362,5 @@ describe('Session legacy status (best-effort runtime state)', () => {
       max_context_tokens: 100_000,
       context_usage: 1,
     });
-  });
-
-  it('fans a permission_mode patch out through the session agent registry', async () => {
-    const broadcastPermissionMode = vi.fn();
-    const agent: IAgentScopeHandle = {
-      id: 'main',
-      kind: LifecycleScope.Agent,
-      accessor: accessor([
-        [IAgentProfileService, { _serviceBrand: undefined }],
-        [IAgentLifecycleService, { broadcastPermissionMode }],
-      ]),
-      dispose: () => {},
-    };
-    const agents = {
-      create: () => Promise.resolve(agent),
-      whenReady: () => Promise.resolve(agent),
-      list: () => [agent],
-      broadcastPermissionMode,
-    } as unknown as IAgentLifecycleService;
-    const session: ISessionScopeHandle = {
-      id: 'session-test',
-      kind: LifecycleScope.Session,
-      accessor: accessor([
-        [IAgentLifecycleService, agents],
-        [
-          ISessionMetadata,
-          {
-            read: () =>
-              Promise.resolve({ id: 'session-test', createdAt: 0, updatedAt: 0, archived: false }),
-          },
-        ],
-        [ISessionContext, { workspaceId: 'ws-test', cwd: '/workspace' }],
-      ]),
-      dispose: () => {},
-    };
-    stubSessionChain(ix, session);
-    ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
-
-    await ix.get(ISessionLegacyService).updateProfile('session-test', {
-      agent_config: { permission_mode: 'yolo' },
-    });
-
-    expect(broadcastPermissionMode).toHaveBeenCalledWith('yolo');
   });
 });

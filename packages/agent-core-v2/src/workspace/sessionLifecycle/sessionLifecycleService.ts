@@ -67,7 +67,23 @@
  * depends on MCP.
  * The session-level services whose subscriptions
  * must exist before the first agent / turn (external hooks, cron, the
- * secondary-model startup warning) opt into `OnScopeCreated` activation.
+ * subagent model-pool startup validation) opt into `OnScopeCreated` activation.
+ * The subagent model pool itself is validated even earlier — at
+ * the top of `materializeSession`, before the MCP overlay, the session scope,
+ * and any persisted artifact come into existence, and again at the top of
+ * `fork` before the source session's files are copied — so a broken pool
+ * (or invalid `force` configuration) fails create/resume/fork without
+ * leaving orphaned session dirs or leaked
+ * overlay connections behind; the Session-scope validation service
+ * (`session/subagent/subagentModelsValidationService.ts`) repeats the same
+ * check at scope activation as a backstop for paths that bypass this service.
+ * That pre-flight awaits the kosong model/provider registries' `ready`
+ * alongside `config.ready` first: the catalog resolves aliases through those
+ * registries rather than the config document, so a cold bootstrap that
+ * creates a session before hydration completes must not fail a valid pool
+ * with `CONFIG_INVALID`.
+ * The pool is gated behind the `secondary-model` experiment, so with the
+ * experiment off these validations are no-ops and the section stays inert.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -85,7 +101,7 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
-import { Emitter, type Event } from '#/_base/event';
+import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -102,7 +118,6 @@ import {
 } from '#/app/sessionIndex/sessionIndex';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
-import { createHooks } from '#/hooks';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -114,11 +129,6 @@ import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/se
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { installSessionSeedAdapters } from '#/session/sessionSeed/sessionSeedAdapters';
-import {
-  ISessionLifecycleHooks,
-  sessionLifecycleHooksSeed,
-  type SessionLifecycleHookSlots,
-} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { drainSessionMetadataWrites, toEpochMs } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -129,6 +139,11 @@ import {
   createWireMetadataRecord,
   type WireRecord,
 } from '#/wire/record';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
+import { IFlagService } from '#/app/flag/flag';
+import { assertValidSubagentModelConfig } from '#/session/subagent/configSection';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
@@ -162,6 +177,8 @@ type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly sessionId: string;
 };
 
+const NO_ABORT = new AbortController().signal;
+
 // NOTE: stays Disposable — its own 'get' and 'config' collide with the Fiber
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
@@ -171,8 +188,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   );
   readonly onWillCreateSession: Event<SessionWillCreateEvent> =
     this._onWillCreateSession.event;
-  private readonly _onDidCreateSession = this._register(new Emitter<SessionCreatedEvent>());
-  readonly onDidCreateSession: Event<SessionCreatedEvent> = this._onDidCreateSession.event;
+  private readonly _onDidCreateSession = this._register(
+    new AsyncEmitter<SessionCreatedEvent & IWaitUntil>(),
+  );
+  readonly onDidCreateSession: Event<SessionCreatedEvent & IWaitUntil> =
+    this._onDidCreateSession.event;
+  private readonly _onWillCloseSession = this._register(
+    new AsyncEmitter<SessionWillCloseEvent & IWaitUntil>(),
+  );
+  readonly onWillCloseSession: Event<SessionWillCloseEvent & IWaitUntil> =
+    this._onWillCloseSession.event;
   private readonly _onDidCloseSession = this._register(new Emitter<SessionClosedEvent>());
   readonly onDidCloseSession: Event<SessionClosedEvent> = this._onDidCloseSession.event;
   private readonly _onDidArchiveSession = this._register(new Emitter<SessionArchivedEvent>());
@@ -207,6 +232,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     private readonly pluginAgentProfileLoader: IPluginAgentProfileLoader,
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IModelService private readonly models: IModelService,
+    @IProviderService private readonly providers: IProviderService,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     super();
   }
@@ -247,11 +276,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
+  private async assertSubagentModelPoolPreFlight(): Promise<void> {
+    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
+    assertValidSubagentModelConfig(this.config, this.flags, this.modelCatalog);
+  }
+
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
     const workspaceId = this.workspaceId;
     const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
+    await this.assertSubagentModelPoolPreFlight();
     await this.workspaceDirs.ready;
     await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
@@ -264,10 +299,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
-    const hooks = createHooks<SessionLifecycleHookSlots, keyof SessionLifecycleHookSlots>([
-      'onDidCreateSession',
-      'onWillCloseSession',
-    ]);
     await this.hostEnv.ready;
     const handle = createScopedChildHandle(
       this.instantiation,
@@ -276,7 +307,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       {
         seeds: [
           ...sessionContextSeed(ctx),
-          ...sessionLifecycleHooksSeed(hooks),
           [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
           ...sessionAgentProfileCatalogSeed({
             _serviceBrand: undefined,
@@ -333,10 +363,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
-    await event.handle.accessor
-      .get(ISessionLifecycleHooks)
-      .onDidCreateSession.run({ source: event.source });
-    this._onDidCreateSession.fire(event);
+    await this._onDidCreateSession.fireAsync(event, NO_ABORT);
     event.handle.accessor
       .get(ITelemetryService)
       .track2('session_started', { resumed: event.source === 'resume' });
@@ -460,9 +487,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async announceWillClose(event: SessionWillCloseEvent): Promise<void> {
-    await event.handle.accessor
-      .get(ISessionLifecycleHooks)
-      .onWillCloseSession.run({ reason: event.reason });
+    await this._onWillCloseSession.fireAsync(event, NO_ABORT);
   }
 
   private async drainAgents(handle: ISessionScopeHandle): Promise<void> {
@@ -488,6 +513,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
     try {
+      await this.assertSubagentModelPoolPreFlight();
       // A turn that just ended may still have its outcome write queued;
       // settle pending metadata writes before reading the source for
       // inheritance, or the fork could copy a stale (or absent) outcome.
@@ -542,7 +568,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
       await targetMeta.update({
         title,
-        isCustomTitle: opts.title !== undefined ? true : sourceMeta?.isCustomTitle === true,
+        titleKind: opts.title !== undefined ? 'custom' : 'replaceable',
         forkedFrom: sourceId,
         archived: false,
         updatedAt: toEpochMs(sourceMeta?.updatedAt) || Date.now(),

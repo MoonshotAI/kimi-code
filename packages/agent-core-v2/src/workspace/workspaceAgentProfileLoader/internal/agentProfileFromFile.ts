@@ -8,8 +8,7 @@
  * marked as builtin overrides; directory files must opt in through frontmatter.
  * `tools` passes through as the allowlist (`undefined` = every tool active);
  * `disallowedTools` passes through as the tool denylist; `subagents` passes
- * through as the delegation allowlist; `model_preference` becomes the
- * symbolic default model used when the profile is delegated to.
+ * through as the delegation allowlist.
  * `profilesFromDiscovery` packs a whole discovery pass into an
  * `AgentProfileContribution`, binding each profile's `${base_prompt}`
  * placeholder lazily at render time so it always reflects the effective
@@ -45,7 +44,6 @@ export function agentProfileFromFile(
     tools: definition.tools,
     disallowedTools: definition.disallowedTools,
     subagents: definition.subagents,
-    modelPreference: definition.modelPreference,
     renderSystemPrompt: (context) =>
       renderPromptTemplateResult(definition.prompt, context, { skillActive }, basePrompt),
   });

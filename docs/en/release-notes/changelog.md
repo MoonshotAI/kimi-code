@@ -6,6 +6,38 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.36.0 (2026-08-13)
+
+### Features
+
+- Upgrade the experimental subagent model setting to a model pool: the `[secondary_model]` section can now hold a set of candidate models with descriptions, and the main agent picks from them per spawn based on the task.
+
+  Set `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` (or the master flag `KIMI_CODE_EXPERIMENTAL_FLAG=1`) before starting Kimi to enable it.
+
+  Recommended setups:
+
+  - Minimal: run `/secondary-model` in the TUI, or write a single `default_model` line in `config.toml`, to make every subagent run the same model by default; add `force = true` to pin that choice so the main agent cannot override it.
+  - Declare a named pool with a one-line scenario description for each alias — the descriptions are what the main agent sees when choosing:
+
+    ```toml
+    [secondary_model]
+    default_model = "kimi-code/kimi-for-coding-highspeed"
+    [secondary_model.models]
+    "kimi-code/kimi-for-coding-highspeed" = "Fast and cheap — good for daily refactoring, code explanation, and small edits."
+    "kimi-code/k3" = "Strong at complex reasoning and deep debugging — pick it for hard problems."
+    ```
+
+  See the [subagent model pool docs](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#subagent-model-pool) for details.
+- Add an experimental fullscreen TUI mode. Set the `KIMI_CODE_TUI_FULL_SCREEN=1` environment variable to enable it.
+- Support rendering LaTeX math formulas (`$…$` / `$$…$$`) in TUI messages as Unicode formulas.
+
+### Bug Fixes
+
+- Show project MCP launch targets in the workspace trust prompt, default to declining trust, and resolve `fd` and `stty` binaries to absolute paths so untrusted workspaces cannot plant bare-name executables before confirmation.
+- Fix sessions failing with a provider 400 error on every follow-up request after a turn is interrupted while the model is still thinking, on strict OpenAI-compatible providers (e.g. DeepSeek).
+- Fix Ctrl+C being ignored during automatic retries of failed API requests.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.35.0 (2026-08-12)
 
 ### Features

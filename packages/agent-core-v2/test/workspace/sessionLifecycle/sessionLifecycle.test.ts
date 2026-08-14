@@ -15,9 +15,9 @@ import {
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import type { Hooks } from '#/hooks';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -41,7 +41,12 @@ import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
-import { ISessionSecondaryModelWarningService } from '#/session/subagent/secondaryModelWarning';
+import { ISessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidation';
+import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
+import { stubProviderService } from '../../app/provider/stubs';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
@@ -53,12 +58,11 @@ import { IWorkspaceToolPolicy } from '#/workspace/workspaceToolPolicy/workspaceT
 import { WorkspaceToolPolicyService } from '#/workspace/workspaceToolPolicy/workspaceToolPolicyService';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
-import {
-  ISessionLifecycleHooks,
-  type SessionLifecycleHookSlots,
-} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import {
+  ISessionMetadata,
+  type SessionMetaPatch,
+} from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
@@ -81,6 +85,7 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes } from '#/errors';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 import { stubLog } from '../../_base/log/stubs';
 
 function bootstrapStub(): IBootstrapService {
@@ -125,6 +130,7 @@ function metadataStub(): ISessionMetadata {
     read: () => Promise.resolve({} as never),
     update: () => Promise.resolve(),
     setTitle: () => Promise.resolve(),
+    setGeneratedTitleIfUncustomized: () => Promise.resolve(false),
     setArchived: () => Promise.resolve(),
     registerAgent: () => Promise.resolve(),
   };
@@ -428,6 +434,33 @@ function configStub(values: Record<string, unknown> = {}): IConfigService {
   } as unknown as IConfigService;
 }
 
+function modelCatalogStub(knownIds: readonly string[] = []): IModelCatalog {
+  return {
+    _serviceBrand: undefined,
+    get: (id: string) => {
+      if (!knownIds.includes(id)) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `Model "${id}" is not configured in config.toml.`,
+          { details: { model: id } },
+        );
+      }
+      return { id };
+    },
+  } as unknown as IModelCatalog;
+}
+
+function modelServiceStub(ready: Promise<void> = Promise.resolve()): IModelService {
+  return {
+    _serviceBrand: undefined,
+    ready,
+  } as unknown as IModelService;
+}
+
+function secondaryModelFlagStub(enabled: boolean): IFlagService {
+  return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
+}
+
 function agentLifecycleCapturingPlanSpy(opts: { mainPreexists?: boolean } = {}): {
   lifecycle: IAgentLifecycleService;
   enter: ReturnType<typeof vi.fn>;
@@ -483,19 +516,19 @@ class RecordingSessionExternalHooksService
 
   constructor(
     @ISessionContext private readonly context: ISessionContext,
-    @ISessionLifecycleHooks hooks: Hooks<SessionLifecycleHookSlots>,
+    @ISessionLifecycleService lifecycle: ISessionLifecycleService,
   ) {
     super();
     this._register(
-      hooks.onDidCreateSession.register('test', async (event, next) => {
+      lifecycle.onDidCreateSession((event) => {
+        if (event.sessionId !== this.context.sessionId) return;
         recordedSessionHookEvents.push(`create:${event.source}:${this.context.sessionId}`);
-        await next();
       }),
     );
     this._register(
-      hooks.onWillCloseSession.register('test', async (event, next) => {
+      lifecycle.onWillCloseSession((event) => {
+        if (event.sessionId !== this.context.sessionId) return;
         recordedSessionHookEvents.push(`close:${event.reason}:${this.context.sessionId}`);
-        await next();
       }),
     );
   }
@@ -599,11 +632,14 @@ describe('SessionLifecycleService', () => {
       stubPair(IAgentLifecycleService, agentLifecycleStub()),
       stubPair(IWorkspaceMcpService, workspaceMcpServiceStub()),
       stubPair(IConfigService, configStub()),
+      stubPair(IModelCatalog, modelCatalogStub()),
+      stubPair(IModelService, modelServiceStub()),
+      stubPair(IProviderService, stubProviderService()),
+      stubPair(IFlagService, secondaryModelFlagStub(false)),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
-      stubPair(ISessionSecondaryModelWarningService, {
+      stubPair(ISessionSubagentModelsValidationService, {
         _serviceBrand: undefined,
-        getSecondaryModelWarning: () => undefined,
-      } as ISessionSecondaryModelWarningService),
+      } as ISessionSubagentModelsValidationService),
       stubPair(IProjectLocalConfigService, projectLocalConfigStub()),
       stubPair(IHostFsWatchService, {
         _serviceBrand: undefined,
@@ -665,6 +701,157 @@ describe('SessionLifecycleService', () => {
 
     await svc.create({ sessionId: 's2', workDir: '/tmp/proj' });
     expect(svc.get('s2')).toBeDefined();
+  });
+
+  it('rejects create with CONFIG_INVALID for a broken subagent model pool before registering anything', async () => {
+    const svc = await build([
+      stubPair(
+        IConfigService,
+        configStub({ secondaryModel: { models: { 'provider/fast': 'fast and cheap' } } }),
+      ),
+      stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+      stubPair(IFlagService, secondaryModelFlagStub(true)),
+    ]);
+
+    await expect(svc.create({ sessionId: 's-broken', workDir: '/tmp/proj' })).rejects.toMatchObject(
+      {
+        code: ErrorCodes.CONFIG_INVALID,
+        message: expect.stringContaining('[secondary_model].default_model is required'),
+      },
+    );
+    expect(svc.get('s-broken')).toBeUndefined();
+  });
+
+  it('creates a session when the subagent model pool is valid', async () => {
+    const svc = await build([
+      stubPair(
+        IConfigService,
+        configStub({
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast and cheap' },
+          },
+        }),
+      ),
+      stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+      stubPair(IFlagService, secondaryModelFlagStub(true)),
+    ]);
+
+    const h = await svc.create({ sessionId: 's-pool', workDir: '/tmp/proj' });
+    expect(svc.get('s-pool')).toBe(h);
+  });
+
+  it('waits for the model/provider registries before validating the subagent model pool', async () => {
+    let releaseRegistries!: () => void;
+    const registriesReady = new Promise<void>((resolve) => {
+      releaseRegistries = resolve;
+    });
+    let registriesReleased = false;
+    const coldRegistryCatalog = {
+      _serviceBrand: undefined,
+      get: (id: string) => {
+        if (!registriesReleased) {
+          throw new Error2(
+            ErrorCodes.CONFIG_INVALID,
+            `Model "${id}" is not configured in config.toml.`,
+            { details: { model: id } },
+          );
+        }
+        return { id };
+      },
+    } as unknown as IModelCatalog;
+    const svc = await build([
+      stubPair(
+        IConfigService,
+        configStub({
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast and cheap' },
+          },
+        }),
+      ),
+      stubPair(IModelCatalog, coldRegistryCatalog),
+      stubPair(IModelService, modelServiceStub(registriesReady)),
+      stubPair(IProviderService, stubProviderService({}, registriesReady)),
+      stubPair(IFlagService, secondaryModelFlagStub(true)),
+    ]);
+
+    // A cold bootstrap can reach create before the kosong registries finish
+    // hydrating: the pre-flight must hold, not fail the valid pool against an
+    // empty registry.
+    let settled = false;
+    const pending = svc.create({ sessionId: 's-race', workDir: '/tmp/proj' }).then((created) => {
+      settled = true;
+      return created;
+    });
+    await tick();
+    expect(settled).toBe(false);
+
+    registriesReleased = true;
+    releaseRegistries();
+    const h = await pending;
+    expect(svc.get('s-race')).toBe(h);
+  });
+
+  it('rejects create with CONFIG_INVALID when force is set without default_model', async () => {
+    const svc = await build([
+      stubPair(IConfigService, configStub({ secondaryModel: { force: true } })),
+      stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+      stubPair(IFlagService, secondaryModelFlagStub(true)),
+    ]);
+
+    await expect(svc.create({ sessionId: 's-force', workDir: '/tmp/proj' })).rejects.toMatchObject(
+      {
+        code: ErrorCodes.CONFIG_INVALID,
+        message: expect.stringContaining('[secondary_model].default_model is required'),
+      },
+    );
+    expect(svc.get('s-force')).toBeUndefined();
+  });
+
+  it('creates a session with a broken pool while the secondary-model experiment is off', async () => {
+    const svc = await build([
+      stubPair(
+        IConfigService,
+        configStub({ secondaryModel: { models: { 'provider/fast': 'fast and cheap' } } }),
+      ),
+      stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+    ]);
+
+    const h = await svc.create({ sessionId: 's-inert', workDir: '/tmp/proj' });
+    expect(svc.get('s-inert')).toBe(h);
+  });
+
+  it('rejects fork with CONFIG_INVALID for a broken pool before copying any files', async () => {
+    const root = await makeTmpRoot();
+    const sections: Record<string, unknown> = {
+      secondaryModel: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast and cheap' },
+      },
+    };
+    const svc = await build([
+      stubPair(IBootstrapService, tmpBootstrapStub(root)),
+      stubPair(IConfigService, {
+        get: (domain: string) => sections[domain],
+        getAll: () => ({ ...sections }),
+        onDidChangeConfiguration: () => ({ dispose: () => {} }),
+        onDidSectionChange: () => ({ dispose: () => {} }),
+      } as unknown as IConfigService),
+      stubPair(IModelCatalog, modelCatalogStub(['provider/fast'])),
+      stubPair(IFlagService, secondaryModelFlagStub(true)),
+    ]);
+    await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+    const srcDir = join(root, 'sessions', 'wd_stub', 'src');
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(join(srcDir, 'marker'), 'src');
+    sections['secondaryModel'] = { models: { 'provider/fast': 'fast and cheap' } };
+
+    await expect(svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' })).rejects.toMatchObject({
+      code: ErrorCodes.CONFIG_INVALID,
+    });
+    expect(svc.get('dst')).toBeUndefined();
+    await expect(stat(join(root, 'sessions', 'wd_stub', 'dst'))).rejects.toThrow();
   });
 
   it('create appends the session to the shared session_index.jsonl', async () => {
@@ -1542,6 +1729,53 @@ describe('SessionLifecycleService', () => {
   });
 
   describe('fork session state', () => {
+    it('marks the default fork title as replaceable', async () => {
+      const updates: SessionMetaPatch[] = [];
+      const svc = await build([
+        stubPair(ISessionMetadata, {
+          ...metadataStub(),
+          read: () =>
+            Promise.resolve({
+              title: 'generated source',
+              titleKind: 'generated',
+              agents: {},
+            } as never),
+          update: (patch) => {
+            updates.push(patch);
+            return Promise.resolve();
+          },
+        }),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      expect(updates).toContainEqual(
+        expect.objectContaining({ title: 'Fork: generated source', titleKind: 'replaceable' }),
+      );
+    });
+
+    it('marks an explicit fork title as custom', async () => {
+      const updates: SessionMetaPatch[] = [];
+      const svc = await build([
+        stubPair(ISessionMetadata, {
+          ...metadataStub(),
+          read: () => Promise.resolve({ title: 'source', agents: {} } as never),
+          update: (patch) => {
+            updates.push(patch);
+            return Promise.resolve();
+          },
+        }),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst', title: 'user title' });
+
+      expect(updates).toContainEqual(
+        expect.objectContaining({ title: 'user title', titleKind: 'custom' }),
+      );
+    });
+
     it('fork inherits the source session\'s last turn outcome', async () => {
       const updates: { readonly lastTurnReason?: unknown }[] = [];
       const metaStub: ISessionMetadata = {

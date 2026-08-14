@@ -36,8 +36,15 @@ export interface CollectionToken<T> {
 
 const _collectionTokens = new Map<string, CollectionToken<unknown>>();
 const _collectionTokenSet = new WeakSet<object>();
+const _collectionValidators = new WeakMap<
+  object,
+  (value: unknown, existing: readonly unknown[]) => void
+>();
 
-export function collection<T>(name: string): CollectionToken<T> {
+export function collection<T>(
+  name: string,
+  options: { readonly validate?: (value: T, existing: readonly T[]) => void } = {},
+): CollectionToken<T> {
   const existing = _collectionTokens.get(name);
   if (existing !== undefined) {
     return existing as CollectionToken<T>;
@@ -61,6 +68,12 @@ export function collection<T>(name: string): CollectionToken<T> {
   Object.defineProperty(token, 'name', { value: name, enumerable: false, configurable: true });
   _collectionTokens.set(name, token as CollectionToken<unknown>);
   _collectionTokenSet.add(token);
+  if (options.validate !== undefined) {
+    _collectionValidators.set(
+      token,
+      options.validate as (value: unknown, existing: readonly unknown[]) => void,
+    );
+  }
   return token;
 }
 
@@ -119,6 +132,10 @@ export class CollectionStore {
       records = new Map();
       this._records.set(token as CollectionToken<unknown>, records);
     }
+    _collectionValidators.get(token)?.(
+      value,
+      [...records.values()].map((entry) => entry.value),
+    );
     const record: StoredRecord = {
       id: ++this._nextId,
       value,

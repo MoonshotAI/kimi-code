@@ -406,7 +406,7 @@ export class ToolManager {
       serverUrl,
       oauthService,
       reconnect: async () => {
-        await mcp.reconnect(entry.name);
+        await mcp.reconnectAndJoin(entry.name);
       },
     });
     this.mcpTools.set(tool.name, { tool, serverName: entry.name });
