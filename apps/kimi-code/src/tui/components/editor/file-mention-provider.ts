@@ -324,7 +324,7 @@ export function extractInlineSkillPrefix(text: string, cursorLine: number = 0): 
     return '/';
   }
   // findInlineSkillTokens skips the leading slash-command area, so a line such
-  // as `/skill:agent-fleet args /` still yields the trailing `/` token.
+  // as `/skill:review args /` still yields the trailing `/` token.
   const tokens = findInlineSkillTokens(text, {
     isKnownSkill: () => true,
     allowEmpty: true,
