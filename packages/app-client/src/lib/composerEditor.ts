@@ -27,6 +27,9 @@ export interface ComposerEditorOptions {
    *  false = fall through to the PM keymaps (history, baseKeymap) and the
    *  browser default. Runs before every PM keymap. */
   handleKeyDown: (event: KeyboardEvent) => boolean;
+  /** Editor lost focus — the composer closes its autocomplete menus (the
+   *  menu rows use mousedown.prevent, so picking one never fires this). */
+  onBlur?: (event: FocusEvent) => void;
   /** IME latch hooks — the composer keeps its per-field composition state and
    *  the document-level latch sees the same events via capture. */
   onCompositionStart?: () => void;
@@ -116,6 +119,12 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
       if (tr.docChanged) options.onChange(docToText(newState.doc));
     },
     handleKeyDown: (_view, event) => options.handleKeyDown(event),
+    handleDOMEvents: {
+      blur: (_view, event) => {
+        options.onBlur?.(event);
+        return false;
+      },
+    },
     // Single-newline clipboard contract (see composerTextDoc.ts): pasting
     // keeps consecutive blank lines, copying does not invent extra ones.
     clipboardTextParser: (text) => parseClipboardText(text),

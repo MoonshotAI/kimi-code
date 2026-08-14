@@ -84,6 +84,20 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     }, 200);
   }
 
+  /** Close the menu and cancel any pending debounced search. Without the
+      cancel, a timer started just before the close (blur, session switch,
+      submit, Escape) would fire afterwards and reopen the menu. An already
+      in-flight search needs no cancel — its stillCurrent() guard sees
+      open.value === false and applies nothing. */
+  function close(): void {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    open.value = false;
+    loading.value = false;
+  }
+
   function select(item: FileItem): void {
     const mt = getMentionToken();
     if (!mt) return;
@@ -100,5 +114,5 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     });
   }
 
-  return { open, items, active, loading, update, select };
+  return { open, items, active, loading, update, close, select };
 }

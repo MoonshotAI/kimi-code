@@ -208,14 +208,6 @@ watch(text, () => {
   void nextTick(recomputeGrown);
 });
 
-// The component instance is reused across session switches (it is not keyed by
-// session), so reset the per-session expanded preference when the active
-// session changes. Without this, expanding in one chat would leave the next
-// session's draft stuck in the tall editor with Enter inserting newlines.
-watch(() => props.sessionId, () => {
-  expanded.value = false;
-});
-
 // ---------------------------------------------------------------------------
 // Sent-message history recall (shell-style ↑/↓). See useInputHistory for the
 // implementation; the composer keeps the keydown orchestration (which also
@@ -284,12 +276,37 @@ const {
   active: mentionActive,
   loading: mentionLoading,
   update: updateMentionMenu,
+  close: closeMentionMenu,
   select: selectMentionItem,
 } = useMentionMenu({
   text,
   editorRef: textareaRef,
   searchFiles: () => props.searchFiles,
 });
+
+// The component instance is reused across session switches (it is not keyed by
+// session), so reset per-session UI state when the active session changes:
+// - the expanded preference, or one chat's tall editor (Enter = newline)
+//   would leak into the next session;
+// - the autocomplete menus, which belong to the focused editing session —
+//   clicking the sidebar already closes them via the editor's blur; this is
+//   the backstop for switches that never touch the composer (keyboard
+//   shortcuts, programmatic switches). Typing reopens them via handleInput.
+watch(() => props.sessionId, () => {
+  expanded.value = false;
+  slashOpen.value = false;
+  closeMentionMenu();
+});
+
+// Losing focus closes the autocomplete menus (VS Code suggest / Notion
+// slash-menu behavior). Menu rows use mousedown.prevent and the scroll thumb
+// prevents pointerdown, so interacting with an open menu never blurs the
+// editor. Refocusing does not reopen a menu — the next keystroke re-derives
+// it from the live text via handleInput.
+function handleEditorBlur(): void {
+  slashOpen.value = false;
+  closeMentionMenu();
+}
 
 // ---------------------------------------------------------------------------
 // Input event handler — updates both menus
@@ -542,7 +559,7 @@ function handleSubmit(): void {
         previewAttachment.value = null;
         previewThumbImg.value = null;
         clearAfterSubmit();
-        mentionOpen.value = false;
+        closeMentionMenu();
         emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)) });
       } else {
         emit('command', { cmd, attachments: [] });
@@ -564,7 +581,7 @@ function handleSubmit(): void {
   text.value = '';
   clearDraft();
   slashOpen.value = false;
-  mentionOpen.value = false;
+  closeMentionMenu();
   collapseAndRefit();
   emit('submit', payload);
 }
@@ -591,7 +608,7 @@ function handleSteer(): void {
   text.value = '';
   clearDraft();
   slashOpen.value = false;
-  mentionOpen.value = false;
+  closeMentionMenu();
   collapseAndRefit();
   emit('steer', payload);
 }
@@ -681,7 +698,7 @@ function handleKeydown(e: KeyboardEvent): void {
   if (mentionOpen.value && !mentionLoading.value) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      mentionOpen.value = false;
+      closeMentionMenu();
       return;
     }
     if (mentionItems.value.length > 0) {
@@ -1276,6 +1293,7 @@ function selectModel(modelId: string): void {
             @compositionstart="handleCompositionStart"
             @compositionend="handleCompositionEnd"
             @input="handleInput"
+            @blur="handleEditorBlur"
           />
           <Tooltip :text="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')">
           <button
