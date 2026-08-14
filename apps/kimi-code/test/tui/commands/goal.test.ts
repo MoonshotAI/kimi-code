@@ -800,6 +800,28 @@ describe('dispatchInput /goal integration', () => {
     expect(session.createGoal).not.toHaveBeenCalled();
     expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X');
   });
+
+  it('restores the input when the post-creation busy re-check rejects /goal', async () => {
+    const { host, session } = makeHost({ hasSession: false });
+    Object.assign(host, {
+      engineV2: true,
+      // A first prompt starts a turn while the lazy session creation awaits.
+      ensureSession: vi.fn(async () => {
+        host.state.appState.streamingPhase = 'thinking';
+        return session;
+      }),
+    });
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(host.showError).toHaveBeenCalledWith(
+        'Cannot /goal while streaming — press Esc or Ctrl-C first.',
+      );
+    });
+    expect(session.createGoal).not.toHaveBeenCalled();
+    expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X');
+  });
 });
 
 describe('goalArgumentCompletions', () => {

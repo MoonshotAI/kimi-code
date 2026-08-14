@@ -313,7 +313,7 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
         host.track('clear');
       }
       try {
-        await handleBuiltInSlashCommand(host, intent.name, intent.args);
+        await handleBuiltInSlashCommand(host, intent.name, intent.args, input);
       } catch (error) {
         host.showError(formatErrorMessage(error));
       }
@@ -354,6 +354,7 @@ async function handleBuiltInSlashCommand(
   host: SlashCommandHost,
   name: BuiltinSlashCommandName,
   args: string,
+  input: string,
 ): Promise<void> {
   if (host.session === undefined && SESSION_REQUIRING_COMMANDS.has(name)) {
     const session = await ensureSessionForCommand(host);
@@ -372,6 +373,8 @@ async function handleBuiltInSlashCommand(
       resolveSlashCommandAvailability(command, args) === 'idle-only'
     ) {
       host.showError(slashBusyMessage(name, busyReason));
+      // Same as the dispatch blocked branch: give the cleared input back.
+      host.restoreInputText(input);
       return;
     }
   }
