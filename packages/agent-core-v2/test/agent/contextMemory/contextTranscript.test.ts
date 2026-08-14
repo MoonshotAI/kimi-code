@@ -257,8 +257,11 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['skill A', 'prompt A']);
   });
 
-  it('undo skips a hook result inside a grouped submission and keeps it', () => {
+  it('undo skips a hook result recorded before a grouped submission and keeps it', () => {
     const result = reduceContextTranscript([
+      appendMessage(
+        userMessage('hook note', { kind: 'hook_result', event: 'UserPromptSubmit' }),
+      ),
       appendMessage(
         userMessage('skill card', {
           kind: 'skill_activation',
@@ -267,9 +270,6 @@ describe('reduceContextTranscript', () => {
           trigger: 'user-slash',
           submissionId: 'sub-1',
         }),
-      ),
-      appendMessage(
-        userMessage('hook note', { kind: 'hook_result', event: 'UserPromptSubmit' }),
       ),
       appendMessage(userMessage('message B', { kind: 'user', submissionId: 'sub-1' })),
       appendMessage(assistantMessage('reply B')),

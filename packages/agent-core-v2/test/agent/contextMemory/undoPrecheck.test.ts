@@ -179,21 +179,21 @@ describe('computeUndoCut', () => {
     expect(isFullyUndoable(cut, 1)).toBe(true);
   });
 
-  it('skips a hook result inside a grouped submission and keeps it', () => {
+  it('skips a hook result recorded before a grouped submission and keeps it', () => {
     const history = [
       user(USER_ORIGIN),
-      skillActivation('sub-1'),
       {
         role: 'user',
         content: [text('hook note')],
         toolCalls: [],
         origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
       } as ContextMessage,
+      skillActivation('sub-1'),
       groupedPrompt('sub-1'),
       assistant(),
     ];
     const cut = computeUndoCut(history, 1);
-    expect(cut).toEqual({ cutIndex: 1, removedCount: 1, stoppedAtCompaction: false });
+    expect(cut).toEqual({ cutIndex: 2, removedCount: 1, stoppedAtCompaction: false });
     expect(isFullyUndoable(cut, 1)).toBe(true);
   });
 });

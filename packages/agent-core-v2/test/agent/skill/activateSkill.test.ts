@@ -146,6 +146,23 @@ describe('promptWithSkills', () => {
     ).toBe(false);
   });
 
+  it('rejects a grouped submission without any skills', async () => {
+    ctx = agentWithSkills();
+
+    await expect(
+      ctx.rpc.promptWithSkills({
+        input: [{ type: 'text', text: 'Review this change.' }],
+        skills: [],
+      }),
+    ).rejects.toThrow(/at least one skill/i);
+
+    expect(ctx.llmCalls).toHaveLength(0);
+    expect(ctx.context.get()).toHaveLength(0);
+    expect(
+      ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'skill.activated'),
+    ).toBe(false);
+  });
+
   it('undoes the prompt and its skill activations as one unit', async () => {
     ctx = agentWithSkills();
     ctx.mockNextResponse({ type: 'text', text: 'done' });

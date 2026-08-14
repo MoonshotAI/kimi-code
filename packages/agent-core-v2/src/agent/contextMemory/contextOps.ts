@@ -24,7 +24,9 @@
  * `context.undo` counts conversation ticks with the single `isUndoAnchor`
  * predicate — the same definition the checkpoint
  * protocol pushes with, so anchor counting and checkpoint pushing can never
- * drift apart.
+ * drift apart. Messages that share the cut anchor's `promptSubmissionId` are
+ * part of the same grouped submission and cut together with it, while
+ * injection and hook-result messages never anchor or interrupt a cut.
  *
  * Blob handling is declared as a `ModelBlobCodec` on `ContextModel.blobs`:
  * - `dehydrate(record, transform)`: at dispatch time, traverses message content
@@ -343,8 +345,6 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
   for (let i = state.length - 1; i >= 0; i--) {
     const message = state[i];
     if (message === undefined) continue;
-    // Injection and hook-result messages never anchor or interrupt a cut:
-    // they are skipped (and survive) while a grouped cut runs past them.
     if (message.origin?.kind === 'injection' || message.origin?.kind === 'hook_result') continue;
     if (remaining <= 0) {
       if (
