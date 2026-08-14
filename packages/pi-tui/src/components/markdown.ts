@@ -31,9 +31,10 @@ class StrictStrikethroughTokenizer extends Tokenizer {
 // at the first CJK punctuation character BEFORE the ASCII backpedal so trailing
 // ASCII punctuation left by the cut is still normalized away. Full-width
 // parentheses are handled like GFM handles ASCII ones: balanced pairs stay
-// part of the URL (`.../wiki/中华人民共和国（1949年）`), and only an
-// unbalanced `（` / `）` terminates the match. Guarded by the "CJK punctuation
-// after bare URLs" tests in test/markdown.test.ts.
+// part of the URL (`.../wiki/中华人民共和国（1949年）`, punctuation inside
+// them included), and only an unbalanced `（` / `）` terminates the match.
+// Guarded by the "CJK punctuation after bare URLs" tests in
+// test/markdown.test.ts.
 const FULLWIDTH_LEFT_PAREN = 0xff08; // （
 const FULLWIDTH_RIGHT_PAREN = 0xff09; // ）
 const CJK_URL_TERMINATOR_REGEX =
@@ -41,8 +42,11 @@ const CJK_URL_TERMINATOR_REGEX =
 
 /**
  * Index at which to cut an autolink match, or -1 to keep it whole. Non-paren
- * CJK punctuation always terminates the URL; full-width parens only terminate
- * it when unbalanced.
+ * CJK punctuation terminates the URL outside of full-width parens; full-width
+ * parens only terminate it when unbalanced. Punctuation inside a balanced
+ * parenthetical (e.g. the ，in （北京，1949年）) stays part of the URL —
+ * prose parentheticals contain spaces and never survive marked's match this
+ * far, so a balanced group is almost always deliberate URL content.
  */
 function findCjkUrlBoundary(match: string): number {
 	let parenDepth = 0;
@@ -62,7 +66,7 @@ function findCjkUrlBoundary(match: string): number {
 			if (parenDepth === 0) {
 				unmatchedOpen = -1;
 			}
-		} else if (CJK_URL_TERMINATOR_REGEX.test(match[i]!)) {
+		} else if (parenDepth === 0 && CJK_URL_TERMINATOR_REGEX.test(match[i]!)) {
 			return i;
 		}
 	}

@@ -1677,6 +1677,24 @@ bar`,
 				"Balanced full-width parens remain part of the hyperlink target",
 			);
 		});
+
+		it("should keep CJK punctuation inside balanced full-width parentheses", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown(
+				"见 https://example.com/wiki/中华人民共和国（北京，1949年） 的说明",
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+
+			assert.ok(
+				joined.includes("\x1b]8;;https://example.com/wiki/中华人民共和国（北京，1949年）\x1b\\"),
+				"Punctuation inside balanced full-width parens remains part of the hyperlink target",
+			);
+		});
 	});
 
 	describe("HTML-like tags in text", () => {
