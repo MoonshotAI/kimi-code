@@ -2816,6 +2816,36 @@ describe('AnthropicChatProvider', () => {
       });
     });
 
+    it('coerces text blocks and deltas that omit `text` to empty strings', async () => {
+      const provider = createStreamProvider();
+      const stream = mockStream([
+        {
+          type: 'message_start',
+          message: { id: 'msg_stream_malformed', usage: { input_tokens: 10 } },
+        },
+        // A non-compliant relay may omit `text` on the block start and on deltas.
+        { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta' } },
+        { type: 'message_delta', delta: {}, usage: { output_tokens: 5 } },
+        { type: 'message_stop' },
+      ]);
+
+      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(stream) as never;
+
+      const result = await provider.generate(
+        '',
+        [],
+        [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] }],
+      );
+
+      const parts = await collectParts(result);
+
+      expect(parts).toEqual([
+        { type: 'text', text: '' },
+        { type: 'text', text: '' },
+      ]);
+    });
+
     it('yields thinking delta and signature from stream events', async () => {
       const provider = createStreamProvider();
       const stream = mockStream([

@@ -558,15 +558,19 @@ export class SessionEventHandler {
 
   private handleAssistantDelta(event: AssistantDeltaEvent): void {
     const { state, streamingUI } = this.host;
+    // Malformed/provider-quirk wire records can arrive without a delta payload
+    // (e.g. an Anthropic content_block_start whose text block omits `text` —
+    // JSON serialization then drops the key). Coerce instead of crashing.
+    const delta = typeof event.delta === 'string' ? event.delta : '';
     if (streamingUI.hasThinkingDraft()) {
       streamingUI.flushThinkingToTranscript('idle');
     }
 
-    if (event.delta.trim().length > 0) {
+    if (delta.trim().length > 0) {
       this.currentTurnHasAssistantText = true;
       this.pendingModelBlockedFallback = undefined;
     }
-    streamingUI.appendAssistantDelta(event.delta);
+    streamingUI.appendAssistantDelta(delta);
 
     this.host.patchLivePane({
       mode: 'idle',

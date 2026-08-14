@@ -1395,3 +1395,44 @@ describe('429 wire behavior over real HTTP (no hidden SDK retry)', () => {
     },
   );
 });
+
+describe('malformed anthropic stream resilience', () => {
+  it('coerces text blocks/deltas that omit `text` into empty-string deltas', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'anthropic',
+      modelName: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+    });
+    const client = sdkClient(provider) as {
+      messages: { create: unknown };
+      beta: { messages: { create: unknown } };
+    };
+    async function* malformedStream(): AsyncIterable<unknown> {
+      yield {
+        type: 'message_start',
+        message: { id: 'msg_probe', usage: { input_tokens: 3, output_tokens: 1 } },
+      };
+      // A non-compliant relay may omit `text` on the block start and on deltas.
+      yield { type: 'content_block_start', index: 0, content_block: { type: 'text' } };
+      yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta' } };
+      yield { type: 'content_block_stop', index: 0 };
+      yield {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn' },
+        usage: { output_tokens: 1 },
+      };
+    }
+    const create = vi.fn().mockImplementation(() => Promise.resolve(malformedStream()));
+    client.messages.create = create;
+    client.beta.messages.create = create;
+
+    const parts: { type: string; text?: unknown }[] = [];
+    for await (const part of await provider.generate('', [], PROBE_HISTORY)) {
+      parts.push(part as { type: string; text?: unknown });
+    }
+
+    const textParts = parts.filter((part) => part.type === 'text');
+    expect(textParts.length).toBeGreaterThan(0);
+    for (const part of textParts) expect(part.text).toBe('');
+  });
+});
