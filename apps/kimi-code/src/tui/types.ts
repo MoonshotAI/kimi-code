@@ -236,6 +236,10 @@ export interface TranscriptEntry {
   skillName?: string;
   skillArgs?: string;
   skillTrigger?: SkillActivationTrigger;
+  /** Card belongs to the following prompt's bundled submission: undo removes them together. */
+  bundledWithPrompt?: boolean;
+  /** Entry renders a UserPromptSubmit hook result (sits inside its prompt's group window). */
+  hookResult?: boolean;
   pluginCommandData?: PluginCommandTranscriptData;
 }
 
@@ -252,6 +256,15 @@ export interface LivePaneState {
   pendingQuestion: PendingQuestion | null;
 }
 
+export interface InlineSkillActivation {
+  readonly skillName: string;
+  /**
+   * Skill arguments. Only set for a leading `/skill:<name> args` command that
+   * is combined with further inline skills; inline tokens carry no args.
+   */
+  readonly args?: string;
+}
+
 export interface QueuedMessage {
   readonly text: string;
   readonly agentId?: string;
@@ -266,6 +279,8 @@ export interface QueuedMessage {
   readonly skillName?: string;
   /** Set when mode === 'skill': the raw (media-rewritten) args to activate with. */
   readonly skillArgs?: string;
+  /** Skills to activate together with this queued message's prompt. */
+  readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
 
 /**

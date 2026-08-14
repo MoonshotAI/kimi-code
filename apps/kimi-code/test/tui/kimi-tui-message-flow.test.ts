@@ -13,6 +13,7 @@ import type {
   ApprovalResponse,
   Event,
   GoalSnapshot,
+  Session,
 } from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -28,6 +29,7 @@ import { AssistantMessageComponent } from '#/tui/components/messages/assistant-m
 import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import {
+  groupTurns,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
   TRANSCRIPT_KEEP_RECENT_STEPS,
@@ -45,6 +47,7 @@ import {
   PluginsPanelComponent,
 } from '#/tui/components/dialogs/plugins-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
+import type { SessionReplayRenderer } from '#/tui/controllers/session-replay';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
@@ -116,6 +119,7 @@ function stripSgr(text: string): string {
 interface MessageDriver {
   state: TUIState;
   streamingUI: StreamingUIController;
+  sessionReplay: SessionReplayRenderer;
   pluginCommandMap: Map<string, string>;
   sessionEventHandler: {
     startSubscription(): void;
@@ -253,6 +257,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     reloadPlugins: vi.fn(async () => ({ added: [], removed: [], errors: [] })),
     reloadSession: vi.fn(async () => ({})),
     activateSkill: vi.fn(async () => {}),
+    promptWithSkills: vi.fn(async () => {}),
     getPluginInfo: vi.fn(async (id: string) => ({
       id,
       displayName: id,
@@ -592,6 +597,394 @@ describe('KimiTUI message flow', () => {
     });
     expect(harness.createSession).toHaveBeenCalledTimes(1);
     expect(driver.getCurrentSessionId()).toBe('ses-lazy');
+  });
+
+  it('submits inline skill tokens with the prompt as one grouped submission (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('please /skill:review and /skill:security this change');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        'please /skill:review and /skill:security this change',
+        [{ name: 'review' }, { name: 'security' }],
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(session.activateSkill).not.toHaveBeenCalled();
+  });
+
+  it('combines a leading skill command with later inline skills into one submission (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/skill:review check this /skill:security');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/skill:review check this /skill:security',
+        [
+          { name: 'review', args: 'check this /skill:security' },
+          { name: 'security' },
+        ],
+      );
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
+  });
+
+  it('scans inline skills in messages that start with an unknown slash token (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/dance please use /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/dance please use /skill:review',
+        [{ name: 'review' }],
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('keeps inline skill tokens as plain text on the legacy engine', async () => {
+    const session = makeSession({ id: 'ses-1' });
+    const { driver } = await makeDriver(session, {
+      listSkills: undefined,
+      listPluginCommands: vi.fn(async () => []),
+    });
+    (
+      driver as unknown as { skillCommandMap: Map<string, string> }
+    ).skillCommandMap.set('skill:review', 'review');
+
+    driver.handleUserInput('please /skill:review this');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('please /skill:review this');
+    });
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+  });
+
+  it('queues an inline-skill prompt while a goal is active (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+    // Materialize the lazy session first: an active goal only exists inside a
+    // live session, and lazy creation would refresh (and clear) the goal
+    // snapshot set up below.
+    await (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession();
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+
+    driver.handleUserInput('check /skill:review');
+
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({
+        text: 'check /skill:review',
+        inlineSkillActivations: [{ skillName: 'review' }],
+      }),
+    ]);
+  });
+
+  it('does not append a user entry when the grouped submission is rejected (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+      promptWithSkills: vi.fn(async () => {
+        throw new Error('Skill "review" was not found');
+      }),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('please /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    // A rejected group leaves no local undo anchor the engine never recorded.
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toHaveLength(0);
+  });
+
+  it('renders a bundled replay submission as a single turn', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(session, {}, startupInput);
+    (session.getResumeState as ReturnType<typeof vi.fn>).mockReturnValue({
+      sessionMetadata: {},
+      agents: {
+        main: {
+          config: { modelCapabilities: { max_context_tokens: 100 }, modelAlias: 'k2' },
+          plan: null,
+          permission: { mode: 'manual' },
+          swarmMode: false,
+          context: { history: [], tokenCount: 0 },
+          background: [],
+          toolStore: {},
+          replay: [
+            {
+              type: 'message',
+              time: 1,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'earlier question' }],
+                toolCalls: [],
+                origin: { kind: 'user' },
+              },
+            },
+            {
+              type: 'message',
+              time: 2,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'earlier answer' }],
+                toolCalls: [],
+              },
+            },
+            {
+              type: 'message',
+              time: 3,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'hook note' }],
+                toolCalls: [],
+                origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
+              },
+            },
+            {
+              type: 'message',
+              time: 4,
+              message: {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'skill card A body' },
+                  { type: 'text', text: 'skill card B body' },
+                  { type: 'text', text: 'please /skill:review and /skill:security' },
+                ],
+                toolCalls: [],
+                origin: {
+                  kind: 'user',
+                  skillActivations: [
+                    { activationId: 'act-1', skillName: 'review' },
+                    { activationId: 'act-2', skillName: 'security' },
+                  ],
+                },
+              },
+            },
+            {
+              type: 'message',
+              time: 5,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'bundled answer' }],
+                toolCalls: [],
+              },
+            },
+            {
+              type: 'message',
+              time: 6,
+              message: {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'skill card C body' },
+                  { type: 'text', text: 'please /commit' },
+                ],
+                toolCalls: [],
+                origin: {
+                  kind: 'user',
+                  skillActivations: [{ activationId: 'act-3', skillName: 'commit' }],
+                },
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
+    expect(replayed).toBe(true);
+
+    const turns = groupTurns(driver.state.transcriptEntries);
+    expect(turns).toHaveLength(3);
+    // The hook result is projected inside the bundle's window (after the
+    // skill cards, before the prompt), matching the live event order.
+    expect(turns[1]!.entries.map((entry) => entry.kind)).toEqual([
+      'skill_activation',
+      'skill_activation',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+    expect(turns[1]!.entries[2]!.hookResult).toBe(true);
+    // The user entry shows only the caller's own text — the rendered skill
+    // blocks the engine prepended to the content are stripped.
+    expect(turns[1]!.entries[3]!.content).toBe('please /skill:review and /skill:security');
+    expect(
+      turns[1]!.entries.slice(0, 2).map((entry) => entry.bundledWithPrompt),
+    ).toEqual([true, true]);
+    expect(turns[2]!.entries.map((entry) => entry.kind)).toEqual(['skill_activation', 'user']);
+    expect(turns[2]!.entries[1]!.content).toBe('please /commit');
+  });
+
+  it('appends the user entry after the skill cards for a bundled submission (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    // Hold the RPC open so the skill.activated event can land mid-flight,
+    // exactly how the in-process wiring delivers it during the call.
+    let release!: () => void;
+    const heldPrompt = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    (session.promptWithSkills as ReturnType<typeof vi.fn>).mockReturnValue(heldPrompt);
+
+    driver.handleUserInput('please /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalled();
+    });
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        sessionId: 'ses-lazy',
+        agentId: 'main',
+        activationId: 'act-1',
+        skillName: 'review',
+        trigger: 'user-slash',
+      } as Event,
+      () => {},
+    );
+    release();
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries.map((entry) => entry.kind)).toEqual([
+        'skill_activation',
+        'user',
+      ]);
+    });
+    expect(driver.state.transcriptEntries[0]!.bundledWithPrompt).toBe(true);
   });
 
   it('serializes concurrent lazy session creation (v2 engine)', async () => {
@@ -3591,6 +3984,84 @@ command = "vim"
     });
     expect(session.steer).not.toHaveBeenCalled();
     expect(stripSgr(renderBtwPanel(driver))).toContain('Q: What are you working on right now?');
+  });
+
+  it('sends /btw panel input with inline skills via promptWithSkills (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/btw');
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledWith();
+    });
+    expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question...');
+
+    driver.handleUserInput('check /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('check /skill:review', [
+        { name: 'review' },
+      ]);
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('activates inline skills in the initial /btw prompt (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/btw check this /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('check this /skill:review', [
+        { name: 'review' },
+      ]);
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
   });
 
   it('cancels an unused /btw side agent when closing an empty panel', async () => {

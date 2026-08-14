@@ -28,6 +28,7 @@ import { markTranscriptComponent } from '../utils/transcript-component-metadata'
 import {
   appStateFromResumeAgent,
   backgroundOrigin,
+  bundledSkillsFromOrigin,
   collectReplayMessageContent,
   contentPartsToText,
   countActiveBackgroundTasks,
@@ -39,6 +40,7 @@ import {
   replayBackgroundProjection,
   replayEntry,
   skillActivationFromOrigin,
+  stripBundledSkillParts,
   pluginCommandFromOrigin,
   toolCallFromReplayMessage,
   toolResultOutput,
@@ -192,11 +194,46 @@ export class SessionReplayRenderer {
 
   private renderRecords(agent: ResumedAgentState): void {
     const context = createReplayRenderContext();
-    for (const record of limitReplayRecordsByTurn(agent.replay, REPLAY_TURN_LIMIT)) {
-      this.renderRecord(context, record);
+    const records = [...limitReplayRecordsByTurn(agent.replay, REPLAY_TURN_LIMIT)];
+    for (let i = 0; i < records.length; i++) {
+      i = this.renderRecordWithBundleLookahead(context, records, i);
     }
     this.flushAssistant(context);
     this.cleanupRuntime(context);
+  }
+
+  private renderRecordWithBundleLookahead(
+    context: ReplayRenderContext,
+    records: readonly AgentReplayRecord[],
+    index: number,
+  ): number {
+    const record = records[index]!;
+    // Hook results recorded ahead of a bundled prompt are projected inside
+    // the bundle's window — after its skill cards, before the prompt —
+    // matching the live event order instead of attaching them to the
+    // previous turn.
+    if (record.type === 'message' && record.message.origin?.kind === 'hook_result') {
+      let end = index;
+      for (;;) {
+        const candidate = records[end + 1];
+        if (candidate?.type !== 'message' || candidate.message.origin?.kind !== 'hook_result') {
+          break;
+        }
+        end += 1;
+      }
+      const next = records[end + 1];
+      if (next?.type === 'message' && bundledSkillsFromOrigin(next.message.origin).length > 0) {
+        const hookResults: ContextMessage[] = [];
+        for (let j = index; j <= end; j++) {
+          const hookRecord = records[j]!;
+          if (hookRecord.type === 'message') hookResults.push(hookRecord.message);
+        }
+        this.renderBundledPrompt(context, next.message, hookResults);
+        return end + 1;
+      }
+    }
+    this.renderRecord(context, record);
+    return index;
   }
 
   private renderRecord(context: ReplayRenderContext, record: AgentReplayRecord): void {
@@ -339,10 +376,38 @@ export class SessionReplayRenderer {
       return;
     }
 
+    if (bundledSkillsFromOrigin(message.origin).length > 0) {
+      this.renderBundledPrompt(context, message);
+      return;
+    }
     this.advanceTurn(context);
     this.host.appendTranscriptEntry(
       replayEntry(context, 'user', contentPartsToText(message.content), 'plain'),
     );
+  }
+
+  private renderBundledPrompt(
+    context: ReplayRenderContext,
+    message: ContextMessage,
+    hookResults: readonly ContextMessage[] = [],
+  ): void {
+    // The bundle is one message: advance once, rebuild the per-skill cards
+    // from the prompt origin, then show the caller's own parts (the engine
+    // prepends one rendered text part per bundled skill to the content).
+    this.advanceTurn(context);
+    this.renderBundledSkillCards(context, message);
+    for (const hookResult of hookResults) {
+      this.renderHookResult(context, hookResult);
+    }
+    this.host.appendTranscriptEntry(
+      replayEntry(context, 'user', contentPartsToText(stripBundledSkillParts(message)), 'plain'),
+    );
+  }
+
+  private renderBundledSkillCards(context: ReplayRenderContext, message: ContextMessage): void {
+    for (const skill of bundledSkillsFromOrigin(message.origin)) {
+      this.renderSkillActivation(context, skill);
+    }
   }
 
   private renderToolCalls(context: ReplayRenderContext, toolCalls: readonly ToolCall[]): void {
@@ -432,6 +497,7 @@ export class SessionReplayRenderer {
       skillName: skill.skillName,
       skillArgs: skill.skillArgs,
       skillTrigger: skill.trigger,
+      bundledWithPrompt: skill.bundled === true ? true : undefined,
     });
   }
 
@@ -526,8 +592,8 @@ export class SessionReplayRenderer {
   private renderHookResult(context: ReplayRenderContext, message: ContextMessage): void {
     if (message.origin?.kind !== 'hook_result') return;
     this.flushAssistant(context);
-    this.host.appendTranscriptEntry(
-      replayEntry(
+    this.host.appendTranscriptEntry({
+      ...replayEntry(
         context,
         'assistant',
         formatHookResultMessageForTranscript(
@@ -537,7 +603,8 @@ export class SessionReplayRenderer {
         ),
         'markdown',
       ),
-    );
+      hookResult: true,
+    });
   }
 
   private renderCronJob(context: ReplayRenderContext, message: ContextMessage): void {

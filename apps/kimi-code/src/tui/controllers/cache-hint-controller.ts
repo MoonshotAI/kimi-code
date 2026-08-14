@@ -17,7 +17,7 @@ import {
 } from '../components/dialogs/cache-hint-dialog';
 import { saveTuiConfig } from '../config';
 import { MAIN_AGENT_ID } from '../constant/kimi-tui';
-import type { AppState } from '../types';
+import type { AppState, InlineSkillActivation } from '../types';
 import type { TUIState } from '../tui-state';
 import { evaluateCacheHint } from '../utils/cache-hint';
 import { formatErrorMessage } from '../utils/event-payload';
@@ -28,6 +28,7 @@ import type { ExtractionResult } from '../utils/image-placeholder';
 interface StashedSubmit {
   readonly text: string;
   readonly extraction?: ExtractionResult;
+  readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
 
 export interface CacheHintHost {
@@ -43,6 +44,11 @@ export interface CacheHintHost {
   showError(message: string): void;
   createNewSession(): Promise<void>;
   sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void>;
+  sendInlineSkillUserInput(
+    text: string,
+    activations: readonly InlineSkillActivation[],
+    preExtracted?: ExtractionResult,
+  ): Promise<void>;
 }
 
 type HintDecision = { readonly idleSeconds: number; readonly totalTokens: number };
@@ -236,7 +242,11 @@ export class CacheHintController {
    * is swallowed while the config is fetched (spec: the trigger must reach
    * the interface); the message is then either shown the dialog or released.
    */
-  maybeInterceptOnSubmit(text: string, extraction?: ExtractionResult): boolean {
+  maybeInterceptOnSubmit(
+    text: string,
+    extraction?: ExtractionResult,
+    inlineSkillActivations?: readonly InlineSkillActivation[],
+  ): boolean {
     const { host } = this;
     if (!host.engineV2 || host.session === undefined) return false;
     // A stashed message being released re-enters the send path here — never
@@ -253,7 +263,7 @@ export class CacheHintController {
     // Coarse floor: configured cache durations are 10min+, so anything
     // fresher than a minute can never hint.
     if (Date.now() - this.lastActivityAt < 60_000) return false;
-    const stash: StashedSubmit = { text, extraction };
+    const stash: StashedSubmit = { text, extraction, inlineSkillActivations };
     const cached = peekCacheHintConfig();
     if (cached !== undefined) {
       const decision = evaluateCacheHint({
@@ -342,10 +352,22 @@ export class CacheHintController {
   private async releaseStashed(stash: StashedSubmit): Promise<void> {
     this.releasingStashed = true;
     try {
-      await this.host.sendNormalUserInput(stash.text, stash.extraction);
+      await this.releaseToSendPath(stash);
     } finally {
       this.releasingStashed = false;
     }
+  }
+
+  private async releaseToSendPath(stash: StashedSubmit): Promise<void> {
+    if (stash.inlineSkillActivations !== undefined && stash.inlineSkillActivations.length > 0) {
+      await this.host.sendInlineSkillUserInput(
+        stash.text,
+        stash.inlineSkillActivations,
+        stash.extraction,
+      );
+      return;
+    }
+    await this.host.sendNormalUserInput(stash.text, stash.extraction);
   }
 
   /** Restore a stashed input to the editor, appending to anything already
@@ -470,7 +492,7 @@ export class CacheHintController {
         break;
     }
     this.lastDialogRestored = false;
-    if (stashed !== undefined) await host.sendNormalUserInput(stashed.text, stashed.extraction);
+    if (stashed !== undefined) await this.releaseToSendPath(stashed);
   }
 
   /** Bounded wait for the engine to flip `isCompacting` after a compact RPC. */

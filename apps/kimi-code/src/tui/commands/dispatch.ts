@@ -14,11 +14,13 @@ import type { ResolvedTheme } from '../theme/colors';
 import type { TUIState } from '../tui-state';
 import type {
   AppState,
+  InlineSkillActivation,
   LoginProgressSpinnerHandle,
   QueuedMessage,
   TranscriptEntry,
 } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
+import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
 import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
 import { handleCopyCommand } from './copy';
@@ -191,6 +193,12 @@ export interface SlashCommandHost {
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
+  /**
+   * Submit a prompt that explicitly activates one or more skills inline
+   * (v2 engine only): all activations ride the same submission as the prompt
+   * and launch as a single turn.
+   */
+  sendInlineSkillUserInput(text: string, activations: readonly InlineSkillActivation[]): Promise<void>;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
   activatePluginCommand(
     session: Session,
@@ -214,10 +222,75 @@ export interface SlashCommandHost {
 
 export function dispatchInput(host: SlashCommandHost, text: string): void {
   if (parseSlashInput(text) !== null) {
+    // A leading skill command combined with further inline skill tokens
+    // (`/skill:a args /skill:b`) is one grouped submission on the v2 engine.
+    if (host.engineV2 && dispatchInlineSkillCombo(host, text)) {
+      return;
+    }
     void executeSlashCommand(host, text);
     return;
   }
+  // Inline skill tokens anywhere in a plain prompt (v2 engine only); on the
+  // legacy engine they keep their plain-text meaning.
+  if (host.engineV2) {
+    const activations = extractInlineSkillActivations(text, host.skillCommandMap);
+    if (activations.length > 0) {
+      void host.sendInlineSkillUserInput(text, activations);
+      return;
+    }
+  }
   host.sendNormalUserInput(text);
+}
+
+/**
+ * Handle the `/skill:a args /skill:b …` combo. Returns true when the input was
+ * claimed (submitted or rejected), false when it should fall through to the
+ * regular single-skill slash path.
+ */
+function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean {
+  const intent = resolveSlashCommandInput({
+    input: text,
+    skillCommandMap: host.skillCommandMap,
+    pluginCommandMap: host.pluginCommandMap,
+    isStreaming: host.state.appState.streamingPhase !== 'idle',
+    isCompacting: host.state.appState.isCompacting,
+  });
+  // An unrecognized slash token makes the whole input a plain message; scan
+  // it for inline skills like any other plain prompt.
+  if (intent.kind === 'message') {
+    const activations = extractInlineSkillActivations(text, host.skillCommandMap);
+    if (activations.length === 0) return false;
+    void host.sendInlineSkillUserInput(text, activations);
+    return true;
+  }
+  if (intent.kind !== 'skill') return false;
+
+  const all = extractInlineSkillActivations(text, host.skillCommandMap, { includeLeading: true });
+  if (all.length < 2) return false;
+
+  // Same gate as the plain skill slash command: never queue a slash command.
+  const busyReason = slashCommandBusyReason({
+    isStreaming: host.state.appState.streamingPhase !== 'idle',
+    isCompacting: host.state.appState.isCompacting,
+  });
+  if (busyReason !== undefined) {
+    host.showError(slashBusyMessage(intent.commandName, busyReason));
+    return true;
+  }
+  if (host.state.appState.model.trim().length === 0) {
+    host.showError(LLM_NOT_SET_MESSAGE);
+    return true;
+  }
+
+  // Preserve the leading command's arguments: inline tokens carry no args, so
+  // the first activation (the leading skill, first-occurrence order) takes the
+  // raw args exactly as the single-skill path would receive them.
+  const activations =
+    intent.args.length > 0 && all[0]?.skillName === intent.skillName
+      ? [{ skillName: intent.skillName, args: intent.args }, ...all.slice(1)]
+      : all;
+  void host.sendInlineSkillUserInput(text, activations);
+  return true;
 }
 
 async function executeSlashCommand(host: SlashCommandHost, input: string): Promise<void> {
