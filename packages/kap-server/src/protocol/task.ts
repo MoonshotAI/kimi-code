@@ -30,5 +30,6 @@ export const taskSchema = z.object({
   model: z.string().optional(),
   /** Subagent tasks only: the child's effective thinking effort at spawn. */
   thinking_effort: z.string().optional(),
+  agent_id: z.string().optional(),
 });
 export type Task = z.infer<typeof taskSchema>;
