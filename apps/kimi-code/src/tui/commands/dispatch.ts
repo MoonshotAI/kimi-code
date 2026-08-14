@@ -51,6 +51,7 @@ import {
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
 import type { SkillListSession } from './skills';
 import {
+  canRestoreSubmittedInput,
   resolveSlashCommandInput,
   slashBusyMessage,
   slashCommandBusyReason,
@@ -349,15 +350,6 @@ const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set
   'undo',
   'web',
 ]);
-
-/**
- * Whether a delayed input restore is still safe: the editor must be empty
- * (no newer draft) and still mounted (no editor-replacement panel opened
- * meanwhile). Restores that run synchronously with submit do not need this.
- */
-export function canRestoreSubmittedInput(host: SlashCommandHost): boolean {
-  return host.state.editor.getText().length === 0 && !host.state.editorReplacementMounted;
-}
 
 async function handleBuiltInSlashCommand(
   host: SlashCommandHost,

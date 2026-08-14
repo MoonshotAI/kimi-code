@@ -25,7 +25,7 @@ import {
   type GoalQueueSnapshot,
 } from '../goal-queue-store';
 import { formatErrorMessage } from '../utils/event-payload';
-import { canRestoreSubmittedInput } from './dispatch';
+import { canRestoreSubmittedInput } from './resolve';
 import type { SlashCommandHost } from './dispatch';
 
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;

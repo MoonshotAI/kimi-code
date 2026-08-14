@@ -6,6 +6,7 @@ import {
 } from './registry';
 import { isExperimentalFlagEnabled } from './experimental-flags';
 import { parseSlashInput } from './parse';
+import type { TUIState } from '../tui-state';
 import type {
   KimiSlashCommand,
   SlashCommandBusyReason,
@@ -148,4 +149,13 @@ export function slashBusyMessage(
     return `Cannot /${commandName} while streaming — press Esc or Ctrl-C first.`;
   }
   return `Cannot /${commandName} while compacting — wait for compaction to finish first.`;
+}
+
+/**
+ * Whether a delayed input restore is still safe: the editor must be empty
+ * (no newer draft) and still mounted (no editor-replacement panel opened
+ * meanwhile). Restores that run synchronously with submit do not need this.
+ */
+export function canRestoreSubmittedInput(host: { state: TUIState }): boolean {
+  return host.state.editor.getText().length === 0 && !host.state.editorReplacementMounted;
 }
