@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="X-UA-Compatible" content="ie=edge" />
+<title>Markmap</title>
+<style>
+* {
+  margin: 0;
+  padding: 0;
+}
+html {
+  font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
+    'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+}
+#mindmap {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+.markmap-dark {
+  background: #27272a;
+  color: white;
+}
+</style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/markmap-toolbar@0.18.12/dist/style.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/styles/default.min.css">
+</head>
+<body>
+<svg id="mindmap"></svg>
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script><script src="https://cdn.jsdelivr.net/npm/markmap-view@0.18.12/dist/browser/index.js"></script><script src="https://cdn.jsdelivr.net/npm/markmap-toolbar@0.18.12/dist/index.js"></script><script>((r) => {
+          setTimeout(r);
+        })(() => {
+  const { markmap, mm } = window;
+  const toolbar = new markmap.Toolbar();
+  toolbar.attach(mm);
+  const el = toolbar.render();
+  el.setAttribute("style", "position:absolute;bottom:20px;right:20px");
+  document.body.append(el);
+})</script><script>((getMarkmap, getOptions, root2, jsonOptions) => {
+              const markmap = getMarkmap();
+              window.mm = markmap.Markmap.create(
+                "svg#mindmap",
+                (getOptions || markmap.deriveOptions)(jsonOptions),
+                root2
+              );
+              if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+                document.documentElement.classList.add("markmap-dark");
+              }
+            })(() => window.markmap,null,{"content":"&#x7528;&#x6237;&#x573a;&#x666f;&#x6d4b;&#x8bd5;&#x5bfc;&#x56fe;&#xff1a;v2 CLI &#x5185;&#x7f6e;&#x80fd;&#x529b;&#xff08;2026-08-03&#xff09;","children":[{"content":"S1 &#x5168;&#x65b0; v2 CLI &#x7528;&#x6237;","children":[{"content":"<table data-lines=\"14,19\">\n<thead data-lines=\"14,15\">\n<tr data-lines=\"14,15\">\n<th>&#x5224;&#x636e;</th>\n<th>&#x53ef;&#x63a5;&#x53d7;&#x7ed3;&#x679c;</th>\n</tr>\n</thead>\n<tbody data-lines=\"16,19\">\n<tr data-lines=\"16,17\">\n<td>v2 &#x53ef;&#x89c1;&#x6027;</td>\n<td>&#x4e24;&#x4e2a;&#x5185;&#x7f6e;&#x6761;&#x76ee;&#x53ea;&#x51fa;&#x73b0;&#x5728; v2 &#x9ed8;&#x8ba4; marketplace</td>\n</tr>\n<tr data-lines=\"17,18\">\n<td>&#x5b8c;&#x6210;&#x6001;</td>\n<td>&#x6240;&#x6709;&#x5fc5;&#x9700;&#x5c42;&#x4e3a; ok&#xff1b;WebBridge extension &#x53ef; missing</td>\n</tr>\n<tr data-lines=\"18,19\">\n<td>&#x5378;&#x8f7d;&#x8fb9;&#x754c;</td>\n<td>&#x4e0d;&#x5220;&#x9664; App&#x3001;daemon &#x6216; managed &#x6587;&#x4ef6;</td>\n</tr>\n</tbody>\n</table>","children":[],"payload":{"tag":"table","lines":"14,19"}}],"payload":{"tag":"h2","lines":"5,6"}},{"content":"S2 &#x5df2;&#x7ecf;&#x901a;&#x8fc7;&#x5176;&#x4ed6;&#x65b9;&#x5f0f;&#x88c5;&#x8fc7;&#x8fd0;&#x884c;&#x65f6;&#x7684;&#x7528;&#x6237;","children":[{"content":"<table data-lines=\"31,36\">\n<thead data-lines=\"31,32\">\n<tr data-lines=\"31,32\">\n<th>&#x5224;&#x636e;</th>\n<th>&#x53ef;&#x63a5;&#x53d7;&#x7ed3;&#x679c;</th>\n</tr>\n</thead>\n<tbody data-lines=\"33,36\">\n<tr data-lines=\"33,34\">\n<td>partial &#x91cd;&#x8bd5;</td>\n<td>&#x5df2;&#x5b8c;&#x6210;&#x5c42;&#x4e0d;&#x91cd;&#x590d;&#x6267;&#x884c;</td>\n</tr>\n<tr data-lines=\"34,35\">\n<td>user skill</td>\n<td>&#x53ea;&#x544a;&#x8b66;&#xff0c;&#x7edd;&#x4e0d;&#x5220;&#x9664;</td>\n</tr>\n<tr data-lines=\"35,36\">\n<td>ready &#x91cd;&#x88c5;</td>\n<td>&#x4e0b;&#x8f7d; latest&#xff0c;&#x800c;&#x4e0d;&#x662f;&#x6309;&#x672c;&#x5730;&#x65e7;&#x7248;&#x672c;&#x53f7;&#x5206;&#x652f;</td>\n</tr>\n</tbody>\n</table>","children":[],"payload":{"tag":"table","lines":"31,36"}}],"payload":{"tag":"h2","lines":"22,23"}},{"content":"S3 &#x540c;&#x65f6;&#x4f7f;&#x7528;&#x5176;&#x4ed6; agent &#x7684;&#x7528;&#x6237;","children":[{"content":"<table data-lines=\"46,50\">\n<thead data-lines=\"46,47\">\n<tr data-lines=\"46,47\">\n<th>&#x5224;&#x636e;</th>\n<th>&#x53ef;&#x63a5;&#x53d7;&#x7ed3;&#x679c;</th>\n</tr>\n</thead>\n<tbody data-lines=\"48,50\">\n<tr data-lines=\"48,49\">\n<td>&#x6587;&#x4ef6;&#x8fb9;&#x754c;</td>\n<td>&#x53ea;&#x6539; Kimi Code &#x81ea;&#x5df1;&#x7684;&#x63d2;&#x4ef6;&#x8bb0;&#x5f55;&#x4e0e; managed &#x5185;&#x5bb9;</td>\n</tr>\n<tr data-lines=\"49,50\">\n<td>&#x5171;&#x4eab;&#x76ee;&#x5f55;</td>\n<td><code>~/.agents/skills</code> &#x53ea;&#x8bfb;&#x68c0;&#x6d4b;&#xff0c;&#x4e0d;&#x505a;&#x5220;&#x9664;&#x6216;&#x8986;&#x76d6;</td>\n</tr>\n</tbody>\n</table>","children":[],"payload":{"tag":"table","lines":"46,50"}}],"payload":{"tag":"h2","lines":"39,40"}},{"content":"S4 &#x7f51;&#x7edc;&#x5f02;&#x5e38;&#x6216;&#x5b89;&#x88c5;&#x88ab;&#x6253;&#x65ad;&#x7684;&#x7528;&#x6237;","children":[{"content":"<table data-lines=\"62,67\">\n<thead data-lines=\"62,63\">\n<tr data-lines=\"62,63\">\n<th>&#x5224;&#x636e;</th>\n<th>&#x53ef;&#x63a5;&#x53d7;&#x7ed3;&#x679c;</th>\n</tr>\n</thead>\n<tbody data-lines=\"64,67\">\n<tr data-lines=\"64,65\">\n<td>&#x9519;&#x8bef;&#x53ef;&#x89c1;</td>\n<td><code>install.error</code> &#x53ef;&#x8bfb;&#xff0c;CLI &#x4e0d;&#x56e0;&#x540e;&#x53f0; Promise &#x9000;&#x51fa;</td>\n</tr>\n<tr data-lines=\"65,66\">\n<td>&#x5e42;&#x7b49;</td>\n<td>&#x91cd;&#x8bd5;&#x4e0d;&#x4f1a;&#x7834;&#x574f;&#x5df2;&#x5b8c;&#x6210;&#x5c42;</td>\n</tr>\n<tr data-lines=\"66,67\">\n<td>&#x79bb;&#x7ebf;&#x5f15;&#x5bfc;</td>\n<td>&#x65e0;&#x6cd5;&#x8bbf;&#x95ee;&#x5546;&#x5e97;&#x65f6;&#x4ecd;&#x6709;&#x660e;&#x786e;&#x4eba;&#x5de5;&#x8def;&#x5f84;</td>\n</tr>\n</tbody>\n</table>","children":[],"payload":{"tag":"table","lines":"62,67"}}],"payload":{"tag":"h2","lines":"53,54"}},{"content":"S5 macOS &#x6743;&#x9650;&#x53d7;&#x9650;&#x7528;&#x6237;","children":[{"content":"<table data-lines=\"77,81\">\n<thead data-lines=\"77,78\">\n<tr data-lines=\"77,78\">\n<th>&#x5224;&#x636e;</th>\n<th>&#x53ef;&#x63a5;&#x53d7;&#x7ed3;&#x679c;</th>\n</tr>\n</thead>\n<tbody data-lines=\"79,81\">\n<tr data-lines=\"79,80\">\n<td>&#x6743;&#x9650;&#x63a2;&#x6d4b;</td>\n<td>&#x53ea;&#x8bfb;&#x63a2;&#x6d4b;&#x4e0d;&#x4e3b;&#x52a8;&#x5f39;&#x7a97;</td>\n</tr>\n<tr data-lines=\"80,81\">\n<td>&#x6743;&#x9650;&#x8bf7;&#x6c42;</td>\n<td>&#x4ec5;&#x5b89;&#x88c5;&#x6d41;&#x7a0b;&#x89e6;&#x53d1;&#xff0c;&#x62d2;&#x7edd;&#x4e0d;&#x4f2a;&#x88c5; ready</td>\n</tr>\n</tbody>\n</table>","children":[],"payload":{"tag":"table","lines":"77,81"}}],"payload":{"tag":"h2","lines":"70,71"}},{"content":"S6 &#x957f;&#x671f;&#x4f7f;&#x7528;&#x4e0e;&#x88ab;&#x52a8;&#x5347;&#x7ea7;&#x7528;&#x6237;","children":[{"content":"<table data-lines=\"91,95\">\n<thead data-lines=\"91,92\">\n<tr data-lines=\"91,92\">\n<th>&#x5224;&#x636e;</th>\n<th>&#x53ef;&#x63a5;&#x53d7;&#x7ed3;&#x679c;</th>\n</tr>\n</thead>\n<tbody data-lines=\"93,95\">\n<tr data-lines=\"93,94\">\n<td>&#x5347;&#x7ea7;&#x89e6;&#x53d1;</td>\n<td>&#x53ea;&#x5728;&#x7528;&#x6237;&#x4e3b;&#x52a8;&#x91cd;&#x88c5;&#x65f6;&#x53d1;&#x751f;&#xff0c;&#x4e0d;&#x626b;&#x63cf;&#x6216;&#x6bd4;&#x8f83;&#x786c;&#x7f16;&#x7801;&#x65e7;&#x7248;&#x672c;</td>\n</tr>\n<tr data-lines=\"94,95\">\n<td>&#x7248;&#x672c;&#x6765;&#x6e90;</td>\n<td>&#x5c55;&#x793a;&#x503c;&#x53ea;&#x6765;&#x81ea;&#x5b9e;&#x9645; App / daemon / plugin&#xff1b;&#x4e0d;&#x4f7f;&#x7528;&#x5386;&#x53f2; installer &#x7248;&#x672c;&#x6587;&#x4ef6;</td>\n</tr>\n</tbody>\n</table>","children":[],"payload":{"tag":"table","lines":"91,95"}}],"payload":{"tag":"h2","lines":"84,85"}},{"content":"&#x9644;&#x5f55;&#xff1a;&#x73af;&#x5883;&#x547d;&#x4ee4;","children":[{"content":"<pre data-lines=\"100,104\"><code class=\"language-bash\"><span class=\"hljs-built_in\">cd</span> ~/code/kimi-code\npnpm run dev:cli:v2\n</code></pre>","children":[],"payload":{"tag":"pre","lines":"100,104"}}],"payload":{"tag":"h2","lines":"98,99"}},{"content":"&#x6392;&#x9664;&#x9879;&#xff08;&#x672c;&#x8f6e;&#x4e0d;&#x6d4b;&#xff09;","children":[{"content":"desktop&#x3001;Kimi Work&#x3001;&#x591a;&#x8fdb;&#x7a0b;&#x5b9e;&#x65f6;&#x540c;&#x6b65;","children":[],"payload":{"tag":"li","lines":"109,110"}},{"content":"v1 &#x5ba2;&#x6237;&#x7aef;&#x517c;&#x5bb9;&#x548c; server REST API","children":[],"payload":{"tag":"li","lines":"110,111"}},{"content":"&#x4efb;&#x610f;&#x5386;&#x53f2; guide/plugin &#x7248;&#x672c;&#x53f7;&#x8bc6;&#x522b;&#x3001;&#x8fc1;&#x79fb;&#x6216;&#x5347;&#x7ea7;&#x5224;&#x65ad;","children":[],"payload":{"tag":"li","lines":"111,112"}},{"content":"&#x81ea;&#x52a8;&#x5220;&#x9664; user skill","children":[],"payload":{"tag":"li","lines":"112,114"}}],"payload":{"tag":"h2","lines":"107,108"}}],"payload":{"tag":"h1","lines":"0,1"}},null)</script>
+
+<script>
+(() => {
+  const STORE_KEY = 'cu-webbridge-test-map:v1';
+  const CHECK_PREFIX = 'M6 5a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z';
+  const state = new Map(JSON.parse(localStorage.getItem(STORE_KEY) || '[]'));
+
+  const bar = document.createElement('div');
+  bar.style.cssText = 'position:fixed;top:10px;left:10px;z-index:99;background:#fff;border:1px solid #ccc;border-radius:8px;padding:6px 12px;font:13px ui-sans-serif,system-ui;box-shadow:0 1px 4px rgba(0,0,0,.15);user-select:none;';
+  document.body.appendChild(bar);
+
+  const keyOf = (box) => 'k:' + (box.textContent || '').trim().slice(0, 80);
+  const save = () => localStorage.setItem(STORE_KEY, JSON.stringify([...state.entries()]));
+  const boxes = () => [...document.querySelectorAll('svg#mindmap svg path')].filter(p => (p.getAttribute('d') || '').startsWith(CHECK_PREFIX)).map(p => p.closest('svg'));
+
+  function applyOne(svg) {
+    const box = svg.closest('div');
+    const on = state.get(keyOf(box)) === true;
+    box.style.opacity = on ? '0.45' : '';
+    if (on) {
+      if (!svg.dataset.checked) {
+        svg.dataset.orig = svg.innerHTML;
+        svg.innerHTML = '<text x="1" y="16" font-size="18" fill="#4EC87E" style="font-weight:bold">✓</text>';
+        svg.dataset.checked = '1';
+      }
+    } else if (svg.dataset.checked) {
+      svg.innerHTML = svg.dataset.orig;
+      delete svg.dataset.checked;
+    }
+  }
+  function applyAll() {
+    const svgs = boxes();
+    svgs.forEach(applyOne);
+    const done = svgs.filter(s => state.get(keyOf(s.closest('div'))) === true).length;
+    bar.textContent = done + ' / ' + svgs.length + ' 完成（点击复选框打勾）';
+  }
+
+  document.addEventListener('click', (e) => {
+    const p = e.target.closest && e.target.closest('path');
+    if (!p || !(p.getAttribute('d') || '').startsWith(CHECK_PREFIX)) return;
+    const svg = p.closest('svg');
+    const box = svg && svg.closest('div');
+    if (!svg || !box) return;
+    const key = keyOf(box);
+    state.set(key, state.get(key) !== true);
+    save();
+    applyAll();
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+
+  new MutationObserver(() => applyAll()).observe(document.getElementById('mindmap'), { childList: true, subtree: true });
+
+  const t = setInterval(() => { if (boxes().length) { applyAll(); clearInterval(t); } }, 300);
+  setTimeout(() => clearInterval(t), 15000);
+})();
+
+</script>
+</body>
+</html>

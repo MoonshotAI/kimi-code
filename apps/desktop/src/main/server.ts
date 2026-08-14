@@ -37,6 +37,14 @@ export interface StartDesktopServerOptions {
    * origin (`http://127.0.0.1:<port>`) when running with renderer HMR.
    */
   readonly extraCorsOrigins?: readonly string[];
+  /**
+   * Mount kap-server's `/api/v1/debug` reflection RPC surface (every scoped
+   * service callable). Dev-only affordance — pass `!app.isPackaged`: it lets
+   * developers drive plugin/capability flows by hand (e.g. simulate a shelf
+   * install to exercise the auto-complete hook) without a plugin UI.
+   * Packaged builds must keep this off.
+   */
+  readonly debugEndpoints?: boolean;
   readonly logger?: ReturnType<typeof createServerLogger>;
 }
 
@@ -86,6 +94,8 @@ export async function startDesktopServer(
     // No bearer token on the embedded server; /api/v1/meta's
     // dangerous_bypass_auth keeps the renderer's ServerAuthDialog off.
     disableAuth: true,
+    // Dev-only debug RPC surface (see StartDesktopServerOptions.debugEndpoints).
+    debugEndpoints: opts.debugEndpoints === true,
   });
 
   // kap-server attaches no telemetry appender itself (everything falls into

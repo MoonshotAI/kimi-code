@@ -992,6 +992,19 @@ type WireEventTaskCompleted = WireEventBase<'event.task.completed', {
   output_bytes?: number;
 }>;
 
+type WireEventPluginChanged = WireEventBase<'event.plugin.changed', Record<string, never>>;
+
+type WireEventCapabilityChanged = WireEventBase<'event.capability.changed', {
+  capability_id: string;
+  install: {
+    running: boolean;
+    step?: string;
+    percent?: number;
+    error?: string;
+    note?: string;
+  };
+}>;
+
 type WireEventConfigChanged = WireEventBase<'event.config.changed', {
   changed_fields: string[];
   config: WireConfig;
@@ -1058,5 +1071,8 @@ export type WireEvent =
   // Config
   | WireEventConfigChanged
   | WireEventModelCatalogChanged
+  // Plugin & capability lifecycle
+  | WireEventPluginChanged
+  | WireEventCapabilityChanged
   // Unknown / future events
   | WireEventUnknown;

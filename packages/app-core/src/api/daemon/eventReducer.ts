@@ -1030,6 +1030,12 @@ export function reduceAppEvent(
     case 'workspaceDeleted':
       break;
 
+    // Plugin/capability shelf state is not in the client store — consumers
+    // (the desktop settings shelf) handle these upstream of the reducer.
+    case 'pluginsChanged':
+    case 'capabilityChanged':
+      break;
+
     default: {
       // TypeScript exhaustiveness guard — should not reach here
       const _exhaustive: never = event;

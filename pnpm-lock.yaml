@@ -540,6 +540,9 @@ importers:
       retry:
         specifier: 0.13.1
         version: 0.13.1
+      semver:
+        specifier: ^7.7.4
+        version: 7.8.5
       smol-toml:
         specifier: ^1.6.1
         version: 1.7.0
@@ -574,6 +577,9 @@ importers:
       '@types/retry':
         specifier: 0.12.0
         version: 0.12.0
+      '@types/semver':
+        specifier: ^7.7.0
+        version: 7.8.0
       '@types/sinon':
         specifier: ^21.0.1
         version: 21.0.1
@@ -638,6 +644,9 @@ importers:
       pino:
         specifier: ^9.5.0
         version: 9.14.0
+      semver:
+        specifier: ^7.7.4
+        version: 7.8.5
       smol-toml:
         specifier: ^1.6.1
         version: 1.7.0
@@ -654,6 +663,9 @@ importers:
       '@types/bcryptjs':
         specifier: ^2.4.6
         version: 2.4.6
+      '@types/semver':
+        specifier: ^7.7.0
+        version: 7.8.0
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
@@ -2700,6 +2712,9 @@ packages:
 
   '@types/retry@0.12.0':
     resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
+
+  '@types/semver@7.8.0':
+    resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
 
   '@types/sinon@21.0.1':
     resolution: {integrity: sha512-5yoJSqLbjH8T9V2bksgRayuhpZy+723/z6wBOR+Soe4ZlXC0eW8Na71TeaZPUWDQvM7LYKa9UGFc6LRqxiR5fQ==}
@@ -7886,6 +7901,8 @@ snapshots:
       '@types/node': 22.20.1
 
   '@types/retry@0.12.0': {}
+
+  '@types/semver@7.8.0': {}
 
   '@types/sinon@21.0.1':
     dependencies:

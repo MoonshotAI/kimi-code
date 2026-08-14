@@ -19,6 +19,9 @@ import type {
   ImportCustomRegistryInput,
   ImportCustomRegistryResult,
   ProviderRefreshResult,
+  AppCapabilityStatus,
+  AppPluginMarketplaceEntry,
+  AppPluginSummary,
   AppSession,
   AppSkill,
   AppSkillAttachment,
@@ -1093,6 +1096,69 @@ export class DaemonKimiWebApi implements KimiWebApi {
       body,
     );
     return { activated: data.activated, skillName: data.skill_name };
+  }
+
+  // -------------------------------------------------------------------------
+  // Capabilities — built-in product capabilities (kimi-cu, kimi-webbridge)
+  // GET  /capabilities               → { capabilities: WireCapabilityStatus[] }
+  // GET  /capabilities/{id}          → WireCapabilityStatus
+  // POST /capabilities/{id}:install  → WireCapabilityStatus (install running)
+  // -------------------------------------------------------------------------
+
+  async listCapabilities(): Promise<AppCapabilityStatus[]> {
+    const data = await this.http.get<{ capabilities: AppCapabilityStatus[] }>('/capabilities');
+    return data.capabilities ?? [];
+  }
+
+  async getCapability(capabilityId: string): Promise<AppCapabilityStatus> {
+    return this.http.get<AppCapabilityStatus>(
+      `/capabilities/${encodeURIComponent(capabilityId)}`,
+    );
+  }
+
+  async installCapability(capabilityId: string): Promise<AppCapabilityStatus> {
+    return this.http.post<AppCapabilityStatus>(
+      `/capabilities/${encodeURIComponent(capabilityId)}:install`,
+      {},
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Plugins — installed plugins + marketplace catalog
+  // GET  /plugins                     → { plugins: WirePluginSummary[] }
+  // GET  /plugins/marketplace         → { entries: WireMarketplaceEntry[] }
+  // POST /plugins {source}            → WirePluginSummary
+  // POST /plugins/{id}:{enable|disable|remove}
+  // -------------------------------------------------------------------------
+
+  async listPlugins(): Promise<AppPluginSummary[]> {
+    const data = await this.http.get<{ plugins: AppPluginSummary[] }>('/plugins');
+    return data.plugins ?? [];
+  }
+
+  async listPluginMarketplace(): Promise<AppPluginMarketplaceEntry[]> {
+    const data = await this.http.get<{ entries: AppPluginMarketplaceEntry[] }>(
+      '/plugins/marketplace',
+    );
+    return data.entries ?? [];
+  }
+
+  async installPlugin(source: string): Promise<AppPluginSummary> {
+    return this.http.post<AppPluginSummary>('/plugins', { source });
+  }
+
+  async setPluginEnabled(pluginId: string, enabled: boolean): Promise<{ ok: true }> {
+    return this.http.post<{ ok: true }>(
+      `/plugins/${encodeURIComponent(pluginId)}:${enabled ? 'enable' : 'disable'}`,
+      {},
+    );
+  }
+
+  async removePlugin(pluginId: string): Promise<{ ok: true }> {
+    return this.http.post<{ ok: true }>(
+      `/plugins/${encodeURIComponent(pluginId)}:remove`,
+      {},
+    );
   }
 
   // -------------------------------------------------------------------------

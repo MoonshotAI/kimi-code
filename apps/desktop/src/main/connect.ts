@@ -149,6 +149,9 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
             // start without index.html in it).
             webAssetsDir: devBase === undefined ? rendererDistRoot() : undefined,
             extraCorsOrigins: devBase === undefined ? [] : [new URL(devBase).origin],
+            // Dev-only: mount the /api/v1/debug reflection RPC surface so plugin
+            // and capability flows can be driven by hand (never in packaged builds).
+            debugEndpoints: !app.isPackaged,
           });
           serverHandle = handle;
           return handle;

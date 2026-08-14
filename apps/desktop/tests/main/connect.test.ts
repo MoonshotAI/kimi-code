@@ -112,6 +112,8 @@ describe('connect', () => {
     expect(mocks.startDesktopServer).toHaveBeenCalledWith({
       webAssetsDir: join('/resources', 'desktop-dist'),
       extraCorsOrigins: [],
+      // Debug RPC surface stays off in packaged builds (mocked isPackaged: true).
+      debugEndpoints: false,
     });
     expect(mocks.rendererUrl).toHaveBeenCalledWith('http://127.0.0.1:54321', undefined, undefined, false, true);
     expect(win.loadURL).toHaveBeenCalledWith('renderer-url');

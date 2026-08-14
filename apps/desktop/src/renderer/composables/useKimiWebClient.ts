@@ -6,6 +6,7 @@ import { i18n } from '../i18n';
 import { formatDuration as formatTaskDuration } from '../components/chatTurnRendering';
 import { traceClientEvent, traceKeyEvent } from '../debug/trace';
 import { getKimiWebApi } from '../api';
+import { handlePluginsShelfEvent } from './usePlugins';
 import { isDaemonApiError, isDaemonNetworkError, isDaemonTimeoutError } from '../api/errors';
 import {
   buildWorkspaceRecencyKeys,
@@ -1414,7 +1415,9 @@ async function reconcileSessionWorkAfterReconnect(): Promise<void> {
 let wsEverConnected = false;
 let wsDisconnectedAt: number | null = null;
 
-function connectEventsIfNeeded(): void {
+// Exported (desktop-only consumer: the settings plugins shelf — web's copy
+// needs no such export; see docs/native-todos.md).
+export function connectEventsIfNeeded(): void {
   if (eventConn !== null) return;
   // Guard: jsdom and some environments have no WebSocket
   if (typeof WebSocket === 'undefined') return;
@@ -1448,6 +1451,12 @@ function connectEventsIfNeeded(): void {
           terminals.destroySession(nativeTerminalDraftKey(appEvent.workspaceId));
         }
         workspaceState.applyWorkspaceEvent(appEvent);
+        return;
+      }
+      // Desktop-only: plugin/capability lifecycle fan-out feeds the settings
+      // plugins shelf (docs/native-todos.md); web has no consumer.
+      if (appEvent.type === 'pluginsChanged' || appEvent.type === 'capabilityChanged') {
+        handlePluginsShelfEvent(appEvent);
         return;
       }
       const isWorkEvent = appEvent.type === 'sessionWorkChanged';

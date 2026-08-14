@@ -11,6 +11,8 @@ import { useDialogFocus } from '../../composables/useDialogFocus';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import ShortcutsPanel from './ShortcutsPanel.vue';
+import PluginsPanel from './PluginsPanel.vue';
+import { usePlugins } from '../../composables/usePlugins';
 import ProvidersPanel from './ProvidersPanel.vue';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
 import { canSetDockIconChoice, useDockIconChoice, type DockIconChoice } from '../../lib/dockIconChoice';
@@ -54,7 +56,7 @@ function onNotifyChange(on: boolean): void {
   track('settings_changed', { key: 'notifications', value: on ? 'on' : 'off', source_panel: 'settings' });
 }
 
-type SettingsTab = 'general' | 'agent' | 'account' | 'providers' | 'advanced' | 'archived' | 'shortcuts';
+type SettingsTab = 'general' | 'agent' | 'account' | 'providers' | 'plugins' | 'advanced' | 'archived' | 'shortcuts';
 
 const props = defineProps<{
   colorScheme: ColorScheme;
@@ -152,11 +154,32 @@ const tabs: { id: SettingsTab; labelKey: string; icon: IconName }[] = [
   { id: 'account', labelKey: 'settings.tabs.account', icon: 'user' },
   // No plug-style glyph exists in the icon registry; the bolt is the closest.
   { id: 'providers', labelKey: 'settings.tabs.providers', icon: 'bolt' },
+  // Desktop-only tab (marketplace shelf; docs/native-todos.md).
+  { id: 'plugins', labelKey: 'settings.tabs.plugins', icon: 'sparkles' },
   // Desktop-only tab (web's copy stops at 'archived'; docs/native-todos.md).
   { id: 'shortcuts', labelKey: 'settings.tabs.shortcuts', icon: 'keyboard' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced', icon: 'microscope' },
   { id: 'archived', labelKey: 'settings.tabs.archived', icon: 'archive' },
 ];
+
+// The plugins tab needs the daemon's plugins routes — probe on dialog mount
+// and hide the tab on older servers instead of showing an error panel.
+const { state: pluginsState, probeSupport: probePluginSupport } = usePlugins();
+onMounted(() => {
+  // Always re-probe (cheap local read, no catalog fetch): retries an older
+  // server's missing routes after upgrade AND catches a downgrade while the
+  // dialog was closed.
+  void probePluginSupport();
+});
+const visibleTabs = computed(() =>
+  tabs.filter((tab) => tab.id !== 'plugins' || !pluginsState.unsupported),
+);
+watch(
+  () => pluginsState.unsupported,
+  (unsupported) => {
+    if (unsupported && activeTab.value === 'plugins') activeTab.value = 'general';
+  },
+);
 
 const daemonEndpoint = serverEndpointLabel();
 // Escalating autonomy order, matching the Composer's permission menu and the
@@ -591,7 +614,7 @@ function archiveTime(iso: string): string {
         </header>
         <div class="settings-tab-list">
           <button
-            v-for="tb in tabs"
+            v-for="tb in visibleTabs"
             :key="tb.id"
             type="button"
             class="tab"
@@ -1011,6 +1034,13 @@ function archiveTime(iso: string): string {
              shows fresh data. -->
         <section v-if="activeTab === 'providers'" class="panel">
           <ProvidersPanel />
+        </section>
+
+        <!-- Plugins (desktop-only). v-if: the panel loads the marketplace
+             catalog on mount, so it should remount (and re-offer a fresh
+             load) each time the tab opens. -->
+        <section v-if="activeTab === 'plugins'" class="panel">
+          <PluginsPanel />
         </section>
 
         <!-- Hotkeys (desktop-only). v-if (not v-show): the panel

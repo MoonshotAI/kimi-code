@@ -447,10 +447,14 @@ export class DaemonHttpClient {
     });
     this.checkAuthRequired(response, envelope.code);
     if (envelope.code !== 0) {
+      // The body may be valid JSON yet not a daemon envelope (e.g. an older
+      // server's bare `{statusCode:404}` 404): fall back to the HTTP status,
+      // same as the GET error path.
+      const fallbackCode = (envelope as { code?: number }).code ?? response.status;
       throw new DaemonApiError({
-        code: envelope.code,
-        msg: envelope.msg,
-        requestId: envelope.request_id,
+        code: fallbackCode,
+        msg: envelope.msg ?? response.statusText,
+        requestId: envelope.request_id ?? requestId,
         details: envelope.details,
         timestamp: Date.now(),
         durationMs: Date.now() - startedAt,
@@ -579,7 +583,9 @@ export class DaemonHttpClient {
     // an empty string.
     if (envelope.code !== 0 && !allowCodes.includes(envelope.code)) {
       throw new DaemonApiError({
-        code: envelope.code,
+        // A non-envelope error body has no code — fall back to the HTTP
+        // status (this is how an old server's bare 404 surfaces).
+        code: typeof envelope.code === 'number' ? envelope.code : response.status,
         msg:
           typeof envelope.msg === 'string' && envelope.msg.length > 0
             ? envelope.msg

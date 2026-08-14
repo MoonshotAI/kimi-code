@@ -699,6 +699,8 @@ export type AppEvent =
    *  Drives the working indicator's retry label. */
   | { type: 'turnRetry'; sessionId: string; retry?: AppTurnRetry }
   | { type: 'configChanged'; changedFields: string[]; config: AppConfig }
+  | { type: 'pluginsChanged' }
+  | { type: 'capabilityChanged'; capabilityId: string; install: AppCapabilityInstallProgress }
   | {
       type: 'modelCatalogChanged';
       changed: { providerId: string; providerName: string; added: number; removed: number }[];
@@ -1082,6 +1084,91 @@ export interface AppSkill {
 }
 
 // ---------------------------------------------------------------------------
+// Capabilities — built-in product capabilities (kimi-cu, kimi-webbridge)
+// GET  /capabilities               → { capabilities: WireCapabilityStatus[] }
+// GET  /capabilities/{id}          → WireCapabilityStatus
+// POST /capabilities/{id}:install  → WireCapabilityStatus (install running)
+// ---------------------------------------------------------------------------
+
+export type AppCapabilityId = 'kimi-cu' | 'kimi-webbridge';
+
+export type AppCapabilityReadiness = 'not_installed' | 'partial' | 'ready' | 'unsupported';
+
+export interface AppCapabilityStep {
+  id: string;
+  state: 'ok' | 'missing' | 'failed';
+  detail?: string;
+  /** Optional steps never block readiness (e.g. the browser extension soft gate). */
+  optional?: boolean;
+}
+
+export interface AppCapabilityInstallProgress {
+  running: boolean;
+  step?: string;
+  percent?: number;
+  error?: string;
+  /** Machine-key note from the last install (e.g. 'user-skill-migrated'). */
+  note?: string;
+}
+
+export interface AppCapabilityStatus {
+  id: string;
+  /** Wiring plugin providing this capability's agent layer (e.g. 'kimi-webbridge'). */
+  pluginId?: string;
+  displayName: string;
+  description: string;
+  supported: boolean;
+  state: AppCapabilityReadiness;
+  version?: string;
+  steps: AppCapabilityStep[];
+  install: AppCapabilityInstallProgress;
+}
+
+// ---------------------------------------------------------------------------
+// Plugins — installed plugins + marketplace catalog
+// GET  /plugins                     → { plugins: WirePluginSummary[] }
+// GET  /plugins/marketplace         → { entries: WireMarketplaceEntry[] }
+// POST /plugins {source}            → WirePluginSummary
+// POST /plugins/{id}:{enable|disable|remove}
+// ---------------------------------------------------------------------------
+
+export type AppPluginSource = 'local-path' | 'zip-url' | 'github';
+
+export interface AppPluginSummary {
+  id: string;
+  displayName: string;
+  version?: string;
+  enabled: boolean;
+  state: 'ok' | 'error';
+  skillCount: number;
+  mcpServerCount: number;
+  enabledMcpServerCount: number;
+  hookCount: number;
+  commandCount: number;
+  hasErrors: boolean;
+  source: AppPluginSource;
+  originalSource?: string;
+}
+
+export type AppPluginTier = 'official' | 'curated' | 'third-party';
+
+export interface AppPluginMarketplaceEntry {
+  id: string;
+  tier: AppPluginTier;
+  displayName: string;
+  description?: string;
+  homepage?: string;
+  keywords?: string[];
+  version?: string;
+  source: string;
+  /** Set (default catalog only) when the entry is a capability's wiring
+   *  plugin — install via the capability route, never as a plain plugin. */
+  capabilityId?: string;
+  installed?: { version?: string; enabled: boolean };
+  updateAvailable?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // KimiWebApi — the app-facing interface
 // ---------------------------------------------------------------------------
 
@@ -1157,6 +1244,15 @@ export interface KimiWebApi {
   /** List skills for a workspace (no session required) — GET /workspaces/{id}/skills. */
   listSkillsForWorkspace(workspaceId: string): Promise<AppSkill[]>;
   activateSkill(sessionId: string, skillName: string, args?: string, attachments?: AppSkillAttachment[]): Promise<{ activated: true; skillName: string }>;
+  listCapabilities(): Promise<AppCapabilityStatus[]>;
+  getCapability(capabilityId: string): Promise<AppCapabilityStatus>;
+  /** Start an idempotent install; poll getCapability for progress. */
+  installCapability(capabilityId: string): Promise<AppCapabilityStatus>;
+  listPlugins(): Promise<AppPluginSummary[]>;
+  listPluginMarketplace(): Promise<AppPluginMarketplaceEntry[]>;
+  installPlugin(source: string): Promise<AppPluginSummary>;
+  setPluginEnabled(pluginId: string, enabled: boolean): Promise<{ ok: true }>;
+  removePlugin(pluginId: string): Promise<{ ok: true }>;
   listTasks(sessionId: string, status?: AppTaskStatus): Promise<AppTask[]>;
   getTask(sessionId: string, taskId: string, input?: { withOutput?: boolean; outputBytes?: number }): Promise<AppTask>;
   cancelTask(sessionId: string, taskId: string): Promise<{ cancelled: true }>;

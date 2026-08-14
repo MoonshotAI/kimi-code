@@ -63,6 +63,8 @@ describe('startDesktopServer', () => {
     expect(args.corsOrigins).toEqual(['app://renderer']);
     // Embedded server skips the persistent bearer token entirely.
     expect(args.disableAuth).toBe(true);
+    // The /api/v1/debug reflection surface stays off unless explicitly requested.
+    expect(args.debugEndpoints).toBe(false);
     // server_version comes from the tsdown/vitest-injected __KIMI_CORE_VERSION__
     // (the kimi-code CLI version), never from the bundled package.json lookup.
     expect(typeof args.serverVersion).toBe('string');
@@ -109,6 +111,19 @@ describe('startDesktopServer', () => {
     expect(wireDesktopTelemetryMock).toHaveBeenCalledWith(core, {
       deviceId: 'device-new',
     });
+  });
+
+  it('passes debugEndpoints through when requested', async () => {
+    startServerMock.mockResolvedValue({
+      host: '127.0.0.1',
+      port: 54321,
+      core: { accessor: 'CORE' },
+      close: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await startDesktopServer({ debugEndpoints: true });
+
+    expect(startServerMock.mock.calls[0]![0].debugEndpoints).toBe(true);
   });
 
   it('close shuts telemetry down before closing the server', async () => {

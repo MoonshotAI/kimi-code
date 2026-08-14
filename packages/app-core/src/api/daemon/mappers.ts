@@ -791,6 +791,16 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         outputBytes: w.payload.output_bytes,
       };
 
+    case 'event.plugin.changed':
+      return { type: 'pluginsChanged' };
+
+    case 'event.capability.changed':
+      return {
+        type: 'capabilityChanged',
+        capabilityId: w.payload.capability_id,
+        install: w.payload.install,
+      };
+
     case 'event.config.changed':
       return {
         type: 'configChanged',
