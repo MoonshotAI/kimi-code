@@ -782,12 +782,10 @@ describe('KimiTUI message flow', () => {
     // Hold the RPC open so the skill.activated event can land mid-flight,
     // exactly how the in-process wiring delivers it during the call.
     let release!: () => void;
-    (session.promptWithSkills as ReturnType<typeof vi.fn>).mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          release = resolve;
-        }),
-    );
+    const heldPrompt = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    (session.promptWithSkills as ReturnType<typeof vi.fn>).mockReturnValue(heldPrompt);
 
     driver.handleUserInput('please /skill:review');
 
