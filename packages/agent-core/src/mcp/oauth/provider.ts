@@ -173,11 +173,20 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    const stored: StoredMcpOAuthTokens = { ...tokens, obtained_at: Date.now() };
-    await this.tokenTransaction.save(stored);
+    // Hand the SDK's token object to the transaction untouched: when the
+    // grant rode createOAuthFetch, the transaction already persisted and
+    // recorded exactly this payload, so a matching save consumes the
+    // recorded effect instead of writing again — re-writing here could
+    // resurrect credentials cleared between the fetch and this callback.
+    // The durable `obtained_at` stamp is applied by the write callback.
+    await this.tokenTransaction.save(tokens);
     const meta: McpOAuthStoreMeta = { serverName: this.serverName, serverUrl: this.serverUrl };
     this.store.write(`${this.storeKey}${META_SUFFIX}`, meta);
-    this.onTokensSaved?.(stored);
+    const stamped: StoredMcpOAuthTokens = {
+      ...tokens,
+      obtained_at: (tokens as StoredMcpOAuthTokens).obtained_at ?? Date.now(),
+    };
+    this.onTokensSaved?.(stamped);
   }
 
   /**

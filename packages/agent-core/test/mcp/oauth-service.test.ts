@@ -347,6 +347,69 @@ describe('McpOAuthService single-flight refresh', () => {
     expect(fetchSpy).toHaveBeenCalled();
     expect(authServer.counts.refresh).toBe(1);
   }, 15000);
+
+  it('does not resurrect tokens cleared between a grant fetch and the SDK save', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.stopProactiveRefresh());
+    cleanups.push(() => rm(fixture.storeDir, { recursive: true, force: true }));
+
+    // The token endpoint returns a rotating refresh grant.
+    const grant = {
+      access_token: 'rotated-access',
+      refresh_token: 'rotated-refresh',
+      token_type: 'Bearer',
+      expires_in: 3600,
+    };
+    const httpServer: HttpServer = createHttpServer((req, res) => {
+      if (req.url === '/token' && req.method === 'POST') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(grant));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    cleanups.push(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          httpServer.close((err) => {
+            if (err) {
+              reject(err);
+              return;
+            }
+            resolve();
+          });
+        }),
+    );
+    const authServerUrl = `http://127.0.0.1:${(httpServer.address() as HttpAddress).port}`;
+
+    const provider = fixture.service.getProvider(SERVER_NAME, SERVER_URL);
+    const state = authServerState(authServerUrl);
+    provider.saveDiscoveryState(state.discovery);
+    provider.saveClientInformation(state.client);
+    await provider.saveTokens({
+      access_token: 'seed-access',
+      refresh_token: 'seed-refresh',
+      token_type: 'Bearer',
+    });
+
+    // The SDK's grant request rides the transaction fetch, which persists and
+    // records the exact payload…
+    const res = await provider.createOAuthFetch()(`${authServerUrl}/token`, {
+      method: 'POST',
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: 'seed-refresh' }),
+    });
+    const granted = (await res.json()) as Parameters<typeof provider.saveTokens>[0];
+
+    // …but before the SDK's saveTokens lands, the credential is reset.
+    await provider.clearCredentials('all');
+    expect(provider.tokens()).toBeUndefined();
+
+    // The matching save is consumed as already-recorded instead of writing
+    // the cleared grant back to disk.
+    await provider.saveTokens(granted);
+    expect(provider.tokens()).toBeUndefined();
+  }, 15000);
 });
 
 describe('McpOAuthService interactive flow serialization', () => {
