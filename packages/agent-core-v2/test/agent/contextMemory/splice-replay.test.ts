@@ -16,6 +16,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
+import { swarmExit } from '#/agent/swarm/swarmOps';
 import {
   ContextModel,
   contextAppendMessage,
@@ -756,6 +757,43 @@ describe('AgentContextMemoryService (wire-backed)', () => {
 
     const log = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
     expect(host.svc.get()).toBe(log);
+  });
+
+  it('pops a visible-tail swarm reminder sitting behind a legacy compaction marker', async () => {
+    const host = buildHost(KEY);
+    const reminder: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'swarm reminder' }],
+      toolCalls: [],
+      origin: { kind: 'injection', variant: 'swarm_mode' },
+    };
+
+    host.svc.append(reminder);
+    // No keptUserMessageCount → legacyTail: the reminder survives as the
+    // visible tail while the marker becomes the log tail.
+    host.wire.dispatch(
+      contextApplyCompaction({ summary: 's', compactedCount: 0, tokensBefore: 0, tokensAfter: 0 }),
+    );
+    expect(host.svc.get().at(-1)).toBe(reminder);
+    expect(host.wire.getModel(ContextModel).messages.at(-1)).not.toBe(reminder);
+
+    host.wire.dispatch(swarmExit({}));
+
+    const log = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    expect(log.map(textOf)).toEqual(['s']);
+    expect(host.svc.get().map(textOf)).toEqual(['s']);
+
+    // The pop replays from the swarm_mode.exit record itself.
+    await host.wire.flush();
+    const records = await readRecords(host.log);
+    const replay = buildHost(REPLAY_KEY);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, REPLAY_KEY),
+      records,
+    );
+    expect(replay.svc.get().map(textOf)).toEqual(['s']);
   });
 
   it('derives identical log and window live and on replay', async () => {

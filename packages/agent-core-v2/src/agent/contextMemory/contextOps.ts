@@ -35,7 +35,9 @@
  * identically. The swarm-mode exit reminder removal is a cross-model fold:
  * `ContextModel` registers a reducer on `swarm_mode.exit` (see
  * `popSwarmModeReminder`) so the pop replays from the `swarm_mode.exit` record
- * itself.
+ * itself; the pop decision mirrors the service's visible-tail check, locating
+ * the reminder through the derived window when a legacy compaction marker
+ * sits behind it in the log.
  *
  * `context.undo` applies the single undo-cut decision owned by
  * `conversationTime` (`computeUndoCut` over `isUndoAnchor`) — the same walk
@@ -194,11 +196,25 @@ export const ContextModel = defineModel<ContextState>(
 );
 
 function popSwarmModeReminder(state: ContextState, _payload: unknown): ContextState {
-  const last = state.messages.at(-1);
+  // Mirror the service's visible-tail decision (`SwarmService.exit` reads the
+  // derived window): the reminder to pop is the VISIBLE tail, which is the
+  // log tail except when a legacy compaction marker sits behind it.
+  const visible = deriveVisibleMessages(state.messages);
+  const last = visible.at(-1);
   if (last === undefined) return state;
   const origin = last.origin;
   if (origin?.kind !== 'injection' || origin.variant !== 'swarm_mode') return state;
-  return freezeContextState({ messages: state.messages.slice(0, -1), fold: EMPTY_FOLD });
+  if (visible === state.messages) {
+    return freezeContextState({ messages: state.messages.slice(0, -1), fold: EMPTY_FOLD });
+  }
+  // Visible-tail survivors keep their log identities, so the entry itself
+  // can be located and removed; the window then re-derives without it.
+  const index = state.messages.lastIndexOf(last);
+  if (index === -1) return state;
+  return freezeContextState({
+    messages: [...state.messages.slice(0, index), ...state.messages.slice(index + 1)],
+    fold: EMPTY_FOLD,
+  });
 }
 
 declare module '#/wire/types' {
