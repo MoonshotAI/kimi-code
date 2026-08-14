@@ -35,6 +35,11 @@ import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
+import { stubProviderService } from '../../app/provider/stubs';
+import { IFlagService } from '#/app/flag/flag';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
 import {
@@ -86,6 +91,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
 
 import { stubLog } from '../../_base/log/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 
 function workspaceCatalogStub(): IWorkspaceService {
   const workspaces = new Map<string, Workspace>();
@@ -296,6 +302,13 @@ describe('workspace add-dir (handler chain)', () => {
         get: () => undefined,
         onDidSectionChange: () => ({ dispose: () => {} }),
       } as unknown as IConfigService),
+      stubPair(IModelCatalog, { _serviceBrand: undefined } as unknown as IModelCatalog),
+      stubPair(IModelService, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+      } as unknown as IModelService),
+      stubPair(IProviderService, stubProviderService()),
+      stubPair(IFlagService, stubFlag(() => false)),
       stubPair(ITelemetryService, noopTelemetryService),
       stubPair(IWorkspaceService, workspaceCatalogStub()),
       stubPair(ISessionIndex, {

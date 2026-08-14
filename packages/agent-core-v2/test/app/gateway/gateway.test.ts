@@ -95,6 +95,7 @@ describe('RestGateway', () => {
       _serviceBrand: undefined,
       onWillCreateSession: () => ({ dispose: () => {} }),
       onDidCreateSession: () => ({ dispose: () => {} }),
+      onWillCloseSession: () => ({ dispose: () => {} }),
       onDidCloseSession: () => ({ dispose: () => {} }),
       onDidArchiveSession: () => ({ dispose: () => {} }),
       onDidForkSession: () => ({ dispose: () => {} }),

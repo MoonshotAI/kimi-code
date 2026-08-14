@@ -94,7 +94,6 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
   const rawSubagents = parseStringList(frontmatter['subagents'], 'subagents', options.path);
   const subagents =
     rawSubagents?.length === 1 && rawSubagents[0] === '*' ? undefined : rawSubagents;
-  const modelPreference = parseModelPreference(frontmatter['model_preference'], options.path);
 
   const prompt = parsed.body.trim();
   if (prompt.length === 0) {
@@ -109,22 +108,10 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     tools,
     disallowedTools,
     subagents,
-    modelPreference,
     prompt,
     path: options.path,
     source: options.source,
   };
-}
-
-function parseModelPreference(
-  value: unknown,
-  filePath: string,
-): AgentFileDefinition['modelPreference'] {
-  if (value === undefined || value === null) return undefined;
-  if (value === 'primary' || value === 'secondary') return value;
-  throw new AgentFileParseError(
-    `Frontmatter field "model_preference" in ${filePath} must be "primary" or "secondary"`,
-  );
 }
 
 function parseBoolean(value: unknown, field: string, filePath: string): boolean {

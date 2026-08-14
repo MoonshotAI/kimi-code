@@ -26,6 +26,7 @@ import type {
   ServiceRecipe,
 } from '#/_base/di/fiber';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { ContributedFeatureService } from './featureServiceContribution';
 
 export interface ManagedUnitInfo {
   readonly name: string;
@@ -46,6 +47,7 @@ export interface IFeatureManager {
   updateUnit(name: string, config?: unknown): Promise<void>;
 
   units(): readonly ManagedUnitInfo[];
+  contributedServices(): readonly ContributedFeatureService[];
   readonly onDidChangeUnits: Event<void>;
 }
 

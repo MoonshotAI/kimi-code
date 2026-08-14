@@ -85,7 +85,7 @@ import type {
   SubagentSpawnedEvent,
   SubagentStartedEvent,
 } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
-import type { SubagentSuspendedEvent } from '@moonshot-ai/agent-core-v2/session/swarm/sessionSwarmService';
+import type { SubagentSuspendedEvent } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
 import type { ToolUpdate } from '@moonshot-ai/agent-core-v2/tool/toolContract';
 
 import { ToolInputDisplaySchema } from './display';

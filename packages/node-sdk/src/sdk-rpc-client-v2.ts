@@ -136,13 +136,6 @@
  *   injection point — see the session-lifecycle section header), and
  *   `toolCall` keeps the base class's "not supported" answer, which the
  *   interaction bridge already relies on.
- * - `applyPersistedSecondaryModel` → the reload + loud validations + warning
- *   refresh of v1's contract, rebuilt over the live `IConfigService` recipe
- *   and `ISessionSecondaryModelWarningService.recheckSecondaryModelWarning`
- *   (the v2 spawn binding resolves the secondary model at spawn time, so
- *   there is no session snapshot to push). `getSessionWarnings` also
- *   surfaces the v2 secondary-model warning next to the AGENTS.md one,
- *   matching v1's aggregate.
  */
 import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
@@ -170,9 +163,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
 import { createMcpOAuthStore } from '@moonshot-ai/agent-core-v2/app/mcpConfig/oauthStore';
 import { canonicalMcpOAuthResource } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/store';
-import { SECONDARY_MODEL_SECTION } from '@moonshot-ai/agent-core-v2/app/kosongConfig/configSection';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
-import { wrapSubagentModelError } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/workspace/workspaceMcpConfig/internal/config-loader';
 import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
@@ -206,7 +197,6 @@ import {
   IEventService,
   IHostEnvironment,
   IHostFileSystem,
-  IModelCatalog,
   IModelService,
   IProviderService,
   ISessionBtwService,
@@ -218,7 +208,6 @@ import {
   ISessionInitService,
   ISessionMcpHandle,
   ISessionMetadata,
-  ISessionSecondaryModelWarningService,
   ISessionSkillCatalog,
   ISessionWorkspaceContext,
   ITelemetryService,
@@ -254,7 +243,6 @@ import {
   type IDisposable,
   type ISessionScopeHandle,
   type Scope,
-  type SecondaryModelConfig,
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
@@ -296,6 +284,7 @@ import type {
   ExportSessionInput,
   ExportSessionResult,
   ForkSessionInput,
+  GenerateSessionTitleInput,
   GetConfigOptions,
   GetCronTasksResult,
   GlobalMcpServerAuthState,
@@ -446,6 +435,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * registered handlers.
    */
   private readonly sessionWirings = new Map<string, SessionEventWiring>();
+  /**
+   * Per-session serialization for the operations that change a session's
+   * live ownership: the temporary resume→act→close paths (`renameSession`,
+   * `generateSessionTitle`) and the public `resumeSession` / `closeSession`
+   * / `reloadSession`. Chaining them through one queue per session id makes
+   * the handoff atomic — a public resume either lands first (the temporary
+   * path then reuses the live handle and leaves it open) or waits for the
+   * temporary close to finish and materializes a fresh scope, so a caller
+   * can never receive a handle whose close is already in flight.
+   */
+  private readonly sessionAccessQueues = new Map<string, Promise<void>>();
   /** App-scope subscriptions (global event forwarding, lifecycle tracking), disposed in {@link close}. */
   private readonly appSubscriptions: IDisposable[] = [];
 
@@ -693,26 +693,30 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * v1's removal cascades: the provider entry, every model pointing at it,
-   * and the default pointers when they dangle. The engine's own
-   * `kosong.removeProvider` only clears the default-provider pointer, so the
-   * full v1 cascade is computed from the user-layer values (see
-   * `planProviderRemoval`) and persisted as ONE atomic multi-section replace —
-   * the same single-write shape as v1's `removeKimiProvider`, so a process
-   * exit can never leave the file in a halfway-cascaded state.
+   * the default pointers when they dangle, and the `[secondary_model]`
+   * subagent pool entries (the section itself when its default dangles).
+   * The engine's own `kosong.removeProvider` only clears the
+   * default-provider pointer, so the full v1 cascade is computed from the
+   * user-layer values (see `planProviderRemoval`) and persisted as ONE
+   * atomic multi-section replace — the same single-write shape as v1's
+   * `removeKimiProvider`, so a process exit can never leave the file in a
+   * halfway-cascaded state.
    */
   override async removeProvider(providerId: string): Promise<KimiConfig> {
     await this.configReady;
-    const [providers, models, defaultModel, defaultProvider] = await Promise.all([
+    const [providers, models, defaultModel, defaultProvider, secondaryModel] = await Promise.all([
       this.klient.global.config.inspect<Record<string, unknown>>('providers'),
       this.klient.global.config.inspect<Record<string, Record<string, unknown>>>('models'),
       this.klient.global.config.inspect<string>('defaultModel'),
       this.klient.global.config.inspect<string>('defaultProvider'),
+      this.klient.global.config.inspect<Record<string, unknown>>('secondaryModel'),
     ]);
     const plan = planProviderRemoval({
       providers: providers.userValue,
       models: models.userValue,
       defaultModel: defaultModel.userValue,
       defaultProvider: defaultProvider.userValue,
+      secondaryModel: secondaryModel.userValue,
       providerId,
     });
     const sections: Record<string, unknown> = {
@@ -724,6 +728,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
     if (plan.clearDefaultProvider) {
       sections['defaultProvider'] = undefined;
+    }
+    if (plan.secondaryModel !== undefined) {
+      // `null` clears the whole section; a replacement object folds the
+      // filtered pool into the same atomic write.
+      sections['secondaryModel'] = plan.secondaryModel ?? undefined;
     }
     await this.klient.global.config.replaceSections({ sections });
     return this.getConfig();
@@ -851,6 +860,64 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return getLiveSessionById(this.engineAccessor, sessionId);
   }
 
+  /**
+   * Runs `work` after every previously queued operation on the same session
+   * settles; different sessions still run in parallel. The map entry drops
+   * itself once the queue drains.
+   */
+  private runSessionAccess<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.sessionAccessQueues.get(sessionId) ?? Promise.resolve();
+    const run = previous.then(work, work);
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.sessionAccessQueues.set(sessionId, tail);
+    void tail.then(() => {
+      if (this.sessionAccessQueues.get(sessionId) === tail) {
+        this.sessionAccessQueues.delete(sessionId);
+      }
+    });
+    return run;
+  }
+
+  /**
+   * Multi-key variant of {@link runSessionAccess}: acquires the queues in
+   * sorted order so concurrent multi-key operations (fork A→B vs fork B→A)
+   * cannot deadlock.
+   */
+  private runSessionAccessAll<T>(sessionIds: readonly string[], work: () => Promise<T>): Promise<T> {
+    const keys = [...new Set(sessionIds)].sort();
+    let chained: () => Promise<T> = work;
+    for (const key of [...keys].reverse()) {
+      const inner = chained;
+      chained = () => this.runSessionAccess(key, inner);
+    }
+    return chained();
+  }
+
+  /**
+   * Runs `action` against the session without changing its live footprint: a
+   * session that is already live (publicly resumed or created through this
+   * client) is used in place and left open, while a cold session is resumed
+   * for the duration of the action and closed again. Only safe inside
+   * {@link runSessionAccess} — the queue is what makes the resume/close pair
+   * atomic against the public lifecycle operations.
+   */
+  private async withTemporarySession<T>(
+    sessionId: string,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    if (this.liveSession(sessionId) !== undefined) return action();
+    const handle = await resumeSessionById(this.engineAccessor, sessionId);
+    if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
+    try {
+      return await action();
+    } finally {
+      await closeSessionById(this.engineAccessor, sessionId);
+    }
+  }
+
   /** v1's `requireSession` / store lookup failure shape. */
   private static sessionNotFound(sessionId: string): KimiError {
     return new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session "${sessionId}" was not found`, {
@@ -901,6 +968,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return {
       id: meta.id,
       title: meta.title,
+      titleKind: meta.titleKind,
       lastPrompt: meta.lastPrompt,
       workDir: ctx.cwd,
       sessionDir: ctx.sessionDir,
@@ -1147,6 +1215,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * default model → `model.not_configured`) are pinned in the parity tests.
    */
   override async createSession(input: CreateSessionOptions): Promise<SessionSummary> {
+    // An explicit id takes the per-session queue so the check-then-create
+    // below is atomic against another create/close of the same id; a random
+    // id has no contenders and needs no serialization.
+    if (input.id !== undefined) {
+      return this.runSessionAccess(input.id, () => this.doCreateSession(input));
+    }
+    return this.doCreateSession(input);
+  }
+
+  private async doCreateSession(input: CreateSessionOptions): Promise<SessionSummary> {
     const workDir = normalizeRequiredWorkDir('createSession', input.workDir);
     if (input.id !== undefined) {
       const existing =
@@ -1204,17 +1282,28 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (title.length === 0) {
       throw new KimiError(ErrorCodes.SESSION_TITLE_EMPTY, 'Session title cannot be empty');
     }
-    if (this.liveSession(input.id) !== undefined) {
-      await this.klient.session(input.id).setTitle(title);
-      return;
-    }
-    const handle = await resumeSessionById(this.engineAccessor, input.id);
-    if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
-    try {
-      await this.klient.session(input.id).setTitle(title);
-    } finally {
-      await closeSessionById(this.engineAccessor, input.id);
-    }
+    await this.runSessionAccess(input.id, () =>
+      this.withTemporarySession(input.id, () => this.klient.session(input.id).setTitle(title)),
+    );
+  }
+
+  /**
+   * v2-only (`ISessionTitleService`, session scope). Like `renameSession`, a
+   * closed session is resumed, titled, and closed again so generation does
+   * not leak a live session. `undefined` means generation was unavailable
+   * (no managed OAuth login, no prompt yet, or a custom title is set) — the
+   * current title is kept.
+   */
+  override async generateSessionTitle(
+    input: GenerateSessionTitleInput,
+  ): Promise<string | undefined> {
+    return this.runSessionAccess(input.id, () =>
+      this.withTemporarySession(input.id, () =>
+        this.klient
+          .session(input.id)
+          .generateTitle({ force: input.force === true, source: input.source }),
+      ),
+    );
   }
 
   /**
@@ -1233,22 +1322,33 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         'forkSession turnIndex truncation is not wired to agent-core-v2 yet.',
       );
     }
-    const forkHandler = await handlerForSession(this.engineAccessor, input.id);
-    if (forkHandler === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
-    const handle = await forkHandler.accessor.get(ISessionLifecycleService).fork({
-      sourceSessionId: input.id,
-      newSessionId: input.forkId,
-      title: input.title,
-      metadata: input.metadata,
-    });
-    this.wireSession(handle);
-    return this.resumedSessionSummary(handle);
+    // The source session's reads (metadata, wire flush) stay atomic against
+    // its close/reload through the per-session queue; an explicit target id
+    // takes a second (sorted) queue so fork(A→X) is also atomic against
+    // create(X) / fork(B→X).
+    return this.runSessionAccessAll(
+      input.forkId === undefined ? [input.id] : [input.id, input.forkId],
+      async () => {
+        const forkHandler = await handlerForSession(this.engineAccessor, input.id);
+        if (forkHandler === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
+        const handle = await forkHandler.accessor.get(ISessionLifecycleService).fork({
+          sourceSessionId: input.id,
+          newSessionId: input.forkId,
+          title: input.title,
+          metadata: input.metadata,
+        });
+        this.wireSession(handle);
+        return this.resumedSessionSummary(handle);
+      },
+    );
   }
 
   override async closeSession(input: SessionIdRpcInput): Promise<void> {
     // v1's print-steer counters die with the Session object; drop ours too.
     this.printSteerStates.delete(input.sessionId);
-    await this.klient.session(input.sessionId).close();
+    await this.runSessionAccess(input.sessionId, () =>
+      this.klient.session(input.sessionId).close(),
+    );
   }
 
   /**
@@ -1267,14 +1367,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // scope is materialized. Unlike v1, the v2
     // engine has no caller `mcpServers` channel on create/resume (caller
     // servers are an ACP-side concern to be designed separately).
-    const handle = await resumeSessionById(this.engineAccessor, input.id, {
-      additionalDirs: input.additionalDirs,
-    });
-    if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
-    this.wireSession(handle);
-    return this.resumedSessionSummary(handle, {
-      includeSubagents: input.includeSubagents,
-      replayTurnLimit: input.replayTurnLimit,
+    return this.runSessionAccess(input.id, async () => {
+      const handle = await resumeSessionById(this.engineAccessor, input.id, {
+        additionalDirs: input.additionalDirs,
+      });
+      if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
+      this.wireSession(handle);
+      return this.resumedSessionSummary(handle, {
+        includeSubagents: input.includeSubagents,
+        replayTurnLimit: input.replayTurnLimit,
+      });
     });
   }
 
@@ -1288,36 +1390,38 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary> {
     const sessionId = input.sessionId;
-    const live = this.liveSession(sessionId);
-    if (live !== undefined) {
-      for (const agent of live.accessor.get(IAgentLifecycleService).list()) {
-        if (agent.accessor.get(IAgentActivityView).state().turn !== undefined) {
-          throw new KimiError(
-            ErrorCodes.TURN_AGENT_BUSY,
-            `Session "${sessionId}" cannot be reloaded while a turn is running`,
-            { details: { sessionId } },
-          );
+    return this.runSessionAccess(sessionId, async () => {
+      const live = this.liveSession(sessionId);
+      if (live !== undefined) {
+        for (const agent of live.accessor.get(IAgentLifecycleService).list()) {
+          if (agent.accessor.get(IAgentActivityView).state().turn !== undefined) {
+            throw new KimiError(
+              ErrorCodes.TURN_AGENT_BUSY,
+              `Session "${sessionId}" cannot be reloaded while a turn is running`,
+              { details: { sessionId } },
+            );
+          }
         }
+      } else if ((await this.engineAccessor.get(ISessionIndex).get(sessionId)) === undefined) {
+        throw SDKRpcClientV2.sessionNotFound(sessionId);
       }
-    } else if ((await this.engineAccessor.get(ISessionIndex).get(sessionId)) === undefined) {
-      throw SDKRpcClientV2.sessionNotFound(sessionId);
-    }
-    await this.configReady;
-    await this.klient.global.config.reload();
-    await this.klient.global.plugins.reload();
-    await this.refreshPluginSessionStarts(sessionId);
-    if (live !== undefined) {
-      await closeSessionById(this.engineAccessor, sessionId);
-    }
-    // Same print-steer reset as closeSession: v1's reload rebuilds the
-    // Session, and with it the counters.
-    this.printSteerStates.delete(sessionId);
-    const handle = await resumeSessionById(this.engineAccessor, sessionId);
-    if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
-    const main = handle.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
-    await main?.accessor.get(IAgentPluginService).refreshSessionStart();
-    this.wireSession(handle);
-    return this.resumedSessionSummary(handle);
+      await this.configReady;
+      await this.klient.global.config.reload();
+      await this.klient.global.plugins.reload();
+      await this.refreshPluginSessionStarts(sessionId);
+      if (live !== undefined) {
+        await closeSessionById(this.engineAccessor, sessionId);
+      }
+      // Same print-steer reset as closeSession: v1's reload rebuilds the
+      // Session, and with it the counters.
+      this.printSteerStates.delete(sessionId);
+      const handle = await resumeSessionById(this.engineAccessor, sessionId);
+      if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
+      const main = handle.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+      await main?.accessor.get(IAgentPluginService).refreshSessionStart();
+      this.wireSession(handle);
+      return this.resumedSessionSummary(handle);
+    });
   }
 
   private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {
@@ -1503,43 +1607,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async setThinking(input: SetSessionThinkingRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
     agent.accessor.get(IAgentProfileService).setThinking(input.effort);
-  }
-
-  /**
-   * v1 reloads the core config and pushes the resolved snapshot into the
-   * session: the spawn binding, the tool descriptions, and the cached
-   * startup warning all read that snapshot. The v2 engine resolves the
-   * secondary model live against `IConfigService` at spawn time
-   * (`resolveSubagentBinding`) and rebuilds the tool description on every
-   * read, so the preceding `setConfig` write already took effect
-   * session-wide — what remains of v1's contract is the reload (the recipe
-   * may have been persisted through another channel), the same loud
-   * validations, and the warning-cache refresh. The recipe read is NOT
-   * flag-gated, mirroring v1's `setSecondaryModelConfig` (the experiment
-   * gate lives at the spawn binding on both engines).
-   */
-  override async applyPersistedSecondaryModel(input: SessionIdRpcInput): Promise<void> {
-    const session = this.requireLiveSession(input.sessionId);
-    await this.klient.global.config.reload();
-    await this.configReady;
-    await this.modelReady;
-    const secondary = this.engineAccessor
-      .get(IConfigService)
-      .get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
-    if (secondary?.model === undefined) {
-      throw new KimiError(
-        ErrorCodes.CONFIG_INVALID,
-        'Cannot set the secondary model: persist its recipe before applying it to a session.',
-      );
-    }
-    try {
-      this.engineAccessor.get(IModelCatalog).get(secondary.model);
-    } catch (error) {
-      throw wrapSubagentModelError(error, secondary.model, undefined);
-    }
-    session.accessor
-      .get(ISessionSecondaryModelWarningService)
-      .recheckSecondaryModelWarning();
   }
 
   override async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {
@@ -1833,14 +1900,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * cache is empty — v1 recomputes on demand whenever no warning is cached,
    * so an AGENTS.md that outgrows the budget mid-session surfaces on both
    * engines. The single warning shape (`agents-md-oversized`, severity
-   * `warning`) mirrors v1's assembly. The secondary-model half comes from the
-   * session scope's `ISessionSecondaryModelWarningService` (v1's
-   * `computeSecondaryModelWarnings`): v1 computes it from the session's
-   * config snapshot while v2 caches the live-config check at main-agent
-   * creation, so the two agree on recipes applied through
-   * `applyPersistedSecondaryModel` (which refreshes the v2 cache) and on
-   * recipes present at session creation; a recipe persisted but never
-   * applied surfaces only on v2 (live config vs v1's snapshot).
+   * `warning`) mirrors v1's assembly.
    */
   override async getSessionWarnings(input: SessionIdRpcInput) {
     const agent = await this.agentScope(input.sessionId);
@@ -1858,17 +1918,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       );
       warning = prepared.agentsMdWarning;
     }
-    const warnings: { code: string; message: string; severity: 'warning' }[] =
-      warning === undefined
-        ? []
-        : [{ code: 'agents-md-oversized', message: warning, severity: 'warning' as const }];
-    const secondary = this.requireLiveSession(input.sessionId)
-      .accessor.get(ISessionSecondaryModelWarningService)
-      .getSecondaryModelWarning();
-    if (secondary !== undefined) {
-      warnings.push({ code: secondary.code, message: secondary.message, severity: 'warning' });
-    }
-    return warnings;
+    return warning === undefined
+      ? []
+      : [{ code: 'agents-md-oversized', message: warning, severity: 'warning' as const }];
   }
 
   /**

@@ -35,6 +35,7 @@ import type {
   ExportSessionResult,
   CreateGoalInput,
   ForkSessionInput,
+  GenerateSessionTitleInput,
   GetConfigOptions,
   GlobalMcpServerAuthStatus,
   McpManagedServerInfo,
@@ -265,6 +266,18 @@ export abstract class SDKRpcClientBase {
       sessionId: input.id,
       title: input.title,
     });
+  }
+
+  /**
+   * v2-only capability (`ISessionTitleService`); the v1 engine has no title
+   * generation, so the base fails loudly and `SDKRpcClientV2` overrides it.
+   */
+  async generateSessionTitle(input: GenerateSessionTitleInput): Promise<string | undefined> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'generateSessionTitle is only available on the agent-core-v2 engine.',
+    );
   }
 
   async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {
@@ -551,11 +564,6 @@ export abstract class SDKRpcClientBase {
       agentId: this.interactiveAgentId,
       effort: input.effort,
     });
-  }
-
-  async applyPersistedSecondaryModel(input: SessionIdRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.applyPersistedSecondaryModel({ sessionId: input.sessionId });
   }
 
   async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {

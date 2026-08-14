@@ -35,6 +35,9 @@ interface TaskWire {
   completed_at?: string;
   output_preview?: string;
   output_bytes?: number;
+  agent_id?: string;
+  subagent_type?: string;
+  parent_tool_call_id?: string;
 }
 
 interface ListWire {
@@ -158,6 +161,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
               kind: 'agent',
               agentId: 'sub-1',
               subagentType: 'explore',
+              parentToolCallId: 'call-parent-1',
               model: 'provider/secondary',
               thinkingEffort: 'low',
             };
@@ -214,6 +218,9 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       status: 'running',
       model: 'provider/secondary', // subagent tasks expose the bound display model
       thinking_effort: 'low', // …and its effective thinking effort
+      agent_id: 'sub-1',
+      subagent_type: 'explore',
+      parent_tool_call_id: 'call-parent-1',
     });
     expect(byId.get(agentId)?.command).toBeUndefined();
 
@@ -223,6 +230,12 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       kind: 'tool', // question → tool
       status: 'running',
     });
+    expect(byId.get(processId)?.agent_id).toBeUndefined();
+    expect(byId.get(questionId)?.agent_id).toBeUndefined();
+    expect(byId.get(processId)?.subagent_type).toBeUndefined();
+    expect(byId.get(questionId)?.subagent_type).toBeUndefined();
+    expect(byId.get(processId)?.parent_tool_call_id).toBeUndefined();
+    expect(byId.get(questionId)?.parent_tool_call_id).toBeUndefined();
   });
 
   it('filters the list by wire status', async () => {
@@ -245,11 +258,24 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     const id = await createSession();
     const tasks = await mainAgentTasks(id);
     const taskId = tasks.registerTask(fakeTask('process'));
+    const subagentId = tasks.registerTask(fakeTask('agent'));
     await flush();
 
     const got = await getJson<TaskWire>(`/api/v1/sessions/${id}/tasks/${taskId}`);
     expect(got.body.code).toBe(0);
     expect(got.body.data).toMatchObject({ id: taskId, session_id: id, kind: 'bash' });
+    expect(got.body.data.agent_id).toBeUndefined();
+
+    const gotSubagent = await getJson<TaskWire>(`/api/v1/sessions/${id}/tasks/${subagentId}`);
+    expect(gotSubagent.body.code).toBe(0);
+    expect(gotSubagent.body.data).toMatchObject({
+      id: subagentId,
+      session_id: id,
+      kind: 'subagent',
+      agent_id: 'sub-1',
+      subagent_type: 'explore',
+      parent_tool_call_id: 'call-parent-1',
+    });
 
     const missing = await getJson<null>(`/api/v1/sessions/${id}/tasks/nope`);
     expect(missing.body.code).toBe(40406);

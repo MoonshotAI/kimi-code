@@ -32,6 +32,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./device": {
+      "types": "./src/device.ts",
+      "default": "./src/device.ts"
     }
   },
   "scripts": {

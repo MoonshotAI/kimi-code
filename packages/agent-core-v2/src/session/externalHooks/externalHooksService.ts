@@ -28,24 +28,22 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
-import type { Hooks } from '#/hooks';
 import { IModelService } from '#/kosong/model/model';
 import {
   ISessionAgentProfileCatalog,
 } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import {
-  ISessionLifecycleHooks,
-  type SessionCloseReason,
-  type SessionCreateSource,
-  type SessionLifecycleHookSlots,
-} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   type AgentTaskStartHookContext,
   type AgentTaskStopHookContext,
   ISessionSubagentService,
 } from '#/session/subagent/subagent';
+import {
+  ISessionLifecycleService,
+  type SessionCloseReason,
+  type SessionCreateSource,
+} from '#/workspace/sessionLifecycle/sessionLifecycle';
 
 import { ISessionExternalHooksService } from './externalHooks';
 
@@ -64,7 +62,7 @@ export class SessionExternalHooksService
 
   constructor(
     @ISessionContext private readonly context: ISessionContext,
-    @ISessionLifecycleHooks lifecycleHooks: Hooks<SessionLifecycleHookSlots>,
+    @ISessionLifecycleService lifecycle: ISessionLifecycleService,
     @ISessionSubagentService subagents: ISessionSubagentService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionAgentProfileCatalog private readonly profiles: ISessionAgentProfileCatalog,
@@ -90,17 +88,17 @@ export class SessionExternalHooksService
       }),
     );
     this._register(
-      lifecycleHooks.onDidCreateSession.register('externalHooks', async (event, next) => {
+      lifecycle.onDidCreateSession((event) => {
+        if (event.sessionId !== this.context.sessionId) return;
         if (event.source !== 'fork') {
-          await this.triggerSessionStart(event.source);
+          event.waitUntil(this.triggerSessionStart(event.source));
         }
-        await next();
       }),
     );
     this._register(
-      lifecycleHooks.onWillCloseSession.register('externalHooks', async (event, next) => {
-        await this.triggerSessionEnd(event.reason);
-        await next();
+      lifecycle.onWillCloseSession((event) => {
+        if (event.sessionId !== this.context.sessionId) return;
+        event.waitUntil(this.triggerSessionEnd(event.reason));
       }),
     );
     this._register(

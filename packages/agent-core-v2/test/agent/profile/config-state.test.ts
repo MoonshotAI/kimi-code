@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
 import type { ModelRecord } from '#/kosong/model/model';
 import {
   configServices,
@@ -118,19 +117,6 @@ describe('ConfigState model capabilities', () => {
       model: 'kimi-code/kimi-for-coding',
       maxContextTokens: 1_000_000,
     });
-  });
-
-  it('reports the recipe base alias when bound to the derived secondary entry', () => {
-    kimiConfig = {
-      providers: {},
-      secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
-    } as TestKimiConfig;
-
-    profile.update({ modelAlias: SECONDARY_DERIVED_MODEL_ID });
-
-    const statuses = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated');
-    const last = statuses.at(-1)?.args as { model?: string };
-    expect(last.model).toBe('provider/secondary');
   });
 
   it('omits maxContextTokens when the bound model no longer resolves', () => {

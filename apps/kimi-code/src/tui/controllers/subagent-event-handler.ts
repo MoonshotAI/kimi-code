@@ -137,8 +137,7 @@ export class SubAgentEventHandler {
         usage: totalUsage,
         // The bound model alias rides every child status update (emitted right
         // after spawn); surface it on the subagent card. `modelDisplayName`
-        // falls back to the alias itself when the entry is unknown (e.g. the
-        // synthesized `__secondary__` derived entry is missing).
+        // falls back to the alias itself when the entry is unknown.
         modelDisplay:
           event.model === undefined
             ? undefined
@@ -589,8 +588,7 @@ export class SubAgentEventHandler {
       // The bound model alias rides every child status update (emitted right
       // after spawn). Swarm members share one binding, so the panel shows it
       // once in the header instead of per cell. `modelDisplayName` falls back
-      // to the alias itself when the entry is unknown (e.g. the synthesized
-      // `__secondary__` derived entry is missing).
+      // to the alias itself when the entry is unknown.
       progress.setModelDisplay(
         modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]),
       );

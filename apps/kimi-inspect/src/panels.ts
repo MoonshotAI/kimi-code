@@ -23,7 +23,7 @@ import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/pe
 import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
-import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/agent/swarm/swarm';
+import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
 import { IAgentTokenCountingService } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
 import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
@@ -35,7 +35,7 @@ import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/pro
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
-import { ISessionInitService } from '@moonshot-ai/agent-core-v2/session/sessionInit/sessionInit';
+import { ISessionInitService } from '@moonshot-ai/agent-core-v2/features/sessionInit/sessionInit';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceContext';
 

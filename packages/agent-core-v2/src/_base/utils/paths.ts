@@ -1,12 +1,38 @@
 /**
- * `_base/utils/paths` (cross-cutting) — pure path-filter predicates.
+ * `_base/utils/paths` (cross-cutting) — pure path predicates and directory
+ * walks.
  *
  * Constrains filesystem watches to selected subtrees and scanner-visible
- * entries.
+ * entries, and walks host directory chains with platform-native path
+ * semantics so drive-letter / UNC roots keep their host form.
  */
+
+import nodePath from 'node:path';
 
 function normalizeSlashes(p: string): string {
   return p.replaceAll('\\', '/');
+}
+
+export interface UpwardRootPathApi {
+  resolve(dir: string): string;
+  dirname(dir: string): string;
+  join(...segments: string[]): string;
+}
+
+export async function findUpwardRoot(
+  workDir: string,
+  markerName: string,
+  hasMarker: (markerPath: string) => Promise<boolean>,
+  pathApi: UpwardRootPathApi = nodePath,
+): Promise<string> {
+  const start = pathApi.resolve(workDir);
+  let current = start;
+  while (true) {
+    if (await hasMarker(pathApi.join(current, markerName))) return normalizeSlashes(current);
+    const parent = pathApi.dirname(current);
+    if (parent === current) return normalizeSlashes(start);
+    current = parent;
+  }
 }
 
 export interface SubtreeWatchFilterOptions {
