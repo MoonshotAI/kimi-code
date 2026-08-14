@@ -5,11 +5,26 @@ import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 import { resolveKimiHome } from '#/config/path';
 import { McpServerConfigSchema, type McpServerConfig } from '#/config/schema';
 import { ErrorCodes, KimiError } from '#/errors';
-import { z } from 'zod';
 
-const McpJsonFileSchema = z.object({
-  mcpServers: z.record(z.string(), McpServerConfigSchema).default({}),
-});
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Parse the file's server map entry-by-entry instead of through a single
+ * `z.record()`: a record parse rebuilds its output with property assignment,
+ * which routes a literal `__proto__` server key through the prototype setter
+ * and silently drops it. Per-entry parsing over the JSON own-keys keeps every
+ * declared server.
+ */
+function parseMcpJsonServers(data: unknown): Record<string, McpServerConfig> {
+  if (!isRecord(data)) throw new Error('expected a JSON object');
+  const raw = data['mcpServers'] ?? {};
+  if (!isRecord(raw)) throw new Error('"mcpServers" must be an object');
+  return Object.fromEntries(
+    Object.entries(raw).map(([name, value]) => [name, McpServerConfigSchema.parse(value)]),
+  );
+}
 
 export interface McpJsonPaths {
   readonly user: string;
@@ -79,8 +94,10 @@ export async function loadMcpServersDetailed(
       [paths.projectRoot, projectRoot],
       [paths.project, project],
     ]);
-  const servers: Record<string, McpServerConfig> = {};
-  const origins: Record<string, string> = {};
+  // Null-prototype accumulators: a server literally named `__proto__` would
+  // otherwise hit the prototype setter and silently vanish from the merge.
+  const servers: Record<string, McpServerConfig> = Object.create(null);
+  const origins: Record<string, string> = Object.create(null);
   for (const [path, layer] of layers) {
     for (const [name, config] of Object.entries(layer)) {
       servers[name] = config;
@@ -142,7 +159,7 @@ async function readMcpJson(
   }
 
   try {
-    return normalizeMcpServers(McpJsonFileSchema.parse(data).mcpServers, options);
+    return normalizeMcpServers(parseMcpJsonServers(data), options);
   } catch (error: unknown) {
     throw new KimiError(ErrorCodes.CONFIG_INVALID, `Invalid MCP server config in ${filePath}: ${describeError(error)}`, {
       cause: error,
