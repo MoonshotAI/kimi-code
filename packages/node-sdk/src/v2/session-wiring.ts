@@ -282,11 +282,16 @@ function withStatusSnapshot(agent: IAgentScopeHandle, event: DomainEvent): Domai
   const contextTokens = tokenCounting.statusSize();
   const capabilities = profile.getModelCapabilities();
   const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  const contextUsage =
+    typeof maxContextTokens === 'number' && maxContextTokens > 0
+      ? contextTokens / maxContextTokens
+      : 0;
   return {
     ...event,
     usage: usageService.status(),
     contextTokens,
     maxContextTokens,
+    contextUsage,
     model: profile.getModel(),
   } as unknown as DomainEvent;
 }

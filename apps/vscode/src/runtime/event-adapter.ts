@@ -325,12 +325,24 @@ function mapLegacyWireEvent(
   }
 }
 
+function contextUsageRatio(
+  sdkEvent: Extract<Event, { type: 'agent.status.updated' }>,
+): number | undefined {
+  const tokens = sdkEvent.contextTokens;
+  const max = sdkEvent.maxContextTokens;
+  if (typeof tokens === 'number' && typeof max === 'number' && max > 0) {
+    return tokens / max;
+  }
+  return sdkEvent.contextUsage;
+}
+
 function mapStatusUpdate(
   state: EventAdapterState,
   sdkEvent: Extract<Event, { type: 'agent.status.updated' }>,
 ): MappedLegacyWireEvent {
   const payload: StatusUpdate = {};
-  if (sdkEvent.contextUsage !== undefined) payload.context_usage = sdkEvent.contextUsage;
+  const contextUsage = contextUsageRatio(sdkEvent);
+  if (contextUsage !== undefined) payload.context_usage = contextUsage;
   if (sdkEvent.planMode !== undefined) payload.plan_mode = sdkEvent.planMode;
   if (sdkEvent.model !== undefined) payload.model = sdkEvent.model;
   if (sdkEvent.thinkingEffort !== undefined) payload.thinking_effort = sdkEvent.thinkingEffort;
