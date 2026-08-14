@@ -112,32 +112,48 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
   const children = host.state.transcriptContainer.children;
   const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);
   if (lastUserComponentIndex !== undefined) {
-    // The group's skill cards sit immediately before the anchor; only the
-    // contiguous run is part of this submission, so a reused submission id on
-    // an earlier, separate group is not swept up here. Structural removal
-    // only: the container's ref-checked render cache detects the child-list
+    // The group's skill cards sit before the anchor; a hook result may
+    // interleave between them and survives undo in the engine, so it is
+    // skipped (kept) while the cards around it are removed. Only the
+    // contiguous run belongs to this submission: a reused submission id on
+    // an earlier, separate group is not swept up. Structural removal only:
+    // the container's ref-checked render cache detects the child-list
     // change; no tree-wide invalidate needed.
-    let removeFromIndex = lastUserComponentIndex;
+    const groupChildIndices = new Set<number>();
     if (submissionId !== undefined) {
-      while (removeFromIndex > 0) {
-        const entry = getTranscriptComponentEntry(children[removeFromIndex - 1]!);
-        if (entry?.promptSubmissionId !== submissionId) break;
-        removeFromIndex--;
+      for (let i = lastUserComponentIndex - 1; i >= 0; i--) {
+        const entry = getTranscriptComponentEntry(children[i]!);
+        if (entry?.promptSubmissionId === submissionId) {
+          groupChildIndices.add(i);
+          continue;
+        }
+        if (entry?.hookResult === true) continue;
+        break;
       }
     }
-    removeUndoContextComponents(children, removeFromIndex);
+    removeUndoContextComponents(children, lastUserComponentIndex, groupChildIndices);
   }
 
-  let removeFromIndex = lastUserIndex;
+  const groupEntryIndices = new Set<number>();
   if (submissionId !== undefined) {
-    while (removeFromIndex > 0 && entries[removeFromIndex - 1]?.promptSubmissionId === submissionId) {
-      removeFromIndex--;
+    for (let i = lastUserIndex - 1; i >= 0; i--) {
+      const prev = entries[i];
+      if (prev?.promptSubmissionId === submissionId) {
+        groupEntryIndices.add(i);
+        continue;
+      }
+      if (prev?.hookResult === true) continue;
+      break;
     }
   }
-  const preservedEntries = entries.slice(removeFromIndex).filter(
-    (entry) => !isUndoContextEntry(entry),
+  const preservedEntries = entries.filter(
+    (entry, index) =>
+      !(
+        (index >= lastUserIndex || groupEntryIndices.has(index)) &&
+        isUndoContextEntry(entry)
+      ),
   );
-  entries.splice(removeFromIndex, entries.length - removeFromIndex, ...preservedEntries);
+  entries.splice(0, entries.length, ...preservedEntries);
 
   if (entries.length === 0) {
     renderWelcome(host);
@@ -472,10 +488,15 @@ function findUndoAnchorComponentIndex(
 function removeUndoContextComponents(
   children: Component[],
   startIndex: number,
+  additionalIndices: ReadonlySet<number>,
 ): void {
-  for (let i = children.length - 1; i >= startIndex; i--) {
+  for (let i = children.length - 1; i >= 0; i--) {
     const child = children[i];
-    if (child !== undefined && isUndoContextComponent(child)) {
+    if (
+      child !== undefined &&
+      (i >= startIndex || additionalIndices.has(i)) &&
+      isUndoContextComponent(child)
+    ) {
       children.splice(i, 1);
     }
   }

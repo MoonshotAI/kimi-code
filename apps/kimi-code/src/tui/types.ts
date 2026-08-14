@@ -238,6 +238,8 @@ export interface TranscriptEntry {
   skillTrigger?: SkillActivationTrigger;
   /** Submission group id shared by a prompt and its inline skill activations. */
   promptSubmissionId?: string;
+  /** Entry renders a UserPromptSubmit hook result (sits inside its prompt's group window). */
+  hookResult?: boolean;
   pluginCommandData?: PluginCommandTranscriptData;
 }
 

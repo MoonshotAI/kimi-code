@@ -55,4 +55,33 @@ describe('/undo with grouped submissions', () => {
       'answer one',
     ]);
   });
+
+  it('removes grouped cards around an interleaved hook result and keeps the hook result', async () => {
+    const entries: TranscriptEntry[] = [
+      entry({
+        kind: 'skill_activation',
+        content: 'Activated skill: review',
+        skillTrigger: 'user-slash',
+        promptSubmissionId: 'sub-1',
+      }),
+      entry({ kind: 'assistant', content: 'hook note', hookResult: true }),
+      entry({ kind: 'user', content: 'grouped prompt', promptSubmissionId: 'sub-1' }),
+      entry({ kind: 'assistant', content: 'grouped answer' }),
+    ];
+    const host = {
+      session: { undoHistory: vi.fn(async () => {}) },
+      state: {
+        transcriptEntries: entries,
+        transcriptContainer: { children: [] },
+        ui: { requestRender: vi.fn() },
+        appState: { streamingPhase: 'idle' },
+      },
+      showError: vi.fn(),
+    } as unknown as SlashCommandHost;
+
+    await handleUndoCommand(host, '1');
+
+    expect(host.session?.undoHistory).toHaveBeenCalledWith(1);
+    expect(entries.map((item) => item.content)).toEqual(['hook note']);
+  });
 });

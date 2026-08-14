@@ -546,8 +546,8 @@ export class SessionReplayRenderer {
   private renderHookResult(context: ReplayRenderContext, message: ContextMessage): void {
     if (message.origin?.kind !== 'hook_result') return;
     this.flushAssistant(context);
-    this.host.appendTranscriptEntry(
-      replayEntry(
+    this.host.appendTranscriptEntry({
+      ...replayEntry(
         context,
         'assistant',
         formatHookResultMessageForTranscript(
@@ -557,7 +557,8 @@ export class SessionReplayRenderer {
         ),
         'markdown',
       ),
-    );
+      hookResult: true,
+    });
   }
 
   private renderCronJob(context: ReplayRenderContext, message: ContextMessage): void {

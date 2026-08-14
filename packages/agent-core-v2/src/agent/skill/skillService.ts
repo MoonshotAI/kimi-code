@@ -94,6 +94,9 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     await this.skillCatalog.ready;
     const submissionId = input.submissionId ?? randomUUID();
     const prepared = input.skills.map((skill) => this.prepare(skill, submissionId));
+    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
+      await this.updatePromptMetadata(promptMetadataTextFromContentParts(input.input));
+    }
     for (const activation of prepared) {
       this.recordActivation(activation.origin);
     }
@@ -106,9 +109,6 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       },
       messagesBefore: prepared.map((activation) => activation.message),
     });
-    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
-      await this.updatePromptMetadata(promptMetadataTextFromContentParts(input.input));
-    }
     if (handle.state === 'pending') return undefined;
     const turn = await handle.launched;
     return turn === undefined ? undefined : { turn_id: turn.id };
