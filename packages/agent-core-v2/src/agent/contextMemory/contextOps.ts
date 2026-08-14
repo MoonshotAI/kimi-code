@@ -346,7 +346,8 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
     if (remaining <= 0) {
       if (
         completingSubmissionId === undefined ||
-        promptSubmissionId(message.origin) !== completingSubmissionId
+        promptSubmissionId(message.origin) !== completingSubmissionId ||
+        isUndoAnchor(message)
       ) {
         break;
       }

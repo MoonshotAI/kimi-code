@@ -176,7 +176,8 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       if (removedUserCount >= count) {
         if (
           completingSubmissionId === undefined ||
-          promptSubmissionId(message.origin) !== completingSubmissionId
+          promptSubmissionId(message.origin) !== completingSubmissionId ||
+          isUndoAnchor(message)
         ) {
           break;
         }

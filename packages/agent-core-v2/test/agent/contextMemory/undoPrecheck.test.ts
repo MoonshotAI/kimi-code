@@ -165,6 +165,19 @@ describe('computeUndoCut', () => {
     expect(cut).toEqual({ cutIndex: 1, removedCount: 1, stoppedAtCompaction: false });
     expect(isFullyUndoable(cut, 1)).toBe(true);
   });
+
+  it('stops a grouped cut at the next undo anchor when submission ids collide', () => {
+    const history = [
+      skillActivation('sub-1'),
+      groupedPrompt('sub-1'),
+      skillActivation('sub-1'),
+      groupedPrompt('sub-1'),
+    ];
+    const cut = computeUndoCut(history, 1);
+    // Only the second group is cut, even though both share the id.
+    expect(cut).toEqual({ cutIndex: 2, removedCount: 1, stoppedAtCompaction: false });
+    expect(isFullyUndoable(cut, 1)).toBe(true);
+  });
 });
 
 describe('contextUndo op', () => {

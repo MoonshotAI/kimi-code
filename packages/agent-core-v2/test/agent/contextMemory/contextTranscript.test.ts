@@ -230,6 +230,33 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['message A', 'reply A']);
   });
 
+  it('undo stops a grouped cut at the next anchor when submission ids collide', () => {
+    const result = reduceContextTranscript([
+      appendMessage(
+        userMessage('skill A', {
+          kind: 'skill_activation',
+          activationId: 'act-a',
+          skillName: 'review',
+          trigger: 'user-slash',
+          submissionId: 'sub-1',
+        }),
+      ),
+      appendMessage(userMessage('prompt A', { kind: 'user', submissionId: 'sub-1' })),
+      appendMessage(
+        userMessage('skill B', {
+          kind: 'skill_activation',
+          activationId: 'act-b',
+          skillName: 'security',
+          trigger: 'user-slash',
+          submissionId: 'sub-1',
+        }),
+      ),
+      appendMessage(userMessage('prompt B', { kind: 'user', submissionId: 'sub-1' })),
+      undo(1),
+    ]);
+    expect(texts(result)).toEqual(['skill A', 'prompt A']);
+  });
+
   it('removes a pre-anchor image compression reminder owned by the undone prompt', () => {
     const result = reduceContextTranscript([
       appendMessage(

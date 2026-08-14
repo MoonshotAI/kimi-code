@@ -13,6 +13,7 @@ import type {
   ApprovalResponse,
   Event,
   GoalSnapshot,
+  Session,
 } from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -28,6 +29,7 @@ import { AssistantMessageComponent } from '#/tui/components/messages/assistant-m
 import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import {
+  groupTurns,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
   TRANSCRIPT_KEEP_RECENT_STEPS,
@@ -45,6 +47,7 @@ import {
   PluginsPanelComponent,
 } from '#/tui/components/dialogs/plugins-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
+import type { SessionReplayRenderer } from '#/tui/controllers/session-replay';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
 import { openUrl } from '#/utils/open-url';
@@ -109,6 +112,7 @@ function stripSgr(text: string): string {
 interface MessageDriver {
   state: TUIState;
   streamingUI: StreamingUIController;
+  sessionReplay: SessionReplayRenderer;
   pluginCommandMap: Map<string, string>;
   sessionEventHandler: {
     startSubscription(): void;
@@ -750,6 +754,110 @@ describe('KimiTUI message flow', () => {
         text: 'check /skill:review',
         inlineSkillActivations: [{ skillName: 'review' }],
       }),
+    ]);
+  });
+
+  it('renders a grouped replay submission as a single turn', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(session, {}, startupInput);
+    const groupedOrigin = (activationId: string, skillName: string) =>
+      ({
+        kind: 'skill_activation',
+        activationId,
+        skillName,
+        trigger: 'user-slash',
+        submissionId: 'sub-1',
+      }) as const;
+    (session.getResumeState as ReturnType<typeof vi.fn>).mockReturnValue({
+      sessionMetadata: {},
+      agents: {
+        main: {
+          config: { modelCapabilities: { max_context_tokens: 100 }, modelAlias: 'k2' },
+          plan: null,
+          permission: { mode: 'manual' },
+          swarmMode: false,
+          context: { history: [], tokenCount: 0 },
+          background: [],
+          toolStore: {},
+          replay: [
+            {
+              type: 'message',
+              time: 1,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'earlier question' }],
+                toolCalls: [],
+                origin: { kind: 'user' },
+              },
+            },
+            {
+              type: 'message',
+              time: 2,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'earlier answer' }],
+                toolCalls: [],
+              },
+            },
+            {
+              type: 'message',
+              time: 3,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'skill card A' }],
+                toolCalls: [],
+                origin: groupedOrigin('act-1', 'review'),
+              },
+            },
+            {
+              type: 'message',
+              time: 4,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'skill card B' }],
+                toolCalls: [],
+                origin: groupedOrigin('act-2', 'security'),
+              },
+            },
+            {
+              type: 'message',
+              time: 5,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'please /skill:review and /skill:security' }],
+                toolCalls: [],
+                origin: { kind: 'user', submissionId: 'sub-1' },
+              },
+            },
+            {
+              type: 'message',
+              time: 6,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'grouped answer' }],
+                toolCalls: [],
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
+    expect(replayed).toBe(true);
+
+    const turns = groupTurns(driver.state.transcriptEntries);
+    expect(turns).toHaveLength(2);
+    expect(turns[1]!.entries.map((entry) => entry.kind)).toEqual([
+      'skill_activation',
+      'skill_activation',
+      'user',
+      'assistant',
     ]);
   });
 

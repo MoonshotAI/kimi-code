@@ -325,14 +325,22 @@ export class SessionReplayRenderer {
     this.flushAssistant(context);
     const skill = skillActivationFromOrigin(message.origin);
     if (skill !== undefined) {
+      const grouped = skill.submissionId !== undefined;
+      // A grouped submission occupies one replay turn: advance once at its
+      // first message, then the whole group (cards + prompt) renders in it.
+      if (grouped && context.groupSubmissionId !== skill.submissionId) {
+        this.advanceTurn(context);
+      }
+      context.groupSubmissionId = grouped ? skill.submissionId : undefined;
       this.renderSkillActivation(context, skill);
-      if (message.origin?.kind === 'skill_activation' && message.origin.trigger === 'user-slash') {
+      if (!grouped && message.origin?.kind === 'skill_activation' && message.origin.trigger === 'user-slash') {
         this.advanceTurn(context);
       }
       return;
     }
     const pluginCommand = pluginCommandFromOrigin(message.origin);
     if (pluginCommand !== undefined) {
+      context.groupSubmissionId = undefined;
       this.renderPluginCommand(context, pluginCommand);
       if (message.origin?.kind === 'plugin_command' && message.origin.trigger === 'user-slash') {
         this.advanceTurn(context);
@@ -340,10 +348,17 @@ export class SessionReplayRenderer {
       return;
     }
 
-    this.advanceTurn(context);
+    const submissionId = originSubmissionId(message.origin);
+    if (submissionId === undefined || context.groupSubmissionId !== submissionId) {
+      // A plain prompt, or a grouped prompt whose cards were trimmed away:
+      // start a fresh turn. A grouped prompt following its own cards joins
+      // the group's turn instead.
+      this.advanceTurn(context);
+    }
+    context.groupSubmissionId = submissionId;
     this.host.appendTranscriptEntry({
       ...replayEntry(context, 'user', contentPartsToText(message.content), 'plain'),
-      promptSubmissionId: originSubmissionId(message.origin),
+      promptSubmissionId: submissionId,
     });
   }
 

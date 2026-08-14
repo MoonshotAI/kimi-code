@@ -28,6 +28,12 @@ export interface ReplayRenderContext {
   turnIndex: number;
   stepIndex: number;
   currentTurnId: string | undefined;
+  /**
+   * The submission group currently being rendered, if any. A grouped
+   * submission (skill activations + their prompt) occupies a single replay
+   * turn: the turn advances once at the group's first message.
+   */
+  groupSubmissionId?: string;
   assistant: {
     thinking: string[];
     text: string[];
