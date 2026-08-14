@@ -471,6 +471,7 @@ onUnmounted(() => {
                 <tr><td class="tk">--duration-base</td><td class="val">160ms</td><td>hover, show/hide</td></tr>
                 <tr><td class="tk">--duration-slow</td><td class="val">260ms</td><td>dialog, Sheet, layout</td></tr>
                 <tr><td class="tk">--duration-hover-intent</td><td class="val">250ms</td><td>hover-intent reveal gate (TOC rail)</td></tr>
+                <tr><td class="tk">--duration-flash</td><td class="val">1200ms</td><td>one-shot attention flashes (search locate, provider-row added) — a highlight timeout, past the show/hide ramp on purpose</td></tr>
                 <tr><td class="tk">--anim-rive-spin</td><td class="val">416.7ms</td><td>new-chat / folder-plus icon: plus spin on hover</td></tr>
                 <tr><td class="tk">--anim-leftbar</td><td class="val">533.3ms</td><td>sidebar toggle icon: arrow fly-in on hover</td></tr>
                 <tr><td class="tk">--anim-leftbar-shrink</td><td class="val">200ms</td><td>sidebar toggle icon: divider shrink on hover</td></tr>
@@ -1872,7 +1873,7 @@ grid-template-rows: minmax(0, 1fr) auto;
               <thead><tr><th>Dialog</th><th>Anatomy</th><th>Composition</th></tr></thead>
               <tbody>
                 <tr><td class="tk">Model picker</td><td>flush · lg · fixed</td><td>search + provider chips + model rows + shortcut bar</td></tr>
-                <tr><td class="tk">Session search</td><td>flush · lg · fixed</td><td>search + result rows + shortcut bar</td></tr>
+                <tr><td class="tk">Session search</td><td>flush · lg · fixed</td><td>search + result rows (sidebar-style alignment: one icon gutter, shared left text edge, shared right meta edge; workspace rows single-line name + right-aligned path, session rows title + time over a workspace · snippet meta line; quiet uppercase section heads with counts; empty query shows a few top workspaces + recent sessions) + shortcut bar</td></tr>
                 <tr><td class="tk">Folder browser</td><td>flush · lg · fixed</td><td>breadcrumb bar + filter bar + folder rows + actions + hint bar</td></tr>
                 <tr><td class="tk">Provider manager</td><td>flush · xl · fixed</td><td>management rows with inset dividers (rows are not selectable) + add section + shortcut bar</td></tr>
                 <tr><td class="tk">Confirm / Login / Status</td><td>padded · md · auto</td><td>title + message or form + right-aligned foot</td></tr>

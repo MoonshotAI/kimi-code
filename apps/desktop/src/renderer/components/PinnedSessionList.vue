@@ -24,6 +24,9 @@ const props = defineProps<{
   activeId: string;
   pendingBySession: Record<string, { approvals: number; questions: number }>;
   unreadBySession: Record<string, boolean>;
+  /** Session being locate-flashed by the search dialog (null when idle) — the
+   *  matching row pulses an accent wash so the eye lands on it. */
+  flashSessionId?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -172,6 +175,8 @@ function onContainerDragLeave(event: DragEvent): void {
           :approval-count="pendingBySession[s.id]?.approvals ?? 0"
           :question-count="pendingBySession[s.id]?.questions ?? 0"
           :unread="unreadBySession[s.id] ?? false"
+          :data-session-id="s.id"
+          :class="{ 'se-locate-flash': flashSessionId === s.id }"
           @rename-state-change="renamingSessionId = $event ? s.id : null"
           @select="emit('selectSession', $event)"
           @rename="(id, title) => emit('renameSession', id, title)"
@@ -228,6 +233,30 @@ function onContainerDragLeave(event: DragEvent): void {
 .pinned-toggle svg {
   width: 13px;
   height: 13px;
+}
+
+/* Session-row locate flash (search dialog): identical treatment to the
+   grouped rows' flash in WorkspaceGroup — a soft accent overlay fading out
+   above the row's resting fill, so nothing snaps when it ends. The class
+   lands on SessionRow's root (class fallthrough), which carries this
+   component's scope id. */
+.se-locate-flash { isolation: isolate; }
+.se-locate-flash::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+  pointer-events: none;
+  animation: se-locate-fade var(--duration-flash) var(--ease-out) forwards;
+}
+@keyframes se-locate-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .se-locate-flash::before { animation: none; }
 }
 
 /* Cap the expanded rows so a long pinned set can't push the workspace list

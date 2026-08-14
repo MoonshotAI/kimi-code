@@ -382,6 +382,10 @@ html[data-color-scheme="dark"] {
   --duration-base: 160ms;
   --duration-slow: 260ms;
   --duration-hover-intent: 250ms;
+  /* Attention flashes: one-shot accent washes that linger then fade (search
+     locate, provider-row added). Long by design — way past the show/hide
+     ramp, closer to a highlight timeout than a transition. */
+  --duration-flash: 1200ms;
   /* Dock work panel enter/leave geometry (the panel pops above the composer). */
   --motion-panel-shift: 2px;
   --motion-panel-scale: 0.97;

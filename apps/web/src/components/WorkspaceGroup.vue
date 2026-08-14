@@ -33,6 +33,9 @@ const props = defineProps<{
   /** Rows-per-group display cap (undefined = the first page,
    *  `group.initialCount`). Drives the in-group expand / collapse controls. */
   visibleLimit: (id: string) => number | undefined;
+  /** Session being locate-flashed by the search dialog (null when idle) — the
+   *  matching row pulses an accent wash so the eye lands on it. */
+  flashSessionId?: string | null;
   /** The pinned session currently being dragged back (null when idle). Only
    *  its home workspace is a drop target; see the drag handlers below. */
   pinnedDragSession?: { id: string; workspaceId: string } | null;
@@ -280,6 +283,8 @@ function onSessionDragStart(id: string, event: DragEvent): void {
         :question-count="pendingBySession[s.id]?.questions ?? 0"
         :unread="unreadBySession[s.id] ?? false"
         :draggable="renamingSessionId !== s.id"
+        :data-session-id="s.id"
+        :class="{ 'se-locate-flash': flashSessionId === s.id }"
         @dragstart="onSessionDragStart(s.id, $event)"
         @rename-state-change="renamingSessionId = $event ? s.id : null"
         @select="emit('selectSession', $event)"
@@ -340,6 +345,32 @@ function onSessionDragStart(id: string, event: DragEvent): void {
 .group.pinned-drop-blocked,
 .group.pinned-drop-blocked :deep(*) {
   cursor: no-drop;
+}
+
+/* Session-row locate flash (search dialog): the picked row washes a soft
+   accent overlay that fades out — an overlay (not a background animation) so
+   the selected fill underneath (.se.on) never gets overridden and nothing
+   snaps back when the wash ends (same treatment as the workspace-header
+   flash in Sidebar and the settings provider row's pp-flash). The class
+   lands on SessionRow's root (class fallthrough), which carries this
+   component's scope id, so the plain selectors match. */
+.se-locate-flash { isolation: isolate; }
+.se-locate-flash::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+  pointer-events: none;
+  animation: se-locate-fade var(--duration-flash) var(--ease-out) forwards;
+}
+@keyframes se-locate-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .se-locate-flash::before { animation: none; }
 }
 
 /* Session list: collapses/expands via a height transition. `interpolate-size:

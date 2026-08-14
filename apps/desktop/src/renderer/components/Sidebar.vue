@@ -254,6 +254,8 @@ onUpdated(() => updateSessionsScrollState());
 onBeforeUnmount(() => {
   sessionsResizeObserver?.disconnect();
   if (sessionsScrollHideTimer) clearTimeout(sessionsScrollHideTimer);
+  if (flashWsTimer) clearTimeout(flashWsTimer);
+  if (flashSessionTimer) clearTimeout(flashSessionTimer);
 });
 
 // ---------------------------------------------------------------------------
@@ -565,6 +567,111 @@ function onDropPin(id: string): void {
 
 function onSearchSelectSession(sessionId: string): void {
   emit('select', { sessionId, source: 'search' });
+  locateSession(sessionId);
+}
+
+// ---------------------------------------------------------------------------
+// Locate a session picked in the search dialog
+// ---------------------------------------------------------------------------
+// Same landing as the workspace locate, but for one row: grouped view, its
+// group expanded, the row scrolled to the top of the list and flashed. The
+// select above made the session active synchronously, so WorkspaceGroup's
+// active-append renders the row on this flush even past the group's display
+// cap — no limit bump (which would mount every row up to the target). A
+// pinned session has no group row; it renders in the pinned section above
+// the groups, so the locate expands/scrolls and flashes it there — opening
+// its home workspace would re-select the workspace's newest session and yank
+// the user away from the session they just picked.
+const flashSessionId = ref<string | null>(null);
+let flashSessionTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Workspaces in sidebar display order — feeds the search dialog's workspace
+// section. (Named for the dialog: the task view's own `workspaceOptions`
+// computed lives in its section below.)
+const searchWorkspaces = computed(() => props.groups.map((g) => g.workspace));
+
+/** Resolve a CSS duration token (e.g. --duration-flash) on an element to ms,
+ *  so the flash-cleanup timer stays sourced from the same token as the
+ *  animation instead of duplicating the value. */
+function readDurationMs(el: HTMLElement, token: string): number {
+  const raw = getComputedStyle(el).getPropertyValue(token).trim();
+  const match = /^([\d.]+)(ms|s)$/.exec(raw);
+  if (!match) return 0;
+  const value = Number.parseFloat(match[1]!);
+  return match[2] === 's' ? value * 1000 : value;
+}
+
+/** scrollIntoView behavior honoring prefers-reduced-motion: the long smooth
+ *  travel to a far-off target is exactly the motion the preference opts out
+ *  of — jump instantly there instead. */
+function scrollBehavior(): ScrollBehavior {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+}
+
+function flashSessionRow(sessionId: string, row: HTMLElement): void {
+  flashSessionId.value = sessionId;
+  if (flashSessionTimer) clearTimeout(flashSessionTimer);
+  flashSessionTimer = setTimeout(() => {
+    flashSessionId.value = null;
+    flashSessionTimer = null;
+  }, readDurationMs(row, '--duration-flash'));
+}
+
+function locateSession(sessionId: string): void {
+  const group = props.groups.find((g) => g.sessions.some((s) => s.id === sessionId));
+  if (!group) {
+    // A folded pinned section renders no rows at all, and the rows scroll in
+    // their own 40vh container — expand first, then scroll the row into view
+    // before flashing (same landing as a grouped row).
+    pinnedListRef.value?.expand();
+    void nextTick(() => {
+      const root = pinnedListRef.value?.$el as HTMLElement | null;
+      const row = [...(root?.querySelectorAll<HTMLElement>('[data-session-id]') ?? [])].find(
+        (el) => el.dataset.sessionId === sessionId,
+      );
+      row?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
+      if (row) flashSessionRow(sessionId, row);
+    });
+    return;
+  }
+  if (viewMode.value !== 'grouped') setViewMode('grouped');
+  if (isCollapsed(group.workspace.id)) toggleCollapse(group.workspace.id);
+  void nextTick(() => {
+    const row = [...(sessionsEl.value?.querySelectorAll<HTMLElement>('[data-session-id]') ?? [])].find(
+      (el) => el.dataset.sessionId === sessionId,
+    );
+    row?.scrollIntoView({ block: 'start', behavior: scrollBehavior() });
+    if (row) flashSessionRow(sessionId, row);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Locate a workspace picked in the search dialog
+// ---------------------------------------------------------------------------
+// Workspace groups only render in the grouped view, so locating switches to it
+// first; the target group is then expanded, scrolled to the top of the list and
+// flashed, and the workspace itself is opened (its most recent session
+// activates) — one click lands you exactly where the row pointed.
+const flashWsId = ref<string | null>(null);
+let flashWsTimer: ReturnType<typeof setTimeout> | null = null;
+
+function onSearchSelectWorkspace(workspaceId: string): void {
+  if (viewMode.value !== 'grouped') setViewMode('grouped');
+  if (isCollapsed(workspaceId)) toggleCollapse(workspaceId);
+  emit('selectWorkspace', workspaceId);
+  void nextTick(() => {
+    const target = [...(sessionsEl.value?.querySelectorAll<HTMLElement>('[data-ws-id]') ?? [])].find(
+      (el) => el.dataset.wsId === workspaceId,
+    );
+    target?.scrollIntoView({ block: 'start', behavior: scrollBehavior() });
+    if (!target) return;
+    flashWsId.value = workspaceId;
+    if (flashWsTimer) clearTimeout(flashWsTimer);
+    flashWsTimer = setTimeout(() => {
+      flashWsId.value = null;
+      flashWsTimer = null;
+    }, readDurationMs(target, '--duration-flash'));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1060,6 +1167,7 @@ onBeforeUnmount(() => {
           :active-id="activeId"
           :pending-by-session="pendingBySession"
           :unread-by-session="unreadBySession"
+          :flash-session-id="flashSessionId"
           @select-session="onSelectSession"
           @rename-session="(id, title) => emit('rename', id, title)"
           @generate-session-title="(id, done) => emit('generateTitle', id, done)"
@@ -1132,9 +1240,11 @@ onBeforeUnmount(() => {
               v-for="g in groups"
               :key="g.workspace.id"
               class="ws-drop-target"
+              :data-ws-id="g.workspace.id"
               :class="{
                 'drop-before': dragOver?.id === g.workspace.id && dragOver.position === 'before',
                 'drop-after': dragOver?.id === g.workspace.id && dragOver.position === 'after',
+                'ws-locate-flash': flashWsId === g.workspace.id,
               }"
               @dragover="onGroupDragOver($event, g.workspace.id)"
               @drop="onGroupDrop(g.workspace.id)"
@@ -1153,6 +1263,7 @@ onBeforeUnmount(() => {
                 :sortable="workspaceSortMode === 'manual'"
                 :is-collapsed="isCollapsed"
                 :visible-limit="visibleLimit"
+                :flash-session-id="flashSessionId"
                 :pinned-drag-session="pinnedDragSession"
                 @group-click="handleGhClick"
                 @group-contextmenu="openGhMenu"
@@ -1361,8 +1472,10 @@ onBeforeUnmount(() => {
     <SearchSessionsDialog
       v-if="showSearch"
       :sessions="sessions"
+      :workspaces="searchWorkspaces"
       :active-id="activeId"
       @select="onSearchSelectSession"
+      @select-workspace="onSearchSelectWorkspace"
       @close="showSearch = false"
     />
     <!-- Keep inside <aside>: a top-level <Teleport> makes Sidebar multi-root,
@@ -1790,6 +1903,33 @@ onBeforeUnmount(() => {
    will land. Inset shadows avoid layout shift. */
 .ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--color-accent); }
 .ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--color-accent); }
+
+/* Search-dialog locate: the picked workspace's header washes a soft accent
+   overlay that fades out — an overlay (not a background animation) so the
+   resting fill underneath (hover / the draft-workspace selected fill) never
+   gets overridden and nothing snaps when the wash ends (same treatment as
+   the settings provider row's pp-flash). The class sits on the wrapper; the
+   overlay lives on WorkspaceGroup's .gh, hence :deep. */
+.ws-drop-target.ws-locate-flash :deep(.gh) {
+  isolation: isolate;
+}
+.ws-drop-target.ws-locate-flash :deep(.gh)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+  pointer-events: none;
+  animation: ws-locate-fade var(--duration-flash) var(--ease-out) forwards;
+}
+@keyframes ws-locate-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ws-drop-target.ws-locate-flash :deep(.gh)::before { animation: none; }
+}
 
 /* Flat mode: the scroll container is the drag-back-to-unpin target (the whole
    list — every workspace's sessions live here). The accent frame mirrors the
