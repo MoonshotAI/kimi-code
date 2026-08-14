@@ -16,6 +16,7 @@ import {
 import { formatErrorMessage } from '../utils/event-payload';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
 import { extractMediaAttachments } from '../utils/image-placeholder';
+import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
 import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
@@ -34,6 +35,7 @@ export interface EditorKeyboardHost {
 
   handleUserInput(text: string): void;
   readonly btwPanelController: BtwPanelController;
+  readonly skillCommandMap: Map<string, string>;
   steerMessage(session: Session, input: readonly SteerInputItem[]): void;
   validateMediaCapabilities(extraction: {
     hasMedia: boolean;
@@ -274,11 +276,17 @@ export class EditorKeyboardController {
       // after the current task instead of being injected into the turn as text.
       // Grouped inline-skill submissions are not steerable either — steer
       // carries no skill activations, so they stay queued and submit intact
-      // when the session drains.
+      // when the session drains. The same applies to an editor draft carrying
+      // inline skill tokens: leave it in the editor for the grouped path.
       const queued = host.state.queuedMessages;
       const steerable = queued.filter(
         (m) => m.mode !== 'bash' && m.inlineSkillActivations === undefined,
       );
+      const editorHasInlineSkills =
+        !editorIsBash &&
+        text.length > 0 &&
+        host.engineV2 &&
+        extractInlineSkillActivations(text, host.skillCommandMap).length > 0;
 
       const items: SteerInputItem[] = [];
       for (const m of steerable) {
@@ -290,7 +298,7 @@ export class EditorKeyboardController {
         }
       }
       let editorExtraction: ReturnType<typeof extractMediaAttachments> | undefined;
-      if (!editorIsBash && text.length > 0) {
+      if (!editorIsBash && text.length > 0 && !editorHasInlineSkills) {
         try {
           editorExtraction = extractMediaAttachments(text, this.imageStore);
         } catch (error) {
@@ -322,7 +330,7 @@ export class EditorKeyboardController {
         host.state.queuedMessages = queued.filter(
           (m) => m.mode === 'bash' || m.inlineSkillActivations !== undefined,
         );
-        if (!editorIsBash) editor.setText('');
+        if (!editorIsBash && !editorHasInlineSkills) editor.setText('');
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
           host.showError(LLM_NOT_SET_MESSAGE);

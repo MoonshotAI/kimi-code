@@ -342,7 +342,10 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
   let groupAnchor: ContextMessage | undefined;
   for (let i = state.length - 1; i >= 0; i--) {
     const message = state[i];
-    if (message === undefined || message.origin?.kind === 'injection') continue;
+    if (message === undefined) continue;
+    // Injection and hook-result messages never anchor or interrupt a cut:
+    // they are skipped (and survive) while a grouped cut runs past them.
+    if (message.origin?.kind === 'injection' || message.origin?.kind === 'hook_result') continue;
     if (remaining <= 0) {
       if (
         completingSubmissionId === undefined ||

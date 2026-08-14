@@ -172,7 +172,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     let i = transcript.length - 1;
     for (; i >= clearFloor; i--) {
       const message = transcript[i]!.message;
-      if (message.origin?.kind === 'injection') continue;
+      if (message.origin?.kind === 'injection' || message.origin?.kind === 'hook_result') continue;
       if (removedUserCount >= count) {
         if (
           completingSubmissionId === undefined ||
