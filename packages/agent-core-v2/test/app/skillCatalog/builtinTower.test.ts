@@ -12,8 +12,9 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { BUILTIN_SKILLS, TOWER_SKILL } from '#/app/skillCatalog/builtin/builtin';
+import { visibleBuiltinSkills } from '#/app/skillCatalog/builtin/builtin';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { TOWER_SKILL } from '#/features/tower/skill/skill';
 
 describe('builtin skill: tower', () => {
   it('has the expected identity and inline metadata', () => {
@@ -33,7 +34,10 @@ describe('builtin skill: tower', () => {
 
   it('ships enabled for every product (not gated by the product-skills switch)', () => {
     expect(TOWER_SKILL.productSpecific).not.toBe(true);
-    expect(BUILTIN_SKILLS).toContain(TOWER_SKILL);
+    // Registered through the feature-authored registry (import = register),
+    // folded into the visible builtin set.
+    expect(visibleBuiltinSkills(true)).toContain(TOWER_SKILL);
+    expect(visibleBuiltinSkills(false)).toContain(TOWER_SKILL);
   });
 
   it('defines the three roles and routes every protocol action through Tower tools', () => {

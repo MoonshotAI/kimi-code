@@ -1,11 +1,13 @@
 /**
  * `tower` domain — the builtin `tower` skill definition (the `/tower` slash
- * command body). Registered into the builtin skill catalog from
- * `app/skillCatalog/builtin/builtin.ts`.
+ * command body). Self-registers into the builtin skill catalog at import via
+ * `registerBuiltinSkill` (the static import=register channel), so no builtin
+ * module needs to know the skill exists.
  */
 
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { parseSkillText } from '#/app/skillCatalog/parser';
+import { registerBuiltinSkill } from '#/app/skillCatalog/builtin/registry';
 import TOWER_BODY from './tower.md?raw';
 
 const PSEUDO_PATH = 'builtin://tower';
@@ -27,3 +29,5 @@ export const TOWER_SKILL: SkillDefinition = {
     disableModelInvocation: true,
   },
 };
+
+registerBuiltinSkill(TOWER_SKILL);
