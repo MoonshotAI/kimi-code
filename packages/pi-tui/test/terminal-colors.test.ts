@@ -135,6 +135,114 @@ function setup(): { terminal: TestTerminal; tui: TUI; component: InputRecorder }
 	return { terminal, tui, component };
 }
 
+describe("TUI terminal status responses", () => {
+	it("filters non-OSC terminal status responses before application dispatch", () => {
+		const terminal = new TestTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new InputRecorder();
+		const listenerInputs: string[] = [];
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.addInputListener((data) => {
+			listenerInputs.push(data);
+			return undefined;
+		});
+		tui.start();
+		try {
+			terminal.sendInput("\x1b[6;18;8t");
+			terminal.sendInput("\x1b[?1;2;4c");
+			terminal.sendInput("\x1bP>|XTerm(390)\x1b\\");
+			terminal.sendInput("\x1b_Gi=1;OK\x1b\\");
+
+			assert.deepStrictEqual(listenerInputs, []);
+			assert.deepStrictEqual(component.inputs, []);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("preserves a key between replies in one raw stdin chunk", () => {
+		const terminal = new TestTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new InputRecorder();
+		const buffer = new StdinBuffer();
+		buffer.on("data", (sequence) => terminal.sendInput(sequence));
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.start();
+		try {
+			buffer.process("\x1bP>|XTerm(390)\x1b\\a\x1bP>|XTerm(390)\x1b\\");
+			assert.deepStrictEqual(component.inputs, ["a"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("lets protocol listeners consume OSC status before focused input", () => {
+		const terminal = new TestTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new InputRecorder();
+		const oscStatusResponse = "\x1b]11;rgb:1515/1919/1e1e\x1b\\";
+		let observedStatus: string | undefined;
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.addInputListener((data) => {
+			if (data !== oscStatusResponse) return undefined;
+			observedStatus = data;
+			return { consume: true };
+		});
+		tui.start();
+		try {
+			terminal.sendInput(oscStatusResponse);
+
+			assert.equal(observedStatus, oscStatusResponse);
+			assert.deepStrictEqual(component.inputs, []);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("filters unhandled OSC status before focused input", () => {
+		const terminal = new TestTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new InputRecorder();
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.start();
+		try {
+			terminal.sendInput("\x1b]11;rgb:1515/1919/1e1e\x1b\\");
+
+			assert.deepStrictEqual(component.inputs, []);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("preserves keyboard and mouse input after filtering terminal status responses", () => {
+		const terminal = new TestTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new InputRecorder();
+		const listenerInputs: string[] = [];
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.addInputListener((data) => {
+			listenerInputs.push(data);
+			return undefined;
+		});
+		tui.start();
+		try {
+			const inputSequences = ["a", "\x1b[<0;10;5M", "\x1b[97u"];
+			for (const input of inputSequences) terminal.sendInput(input);
+
+			assert.deepStrictEqual(listenerInputs, inputSequences);
+			assert.deepStrictEqual(component.inputs, inputSequences);
+		} finally {
+			tui.stop();
+		}
+	});
+
+});
+
 describe("TUI.queryTerminalColors", () => {
 	it("queries all colors in one write and consumes the replies", async () => {
 		const { terminal, tui, component } = setup();
@@ -214,9 +322,9 @@ describe("TUI.queryTerminalColors", () => {
 			assert.deepStrictEqual(late, [{ foreground: undefined, background: WHITE, palette: undefined }]);
 			assert.deepStrictEqual(component.inputs, []);
 
-			// With no query pending, color replies are ordinary input again.
+			// Terminal status replies never become keyboard input, even after the query ends.
 			terminal.sendInput("\x1b]11;#ffffff\x07");
-			assert.deepStrictEqual(component.inputs, ["\x1b]11;#ffffff\x07"]);
+			assert.deepStrictEqual(component.inputs, []);
 		} finally {
 			tui.stop();
 		}
