@@ -14,6 +14,7 @@ import {
 import { useIsDark } from '@moonshot-ai/app-core';
 import type { ResolveImage } from '@moonshot-ai/app-core/contracts';
 import { collectFilePathAliases, findFilePathLinks } from './lib/filePathLinks';
+import { splitFrontmatter } from './lib/frontmatter';
 import { configureInlineMath } from './lib/inlineMath';
 import { markdownRenderPlan } from './lib/markdownPerformance';
 import { copyCodeBlockFallback, copyTextToClipboard } from './lib/clipboard';
@@ -99,7 +100,18 @@ const props = withDefaults(
 );
 
 const final = computed(() => !props.streaming);
-const filePathAliases = computed(() => collectFilePathAliases(props.text ?? ''));
+
+// YAML frontmatter is split off BEFORE anything parses the text: markstream/
+// markdown-it has no frontmatter support, so an intact block renders the
+// opening `---` as an <hr> and the closing `---` as a setext underline that
+// swallows the metadata into a giant <h2>. Every downstream consumer — file
+// aliases, render plan, image rewriting, diff segmentation — only ever sees
+// the body; the raw YAML renders as a plain meta block above it (template).
+const frontmatterSplit = computed(() => splitFrontmatter(props.text ?? ''));
+const frontmatter = computed(() => frontmatterSplit.value.frontmatter);
+const markdownBody = computed(() => frontmatterSplit.value.body);
+
+const filePathAliases = computed(() => collectFilePathAliases(markdownBody.value));
 const renderPlan = computed(() => {
   // While a turn is actively streaming, never downgrade the code renderer:
   // markstream keys each code block on the renderer value, so flipping
@@ -108,7 +120,7 @@ const renderPlan = computed(() => {
   // Plan for heaviness only once the turn has settled — already-loaded history
   // is never `streaming`, so the large/heavy-session case still gets `pre`.
   if (props.streaming) return { codeRenderer: 'shiki' as const, codeFenceCount: 0, codeChars: 0 };
-  return markdownRenderPlan(props.text ?? '');
+  return markdownRenderPlan(markdownBody.value);
 });
 
 // Code blocks follow the app colour scheme (shiki re-renders on flip). Resolved
@@ -203,8 +215,8 @@ function rewriteImageSrcs(text: string): string {
 // NOTE: comes after defineProps — watch() invokes its getter synchronously, so
 // referencing `props` above its declaration would throw a TDZ ReferenceError.
 watch(
-  () => props.text,
-  (text) => queueImageResolution(text ?? ''),
+  markdownBody,
+  (body) => queueImageResolution(body),
   { immediate: true },
 );
 
@@ -428,7 +440,7 @@ type Segment =
 const DIFF_FENCE_RE = /(^|\n)(?:```|~~~)diff\b[^\n]*\n([\s\S]*?)(?:\n)?(?:```|~~~)(?=\n|$)/g;
 
 const segments = computed<Segment[]>(() => {
-  const text = rewriteImageSrcs(props.text ?? '');
+  const text = rewriteImageSrcs(markdownBody.value);
   const out: Segment[] = [];
   let lastIndex = 0;
   DIFF_FENCE_RE.lastIndex = 0;
@@ -483,6 +495,8 @@ function copyDiff(code: string, idx: number) {
 
 <template>
   <div ref="mdRef" class="md">
+    <!-- YAML frontmatter → plain meta block (raw YAML verbatim, never parsed) -->
+    <pre v-if="frontmatter !== null" class="md-frontmatter">{{ frontmatter }}</pre>
     <template v-for="(seg, i) in segments" :key="i">
       <!-- Non-diff markdown → markstream (smooth streaming + monaco code blocks) -->
       <MarkdownRender
@@ -1122,6 +1136,24 @@ function copyDiff(code: string, idx: number) {
    the scoped component style is injected. */
 .md :deep(.table-node) tbody tr:hover {
   background-color: transparent !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Frontmatter meta block — the raw YAML in a quiet well above the body. Same
+   chrome as the code blocks (content well, line border, radius md, mono
+   text) but muted ink and no header bar; the YAML is shown verbatim, so it
+   wraps nowhere and scrolls horizontally like a code block.
+--------------------------------------------------------------------------- */
+.md-frontmatter {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-well);
+  box-shadow: var(--shadow-xs);
+  overflow-x: auto;
+  color: var(--color-text-muted);
+  font: var(--text-sm)/1.65 var(--font-mono);
 }
 
 /* ---------------------------------------------------------------------------
