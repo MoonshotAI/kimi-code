@@ -83,8 +83,14 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
     const command = forkResumeCommand(host.state.appState.workDir, forkId);
     let clipboardNote: string;
     try {
-      await copyTextToClipboard(command);
-      clipboardNote = 'Command copied to clipboard';
+      const method = await copyTextToClipboard(command);
+      // OSC 52 delivery is fire-and-forget: terminals without OSC 52 support
+      // silently drop the sequence, so only native delivery may claim success
+      // (same wording convention as /copy).
+      clipboardNote =
+        method === 'native'
+          ? 'Command copied to clipboard'
+          : 'Command copied via terminal escape sequence (unverified)';
     } catch {
       clipboardNote = 'Failed to copy command to clipboard';
     }

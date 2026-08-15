@@ -6427,6 +6427,23 @@ command = "vim"
     expect(driver.getCurrentSessionId()).toBe('ses-source');
   });
 
+  it('labels OSC 52 clipboard delivery as unverified after a fork', async () => {
+    vi.mocked(copyTextToClipboard).mockResolvedValueOnce('osc52');
+    const source = makeSession({ id: 'ses-source' });
+    const forked = makeSession({ id: 'ses-fork' });
+    const forkSession = vi.fn(async () => forked);
+    const { driver } = await makeDriver(source, { forkSession });
+
+    driver.handleUserInput('/fork');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+        'Command copied via terminal escape sequence (unverified)',
+      );
+    });
+    expect(driver.getCurrentSessionId()).toBe('ses-source');
+  });
+
   it('prints a pushd-based fork resume command on Windows', async () => {
     const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
     Object.defineProperty(process, 'platform', { value: 'win32' });
