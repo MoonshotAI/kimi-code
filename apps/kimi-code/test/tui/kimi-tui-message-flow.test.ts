@@ -6427,6 +6427,34 @@ command = "vim"
     expect(driver.getCurrentSessionId()).toBe('ses-source');
   });
 
+  it('prints a pushd-based fork resume command on Windows', async () => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      const source = makeSession({ id: 'ses-source' });
+      const forked = makeSession({ id: 'ses-fork' });
+      const forkSession = vi.fn(async () => forked);
+      const { driver } = await makeDriver(source, { forkSession }, {
+        ...makeStartupInput(),
+        workDir: 'D:\\proj',
+      });
+
+      driver.handleUserInput('/fork');
+
+      // cmd.exe's `cd` does not switch drives; pushd works in cmd + PowerShell.
+      await vi.waitFor(() => {
+        expect(copyTextToClipboard).toHaveBeenCalledWith(
+          'pushd "D:\\proj" && kimi --resume "ses-fork"',
+        );
+      });
+      expect(driver.getCurrentSessionId()).toBe('ses-source');
+    } finally {
+      if (platformDescriptor !== undefined) {
+        Object.defineProperty(process, 'platform', platformDescriptor);
+      }
+    }
+  });
+
   it('keeps the current session when fork fails', async () => {
     const forkSession = vi.fn(async () => {
       throw new Error('fork unavailable');
