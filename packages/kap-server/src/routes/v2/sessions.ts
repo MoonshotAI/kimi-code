@@ -13,7 +13,15 @@
  *     version + query fingerprint + keyset position, following the search
  *     module's token precedent) that binds every query condition of the
  *     first page — flipping any condition mid-pagination fails with 40922
- *     instead of silently serving a drifted window.
+ *     instead of silently serving a drifted window;
+ *   - alternatively, `page` (1-based) switches to stateless page-number
+ *     mode for admin-style lists that jump arbitrarily: each request is a
+ *     full independent snapshot (re-drained, re-filtered, re-sorted — the
+ *     same per-request semantics the cursor mode already has), no token is
+ *     minted, and none is accepted (`page` + `page_token` together is a
+ *     40001). Jumping to page N needs no token binding, so the 40922
+ *     fingerprint mechanism does not apply. Every response carries `total`
+ *     — the filtered/sorted set size — in both modes.
  *
  * Response domains: `workspace` / `meta` / `activity` are always projected;
  * `git` is opt-in (`include=git`), resolved per unique `workspace.cwd` with
@@ -102,9 +110,19 @@ const v2SessionsListQuerySchema = z
     sort: v2SortSchema.optional(),
     include: z.string().optional(),
     page_size: z.coerce.number().int().min(1).max(100).optional(),
+    page: z.coerce.number().int().min(1).optional(),
     page_token: z.string().min(1).optional(),
   })
   .superRefine((value, ctx) => {
+    // Page-number mode is stateless — a token would be meaningless beside it.
+    if (value.page !== undefined && value.page_token !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'page and page_token are mutually exclusive',
+        path: ['page'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
     // Unknown include domains are rejected so a typo never silently drops
     // paid-for data.
     for (const domain of includeDomains(value.include)) {
@@ -169,6 +187,8 @@ const v2SessionSchema = z.object({
 
 const v2SessionPageSchema = z.object({
   items: z.array(v2SessionSchema),
+  /** Filtered/sorted set size — present in both pagination modes. */
+  total: z.number().int(),
   has_more: z.boolean(),
   next_page_token: z.string().nullable(),
 });
@@ -366,7 +386,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         [ErrorCode.PAGE_TOKEN_MISMATCH]: {},
       },
       description:
-        'List sessions with domain-grouped metadata (workspace / meta / activity; git via include=git). Opaque-cursor pagination: page_token binds the first page’s query conditions.',
+        'List sessions with domain-grouped metadata (workspace / meta / activity; git via include=git). Paginate with the opaque page_token (binds the first page’s query conditions) or with the stateless 1-based page parameter; every page carries total.',
       tags: ['v2-sessions'],
     },
     async (req, reply) => {
@@ -443,7 +463,11 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
       const sorted = filtered.toSorted(comparator);
 
       let start = 0;
-      if (cursor !== undefined) {
+      if (raw.page !== undefined) {
+        // Stateless page-number mode: slice the fresh snapshot directly;
+        // no token is minted below and none was accepted above.
+        start = (raw.page - 1) * query.pageSize;
+      } else if (cursor !== undefined) {
         const [cursorKey, cursorId] = cursor;
         // The comparator only reads the sort key + id, so a synthetic
         // cursor item pins the keyset position in any sort order.
@@ -460,7 +484,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
       const hasMore = start + query.pageSize < sorted.length;
       const lastServed = window.at(-1);
       const nextPageToken =
-        hasMore && lastServed !== undefined
+        raw.page === undefined && hasMore && lastServed !== undefined
           ? encodePageToken(fingerprint, sortKeyOf(query.sort)(lastServed), lastServed.id)
           : null;
 
@@ -505,7 +529,12 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         };
       });
 
-      reply.send(okEnvelope({ items, has_more: hasMore, next_page_token: nextPageToken }, req.id));
+      reply.send(
+        okEnvelope(
+          { items, total: sorted.length, has_more: hasMore, next_page_token: nextPageToken },
+          req.id,
+        ),
+      );
     },
   );
 

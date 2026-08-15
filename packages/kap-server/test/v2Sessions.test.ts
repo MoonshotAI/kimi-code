@@ -48,6 +48,7 @@ interface SessionWireV2 {
 
 interface PageWireV2 {
   items: SessionWireV2[];
+  total: number;
   has_more: boolean;
   next_page_token: string | null;
 }
@@ -350,6 +351,55 @@ describe('server /api/v2/sessions', () => {
       `?page_size=2&sort=meta.updated_at_asc&page_token=${token}`,
     );
     expect(resorted.code).toBe(40922);
+  });
+
+  it('carries total (filtered set size) in every page mode', async () => {
+    const all = await getData();
+    expect(all.total).toBe(3);
+
+    const filtered = await getData(`?workspace.id=${WS_A}`);
+    expect(filtered.total).toBe(2);
+
+    // Cursor mode reports the same total on follow-up pages.
+    const page1 = await getData('?page_size=2');
+    expect(page1.total).toBe(3);
+    const page2 = await getData(`?page_size=2&page_token=${page1.next_page_token}`);
+    expect(page2.total).toBe(3);
+  });
+
+  it('paginates by 1-based page without minting tokens', async () => {
+    const page1 = await getData('?page=1&page_size=2');
+    expect(page1.items.map((item) => item.id)).toEqual(['s1', 's2']);
+    expect(page1.total).toBe(3);
+    expect(page1.has_more).toBe(true);
+    expect(page1.next_page_token).toBeNull();
+
+    const page2 = await getData('?page=2&page_size=2');
+    expect(page2.items.map((item) => item.id)).toEqual(['s3']);
+    expect(page2.total).toBe(3);
+    expect(page2.has_more).toBe(false);
+
+    // A page beyond the end is an empty, terminal snapshot — total stays.
+    const beyond = await getData('?page=7&page_size=2');
+    expect(beyond.items).toEqual([]);
+    expect(beyond.total).toBe(3);
+    expect(beyond.has_more).toBe(false);
+  });
+
+  it('honors filters and sort in page mode', async () => {
+    const page = await getData(`?workspace.id=${WS_A}&sort=meta.updated_at_asc&page=2&page_size=1`);
+    expect(page.items.map((item) => item.id)).toEqual(['s1']);
+    expect(page.total).toBe(2);
+    expect(page.has_more).toBe(false);
+  });
+
+  it('rejects page combined with page_token (40001), and page=0', async () => {
+    const first = await getData('?page_size=2');
+    const both = await getError(`?page=2&page_token=${first.next_page_token}`);
+    expect(both.code).toBe(40001);
+
+    const zero = await getError('?page=0');
+    expect(zero.code).toBe(40001);
   });
 
   it('rejects a corrupted page_token (40922)', async () => {
