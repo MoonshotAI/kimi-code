@@ -218,7 +218,11 @@ function promptMetadataFromTurnRecord(record: WireRecord): string | undefined {
   }
   const content = message['content'];
   if (!Array.isArray(content)) return undefined;
-  return promptMetadataTextFromContentParts(content as readonly ContentPart[]);
+  const activations = origin?.['skillActivations'];
+  const bundled = origin?.['kind'] === 'user' && Array.isArray(activations) ? activations.length : 0;
+  return promptMetadataTextFromContentParts(
+    (bundled === 0 ? content : content.slice(bundled)) as readonly ContentPart[],
+  );
 }
 
 function slashCommandText(command: string, args: unknown): string {

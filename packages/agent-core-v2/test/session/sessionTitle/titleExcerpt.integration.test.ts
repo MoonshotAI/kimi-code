@@ -91,4 +91,31 @@ describe('title excerpts over the real context memory', () => {
       assistant: undefined,
     });
   });
+
+  it('excludes bundled skill blocks from the excerpt of a bundled prompt', async () => {
+    const context = ctx.get(IAgentContextMemoryService);
+    context.append({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'User activated the skill "review". Follow the loaded skill instructions.' },
+        { type: 'text', text: 'User activated the skill "security". Follow the loaded skill instructions.' },
+        { type: 'text', text: '检查这次改动的正确性' },
+      ],
+      toolCalls: [],
+      origin: {
+        kind: 'user',
+        skillActivations: [
+          { activationId: 'act-1', skillName: 'review' },
+          { activationId: 'act-2', skillName: 'security' },
+        ],
+      },
+    });
+
+    const source = ctx.get(IAgentTitlePromptSource);
+    await expect(source.firstTurnExcerpt()).resolves.toEqual({
+      user: '检查这次改动的正确性',
+      assistant: undefined,
+    });
+    await expect(source.firstUserPrompts(5)).resolves.toEqual(['检查这次改动的正确性']);
+  });
 });
