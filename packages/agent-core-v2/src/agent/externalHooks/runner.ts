@@ -46,6 +46,7 @@ const HookSpecificOutputSchema = z.preprocess(
     .looseObject({
       message: OptionalStringSchema,
       permissionDecision: z.unknown().optional(),
+      permissionRequestId: OptionalStringSchema,
       permissionDecisionReason: z.unknown().optional(),
     })
     .optional(),
@@ -147,6 +148,8 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
       stdout,
       stderr,
       exitCode,
+      permissionDecision: 'deny',
+      permissionDecisionReason: message,
     };
   }
 
@@ -160,6 +163,9 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
       stderr,
       exitCode,
       structuredOutput: structured.structuredOutput,
+      permissionDecision: structured.permissionDecision,
+      permissionRequestId: structured.permissionRequestId,
+      permissionDecisionReason: structured.permissionDecisionReason,
     };
   }
 
@@ -169,12 +175,25 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
     stderr,
     exitCode,
     structuredOutput: structured?.structuredOutput,
+    permissionDecision: structured?.permissionDecision,
+    permissionRequestId: structured?.permissionRequestId,
+    permissionDecisionReason: structured?.permissionDecisionReason,
   });
 }
 
 function structuredOutput(
   stdout: string,
-): { action?: 'block'; reason?: string; message?: string; structuredOutput: true } | undefined {
+):
+  | {
+      action?: 'block';
+      reason?: string;
+      message?: string;
+      structuredOutput: true;
+      permissionDecision?: 'allow' | 'deny';
+      permissionRequestId?: string;
+      permissionDecisionReason?: string;
+    }
+  | undefined {
   const text = stdout.trim();
   if (text.length === 0) return undefined;
 
@@ -184,20 +203,31 @@ function structuredOutput(
     if (!output.success) return undefined;
 
     const { message, hookSpecificOutput } = output.data;
+    const permissionDecision: HookResult['permissionDecision'] =
+      hookSpecificOutput?.permissionDecision === 'allow' ||
+      hookSpecificOutput?.permissionDecision === 'deny'
+        ? hookSpecificOutput.permissionDecision
+        : undefined;
     const result = {
       message: message ?? hookSpecificOutput?.message,
       structuredOutput: true as const,
+      permissionDecision,
+      permissionRequestId: hookSpecificOutput?.permissionRequestId,
+      permissionDecisionReason:
+        typeof hookSpecificOutput?.permissionDecisionReason === 'string'
+          ? hookSpecificOutput.permissionDecisionReason
+          : undefined,
     };
-    if (hookSpecificOutput?.permissionDecision !== 'deny') {
+    if (permissionDecision !== 'deny') {
       return result;
     }
     return {
       action: 'block',
       message: result.message,
-      reason:
-        typeof hookSpecificOutput.permissionDecisionReason === 'string'
-          ? hookSpecificOutput.permissionDecisionReason
-          : undefined,
+      reason: result.permissionDecisionReason,
+      permissionDecision,
+      permissionRequestId: result.permissionRequestId,
+      permissionDecisionReason: result.permissionDecisionReason,
       structuredOutput: true as const,
     };
   } catch {
@@ -212,6 +242,9 @@ function allowResult(input: {
   readonly exitCode?: number;
   readonly timedOut?: boolean;
   readonly structuredOutput?: boolean;
+  readonly permissionDecision?: 'allow' | 'deny';
+  readonly permissionRequestId?: string;
+  readonly permissionDecisionReason?: string;
 }): HookResult {
   return {
     action: 'allow',
@@ -221,6 +254,9 @@ function allowResult(input: {
     exitCode: input.exitCode,
     timedOut: input.timedOut,
     structuredOutput: input.structuredOutput,
+    permissionDecision: input.permissionDecision,
+    permissionRequestId: input.permissionRequestId,
+    permissionDecisionReason: input.permissionDecisionReason,
   };
 }
 

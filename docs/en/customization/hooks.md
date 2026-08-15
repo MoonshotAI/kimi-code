@@ -17,7 +17,7 @@ The script's response is determined by two things:
 - **Exit code**: `0` means allow, `2` means block, other non-zero values default to allow
 - **Standard output** (stdout): can include explanatory text
 
-Even if the script errors or times out, the CLI **will not interrupt your work** as a result — this "allow on failure" design is called fail-open, preventing hook errors from becoming blockers.
+For the existing blockable events, a script error or timeout does not interrupt your work. The experimental `PermissionDecisionRequest` event is stricter: an invalid or missing result falls back to Kimi Code CLI's native approval instead of allowing the tool.
 
 ::: warning Note
 Precisely because of fail-open, Hooks are suitable for alerts and lightweight interception, but **should not be used as the sole security barrier**. For truly high-risk operations, rely on permission approvals and manual confirmation.
@@ -93,7 +93,57 @@ You can also return a JSON object via stdout to block:
 ```
 
 ::: info Which events support blocking?
-Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return values that affect the main flow. All other events are **observation-only events** — they fire and forget; the main flow is unaffected regardless of what the script returns.
+The established blockable events are `PreToolUse`, `Stop`, and `UserPromptSubmit`. The experimental `PermissionDecisionRequest` event can answer an ordinary tool approval using the stricter protocol below. All other events are **observation-only events** — they fire and forget; the main flow is unaffected regardless of what the script returns.
+:::
+
+## Experimental: answering tool approvals
+
+`PermissionRequest` remains observation-only. To let a hook answer an ordinary tool approval, enable the experimental `PermissionDecisionRequest` event:
+
+```toml
+# ~/.kimi-code/config.toml
+[experimental]
+permission-decision-hook = true
+
+[[hooks]]
+event = "PermissionDecisionRequest"
+matcher = "Bash"
+command = "node ~/.kimi-code/hooks/approve-bash.mjs"
+timeout = 5
+```
+
+You can also enable the feature with `KIMI_CODE_EXPERIMENTAL_PERMISSION_DECISION_HOOK=true`. The master `KIMI_CODE_EXPERIMENTAL_FLAG=true` switch enables it as well.
+
+The hook receives the ordinary event fields plus `permission_request_id`, `agent_id`, `turn_id`, `tool_call_id`, `tool_name`, `action`, `tool_input`, and `display`. It must copy the exact request ID into a structured response:
+
+```js
+// approve-bash.mjs
+let input = '';
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', () => {
+  const payload = JSON.parse(input);
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      permissionRequestId: payload.permission_request_id,
+      permissionDecision: 'allow',
+    },
+  }));
+});
+```
+
+To deny, return `permissionDecision: "deny"` with the same `permissionRequestId` and an optional `permissionDecisionReason`. Exiting with code `2` also denies the current request and uses stderr as the reason.
+
+The decision rules are deliberately conservative:
+
+- Any valid deny from a matching hook wins.
+- Allow is accepted only when every matching hook returns a structured allow for the current request ID.
+- No matching hook, a mismatched request ID, malformed output, another exit code, a crash, or a timeout produces no hook decision and opens the native approval flow.
+- Cancellation still cancels the approval; it is never converted into a native fallback.
+
+This event only handles ordinary tool approvals. Approval flows with a custom continuation, including plan review, always use the native flow. Main agents and sub-agents use the same rules. In `kimi web` / kap-server mode the hook runs on the server host, and the first blocking request waits for configured and plugin-provided hooks to finish loading.
+
+::: danger
+The master `KIMI_CODE_EXPERIMENTAL_FLAG=true` switch enables this feature too. Once enabled, matching configured hooks—and hooks contributed by enabled plugins—have the authority to approve tools without a click. Review their code, command, matcher, and update source. Do not enable approval hooks from an untrusted plugin.
 :::
 
 ## Event Reference
@@ -108,6 +158,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `PostToolUse` | Tool name | — | Triggered after a tool executes successfully (observation only) |
 | `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked (observation only) |
 | `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval (observation only) |
+| `PermissionDecisionRequest` | Tool name | Experimental | Can answer an ordinary tool approval when `permission-decision-hook` is enabled; otherwise the native approval flow is used |
 | `PermissionResult` | Tool name | — | Triggered after approval completes (observation only) |
 | `SessionStart` | `startup` or `resume` | — | Triggered after a new session starts or a previous session resumes; the payload includes `source`, `model`, and `profile` |
 | `SessionEnd` | `exit` or `archive` | — | Triggered after a session closes; `archive` means the session was archived rather than exited |

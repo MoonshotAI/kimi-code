@@ -621,7 +621,7 @@ describe('PluginManager consumption plane', () => {
   it('enabledHooks() returns hooks from enabled plugins with cwd and env injected', async () => {
     const home = await makeKimiHome();
     const root = await makePlugin('demo', {
-      hooks: [{ event: 'PreToolUse', command: './hooks/guard.sh', timeout: 10 }],
+      hooks: [{ event: 'PermissionDecisionRequest', command: './hooks/guard.sh', timeout: 10 }],
     });
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
@@ -629,7 +629,7 @@ describe('PluginManager consumption plane', () => {
     const installedRoot = await managedPluginRoot(manager, 'demo');
     expect(manager.enabledHooks()).toEqual([
       {
-        event: 'PreToolUse',
+        event: 'PermissionDecisionRequest',
         command: './hooks/guard.sh',
         timeout: 10,
         cwd: installedRoot,

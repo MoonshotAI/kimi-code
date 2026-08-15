@@ -30,18 +30,25 @@ import {
 } from '#/agent/toolApproval/toolApprovalService';
 import { IEventBus } from '#/app/event/eventBus';
 import { Event2 } from '#/app/event/event2';
+import { IFlagService } from '#/app/flag/flag';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import {
+  IAgentToolApprovalService,
+  type ToolApprovalRequestHookContext,
+} from '#/agent/toolApproval/toolApproval';
 import { toKimiErrorPayload } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentExternalHooksService } from './externalHooks';
+import { PERMISSION_DECISION_HOOK_FLAG_ID } from './flag';
 import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
-import type { HookMatcherValue } from './types';
+import { reducePermissionDecisionResults } from './permissionDecision';
+import type { HookMatcherValue, HookResult as ExternalHookResult } from './types';
 import {
   renderUserPromptHookBlockResult,
   renderUserPromptHookResult,
@@ -77,6 +84,8 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IAgentStateService private readonly states: IAgentStateService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     super();
     this.states.contributeState(externalHooksStopHookContinuationUsedKey);
@@ -175,6 +184,12 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
   private registerPermissionHooks(): void {
     this._register(
+      this.toolApproval.hooks.onWillRequestApproval.register(
+        'externalHooks',
+        async (ctx, next) => this.runPermissionDecisionHook(ctx, next),
+      ),
+    );
+    this._register(
       this.eventBus.subscribe(PermissionApprovalRequested, (e) => {
         const { type: _type, time: _time, ...inputData } = e;
         this.fireAndForget('PermissionRequest', inputData, e.toolName);
@@ -186,6 +201,56 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         this.fireAndForget('PermissionResult', inputData, e.toolName);
       }),
     );
+  }
+
+  private async runPermissionDecisionHook(
+    ctx: ToolApprovalRequestHookContext,
+    next: () => Promise<void>,
+  ): Promise<void> {
+    if (!this.flags.enabled(PERMISSION_DECISION_HOOK_FLAG_ID)) {
+      await next();
+      return;
+    }
+
+    let results: ExternalHookResult[];
+    try {
+      ctx.signal.throwIfAborted();
+      results = await this.runner.trigger('PermissionDecisionRequest', {
+        matcherValue: ctx.request.toolName,
+        signal: ctx.signal,
+        sessionId: ctx.request.sessionId,
+        inputData: this.withSessionFacts({
+          permissionRequestId: ctx.request.permissionRequestId,
+          agentId: ctx.request.agentId,
+          turnId: ctx.request.turnId,
+          toolCallId: ctx.request.toolCallId,
+          toolName: ctx.request.toolName,
+          action: ctx.request.action,
+          toolInput: ctx.request.toolInput,
+          display: ctx.request.display,
+        }),
+      });
+      ctx.signal.throwIfAborted();
+    } catch {
+      ctx.signal.throwIfAborted();
+      await next();
+      return;
+    }
+
+    const decision = reducePermissionDecisionResults(
+      results,
+      ctx.request.permissionRequestId,
+    );
+    if (decision === undefined) {
+      await next();
+      return;
+    }
+
+    ctx.decisionSource = 'external_hook';
+    ctx.response =
+      decision.decision === 'allow'
+        ? { decision: 'approved' }
+        : { decision: 'rejected', feedback: decision.reason };
   }
 
   private registerPromptHooks(prompt: IAgentPromptService): void {

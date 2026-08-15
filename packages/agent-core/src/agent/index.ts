@@ -77,6 +77,7 @@ export type AgentType = 'main' | 'sub' | 'independent';
 
 export interface AgentOptions {
   readonly kaos: Kaos;
+  readonly agentId?: string;
   readonly config?: KimiConfig;
   readonly homedir?: string;
   /**
@@ -114,6 +115,7 @@ export interface AgentOptions {
 
 export class Agent {
   readonly type: AgentType;
+  readonly agentId?: string;
   private _kaos: Kaos;
 
   get kaos(): Kaos {
@@ -191,6 +193,7 @@ export class Agent {
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
+    this.agentId = options.agentId;
     this._kaos = options.kaos;
     this.kimiConfig = options.config;
     this.homedir = options.homedir;

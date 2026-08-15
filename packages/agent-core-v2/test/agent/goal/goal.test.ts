@@ -27,6 +27,7 @@ import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode, PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { OrderedHookSlot } from '#/hooks';
 import {
   IAgentToolExecutorService,
   type ToolExecutionResult,
@@ -725,6 +726,9 @@ describe('AgentGoalService goal-start review', () => {
   function approvalStub(): IAgentToolApprovalService {
     return {
       _serviceBrand: undefined,
+      hooks: {
+        onWillRequestApproval: new OrderedHookSlot(),
+      },
       resolvePermissionResolution: async () => undefined,
       requestToolApproval: async (_context, result, origin) => {
         approvalCalls.push({ result, origin });

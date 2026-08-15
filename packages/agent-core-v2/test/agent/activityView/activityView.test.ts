@@ -233,6 +233,7 @@ describe('AgentActivityView', () => {
     bus.publish(
       new PermissionApprovalRequested({
         id: 'approval_1',
+        permissionRequestId: 'approval_1',
         sessionId: 's',
         agentId: 'main',
         turnId: 1,
@@ -250,6 +251,7 @@ describe('AgentActivityView', () => {
     bus.publish(
       new PermissionApprovalResolved({
         id: 'approval_1',
+        permissionRequestId: 'approval_1',
         sessionId: 's',
         agentId: 'main',
         turnId: 1,
@@ -259,6 +261,7 @@ describe('AgentActivityView', () => {
         toolInput: {},
         display: { kind: 'command', command: 'ls' },
         decision: 'approved',
+        decisionSource: 'native',
       }),
     );
     expect(view.state().turn?.pendingApprovals).toEqual([]);

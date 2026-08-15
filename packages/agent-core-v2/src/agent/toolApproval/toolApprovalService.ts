@@ -3,11 +3,13 @@ import { randomUUID } from 'node:crypto';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
+import { OrderedHookSlot } from '#/hooks';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable, isUserCancellation } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type {
+  ApprovalRequest,
   ApprovalResponse,
   PermissionPolicyResolution,
   PermissionPolicyResult,
@@ -26,19 +28,15 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-import { IAgentToolApprovalService } from './toolApproval';
+import {
+  IAgentToolApprovalService,
+  type PermissionApprovalRequestContext,
+  type PermissionDecisionRequestContext,
+  type PermissionDecisionSource,
+  type ToolApprovalRequestHookContext,
+} from './toolApproval';
 
-export interface PermissionApprovalRequestedPayload {
-  readonly id?: string;
-  readonly sessionId?: string;
-  readonly agentId?: string;
-  readonly turnId: number;
-  readonly toolCallId: string;
-  readonly toolName: string;
-  readonly action: string;
-  readonly display: ToolInputDisplay;
-  readonly toolInput: unknown;
-}
+export interface PermissionApprovalRequestedPayload extends PermissionApprovalRequestContext {}
 
 export class PermissionApprovalRequested extends Event2<PermissionApprovalRequestedPayload> {
   static override readonly type = 'permission.approval.requested';
@@ -52,6 +50,7 @@ export interface PermissionApprovalResolvedPayload extends PermissionApprovalReq
   readonly feedback?: string;
   readonly selectedLabel?: string;
   readonly error?: string;
+  readonly decisionSource: PermissionDecisionSource;
 }
 
 export class PermissionApprovalResolved extends Event2<PermissionApprovalResolvedPayload> {
@@ -62,6 +61,10 @@ export interface PermissionApprovalResolved extends PermissionApprovalResolvedPa
 
 export class AgentToolApprovalService extends Service implements IAgentToolApprovalService {
   declare readonly _serviceBrand: undefined;
+
+  readonly hooks = {
+    onWillRequestApproval: new OrderedHookSlot<ToolApprovalRequestHookContext>(),
+  };
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -126,21 +129,37 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     };
     const approvalContext = {
       ...approvalRequest,
+      permissionRequestId: approvalRequest.id,
       toolInput: context.args,
-    } satisfies PermissionApprovalRequestedPayload;
+    } satisfies PermissionDecisionRequestContext;
     const startedAt = Date.now();
 
     let response: ApprovalResponse;
+    let decisionSource: PermissionDecisionSource = 'native';
     const approvalService = this.tryApprovalService();
     if (approvalService === undefined) {
+      decisionSource = 'implicit_no_broker';
       response = { decision: 'approved' };
     } else {
       void this.dispatcher.dispatch(new PermissionApprovalRequested(approvalContext));
       try {
-        response = await abortable(
-          approvalService.request(approvalRequest),
-          context.signal,
-        );
+        const resultWithSource =
+          result.resolveApproval === undefined
+            ? await this.requestWithParticipants(
+                approvalService,
+                approvalRequest,
+                approvalContext,
+                context.signal,
+              )
+            : {
+                response: await abortable(
+                  approvalService.request(approvalRequest),
+                  context.signal,
+                ),
+                decisionSource: 'native' as const,
+              };
+        response = resultWithSource.response;
+        decisionSource = resultWithSource.decisionSource;
         context.signal.throwIfAborted();
       } catch (error) {
         if (isUserCancellation(error)) throw error;
@@ -156,12 +175,14 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
           session_cache_written: false,
           has_feedback: false,
           trace_id: context.trace?.traceId,
+          decision_source: decisionSource,
         });
         void this.dispatcher.dispatch(
           new PermissionApprovalResolved({
             ...approvalContext,
             decision: 'error',
             error: error instanceof Error ? error.message : String(error),
+            decisionSource,
           }),
         );
         const resolved = result.resolveError?.(error);
@@ -181,6 +202,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
         new PermissionApprovalResolved({
           ...approvalContext,
           ...response,
+          decisionSource,
         }),
       );
     }
@@ -207,6 +229,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
       session_cache_written: sessionApprovalRule !== undefined,
       has_feedback: response.feedback !== undefined && response.feedback.length > 0,
       trace_id: context.trace?.traceId,
+      decision_source: decisionSource,
     });
 
     const resolved = result.resolveApproval?.(response);
@@ -216,13 +239,55 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
 
     if (response.decision === 'approved') return undefined;
     return {
-      veto: denyToolExecution(this.formatApprovalRejectionMessage(name, response)),
+      veto: denyToolExecution(
+        this.formatApprovalRejectionMessage(name, response, decisionSource),
+      ),
+    };
+  }
+
+  private async requestWithParticipants(
+    approvalService: ISessionApprovalService,
+    approvalRequest: ApprovalRequest,
+    approvalContext: PermissionDecisionRequestContext,
+    signal: AbortSignal,
+  ): Promise<{ readonly response: ApprovalResponse; readonly decisionSource: PermissionDecisionSource }> {
+    const hookContext: ToolApprovalRequestHookContext = {
+      request: approvalContext,
+      signal,
+      decisionSource: 'native',
+    };
+    let nativeApprovalPromise: Promise<ApprovalResponse> | undefined;
+    const requestNativeApproval = (requestSignal: AbortSignal): Promise<ApprovalResponse> => {
+      nativeApprovalPromise ??= approvalService.request(approvalRequest);
+      return abortable(nativeApprovalPromise, requestSignal);
+    };
+
+    try {
+      await this.hooks.onWillRequestApproval.run(hookContext, async (current) => {
+        try {
+          current.response = await requestNativeApproval(current.signal);
+          current.decisionSource = 'native';
+        } catch {}
+      });
+    } catch {
+      signal.throwIfAborted();
+    }
+
+    signal.throwIfAborted();
+    if (hookContext.response === undefined) {
+      hookContext.response = await requestNativeApproval(signal);
+      hookContext.decisionSource = 'native';
+    }
+    return {
+      response: hookContext.response,
+      decisionSource: hookContext.decisionSource,
     };
   }
 
   formatApprovalRejectionMessage(
     toolName: string,
     result: Pick<ApprovalResponse, 'decision' | 'feedback'>,
+    source: PermissionDecisionSource = 'native',
   ): string {
     const suffix =
       result.feedback !== undefined && result.feedback.length > 0
@@ -231,7 +296,9 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     const prefix =
       result.decision === 'cancelled'
         ? `Tool "${toolName}" was not run because the approval request was cancelled.`
-        : `Tool "${toolName}" was not run because the user rejected the approval request.`;
+        : source === 'external_hook'
+          ? `Tool "${toolName}" was not run because an external approval hook rejected the approval request.`
+          : `Tool "${toolName}" was not run because the user rejected the approval request.`;
     if (this.usesWorkerRejectionGuidance()) {
       return `${prefix}${suffix} Try a different approach — don't retry the same call, don't attempt to bypass the restriction.`;
     }

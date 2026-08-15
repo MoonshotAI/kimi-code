@@ -18,6 +18,7 @@ import {
   type PermissionRule,
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { OrderedHookSlot } from '#/hooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -78,6 +79,9 @@ describe('AgentPermissionGate', () => {
     requestToolApproval = vi.fn(async () => undefined);
     const toolApproval: IAgentToolApprovalService = {
       _serviceBrand: undefined,
+      hooks: {
+        onWillRequestApproval: new OrderedHookSlot(),
+      },
       resolvePermissionResolution,
       requestToolApproval,
       formatDenyMessage: (message) => message,

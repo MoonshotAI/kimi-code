@@ -76,3 +76,19 @@ describe('prompt contract validation', () => {
     expect(promptPayloadSchema.safeParse({ input: [], promptId: 'submission-1' }).success).toBe(true);
   });
 });
+
+describe('plugin hook contract validation', () => {
+  it('accepts the experimental permission decision event', () => {
+    expect(
+      pluginManifestSchema.safeParse({
+        name: 'approval-plugin',
+        hooks: [
+          {
+            event: 'PermissionDecisionRequest',
+            command: 'node ./approve.mjs',
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+});
