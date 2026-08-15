@@ -20,7 +20,10 @@ import type {
   TranscriptEntry,
 } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
-import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
+import {
+  extractInlineSkillActivations,
+  findInlineSkillTokens,
+} from '../utils/inline-skill-tokens';
 import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
 import { handleCopyCommand } from './copy';
@@ -268,8 +271,18 @@ function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean
   }
   if (intent.kind !== 'skill') return false;
 
+  // Combo-ness is decided by the raw token count, not the deduplicated
+  // activation count: `/skill:review check /skill:review` repeats one skill
+  // and still submits as a bundled prompt, matching the equivalent inline
+  // input's transcript and undo behavior.
+  const tokens = findInlineSkillTokens(text, {
+    isKnownSkill: (commandName) =>
+      host.skillCommandMap.has(commandName) || host.skillCommandMap.has(`skill:${commandName}`),
+    includeLeading: true,
+  });
+  if (tokens.length < 2) return false;
+
   const all = extractInlineSkillActivations(text, host.skillCommandMap, { includeLeading: true });
-  if (all.length < 2) return false;
 
   if (host.state.appState.model.trim().length === 0) {
     host.showError(LLM_NOT_SET_MESSAGE);

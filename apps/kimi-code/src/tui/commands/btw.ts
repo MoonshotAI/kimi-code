@@ -15,7 +15,7 @@ export async function handleBtwCommand(host: SlashCommandHost, args: string): Pr
   try {
     const agentId = await session.startBtw();
     const activations = host.engineV2
-      ? extractInlineSkillActivations(prompt, host.skillCommandMap)
+      ? extractInlineSkillActivations(prompt, host.skillCommandMap, { includeLeading: true })
       : [];
     host.btwPanelController.open(
       agentId,
