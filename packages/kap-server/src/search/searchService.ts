@@ -1102,8 +1102,8 @@ registerScopedService(
   // OnDemand, not OnScopeCreated: kap-server's module graph is bundled into
   // the CLI (the `kimi web` subcommand), so its registrations land in the
   // global registry of every CLI process, and OnScopeCreated would make even
-  // a plain TUI run open the (potentially large) search index and kick a sync
-  // pass on the main thread at startup. The real server pre-warms the service
+  // a plain TUI run spawn the sync worker and open the (potentially large)
+  // search index at startup. The real server pre-warms the service
   // explicitly in start.ts (`setLiveTranscriptSource`), and the search route
   // resolves it per request.
   ScopeActivation.OnDemand,
