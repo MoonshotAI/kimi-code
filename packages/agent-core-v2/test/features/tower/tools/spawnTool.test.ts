@@ -217,6 +217,24 @@ describe('TowerSpawnTool', () => {
     expect(result).toEqual({ output: gate.ok === false ? gate.reason : '', isError: true });
     expect(createAgent).not.toHaveBeenCalled();
     expect(release).not.toHaveBeenCalled();
+
+    // The mission is untouched by the refused spawn — no phantom active owner.
+    const mission = (await store.load()).missions.find((m) => m.id === 'M1');
+    expect(mission?.status).toBe('planned');
+    expect(mission?.owner).toBeUndefined();
+  });
+
+  it('leaves the mission untouched when the launch fails', async () => {
+    createAgent.mockRejectedValue(new Error('provider unavailable'));
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result).toEqual({ output: 'tower spawn failed: provider unavailable', isError: true });
+    const state = await store.load();
+    const mission = state.missions.find((m) => m.id === 'M1');
+    expect(mission?.status).toBe('planned');
+    expect(mission?.owner).toBeUndefined();
+    expect(state.roster.agents).toHaveLength(0);
   });
 
   it('spawns a detached tower-worker, registers the roster entry, and releases the slot on settle', async () => {

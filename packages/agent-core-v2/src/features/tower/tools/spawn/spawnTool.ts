@@ -174,14 +174,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
             `worktree setup warning (continuing): ${error instanceof Error ? error.message : String(error)}`,
           );
         }
-        // Silent: the spawn log line below already carries name/owner/mission —
-        // a second mission.update line for the same assignment is pure noise.
-        await store.updateMission(
-          TOWER_NAME,
-          mission.id,
-          { status: 'active', owner: args.name },
-          { silent: true },
-        );
       } else {
         reviewTarget = args.review_target;
         if (reviewTarget === undefined) {
@@ -263,6 +255,19 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           branch: mission?.branch,
           spawnedAt: new Date().toISOString(),
         });
+        if (mission !== undefined) {
+          // Only once the spawn is real (gate passed, task registered, roster
+          // written): marking the mission active+owned any earlier would leave
+          // a phantom owner behind when the gate or the launch fails. Silent:
+          // the spawn log line below already carries name/owner/mission — a
+          // second mission.update line for the same assignment is pure noise.
+          await store.updateMission(
+            TOWER_NAME,
+            mission.id,
+            { status: 'active', owner: args.name },
+            { silent: true },
+          );
+        }
         await store.appendLog(
           TOWER_NAME,
           'spawn',
