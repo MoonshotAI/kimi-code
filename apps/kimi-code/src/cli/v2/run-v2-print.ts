@@ -372,7 +372,9 @@ async function resolveNativeSession(
 
   if (opts.continue) {
     const page = await index.listRecent({});
-    const previous = page.items.find((summary) => summary.cwd === workDir);
+    const previous = page.items.find(
+      (summary) => summary.cwd !== undefined && resolve(summary.cwd) === resolve(workDir),
+    );
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
       const agent = await ensureMainAgent(session);
