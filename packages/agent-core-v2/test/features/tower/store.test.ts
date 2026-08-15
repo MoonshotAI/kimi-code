@@ -411,6 +411,59 @@ describe('merge gate', () => {
     expect(index).toContain('✅');
   });
 
+  it('refuses to merge when the main checkout has moved off the recorded base', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await cleanReview('rev', mission.branch);
+
+    // The main checkout moved off the recorded base after TowerInit.
+    await git(repo, 'checkout', '-b', 'hotfix');
+    const hotfixTip = await git(repo, 'rev-parse', 'HEAD');
+
+    await expect(store.merge(mission.branch)).rejects.toThrow(/not the recorded base/);
+
+    // Nothing merged: the mission stays open, the checked-out branch is
+    // untouched, and the refusal lands in the activity log.
+    const state = await store.load();
+    expect(state.missions.find((m) => m.id === mission.id)?.status).not.toBe('merged');
+    expect(await git(repo, 'rev-parse', 'HEAD')).toBe(hotfixTip);
+    const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    expect(log).toContain('merge.blocked');
+    expect(log).toContain('base-mismatch');
+
+    // Back on base, the gate opens.
+    await git(repo, 'checkout', 'main');
+    const { mergeCommit } = await store.merge(mission.branch);
+    expect(mergeCommit).toBe(await git(repo, 'rev-parse', 'HEAD'));
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('merged');
+  });
+
+  it('refuses to merge from a detached HEAD', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await cleanReview('rev', mission.branch);
+
+    await git(repo, 'checkout', '--detach', 'HEAD');
+    await expect(store.merge(mission.branch)).rejects.toThrow(/detached HEAD/);
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).not.toBe(
+      'merged',
+    );
+  });
+
   it('only lets the assigned reviewer submit a review for the target', async () => {
     const mission = await setupMission({
       title: 'feature x',

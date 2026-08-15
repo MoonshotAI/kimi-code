@@ -867,6 +867,26 @@ export class TowerStore {
       );
     }
 
+    // The merge lands wherever the main checkout currently points: refuse
+    // when it has moved off the recorded base since TowerInit (a hotfix
+    // branch, a detached HEAD) — otherwise the mission would be marked
+    // merged while the base branch never received it.
+    let checkedOut: string;
+    try {
+      checkedOut = await currentBranch(this.repoRoot);
+    } catch {
+      throw await block(
+        'base-mismatch',
+        `merge blocked: the main checkout is in a detached HEAD state — check out the recorded base branch "${state.base}" before merging; nothing was merged`,
+      );
+    }
+    if (checkedOut !== state.base) {
+      throw await block(
+        'base-mismatch',
+        `merge blocked: the main checkout is on "${checkedOut}", not the recorded base "${state.base}" — switch it back (\`git checkout ${state.base}\`) and retry; nothing was merged`,
+      );
+    }
+
     const mergeCommit = await mergeNoFf(this.repoRoot, branch);
     mission.status = 'merged';
 
