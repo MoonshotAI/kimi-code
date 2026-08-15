@@ -1,3 +1,7 @@
+// Scenario: user input dispatch and SDK session events through the interactive TUI.
+// Responsibilities: preserve observable editor, transcript, queue, and session behavior.
+// Wiring: real KimiTUI/controllers/components with only SDK and OS boundaries stubbed.
+// Run: pnpm --filter @moonshot-ai/kimi-code exec vitest run test/tui/kimi-tui-message-flow.test.ts
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -2692,6 +2696,84 @@ command = "vim"
     driver.state.editor.onCtrlC?.();
 
     expect(session.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a pre-response cancellation to the editor without an interruption error', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('inspect the failing request');
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('inspect the failing request');
+    });
+
+    driver.state.editor.onEscape?.();
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        reason: 'aborted',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(driver.state.editor.getText()).toBe('inspect the failing request');
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Interrupted by user');
+  });
+
+  it('prepends the submitted prompt when Escape restores over a newer draft', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('inspect the failing request');
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('inspect the failing request');
+    });
+    driver.state.editor.setText('keep this newer draft');
+
+    driver.state.editor.onEscape?.();
+
+    expect(driver.state.editor.getText()).toBe(
+      'inspect the failing request\nkeep this newer draft',
+    );
+  });
+
+  it('keeps the submitted text consumed when Escape cancels after visible output', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('inspect after output');
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('inspect after output');
+    });
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        delta: 'Visible response',
+      } as Event,
+      vi.fn(),
+    );
+
+    driver.state.editor.onEscape?.();
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        reason: 'aborted',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.editor.getText()).toBe('');
+    expect(stripSgr(renderTranscript(driver))).toContain('Interrupted by user');
   });
 
   it('clears streaming editor text before cancelling the active turn on Ctrl-C', async () => {

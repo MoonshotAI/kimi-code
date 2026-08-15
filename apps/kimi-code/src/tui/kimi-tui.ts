@@ -1453,7 +1453,8 @@ export class KimiTUI {
     this.track('input_queue');
   }
 
-  beginSessionRequest(): void {
+  beginSessionRequest(restorableInput?: string): void {
+    this.sessionEventHandler.beginPromptRestoreWindow(restorableInput);
     this.cacheHint.onTurnBegin();
     this.streamingUI.setTurnId(undefined);
     this.streamingUI.resetLiveText();
@@ -1472,6 +1473,7 @@ export class KimiTUI {
   }
 
   failSessionRequest(message: string): void {
+    this.sessionEventHandler.clearPromptRestoreWindow();
     this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();
     this.showError(message);
@@ -1494,7 +1496,12 @@ export class KimiTUI {
     this.sessionEventHandler.requestQueuedGoalPromotion();
   }
 
-  private sendMessageInternal(session: Session, input: string, options?: SendMessageOptions): void {
+  private sendMessageInternal(
+    session: Session,
+    input: string,
+    options?: SendMessageOptions,
+    restoreOnEarlyEscape = false,
+  ): void {
     const imageAttachmentIds =
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
         ? options.imageAttachmentIds
@@ -1508,7 +1515,7 @@ export class KimiTUI {
       imageAttachmentIds,
     });
 
-    this.beginSessionRequest();
+    this.beginSessionRequest(restoreOnEarlyEscape ? input : undefined);
 
     const sdkInput = options?.parts ?? input;
     // While a goal is being pursued the engine holds its active turn across the
@@ -1590,7 +1597,11 @@ export class KimiTUI {
       this.enqueueMessage(input, options);
       return;
     }
-    this.sendMessageInternal(session, input, options);
+    this.sendMessageInternal(session, input, options, options?.hasMedia !== true);
+  }
+
+  restoreSubmittedInputOnEscape(): void {
+    this.sessionEventHandler.restorePendingPromptOnEscape();
   }
 
   steerMessage(session: Session, input: readonly SteerInputItem[]): void {

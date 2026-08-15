@@ -168,6 +168,10 @@ export class SessionEventHandler {
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
   private stepRetryAttemptTimer: ReturnType<typeof setTimeout> | undefined;
+  // A plain submitted prompt remains restorable only until response content
+  // becomes visible. Esc then arms one-shot suppression for its abort event.
+  private pendingPromptRestore: string | undefined;
+  private suppressNextUserInterruption = false;
 
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
@@ -187,7 +191,28 @@ export class SessionEventHandler {
     this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
     this.clearStepRetryAttemptTimer();
+    this.clearPromptRestoreWindow();
     this.stopAllMcpServerStatusSpinners();
+  }
+
+  beginPromptRestoreWindow(restorableInput?: string): void {
+    this.pendingPromptRestore = restorableInput;
+    this.suppressNextUserInterruption = false;
+  }
+
+  restorePendingPromptOnEscape(): void {
+    const input = this.pendingPromptRestore;
+    if (input === undefined) return;
+    this.pendingPromptRestore = undefined;
+    this.suppressNextUserInterruption = true;
+
+    const draft = this.host.state.editor.getText();
+    this.host.restoreInputText(draft.length === 0 ? input : `${input}\n${draft}`);
+  }
+
+  clearPromptRestoreWindow(): void {
+    this.pendingPromptRestore = undefined;
+    this.suppressNextUserInterruption = false;
   }
 
   clearAgentSwarmProgress(): void {
@@ -358,6 +383,7 @@ export class SessionEventHandler {
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
     this.host.streamingUI.flushNow();
     this.clearStepRetry();
+    this.clearPromptRestoreWindow();
     if (event.reason === 'cancelled') {
       this.markActiveAgentSwarmsCancelled();
     }
@@ -520,11 +546,16 @@ export class SessionEventHandler {
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('idle');
     const reason = event.reason;
+    const hasMessage = event.message !== undefined && event.message !== '';
+    const suppressInterruption = !hasMessage && this.suppressNextUserInterruption;
+    this.clearPromptRestoreWindow();
     if (reason === 'error') return;
     if (reason === 'aborted' || reason === undefined || reason === '') {
       this.markActiveAgentSwarmsCancelled();
-      if (event.message === undefined || event.message === '') {
-        this.host.showStatus('Interrupted by user', 'error');
+      if (!hasMessage) {
+        if (!suppressInterruption) {
+          this.host.showStatus('Interrupted by user', 'error');
+        }
       } else {
         this.host.showError(event.message);
       }
@@ -548,6 +579,7 @@ export class SessionEventHandler {
     // text), leaving a blank, spinner-less gap until the first real text/tool
     // token arrives. Keep the moon up until actual thinking text shows up.
     if (event.delta.trim().length === 0 && !streamingUI.hasThinkingDraft()) return;
+    this.markResponseVisible();
     streamingUI.appendThinkingDelta(event.delta);
     this.host.patchLivePane({ mode: 'idle' });
     if (state.appState.streamingPhase !== 'thinking') {
@@ -563,6 +595,7 @@ export class SessionEventHandler {
     }
 
     if (event.delta.trim().length > 0) {
+      this.markResponseVisible();
       this.currentTurnHasAssistantText = true;
       this.pendingModelBlockedFallback = undefined;
     }
@@ -585,6 +618,7 @@ export class SessionEventHandler {
       this.host.streamingUI.flushThinkingToTranscript('idle');
     }
     this.host.streamingUI.finalizeAssistantStream();
+    this.markResponseVisible();
     if (event.content.trim().length > 0) {
       this.currentTurnHasAssistantText = true;
       this.pendingModelBlockedFallback = undefined;
@@ -606,6 +640,7 @@ export class SessionEventHandler {
   private handleToolCall(event: ToolCallStartedEvent): void {
     const { streamingUI } = this.host;
     streamingUI.flushNow();
+    this.markResponseVisible();
     const { turnId, step } = streamingUI.getTurnContext();
     const toolCall: ToolCallBlockData = {
       id: event.toolCallId,
@@ -632,6 +667,9 @@ export class SessionEventHandler {
     const { state, streamingUI } = this.host;
     streamingUI.accumulateToolCallDelta(event.toolCallId, event.name, event.argumentsPart);
     const preview = streamingUI.getStreamingToolCallPreview(event.toolCallId);
+    if (preview !== undefined) {
+      this.markResponseVisible();
+    }
     if (
       preview !== undefined &&
       (preview.name === 'AgentSwarm' || this.subAgentEventHandler.hasAgentSwarmProgress(event.toolCallId))
@@ -650,6 +688,10 @@ export class SessionEventHandler {
       this.host.setAppState({ streamingPhase: 'composing', streamingStartTime: Date.now() });
     }
     streamingUI.scheduleFlush();
+  }
+
+  private markResponseVisible(): void {
+    this.pendingPromptRestore = undefined;
   }
 
   private handleToolProgress(event: ToolProgressEvent): void {

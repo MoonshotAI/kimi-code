@@ -1,3 +1,7 @@
+// Scenario: editor shortcut routing across idle, streaming, compaction, and dialogs.
+// Responsibilities: prioritize the active surface and delegate the selected action once.
+// Wiring: real EditorKeyboardController with editor, session, and host boundaries stubbed.
+// Run: pnpm --filter @moonshot-ai/kimi-code exec vitest run test/tui/controllers/editor-keyboard.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DOUBLE_ESC_WINDOW_MS, NO_ACTIVE_SESSION_MESSAGE } from '#/tui/constant/kimi-tui';
@@ -48,6 +52,7 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
     cancelRunningShellCommand,
     updateEditorBorderHighlight: vi.fn(),
     updateGoalLengthWarning: vi.fn(),
+    restoreSubmittedInputOnEscape: vi.fn(),
   } as unknown as EditorKeyboardHost;
 
   const controller = new EditorKeyboardController(
