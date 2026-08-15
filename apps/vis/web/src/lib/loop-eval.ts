@@ -45,11 +45,11 @@ export interface RepetitionWindow {
 }
 
 export interface PromptPhaseEvaluation {
-  /** Phase 0 is the preamble before the first turn.prompt. */
+  /** Phase 0 is the preamble before the first accepted turn.prompt. */
   index: number;
-  /** Prompt that starts this phase; null for phase 0. Prompt text is excluded. */
+  /** Accepted prompt that starts this phase; null for phase 0. Prompt text is excluded. */
   promptLineNo: number | null;
-  /** Prompt that ends this phase; null for the final phase. */
+  /** Accepted prompt that ends this phase; null for the final phase. */
   nextPromptLineNo: number | null;
   toolCallCount: number;
   distinctCallCount: number;
@@ -163,6 +163,7 @@ export function evaluateLoopTrace(
 
   if (entries.length === 0) return emptyEvaluation(settings);
 
+  const acceptedPromptLineNos = findAcceptedPromptLineNos(entries);
   const mutablePhases: MutablePhase[] = [];
   let current = createPhase(0, null);
 
@@ -170,6 +171,7 @@ export function evaluateLoopTrace(
     const record = entry.data;
 
     if (record.type === 'turn.prompt') {
+      if (!acceptedPromptLineNos.has(entry.lineNo)) continue;
       current.nextPromptLineNo = entry.lineNo;
       mutablePhases.push(current);
       current = createPhase(mutablePhases.length, entry.lineNo);
@@ -231,6 +233,35 @@ export function evaluateLoopTrace(
     phases,
     steerComparisons,
   };
+}
+
+function findAcceptedPromptLineNos(entries: readonly WireEntry[]): ReadonlySet<number> {
+  const accepted = new Set<number>();
+  let currentTurnId: string | undefined;
+  let pendingPromptLineNo: number | undefined;
+
+  for (const entry of entries) {
+    const record = entry.data;
+    if (record.type === 'turn.prompt') {
+      pendingPromptLineNo = entry.lineNo;
+      continue;
+    }
+    if (
+      record.type !== 'context.append_loop_event' ||
+      !('turnId' in record.event)
+    ) {
+      continue;
+    }
+
+    const nextTurnId = record.event.turnId;
+    if (pendingPromptLineNo !== undefined && nextTurnId !== currentTurnId) {
+      accepted.add(pendingPromptLineNo);
+    }
+    pendingPromptLineNo = undefined;
+    currentTurnId = nextTurnId;
+  }
+
+  return accepted;
 }
 
 function createPhase(index: number, promptLineNo: number | null): MutablePhase {

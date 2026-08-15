@@ -30,12 +30,14 @@ function steer(text = 'steer'): WireEntry {
   });
 }
 
-function call(name: string, args: unknown): WireEntry {
+function call(name: string, args: unknown, turnId = '0'): WireEntry {
   return record({
     type: 'context.append_loop_event',
     event: {
       type: 'tool.call',
       uuid: `uuid-${String(line + 1)}`,
+      turnId,
+      step: 1,
       stepUuid: 'step',
       toolCallId: `call-${String(line + 1)}`,
       name,
@@ -55,7 +57,7 @@ describe('evaluateLoopTrace', () => {
       call('Read', { offset: 1, path: '/tmp/a' }),
       call('Read', { path: '/tmp/a', offset: 1 }),
       prompt('second'),
-      call('Read', { offset: 1, path: '/tmp/a' }),
+      call('Read', { offset: 1, path: '/tmp/a' }, '1'),
     ];
 
     const evaluation = evaluateLoopTrace(entries, {
@@ -102,6 +104,40 @@ describe('evaluateLoopTrace', () => {
       repeatedCallCount: 4,
       longestExactRun: { phaseIndex: 1, length: 5 },
       peakRepetitionWindow: { phaseIndex: 1, repeatedCallRate: 0.75 },
+    });
+  });
+
+  it('does not split a phase when an active turn rejects a prompt', () => {
+    line = 0;
+    const entries = [
+      prompt('start the active turn'),
+      call('Bash', { cmd: 'poll' }, '0'),
+      prompt('rejected while busy'),
+      call('Bash', { cmd: 'poll' }, '0'),
+      call('Bash', { cmd: 'poll' }, '0'),
+    ];
+
+    const evaluation = evaluateLoopTrace(entries, {
+      repetitionWindowCalls: 3,
+    });
+
+    expect(evaluation.phases).toHaveLength(2);
+    expect(evaluation.phases[1]).toMatchObject({
+      promptLineNo: 1,
+      nextPromptLineNo: null,
+      toolCallCount: 3,
+      distinctCallCount: 1,
+      repeatedCallCount: 2,
+      longestExactRun: {
+        length: 3,
+        startLineNo: 2,
+        endLineNo: 5,
+      },
+      peakRepetitionWindow: {
+        callCount: 3,
+        repeatedCallCount: 2,
+        repeatedCallRate: 2 / 3,
+      },
     });
   });
 
@@ -158,15 +194,15 @@ describe('evaluateLoopTrace', () => {
       call('Bash', { cmd: 'b' }),
       call('Bash', { cmd: 'a' }),
       prompt('disjoint distribution'),
-      call('Read', { path: 'a' }),
-      call('Read', { path: 'b' }),
-      call('Read', { path: 'c' }),
-      call('Read', { path: 'd' }),
+      call('Read', { path: 'a' }, '1'),
+      call('Read', { path: 'b' }, '1'),
+      call('Read', { path: 'c' }, '1'),
+      call('Read', { path: 'd' }, '1'),
       steer('look elsewhere'),
-      call('Bash', { cmd: 'e' }),
-      call('Bash', { cmd: 'f' }),
-      call('Bash', { cmd: 'g' }),
-      call('Bash', { cmd: 'h' }),
+      call('Bash', { cmd: 'e' }, '1'),
+      call('Bash', { cmd: 'f' }, '1'),
+      call('Bash', { cmd: 'g' }, '1'),
+      call('Bash', { cmd: 'h' }, '1'),
     ];
 
     const evaluation = evaluateLoopTrace(entries, { steerComparisonCalls: 4 });
