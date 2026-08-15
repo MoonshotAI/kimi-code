@@ -1376,27 +1376,7 @@ export class KimiTUI {
     activations: readonly InlineSkillActivation[],
     preExtracted?: ExtractionResult,
   ): Promise<void> {
-    let rewrittenActivations = activations;
-    if (activations.some((activation) => activation.args !== undefined)) {
-      // Args are a plain-text channel (XML-escaped on render), so pasted
-      // media placeholders in a leading combo's arguments must be rewritten
-      // into escape-proof file references — the media themselves still ride
-      // the prompt as extracted parts (see sendSkillActivation).
-      try {
-        rewrittenActivations = activations.map((activation) =>
-          activation.args === undefined
-            ? activation
-            : {
-                skillName: activation.skillName,
-                args: rewriteMediaPlaceholders(activation.args, this.imageStore, 'plain').text,
-              },
-        );
-      } catch (error) {
-        this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
-        return;
-      }
-    }
-    if (this.btwPanelController.sendUserInput(text, rewrittenActivations)) return;
+    if (this.btwPanelController.sendUserInput(text, activations)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
@@ -1409,7 +1389,7 @@ export class KimiTUI {
       return;
     }
     if (!this.validateMediaCapabilities(extraction)) return;
-    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction, rewrittenActivations)) return;
+    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction, activations)) return;
     let session = this.session;
     if (session === undefined) {
       // Dispatch only routes here on the v2 engine, so the session is created
@@ -1430,16 +1410,16 @@ export class KimiTUI {
               hasMedia: true,
               parts: extraction.parts,
               imageAttachmentIds: extraction.imageAttachmentIds,
-              inlineSkillActivations: rewrittenActivations,
+              inlineSkillActivations: activations,
             }
-          : { inlineSkillActivations: rewrittenActivations },
+          : { inlineSkillActivations: activations },
       );
       this.updateQueueDisplay();
       this.state.ui.requestRender();
       return;
     }
     this.beginSessionRequest();
-    void this.runInlineSkillActivations(session, text, rewrittenActivations, extraction).catch(
+    void this.runInlineSkillActivations(session, text, activations, extraction).catch(
       (error: unknown) => {
         this.failSessionRequest(`Skill activation failed: ${formatErrorMessage(error)}`);
       },

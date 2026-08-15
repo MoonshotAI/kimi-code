@@ -246,14 +246,37 @@ export function dispatchInput(host: SlashCommandHost, text: string): void {
 }
 
 /**
- * Handle the `/skill:a args /skill:b …` combo. Returns true when the input was
- * claimed (submitted or rejected), false when it should fall through to the
+ * Handle a leading-slash input that may be a bundled submission. Returns true
+ * when the input was claimed, false when it should fall through to the
  * regular single-skill slash path.
+ *
+ * Bundle rule: two or more known skill tokens anywhere in the input (the
+ * leading one included) make the whole input one bundled prompt in which
+ * every token activates with NO args — the mention is the whole interface,
+ * and args stay a standalone-activation concept (`/skill:a some args` with
+ * no other tokens keeps its single-skill path). Tokenization is
+ * whitespace-generic, so space- and newline-separated bundles behave
+ * identically.
  */
 function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean {
-  // The intent is parsed without the busy flags on purpose: a combo submits
-  // through sendInlineSkillUserInput, whose busy path queues the intact
-  // bundle — only genuine single-skill commands reject while busy.
+  const tokens = findInlineSkillTokens(text, {
+    isKnownSkill: (commandName) =>
+      host.skillCommandMap.has(commandName) || host.skillCommandMap.has(`skill:${commandName}`),
+    includeLeading: true,
+  });
+  if (tokens.length >= 2) {
+    const activations = extractInlineSkillActivations(text, host.skillCommandMap, {
+      includeLeading: true,
+    });
+    void host.sendInlineSkillUserInput(text, activations);
+    return true;
+  }
+
+  // An unrecognized leading slash token makes the whole input a plain
+  // message; scan it for inline skills like any other plain prompt. The
+  // intent is parsed without the busy flags on purpose: submissions through
+  // sendInlineSkillUserInput queue while busy — only genuine single-skill
+  // commands reject.
   const intent = resolveSlashCommandInput({
     input: text,
     skillCommandMap: host.skillCommandMap,
@@ -261,41 +284,9 @@ function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean
     isStreaming: false,
     isCompacting: false,
   });
-  // An unrecognized slash token makes the whole input a plain message; scan
-  // it for inline skills like any other plain prompt.
-  if (intent.kind === 'message') {
-    const activations = extractInlineSkillActivations(text, host.skillCommandMap);
-    if (activations.length === 0) return false;
-    void host.sendInlineSkillUserInput(text, activations);
-    return true;
-  }
-  if (intent.kind !== 'skill') return false;
-
-  // Combo-ness is decided by the raw token count, not the deduplicated
-  // activation count: `/skill:review check /skill:review` repeats one skill
-  // and still submits as a bundled prompt, matching the equivalent inline
-  // input's transcript and undo behavior.
-  const tokens = findInlineSkillTokens(text, {
-    isKnownSkill: (commandName) =>
-      host.skillCommandMap.has(commandName) || host.skillCommandMap.has(`skill:${commandName}`),
-    includeLeading: true,
-  });
-  if (tokens.length < 2) return false;
-
-  const all = extractInlineSkillActivations(text, host.skillCommandMap, { includeLeading: true });
-
-  if (host.state.appState.model.trim().length === 0) {
-    host.showError(LLM_NOT_SET_MESSAGE);
-    return true;
-  }
-
-  // Preserve the leading command's arguments: inline tokens carry no args, so
-  // the first activation (the leading skill, first-occurrence order) takes the
-  // raw args exactly as the single-skill path would receive them.
-  const activations =
-    intent.args.length > 0 && all[0]?.skillName === intent.skillName
-      ? [{ skillName: intent.skillName, args: intent.args }, ...all.slice(1)]
-      : all;
+  if (intent.kind !== 'message') return false;
+  const activations = extractInlineSkillActivations(text, host.skillCommandMap);
+  if (activations.length === 0) return false;
   void host.sendInlineSkillUserInput(text, activations);
   return true;
 }

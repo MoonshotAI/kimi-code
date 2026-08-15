@@ -660,10 +660,7 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith(
         '/skill:review check this /skill:security',
-        [
-          { name: 'review', args: 'check this /skill:security' },
-          { name: 'security' },
-        ],
+        [{ name: 'review' }, { name: 'security' }],
       );
     });
     expect(session.activateSkill).not.toHaveBeenCalled();
@@ -694,13 +691,13 @@ describe('KimiTUI message flow', () => {
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review check /skill:review', [
-        { name: 'review', args: 'check /skill:review' },
+        { name: 'review' },
       ]);
     });
     expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
-  it('rewrites media placeholders in leading combo arguments (v2 engine)', async () => {
+  it('passes no args in a bundle while media rides the prompt parts (v2 engine)', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
@@ -727,19 +724,48 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput(`/skill:review inspect ${attachment.placeholder} /skill:security`);
 
     await vi.waitFor(() => {
-      expect(session.promptWithSkills).toHaveBeenCalled();
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        [
+          { type: 'text', text: '/skill:review inspect ' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+          { type: 'text', text: ' /skill:security' },
+        ],
+        [{ name: 'review' }, { name: 'security' }],
+      );
     });
-    const [input, skills] = (session.promptWithSkills as ReturnType<typeof vi.fn>).mock
-      .calls[0] as [unknown, { name: string; args?: string }[]];
-    expect(input).toEqual([
-      { type: 'text', text: '/skill:review inspect ' },
-      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
-      { type: 'text', text: ' /skill:security' },
-    ]);
-    expect(skills[0]!.name).toBe('review');
-    expect(skills[0]!.args).toContain('inspect');
-    expect(skills[0]!.args).not.toContain(attachment.placeholder);
-    expect(skills[1]).toEqual({ name: 'security' });
+  });
+
+  it('bundles newline-separated skills with the leading one included (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/skill:review\ncheck this /skill:security');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/skill:review\ncheck this /skill:security',
+        [{ name: 'review' }, { name: 'security' }],
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
   });
 
   it('scans inline skills in messages that start with an unknown slash token (v2 engine)', async () => {
@@ -864,10 +890,7 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.queuedMessages).toEqual([
       expect.objectContaining({
         text: '/skill:review check this /skill:security',
-        inlineSkillActivations: [
-          { skillName: 'review', args: 'check this /skill:security' },
-          { skillName: 'security' },
-        ],
+        inlineSkillActivations: [{ skillName: 'review' }, { skillName: 'security' }],
       }),
     ]);
   });
