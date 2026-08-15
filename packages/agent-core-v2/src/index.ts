@@ -416,6 +416,7 @@ export * from '#/app/workspaceLifecycle/sessionLookup';
 export * from '#/workspace/workspaceContext/workspaceContext';
 export * from '#/workspace/sessionLifecycle/sessionLifecycle';
 export * from '#/workspace/sessionLifecycle/sessionLifecycleService';
+export * from '#/workspace/sessionLifecycle/coldSessionArchive';
 export * from '#/workspace/sessionLifecycle/internal/addressing';
 export * from '#/session/externalHooks/externalHooks';
 export * from '#/session/externalHooks/externalHooksService';

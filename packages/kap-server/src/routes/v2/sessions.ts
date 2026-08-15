@@ -36,14 +36,35 @@
  * same edge pattern as v1's unpaged `GET /api/v1/sessions`. All sorts
  * share one comparator + one cursor encoding, so every sort paginates
  * identically.
+ *
+ * Batch actions: `POST /sessions:archive` / `POST /sessions:restore`
+ * (registered as `/sessions::{action}` — find-my-way splits a segment at
+ * its first `:`, so the wire path carries a single colon, same as the v1
+ * `/fs::browse` precedent) take `{ ids }` (non-empty, ≤5000 unique) and
+ * answer per-item results — `data.results[]` in input order with
+ * `ok` / `error`, plus `succeeded` / `failed` counts; only a body
+ * validation failure fails the whole request. A live session goes
+ * through the full `ISessionLifecycleService` chain (agents drain, scope
+ * teardown, mirror drain); a cold session is never materialized — its
+ * archived flag is patched straight into the persisted metadata
+ * document, mirrored into the read model, and (`:archive` only)
+ * announced through the same `event.session.archived` bus event the live
+ * lifecycle publishes, while `:restore` publishes nothing, matching the
+ * live restore. An unknown id folds into its own item as 40401. The
+ * batch ends with one shared `ISessionIndexMirror.drain()`, never one
+ * per item.
  */
 
 import { createHash } from 'node:crypto';
 
 import {
   ISessionIndex,
+  ISessionIndexMirror,
+  ISessionLifecycleService,
   IWorkspaceAliases,
   IWorkspaceService,
+  liveHandlerForSession,
+  setColdSessionArchived,
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
@@ -61,6 +82,14 @@ interface V2SessionsRouteHost {
     options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
     handler: (
       req: { id: string; query: unknown; params: unknown },
+      reply: { send(payload: unknown): unknown },
+    ) => Promise<void> | void,
+  ): unknown;
+  post(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string; body: unknown; params: unknown; headers: Record<string, unknown> },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -198,6 +227,43 @@ const v2SessionPageSchema = z.object({
 
 /** `40001 validation.failed` carries the offending fields (REST.md §1.4). */
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
+
+// ---------------------------------------------------------------------------
+// Batch archive / restore contract
+// ---------------------------------------------------------------------------
+
+/** Cap on unique ids per batch, keeping one request's edge work bounded. */
+const BATCH_IDS_MAX = 5000;
+
+/** Hot-path lifecycle calls run with this many in flight at most. */
+const BATCH_CONCURRENCY = 8;
+
+const v2SessionsBatchBodySchema = z
+  .object({ ids: z.array(z.string().min(1)).min(1) })
+  .superRefine((value, ctx) => {
+    if (new Set(value.ids).size > BATCH_IDS_MAX) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `ids must contain at most ${BATCH_IDS_MAX} unique entries`,
+        path: ['ids'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
+  });
+
+const v2SessionsBatchResultSchema = z.object({
+  results: z.array(
+    z.object({
+      id: z.string(),
+      ok: z.boolean(),
+      error: z.object({ code: z.number().int(), message: z.string() }).optional(),
+    }),
+  ),
+  succeeded: z.number().int(),
+  failed: z.number().int(),
+});
+
+type V2BatchItemResult = z.infer<typeof v2SessionsBatchResultSchema>['results'][number];
 
 type V2GitDomain = z.infer<typeof v2GitDomainSchema>;
 type V2SessionWire = z.infer<typeof v2SessionSchema>;
@@ -376,6 +442,77 @@ class GitDomainResolver {
 // Route
 // ---------------------------------------------------------------------------
 
+/**
+ * Run one `:archive` / `:restore` batch: live sessions through the full
+ * `ISessionLifecycleService` chain, cold sessions through the direct cold
+ * patch (no materialization); per-item failures fold into the result list
+ * in input order. Ends with a single shared mirror drain.
+ */
+async function runBatchArchive(
+  core: Scope,
+  action: 'archive' | 'restore',
+  rawIds: readonly string[],
+  requestId: string,
+  reply: { send(payload: unknown): unknown },
+): Promise<void> {
+  const archived = action === 'archive';
+  const ids = [...new Set(rawIds)];
+  const results: (V2BatchItemResult | undefined)[] = ids.map(() => undefined);
+
+  // Per-item work never throws: a failure folds into its own result and
+  // the rest of the batch still runs.
+  const applyOne = async (id: string): Promise<V2BatchItemResult> => {
+    try {
+      const liveHandler = liveHandlerForSession(core.accessor, id);
+      if (liveHandler !== undefined) {
+        const lifecycle = liveHandler.accessor.get(ISessionLifecycleService);
+        if (archived) await lifecycle.archive(id);
+        else await lifecycle.restore(id);
+        return { id, ok: true };
+      }
+      const outcome = await setColdSessionArchived(core.accessor, id, archived);
+      return outcome === 'updated'
+        ? { id, ok: true }
+        : {
+            id,
+            ok: false,
+            error: {
+              code: ErrorCode.SESSION_NOT_FOUND,
+              message: `session ${id} does not exist`,
+            },
+          };
+    } catch (error) {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  };
+
+  let next = 0;
+  const workers = Array.from({ length: Math.min(BATCH_CONCURRENCY, ids.length) }, async () => {
+    while (next < ids.length) {
+      const index = next++;
+      results[index] = await applyOne(ids[index] as string);
+    }
+  });
+  await Promise.all(workers);
+  // One drain for the whole batch — cold records queue in the mirror, and
+  // the hot path already drained itself per call.
+  await core.accessor.get(ISessionIndexMirror).drain();
+
+  // Every slot was assigned by the workers — no undefined entries remain.
+  const settled = results as V2BatchItemResult[];
+  const succeeded = settled.filter((result) => result.ok).length;
+  reply.send(
+    okEnvelope({ results: settled, succeeded, failed: settled.length - succeeded }, requestId),
+  );
+}
+
 export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope): void {
   const gitResolver = new GitDomainResolver(core);
 
@@ -551,4 +688,30 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
     listRoute.options,
     listRoute.handler as Parameters<V2SessionsRouteHost['get']>[2],
   );
+
+  for (const action of ['archive', 'restore'] as const) {
+    const batchRoute = defineRoute(
+      {
+        method: 'POST',
+        // `/sessions::${action}` in find-my-way serves the wire path
+        // `/sessions:archive` / `/sessions:restore` (single colon).
+        path: `/sessions::${action}`,
+        body: v2SessionsBatchBodySchema,
+        success: { data: v2SessionsBatchResultSchema },
+        errors: {
+          [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        },
+        description: `Batch-${action} sessions by id ({ ids }, ≤5000 unique). Per-item results — a missing session folds into its own item; cold sessions are patched without materialization.`,
+        tags: ['v2-sessions'],
+      },
+      async (req, reply) => {
+        await runBatchArchive(core, action, req.body.ids, req.id, reply);
+      },
+    );
+    app.post(
+      batchRoute.path,
+      batchRoute.options,
+      batchRoute.handler as Parameters<V2SessionsRouteHost['post']>[2],
+    );
+  }
 }

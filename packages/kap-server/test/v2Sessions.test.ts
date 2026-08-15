@@ -1,13 +1,16 @@
 /**
- * Scenario: `/api/v2/sessions` domain-grouped session list query.
+ * Scenario: `/api/v2/sessions` domain-grouped session list query + batch actions.
  * Responsibilities: envelope wire shape (business outcome in `code`: 40001
  * invalid params / 40922 page_token mismatch), filters, sort orders, opaque
- * page tokens, git domain dedup/cache/degradation, v2 auth error shape, and
- * the activity-status mapper.
- * Wiring: real kap-server; `ISessionIndex` / `IGitService` stubbed via DI seeds.
+ * page tokens, page-number mode + total, git domain dedup/cache/degradation,
+ * v2 auth error shape, the activity-status mapper, and the
+ * `POST /sessions:archive` / `:restore` batch endpoints (per-item results,
+ * live/cold split, cold path never materializes).
+ * Wiring: real kap-server; the list tests stub `ISessionIndex` / `IGitService`
+ * via DI seeds, the batch tests run real sessions in a temp home.
  * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/v2Sessions.test.ts`.
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,6 +18,15 @@ import {
   Error2,
   ErrorCodes,
   ISessionIndex,
+  ISessionLifecycleService,
+  IEventService,
+  IWorkspaceLifecycleService,
+  closeSessionById,
+  getLiveSessionById,
+  liveHandlerForSession,
+  resumeSessionById,
+  sessionDirOf,
+  type GlobalEvent,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -22,7 +34,7 @@ import {
   type FsPullRequest,
   IGitService,
 } from '@moonshot-ai/agent-core-v2/app/git/git';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { mapActivityStatus } from '../src/routes/v2/sessions';
@@ -489,6 +501,280 @@ describe('server /api/v2/sessions', () => {
       headers: authHeaders(server as RunningServer),
     } as never);
     expect(res.status).toBe(200);
+  });
+});
+
+describe('server /api/v2/sessions batch archive/restore', () => {
+  interface BatchItemWire {
+    id: string;
+    ok: boolean;
+    error?: { code: number; message: string };
+  }
+
+  interface BatchWire {
+    results: BatchItemWire[];
+    succeeded: number;
+    failed: number;
+  }
+
+  interface BatchEnvelopeWire {
+    code: number;
+    msg: string;
+    data: BatchWire | null;
+    request_id: string;
+    details?: { path: string; message: string }[];
+  }
+
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-batch-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+      home = undefined;
+    }
+  });
+
+  function core(): RunningServer['core']['accessor'] {
+    return (server as RunningServer).core.accessor;
+  }
+
+  /** Subscribe a bus-event collector; caller disposes the returned sub. */
+  function collectEvents(): { events: GlobalEvent[]; dispose(): void } {
+    const events: GlobalEvent[] = [];
+    const sub = core().get(IEventService).subscribe((event) => events.push(event));
+    return {
+      events,
+      dispose: () => {
+        sub.dispose();
+      },
+    };
+  }
+
+  async function createSession(): Promise<{ id: string; workspace_id: string }> {
+    const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metadata: { cwd: home } }),
+    });
+    const body = (await res.json()) as {
+      code: number;
+      data: { id: string; workspace_id: string };
+    };
+    expect(body.code).toBe(0);
+    return body.data;
+  }
+
+  async function postBatch(path: string, body?: unknown): Promise<BatchEnvelopeWire> {
+    const res = await authedFetch(server as RunningServer, base, path, {
+      method: 'POST',
+      headers: body !== undefined ? { 'content-type': 'application/json' } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as BatchEnvelopeWire;
+  }
+
+  async function readStateJson(workspaceId: string, id: string): Promise<Record<string, unknown>> {
+    const dir = sessionDirOf(home as string, `sessions/${workspaceId}`, id);
+    return JSON.parse(await readFile(join(dir, 'state.json'), 'utf-8')) as Record<string, unknown>;
+  }
+
+  async function indexArchived(id: string): Promise<boolean | undefined> {
+    return (await core().get(ISessionIndex).get(id))?.archived;
+  }
+
+  async function listedIds(query = ''): Promise<string[]> {
+    const res = await authedFetch(server as RunningServer, base, `/api/v2/sessions${query}`);
+    const body = (await res.json()) as { code: number; data: { items: { id: string }[] } };
+    expect(body.code).toBe(0);
+    return body.data.items.map((item) => item.id);
+  }
+
+  it('archives a cold session without materializing it or touching a workspace handler', async () => {
+    const created = await createSession();
+    await closeSessionById(core(), created.id);
+    expect(getLiveSessionById(core(), created.id)).toBeUndefined();
+
+    // Any materialization (resume, or the v1 single-archive route) must go
+    // through handlerFor; the cold path never touches it.
+    const handlerForSpy = vi.spyOn(core().get(IWorkspaceLifecycleService), 'handlerFor');
+    const { events, dispose } = collectEvents();
+    const before = await readStateJson(created.workspace_id, created.id);
+
+    const body = await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
+    expect(body.code).toBe(0);
+    expect(body.data).toMatchObject({
+      succeeded: 1,
+      failed: 0,
+      results: [{ id: created.id, ok: true }],
+    });
+
+    expect(handlerForSpy).not.toHaveBeenCalled();
+    expect(getLiveSessionById(core(), created.id)).toBeUndefined();
+
+    // The persisted metadata flips exactly like setArchived(true): archived
+    // (+ archivedAt), updatedAt and every other field preserved.
+    const after = await readStateJson(created.workspace_id, created.id);
+    expect(after['archived']).toBe(true);
+    expect(typeof after['archivedAt']).toBe('number');
+    expect(after['updatedAt']).toBe(before['updatedAt']);
+    expect(after['createdAt']).toBe(before['createdAt']);
+    expect(after['agents']).toEqual(before['agents']);
+
+    // The route drained the mirror once: the read model already answers
+    // archived, and the v2 list serves the session under meta.archived=true.
+    expect(await indexArchived(created.id)).toBe(true);
+    expect(await listedIds('?meta.archived=true')).toEqual([created.id]);
+    expect(await listedIds()).toEqual([]);
+
+    // Same bus event the live lifecycle publishes.
+    expect(events.filter((event) => event.type === 'event.session.archived')).toEqual([
+      { type: 'event.session.archived', payload: { sessionId: created.id } },
+    ]);
+    dispose();
+  });
+
+  it('archives a live session through the full lifecycle chain', async () => {
+    const created = await createSession();
+    const liveHandler = liveHandlerForSession(core(), created.id);
+    expect(liveHandler).toBeDefined();
+    const lifecycle = liveHandler?.accessor.get(ISessionLifecycleService);
+    const archiveSpy = vi.spyOn(lifecycle as ISessionLifecycleService, 'archive');
+    const resumeSpy = vi.spyOn(lifecycle as ISessionLifecycleService, 'resume');
+    const { events, dispose } = collectEvents();
+
+    const body = await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
+    expect(body.code).toBe(0);
+    expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
+
+    // The full chain ran: archive() (no resume needed for a live session)
+    // closed and disposed the session and published the event itself.
+    expect(archiveSpy).toHaveBeenCalledWith(created.id);
+    expect(resumeSpy).not.toHaveBeenCalled();
+    expect(getLiveSessionById(core(), created.id)).toBeUndefined();
+    expect(
+      events.some(
+        (event) =>
+          event.type === 'event.session.archived' &&
+          (event.payload as { sessionId: string }).sessionId === created.id,
+      ),
+    ).toBe(true);
+    expect(await indexArchived(created.id)).toBe(true);
+    dispose();
+  });
+
+  it('reports per-item results in input order for a live/cold/missing mixed batch', async () => {
+    const live = await createSession();
+    const cold = await createSession();
+    await closeSessionById(core(), cold.id);
+
+    const body = await postBatch('/api/v2/sessions:archive', {
+      ids: [live.id, cold.id, 'sess_missing'],
+    });
+    expect(body.code).toBe(0);
+    expect(body.data?.results).toEqual([
+      { id: live.id, ok: true },
+      { id: cold.id, ok: true },
+      {
+        id: 'sess_missing',
+        ok: false,
+        error: { code: 40401, message: 'session sess_missing does not exist' },
+      },
+    ]);
+    expect(body.data?.succeeded).toBe(2);
+    expect(body.data?.failed).toBe(1);
+    expect(await indexArchived(live.id)).toBe(true);
+    expect(await indexArchived(cold.id)).toBe(true);
+  });
+
+  it('restores a cold session without materializing it and publishes no archived event', async () => {
+    const created = await createSession();
+    await closeSessionById(core(), created.id);
+    await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
+    expect(await indexArchived(created.id)).toBe(true);
+
+    const handlerForSpy = vi.spyOn(core().get(IWorkspaceLifecycleService), 'handlerFor');
+    const { events, dispose } = collectEvents();
+    const before = await readStateJson(created.workspace_id, created.id);
+
+    const body = await postBatch('/api/v2/sessions:restore', { ids: [created.id] });
+    expect(body.code).toBe(0);
+    expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
+
+    expect(handlerForSpy).not.toHaveBeenCalled();
+    expect(getLiveSessionById(core(), created.id)).toBeUndefined();
+
+    const after = await readStateJson(created.workspace_id, created.id);
+    expect(after['archived']).toBe(false);
+    expect('archivedAt' in after).toBe(false);
+    expect(after['updatedAt']).toBe(before['updatedAt']);
+
+    expect(await indexArchived(created.id)).toBe(false);
+    expect(await listedIds()).toEqual([created.id]);
+    // The live restore publishes nothing either — no event at all.
+    expect(events.filter((event) => event.type === 'event.session.archived')).toEqual([]);
+    dispose();
+  });
+
+  it('restores a live session through the lifecycle chain and keeps it live', async () => {
+    const created = await createSession();
+    await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
+    // Back to live-but-archived: resume materializes regardless of the flag.
+    expect(await resumeSessionById(core(), created.id)).toBeDefined();
+    const lifecycle = liveHandlerForSession(core(), created.id)?.accessor.get(
+      ISessionLifecycleService,
+    );
+    const restoreSpy = vi.spyOn(lifecycle as ISessionLifecycleService, 'restore');
+
+    const body = await postBatch('/api/v2/sessions:restore', { ids: [created.id] });
+    expect(body.code).toBe(0);
+    expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
+
+    expect(restoreSpy).toHaveBeenCalledWith(created.id);
+    expect(getLiveSessionById(core(), created.id)).toBeDefined();
+    expect(await indexArchived(created.id)).toBe(false);
+  });
+
+  it('validates the batch body: empty, missing, over the unique cap, duplicates', async () => {
+    for (const body of [{ ids: [] }, {}]) {
+      const rejected = await postBatch('/api/v2/sessions:archive', body);
+      expect(rejected.code).toBe(40001);
+      expect(rejected.data).toBeNull();
+    }
+
+    const tooMany = await postBatch('/api/v2/sessions:archive', {
+      ids: Array.from({ length: 5001 }, (_, i) => `sess_${i}`),
+    });
+    expect(tooMany.code).toBe(40001);
+
+    // Duplicates collapse before the cap; a repeated id runs once.
+    const deduped = await postBatch('/api/v2/sessions:archive', {
+      ids: Array.from({ length: 5001 }, () => 'sess_dup'),
+    });
+    expect(deduped.code).toBe(0);
+    expect(deduped.data?.results).toHaveLength(1);
+    expect(deduped.data?.results[0]?.ok).toBe(false);
+    expect(deduped.data?.results[0]?.error?.code).toBe(40401);
   });
 });
 
