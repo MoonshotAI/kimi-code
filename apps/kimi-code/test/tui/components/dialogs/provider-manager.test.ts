@@ -1,3 +1,8 @@
+/**
+ * Scenario: Provider Manager rendering and keyboard actions.
+ * Responsibilities: expose stable provider actions and dispatch public callbacks.
+ * Wiring: real component with callback spies; run with this file through Vitest.
+ */
 import type { ProviderConfig } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -25,6 +30,7 @@ function makeComponent(overrides: Partial<ProviderManagerOptions> = {}): Provide
   return new ProviderManagerComponent({
     providers: {} as Record<string, ProviderConfig>,
     onAdd: vi.fn(),
+    onRefresh: vi.fn(),
     onDeleteSource: vi.fn(),
     onClose: vi.fn(),
     ...overrides,
@@ -121,6 +127,19 @@ describe('ProviderManagerComponent', () => {
     expect(rendered(component)).toContain('[y/N]');
     component.handleInput('y');
     expect(onDeleteSource).toHaveBeenCalledWith(['acme']);
+  });
+
+  it('dispatches refresh when R arrives through the Kitty keyboard protocol', () => {
+    const onRefresh = vi.fn();
+    const component = makeComponent({ onRefresh });
+
+    component.handleInput(`${ESC}[114u`);
+
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it('advertises the R refresh shortcut in the header hint', () => {
+    expect(rendered(makeComponent())).toContain('R refresh');
   });
 
   it('closes on Esc', () => {
