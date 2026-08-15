@@ -8,12 +8,15 @@
 
      State-machine inputs are poked defensively via lib/riveInputs (anything
      the asset doesn't expose no-ops): 'light/dark' number follows the app
-     theme, 'hoverspace' boolean on hover, 'click_avator' trigger on click. -->
+     theme, 'hoverspace' boolean on hover, 'click_avator' trigger on click.
+     Once playing, lib/rivePlayback pauses the instance whenever the page is
+     hidden or the canvas scrolls out of the viewport, so the runtime's
+     per-frame render loop stops instead of holding the screen's refresh rate. -->
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useIsDark } from '@moonshot-ai/app-core';
 import rivUrl from '../assets/mascot/kimi_avatar_default.riv?url';
-import { fireTrigger, setInputValue, type RiveLike } from '@moonshot-ai/app-core/lib';
+import { bindRivePlayback, fireTrigger, setInputValue, type RiveLike } from '@moonshot-ai/app-core/lib';
 
 // Input names inside the asset (from its published strings).
 const THEME_INPUT = 'light/dark';
@@ -21,7 +24,8 @@ const CLICK_TRIGGER = 'click_avator';
 const HOVER_INPUT = 'hoverspace';
 
 type MascotRive = RiveLike & {
-  play: (stateMachine: string) => void;
+  play: (stateMachine?: string) => void;
+  pause: () => void;
   resizeDrawingSurfaceToCanvas: () => void;
   cleanup: () => void;
 };
@@ -31,6 +35,7 @@ const canvasRef = ref<HTMLCanvasElement | null>(null);
 const isDark = useIsDark();
 let rive: MascotRive | null = null;
 let teardown: (() => void) | null = null;
+let unbindPlayback: (() => void) | null = null;
 
 function applyTheme(): void {
   if (rive !== null) setInputValue(rive, THEME_INPUT, isDark.value ? 1 : 0);
@@ -65,6 +70,9 @@ onMounted(async () => {
           if (!canvasRef.value) return;
           applyTheme();
           instance.resizeDrawingSurfaceToCanvas(); // bitmap = CSS size × DPR
+          // Gate the frame loop on page visibility + viewport intersection
+          // (bound only now, once the instance is loaded and playing).
+          unbindPlayback = bindRivePlayback(instance, canvas);
           ready.value = true;
         });
       },
@@ -75,6 +83,8 @@ onMounted(async () => {
     const onResize = () => instance.resizeDrawingSurfaceToCanvas();
     window.addEventListener('resize', onResize);
     teardown = () => {
+      unbindPlayback?.();
+      unbindPlayback = null;
       stopThemeWatch();
       window.removeEventListener('resize', onResize);
       instance.cleanup();

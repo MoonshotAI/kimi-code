@@ -4,16 +4,21 @@
      with the app theme). The runtime+wasm (~2.3MB) are lazy dynamic imports
      kept out of the entry chunk; until they arrive — or permanently when
      they fail to load, or under reduced motion — the `fallback` slot shows
-     in their place. -->
+     in their place. Once playing, lib/rivePlayback pauses the instance
+     whenever the page is hidden or the canvas scrolls out of the viewport,
+     so the runtime's per-frame render loop stops instead of holding the
+     screen's refresh rate. -->
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useIsDark } from '@moonshot-ai/app-core';
 import rivUrl from '../assets/doodle/k3_doodle1.riv?url';
+import { bindRivePlayback } from '@moonshot-ai/app-core/lib';
 
 const ready = ref(false);
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const isDark = useIsDark();
 let teardown: (() => void) | null = null;
+let unbindPlayback: (() => void) | null = null;
 
 onMounted(async () => {
   // Reduced motion: don't even fetch the runtime, keep the fallback.
@@ -44,6 +49,9 @@ onMounted(async () => {
           if (!canvasRef.value) return;
           applyTheme();
           rive.resizeDrawingSurfaceToCanvas(); // bitmap = CSS size × DPR
+          // Gate the frame loop on page visibility + viewport intersection
+          // (bound only now, once the instance is loaded and playing).
+          unbindPlayback = bindRivePlayback(rive, canvas);
           ready.value = true;
         });
       },
@@ -60,6 +68,8 @@ onMounted(async () => {
     const onResize = () => rive.resizeDrawingSurfaceToCanvas();
     window.addEventListener('resize', onResize);
     teardown = () => {
+      unbindPlayback?.();
+      unbindPlayback = null;
       stopThemeWatch();
       window.removeEventListener('resize', onResize);
       rive.cleanup();

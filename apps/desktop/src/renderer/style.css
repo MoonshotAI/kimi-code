@@ -419,11 +419,18 @@ body {
   to { opacity: 1; transform: scale(1); }
 }
 
-/* ---- Reduced-motion: disable ALL entrance/micro animations ---- */
+/* ---- Reduced-motion: disable ALL entrance/micro animations. Iteration count
+   must drop to 1 too: an infinite animation at 0.001ms otherwise keeps
+   ticking forever (invisible but never idle). Pseudo-elements need their own
+   selectors — `*` alone never matches them, so pseudo animations (the running
+   dots' pulse rings) would keep running. ---- */
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.001ms !important;
     animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
 }

@@ -21,6 +21,7 @@ export * from './planUsage';
 export * from './providerForm';
 export * from './readOutput';
 export * from './riveInputs';
+export * from './rivePlayback';
 export * from './rootKey';
 export * from './searchHighlight';
 export * from './serverAuth';

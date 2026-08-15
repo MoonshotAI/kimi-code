@@ -54,10 +54,26 @@ const kind = computed(() => normalize(props.status));
 .kw-dot--suspended { background: var(--color-warning); }
 .kw-dot--running {
   background: var(--color-accent);
+  position: relative;
+}
+/* Expanding ring on a pseudo-element: transform/opacity run on the
+   compositor, unlike a box-shadow pulse which repaints on the main thread
+   every frame for every running row. Same 1.4s cadence as before: the ring
+   grows from the dot's edge to a 6px halo while fading out. */
+.kw-dot--running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
   animation: kw-dot-pulse 1.4s var(--ease-out) infinite;
 }
 @keyframes kw-dot-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 40%, transparent); }
-  100% { box-shadow: 0 0 0 6px transparent; }
+  0% { transform: scale(1); opacity: 1; }
+  /* 7px dot + 6px halo on each side ≈ 2.7× the dot's diameter. */
+  100% { transform: scale(2.7); opacity: 0; }
 }
+/* No component-level reduced-motion override: the apps' global rule now
+   covers ::before/::after and caps this ring to a single 0.001ms iteration,
+   same as every other pseudo-element animation. */
 </style>
