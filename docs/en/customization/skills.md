@@ -44,7 +44,6 @@ Please handle code according to the following guidelines:
 | `type` | Skill type: `prompt` (default), `inline` (same semantics as `prompt`), `flow` (manual invocation only; not available for automatic model invocation). Other values are skipped |
 | `whenToUse` | Description of when the Skill should be triggered. Also accepts `when-to-use` and `when_to_use` |
 | `disableModelInvocation` | When set to `true`, prevents the model from invoking this Skill automatically. Also accepts `disable-model-invocation` and `disable_model_invocation` |
-| `allowActivationWhileBusy` | When set to `true`, a slash command for this Skill entered while the agent is busy takes effect immediately (steered into the running turn) instead of queueing. Also accepts `allow-activation-while-busy` and `allow_activation_while_busy` |
 | `arguments` | List of named parameters; can be written as a string array or a whitespace-separated string (e.g., `arguments: target mode`). Once declared, parameters can be read in the body with `$<name>` |
 
 ::: warning Note

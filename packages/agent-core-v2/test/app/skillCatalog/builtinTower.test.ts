@@ -28,10 +28,6 @@ describe('builtin skill: tower', () => {
     expect(TOWER_SKILL.metadata.disableModelInvocation).toBe(true);
   });
 
-  it('opts into busy activation (the tower coordinates a running turn)', () => {
-    expect(TOWER_SKILL.metadata.allowActivationWhileBusy).toBe(true);
-  });
-
   it('ships enabled for every product (not gated by the product-skills switch)', () => {
     expect(TOWER_SKILL.productSpecific).not.toBe(true);
     // Registered through the feature-authored registry (import = register),

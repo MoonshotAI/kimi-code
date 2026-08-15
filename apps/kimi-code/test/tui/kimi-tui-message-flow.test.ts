@@ -2584,41 +2584,13 @@ command = "vim"
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
   });
 
-  it('fires a slash-skill activation immediately while a turn is streaming when the skill opts in (engine steers it in)', async () => {
+  it('queues a slash-skill activation while a turn is streaming (like any other input) and activates on drain', async () => {
     const session = makeSession({
       listSkills: vi.fn(async () => [
         {
           name: 'tower',
           description: 'multi-agent tower mode',
           path: 'builtin://tower',
-          source: 'builtin',
-          type: 'inline',
-          allowActivationWhileBusy: true,
-        },
-      ]),
-    });
-    const { driver } = await makeDriver(session);
-    await (
-      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
-    ).refreshSkillCommands(session);
-    driver.state.appState.streamingPhase = 'waiting';
-
-    driver.handleUserInput('/tower refactor auth and ui');
-
-    expect(session.activateSkill).toHaveBeenCalledWith('tower', 'refactor auth and ui');
-    expect(session.prompt).not.toHaveBeenCalled();
-    expect(driver.state.queuedMessages).toEqual([]);
-    // The live pane keeps belonging to the running turn — no fresh waiting phase.
-    expect(driver.state.appState.streamingPhase).toBe('waiting');
-  });
-
-  it('queues a slash-skill activation while a turn is streaming when the skill does not opt in', async () => {
-    const session = makeSession({
-      listSkills: vi.fn(async () => [
-        {
-          name: 'review',
-          description: 'review the current change',
-          path: 'builtin://review',
           source: 'builtin',
           type: 'inline',
         },
@@ -2631,16 +2603,16 @@ command = "vim"
     driver.state.appState.streamingPhase = 'waiting';
     harness.track.mockClear();
 
-    driver.handleUserInput('/review src/auth');
+    driver.handleUserInput('/tower refactor auth and ui');
 
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([
       {
-        text: '/review src/auth',
+        text: '/tower refactor auth and ui',
         agentId: 'main',
         mode: 'skill',
-        skillName: 'review',
-        skillArgs: 'src/auth',
+        skillName: 'tower',
+        skillArgs: 'refactor auth and ui',
       },
     ]);
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
@@ -2651,7 +2623,7 @@ command = "vim"
     driver.state.queuedMessages = [];
     driver.sendQueuedMessage(session, queued);
 
-    expect(session.activateSkill).toHaveBeenCalledWith('review', 'src/auth');
+    expect(session.activateSkill).toHaveBeenCalledWith('tower', 'refactor auth and ui');
   });
 
   it('queues a slash-skill activation while compacting and activates it on drain', async () => {

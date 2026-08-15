@@ -4,14 +4,16 @@
  * Resolves skills from the session catalog, renders the activation prompt,
  * records the activation as a `skill.activate` fact through `wire.dispatch`
  * (a stateless, identity-apply Op), derives the `skill.activated` event
- * through the Op's `toEvent`, drives user-slash activations into a new turn via
- * `prompt` (attachment parts from the caller ride the same user message after
- * the rendered prompt), settles `{turn_id}` for the caller, persists the
- * derived title/lastPrompt through `sessionMetadata` for the main agent only
- * (publishing the live update through `event`), and reports `skill_invoked` /
- * `flow_invoked` through `telemetry`. `wire.replay` reapplies the fact as a
- * no-op, so neither the event nor telemetry fires on resume (matching the
- * former `restoring` guard). Bound at Agent scope.
+ * through the Op's `toEvent`, and delivers user-slash activations through
+ * `prompt.inject` — steered into the running turn when one is active,
+ * launched as a fresh turn when idle, exactly the queue/steer equivalence of
+ * plain user input (attachment parts from the caller ride the same user
+ * message after the rendered prompt). It settles `{turn_id}` for the caller,
+ * persists the derived title/lastPrompt through `sessionMetadata` for the
+ * main agent only (publishing the live update through `event`), and reports
+ * `skill_invoked` / `flow_invoked` through `telemetry`. `wire.replay`
+ * reapplies the fact as a no-op, so neither the event nor telemetry fires on
+ * resume (matching the former `restoring` guard). Bound at Agent scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -28,7 +30,7 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCatalog/types';
 import { IAgentPromptService, type PromptLaunchResult } from '#/agent/prompt/prompt';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { Turn } from '#/agent/loop/loop';
+import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { IWireService } from '#/wire/wire';
 import { IAgentSkillService, type SkillActivationInput } from './skill';
 import { skillActivate } from './skillOps';
@@ -45,6 +47,7 @@ export class AgentSkillService extends Service implements IAgentSkillService {
   constructor(
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -136,6 +139,13 @@ export class AgentSkillService extends Service implements IAgentSkillService {
       toolCalls: [],
       origin,
     };
+    // Plain-input equivalence, no opt-in: an activation that arrives while a
+    // turn is running steers into it at the next step boundary (the
+    // skill_activation origin rides the `turn.steer` record); with no running
+    // turn it queues as a fresh prompt turn exactly like normal input.
+    if (this.loop.status().state === 'running') {
+      return this.prompt.inject(message);
+    }
     return (await this.prompt.enqueue({ message })).launched;
   }
 

@@ -1816,10 +1816,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * keeps v1's semantics: validate first (`skill.not_found` /
    * `skill.type_unsupported` reject synchronously), then render the skill
    * prompt and launch a turn with it. The engine updates title/lastPrompt for
-   * the MAIN agent only, matching v1's session layer. Busy-turn gap vs v1,
-   * pinned in the migration tracker: v1 drops
-   * the activation into an error event while a turn runs; v2's activate
-   * awaits the queued prompt's launch.
+   * the MAIN agent only, matching v1's session layer. Busy-turn behavior now
+   * matches v1 too: the activation steers into the running turn at the next
+   * step boundary (v1's `SkillManager.recordActivation` steer; v2 queues a
+   * fresh prompt turn only when idle).
    */
   override async activateSkill(input: ActivateSkillRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);

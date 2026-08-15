@@ -1,14 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createControlledPromise } from '@antfu/utils';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { summarizeSkill } from '#/app/skillCatalog/types';
+import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -26,6 +29,14 @@ import type { Turn } from '#/agent/loop/loop';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from '../../app/skillCatalog/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
+import {
+  createTestAgent,
+  InMemoryWireRecordPersistence,
+  skillServices,
+  type TestAgentContext,
+} from '../../harness';
+
+type GenerateFn = typeof kosongGenerate;
 
 const COMMIT_SKILL = stubSkill('commit', {
   description: 'commit changes',
@@ -71,8 +82,12 @@ describe('AgentSkillService', () => {
       additionalServices: (reg) => {
         reg.definePartialInstance(IAgentPromptService, {
           enqueue: ({ message }: { message: ContextMessage }) => { prompted.push(message); return Promise.resolve({ launched: Promise.resolve(fakeTurn()) } as never); },
+          inject: (message: ContextMessage) => { prompted.push(message); return Promise.resolve(fakeTurn()); },
           retry: () => Promise.resolve(undefined),
           clear: () => {},
+        });
+        reg.definePartialInstance(IAgentLoopService, {
+          status: () => ({ state: 'idle', activeTurnId: undefined, pendingTurnIds: [], hasPendingRequests: false, activeTraceId: undefined }),
         });
         registerTestAgentWireServices(reg, 'wire/skill-test');
         reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
@@ -170,8 +185,12 @@ describe('SkillTool', () => {
       additionalServices: (reg) => {
         reg.definePartialInstance(IAgentPromptService, {
           enqueue: ({ message }: { message: ContextMessage }) => { prompted.push(message); return Promise.resolve({ launched: Promise.resolve(fakeTurn()) } as never); },
+          inject: (message: ContextMessage) => { prompted.push(message); return Promise.resolve(fakeTurn()); },
           retry: () => Promise.resolve(undefined),
           clear: () => {},
+        });
+        reg.definePartialInstance(IAgentLoopService, {
+          status: () => ({ state: 'idle', activeTurnId: undefined, pendingTurnIds: [], hasPendingRequests: false, activeTraceId: undefined }),
         });
         registerTestAgentWireServices(reg, 'wire/skill-test');
         reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
@@ -353,5 +372,96 @@ describe('SkillTool', () => {
       ),
     ).rejects.toBeInstanceOf(NestedSkillTooDeepError);
     expect(prompted).toHaveLength(0);
+  });
+});
+
+
+/**
+ * Busy-delivery semantics (harness): a user-slash activation arriving while a
+ * turn is running steers into that turn at the next step boundary (a
+ * `turn.steer` record carrying the skill_activation origin); with no active
+ * turn it launches a fresh one (`turn.prompt`). This is the plain-input
+ * queue/steer equivalence — every skill behaves the same, no opt-in.
+ */
+describe('AgentSkillService busy delivery (harness)', () => {
+  let ctx: TestAgentContext;
+
+  afterEach(async () => {
+    await ctx.dispose();
+  });
+
+  it('steers the activation into the running turn and launches a new one when idle', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(
+      stubSkill('tower', {
+        content: 'Tower mission: $ARGUMENTS',
+        metadata: {},
+      }),
+    );
+
+    const gate = createControlledPromise<void>();
+    let generateCalls = 0;
+    const generate: GenerateFn = async (_chat, _systemPrompt, _tools, _history, callbacks, options) => {
+      generateCalls += 1;
+      const n = generateCalls;
+      options?.onRequestStart?.();
+      // Hold turn 1 open so the first activation arrives while it is running.
+      if (n === 1) await gate;
+      options?.signal?.throwIfAborted();
+      const text = `response-${String(n)}`;
+      await callbacks?.onMessagePart?.({ type: 'text', text });
+      options?.onStreamEnd?.();
+      return {
+        id: `mock-${String(n)}`,
+        message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+        traceId: null,
+      };
+    };
+
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent(skillServices(catalog), { generate, persistence });
+
+    const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
+    await vi.waitFor(() => {
+      expect(generateCalls).toBe(1);
+    });
+
+    // Busy: the activation steers into turn 1 — resolves without waiting for
+    // the turn to end, and starts no new turn.
+    const busyActivation = ctx.get(IAgentSkillService).activate({ name: 'tower', args: 'mission-1' });
+    const busyResult = await busyActivation;
+    expect(busyResult.turn_id).toBe(0);
+    expect(generateCalls).toBe(1);
+
+    gate.resolve();
+    await promptPromise;
+    await ctx.untilTurnEnd();
+
+    // Idle: the next activation launches a fresh turn.
+    const idleResult = await ctx.get(IAgentSkillService).activate({ name: 'tower', args: 'mission-2' });
+    expect(idleResult.turn_id).toBe(1);
+    await ctx.untilTurnEnd();
+    // Turn 1 runs a second step to react to the steered activation; the idle
+    // activation's turn is the third generate call.
+    expect(generateCalls).toBe(3);
+
+    // Both activations landed in context, in order, with their origin.
+    const activations = ctx
+      .contextData()
+      .history.filter((m) => m.role === 'user' && m.origin?.kind === 'skill_activation');
+    expect(activations.map((m) => (m.origin?.kind === 'skill_activation' ? m.origin.skillArgs : ''))).toEqual([
+      'mission-1',
+      'mission-2',
+    ]);
+
+    // The wire log shows one steer (busy) and two prompts (initial + idle).
+    const types = persistence.records.map((record) => record.type);
+    expect(types.filter((type) => type === 'turn.prompt')).toHaveLength(2);
+    expect(types.filter((type) => type === 'turn.steer')).toHaveLength(1);
+    const steer = persistence.records.find((record) => record.type === 'turn.steer');
+    expect(steer).toMatchObject({ origin: { kind: 'skill_activation', skillArgs: 'mission-1' } });
   });
 });

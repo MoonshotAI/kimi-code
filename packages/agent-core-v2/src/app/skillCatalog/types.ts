@@ -10,12 +10,6 @@
  * `root-skill-only` marks the plugin manifest root SKILL.md fallback, where
  * the root is a single skill bundle and sibling docs like CHANGELOG.md must
  * not be mistaken for flat skills.
- *
- * `allowActivationWhileBusy` is a frontmatter opt-in (consumed by clients such
- * as the TUI, not by the engine): a slash activation entered while a turn is
- * running may steer into the running turn instead of queueing behind it.
- * Reserve it for coordination-style skills (e.g. `tower`) whose whole point is
- * mid-turn intervention.
  */
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
@@ -26,7 +20,6 @@ export interface SkillMetadata {
   readonly type?: string | undefined;
   readonly whenToUse?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
-  readonly allowActivationWhileBusy?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;
   readonly safe?: boolean | undefined;
   readonly arguments?: readonly unknown[] | string | undefined;
@@ -54,7 +47,6 @@ export interface SkillSummary {
   readonly source: SkillSource;
   readonly type?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
-  readonly allowActivationWhileBusy?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;
 }
 
@@ -115,7 +107,6 @@ export function summarizeSkill(skill: SkillDefinition): SkillSummary {
     source: skill.source,
     type: skill.metadata.type,
     disableModelInvocation: skill.metadata.disableModelInvocation,
-    allowActivationWhileBusy: skill.metadata.allowActivationWhileBusy,
     isSubSkill: skill.metadata.isSubSkill,
   };
 }

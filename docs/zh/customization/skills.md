@@ -44,7 +44,6 @@ arguments:
 | `type` | Skill 类型：`prompt`（默认）、`inline`（与 `prompt` 语义相同）、`flow`（只支持手动调用，不支持模型自动调用）。其他值会被跳过 |
 | `whenToUse` | 触发场景描述。也接受 `when-to-use`、`when_to_use` 写法 |
 | `disableModelInvocation` | 设为 `true` 时禁止模型自动调用此 Skill。也接受 `disable-model-invocation`、`disable_model_invocation` 写法 |
-| `allowActivationWhileBusy` | 设为 `true` 时，agent 运行中输入此 Skill 的斜杠命令会立即生效（注入正在运行的回合），而不是排队等待。也接受 `allow-activation-while-busy`、`allow_activation_while_busy` 写法 |
 | `arguments` | 命名参数列表，可写成字符串数组或空白分隔的字符串（如 `arguments: target mode`）。声明后，正文可用 `$<name>` 读取参数 |
 
 ::: warning 注意

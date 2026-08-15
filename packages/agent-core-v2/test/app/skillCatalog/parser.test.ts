@@ -25,11 +25,10 @@ describe('parseSkillText', () => {
       skillMdPath: '/skills/x/SKILL.md',
       skillDirName: 'x',
       source: 'user',
-      text: '---\nname: x\ndescription: d\nwhen-to-use: when X\ndisable_model_invocation: true\nallow-activation-while-busy: true\n---\nbody',
+      text: '---\nname: x\ndescription: d\nwhen-to-use: when X\ndisable_model_invocation: true\n---\nbody',
     });
     expect(skill.metadata.whenToUse).toBe('when X');
     expect(skill.metadata.disableModelInvocation).toBe(true);
-    expect(skill.metadata.allowActivationWhileBusy).toBe(true);
   });
 
   it('throws when a directory skill misses a required field', () => {

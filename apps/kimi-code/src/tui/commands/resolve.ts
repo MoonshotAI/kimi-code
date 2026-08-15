@@ -85,7 +85,8 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
   if (skillName !== undefined) {
     // Skill activations are never blocked by a busy session: the TUI queues
     // them behind the running turn exactly like normal messages (see
-    // sendSkillActivation), so commands like /tower can be issued any time.
+    // sendSkillActivation), and Ctrl-S steers them as real activations, so
+    // commands like /tower can be issued any time.
     return {
       kind: 'skill',
       commandName: parsed.name,

@@ -3,9 +3,10 @@
  *
  * `SkillActivationInput` carries the slash name and raw args, plus optional
  * edge-resolved attachment parts (`content`) that the activation appends after
- * the rendered skill prompt in its user message. `IAgentSkillService` starts
- * the activation turn (`activate`) and records model-tool activations without
- * a turn (`recordModelToolActivation`). Bound at Agent scope.
+ * the rendered skill prompt in its user message. `IAgentSkillService`
+ * delivers activations (`activate` — steered into the running turn when busy,
+ * launched as a fresh turn when idle) and records model-tool activations
+ * without a turn (`recordModelToolActivation`). Bound at Agent scope.
  */
 
 import { createDecorator } from "#/_base/di/instantiation";

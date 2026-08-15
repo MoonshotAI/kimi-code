@@ -366,3 +366,65 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
     expect(handlePlanToggle).not.toHaveBeenCalled();
   });
 });
+
+
+/**
+ * Ctrl-S steering of the TUI queue: plain-text items steer as messages,
+ * slash-skill items fire as real activations into the running turn (never as
+ * literal text), bash items stay queued — all in queue order.
+ */
+describe('EditorKeyboardController Ctrl-S steering', () => {
+  it('steers text as a message, skill items as activations, and keeps bash queued', () => {
+    const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
+      setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
+      setInputMode: vi.fn() as unknown as (...args: never[]) => unknown,
+      getText: vi.fn(() => '') as unknown as (...args: never[]) => unknown,
+      setText: vi.fn() as unknown as (...args: never[]) => unknown,
+      inputMode: 'prompt' as unknown as (...args: never[]) => unknown,
+    };
+    const steerMessage = vi.fn();
+    const steerSkillActivation = vi.fn();
+    const updateQueueDisplay = vi.fn();
+    const session = { id: 'ses-1' };
+    const host = {
+      state: {
+        editor,
+        queuedMessages: [
+          { text: 'queued text', agentId: 'main' },
+          { text: '/tower status', agentId: 'main', mode: 'skill', skillName: 'tower', skillArgs: 'status' },
+          { text: '!ls', agentId: 'main', mode: 'bash' },
+        ],
+        appState: {
+          streamingPhase: 'waiting',
+          isCompacting: false,
+          model: 'mock-model',
+        },
+        ui: { requestRender: vi.fn() },
+      },
+      session,
+      steerMessage,
+      steerSkillActivation,
+      updateQueueDisplay,
+      validateMediaCapabilities: vi.fn(() => true),
+      showError: vi.fn(),
+      track: vi.fn(),
+    } as unknown as EditorKeyboardHost;
+
+    const controller = new EditorKeyboardController(
+      host,
+      undefined as unknown as ImageAttachmentStore,
+    );
+    controller.install();
+
+    const handler = editor['onCtrlS'];
+    expect(handler).toBeDefined();
+    (handler as () => void)();
+
+    expect(steerMessage).toHaveBeenCalledWith(session, [
+      { text: 'queued text', parts: undefined, imageAttachmentIds: undefined },
+    ]);
+    expect(steerSkillActivation).toHaveBeenCalledWith(session, 'tower', 'status');
+    expect(host.state.queuedMessages).toEqual([{ text: '!ls', agentId: 'main', mode: 'bash' }]);
+    expect(updateQueueDisplay).toHaveBeenCalled();
+  });
+});

@@ -2,7 +2,6 @@ import type {
   ExportSessionManifest,
   ResumeSessionResult,
   ShellEnvironment,
-  SkillSummary as AgentCoreSkillSummary,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
@@ -66,6 +65,7 @@ export type {
   ResumedAgentState,
   ServicesConfig,
   ShellEnvironment,
+  SkillSummary,
   ThinkingConfig,
   ToolInfo,
   GlobalMcpServerConfig as McpServerConfig,
@@ -73,16 +73,6 @@ export type {
 } from '@moonshot-ai/agent-core';
 
 export type { KimiHostIdentity, OAuthRefreshOutcome };
-
-/**
- * SDK-surface skill summary. Extends the v1 engine's type with
- * `allowActivationWhileBusy` (a v2-era frontmatter opt-in consumed by clients
- * such as the TUI) so the field is typed here instead of in the deprecated
- * `@moonshot-ai/agent-core` package. v1-backed sessions simply never set it.
- */
-export interface SkillSummary extends AgentCoreSkillSummary {
-  readonly allowActivationWhileBusy?: boolean | undefined;
-}
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
 export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
 // Contributed commands are an agent-core-v2 seam; the type is re-exported

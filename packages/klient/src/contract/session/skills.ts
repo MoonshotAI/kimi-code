@@ -17,7 +17,6 @@ export const skillSummarySchema = z.object({
   source: z.enum(['project', 'user', 'extra', 'builtin']),
   type: z.string().optional(),
   disableModelInvocation: z.boolean().optional(),
-  allowActivationWhileBusy: z.boolean().optional(),
   isSubSkill: z.boolean().optional(),
 });
 

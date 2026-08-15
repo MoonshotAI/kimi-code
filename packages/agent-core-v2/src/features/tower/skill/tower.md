@@ -2,7 +2,6 @@
 name: tower
 description: Orchestrate multiple agents iterating on one repo in parallel — you act as the unique control tower, spawn worker agents into their own git worktrees, and coordinate through code-enforced Tower tools (inbox/findings/reviews/merge gate/activity log). Use when the user runs /tower.
 disable-model-invocation: true
-allow-activation-while-busy: true
 ---
 
 # Tower mode (tower)

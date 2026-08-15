@@ -1,0 +1,87 @@
+{
+  "width": 400,
+  "height": 618,
+  "weight_exp": 1.5,
+  "breath": {
+    "amp": 0.0,
+    "period": 3.2,
+    "anchor_y": 596
+  },
+  "order": [
+    "collar",
+    "hem_l",
+    "hem_r",
+    "hair_l",
+    "hair_r",
+    "tassel"
+  ],
+  "layers": {
+    "collar": {
+      "x": 103,
+      "y": 101,
+      "w": 195,
+      "h": 101,
+      "amp_x": 0.0,
+      "amp_y": 0.0,
+      "period": 3.2,
+      "lag": 0.08,
+      "edge": "uniform",
+      "curve": "breath"
+    },
+    "hem_l": {
+      "x": 75,
+      "y": 321,
+      "w": 87,
+      "h": 105,
+      "amp_x": 2.2,
+      "amp_y": 0.0,
+      "period": 1.0,
+      "phase": 0.6,
+      "edge": "bottom"
+    },
+    "hem_r": {
+      "x": 188,
+      "y": 320,
+      "w": 126,
+      "h": 107,
+      "amp_x": 2.2,
+      "amp_y": 0.0,
+      "period": 1.0,
+      "phase": 2.6,
+      "edge": "bottom"
+    },
+    "hair_l": {
+      "x": 129,
+      "y": 41,
+      "w": 53,
+      "h": 157,
+      "amp_x": 0.0,
+      "amp_y": 0.0,
+      "period": 0.9,
+      "phase": 2.1,
+      "edge": "bottom"
+    },
+    "hair_r": {
+      "x": 246,
+      "y": 109,
+      "w": 84,
+      "h": 132,
+      "amp_x": 0.0,
+      "amp_y": 0.0,
+      "period": 1.0,
+      "phase": 4.0,
+      "edge": "bottom"
+    },
+    "tassel": {
+      "x": 313,
+      "y": 247,
+      "w": 46,
+      "h": 84,
+      "amp_x": 4.0,
+      "amp_y": 0.5,
+      "period": 1.1,
+      "phase": 1.2,
+      "edge": "bottom"
+    }
+  }
+}
