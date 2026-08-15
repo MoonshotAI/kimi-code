@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { detectInstallSource } from '#/cli/update/source';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
@@ -76,10 +77,19 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
     }
     // Stay in the source session: switching to the fork would close the
     // source, killing its in-flight turn and background tasks. The fork is
-    // an independent copy the user can switch to explicitly via /sessions.
-    host.showStatus(
-      `Session forked (${forkId}). Still in the original session; switch to the fork via /sessions.`,
-    );
+    // an independent copy the user can switch to explicitly via /sessions,
+    // or enter in a new terminal with `kimi -r <id>` — print the full command
+    // and copy it to the clipboard like the cross-cwd resume hint does.
+    const command = `kimi -r ${forkId}`;
+    const message =
+      `Session forked (${forkId}). Still in the original session; switch to the fork via /sessions.\n` +
+      `  To enter the fork in a new terminal, run: ${command}`;
+    try {
+      await copyTextToClipboard(command);
+      host.showStatus(`${message}\n  Command copied to clipboard`);
+    } catch {
+      host.showStatus(message);
+    }
   } catch (error) {
     const msg = formatErrorMessage(error);
     host.showError(`Failed to fork session: ${msg}`);

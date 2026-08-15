@@ -47,6 +47,7 @@ import {
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
 import { createFeedbackArchivePath } from '../../src/feedback/archive';
 import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
@@ -96,6 +97,14 @@ vi.mock('../../src/feedback/archive', async (importOriginal) => {
 // /feedback opens GitHub Issues in a browser when submission fails — stub it
 // out so the test suite never spawns a browser window.
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
+
+// /fork copies the resume command to the clipboard — stub it so tests never
+// touch a real clipboard and can assert the copied text.
+vi.mock('#/utils/clipboard/clipboard-text', () => ({
+  copyTextToClipboard: vi.fn(async () => {}),
+}));
+
+const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
 
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
@@ -6377,10 +6386,14 @@ command = "vim"
           id: 'ses-source',
           title: 'Fork: Source title',
         });
-        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+        const transcript = driver.state.transcriptContainer.render(120).join('\n');
+        expect(transcript).toContain(
           'Session forked (ses-fork). Still in the original session; switch to the fork via /sessions.',
         );
+        expect(transcript).toContain('To enter the fork in a new terminal, run: kimi -r ses-fork');
+        expect(transcript).toContain('Command copied to clipboard');
       });
+      expect(copyTextToClipboardMock).toHaveBeenCalledWith('kimi -r ses-fork');
       expect(driver.getCurrentSessionId()).toBe('ses-source');
       expect(source.close).not.toHaveBeenCalled();
       expect(forked.close).toHaveBeenCalledOnce();
@@ -6391,6 +6404,28 @@ command = "vim"
     } finally {
       process.title = originalTitle;
     }
+  });
+
+  it('still prints the fork resume command when the clipboard is unavailable', async () => {
+    copyTextToClipboardMock.mockRejectedValueOnce(new Error('no clipboard'));
+    const forked = makeSession({ id: 'ses-fork' });
+    const forkSession = vi.fn(async () => forked);
+    const { driver } = await makeDriver(makeSession({ id: 'ses-source' }), { forkSession });
+
+    driver.handleUserInput('/fork');
+
+    await vi.waitFor(() => {
+      const transcript = driver.state.transcriptContainer.render(120).join('\n');
+      expect(transcript).toContain(
+        'Session forked (ses-fork). Still in the original session; switch to the fork via /sessions.',
+      );
+      expect(transcript).toContain('To enter the fork in a new terminal, run: kimi -r ses-fork');
+    });
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith('kimi -r ses-fork');
+    expect(driver.state.transcriptContainer.render(120).join('\n')).not.toContain(
+      'Command copied to clipboard',
+    );
+    expect(driver.getCurrentSessionId()).toBe('ses-source');
   });
 
   it('keeps the current session when fork fails', async () => {
