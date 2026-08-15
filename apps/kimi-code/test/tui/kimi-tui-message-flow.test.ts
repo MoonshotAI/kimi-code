@@ -700,6 +700,48 @@ describe('KimiTUI message flow', () => {
     expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
+  it('rewrites media placeholders in leading combo arguments (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+
+    driver.handleUserInput(`/skill:review inspect ${attachment.placeholder} /skill:security`);
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalled();
+    });
+    const [input, skills] = (session.promptWithSkills as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [unknown, { name: string; args?: string }[]];
+    expect(input).toEqual([
+      { type: 'text', text: '/skill:review inspect ' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+      { type: 'text', text: ' /skill:security' },
+    ]);
+    expect(skills[0]!.name).toBe('review');
+    expect(skills[0]!.args).toContain('inspect');
+    expect(skills[0]!.args).not.toContain(attachment.placeholder);
+    expect(skills[1]).toEqual({ name: 'security' });
+  });
+
   it('scans inline skills in messages that start with an unknown slash token (v2 engine)', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
