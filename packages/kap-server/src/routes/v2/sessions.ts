@@ -31,10 +31,11 @@
  *
  * Sorting / filtering: the session index only serves `updatedAt desc,
  * id desc` keyset pages, so the two other sorts and the status /
- * updated_after / archived-only filters are applied at the edge after
- * draining the (workspace-, archive-) filtered set — the same edge pattern
- * as v1's unpaged `GET /api/v1/sessions`. All sorts share one comparator +
- * one cursor encoding, so every sort paginates identically.
+ * updated_after / updated_before / archived-only filters are applied at
+ * the edge after draining the (workspace-, archive-) filtered set — the
+ * same edge pattern as v1's unpaged `GET /api/v1/sessions`. All sorts
+ * share one comparator + one cursor encoding, so every sort paginates
+ * identically.
  */
 
 import { createHash } from 'node:crypto';
@@ -106,6 +107,7 @@ const v2SessionsListQuerySchema = z
     'workspace.id': repeatedParam(z.string().min(1)),
     'activity.status': repeatedParam(v2ActivityStatusSchema),
     'meta.updated_after': z.coerce.number().int().nonnegative().optional(),
+    'meta.updated_before': z.coerce.number().int().nonnegative().optional(),
     'meta.archived': z.enum(['true', 'false', 'all']).optional(),
     sort: v2SortSchema.optional(),
     include: z.string().optional(),
@@ -147,6 +149,7 @@ interface NormalizedQuery {
   readonly workspaceFilter?: readonly string[];
   readonly statuses?: readonly V2ActivityStatus[];
   readonly updatedAfter?: number;
+  readonly updatedBefore?: number;
   readonly archived: 'true' | 'false' | 'all';
   readonly sort: V2Sort;
   readonly includeGit: boolean;
@@ -262,6 +265,7 @@ function queryFingerprint(query: NormalizedQuery): string {
     query.workspaceFilter === undefined ? null : [...query.workspaceFilter].toSorted(),
     query.statuses === undefined ? null : [...query.statuses].toSorted(),
     query.updatedAfter ?? null,
+    query.updatedBefore ?? null,
     query.archived,
     query.sort,
     query.includeGit,
@@ -396,6 +400,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         workspaceFilter: asArray(raw['workspace.id']),
         statuses: asArray(raw['activity.status']),
         updatedAfter: raw['meta.updated_after'],
+        updatedBefore: raw['meta.updated_before'],
         archived: raw['meta.archived'] ?? 'false',
         sort: raw.sort ?? 'meta.updated_at_desc',
         includeGit: includeDomains(raw.include).includes('git'),
@@ -448,6 +453,9 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
       const filtered = page.items.filter((summary) => {
         if (query.archived === 'true' && !summary.archived) return false;
         if (query.updatedAfter !== undefined && summary.updatedAt < query.updatedAfter) {
+          return false;
+        }
+        if (query.updatedBefore !== undefined && summary.updatedAt > query.updatedBefore) {
           return false;
         }
         if (

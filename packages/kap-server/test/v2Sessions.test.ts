@@ -276,6 +276,34 @@ describe('server /api/v2/sessions', () => {
     expect(page.items.map((item) => item.id)).toEqual(['s1', 's2']);
   });
 
+  it('filters by meta.updated_before (inclusive), combined into a range', async () => {
+    const before = await getData('?meta.updated_before=4000');
+    expect(before.items.map((item) => item.id)).toEqual(['s2', 's3']);
+    expect(before.total).toBe(2);
+
+    const range = await getData('?meta.updated_after=3000&meta.updated_before=4000');
+    expect(range.items.map((item) => item.id)).toEqual(['s2', 's3']);
+
+    const bogus = await getError('?meta.updated_before=-1');
+    expect(bogus.code).toBe(40001);
+  });
+
+  it('binds meta.updated_before into the page_token fingerprint', async () => {
+    const page1 = await getData('?page_size=1&meta.updated_before=4500');
+    expect(page1.items.map((item) => item.id)).toEqual(['s2']);
+    expect(page1.has_more).toBe(true);
+
+    // Same conditions + token paginates on …
+    const page2 = await getData(
+      `?page_size=1&meta.updated_before=4500&page_token=${page1.next_page_token}`,
+    );
+    expect(page2.items.map((item) => item.id)).toEqual(['s3']);
+
+    // … but dropping the condition mid-pagination is a fingerprint flip.
+    const drifted = await getError(`?page_size=1&page_token=${page1.next_page_token}`);
+    expect(drifted.code).toBe(40922);
+  });
+
   it('filters by meta.archived (default false / true / all)', async () => {
     const only = await getData('?meta.archived=true');
     expect(only.items.map((item) => item.id)).toEqual(['s4']);
