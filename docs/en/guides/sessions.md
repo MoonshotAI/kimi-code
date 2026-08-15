@@ -87,6 +87,8 @@ To explore a new direction without disrupting the current conversation, use `/fo
 
 Forking does not switch you away: you stay in the original session and the conversation continues untouched. The fork is an independent copy you can switch to at any time using `/sessions`. A saved `/goal` is not copied to the fork. Start a new goal there if you want autonomous goal work.
 
+After forking, the CLI prints a ready-to-run `kimi --resume` command (also copied to the clipboard) so you can enter the fork directly from a new terminal process.
+
 ## Exporting a session
 
 Use `kimi export` to package a session as a ZIP file — useful for sharing, archiving, or filing a bug report:

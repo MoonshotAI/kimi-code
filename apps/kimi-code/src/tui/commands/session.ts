@@ -5,7 +5,9 @@ import { pathToFileURL } from 'node:url';
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { detectInstallSource } from '#/cli/update/source';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
+import { quoteShellArg } from '#/utils/shell-quote';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { isAbortError } from '../utils/errors';
@@ -76,9 +78,20 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
     }
     // Stay in the source session: switching to the fork would close the
     // source, killing its in-flight turn and background tasks. The fork is
-    // an independent copy the user can switch to explicitly via /sessions.
+    // an independent copy the user can switch to explicitly via /sessions,
+    // or enter from a new CLI process with the printed resume command.
+    const command = `cd ${quoteShellArg(host.state.appState.workDir)} && kimi --resume ${quoteShellArg(forkId)}`;
+    let clipboardNote: string;
+    try {
+      await copyTextToClipboard(command);
+      clipboardNote = 'Command copied to clipboard';
+    } catch {
+      clipboardNote = 'Failed to copy command to clipboard';
+    }
     host.showStatus(
-      `Session forked (${forkId}). Still in the original session; switch to the fork via /sessions.`,
+      `Session forked (${forkId}). Still in the original session; switch to the fork via /sessions.\n` +
+        `  To enter the fork in a new process, run: ${command}\n` +
+        `  ${clipboardNote}`,
     );
   } catch (error) {
     const msg = formatErrorMessage(error);
