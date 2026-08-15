@@ -2260,12 +2260,15 @@ export class Editor implements Component, Focusable {
 	}
 
 	// Whether the token being typed is an inline slash token (opt-in trigger):
-	// a "/" after whitespace mid-input followed only by token characters. The
+	// a "/" after whitespace mid-input, or a "/" opening a subsequent line —
+	// isSlashMenuAllowed confines the slash-command menu to the first line,
+	// while the inline trigger deliberately covers later lines too. The
 	// leading slash-command context is owned by isInSlashCommandContext.
 	private isInInlineSlashContext(textBeforeCursor: string): boolean {
-		if (!this.inlineSlashTrigger || !this.isSlashMenuAllowed()) return false;
+		if (!this.inlineSlashTrigger) return false;
 		if (this.isInSlashCommandContext(textBeforeCursor)) return false;
-		return /[ \t]\/[a-zA-Z0-9.\-_]*$/.test(textBeforeCursor);
+		if (/[ \t]\/[a-zA-Z0-9.\-_]*$/.test(textBeforeCursor)) return true;
+		return this.state.cursorLine > 0 && /^\/[a-zA-Z0-9.\-_]*$/.test(textBeforeCursor);
 	}
 
 	private isInSlashCommandContext(textBeforeCursor: string): boolean {
