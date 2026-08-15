@@ -77,6 +77,7 @@ function buildProviderManagerOptions(host: SlashCommandHost): ProviderManagerOpt
 }
 
 async function handleProviderManagerRefresh(host: SlashCommandHost): Promise<void> {
+  const managerAtRefreshStart = host.state.editorContainer.children[0];
   const spinner = host.showProgressSpinner('Refreshing provider models...');
   try {
     const result = await host.authFlow.refreshProviderModels();
@@ -92,7 +93,9 @@ async function handleProviderManagerRefresh(host: SlashCommandHost): Promise<voi
     spinner.stop({ ok: false, label: 'Provider refresh failed.' });
     throw error;
   } finally {
-    reopenProviderManager(host);
+    if (host.state.editorContainer.children[0] === managerAtRefreshStart) {
+      reopenProviderManager(host);
+    }
   }
 }
 
