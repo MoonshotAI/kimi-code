@@ -3162,6 +3162,30 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.isShowingAutocomplete(), true);
 		});
 
+		it("retriggers inline completion as token characters arrive with the slash's request in flight", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+					const match = /\/skill:\w*$/.exec(beforeCursor);
+					if (match === null) return null;
+					return {
+						items: [{ value: "skill:review", label: "skill:review" }],
+						prefix: match[0],
+					};
+				},
+				applyCompletion,
+			});
+
+			// The slash and its first letters land back-to-back, the way one
+			// stdin chunk delivers them: the slash's request is still in flight
+			// while the letters arrive with no autocomplete state yet.
+			for (const ch of "hello /skill:r") editor.handleInput(ch);
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
 		it("triggers for `/` at the start of a later line when inlineSlashTrigger is on", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
 			editor.setAutocompleteProvider(inlineProvider);

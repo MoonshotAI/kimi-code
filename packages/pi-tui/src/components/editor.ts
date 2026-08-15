@@ -1285,6 +1285,12 @@ export class Editor implements Component, Focusable {
 				else if (this.autocompleteTriggerPattern.test(textBeforeCursor)) {
 					this.tryTriggerAutocomplete();
 				}
+				// Check if we're typing an inline slash token (opt-in trigger):
+				// without this the slash's in-flight request goes stale as the
+				// token grows and no fresh request replaces it.
+				else if (this.isInInlineSlashContext(textBeforeCursor)) {
+					this.tryTriggerAutocomplete();
+				}
 			}
 		} else {
 			this.updateAutocomplete();
@@ -2251,6 +2257,15 @@ export class Editor implements Component, Focusable {
 
 		const charBeforeSlash = beforeCursor[beforeCursor.length - 2];
 		return charBeforeSlash === " " || charBeforeSlash === "\t";
+	}
+
+	// Whether the token being typed is an inline slash token (opt-in trigger):
+	// a "/" after whitespace mid-input followed only by token characters. The
+	// leading slash-command context is owned by isInSlashCommandContext.
+	private isInInlineSlashContext(textBeforeCursor: string): boolean {
+		if (!this.inlineSlashTrigger || !this.isSlashMenuAllowed()) return false;
+		if (this.isInSlashCommandContext(textBeforeCursor)) return false;
+		return /[ \t]\/[a-zA-Z0-9.\-_]*$/.test(textBeforeCursor);
 	}
 
 	private isInSlashCommandContext(textBeforeCursor: string): boolean {
