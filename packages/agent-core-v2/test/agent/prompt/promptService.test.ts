@@ -274,6 +274,35 @@ describe('AgentPromptService', () => {
     ).toBe(true);
   });
 
+  it('gates hook-blocked prompt images too', async () => {
+    const { prompt, context } = harness();
+    prompt.hooks.onBeforeSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
+    const avifUrl = `data:image/avif;base64,${Buffer.from([7, 8, 9]).toString('base64')}`;
+    const handle = await prompt.enqueue({
+      id: 'prompt-blocked-img',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'look' },
+          { type: 'image_url', imageUrl: { url: avifUrl } },
+          { type: 'image_url', imageUrl: { url: 'data:image/png,not-a-base64-payload' } },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
+
+    const appended = context.get();
+    expect(appended).toHaveLength(1);
+    expect(appended[0]?.id).toBe('prompt-blocked-img');
+    const parts = appended[0]!.content;
+    expect(parts.some((part) => part.type === 'image_url')).toBe(false);
+    expect(parts[0]).toEqual({ type: 'text', text: 'look' });
+    expect((parts[1] as { text: string }).text).toContain('image/avif');
+    expect((parts[2] as { text: string }).text).toContain('not a valid data URL');
+  });
+
   it('materializes daemon-ref media at steer intake', async () => {
     const { prompt, intake } = harness();
     const active = await prompt.enqueue({ message: message('active') });
