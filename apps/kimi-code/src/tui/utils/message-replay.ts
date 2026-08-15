@@ -24,6 +24,16 @@ import { nextTranscriptId } from './transcript-id';
 
 export const REPLAY_TURN_LIMIT = 10;
 
+/**
+ * Resume fetches one extra turn of records: the SDK trims the replay to the
+ * requested limit before returning it, and a trim that lands between a
+ * bundled prompt and the hook results recorded immediately before it would
+ * make them unrecoverable. The extra margin lets the TUI-side limiter
+ * (session-replay's preserveBundleHookResults) do the final cut without
+ * losing them.
+ */
+export const REPLAY_FETCH_TURN_LIMIT = REPLAY_TURN_LIMIT + 1;
+
 export interface ReplayRenderContext {
   turnIndex: number;
   stepIndex: number;
