@@ -761,6 +761,44 @@ describe('KimiTUI message flow', () => {
     ]);
   });
 
+  it('queues a leading-combo bundle while busy instead of rejecting it (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession();
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+
+    driver.handleUserInput('/skill:review check this /skill:security');
+
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({
+        text: '/skill:review check this /skill:security',
+        inlineSkillActivations: [
+          { skillName: 'review', args: 'check this /skill:security' },
+          { skillName: 'security' },
+        ],
+      }),
+    ]);
+  });
+
   it('does not append a user entry when the grouped submission is rejected (v2 engine)', async () => {
     const session = makeSession({
       id: 'ses-lazy',
@@ -924,6 +962,102 @@ describe('KimiTUI message flow', () => {
     ).toEqual([true, true]);
     expect(turns[2]!.entries.map((entry) => entry.kind)).toEqual(['skill_activation', 'user']);
     expect(turns[2]!.entries[1]!.content).toBe('please /commit');
+  });
+
+  it('keeps hook results recorded before the oldest retained bundle within the replay limit', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(session, {}, startupInput);
+    const plainTurn = (index: number) => [
+      {
+        type: 'message',
+        time: index * 2,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: `question ${index}` }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'message',
+        time: index * 2 + 1,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: `answer ${index}` }],
+          toolCalls: [],
+        },
+      },
+    ];
+    (session.getResumeState as ReturnType<typeof vi.fn>).mockReturnValue({
+      sessionMetadata: {},
+      agents: {
+        main: {
+          config: { modelCapabilities: { max_context_tokens: 100 }, modelAlias: 'k2' },
+          plan: null,
+          permission: { mode: 'manual' },
+          swarmMode: false,
+          context: { history: [], tokenCount: 0 },
+          background: [],
+          toolStore: {},
+          replay: [
+            ...plainTurn(0),
+            {
+              type: 'message',
+              time: 1,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'hook note' }],
+                toolCalls: [],
+                origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
+              },
+            },
+            {
+              type: 'message',
+              time: 2,
+              message: {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'review body' },
+                  { type: 'text', text: 'bundled question' },
+                ],
+                toolCalls: [],
+                origin: {
+                  kind: 'user',
+                  skillActivations: [{ activationId: 'act-1', skillName: 'review' }],
+                },
+              },
+            },
+            {
+              type: 'message',
+              time: 3,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'bundled answer' }],
+                toolCalls: [],
+              },
+            },
+            ...Array.from({ length: 9 }, (_, i) => plainTurn(i + 10)).flat(),
+          ],
+        },
+      },
+    });
+
+    const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
+    expect(replayed).toBe(true);
+
+    const entries = driver.state.transcriptEntries;
+    const hookIndex = entries.findIndex((entry) => entry.hookResult === true);
+    expect(hookIndex).toBeGreaterThan(-1);
+    expect(entries[hookIndex]!.content).toContain('hook note');
+    const contents = entries.map((entry) => entry.content);
+    expect(contents.indexOf('Activated skill: review')).toBeLessThan(hookIndex);
+    expect(contents.indexOf('bundled question')).toBeGreaterThan(hookIndex);
+    expect(contents).not.toContain('question 0');
   });
 
   it('appends the user entry after the skill cards for a bundled submission (v2 engine)', async () => {

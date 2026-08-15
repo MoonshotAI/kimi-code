@@ -1432,22 +1432,23 @@ export class KimiTUI {
     activations: readonly InlineSkillActivation[],
     extraction: ReturnType<typeof extractMediaAttachments>,
   ): Promise<void> {
-    const entries = this.state.transcriptEntries;
-    const entriesBefore = entries.length;
+    const knownEntryIds = new Set(this.state.transcriptEntries.map((entry) => entry.id));
     await session.promptWithSkills(
       extraction.hasMedia ? extraction.parts : text,
       activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
     );
     // The engine bundles the activations into the prompt's own message, and
     // the `skill.activated` events land synchronously during the call — so
-    // the cards just appended belong to this submission, and appending the
-    // user entry afterwards keeps the live transcript in the same order as a
-    // resumed replay (skill cards first, prompt last). Marking only happens
-    // once the submission was accepted: a rejected bundle leaves no cards and
-    // must not leave a local undo anchor the engine never recorded.
-    for (let i = entriesBefore; i < entries.length; i++) {
-      const entry = entries[i];
-      if (entry?.kind === 'skill_activation') {
+    // the cards appended for this submission are the skill_activation entries
+    // with fresh ids (the window trim may replace the entries array mid-call,
+    // so membership is decided by id, not by index into a captured array).
+    // Appending the user entry afterwards keeps the live transcript in the
+    // same order as a resumed replay (skill cards first, prompt last).
+    // Marking only happens once the submission was accepted: a rejected
+    // bundle leaves no cards and must not leave a local undo anchor the
+    // engine never recorded.
+    for (const entry of this.state.transcriptEntries) {
+      if (entry.kind === 'skill_activation' && !knownEntryIds.has(entry.id)) {
         entry.bundledWithPrompt = true;
       }
     }

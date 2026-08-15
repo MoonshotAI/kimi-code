@@ -83,6 +83,33 @@ function unescapeBashXml(text: string): string {
     .replaceAll('&amp;', '&');
 }
 
+/**
+ * Replay records within the turn limit, but never cut between a bundled
+ * prompt and the hook results recorded immediately before it: when the
+ * limiter's first retained record is a bundled prompt, the consecutive
+ * preceding hook results are pulled back into the window so the oldest
+ * visible bundle keeps its hook context.
+ */
+function preserveBundleHookResults(
+  replay: readonly AgentReplayRecord[],
+  maxTurns: number,
+): readonly AgentReplayRecord[] {
+  const limited = limitReplayRecordsByTurn(replay, maxTurns);
+  const first = limited[0];
+  if (first?.type !== 'message' || bundledSkillsFromOrigin(first.message.origin).length === 0) {
+    return limited;
+  }
+  const firstIndex = replay.indexOf(first);
+  if (firstIndex < 0) return limited;
+  let start = firstIndex;
+  for (;;) {
+    const candidate = replay[start - 1];
+    if (candidate?.type !== 'message' || candidate.message.origin?.kind !== 'hook_result') break;
+    start -= 1;
+  }
+  return start === firstIndex ? limited : [...replay.slice(start, firstIndex), ...limited];
+}
+
 export class SessionReplayRenderer {
   constructor(private readonly host: SessionReplayHost) {}
 
@@ -194,7 +221,7 @@ export class SessionReplayRenderer {
 
   private renderRecords(agent: ResumedAgentState): void {
     const context = createReplayRenderContext();
-    const records = [...limitReplayRecordsByTurn(agent.replay, REPLAY_TURN_LIMIT)];
+    const records = [...preserveBundleHookResults(agent.replay, REPLAY_TURN_LIMIT)];
     for (let i = 0; i < records.length; i++) {
       i = this.renderRecordWithBundleLookahead(context, records, i);
     }

@@ -248,12 +248,15 @@ export function dispatchInput(host: SlashCommandHost, text: string): void {
  * regular single-skill slash path.
  */
 function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean {
+  // The intent is parsed without the busy flags on purpose: a combo submits
+  // through sendInlineSkillUserInput, whose busy path queues the intact
+  // bundle — only genuine single-skill commands reject while busy.
   const intent = resolveSlashCommandInput({
     input: text,
     skillCommandMap: host.skillCommandMap,
     pluginCommandMap: host.pluginCommandMap,
-    isStreaming: host.state.appState.streamingPhase !== 'idle',
-    isCompacting: host.state.appState.isCompacting,
+    isStreaming: false,
+    isCompacting: false,
   });
   // An unrecognized slash token makes the whole input a plain message; scan
   // it for inline skills like any other plain prompt.
@@ -268,15 +271,6 @@ function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean
   const all = extractInlineSkillActivations(text, host.skillCommandMap, { includeLeading: true });
   if (all.length < 2) return false;
 
-  // Same gate as the plain skill slash command: never queue a slash command.
-  const busyReason = slashCommandBusyReason({
-    isStreaming: host.state.appState.streamingPhase !== 'idle',
-    isCompacting: host.state.appState.isCompacting,
-  });
-  if (busyReason !== undefined) {
-    host.showError(slashBusyMessage(intent.commandName, busyReason));
-    return true;
-  }
   if (host.state.appState.model.trim().length === 0) {
     host.showError(LLM_NOT_SET_MESSAGE);
     return true;
