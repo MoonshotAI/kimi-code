@@ -597,7 +597,7 @@ function createRuntimeReadStream(
   const release = (): void => {
     if (released) return;
     released = true;
-    void tracked.dispose();
+    tracked.dispose();
     runtimeFs.lease.dispose();
   };
   stream.once('end', release);
