@@ -29,6 +29,7 @@ import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';
+import type { AppState } from '../types';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
@@ -540,7 +541,12 @@ async function performModelSwitch(
     effectiveAlias,
     host.state.appState.availableModels[effectiveAlias],
   );
-  host.setAppState({ model: effectiveAlias, thinkingEffort: effectiveEffort });
+  const patch: Partial<AppState> = { model: effectiveAlias, thinkingEffort: effectiveEffort };
+  if (session === undefined) {
+    patch.maxContextTokens =
+      host.state.appState.availableModels[effectiveAlias]?.maxContextSize ?? 0;
+  }
+  host.setAppState(patch);
   if (session === undefined && runtimeChanged) {
     if (effectiveModelChanged) {
       host.track('model_switch', { model: effectiveAlias });
