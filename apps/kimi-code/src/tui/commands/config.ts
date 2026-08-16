@@ -543,8 +543,9 @@ async function performModelSwitch(
   );
   const patch: Partial<AppState> = { model: effectiveAlias, thinkingEffort: effectiveEffort };
   if (session === undefined) {
-    patch.maxContextTokens =
-      host.state.appState.availableModels[effectiveAlias]?.maxContextSize ?? 0;
+    const picked = host.state.appState.availableModels[effectiveAlias];
+    const effective = picked === undefined ? undefined : effectiveModelForHost(host, picked);
+    patch.maxContextTokens = effective?.maxInputSize ?? effective?.maxContextSize ?? 0;
   }
   host.setAppState(patch);
   if (session === undefined && runtimeChanged) {
