@@ -21,7 +21,10 @@
  * The Windows path downloads and runs the official `setup_windows.ps1`, so
  * its signature verification, rollback, and agent autostart stay upstream.
  * It selects a trusted PowerShell installation that satisfies the script's
- * command requirements before changing plugin wiring.
+ * command requirements before changing plugin wiring, probing `pwsh` installs
+ * found via `where.exe` and the MSIX WindowsApps alias when the standard
+ * locations fail, and pins PSModulePath to `$PSHOME` first so a PowerShell 7
+ * installation cannot shadow the cmdlets the installer needs.
  */
 
 import { constants } from 'node:fs';
@@ -59,7 +62,9 @@ const WINDOWS_INSTALLER_PROBE_TIMEOUT_MS = 10_000;
 const WINDOWS_INSTALL_TIMEOUT_MS = 180_000;
 const DEFAULT_WINDOWS_SYSTEM_ROOT = 'C:\\Windows';
 const DEFAULT_WINDOWS_PROGRAM_FILES = 'C:\\Program Files';
+const MAX_WINDOWS_POWERSHELL_CANDIDATES = 6;
 const WINDOWS_INSTALLER_PROBE_SCRIPT =
+  "$env:PSModulePath = (Join-Path $PSHOME 'Modules') + ';' + $env:PSModulePath; " +
   "$required = @('Get-FileHash', 'Expand-Archive', 'Get-AuthenticodeSignature', 'Get-CimInstance', 'Invoke-WebRequest', 'Invoke-RestMethod', 'ConvertFrom-Json', 'ConvertTo-Json'); " +
   '$missing = @($required | Where-Object { -not (Get-Command $_ -CommandType Cmdlet,Function -ErrorAction SilentlyContinue) }); ' +
   '$issues = @(); ' +
@@ -163,6 +168,7 @@ function powerShellStringLiteral(value: string): string {
 
 function powerShellSetupCommand(setupPath: string): string {
   return (
+    "$env:PSModulePath = (Join-Path $PSHOME 'Modules') + ';' + $env:PSModulePath; " +
     '$utf8 = New-Object System.Text.UTF8Encoding($false); ' +
     '[Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8; ' +
     `& ${powerShellStringLiteral(setupPath)}`
@@ -533,33 +539,76 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
   const supported = ctx.platform === 'win32' && ctx.arch === 'x64';
   const probeTimeoutMs = ctx.detectProbeTimeoutMs ?? DETECT_PROBE_TIMEOUT_MS;
   const installerProbeTimeoutMs =
-    ctx.detectProbeTimeoutMs ?? WINDOWS_INSTALLER_PROBE_TIMEOUT_MS;
+    ctx.installerProbeTimeoutMs ?? WINDOWS_INSTALLER_PROBE_TIMEOUT_MS;
   const installTimeoutMs = ctx.commandTimeoutMs ?? WINDOWS_INSTALL_TIMEOUT_MS;
   const powershellPath = windowsPowerShellPath();
   const powershell7Path = windowsPowerShell7Path();
 
+  async function discoverAdditionalPowerShellCandidates(): Promise<
+    Array<{ label: string; command: string }>
+  > {
+    const candidates: Array<{ label: string; command: string }> = [];
+    const seen = new Set<string>([powershellPath.toLowerCase(), powershell7Path.toLowerCase()]);
+    const add = (label: string, command: string): void => {
+      const normalized = command.trim().toLowerCase();
+      if (normalized.length === 0 || seen.has(normalized)) return;
+      seen.add(normalized);
+      candidates.push({ label, command: command.trim() });
+    };
+    const where = await runCommand(ctx.hostProcess, 'where.exe', ['pwsh'], {
+      timeout: installerProbeTimeoutMs,
+    }).catch(() => undefined);
+    if (where?.code === 0) {
+      for (const line of where.stdout.split(/\r?\n/)) {
+        add('PowerShell 7 (from PATH)', line);
+      }
+    }
+    const localAppData = process.env['LOCALAPPDATA'];
+    if (localAppData !== undefined && localAppData.length > 0) {
+      add(
+        'PowerShell 7 (WindowsApps alias)',
+        path.win32.join(localAppData, 'Microsoft', 'WindowsApps', 'pwsh.exe'),
+      );
+    }
+    return candidates.slice(0, MAX_WINDOWS_POWERSHELL_CANDIDATES - 2);
+  }
+
+  async function probeInstallerCandidate(
+    candidate: { label: string; command: string },
+    failures: string[],
+  ): Promise<string | undefined> {
+    try {
+      const result = await runCommand(
+        ctx.hostProcess,
+        candidate.command,
+        ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_INSTALLER_PROBE_SCRIPT],
+        { timeout: installerProbeTimeoutMs },
+      );
+      if (result.code === 0) return candidate.command;
+      failures.push(
+        `${candidate.label} (${candidate.command}): ${
+          result.stderr.trim() || result.stdout.trim() || `exit code ${result.code}`
+        }`,
+      );
+    } catch (error) {
+      failures.push(`${candidate.label} (${candidate.command}): ${errorMessage(error)}`);
+    }
+    return undefined;
+  }
+
   async function installerPowerShell(): Promise<string> {
     const failures: string[] = [];
-    for (const candidate of [
+    const hardcoded: Array<{ label: string; command: string }> = [
       { label: 'Windows PowerShell', command: powershellPath },
       { label: 'PowerShell 7', command: powershell7Path },
-    ]) {
-      try {
-        const result = await runCommand(
-          ctx.hostProcess,
-          candidate.command,
-          ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_INSTALLER_PROBE_SCRIPT],
-          { timeout: installerProbeTimeoutMs },
-        );
-        if (result.code === 0) return candidate.command;
-        failures.push(
-          `${candidate.label} (${candidate.command}): ${
-            result.stderr.trim() || result.stdout.trim() || `exit code ${result.code}`
-          }`,
-        );
-      } catch (error) {
-        failures.push(`${candidate.label} (${candidate.command}): ${errorMessage(error)}`);
-      }
+    ];
+    for (const candidate of hardcoded) {
+      const accepted = await probeInstallerCandidate(candidate, failures);
+      if (accepted !== undefined) return accepted;
+    }
+    for (const candidate of await discoverAdditionalPowerShellCandidates()) {
+      const accepted = await probeInstallerCandidate(candidate, failures);
+      if (accepted !== undefined) return accepted;
     }
     throw new Error(
       'Kimi Computer Use requires Windows PowerShell 5.1 or PowerShell 7 with the commands required by its official installer. ' +
@@ -567,7 +616,10 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     );
   }
 
-  async function runtimeStep(command: string): Promise<{
+  async function runtimeStep(
+    command: string,
+    timeoutMs = probeTimeoutMs,
+  ): Promise<{
     readonly step: CapabilityStep;
     readonly version?: string;
   }> {
@@ -577,7 +629,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         ctx.hostProcess,
         command,
         ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_DOCTOR_SCRIPT],
-        { timeout: probeTimeoutMs },
+        { timeout: timeoutMs },
       );
     } catch (error) {
       return { step: { id: 'runtime', state: 'failed', detail: errorMessage(error) } };
@@ -617,7 +669,13 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     if (systemRuntime.step.state !== 'failed') return systemRuntime;
 
     const fallbackRuntime = await runtimeStep(powershell7Path);
-    return fallbackRuntime.step.state === 'ok' ? fallbackRuntime : systemRuntime;
+    if (fallbackRuntime.step.state === 'ok') return fallbackRuntime;
+
+    for (const candidate of await discoverAdditionalPowerShellCandidates()) {
+      const runtime = await runtimeStep(candidate.command);
+      if (runtime.step.state === 'ok') return runtime;
+    }
+    return systemRuntime;
   }
 
   async function detect(): Promise<CapabilityDetectResult> {
@@ -704,7 +762,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
       }
 
-      const runtime = await runtimeStep(installPowerShell);
+      const runtime = await runtimeStep(installPowerShell, installerProbeTimeoutMs);
       if (runtime.step.state !== 'ok') {
         throw new Error(
           `kimi-cu Windows runtime is not ready after install: ${runtime.step.detail ?? runtime.step.state}`,
