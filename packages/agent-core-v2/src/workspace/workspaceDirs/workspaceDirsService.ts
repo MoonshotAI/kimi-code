@@ -19,7 +19,6 @@
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
 import { TimeoutTimer } from '#/_base/utils/timer';
@@ -216,10 +215,3 @@ function sameStringList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceDirs,
-  WorkspaceDirsService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceDirs',
-);

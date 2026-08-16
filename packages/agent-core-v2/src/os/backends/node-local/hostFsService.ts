@@ -17,8 +17,8 @@ import {
   stat as nodeStat,
   writeFile,
 } from 'node:fs/promises';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { decodeTextWithErrors, type TextDecodeErrors } from '#/_base/execEnv/decodeText';
 
 import { type HostDirEntry, type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -79,16 +79,17 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async readBytes(path: string, n?: number): Promise<Uint8Array> {
+  async readBytes(path: string, n?: number, offset = 0): Promise<Uint8Array> {
     try {
-      if (n === undefined) {
+      if (n === undefined && offset === 0) {
         const buf = await readFile(path);
         return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
       }
       const fh = await open(path, 'r');
       try {
-        const buf = Buffer.alloc(n);
-        const { bytesRead } = await fh.read(buf, 0, n, 0);
+        const length = n ?? Math.max(0, (await fh.stat()).size - offset);
+        const buf = Buffer.alloc(length);
+        const { bytesRead } = await fh.read(buf, 0, length, offset);
         return buf.subarray(0, bytesRead);
       } finally {
         await fh.close();

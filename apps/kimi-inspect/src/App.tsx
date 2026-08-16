@@ -12,18 +12,20 @@
  * `workspace` view is the workspace-scope counterpart
  * (`WorkspaceServicesView`, with a workspace picker on top); the
  * `bash` view is the full-width `IBashParserService` playground
- * (`BashParserView`); the `search` view is the full-width global message
- * search (`SearchView`) whose hits navigate back into the chat timeline.
+ * (`BashParserView`); the `di` view is the engine's Service × Effect × DI
+ * debug surface (`DiInspectionView`); the `search` view is the full-width
+ * global message search (`SearchView`) whose hits navigate back into the
+ * chat timeline.
  */
 
-import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
+import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { useEffect, useState } from 'react';
 
 import type { AuditTrail } from './audit/trail';
 import { AppServicesView } from './components/AppServicesView';
 import { BashParserView } from './components/BashParserView';
 import { ChatView, type ChatJump } from './components/ChatView';
+import { DiInspectionView } from './components/DiInspectionView';
 import { ModelCatalogView } from './components/ModelCatalogView';
 import { NavRail, type AppView } from './components/NavRail';
 import { RightPanel } from './components/RightPanel';
@@ -58,11 +60,10 @@ export function App() {
     setReady(false);
     setResumeError(null);
     klient
-      .core(ISessionIndex)
-      .get(sessionId)
-      .then((summary) => {
-        if (summary === undefined) throw new Error(`session ${sessionId} does not exist`);
-        return klient.workspace(summary.workspaceId).service(ISessionLifecycleService).resume(sessionId);
+      .core(ISessionManager)
+      .resume(sessionId)
+      .then((session) => {
+        if (session === undefined) throw new Error(`session ${sessionId} does not exist`);
       })
       .then(() => {
         if (!cancelled) setReady(true);
@@ -118,6 +119,8 @@ export function App() {
           <WorkspaceServicesView />
         ) : view === 'bash' ? (
           <BashParserView />
+        ) : view === 'di' ? (
+          <DiInspectionView />
         ) : view === 'models' ? (
           <ModelCatalogView
             onOpenSession={(id) => {

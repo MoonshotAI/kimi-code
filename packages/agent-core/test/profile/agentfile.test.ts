@@ -372,6 +372,33 @@ describe('SessionAgentProfileCatalog', () => {
     expect(c.delegatableSubagents('agent')).not.toHaveProperty('agent');
   });
 
+  it('keeps builtin profiles session-local when a caller rewrites them in place', async () => {
+    const { workDir, brandHome, osHome } = await makeLayout();
+
+    const first = catalog({ workDir, brandHomeDir: brandHome, osHomeDir: osHome });
+    await first.ready;
+    const firstCoder = first.get('coder');
+    expect(firstCoder).toBeDefined();
+    // Host runtimes may project a session's catalog entries onto the session
+    // tool surface by rewriting them in place (host subagent projection).
+    firstCoder!.tools = ['Read'];
+
+    // The process-wide defaults stay pristine, and a later session's catalog
+    // seeds from them rather than from the rewritten objects.
+    expect(DEFAULT_AGENT_PROFILES['coder']!.tools).toContain('Bash');
+    const second = catalog({ workDir, brandHomeDir: brandHome, osHomeDir: osHome });
+    await second.ready;
+    expect(second.get('coder')?.tools).toEqual(DEFAULT_AGENT_PROFILES['coder']!.tools);
+
+    // The delegation graph is re-linked to the session-local copies, so an
+    // in-place projection reaches what useProfile and the Agent tool
+    // description actually read.
+    expect(first.delegatableSubagents('agent')['coder']).toBe(firstCoder);
+    expect(second.delegatableSubagents('agent')['coder']?.tools).toEqual(
+      DEFAULT_AGENT_PROFILES['coder']!.tools,
+    );
+  });
+
   it('extends SYSTEM.md delegation with custom agents without allowing self-delegation', async () => {
     const { workDir, brandHome, osHome } = await makeLayout();
     await writeFile(join(brandHome, 'SYSTEM.md'), 'Custom system.', 'utf-8');

@@ -306,6 +306,51 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
+  it('recompiles the cached args validator when a tool advertises a different schema object', async () => {
+    const inner = new TestTool('dynamic');
+    let currentSchema: Record<string, unknown> = {
+      type: 'object',
+      properties: { value: { type: 'number' } },
+      required: ['value'],
+      additionalProperties: false,
+    };
+    const tool: ExecutableTool<Record<string, unknown>> = {
+      name: inner.name,
+      description: inner.description,
+      get parameters() {
+        return currentSchema;
+      },
+      resolveExecution: (args) => inner.resolveExecution(args),
+    };
+    registry.register(tool);
+
+    const rejected = await execute([
+      toolCall('call_strict', 'dynamic', { value: 1, model: 'fast' }),
+    ]);
+
+    expect(rejected).toEqual([
+      expect.objectContaining({
+        output: expect.stringContaining('Invalid args for tool "dynamic"'),
+        isError: true,
+      }),
+    ]);
+    expect(inner.calls).toEqual([]);
+
+    currentSchema = {
+      type: 'object',
+      properties: { value: { type: 'number' }, model: { type: 'string' } },
+      required: ['value'],
+      additionalProperties: false,
+    };
+    const accepted = await execute([
+      toolCall('call_open', 'dynamic', { value: 1, model: 'fast' }),
+    ]);
+
+    expect(accepted).toEqual([expect.objectContaining({ stopTurn: false })]);
+    expect(inner.calls).toHaveLength(1);
+    expect(inner.calls[0]?.args).toEqual({ value: 1, model: 'fast' });
+  });
+
   it('routes malformed JSON args through schema validation', async () => {
     const tool = new TestTool('strict', {
       parameters: {
@@ -805,10 +850,6 @@ describe('onBeforeExecuteTool veto semantics', () => {
     expect(tool.calls[0]).toEqual(expect.objectContaining({ metadata }));
   });
 
-  // Regression for the ask/deny ordering bug: a deny-style veto (btw's
-  // deny-all) registered after an ask-style listener (permission) must win
-  // without the ask's Interaction ever starting — the waitUntil factory
-  // stays cold because the veto lands in the immediate pass.
   it('never invokes waitUntil factories when an immediate veto decides the call', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);

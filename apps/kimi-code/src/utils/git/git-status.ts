@@ -9,6 +9,8 @@
 
 import { execFile, spawnSync } from 'node:child_process';
 
+import { resolveCommandPath } from '#/utils/process/resolve-command';
+
 const BRANCH_TTL_MS = 5_000;
 const STATUS_TTL_MS = 15_000;
 const PULL_REQUEST_TTL_MS = 60_000;
@@ -67,7 +69,11 @@ export function createGitStatusCache(
   workDir: string,
   options: GitStatusCacheOptions = {},
 ): GitStatusCache {
-  const isRepo = detectGitRepo(workDir);
+  // This cache is constructed before the workspace trust gate, so the git
+  // binary must be resolved through PATH to an absolute path — a bare name
+  // would let cmd.exe pick up a `git.exe` planted in the workspace.
+  const git = resolveCommandPath('git', workDir);
+  const isRepo = git !== undefined && detectGitRepo(git, workDir);
   let branch: BranchState = { value: null, fetchedAt: 0 };
   let status: StatusState = {
     dirty: false,
@@ -87,16 +93,16 @@ export function createGitStatusCache(
 
   return {
     getStatus: () => {
-      if (!isRepo) return null;
+      if (!isRepo || git === undefined) return null;
 
       const now = Date.now();
       if (now - branch.fetchedAt >= BRANCH_TTL_MS) {
-        branch = { value: readBranch(workDir), fetchedAt: now };
+        branch = { value: readBranch(git, workDir), fetchedAt: now };
       }
       if (branch.value === null) return null;
 
       if (now - status.fetchedAt >= STATUS_TTL_MS) {
-        status = { ...readStatus(workDir), fetchedAt: now };
+        status = { ...readStatus(git, workDir), fetchedAt: now };
       }
       refreshPullRequestIfNeeded(branch.value, now);
 
@@ -143,9 +149,9 @@ export function createGitStatusCache(
   }
 }
 
-function detectGitRepo(workDir: string): boolean {
+function detectGitRepo(git: string, workDir: string): boolean {
   try {
-    const result = spawnSync('git', ['-C', workDir, 'rev-parse', '--is-inside-work-tree'], {
+    const result = spawnSync(git, ['-C', workDir, 'rev-parse', '--is-inside-work-tree'], {
       encoding: 'utf8',
       timeout: SPAWN_TIMEOUT_MS,
     });
@@ -155,9 +161,9 @@ function detectGitRepo(workDir: string): boolean {
   }
 }
 
-function readBranch(workDir: string): string | null {
+function readBranch(git: string, workDir: string): string | null {
   try {
-    const result = spawnSync('git', ['-C', workDir, 'branch', '--show-current'], {
+    const result = spawnSync(git, ['-C', workDir, 'branch', '--show-current'], {
       encoding: 'utf8',
       timeout: SPAWN_TIMEOUT_MS,
     });
@@ -169,7 +175,10 @@ function readBranch(workDir: string): string | null {
   }
 }
 
-function readStatus(workDir: string): {
+function readStatus(
+  git: string,
+  workDir: string,
+): {
   dirty: boolean;
   ahead: number;
   behind: number;
@@ -177,7 +186,7 @@ function readStatus(workDir: string): {
   diffDeleted: number;
 } {
   try {
-    const result = spawnSync('git', ['-C', workDir, 'status', '--porcelain', '-b'], {
+    const result = spawnSync(git, ['-C', workDir, 'status', '--porcelain', '-b'], {
       encoding: 'utf8',
       timeout: SPAWN_TIMEOUT_MS,
       maxBuffer: 4 * 1024 * 1024,
@@ -200,7 +209,7 @@ function readStatus(workDir: string): {
         dirty = true;
       }
     }
-    const diff = dirty ? readDiffStats(workDir) : { added: 0, deleted: 0 };
+    const diff = dirty ? readDiffStats(git, workDir) : { added: 0, deleted: 0 };
     return {
       dirty,
       ahead,
@@ -213,9 +222,9 @@ function readStatus(workDir: string): {
   }
 }
 
-function readDiffStats(workDir: string): { added: number; deleted: number } {
+function readDiffStats(git: string, workDir: string): { added: number; deleted: number } {
   try {
-    const result = spawnSync('git', ['-C', workDir, 'diff', '--numstat', 'HEAD', '--'], {
+    const result = spawnSync(git, ['-C', workDir, 'diff', '--numstat', 'HEAD', '--'], {
       encoding: 'utf8',
       timeout: SPAWN_TIMEOUT_MS,
       maxBuffer: 4 * 1024 * 1024,
@@ -244,9 +253,16 @@ function parseDiffNumstatCount(value: string | undefined): number {
 
 function readPullRequest(workDir: string): Promise<PullRequestInfo | null> {
   return new Promise((resolve) => {
+    // Resolve gh through PATH as well — this runs with cwd = workDir, where a
+    // planted `gh.exe` would otherwise be picked up by cmd.exe on Windows.
+    const gh = resolveCommandPath('gh', workDir);
+    if (gh === undefined) {
+      resolve(null);
+      return;
+    }
     try {
       execFile(
-        'gh',
+        gh,
         ['pr', 'view', '--json', 'number,url'],
         {
           cwd: workDir,

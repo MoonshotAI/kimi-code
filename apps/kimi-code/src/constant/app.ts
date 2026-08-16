@@ -66,6 +66,9 @@ export const DEFAULT_OAUTH_PROVIDER_NAME = 'managed:kimi-code';
 export const OAUTH_LOGIN_REQUIRED_CODE = ErrorCodes.AUTH_LOGIN_REQUIRED;
 
 export const FEEDBACK_ISSUE_URL = 'https://github.com/MoonshotAI/kimi-code/issues';
+// Sign-up / sign-in page offered to signed-out users so they can create an
+// account and submit feedback through the authenticated channel next time.
+export const KIMI_CODE_SIGNUP_URL = 'https://www.kimi.com/code';
 
 // Sent in the feedback `version` field so the backend can distinguish this
 // TypeScript client from clients that send a bare version.
@@ -82,8 +85,14 @@ export const KIMI_CODE_CDN_LATEST_URL = `${KIMI_CODE_CDN_BASE}/latest`;
 // bodies, and the CDN install scripts read it for fresh installs.
 export const KIMI_CODE_CDN_LATEST_JSON_URL = `${KIMI_CODE_CDN_BASE}/latest.json`;
 export const KIMI_CODE_TIPS_BANNER_URL = 'https://cdn.kimi.com/kimi-code-tips/tips.json';
-export const KIMI_CODE_PLUGIN_MARKETPLACE_URL = `${KIMI_CODE_CDN_BASE}/plugins/marketplace.json`;
-export const KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV = 'KIMI_CODE_PLUGIN_MARKETPLACE_URL';
+// The marketplace catalog location constants live in the shared
+// agent-core-v2 plugin domain (kap-server consumes them from there).
+// Deep-path import: this module is evaluated on every CLI invocation, so it
+// must not pull in the engine root.
+export {
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
 // Official plugins whose usage bills against the user's plan quota. Installing
 // one of these shows a quota note after the install result.
 export const QUOTA_CONSUMING_PLUGIN_IDS: readonly string[] = ['kimi-datasource'];

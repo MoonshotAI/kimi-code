@@ -64,31 +64,26 @@ const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
   'llm.request',
   'mcp.tools_discovered',
 ]);
-// `profile.bind` is deliberately classified v2-only: v1's replay switch has no
-// case for it and silently skips the record, so a v1 resume of a v2-bound
-// session loses the binding (model / prompt / tool policy), and v1's
-// empty-prompt fallback then writes builtin defaults back into the shared
-// wire, overwriting the binding for later v2 resumes too. Accepted tradeoff
-// for the custom-agent rollout; revisit by teaching v1 to replay the record
-// rather than by dual-writing v1-shaped companions from v2.
 const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
   'tools.reset_active_tools',
   'profile.bind',
 ]);
 
-// Persisted record types introduced after the v1 vocabulary: the task
-// lifecycle journal (the restore seed for ghosts and the cold transcript
-// fold), the interaction request/resolution journal, the plan revision
-// reference journal, and the terminal turn record. Replay tolerates unknown
-// record types (skip + warn), so older readers degrade gracefully.
 const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'tower_mode.enter',
+  'tower_mode.exit',
   'task.started',
   'task.terminated',
   'interaction.request',
   'interaction.resolved',
   'plan.revision',
   'interruptionReminder.recorded',
+  'plugin.session_start',
+  'runtime.set_binding',
   'turn.ended',
+  'token_counting.measured',
+  'token_counting.truncated',
+  'token_counting.rebased',
 ]);
 
 describe('v1 wire vocabulary', () => {
@@ -173,12 +168,7 @@ describe('v1 wire vocabulary', () => {
 });
 
 describe('conversation-time checkpoint registration', () => {
-  // Models that react to context.* records but deliberately stay on world time
-  // (ephemeral notice state that must not travel through undo) are exempt.
-  // Registering a new context-reacting model without `defineCheckpointedModel`
-  // fails this test — add the name here only with a justification.
   const CHECKPOINT_EXEMPT_MODELS: ReadonlySet<string> = new Set([
-    // goalForkNotice is one-shot reminder bookkeeping, not conversation state.
     'goalForkNotice',
   ]);
   const CONTEXT_OPS = [
@@ -199,7 +189,6 @@ describe('conversation-time checkpoint registration', () => {
         violations.push(`${entry.model.name} (on ${opType})`);
       }
     }
-    // Guard against a vacuous pass when module loading changes.
     expect(entries).toBeGreaterThan(0);
     expect(violations).toEqual([]);
   });
@@ -246,7 +235,6 @@ describe('AgentRecords persistence metadata', () => {
     expectResumeMatches = false;
     await ctx.restorePersisted();
 
-    // The envelope was synthesized and rewritten ahead of the records.
     expect(persistence.records.map((record) => record.type)).toEqual([
       'metadata',
       'context.append_message',
@@ -255,7 +243,6 @@ describe('AgentRecords persistence metadata', () => {
       type: 'metadata',
       protocol_version: WIRE_PROTOCOL_VERSION,
     });
-    // And the orphaned message landed in the restored context.
     expect(ctx.context.get()).toHaveLength(1);
   });
 
@@ -405,7 +392,10 @@ describe('AgentRecords persistence metadata', () => {
     ]);
     expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
     const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
+    expect(reminder?.origin).toEqual({
+      kind: 'injection',
+      variant: 'goal_fork_cleared',
+    });
     expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
   });
 
@@ -431,8 +421,8 @@ describe('AgentRecords persistence metadata', () => {
       objective: 'fork work',
     });
     expect(context.get().at(-1)?.origin).toEqual({
-      kind: 'system_trigger',
-      name: 'goal_fork_cleared',
+      kind: 'injection',
+      variant: 'goal_fork_cleared',
     });
   });
 

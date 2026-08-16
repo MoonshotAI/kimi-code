@@ -194,6 +194,7 @@ export class FooterComponent implements Component {
   private gitCache: GitStatusCache;
   private gitCacheWorkDir: string;
   private transientHint: string | null = null;
+  private warningHint: string | null = null;
   private goalSnapshotKey: string | null = null;
   private goalObservedAtMs = Date.now();
   private goalTimer: ReturnType<typeof setInterval> | null = null;
@@ -256,6 +257,17 @@ export class FooterComponent implements Component {
 
   getTransientHint(): string | null {
     return this.transientHint;
+  }
+
+  /**
+   * Longer-lived warning for line 2 (e.g. the over-long `/goal` objective
+   * warning). Unlike the transient hint it has no owner/timeout: the caller
+   * sets and clears it directly. A transient hint takes precedence while
+   * present; the warning returns as soon as the transient hint clears.
+   * Pass `null` to clear.
+   */
+  setWarningHint(hint: string | null): void {
+    this.warningHint = hint;
   }
 
   /**
@@ -325,7 +337,7 @@ export class FooterComponent implements Component {
       }
     }
 
-    // ── Line 2: transient hint (bottom-left) + context (right) ──
+    // ── Line 2: hint (bottom-left) + context (right) ──
     const contextText = formatContextStatus(
       state.contextUsage,
       state.contextTokens,
@@ -333,12 +345,11 @@ export class FooterComponent implements Component {
     );
     const contextWidth = visibleWidth(contextText);
     let line2: string;
-    if (this.transientHint) {
+    const hint = this.transientHint ?? this.warningHint;
+    if (hint) {
       const maxHintWidth = Math.max(0, width - contextWidth - 1);
       const shownHint =
-        visibleWidth(this.transientHint) <= maxHintWidth
-          ? this.transientHint
-          : truncateToWidth(this.transientHint, maxHintWidth, '…');
+        visibleWidth(hint) <= maxHintWidth ? hint : truncateToWidth(hint, maxHintWidth, '…');
       const hintWidth = visibleWidth(shownHint);
       const pad = Math.max(0, width - hintWidth - contextWidth);
       line2 =

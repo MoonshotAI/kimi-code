@@ -29,7 +29,7 @@ import {
 import { renderNotificationXml } from '#/agent/task/notificationXml';
 import { AgentTaskService } from '#/agent/task/taskService';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
-import type { IProcess } from '#/session/process/processRunner';
+import type { IHostProcess } from '#/os/interface/hostProcess';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -101,7 +101,7 @@ describe('AgentTaskService', () => {
     ix.stub(IEventBus, eventBus);
     ix.stub(IAgentContextInjectorService, {
       register: (name, provider) => {
-        injectionProviders.set(name, provider);
+        injectionProviders.set(name, provider as ContextInjectionProvider);
         return toDisposable(() => {
           injectionProviders.delete(name);
         });
@@ -173,6 +173,23 @@ describe('AgentTaskService', () => {
     expect(listed[0]?.kind).toBe('process');
     expect(await svc.readOutput(id)).toBe('');
     await svc.stop(id);
+  });
+
+  it('wait with a timeout beyond the timer ceiling does not resolve immediately', async () => {
+    const svc = ix.get(IAgentTaskService);
+    const taskId = svc.registerTask(fakeProcessTask());
+    // 10 years in ms overflows Node's setTimeout ceiling (2^31-1 ms) into a
+    // 1ms fire; wait must clamp instead of returning at once.
+    const waited = svc.wait(taskId, 10 * 365 * 24 * 3600 * 1000);
+    const early = await Promise.race([
+      waited.then(() => 'returned' as const),
+      new Promise<'waiting'>((resolve) => setTimeout(() => {
+        resolve('waiting');
+      }, 50)),
+    ]);
+    expect(early).toBe('waiting');
+    await svc.stop(taskId);
+    await expect(waited).resolves.toMatchObject({ taskId });
   });
 
   function capturingWire(): { dispatched: { type: string; payload: unknown }[] } {
@@ -363,7 +380,7 @@ describe('AgentTaskService', () => {
       wait: () => wait,
       kill,
       dispose: vi.fn().mockResolvedValue(undefined),
-    } as unknown as IProcess;
+    } as unknown as IHostProcess;
     const svc = ix.get(IAgentTaskService);
     svc.registerTask(new ProcessTask(proc, 'ignore-term', 'long-running process'));
     await Promise.resolve();
@@ -409,7 +426,7 @@ describe('AgentTaskService', () => {
       wait: () => wait,
       kill: vi.fn().mockResolvedValue(undefined),
       dispose: vi.fn().mockResolvedValue(undefined),
-    } as unknown as IProcess;
+    } as unknown as IHostProcess;
     const svc = ix.get(IAgentTaskService);
     svc.registerTask(new ProcessTask(proc, 'keep-running', 'long-running process'));
     await Promise.resolve();
@@ -698,7 +715,7 @@ describe('AgentTaskService', () => {
   const LIMIT_BYTES = 16 * MiB;
 
   function streamingProcess(chunks: string[]): {
-    proc: IProcess;
+    proc: IHostProcess;
     kill: ReturnType<typeof vi.fn>;
   } {
     const stdout = Readable.from(chunks);
@@ -723,12 +740,12 @@ describe('AgentTaskService', () => {
       wait: () => waitP,
       kill,
       dispose: vi.fn().mockResolvedValue(undefined),
-    } as unknown as IProcess;
+    } as unknown as IHostProcess;
     return { proc, kill };
   }
 
   function sigtermIgnoringProcess(chunks: string[]): {
-    proc: IProcess;
+    proc: IHostProcess;
     kill: ReturnType<typeof vi.fn>;
   } {
     const stdout = Readable.from(chunks);
@@ -755,7 +772,7 @@ describe('AgentTaskService', () => {
       wait: () => waitP,
       kill,
       dispose: vi.fn().mockResolvedValue(undefined),
-    } as unknown as IProcess;
+    } as unknown as IHostProcess;
     return { proc, kill };
   }
 

@@ -766,6 +766,116 @@ describe('WsConnectionV1 outbound buffer', () => {
 });
 
 // ---------------------------------------------------------------------------
+// WsConnectionV1 — heartbeat
+// ---------------------------------------------------------------------------
+
+describe('WsConnectionV1 heartbeat', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function sentTypes(socket: FakeSocket): string[] {
+    return socket.frames().map((f) => (f as { type: string }).type);
+  }
+
+  function sentPings(socket: FakeSocket): Array<{ type: string; payload: { nonce: string } }> {
+    return socket.frames() as Array<{ type: string; payload: { nonce: string } }>;
+  }
+
+  it('advertises the heartbeat interval in server_hello', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+    const hello = socket.frames()[0] as { type: string; payload: { heartbeat_ms?: number } };
+    expect(hello.type).toBe('server_hello');
+    expect(hello.payload.heartbeat_ms).toBe(10);
+    conn.close();
+  });
+
+  it('defaults to a 10s heartbeat interval', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket);
+    const hello = socket.frames()[0] as { payload: { heartbeat_ms?: number } };
+    expect(hello.payload.heartbeat_ms).toBe(10_000);
+    conn.close();
+  });
+
+  it('sends a ping every interval while the peer keeps answering', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+    socket.sent = [];
+
+    for (let i = 0; i < 3; i++) {
+      vi.advanceTimersByTime(10);
+      expect(sentTypes(socket)).toHaveLength(i + 1);
+      socket.emit('message', JSON.stringify({ type: 'pong', payload: { nonce: 'n' } }));
+    }
+
+    const pings = sentPings(socket);
+    expect(pings.every((f) => f.type === 'ping')).toBe(true);
+    expect(typeof pings[0]!.payload.nonce).toBe('string');
+    expect(new Set(pings.map((f) => f.payload.nonce)).size).toBe(3);
+    expect(socket.closeCalls).toHaveLength(0);
+    conn.close();
+  });
+
+  it('reaps the connection after two silent cycles', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+    socket.sent = [];
+
+    vi.advanceTimersByTime(10);
+    expect(sentTypes(socket)).toEqual(['ping']);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    // Second silent cycle: the tick closes instead of pinging again.
+    vi.advanceTimersByTime(10);
+    expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
+    expect(sentTypes(socket)).toEqual(['ping']);
+
+    // The heartbeat stops with the connection.
+    vi.advanceTimersByTime(100);
+    expect(sentTypes(socket)).toEqual(['ping']);
+    expect(socket.closeCalls).toHaveLength(1);
+  });
+
+  it('treats any inbound frame — not just pong — as proof of life', () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
+    socket.sent = [];
+
+    // t=10: ping. t=15: an unknown control frame still resets the window.
+    vi.advanceTimersByTime(15);
+    socket.emit('message', JSON.stringify({ type: 'some_future_frame', payload: {} }));
+
+    // t=20 (silence 5) and t=30 (silence 15): pings, no reap.
+    vi.advanceTimersByTime(20);
+    expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping']);
+    expect(socket.closeCalls).toHaveLength(0);
+
+    // t=40: silence 25 ≥ 2 cycles — reaped.
+    vi.advanceTimersByTime(5);
+    expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
+  });
+
+  it('stops heartbeating once the socket closes on its own', () => {
+    const socket = new FakeSocket();
+    makeConn(socket, { heartbeatIntervalMs: 10 });
+    socket.sent = [];
+
+    vi.advanceTimersByTime(10);
+    expect(sentTypes(socket)).toEqual(['ping']);
+
+    socket.terminate();
+    vi.advanceTimersByTime(100);
+    expect(sentTypes(socket)).toEqual(['ping']);
+    expect(socket.closeCalls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WsConnectionV1 — global-event registration lifecycle
 // ---------------------------------------------------------------------------
 
@@ -773,11 +883,13 @@ describe('WsConnectionV1 global target registration', () => {
   function makeGlobalTargetBroadcaster() {
     const added: unknown[] = [];
     const removed: unknown[] = [];
+    const diOptIns: unknown[] = [];
     const broadcaster = {
       subscribe: async () => true,
       unsubscribe: () => {},
       addGlobalTarget: (target: unknown) => added.push(target),
       removeGlobalTarget: (target: unknown) => removed.push(target),
+      addDiEventTarget: (target: unknown) => diOptIns.push(target),
       getCursor: async () => ({ seq: 0, epoch: '' }),
       getBufferedSince: async () => ({
         events: [],
@@ -786,7 +898,7 @@ describe('WsConnectionV1 global target registration', () => {
         epoch: '',
       }),
     } as unknown as SessionEventBroadcaster;
-    return { broadcaster, added, removed };
+    return { broadcaster, added, removed, diOptIns };
   }
 
   it('registers the connection as a global target on construction and unregisters on close', () => {
@@ -809,5 +921,30 @@ describe('WsConnectionV1 global target registration', () => {
 
     socket.emit('close');
     expect(removed).toEqual([conn]);
+  });
+
+  it('opts only kimi-inspect connections into the event.di.* debug feed on client_hello', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, diOptIns } = makeGlobalTargetBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    // Another client id (or none) never joins the DI fan-out.
+    socket.emit(
+      'message',
+      JSON.stringify({ type: 'client_hello', id: 'h1', payload: { client_id: 'kimi-web' } }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(diOptIns).toEqual([]);
+
+    socket.emit(
+      'message',
+      JSON.stringify({
+        type: 'client_hello',
+        id: 'h2',
+        payload: { client_id: 'kimi-inspect' },
+      }),
+    );
+    await vi.waitFor(() => expect(diOptIns).toEqual([conn]));
+    conn.close();
   });
 });

@@ -27,7 +27,7 @@ import {
 } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentSwarmService } from '#/agent/swarm/swarm';
+import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode, PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -64,9 +64,6 @@ import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubAgentSwarm } from './stubs';
 
-// The real AgentSwarmService self-wires executor listeners and pulls in the
-// swarm runtime; goal tests never exercise swarm behavior, so every test
-// agent here stubs it out to keep the wiring focused on the goal domain.
 function createTestAgent(
   ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]
 ): TestAgentContext {
@@ -215,11 +212,13 @@ async function runGoalStep(loopService: StubLoop, turn: Turn): Promise<boolean> 
   const step = {
     turnId: turn.id,
     step: 1,
+    firstStepOfTurn: true,
     signal: turn.signal,
   };
   const afterStep: AfterStepContext = {
     turnId: turn.id,
     step: 1,
+    firstStepOfTurn: true,
     signal: turn.signal,
     usage: zeroUsage,
     finishReason: 'completed' as const,
@@ -501,7 +500,10 @@ describe('AgentGoalService', () => {
       expect(removed.status).toBe('active');
       expect(goals.getGoal()).toEqual({ goal: null });
       const reminder = context.get().at(-1);
-      expect(reminder?.origin).toEqual({ kind: 'system_trigger', name: 'goal_cancelled' });
+      expect(reminder?.origin).toEqual({
+        kind: 'injection',
+        variant: 'goal_cancelled',
+      });
       expect(JSON.stringify(reminder?.content)).toContain('Ignore earlier active-goal reminders');
       await expect(goals.cancelGoal()).rejects.toMatchObject({ code: ErrorCodes.GOAL_NOT_FOUND });
     });
@@ -902,6 +904,7 @@ describe('AgentGoalService core workflow hooks', () => {
       await loopService.hooks.onWillBeginStep.run({
         turnId: turn.id,
         step: 1,
+        firstStepOfTurn: true,
         signal: turn.signal,
       });
 
@@ -927,6 +930,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     });
 
@@ -972,6 +976,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     });
     const toolCall: ToolCall = {
@@ -1003,6 +1008,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     });
     const toolCall: ToolCall = {
@@ -1030,6 +1036,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: oldTurn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: oldTurn.signal,
     });
     recordStepUsage(usageService, goals, oldTurn, { ...zeroUsage, output: 5 });
@@ -1055,6 +1062,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onDidFinishStep.run({
       turnId: oldTurn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: oldTurn.signal,
       usage: zeroUsage,
       finishReason: 'completed',
@@ -1141,6 +1149,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: continuationTurn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: continuationTurn.signal,
     });
     recordStepUsage(usageService, goals, continuationTurn, { ...zeroUsage, output: 7 });
@@ -1304,6 +1313,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     });
 
@@ -1315,6 +1325,7 @@ describe('AgentGoalService core workflow hooks', () => {
     const afterStep: AfterStepContext = {
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed',
@@ -1354,6 +1365,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: continuation.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: continuation.signal,
     });
 
@@ -1374,6 +1386,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await loopService.hooks.onWillBeginStep.run({
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     });
     await goals.markBlocked({}, 'model');
@@ -1382,6 +1395,7 @@ describe('AgentGoalService core workflow hooks', () => {
     const afterStep: AfterStepContext = {
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed',
@@ -1505,11 +1519,13 @@ describe('AgentGoalService core workflow hooks', () => {
     const step = {
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
     };
     const afterStep: AfterStepContext = {
       turnId: turn.id,
       step: 1,
+      firstStepOfTurn: true,
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed' as const,
@@ -1531,6 +1547,7 @@ describe('AgentGoalService core workflow hooks', () => {
     const secondAfterStep: AfterStepContext = {
       turnId: turn.id,
       step: 2,
+      firstStepOfTurn: false,
       signal: turn.signal,
       usage: zeroUsage,
       finishReason: 'completed' as const,
@@ -2001,7 +2018,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
       const toolResultIndex = history.findIndex((message) => message.role === 'tool');
       const reminderIndex = history.findIndex(
         (message) =>
-          message.origin?.kind === 'system_trigger' && message.origin.name === 'goal_budget_stop',
+          message.origin?.kind === 'injection' && message.origin.variant === 'goal_budget_stop',
       );
       expect(toolResultIndex).toBeGreaterThanOrEqual(0);
       expect(reminderIndex).toBeGreaterThan(toolResultIndex);
@@ -2304,11 +2321,35 @@ describe('AgentGoalService fork boundaries', () => {
 
     expect(goals.getGoal().goal).toBeNull();
     const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
+    expect(reminder?.origin).toEqual({
+      kind: 'injection',
+      variant: 'goal_fork_cleared',
+    });
     const text = JSON.stringify(reminder?.content);
     expect(text).toContain('This fork does not have a current goal.');
     expect(text).toContain('Ignore earlier active-goal reminders from the source session.');
     expect(text).toContain('Handle requests normally unless the user starts a new goal.');
+  });
+
+  it('does not re-deliver a fork-cleared reminder recorded with the legacy system_trigger origin', async () => {
+    await restoreGoalRecords(ctx, goals, [
+      { type: 'goal.create', goalId: 'source-goal', objective: 'source work' },
+      { type: 'forked' },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: '<system-reminder>\nlegacy fork cleared\n</system-reminder>' },
+          ],
+          toolCalls: [],
+          origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
+        },
+      },
+    ]);
+
+    expect(context.get()).toHaveLength(1);
+    expect(context.get()[0]?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
   });
 
   it('does not append a fork-cleared reminder when the fork had no goal', async () => {

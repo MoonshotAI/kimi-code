@@ -5,7 +5,15 @@
 import { onUnexpectedError } from '../errors/unexpectedError';
 import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
 
+export interface IDisposableDebugLabel {
+  readonly debugLabel?: string;
+}
+
 function disposableLabel(d: IDisposable): string {
+  const debugLabel = (d as IDisposableDebugLabel).debugLabel;
+  if (typeof debugLabel === 'string' && debugLabel.length > 0) {
+    return debugLabel;
+  }
   return `disposable:${d.constructor?.name ?? 'anonymous'}`;
 }
 
@@ -231,6 +239,10 @@ export class DisposableStore implements IDisposable {
 
   constructor() {
     trackDisposable(this);
+  }
+
+  get ledger(): Ledger {
+    return this._ledger;
   }
 
   add<T extends IDisposable>(d: T): T {

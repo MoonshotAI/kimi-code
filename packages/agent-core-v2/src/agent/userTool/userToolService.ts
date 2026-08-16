@@ -17,8 +17,12 @@
  * Bound at Agent scope.
  */
 
-import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { randomUUID } from 'node:crypto';
+
+import { type IDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type {
@@ -40,7 +44,7 @@ interface UserToolExecutionRequest {
   readonly args: unknown;
 }
 
-export class AgentUserToolService extends Disposable implements IAgentUserToolService {
+export class AgentUserToolService extends Service implements IAgentUserToolService {
   declare readonly _serviceBrand: undefined;
 
   private readonly registrations = new Map<string, IDisposable>();
@@ -124,8 +128,9 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
     name: string,
     args: unknown,
   ): Promise<ExecutableToolResult> {
+    const id = `user_tool_${randomUUID()}`;
     const request = this.interaction.request<UserToolExecutionRequest, ExecutableToolResult>({
-      id: context.toolCallId,
+      id,
       kind: 'user_tool',
       payload: {
         turnId: context.turnId,
@@ -141,7 +146,7 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
       return await abortable(request, context.signal);
     } catch (error) {
       if (context.signal.aborted) {
-        this.interaction.respond(context.toolCallId, {
+        this.interaction.respond(id, {
           output: `User tool "${name}" was aborted.`,
           isError: true,
         });

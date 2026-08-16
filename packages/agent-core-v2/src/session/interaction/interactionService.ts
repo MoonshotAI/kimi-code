@@ -18,8 +18,9 @@
 
 import { Emitter, type Event } from '#/_base/event';
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -56,7 +57,7 @@ export const interactionRecentlyResolvedKey = defineState<Map<string, number>>(
 );
 export const interactionNextIdKey = defineState<number>('interaction.nextId', () => 0);
 
-export class SessionInteractionService extends Disposable implements ISessionInteractionService {
+export class SessionInteractionService extends Service implements ISessionInteractionService {
   declare readonly _serviceBrand: undefined;
 
   private readonly _onDidChangePending = this._register(new Emitter<InteractionPendingChangedEvent>());

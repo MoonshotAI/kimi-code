@@ -36,7 +36,7 @@ export interface IHostFileSystem {
   ): Promise<string>;
   writeText(path: string, data: string): Promise<void>;
   appendText(path: string, data: string): Promise<void>;
-  readBytes(path: string, n?: number): Promise<Uint8Array>;
+  readBytes(path: string, n?: number, offset?: number): Promise<Uint8Array>;
   writeBytes(path: string, data: Uint8Array): Promise<void>;
   readLines(
     path: string,

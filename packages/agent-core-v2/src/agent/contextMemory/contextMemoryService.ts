@@ -3,15 +3,16 @@
  *
  * Owns per-agent conversation history through `wire`, maintains measurements
  * with `tokenCounting`, and broadcasts live mutations through `event`. Every
- * splice-shaped mutation (`clear` / `applyCompaction` / `undo`) publishes
- * `context.spliced` from the live path only — replay rebuilds silently — and
- * `undo` additionally truncates the measured-anchor ledger when the cut
- * crosses an anchor, letting `tokenCounting` restore the surviving prefix's
- * REAL size from the remaining anchors. Bound at Agent scope.
+ * splice-shaped mutation (`clear` / `applyCompaction` / `undo`, plus verified
+ * cross-model trailing removal) publishes `context.spliced` from the live path
+ * only — replay rebuilds silently — and truncates the measured-anchor ledger
+ * when a cut crosses an anchor, letting `tokenCounting` restore the surviving
+ * prefix's REAL size from the remaining anchors. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import {
@@ -53,6 +54,7 @@ declare module '#/app/event/eventBus' {
   }
 }
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class AgentContextMemoryService extends Disposable implements IAgentContextMemoryService {
   declare readonly _serviceBrand: undefined;
 
@@ -85,6 +87,21 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
 
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.wire.dispatch(contextAppendLoopEvent({ event }));
+  }
+
+  publishTrailingRemoval(previous: readonly ContextMessage[]): boolean {
+    const cutIndex = previous.length - 1;
+    if (cutIndex < 0) return false;
+    const current = this.get();
+    if (
+      current.length !== cutIndex ||
+      current.some((message, index) => message !== previous[index])
+    ) {
+      return false;
+    }
+    this.wire.dispatch(...this.sizeOpsForCut(cutIndex));
+    this.publishSplice({ start: cutIndex, deleteCount: 1, messages: [] });
+    return true;
   }
 
   clear(): void {

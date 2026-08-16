@@ -12,12 +12,18 @@
  * (and the OAuth dynamic-registration label), consulted per connection so an
  * identity configured after construction still applies; omitted, or resolving
  * to `undefined`, keeps the built-in name.
+ *
+ * A server whose config disappears is tombstoned (`markRemoved`): the
+ * client is closed but the entry stays with status `removed` so consumers
+ * holding its tools can fail calls with a clear notice, until a same-named
+ * `connect` replaces it or `shutdown` clears everything.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
 import type { Tool } from '#/kosong/contract/tool';
+import { HostProcessError, HostProcessErrorCode } from '#/os/interface/hostProcess';
 
 import { abortable } from '#/_base/utils/abort';
 import { HttpMcpClient } from './client-http';
@@ -28,7 +34,7 @@ import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
 
-export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
 
 export interface McpServerEntry {
   readonly name: string;
@@ -99,6 +105,10 @@ export interface McpDefaultTimeouts {
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   readonly stdioCwd?: string;
+  readonly runtimeResolver?: import('#/workspace/workspaceInstance/workspaceInstanceManager').IRuntimeResolver;
+  readonly workspaceId?: string;
+  readonly runtimeId?: string;
+  readonly requireStdioRuntimeId?: boolean;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
   readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
@@ -226,6 +236,19 @@ export class McpConnectionManager implements McpConnectionView {
     return true;
   }
 
+  async markRemoved(name: string): Promise<boolean> {
+    const entry = this.entries.get(name);
+    if (entry === undefined) return false;
+    await this.closeClient(entry);
+    entry.status = 'removed';
+    entry.tools = undefined;
+    entry.enabledNames = undefined;
+    entry.rawTools = undefined;
+    entry.error = undefined;
+    this.emit(entry);
+    return true;
+  }
+
   waitForInitialLoad(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     if (signal === undefined) return this.initialLoad;
@@ -259,7 +282,7 @@ export class McpConnectionManager implements McpConnectionView {
 
   async reconnect(name: string): Promise<void> {
     const entry = this.entries.get(name);
-    if (entry === undefined) {
+    if (entry === undefined || entry.status === 'removed') {
       throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, `Unknown MCP server: ${name}`);
     }
     if (entry.config.enabled === false) {
@@ -379,11 +402,20 @@ export class McpConnectionManager implements McpConnectionView {
       config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
     const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
+      const runtimeResolver = this.options.runtimeResolver;
+      const workspaceId = this.options.workspaceId;
+      const runtimeId = config.runtime_id ?? this.options.runtimeId;
+      if (runtimeResolver === undefined || workspaceId === undefined || runtimeId === undefined || (this.options.requireStdioRuntimeId === true && config.runtime_id === undefined)) {
+        throw new Error('MCP stdio requires runtime_id and runtime binding');
+      }
       return new StdioMcpClient(config, {
         startupTimeoutMs,
         toolCallTimeoutMs,
         defaultCwd: this.options.stdioCwd,
         clientName,
+        runtimeResolver,
+        workspaceId,
+        runtimeId,
       });
     }
     if (config.transport === 'sse') {
@@ -514,7 +546,12 @@ function isUnauthorizedLikeError(error: unknown): boolean {
 }
 
 function formatStartupError(error: unknown, client: RuntimeMcpClient | undefined): string {
-  const base = error instanceof Error ? error.message : String(error);
+  const source = error instanceof HostProcessError &&
+    error.code === HostProcessErrorCode.SpawnFailed &&
+    error.cause instanceof Error
+    ? error.cause
+    : error;
+  const base = source instanceof Error ? source.message : String(source);
   const tail = stderrTail(client);
   if (tail === undefined) return base;
   return `${base}\nstderr: ${tail}`;

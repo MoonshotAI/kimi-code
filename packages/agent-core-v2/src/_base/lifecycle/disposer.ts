@@ -12,15 +12,6 @@ export type TeardownReason = 'scope-close' | 'cascade' | 'unload';
 
 export type Disposer = (reason: TeardownReason) => void | Promise<void>;
 
-/**
- * The four return forms accepted from an effect body:
- * - `void` — nothing to roll back (the entry still exists for introspection);
- * - `Disposer` — a single rollback action;
- * - `Promise<Disposer | void>` — an asynchronously produced rollback action;
- * - sync / async iterator of `Disposer`s — each yielded value is one rollback
- *   action; if iteration throws partway, the already-yielded disposers are
- *   rolled back in reverse before the error propagates.
- */
 export type EffectResult =
   | void
   | Disposer

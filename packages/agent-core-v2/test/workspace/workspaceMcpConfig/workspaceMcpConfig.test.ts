@@ -91,7 +91,7 @@ describe('WorkspaceMcpConfigService', () => {
           emitter = new Emitter<HostFsChange>();
           watchFires.set(path, emitter);
         }
-        return { onDidChange: emitter.event, dispose: () => {} };
+        return { ready: Promise.resolve(), onDidChange: emitter.event, dispose: () => {} };
       },
     };
   }
@@ -291,8 +291,6 @@ describe('WorkspaceMcpConfigService', () => {
     pluginServers = {};
     pluginReloads.fire({ added: [], removed: [], errors: [] });
 
-    // The merged view is unchanged (the file entry still wins), so no event
-    // fires and the snapshot stays put.
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
     expect(changes).toEqual([]);
     expect(service.servers()).toEqual({ shared: stdioConfig('file-version') });

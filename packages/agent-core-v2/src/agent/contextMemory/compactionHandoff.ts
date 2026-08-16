@@ -13,6 +13,7 @@
 
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/kosong/contract/tokens';
 import type { ContentPart } from '#/kosong/contract/message';
+import { wrapSystemReminder } from '#/agent/systemReminder/systemReminder';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 import type { ContextMessage, PromptOrigin } from './types';
 
@@ -54,6 +55,12 @@ export interface ContextCompactionShapeInput {
    *  the generated summary. Preferred over the summary-text estimate in the
    *  `tokensAfter` fallback when present. */
   readonly summaryOutputTokens?: number;
+  /** Estimated fixed request overhead (system prompt + non-deferred tool
+   *  schemas) surviving the compaction; counted into the `tokensAfter`
+   *  fallback so the result stays on the same full-request basis as the
+   *  measured exchange anchors. Live path only — replay reads the persisted
+   *  `tokensAfter` verbatim. */
+  readonly requestOverheadTokens?: number;
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
@@ -111,7 +118,9 @@ export function buildContextCompactionShape(
   const contextSummary = input.contextSummary ?? input.summary;
   const tokensAfter =
     input.tokensAfter ??
-    (input.summaryOutputTokens ?? estimate.text(contextSummary)) + estimate.messages(keptMessages);
+    (input.requestOverheadTokens ?? 0) +
+      (input.summaryOutputTokens ?? estimate.text(contextSummary)) +
+      estimate.messages(keptMessages);
   const keptUserMessageCount =
     input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
   const keptHeadUserMessageCount =
@@ -154,11 +163,9 @@ export function createCompactionElisionMessage(omittedTokens: number): ContextMe
 }
 
 export function buildCompactionElisionText(omittedTokens: number): string {
-  return [
-    '<system-reminder>',
+  return wrapSystemReminder(
     `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`,
-    '</system-reminder>',
-  ].join('\n');
+  );
 }
 
 export function collectCompactableUserMessages<T extends MessageLike>(messages: readonly T[]): T[] {

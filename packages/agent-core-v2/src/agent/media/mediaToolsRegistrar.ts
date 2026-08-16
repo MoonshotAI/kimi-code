@@ -26,16 +26,17 @@
  * bind runs, so the first `agent.status.updated` is always observed.
  */
 
-import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { type ModelRequester } from '#/kosong/model/modelRequester';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -50,7 +51,7 @@ export const mediaRegisteredKeyKey = defineState<string | undefined>(
   () => undefined as string | undefined,
 );
 
-export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaToolsRegistrar {
+export class AgentMediaToolsRegistrar extends Service implements IAgentMediaToolsRegistrar {
   declare readonly _serviceBrand: undefined;
 
   private registration: IDisposable | undefined;
@@ -60,8 +61,7 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IEventBus eventBus: IEventBus,
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -71,6 +71,7 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
     this.states.register(mediaRegisteredKeyKey);
     this.refresh();
     this._register(eventBus.subscribe('agent.status.updated', () => this.refresh()));
+    this._register(this.runtime.onDidChange(() => this.refresh()));
     this._register(toDisposable(() => this.registration?.dispose()));
   }
 
@@ -84,18 +85,42 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
 
   private refresh(): void {
     const capabilities = this.profile.getModelCapabilities();
+    const modelAlias = this.profile.getModel();
+    if (!this.runtime.isAvailable(['fs'])) {
+      const key = [
+        modelAlias,
+        String(capabilities.image_in),
+        String(capabilities.video_in),
+        'runtime-unavailable',
+      ].join('|');
+      if (key === this.registeredKey) return;
+      this.registeredKey = key;
+      this.registration?.dispose();
+      this.registration = undefined;
+      return;
+    }
+    const inspected = this.runtime.inspect();
+    const identityKey = [
+      inspected.identity.workspaceId,
+      inspected.identity.runtimeId,
+      inspected.identity.generation,
+    ].join('|');
     const key = [
-      this.profile.getModel(),
+      modelAlias,
       String(capabilities.image_in),
       String(capabilities.video_in),
+      identityKey,
+      inspected.status,
+      inspected.environment.pathClass,
+      String(inspected.capabilities.has('fs')),
     ].join('|');
     if (key === this.registeredKey) return;
     this.registeredKey = key;
     this.registration?.dispose();
     const workspaceCtx = this.workspaceCtx;
     const skillCatalog = this.skillCatalog;
-    const env = this.env;
-    const modelAlias = this.profile.getModel();
+    const runtime = this.runtime;
+    const pathClass = inspected.environment.pathClass;
     let requester: ModelRequester | undefined;
     let model: Model | undefined;
     if (modelAlias !== '') {
@@ -103,8 +128,7 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
       model = requester.model;
     }
     this.registration = registerMediaTools(this.toolRegistry, {
-      fs: this.fs,
-      env: this.env,
+      runtime,
       workspace: {
         get workspaceDir() {
           return workspaceCtx.workDir;
@@ -113,7 +137,7 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
           return extendWorkspaceWithSkillRoots(
             { workspaceDir: workspaceCtx.workDir, additionalDirs: workspaceCtx.additionalDirs },
             skillCatalog?.catalog.getSkillRoots() ?? [],
-            env.pathClass,
+            pathClass,
           ).additionalDirs;
         },
       },

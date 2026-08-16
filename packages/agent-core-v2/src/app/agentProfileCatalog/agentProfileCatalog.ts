@@ -14,9 +14,7 @@
  * `systemPrompt(context)` is the same render's text only — it is derived from
  * `renderSystemPrompt` at registration, so the two can never drift apart.
  * Profiles stay
- * independent of concrete model aliases, but may declare
- * a symbolic primary/secondary preference used as the default when spawned as
- * a subagent. The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the
+ * independent of concrete model aliases. The builtin {@link DEFAULT_AGENT_PROFILE_NAME} (`agent`) is the
  * default profile used when an Agent is bound to a Model without naming a
  * profile.
  *
@@ -29,24 +27,23 @@
  * Profiles reach agents through the Contribution / Registry / Catalog
  * extension point: loaders (builtin code contributions via
  * `registerAgentProfile(...)`, plugin / user file scans at App scope,
- * workspace / extra / explicit file scans at Workspace scope) register
- * `AgentProfileContribution`s into the App-scope `IAgentProfileRegistry`,
- * keyed by source id; the Session-scope `ISessionAgentProfileCatalog`
- * projects the registry into the merged, name-deduped read view that
- * consumers (the `Agent` tool, the swarm scheduler, the per-agent profile
- * binding) resolve profiles through.
+ * workspace / extra / explicit file scans at Workspace scope) contribute
+ * `AgentProfileContribution` records to the collection, keyed by source id;
+ * the App-scope `IAgentProfileRegistry` fold projects them into its read
+ * surface, and the Session-scope `ISessionAgentProfileCatalog` projects the
+ * registry into the merged, name-deduped read view that consumers (the
+ * `Agent` tool, the swarm scheduler, the per-agent profile binding) resolve
+ * profiles through.
  */
 
 import type { ILogger } from '#/_base/log/log';
-import type { ISessionProcessRunner } from '#/session/process/processRunner';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
 
 export const DEFAULT_AGENT_PROFILE_NAME = 'agent';
 
-export type AgentModelPreference = 'primary' | 'secondary';
-
 export interface AgentProfilePromptPrefixContext {
   readonly cwd: string;
-  readonly runner: ISessionProcessRunner;
+  readonly process: IHostProcessService;
   readonly log?: ILogger;
 }
 
@@ -94,7 +91,6 @@ export interface AgentProfile {
   readonly tools?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
-  readonly modelPreference?: AgentModelPreference;
   readonly systemPrompt: (context: AgentProfileContext) => string;
   readonly renderSystemPrompt: (context: AgentProfileContext) => SystemPromptRenderResult;
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;

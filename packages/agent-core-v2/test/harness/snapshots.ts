@@ -56,12 +56,14 @@ export function eventSnapshot(
 interface SnapshotLabels {
   readonly uuidLabels: Map<string, string>;
   readonly msgLabels: Map<string, string>;
+  readonly interactionLabels: Map<string, string>;
 }
 
 export function createEventSnapshotter() {
   const labels: SnapshotLabels = {
     uuidLabels: new Map<string, string>(),
     msgLabels: new Map<string, string>(),
+    interactionLabels: new Map<string, string>(),
   };
 
   return (events: readonly EventSnapshotEntry[]): EventSnapshot => eventSnapshot(events, labels);
@@ -261,6 +263,10 @@ function normalizeValue(value: unknown, labels: SnapshotLabels): unknown {
     if (isAutoModeEnterReminder(value)) return '<auto-mode-enter-reminder>';
     if (isAutoModeExitReminder(value)) return '<auto-mode-exit-reminder>';
     if (isPlanModeReminder(value)) return '<plan-mode-reminder>';
+    const interactionKind = interactionIdKind(value);
+    if (interactionKind !== undefined) {
+      return labelFor(value, labels.interactionLabels, interactionKind);
+    }
     if (isUuid(value)) return labelFor(value, labels.uuidLabels, 'uuid');
     if (isMessageId(value)) return labelFor(value, labels.msgLabels, 'msg');
     return value;
@@ -314,6 +320,13 @@ function stripUndefined(value: unknown): unknown {
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function interactionIdKind(value: string): string | undefined {
+  const match = /^(approval|question|user_tool)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.exec(
+    value,
+  );
+  return match?.[1];
 }
 
 function isMessageId(value: string): boolean {

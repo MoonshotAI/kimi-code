@@ -9,11 +9,11 @@
  * turn driving itself is delegated to a pure helper. Bound at Session scope.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { Error2, ErrorCodes } from '#/errors';
+import { LifecycleScope } from '#/app/scopes';
 import {
   type IAgentScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -34,7 +34,7 @@ import {
 } from './subagent';
 import { runAgentTurn } from './runAgentTurn';
 
-export class SessionSubagentService extends Disposable implements ISessionSubagentService {
+export class SessionSubagentService extends Service implements ISessionSubagentService {
   declare readonly _serviceBrand: undefined;
 
   readonly hooks = createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']);

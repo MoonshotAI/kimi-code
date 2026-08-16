@@ -19,6 +19,7 @@ import type {
   PluginAgentRoot,
   PluginCommandDef,
   PluginInfo,
+  PluginMutationSummary,
   PluginSummary,
   PluginUpdateStatus,
   ReloadSummary,
@@ -65,7 +66,16 @@ export interface IPluginService {
   enabledSystemPrompts(): Promise<readonly EnabledPluginSystemPrompt[]>;
   enabledMcpServers(): Promise<Record<string, McpServerConfig>>;
   enabledHooks(): Promise<readonly HookDef[]>;
+  // Consumption reads resolve to a per-method fallback (never reject) while
+  // no snapshot has loaded; consumers pinning a read use this to tell a real
+  // empty snapshot from the fallback.
+  hasLoadedSnapshot(): boolean;
   readonly onDidReload: Event<ReloadSummary>;
+  // Fires only after a mutation (install / enable / disable / remove) has
+  // reloaded and notified — unlike `onDidReload`, an explicit
+  // `reloadPlugins()` does not raise it, so live-session consumers can tell
+  // "the plugin set changed under you" apart from a deliberate reload.
+  readonly onDidMutate: Event<PluginMutationSummary>;
 }
 
 export const IPluginService: ServiceIdentifier<IPluginService> =

@@ -10,13 +10,17 @@
 import {
   bootstrap,
   drainQueryStoreDisposals,
+  drainSessionMetadataWrites,
   drainSessionIndexMirror,
   IConfigService,
   IEventService,
   IProviderDiscoveryService,
   ISessionIndex,
   ISessionIndexMirror,
+  ICapabilityService,
+  IPluginService,
   IWorkspaceService,
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
@@ -38,6 +42,7 @@ import { transformOpenApiDocument } from './openapi/transforms';
 import { registerRequestLogging } from './requestLogging';
 import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
+import { registerApiV2Routes } from './routes/registerApiV2Routes';
 import { registerWebAssetRoutes } from './routes/webAssets';
 import {
   createServerLogger,
@@ -102,6 +107,12 @@ export interface ServerStartOptions {
   readonly host?: string;
   readonly port?: number;
   readonly homeDir?: string;
+  /**
+   * Plugin marketplace catalog URL for `GET /api/v1/plugins/marketplace`.
+   * Defaults to the `KIMI_CODE_PLUGIN_MARKETPLACE_URL` env var, then the
+   * production catalog.
+   */
+  readonly pluginMarketplaceUrl?: string;
   readonly configPath?: string;
   /**
    * Override the instance-registry directory — used in tests that need the
@@ -372,6 +383,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const close = async (): Promise<void> => {
     await app.close();
     configWarningSubscription.dispose();
+    pluginChangeSubscription.dispose();
+    capabilityInstallSubscription.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
     // Telemetry is best-effort and must never prevent core or instance cleanup.
@@ -384,10 +397,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       );
     }
     try {
+      // Settle session metadata writes first: requests have stopped, and a
+      // queued write must land before the mirror flushes its summary and the
+      // scope disposal marks the service disposed.
+      await drainSessionMetadataWrites();
       // Drain the session-index mirror while the query store is still open:
       // requests have stopped, so no new summaries arrive and the queue just
       // needs its final flush to land in the read model.
       await core.accessor.get(ISessionIndexMirror).drain();
+      fsWatchBridge.dispose();
       core.dispose();
       // `core.dispose()` runs the mirror's, the search service's and the query
       // store's synchronous `dispose()`, whose drains/closes are asynchronous —
@@ -396,6 +414,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
       await drainQueryStoreDisposals();
+      await drainSessionMetadataWrites();
     } finally {
       await registration.release();
     }
@@ -436,6 +455,22 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     });
   };
   const configWarningSubscription = configService.onDidChangeDiagnostics(publishConfigWarnings);
+
+  // Fan plugin/capability lifecycle facts out as global WS events so every
+  // client (desktop settings, web, CLI) converges without polling: plugin
+  // mutations end in onDidReload; capability installs report every progress
+  // transition through onDidChangeInstall.
+  const pluginService = core.accessor.get(IPluginService);
+  const pluginChangeSubscription = pluginService.onDidReload(() => {
+    core.accessor.get(IEventService).publish({ type: 'event.plugin.changed', payload: {} });
+  });
+  const capabilityService = core.accessor.get(ICapabilityService);
+  const capabilityInstallSubscription = capabilityService.onDidChangeInstall((change) => {
+    core.accessor.get(IEventService).publish({
+      type: 'event.capability.changed',
+      payload: { capability_id: change.id, install: change.install },
+    });
+  });
   void configService.ready
     .then(() => {
       if (configService.diagnostics().some((diagnostic) => diagnostic.severity === 'warning')) {
@@ -462,6 +497,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'models', description: 'Configured model aliases' },
           { name: 'providers', description: 'Configured providers' },
           { name: 'sessions', description: 'Session lifecycle' },
+          { name: 'v2-sessions', description: 'Domain-grouped session list query (API v2)' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
           { name: 'search', description: 'Global message search' },
@@ -496,6 +532,16 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     enableShutdown,
     enableTerminals,
     guiStore,
+    pluginMarketplaceUrl:
+      opts.pluginMarketplaceUrl ??
+      process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] ??
+      KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+    pluginMarketplaceIsDefault:
+      opts.pluginMarketplaceUrl === undefined &&
+      (process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] === undefined ||
+        // The dev marketplace server (scripts/dev.mjs) serves this repo's own
+        // catalog and marks itself — it still counts as the default.
+        process.env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1'),
     onShutdown: () => {
       void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
     },
@@ -504,6 +550,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
   });
+
+  // `/api/v2` — same envelope conventions as v1, domain-grouped payloads.
+  // Mounted after v1; the root auth/host/origin hooks cover it identically.
+  await registerApiV2Routes(app, core);
 
   const wssV1 = registerWsV1(core, {
     validateCredential,

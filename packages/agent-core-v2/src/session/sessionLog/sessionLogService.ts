@@ -9,7 +9,9 @@
  * `sessionState` (`ISessionStateService`) and read/written through it.
  */
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';

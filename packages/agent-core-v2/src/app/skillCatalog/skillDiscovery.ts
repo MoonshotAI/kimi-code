@@ -19,6 +19,7 @@ export interface SkillDiscoveryResult {
   readonly skills: readonly SkillDefinition[];
   readonly skipped: readonly SkippedSkill[];
   readonly scannedRoots: readonly string[];
+  readonly scannedDirectories: readonly string[];
 }
 
 export interface ISkillDiscovery {

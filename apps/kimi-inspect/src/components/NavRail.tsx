@@ -6,7 +6,7 @@
 
 import type { ReactNode } from 'react';
 
-export type AppView = 'chat' | 'search' | 'models' | 'services' | 'workspace' | 'bash';
+export type AppView = 'chat' | 'search' | 'models' | 'services' | 'workspace' | 'bash' | 'di';
 
 interface ViewDef {
   readonly id: AppView;
@@ -70,7 +70,7 @@ const VIEWS: readonly ViewDef[] = [
   },
   {
     id: 'workspace',
-    title: 'Workspace Services',
+    title: 'Workspace Runtime',
     icon: (
       <svg {...iconProps}>
         <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
@@ -84,6 +84,19 @@ const VIEWS: readonly ViewDef[] = [
       <svg {...iconProps}>
         <polyline points="4 17 10 11 4 5" />
         <line x1="12" y1="19" x2="20" y2="19" />
+      </svg>
+    ),
+  },
+  {
+    id: 'di',
+    title: 'DI',
+    icon: (
+      <svg {...iconProps}>
+        <circle cx="18" cy="5" r="3" />
+        <circle cx="6" cy="12" r="3" />
+        <circle cx="18" cy="19" r="3" />
+        <line x1="8.6" y1="10.5" x2="15.4" y2="6.5" />
+        <line x1="8.6" y1="13.5" x2="15.4" y2="17.5" />
       </svg>
     ),
   },

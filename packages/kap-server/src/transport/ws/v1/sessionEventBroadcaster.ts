@@ -36,9 +36,11 @@
  * families, including every session's `event.session.work_changed`) are pushed
  * to EVERY established connection (registered via
  * {@link SessionEventBroadcaster.addGlobalTarget}, no subscription needed)
- * union every subscribed target. Session/agent events only reach connections
- * subscribed to that session, subject to the per-subscription agent allowlist
- * and the transcript suppression below. Transcript frames (`transcript.reset`
+ * union every subscribed target — except the `event.di.*` debug feed, which
+ * only reaches connections opted in via
+ * {@link SessionEventBroadcaster.addDiEventTarget}. Session/agent events only
+ * reach connections subscribed to that session, subject to the
+ * per-subscription agent allowlist and the transcript suppression below. Transcript frames (`transcript.reset`
  * / `transcript.ops`) are a separate channel: they are governed by the
  * per-agent transcript grades alone and bypass the agent allowlist entirely.
  *
@@ -75,6 +77,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type {
   ConfigWarningItem,
+  DiUnitChangedEvent,
   SessionCreatedEvent,
   SessionMetaUpdatedEvent,
   Event,
@@ -223,6 +226,16 @@ export class SessionEventBroadcaster {
    */
   private readonly globalTargets = new Set<BroadcastTarget>();
   /**
+   * Opt-in set for the `event.di.*` debug-surface feed. That feed is global
+   * (no owning session) and high-churn, but only kimi-inspect's DI view
+   * consumes it — pushing it to every connection wastes bandwidth on clients
+   * that drop the frames unread. Temporary gate until a client-declared
+   * event-type whitelist exists: `WsConnectionV1` opts a connection in when
+   * its `client_hello` carries `client_id: 'kimi-inspect'`; every other
+   * connection (including subscribed targets) skips `event.di.*` frames.
+   */
+  private readonly diEventTargets = new Set<BroadcastTarget>();
+  /**
    * Single-flight guard for session activation: without it, two concurrent
    * activations (WS subscribe racing a REST snapshot / replay / resync) each
    * built their own SessionState, bus subscriptions, and journal writer. The
@@ -270,6 +283,16 @@ export class SessionEventBroadcaster {
   /** Drop a closed connection from the global fan-out set. Idempotent. */
   removeGlobalTarget(target: BroadcastTarget): void {
     this.globalTargets.delete(target);
+    this.diEventTargets.delete(target);
+  }
+
+  /**
+   * Opt a connection into the `event.di.*` debug-surface feed (see
+   * {@link diEventTargets}). Idempotent; cleaned up by
+   * {@link removeGlobalTarget}.
+   */
+  addDiEventTarget(target: BroadcastTarget): void {
+    this.diEventTargets.add(target);
   }
 
   /**
@@ -881,6 +904,32 @@ export class SessionEventBroadcaster {
       );
       return;
     }
+    if (event.type === 'event.plugin.changed') {
+      // Plugin set mutations (install/enable/disable/remove from ANY client)
+      // fan out so every host re-reads instead of caching stale rows. Bare
+      // signal by design — the payload is the services' own REST surfaces.
+      void this.dispatchGlobal({
+        type: 'event.plugin.changed',
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.plugin.changed', error),
+      );
+      return;
+    }
+    if (event.type === 'event.capability.changed') {
+      const payload = capabilityChangedPayload(event.payload);
+      if (payload === undefined) return;
+      void this.dispatchGlobal({
+        type: 'event.capability.changed',
+        ...payload,
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.capability.changed', error),
+      );
+      return;
+    }
     if (event.type === 'event.config.warning') {
       const payload = configWarningPayload(event.payload);
       if (payload === undefined) return;
@@ -896,6 +945,25 @@ export class SessionEventBroadcaster {
       } as Event).catch((error: unknown) =>
         this.logDispatchError(GLOBAL_SESSION_ID, 'event.config.warning', error),
       );
+      return;
+    }
+    if (event.type === 'event.di.unit_changed') {
+      const payload = diUnitChangedPayload(event.payload);
+      if (payload === undefined) return;
+      // Engine DI unit state transitions (the debug-surface feed) have no
+      // owning session: route through the global state so the envelope carries
+      // the '__global__' watermark. `isGlobalEvent` fans it out, but delivery
+      // is gated to connections opted in via `addDiEventTarget` (kimi-inspect
+      // only) — `VOLATILE_EVENT_TYPES` keeps the churn unjournaled.
+      void this.dispatchGlobal({
+        type: 'event.di.unit_changed',
+        ...payload,
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.di.unit_changed', error),
+      );
+      return;
     }
   }
 
@@ -1237,7 +1305,11 @@ export class SessionEventBroadcaster {
       // minimal embeds) on the legacy delivery path.
       const recipients = new Set<BroadcastTarget>(this.globalTargets);
       for (const target of this.allTargets()) recipients.add(target);
+      // The `event.di.*` debug feed is opt-in (kimi-inspect only) — every
+      // other connection drops those frames unread anyway.
+      const diGated = event.type.startsWith('event.di.');
       for (const target of recipients) {
+        if (diGated && !this.diEventTargets.has(target)) continue;
         try {
           target.send(envelope, 'immediate');
         } catch {
@@ -1327,13 +1399,16 @@ function legacyTaskEvent(event: DomainEvent, agentId: string, sessionId: string)
   return { ...event, type: legacyType, agentId, sessionId } as unknown as Event;
 }
 
-/** Session/workspace/config events are broadcast to every connection. */
+/** Session/workspace/config/di events are broadcast to every connection. */
 function isGlobalEvent(type: string): boolean {
   return (
     type === 'session.meta.updated' ||
     type.startsWith('event.session.') ||
     type.startsWith('event.workspace.') ||
-    type.startsWith('event.config.')
+    type.startsWith('event.config.') ||
+    type.startsWith('event.plugin.') ||
+    type.startsWith('event.capability.') ||
+    type.startsWith('event.di.')
   );
 }
 
@@ -1582,6 +1657,37 @@ function sessionMetaUpdatedSessionId(payload: unknown): string | undefined {
   return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
 }
 
+const DI_UNIT_STATES: ReadonlySet<string> = new Set([
+  'Pending',
+  'Activating',
+  'Active',
+  'Unloading',
+  'Failed',
+]);
+
+/**
+ * Validate the `event.di.unit_changed` payload published on the core
+ * `IEventService` by agent-core-v2's `IDebugCascadeService` (the debug
+ * surface's unit state feed). Malformed payloads are dropped, never forwarded.
+ */
+function diUnitChangedPayload(
+  payload: unknown,
+): Pick<DiUnitChangedEvent, 'scope' | 'token' | 'state' | 'error'> | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = payload as Partial<DiUnitChangedEvent>;
+  if (typeof candidate.scope !== 'string' || candidate.scope.length === 0) return undefined;
+  if (typeof candidate.token !== 'string' || candidate.token.length === 0) return undefined;
+  if (typeof candidate.state !== 'string' || !DI_UNIT_STATES.has(candidate.state)) {
+    return undefined;
+  }
+  return {
+    scope: candidate.scope,
+    token: candidate.token,
+    state: candidate.state as DiUnitChangedEvent['state'],
+    error: typeof candidate.error === 'string' ? candidate.error : undefined,
+  };
+}
+
 /**
  * Validate the `event.session.created` payload published on the core
  * `IEventService`. The create/fork/child routes publish
@@ -1613,6 +1719,35 @@ function sessionCreatedPayload(
  * entry rejects the whole batch — the publisher always sends the full current
  * warning set, so a partial frame would be a lie by omission.
  */
+interface CapabilityChangedPayload {
+  capability_id: string;
+  install: {
+    running: boolean;
+    step?: string;
+    percent?: number;
+    error?: string;
+    note?: string;
+  };
+}
+
+function capabilityChangedPayload(payload: unknown): CapabilityChangedPayload | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const id = (payload as { capability_id?: unknown }).capability_id;
+  if (typeof id !== 'string' || id.length === 0) return undefined;
+  const install = (payload as { install?: unknown }).install;
+  if (typeof install !== 'object' || install === null) return undefined;
+  const running = (install as { running?: unknown }).running;
+  if (typeof running !== 'boolean') return undefined;
+  const out: CapabilityChangedPayload['install'] = { running };
+  for (const key of ['step', 'error', 'note'] as const) {
+    const value = (install as Record<string, unknown>)[key];
+    if (typeof value === 'string') out[key] = value;
+  }
+  const percent = (install as { percent?: unknown }).percent;
+  if (typeof percent === 'number') out.percent = percent;
+  return { capability_id: id, install: out };
+}
+
 function configWarningPayload(payload: unknown): { warnings: ConfigWarningItem[] } | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
   const warnings = (payload as { warnings?: unknown }).warnings;

@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
+import type { ILogService, LogPayload } from '#/_base/log/log';
 import { CapabilityErrors } from '#/app/capability/errors';
 import { CapabilityService } from '#/app/capability/capabilityService';
 import type {
@@ -15,14 +16,18 @@ import type {
   CapabilityInstallReporter,
 } from '#/app/capability/types';
 
+import { stubLog } from '../../_base/log/stubs';
+
 function fakeEntry(overrides: {
   id: 'kimi-cu' | 'kimi-webbridge';
+  pluginId?: string;
   supported?: boolean;
   detect?: CapabilityDetectResult;
-  install?: (report: CapabilityInstallReporter) => Promise<void>;
+  install?: (report: CapabilityInstallReporter) => Promise<string | undefined>;
 }): CapabilityEntry {
   return {
     id: overrides.id,
+    pluginId: overrides.pluginId,
     displayName: overrides.id,
     description: 'fake',
     supported: overrides.supported ?? true,
@@ -30,16 +35,20 @@ function fakeEntry(overrides: {
       Promise.resolve(
         overrides.detect ?? { steps: [{ id: 'plugin', state: 'ok' }] },
       ),
-    install: overrides.install ?? (() => Promise.resolve()),
+    install: overrides.install ?? (() => Promise.resolve(undefined)),
   };
 }
 
-function fakeService(entries: readonly CapabilityEntry[]): CapabilityService {
+function fakeService(
+  entries: readonly CapabilityEntry[],
+  log: ILogService = stubLog(),
+): CapabilityService {
   // bootstrap / hostProcess are unused when entries are injected.
   return new CapabilityService(
     undefined as never,
     undefined as never,
     undefined as never,
+    log,
     entries,
   );
 }
@@ -52,7 +61,11 @@ function expectErrorCode(error: unknown, code: string): void {
 describe('CapabilityService', () => {
   it('lists entries with readiness computed from required steps', async () => {
     const service = fakeService([
-      fakeEntry({ id: 'kimi-cu', detect: { steps: [{ id: 'plugin', state: 'ok' }] } }),
+      fakeEntry({
+        id: 'kimi-cu',
+        pluginId: 'kimi-cu-win',
+        detect: { steps: [{ id: 'plugin', state: 'ok' }] },
+      }),
       fakeEntry({
         id: 'kimi-webbridge',
         detect: {
@@ -69,6 +82,7 @@ describe('CapabilityService', () => {
       ['kimi-cu', 'ready'],
       ['kimi-webbridge', 'partial'],
     ]);
+    expect(list[0]?.pluginId).toBe('kimi-cu-win');
   });
 
   it('isolates a failing detector to its own entry', async () => {
@@ -78,7 +92,7 @@ describe('CapabilityService', () => {
       description: 'fake',
       supported: true,
       detect: () => Promise.reject(new Error('probe timed out')),
-      install: () => Promise.resolve(),
+      install: () => Promise.resolve(undefined),
     };
     const service = fakeService([
       broken,
@@ -162,9 +176,9 @@ describe('CapabilityService', () => {
         id: 'kimi-cu',
         install: (report) => {
           report('download', 42);
-          return new Promise<void>((resolve) => {
+          return new Promise<string | undefined>((resolve) => {
             release = () => {
-              resolve();
+              resolve(undefined);
             };
           });
         },
@@ -199,6 +213,59 @@ describe('CapabilityService', () => {
     expect.unreachable('install never settled');
   });
 
+  it('describes the registry without running detectors', async () => {
+    const service = fakeService([
+      fakeEntry({ id: 'kimi-cu', supported: true }),
+      fakeEntry({ id: 'kimi-webbridge', supported: false }),
+    ]);
+    const descriptors = service.describeCapabilities();
+    expect(descriptors.map((d) => d.id)).toEqual(['kimi-cu', 'kimi-webbridge']);
+    expect(descriptors.find((d) => d.id === 'kimi-webbridge')?.supported).toBe(false);
+  });
+
+  it('emits onDidChangeInstall on every progress transition', async () => {
+    const service = fakeService([
+      fakeEntry({
+        id: 'kimi-cu',
+        install: (report) => {
+          report('download', 42);
+          return Promise.resolve(undefined);
+        },
+      }),
+    ]);
+    const seen: Array<{ id: string; install: { running: boolean; step?: string } }> = [];
+    service.onDidChangeInstall((change) => {
+      seen.push({ id: change.id, install: change.install });
+    });
+
+    await service.installCapability('kimi-cu');
+    for (let i = 0; i < 50; i += 1) {
+      const status = await service.getCapability('kimi-cu');
+      if (!status.install.running) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(seen[0]).toEqual({ id: 'kimi-cu', install: { running: true } });
+    expect(seen).toContainEqual({ id: 'kimi-cu', install: { running: true, step: 'download', percent: 42 } });
+    expect(seen.at(-1)).toEqual({ id: 'kimi-cu', install: { running: false } });
+  });
+
+  it('surfaces an install note from the entry through progress', async () => {
+    const service = fakeService([
+      fakeEntry({
+        id: 'kimi-cu',
+        install: () => Promise.resolve('user-skill-migrated'),
+      }),
+    ]);
+    await service.installCapability('kimi-cu');
+    for (let i = 0; i < 50; i += 1) {
+      const status = await service.getCapability('kimi-cu');
+      if (!status.install.running) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect((await service.getCapability('kimi-cu')).install.note).toBe('user-skill-migrated');
+  });
+
   it('surfaces install errors through progress until the next attempt', async () => {
     let attempts = 0;
     const service = fakeService([
@@ -208,7 +275,7 @@ describe('CapabilityService', () => {
           attempts += 1;
           return attempts === 1
             ? Promise.reject(new Error('boom'))
-            : Promise.resolve();
+            : Promise.resolve(undefined);
         },
       }),
     ]);
@@ -231,5 +298,43 @@ describe('CapabilityService', () => {
     const retried = await service.getCapability('kimi-cu');
     expect(retried.install.error).toBeUndefined();
     expect(attempts).toBe(2);
+  });
+
+  it('logs an install error with its last progress step when setup fails', async () => {
+    const warnings: Array<{ message: string; payload?: LogPayload }> = [];
+    let resolveLogged: (() => void) | undefined;
+    const logged = new Promise<void>((resolve) => {
+      resolveLogged = resolve;
+    });
+    const error = new Error('signature mismatch');
+    const log = {
+      ...stubLog(),
+      warn: (message: string, payload?: LogPayload) => {
+        warnings.push({ message, payload });
+        resolveLogged?.();
+      },
+    } satisfies ILogService;
+    const service = fakeService(
+      [
+        fakeEntry({
+          id: 'kimi-cu',
+          install: async (report) => {
+            report('runtime');
+            throw error;
+          },
+        }),
+      ],
+      log,
+    );
+
+    await service.installCapability('kimi-cu');
+    await logged;
+
+    expect(warnings).toEqual([
+      {
+        message: 'capability install failed',
+        payload: { capabilityId: 'kimi-cu', step: 'runtime', error },
+      },
+    ]);
   });
 });

@@ -76,9 +76,9 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 
 - **`state.json`**：会话标题、`lastPrompt`、创建/更新时间、`forkedFrom` 等元数据。
 - **`upcoming-goals.json`**：由 `/goal next <objective>` 创建的 TUI 专属队列。它不属于 Agent 对话；只有当前目标完成并提升后续目标后，才会进入 Agent 对话。
-- **`agents/main/wire.jsonl`**：主 Agent 的完整通信记录，用于会话恢复和回放。
+- **`agents/main/wire.jsonl`**：main agent 的完整通信记录，用于会话恢复和回放。
 - **`agents/main/plans/`**：Plan 模式下写入的计划文件，按计划 id 命名（`<id>.md`）。
-- **`agents/agent-0/` 等**：子 Agent 实例目录，各自含 `wire.jsonl`。
+- **`agents/agent-0/` 等**：subagent 实例目录，各自含 `wire.jsonl`。
 - **`logs/kimi-code.log`**：该会话的诊断日志，只有发生诊断事件时才存在。
 - **`tasks/`**：后台任务持久化——`tasks/<task_id>.json` 保存状态/pid/退出码，`tasks/<task_id>/output.log` 保存输出。
 - **`cron/`**：定时任务持久化，用 `kimi --session` 恢复会话时重新加载到调度器。详见[定时任务](../reference/tools.md#定时任务)。

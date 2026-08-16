@@ -199,6 +199,138 @@ for (const valueMode of ['memory', 'disk'] as const) {
   });
 }
 
+test('catchUpFromWal: a torn tail pauses the catch-up and a later call completes it', async () => {
+  const dir = await tmpDir();
+  try {
+    const writer = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    for (let i = 0; i < 10; i++) await writer.set(`k${i}`, { n: i });
+    const reader = await MiniDb.open({ dir, valueCodec: 'json', readOnly: true });
+    const ri = reader.recoveryInfo!;
+
+    // Simulate a writer mid-writev: only a PREFIX of the next frame is on
+    // disk. The catch-up must stop at the last fully-valid frame without
+    // erroring, and must not advance the watermark past it.
+    const frame = encodeFrame({
+      type: TYPE_SET,
+      key: Buffer.from('torn', 'utf8'),
+      value: Buffer.from(JSON.stringify({ n: 99 }), 'utf8'),
+    });
+    const half = Math.floor(frame.length / 2);
+    const walPath = path.join(dir, 'db.wal');
+    await fs.appendFile(walPath, frame.subarray(0, half));
+    const paused = await reader.catchUpFromWal(ri.walScanEnd);
+    assert.deepEqual(paused, { offset: ri.walScanEnd, appliedFrames: 0 });
+    assert.equal(reader.get('torn'), undefined);
+
+    // The writev lands: the tail's CRC now validates and the frame applies.
+    await fs.appendFile(walPath, frame.subarray(half));
+    const done = await reader.catchUpFromWal(ri.walScanEnd);
+    assert.deepEqual(done, { offset: ri.walScanEnd + frame.length, appliedFrames: 1 });
+    assert.deepEqual(reader.get('torn'), { n: 99 });
+
+    await reader.close();
+    await writer.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('catchUpFromWal: a compaction rotation swaps the WAL inode and the catch-up declines', async () => {
+  const dir = await tmpDir();
+  try {
+    const writer = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    for (let i = 0; i < 100; i++) await writer.set(`k${i}`, { n: i });
+    const reader = await MiniDb.open({ dir, valueCodec: 'json', readOnly: true });
+    const ri = reader.recoveryInfo!;
+    assert.ok(ri.walScanEnd > 0);
+
+    // Rotation: compaction swaps db.snapshot/db.wal in two renames, so the
+    // WAL the reader anchored on is gone — incremental catch-up must decline
+    // (null) and leave the reopen decision to the caller.
+    await writer.compact();
+    assert.equal(await reader.catchUpFromWal(ri.walScanEnd), null);
+
+    // A fresh read-only reopen sees every write, including post-rotation ones.
+    await writer.set('post-rotation', { n: 101 });
+    await reader.close();
+    const reopened = await MiniDb.open({ dir, valueCodec: 'json', readOnly: true });
+    assert.equal(reopened.size, 101);
+    assert.deepEqual(reopened.get('post-rotation'), { n: 101 });
+    await reopened.close();
+    await writer.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('catchUpFromWal: concurrent calls are serialized instead of interleaving mid-apply', async () => {
+  const dir = await tmpDir();
+  try {
+    const writer = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    for (let i = 0; i < 50; i++) await writer.set(`k${i}`, { n: i });
+    const reader = await MiniDb.open({ dir, valueCodec: 'json', readOnly: true });
+    const ri = reader.recoveryInfo!;
+    for (let i = 50; i < 150; i++) await writer.set(`k${i}`, { n: i });
+
+    // The sliced async apply yields to the event loop, so two overlapping
+    // catch-ups at the same watermark would interleave op-by-op without the
+    // per-instance chain. The second call runs after the first advanced the
+    // watermark and declines (the caller then falls back to a reopen).
+    const [first, second] = await Promise.all([
+      reader.catchUpFromWal(ri.walScanEnd),
+      reader.catchUpFromWal(ri.walScanEnd),
+    ]);
+    assert.ok(first && first.appliedFrames === 100);
+    assert.equal(second, null);
+    assert.equal(reader.size, 150);
+
+    await reader.close();
+    await writer.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('catchUpFromWal: a large tail applies in cooperative slices (event loop stays live)', { timeout: 60_000 }, async () => {
+  const dir = await tmpDir();
+  try {
+    const writer = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    for (let i = 0; i < 100; i++) await writer.set(`pre:${i}`, { n: i, t: `alpha ${i}` });
+    await writer.createTextIndex('t', { fields: ['t'] });
+    const reader = await MiniDb.open({ dir, valueCodec: 'json', readOnly: true });
+    const ri = reader.recoveryInfo!;
+    // 8000 single-op frames: WAL_APPLY_OPS_PER_SLICE (512) alone forces ~15
+    // yields mid-apply even when every op is cheap.
+    for (let i = 0; i < 8000; i++) await writer.set(`s:${i}`, { n: i, t: `alpha beta ${i}` });
+
+    // Count event-loop turns observed while the catch-up runs. The async
+    // scan contributes about one (a sub-window file fills in one read); an
+    // UNSLICED apply would add none, the sliced one adds one per 512 ops.
+    let loopTurns = 0;
+    let catchUpDone = false;
+    const probe = (async () => {
+      for (;;) {
+        await new Promise((r) => setImmediate(r));
+        if (catchUpDone) return;
+        loopTurns++;
+      }
+    })();
+    const res = await reader.catchUpFromWal(ri.walScanEnd);
+    catchUpDone = true;
+    await probe;
+
+    assert.ok(res && res.appliedFrames === 8000);
+    assert.ok(loopTurns >= 3, `expected the sliced apply to yield repeatedly, observed ${loopTurns} loop turn(s)`);
+    assert.equal(reader.size, 8100);
+    assert.ok(reader.search('t', 'beta').length > 0);
+
+    await reader.close();
+    await writer.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 // ---- generation pairing (stat-pairing; review #15) --------------------------
 //
 // Fault-injection tests for recover()'s snapshot/WAL generation pairing. The
@@ -639,6 +771,68 @@ test('async scanner: resync candidate budget bounds fake-magic storms', async ()
     assert.equal(res.corruptRanges.length, 1);
     assert.equal(res.corruptRanges[0]![0], head.length);
     assert.equal(res.eofOffset, head.length);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- phase 3: cooperative slicing of the recovered-op apply loops -----------
+
+import { walApplySlicer, WAL_APPLY_OPS_PER_SLICE, WAL_APPLY_SLICE_MS } from '../src/recovery.js';
+
+test('walApplySlicer trips on the op budget, then resets; the time budget trips independently', () => {
+  const slice = walApplySlicer();
+  for (let i = 1; i < WAL_APPLY_OPS_PER_SLICE; i++) assert.equal(slice(), false);
+  assert.equal(slice(), true); // the op budget trips exactly at the cap
+  assert.equal(slice(), false); // counters reset for the next slice
+  // The time budget trips below the op cap once the slice ran long enough.
+  const timed = walApplySlicer();
+  assert.equal(timed(), false); // one op, well under the op cap
+  const t0 = performance.now();
+  while (performance.now() - t0 < WAL_APPLY_SLICE_MS + 5) {
+    // busy-wait: keep this slice over its time budget with ops to spare
+  }
+  assert.equal(timed(), true);
+});
+
+test('a generation WAL delta of large batch frames replays every op through the sliced apply loop', async () => {
+  const dir = await tmpDir();
+  try {
+    let db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    db.genBuildKickMinIntervalMs = Number.POSITIVE_INFINITY; // exactly one explicit generation
+    for (let base = 0; base < 2000; base += 500) {
+      await db.batch(Array.from({ length: 500 }, (_, i) => ({ op: 'set' as const, key: `b${base + i}`, value: { n: base + i } })));
+    }
+    await db.rebuildGeneration();
+    await db.close();
+
+    // A WAL delta of batch frames past the checkpoint: thousands of primitive
+    // ops in a handful of frames — frame-granular yielding could never slice
+    // this; the op/time budgets can. Small values keep the delta far below
+    // the close-time republish threshold.
+    db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });
+    const gen = db.getIndexGeneration()?.id;
+    for (let base = 0; base < 3000; base += 500) {
+      await db.batch(Array.from({ length: 500 }, (_, i) => ({ op: 'set' as const, key: `d${base + i}`, value: { n: base + i } })));
+    }
+    await db.close();
+    assert.equal(db.getIndexGeneration()?.id, gen); // no close-time republish: the delta must be replayed
+
+    db = await MiniDb.open({ dir, valueCodec: 'json', autoCompact: false });
+    try {
+      assert.ok(db.recoveryInfo?.indexGeneration);
+      assert.equal(db.recoveryInfo?.walDeltaAppliedOps, 3000);
+      assert.equal(db.size, 5000);
+      assert.deepEqual(db.get('d0'), { n: 0 });
+      assert.deepEqual(db.get('d2999'), { n: 2999 });
+      assert.deepEqual(db.get('b1999'), { n: 1999 });
+      const status = db.lifecycleStatus();
+      assert.equal(status.state, 'ready');
+      assert.deepEqual(status.path, ['no-generation', 'generation-load', 'wal-catch-up', 'ready']);
+      assert.ok(status.phases.walApplyMs > 0);
+    } finally {
+      await db.close();
+    }
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

@@ -2,9 +2,10 @@
  * In-process dispatcher — resolves a wire triple `(service, method, args)`
  * against a live engine scope and mirrors kap-server's dispatcher semantics
  * (reflection call, non-function members are property reads, `main` agent
- * auto-materialized via `ensureMainAgent`). Scope routing walks
- * `IWorkspaceLifecycleService` / `IAgentLifecycleService` exactly like the
- * server's `resolveScope`. Every argument, result, and event payload passes
+ * auto-materialized via `ensureMainAgent`). Scope routing resolves workspace
+ * instances through `IWorkspaceInstanceManager` and live sessions through the
+ * App `SessionManager`, matching the server's `resolveScope`. Every argument,
+ * result, and event payload passes
  * through `wireClone` (a JSON round-trip), so consumers observe
  * byte-identical data no matter whether the call crossed a socket or stayed
  * in-process — and non-serializable leaks fail early.
@@ -14,8 +15,9 @@
  */
 
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
-import { IWorkspaceLifecycleService } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/workspaceLifecycle';
-import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/workspaceLifecycle/sessionLookup';
+import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
+import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
+import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
@@ -63,13 +65,14 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   /** Mirrors kap-server's `resolveScope`, incl. main-agent materialization. */
   async function resolveScope(scope: ScopeRef): Promise<ResolvedScope> {
     if (scope.workspaceId !== undefined) {
-      const handler = await root.accessor
-        .get(IWorkspaceLifecycleService)
-        .handlerFor({ workspaceId: scope.workspaceId });
-      return { kind: 'workspace', like: handler };
+      const workspace = await root.accessor
+        .get(IWorkspaceInstanceManager)
+        .getOrCreate({ workspaceId: scope.workspaceId });
+      void workspace.program;
+      return { kind: 'workspace', like: root };
     }
     if (scope.sessionId === undefined) return { kind: 'core', like: root };
-    const session = getLiveSessionById(root.accessor, scope.sessionId);
+    const session = root.accessor.get(ISessionManager).get(scope.sessionId) ?? getLiveSessionById(root.accessor, scope.sessionId);
     if (session === undefined) {
       throw new RPCError(NOT_FOUND, `session not found: ${scope.sessionId}`);
     }

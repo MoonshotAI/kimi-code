@@ -34,7 +34,8 @@ import { randomUUID } from 'node:crypto';
 import { createControlledPromise } from '@antfu/utils';
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
@@ -99,6 +100,7 @@ export const loopLastRequestTraceIdKey = defineState<string | undefined>(
 );
 export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
 
@@ -248,9 +250,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
+  cancelFromUser(turnId?: number): void {
+    const status = this.status();
+    if (status.state === 'running') {
+      this.telemetry.track2('cancel', {
+        from: 'streaming',
+        trace_id: status.activeTraceId,
+      });
+    }
+    this.cancel(turnId);
+  }
+
   tryAcquireQuiescence(): IDisposable | undefined {
     if (this.disposing) throw abortError('Agent loop disposed');
-    if (this.activeTurnJob !== undefined || this.hasPendingRequests()) return undefined;
+    if (
+      this.quiescenceDepth > 0 ||
+      this.activeTurnJob !== undefined ||
+      this.hasPendingRequests()
+    ) {
+      return undefined;
+    }
     this.quiescenceDepth += 1;
     return toDisposable(() => this.releaseQuiescence());
   }
@@ -455,7 +474,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       type: 'turn.started',
       turnId: job.turn.id,
       origin,
-      prompt: isDisplayablePromptOrigin(origin) ? turnPromptText(job.seed.input) : undefined,
+      prompt: isDisplayablePromptOrigin(origin) ? turnPromptText(job.seed.input, origin) : undefined,
     });
     void this.runTurn(job.turn, job.ready).then(job.result.resolve, job.result.reject);
   }
@@ -618,6 +637,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             begun.step.signal,
             runtime.turnSignal,
             begun.step.number,
+            runtime.job !== undefined && begun.step.number === 1,
             begun.step.uuid,
             options.onStarted,
           );
@@ -802,11 +822,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     signal: AbortSignal,
     turnSignal: AbortSignal,
     currentStep: number,
+    firstStepOfTurn: boolean,
     stepUuid: string,
     onStarted: ((step: number) => void) | undefined,
   ): Promise<StepExecutionResult> {
     this.activeRequestTrace = undefined;
-    await this.hooks.onWillBeginStep.run({ turnId, step: currentStep, signal });
+    await this.hooks.onWillBeginStep.run({ turnId, step: currentStep, firstStepOfTurn, signal });
     const markStepStarted = this.beginStep(turnId, signal, currentStep, stepUuid, onStarted);
     const streamParts = this.createStreamPartHandler(turnId, markStepStarted);
     const request = this.llmRequester.start(
@@ -837,6 +858,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       turnId,
       signal,
       currentStep,
+      firstStepOfTurn,
       response.usage,
       finishReason,
     );
@@ -994,12 +1016,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     turnId: number,
     signal: AbortSignal,
     currentStep: number,
+    firstStepOfTurn: boolean,
     usage: TokenUsage,
     finishReason: FinishReason,
   ): Promise<boolean> {
     const context: AfterStepContext = {
       turnId,
       step: currentStep,
+      firstStepOfTurn,
       signal,
       usage,
       finishReason,

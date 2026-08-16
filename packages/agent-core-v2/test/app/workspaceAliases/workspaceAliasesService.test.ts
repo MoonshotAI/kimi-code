@@ -3,9 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -98,9 +97,6 @@ describe('WorkspaceAliasesService (file-backed)', () => {
   }
 
   it('resolveAliasIds returns every registered id for one physical directory', async () => {
-    // A legacy catalog holds two entries whose roots differ only by casing —
-    // one physical folder, two bucket ids (this is what `dedupeByRoot` merges
-    // for listing; the alias set exposes both for multi-bucket reads).
     const lowerRoot = 'c:\\users\\foo\\proj';
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const legacyId = 'wd_proj_deadbeef0002';
@@ -125,9 +121,6 @@ describe('WorkspaceAliasesService (file-backed)', () => {
   });
 
   it('resolveAliasIds folds in session-index-only spellings of the same root', async () => {
-    // The sibling bucket's spelling was never registered: only the legacy
-    // session index remembers it. Malformed index lines are skipped, never
-    // thrown.
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const typedId = encodeWorkDirKey(typedRoot);
     const indexOnlyId = encodeWorkDirKey('c:\\Users\\Foo\\Proj');
@@ -165,11 +158,9 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     });
 
     const aliases = build();
-    // Unknown id: callers keep their existing not-found semantics.
     expect(await aliases.resolveAliasIds('wd_missing_000000000000')).toEqual([
       'wd_missing_000000000000',
     ]);
-    // POSIX roots never fold, so the alias set is just the id itself.
     expect(await aliases.resolveAliasIds(id)).toEqual([id]);
   });
 });

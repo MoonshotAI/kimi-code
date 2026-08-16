@@ -16,7 +16,6 @@
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/_base/state/stateRegistry';
 import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
@@ -99,6 +98,10 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
     this.onDidChangeEmitter.fire('catalog');
   }
 
+  async reloadSources(ids: readonly string[]): Promise<void> {
+    await Promise.all(ids.map((id) => this.reloadSource(id)));
+  }
+
   async load(): Promise<void> {
     await this.ready;
   }
@@ -160,10 +163,3 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceSkillCatalog,
-  WorkspaceSkillCatalogService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceSkillCatalog',
-);

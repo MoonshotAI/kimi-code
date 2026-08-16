@@ -6,6 +6,7 @@ import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path
 import { pathToFileURL } from 'node:url';
 
 import {
+  KAP_SEARCH_WORKER_ASSET,
   MINIDB_TEXT_BUILD_WORKER_ASSET,
   NATIVE_ASSET_MANIFEST_VERSION,
   buildManifestKey,
@@ -272,19 +273,23 @@ export async function collectNativeAssets({ appRoot, target }) {
     Object.assign(assets, result.assets);
   }
 
-  const workerSource = resolve(appRoot, 'dist-native', 'intermediates', 'text-build-worker.mjs');
-  const workerBytes = await readFile(workerSource);
-  const workerAssetKey = buildRuntimeAssetKey(target, MINIDB_TEXT_BUILD_WORKER_ASSET.key);
-  const runtimeFiles = [
-    {
-      key: MINIDB_TEXT_BUILD_WORKER_ASSET.key,
+  const runtimeFiles = [];
+  for (const [fileName, asset] of [
+    ['text-build-worker.mjs', MINIDB_TEXT_BUILD_WORKER_ASSET],
+    ['search-worker.mjs', KAP_SEARCH_WORKER_ASSET],
+  ]) {
+    const workerSource = resolve(appRoot, 'dist-native', 'intermediates', fileName);
+    const workerBytes = await readFile(workerSource);
+    const workerAssetKey = buildRuntimeAssetKey(target, asset.key);
+    runtimeFiles.push({
+      key: asset.key,
       assetKey: workerAssetKey,
-      relativePath: MINIDB_TEXT_BUILD_WORKER_ASSET.relativePath,
+      relativePath: asset.relativePath,
       sha256: sha256(workerBytes),
-      mode: MINIDB_TEXT_BUILD_WORKER_ASSET.mode,
-    },
-  ];
-  assets[workerAssetKey] = workerSource;
+      mode: asset.mode,
+    });
+    assets[workerAssetKey] = workerSource;
+  }
 
   const manifest = {
     version: NATIVE_ASSET_MANIFEST_VERSION,

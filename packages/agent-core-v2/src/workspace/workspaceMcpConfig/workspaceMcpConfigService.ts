@@ -24,7 +24,6 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { TimeoutTimer } from '#/_base/utils/timer';
@@ -50,6 +49,7 @@ import {
 
 const WATCH_DEBOUNCE_MS = 200;
 
+// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceMcpConfigService {
   declare readonly _serviceBrand: undefined;
 
@@ -229,10 +229,3 @@ function sortKeysDeep(value: unknown): unknown {
   return value;
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceMcpConfigService,
-  WorkspaceMcpConfigService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceMcpConfig',
-);

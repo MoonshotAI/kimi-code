@@ -14,6 +14,7 @@ import type {
   PromptPart,
   Session,
   SkillSummary,
+  TokenUsage,
   WorkspaceTrustInfo,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
@@ -23,6 +24,8 @@ import {
   type Focusable,
   getCapabilities,
   Spacer,
+  TuiAltScreen,
+  TuiMainScreen,
 } from '@moonshot-ai/pi-tui';
 import { resolve } from 'pathe';
 
@@ -42,6 +45,7 @@ import {
   BUILTIN_SLASH_COMMANDS,
   buildPluginSlashCommands,
   buildSkillSlashCommands,
+  goalObjectiveLengthWarning,
   isExperimentalFlagEnabled,
   setExperimentalFeatures,
   sortSlashCommands,
@@ -49,6 +53,7 @@ import {
   type SkillListSession,
 } from './commands';
 import * as slashCommands from './commands/dispatch';
+import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import { GutterContainer } from './components/chrome/gutter-container';
@@ -103,6 +108,7 @@ import {
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
+  SESSION_LIST_PAGE_SIZE,
   SESSIONLESS_STARTUP_NOTICE,
 } from './constant/kimi-tui';
 import { CHROME_GUTTER } from './constant/rendering';
@@ -129,11 +135,13 @@ import { createTUIState, type TUIState } from './tui-state';
 import {
   INITIAL_LIVE_PANE,
   type AppState,
+  type InlineSkillActivation,
   type KimiTUIOptions,
   type LivePaneState,
   type LoginProgressSpinnerHandle,
   type QueuedMessage,
   type SteerInputItem,
+  type StepRetryState,
   type TranscriptEntry,
   type TUIStartupOptions,
   type TUIStartupState,
@@ -144,11 +152,14 @@ import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
+import type { ExtractionResult } from './utils/image-placeholder';
 import { installInputLatencyProbe } from './utils/input-latency';
 import { startupTrace } from '#/utils/startup-trace';
-import { REPLAY_TURN_LIMIT } from './utils/message-replay';
+import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
+import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
+import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { capStoredShellOutput, formatBashOutputForDisplay } from './utils/shell-output';
 import { thinkingEffortFromConfig } from './utils/thinking-config';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
@@ -194,7 +205,7 @@ export interface KimiTUIStartupInput {
   readonly migrationPlan?: MigrationPlan | null;
   /** When true, run only the migration screen, then exit (the `kimi migrate` command). */
   readonly migrateOnly?: boolean;
-  /** agent-core-v2 engine (KIMI_CODE_EXPERIMENTAL_FLAG); enables the startup workspace-trust prompt. */
+  /** agent-core-v2 engine; enables the startup workspace-trust prompt. */
   readonly engineV2?: boolean;
 }
 
@@ -205,6 +216,10 @@ function loadingTipKind(mode: EffectiveActivityPaneMode): LoadingTipKind | undef
   if (mode === 'waiting' || mode === 'tool') return 'moon';
   if (mode === 'composing') return 'composing';
   return undefined;
+}
+
+function waitingSpinnerLabel(retry: StepRetryState | null): string {
+  return retry === null ? '' : formatStepRetryLabel(retry);
 }
 
 function sameStringArrays(a: readonly string[], b: readonly string[]): boolean {
@@ -238,10 +253,13 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     isReplaying: false,
     streamingPhase: 'idle',
     streamingStartTime: 0,
+    stepRetry: null,
     theme: input.tuiConfig.theme,
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     disablePasteBurst: input.tuiConfig.disablePasteBurst,
+    renderLatex: input.tuiConfig.renderLatex,
+    cacheExpiryHint: input.tuiConfig.cacheExpiryHint,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
     statusLine: input.tuiConfig.statusLine,
@@ -314,6 +332,7 @@ export class KimiTUI {
   state: TUIState;
   /** In-flight lazy session creation (v2 engine), shared by concurrent first-use triggers. */
   private ensureSessionPromise: Promise<Session | undefined> | null = null;
+  private readonly cacheHint = new CacheHintController(this);
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
@@ -322,7 +341,10 @@ export class KimiTUI {
   private pluginCommands: readonly KimiSlashCommand[] = [];
   readonly pluginCommandMap = new Map<string, string>();
   private readonly imageStore = new ImageAttachmentStore();
-  private fdPath: string | null = detectFdPath();
+  // Detected lazily in startBackgroundFdAutocomplete() — detection spawns
+  // `fd --version`, which must not happen before the workspace trust gate:
+  // on Windows a bare command name resolves into the (untrusted) cwd first.
+  private fdPath: string | null = null;
   private fdDownloadStarted = false;
   sessionEventUnsubscribe: (() => void) | undefined;
   cancelInFlight: (() => void) | undefined;
@@ -367,12 +389,13 @@ export class KimiTUI {
   // preview viewer can restore focus to the exact same instance (and its
   // selection / feedback state) when it closes.
   private activeApprovalPanel: ApprovalPanelComponent | undefined;
-  // Active full-screen approval preview. While set, the root UI's normal
-  // children are stashed in `savedChildren`; closing restores them.
+  // Active full-screen approval preview. While set, the previous screen is
+  // stashed in `takeover` (root children in regular mode, the layout root in
+  // fullscreen); closing restores it.
   private approvalPreview:
     | {
         component: ApprovalPreviewViewer;
-        savedChildren: readonly Component[];
+        takeover: ScreenTakeover;
         panel: ApprovalPanelComponent;
       }
     | undefined;
@@ -470,12 +493,14 @@ export class KimiTUI {
           : {}),
       };
     });
+    const skillCommandNames = new Set(this.skillCommandMap.keys());
     const provider = new FileMentionProvider(
       slashCommands,
       this.state.appState.workDir,
       this.fdPath,
       this.state.appState.additionalDirs,
       () => this.state.appState.inputMode,
+      skillCommandNames,
     );
     this.state.editor.setAutocompleteProvider(provider);
 
@@ -488,6 +513,7 @@ export class KimiTUI {
       }
     }
     this.state.editor.setArgumentHints(argumentHints);
+    this.state.editor.setSkillCommandNames(skillCommandNames);
   }
 
   refreshSlashCommandAutocomplete(): void {
@@ -581,9 +607,19 @@ export class KimiTUI {
     this.registerSignalHandlers();
     // Outer try rolls back signal listeners on startup failure.
     try {
+      // The workspace trust gate must run before anything else in startup —
+      // including the migration branch: a workspace that needs migration is
+      // not implicitly trusted, and later startup steps spawn child processes.
+      startupTrace('trustPrompt:begin');
+      const trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
+      startupTrace('trustPrompt:end');
+
       if (this.migrationPlan !== null) {
         // Migration needs the event loop running first (pi-tui component).
-        this.startEventLoop();
+        // When the trust prompt already started it, starting it again would
+        // re-run pi-tui's terminal.start() — stacking a second Kitty
+        // keyboard-protocol push and duplicate stdin listeners.
+        if (!trustPromptStartedLoop) this.startEventLoop();
         try {
           const migrationResult = await this.runMigrationScreen(this.migrationPlan);
           if (this.migrateOnly) {
@@ -604,9 +640,6 @@ export class KimiTUI {
         return;
       }
 
-      startupTrace('trustPrompt:begin');
-      const trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
-      startupTrace('trustPrompt:end');
       startupTrace('initMainTui:begin');
       const shouldReplayHistory = await this.initMainTui();
       startupTrace('initMainTui:end');
@@ -719,8 +752,14 @@ export class KimiTUI {
   }
 
   private startBackgroundFdAutocomplete(): void {
-    if (this.fdPath !== null || this.fdDownloadStarted) return;
+    if (this.fdDownloadStarted) return;
     this.fdDownloadStarted = true;
+
+    this.fdPath = detectFdPath();
+    if (this.fdPath !== null) {
+      this.setupAutocomplete();
+      return;
+    }
 
     void ensureFdPath()
       .then((fdPath) => {
@@ -773,6 +812,9 @@ export class KimiTUI {
     if (this.session !== undefined) {
       this.sessionEventHandler.startSubscription();
       void this.showSessionWarnings(this.session);
+    }
+    if (shouldReplayHistory) {
+      void this.cacheHint.maybeShowOnResume();
     }
     void this.fetchSessions();
     if (this.session !== undefined) {
@@ -857,17 +899,19 @@ export class KimiTUI {
           session = await this.harness.resumeSession({
             id: startup.sessionFlag,
             additionalDirs: createSessionOptions.additionalDirs,
-            replayTurnLimit: REPLAY_TURN_LIMIT,
+            replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
           });
           shouldReplayHistory = true;
         } else {
-          const sessions = await this.harness.listSessions({ workDir });
-          const target = sessions[0];
+          // Only the most recent session matters here — fetch a one-item page
+          // instead of materializing the whole listing.
+          const page = await this.harness.listSessionsPage({ workDir, limit: 1 });
+          const target = page.items[0];
           if (target !== undefined) {
             session = await this.harness.resumeSession({
               id: target.id,
               additionalDirs: createSessionOptions.additionalDirs,
-              replayTurnLimit: REPLAY_TURN_LIMIT,
+              replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
             });
             shouldReplayHistory = true;
           } else {
@@ -953,6 +997,7 @@ export class KimiTUI {
       await this.harness.close();
     } finally {
       this.sessionEventHandler.stopAllMcpServerStatusSpinners();
+      this.sessionEventHandler.clearStepRetryAttemptTimer();
       this.uninstallRainbowDance();
       try {
         await this.state.terminal.drainInput();
@@ -960,7 +1005,7 @@ export class KimiTUI {
         // best effort — the terminal may already be dead (SIGHUP / EIO).
       }
       try {
-        this.state.ui.stop();
+        this.stopUiForExit();
       } catch {
         // best effort terminal restore.
       }
@@ -1045,6 +1090,9 @@ export class KimiTUI {
 
   private buildLayout(): void {
     const { ui } = this.state;
+    // Fullscreen mounts its layout root (transcript ScrollView + bottom dock)
+    // in createTUIState; the root children list stays empty there.
+    if (ui instanceof TuiAltScreen) return;
     ui.clear();
     ui.addChild(this.state.transcriptContainer);
     ui.addChild(this.state.activityContainer);
@@ -1063,7 +1111,41 @@ export class KimiTUI {
   private mountFooter(): void {
     const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
     footerWrap.addChild(this.state.footer);
+    const dock = this.state.dockContainer;
+    if (dock !== undefined) {
+      // Dock sizing contract: the footer may shrink to 1 row under extreme
+      // height pressure, but never disappears (see createTUIState).
+      dock.addChild(footerWrap, { shrink: 1, minSize: 1 });
+      return;
+    }
     this.state.ui.addChild(footerWrap);
+  }
+
+  // Fullscreen exit: leave the alternate screen with the frame preserved,
+  // then replay the transcript through a main-screen renderer so native
+  // scrollback ends up with the same inline layout a regular session would
+  // have produced (pi's "transcript" exit form).
+  private stopUiForExit(): void {
+    const ui = this.state.ui;
+    if (!(ui instanceof TuiAltScreen)) {
+      ui.stop();
+      return;
+    }
+    ui.stop({ preserveScreen: true });
+    const main = new TuiMainScreen(ui.terminal);
+    main.addChild(this.state.transcriptContainer);
+    main.addChild(this.state.activityContainer);
+    main.addChild(this.state.todoPanelContainer);
+    main.addChild(this.state.queueContainer);
+    main.addChild(this.state.btwPanelContainer);
+    main.addChild(this.state.editorContainer);
+    const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+    footerWrap.addChild(this.state.footer);
+    main.addChild(footerWrap);
+    // First paint of a main-screen renderer writes every line sequentially,
+    // landing the whole transcript in native scrollback.
+    main.renderNow();
+    main.stop();
   }
 
   // =========================================================================
@@ -1248,7 +1330,7 @@ export class KimiTUI {
     this.updateQueueDisplay();
   }
 
-  async sendNormalUserInput(text: string): Promise<void> {
+  async sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void> {
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
@@ -1259,7 +1341,11 @@ export class KimiTUI {
       // Pasted videos are copied into the cache and expand to a `file://`
       // `video_url` part; the engine resolves (uploads or degrades) them
       // inside the turn, so submission stays fully synchronous.
-      extraction = extractMediaAttachments(text, this.imageStore);
+      //
+      // A cache-hint-swallowed resend passes its pre-dialog extraction back
+      // in: the image store may already be cleared (e.g. after "Start a new
+      // session"), so re-extracting from the text would lose the media.
+      extraction = preExtracted ?? extractMediaAttachments(text, this.imageStore);
     } catch (error) {
       // A video cache copy failed (unwritable cache dir, vanished source…);
       // nothing was dispatched.
@@ -1267,6 +1353,10 @@ export class KimiTUI {
       return;
     }
     if (!this.validateMediaCapabilities(extraction)) return;
+    // Idle cache-hint interception sits before session creation; it is
+    // synchronous unless a hint actually fires, keeping the send path
+    // await-free up to sendMessage.
+    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction)) return;
     let session = this.session;
     if (session === undefined) {
       if (!this.engineV2) {
@@ -1287,6 +1377,98 @@ export class KimiTUI {
     }
     this.updateQueueDisplay();
     this.state.ui.requestRender();
+  }
+
+  async sendInlineSkillUserInput(
+    text: string,
+    activations: readonly InlineSkillActivation[],
+    preExtracted?: ExtractionResult,
+  ): Promise<void> {
+    if (this.btwPanelController.sendUserInput(text, activations)) return;
+    if (this.state.appState.model.trim().length === 0) {
+      this.showError(LLM_NOT_SET_MESSAGE);
+      return;
+    }
+    let extraction: ReturnType<typeof extractMediaAttachments>;
+    try {
+      extraction = preExtracted ?? extractMediaAttachments(text, this.imageStore);
+    } catch (error) {
+      this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      return;
+    }
+    if (!this.validateMediaCapabilities(extraction)) return;
+    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction, activations)) return;
+    let session = this.session;
+    if (session === undefined) {
+      // Dispatch only routes here on the v2 engine, so the session is created
+      // lazily on first use exactly like a normal prompt.
+      session = await this.ensureSession();
+      if (session === undefined) return;
+    }
+    if (
+      this.deferUserMessages ||
+      this.state.appState.goal?.status === 'active' ||
+      this.state.appState.streamingPhase !== 'idle' ||
+      this.state.appState.isCompacting
+    ) {
+      this.enqueueMessage(
+        text,
+        extraction.hasMedia
+          ? {
+              hasMedia: true,
+              parts: extraction.parts,
+              imageAttachmentIds: extraction.imageAttachmentIds,
+              inlineSkillActivations: activations,
+            }
+          : { inlineSkillActivations: activations },
+      );
+      this.updateQueueDisplay();
+      this.state.ui.requestRender();
+      return;
+    }
+    this.beginSessionRequest();
+    void this.runInlineSkillActivations(session, text, activations, extraction).catch(
+      (error: unknown) => {
+        this.failSessionRequest(`Skill activation failed: ${formatErrorMessage(error)}`);
+      },
+    );
+  }
+
+  private async runInlineSkillActivations(
+    session: Session,
+    text: string,
+    activations: readonly InlineSkillActivation[],
+    extraction: ReturnType<typeof extractMediaAttachments>,
+  ): Promise<void> {
+    const knownEntryIds = new Set(this.state.transcriptEntries.map((entry) => entry.id));
+    await session.promptWithSkills(
+      extraction.hasMedia ? extraction.parts : text,
+      activations.map((activation) => ({ name: activation.skillName, args: activation.args })),
+    );
+    // The engine bundles the activations into the prompt's own message, and
+    // the `skill.activated` events land synchronously during the call — so
+    // the cards appended for this submission are the skill_activation entries
+    // with fresh ids (the window trim may replace the entries array mid-call,
+    // so membership is decided by id, not by index into a captured array).
+    // Appending the user entry afterwards keeps the live transcript in the
+    // same order as a resumed replay (skill cards first, prompt last).
+    // Marking only happens once the submission was accepted: a rejected
+    // bundle leaves no cards and must not leave a local undo anchor the
+    // engine never recorded.
+    for (const entry of this.state.transcriptEntries) {
+      if (entry.kind === 'skill_activation' && !knownEntryIds.has(entry.id)) {
+        entry.bundledWithPrompt = true;
+      }
+    }
+    this.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'user',
+      turnId: undefined,
+      renderMode: 'plain',
+      content: text,
+      imageAttachmentIds:
+        extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
+    });
   }
 
   validateMediaCapabilities(extraction: {
@@ -1359,7 +1541,9 @@ export class KimiTUI {
 
   private enqueueMessage(
     text: string,
-    options?: SendMessageOptions,
+    options?: SendMessageOptions & {
+      readonly inlineSkillActivations?: readonly InlineSkillActivation[];
+    },
     mode?: 'prompt' | 'bash',
   ): void {
     this.state.queuedMessages.push({
@@ -1371,11 +1555,13 @@ export class KimiTUI {
           ? options.imageAttachmentIds
           : undefined,
       mode,
+      inlineSkillActivations: options?.inlineSkillActivations,
     });
     this.track('input_queue');
   }
 
   beginSessionRequest(): void {
+    this.cacheHint.onTurnBegin();
     this.streamingUI.setTurnId(undefined);
     this.streamingUI.resetLiveText();
     this.streamingUI.resetToolUi();
@@ -1401,6 +1587,31 @@ export class KimiTUI {
   sendQueuedMessage(session: Session, item: QueuedMessage): void {
     if (item.mode === 'bash') {
       void this.runShellCommandFromInput(item.text);
+      return;
+    }
+    if (item.mode === 'skill' && item.skillName !== undefined) {
+      // sendSkillActivation re-checks the busy state, so a premature drain
+      // re-queues at the tail instead of racing the running turn.
+      this.sendSkillActivation(session, item.skillName, item.skillArgs ?? '');
+      return;
+    }
+    if (item.inlineSkillActivations !== undefined && item.inlineSkillActivations.length > 0) {
+      // Media was extracted and validated at enqueue time; reuse the queued
+      // parts rather than re-extracting from a possibly-cleared image store.
+      this.beginSessionRequest();
+      void this.runInlineSkillActivations(
+        session,
+        item.text,
+        item.inlineSkillActivations,
+        {
+          parts: item.parts !== undefined ? [...item.parts] : [],
+          hasMedia: item.parts !== undefined && item.parts.length > 0,
+          imageAttachmentIds: item.imageAttachmentIds !== undefined ? [...item.imageAttachmentIds] : [],
+          videoAttachmentIds: [],
+        },
+      ).catch((error: unknown) => {
+        this.failSessionRequest(`Skill activation failed: ${formatErrorMessage(error)}`);
+      });
       return;
     }
     this.harness.withInteractiveAgent(item.agentId ?? MAIN_AGENT_ID, () => {
@@ -1469,6 +1680,29 @@ export class KimiTUI {
       return;
     }
     if (!this.validateMediaCapabilities(rewrite)) return;
+    // Compacting (or deferred input): queue behind it — visible and recallable.
+    // Slash-skill items steer like any queued input on Ctrl-S (the activation
+    // fires into the running turn instead of the literal text) — see
+    // editor-keyboard.ts.
+    // A running turn queues the activation too: every skill behaves like
+    // plain input — queued by default, steered on demand — because the engine
+    // steers activations into a running turn exactly like a steered user
+    // message (v2 `prompt.inject`, v1 `SkillManager.recordActivation`).
+    const turnRunning = this.state.appState.streamingPhase !== 'idle';
+    if (this.deferUserMessages || this.state.appState.isCompacting || turnRunning) {
+      const args = rewrite.text.trim();
+      this.state.queuedMessages.push({
+        text: `/${skillName}${args.length > 0 ? ` ${args}` : ''}`,
+        agentId: this.harness.interactiveAgentId,
+        mode: 'skill',
+        skillName,
+        skillArgs: rewrite.text,
+      });
+      this.track('input_queue');
+      this.updateQueueDisplay();
+      this.state.ui.requestRender();
+      return;
+    }
     this.beginSessionRequest();
     void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
       const message = formatErrorMessage(error);
@@ -1545,6 +1779,15 @@ export class KimiTUI {
     void session.steer(combineSteerInput(input)).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.showError(`Failed to steer: ${message}`);
+    });
+  }
+
+  steerSkillActivation(session: Session, skillName: string, skillArgs: string): void {
+    // Ctrl-S on a queued slash-skill item: the activation fires into the
+    // running turn (the engine steers it there, never the literal text). No
+    // beginSessionRequest — the live pane belongs to the running turn.
+    void session.activateSkill(skillName, skillArgs).catch((error: unknown) => {
+      this.showError(`Skill "${skillName}" failed: ${formatErrorMessage(error)}`);
     });
   }
 
@@ -1724,6 +1967,8 @@ export class KimiTUI {
   }
 
   private async createSessionFromCurrentState(bindStartupAgent = false): Promise<Session> {
+    // Background warm-up of the cache-hint config on every new session.
+    this.cacheHint.refreshConfigInBackground();
     const model = this.state.appState.model.trim();
     if (model.length === 0) {
       throw new Error(LLM_NOT_SET_MESSAGE);
@@ -1945,13 +2190,16 @@ export class KimiTUI {
   async fetchSessions(scope: 'cwd' | 'all' = this.state.sessionsScope): Promise<void> {
     this.state.loadingSessions = true;
     this.state.sessionsScope = scope;
+    this.state.sessionsNextCursor = undefined;
+    this.state.sessionsLoadingMore = false;
     try {
-      const sessions =
-        scope === 'all'
-          ? await this.harness.listSessions({})
-          : await this.harness.listSessions({ workDir: this.state.appState.workDir });
+      const page = await this.harness.listSessionsPage({
+        workDir: scope === 'all' ? undefined : this.state.appState.workDir,
+        limit: SESSION_LIST_PAGE_SIZE,
+      });
+      this.state.sessionsNextCursor = page.nextCursor;
       this.state.sessions = sessionRowsForPicker(
-        sessions,
+        page.items,
         this.state.appState.sessionId,
         this.hasSessionContent(),
       );
@@ -1965,6 +2213,81 @@ export class KimiTUI {
     }
   }
 
+  /**
+   * Pulls the next keyset page into the session picker (scroll-bottom paging).
+   * A scope switch or picker close bumps `sessionPickerScopeRequestToken`,
+   * which makes an in-flight append discard its result. Returns whether a page
+   * was appended — callers draining pages stop on the first `false`.
+   * Scroll triggers pass no argument and are dropped while a fetch is running;
+   * the search drain passes `waitForInFlight` to join the running fetch and
+   * continue with the next page, so a query typed mid-fetch still ends up
+   * covering every session.
+   */
+  private async fetchMoreSessions(waitForInFlight = false): Promise<boolean> {
+    while (this.sessionsPageFetchInFlight !== undefined) {
+      if (!waitForInFlight) return false;
+      await this.sessionsPageFetchInFlight;
+    }
+    const cursor = this.state.sessionsNextCursor;
+    if (cursor === undefined) return false;
+    const requestToken = this.sessionPickerScopeRequestToken;
+    this.state.sessionsLoadingMore = true;
+    this.sessionPickerComponent?.setPaging(true, true);
+    this.state.ui.requestRender();
+    const run = this.appendNextSessionPage(cursor, requestToken);
+    this.sessionsPageFetchInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (this.sessionsPageFetchInFlight === run) this.sessionsPageFetchInFlight = undefined;
+    }
+  }
+
+  private async appendNextSessionPage(cursor: string, requestToken: number): Promise<boolean> {
+    try {
+      const page = await this.harness.listSessionsPage({
+        workDir: this.state.sessionsScope === 'all' ? undefined : this.state.appState.workDir,
+        limit: SESSION_LIST_PAGE_SIZE,
+        before: cursor,
+      });
+      if (requestToken !== this.sessionPickerScopeRequestToken) return false;
+      this.state.sessionsNextCursor = page.nextCursor;
+      const rows = sessionRowsForPicker(
+        page.items,
+        this.state.appState.sessionId,
+        this.hasSessionContent(),
+      );
+      this.state.sessions = [...this.state.sessions, ...rows];
+      this.sessionPickerComponent?.appendSessions(rows);
+      this.sessionPickerComponent?.setPaging(page.nextCursor !== undefined, false);
+      return true;
+    } catch (error) {
+      log.warn('failed to fetch more sessions for picker', { error: String(error) });
+      return false;
+    } finally {
+      if (requestToken === this.sessionPickerScopeRequestToken) {
+        this.state.sessionsLoadingMore = false;
+        this.sessionPickerComponent?.setPaging(this.state.sessionsNextCursor !== undefined, false);
+        this.state.ui.requestRender();
+      }
+    }
+  }
+
+  /**
+   * Search covers every session: while a query is active the picker asks for
+   * all remaining pages, drained one at a time in the background. A failed or
+   * superseded fetch stops the drain (the next fresh query re-triggers it).
+   */
+  private async drainSessionsForSearch(): Promise<void> {
+    const requestToken = this.sessionPickerScopeRequestToken;
+    while (
+      this.state.sessionsNextCursor !== undefined &&
+      requestToken === this.sessionPickerScopeRequestToken
+    ) {
+      if (!(await this.fetchMoreSessions(true))) return;
+    }
+  }
+
   updateTerminalTitle(): void {
     const trimmed = this.state.appState.sessionTitle?.trim() ?? '';
     const label = trimmed.length > 0 ? trimmed.slice(0, MAX_TERMINAL_TITLE_LENGTH) : PRODUCT_NAME;
@@ -1973,6 +2296,7 @@ export class KimiTUI {
 
   resetSessionRuntime(): void {
     this.aborted = false;
+    this.cacheHint.resetRuntime();
     this.streamingUI.discardPending();
     this.state.queuedMessages = [];
     this.state.swarmModeEntry = undefined;
@@ -2024,7 +2348,7 @@ export class KimiTUI {
     try {
       session = await this.harness.resumeSession({
         id: targetSessionId,
-        replayTurnLimit: REPLAY_TURN_LIMIT,
+        replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
       });
     } catch (error) {
       const msg = formatErrorMessage(error);
@@ -2062,6 +2386,7 @@ export class KimiTUI {
     }
     this.showStatus(statusMessage);
     void this.showSessionWarnings(session);
+    void this.cacheHint.maybeShowOnResume();
   }
 
   async reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void> {
@@ -2683,7 +3008,13 @@ export class KimiTUI {
     }
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
     const placeSpinnerInAgentSwarm = this.shouldPlaceActivitySpinnerInAgentSwarm(effectiveMode);
-    const activityModeKey = `${effectiveMode}:${placeSpinnerInAgentSwarm ? 'swarm' : 'pane'}`;
+    // Carry the retry state in the mode key so an incoming/cleared
+    // `turn.step.retrying` rebuilds the waiting pane with fresh label and
+    // detail instead of hitting the cached-pane early return below.
+    const retry = effectiveMode === 'waiting' ? this.state.appState.stepRetry : null;
+    const retryKey =
+      retry === null ? '' : `${formatStepRetryLabel(retry)}|${formatStepRetryDetail(retry)}`;
+    const activityModeKey = `${effectiveMode}:${placeSpinnerInAgentSwarm ? 'swarm' : 'pane'}:${retryKey}`;
 
     if (
       activityModeKey === this.lastActivityMode &&
@@ -2705,14 +3036,16 @@ export class KimiTUI {
         this.state.ui.requestRender();
         return;
       case 'waiting': {
-        const spinner = this.ensureActivitySpinner('moon');
+        const stepRetry = this.state.appState.stepRetry;
+        const spinner = this.ensureActivitySpinner('moon', waitingSpinnerLabel(stepRetry));
         this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
         if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'waiting',
             spinner,
-            tip: this.currentLoadingTip?.tip,
+            tip: stepRetry === null ? this.currentLoadingTip?.tip : undefined,
+            detail: stepRetry === null ? undefined : formatStepRetryDetail(stepRetry),
           }),
         );
         break;
@@ -2953,6 +3286,21 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
+  /**
+   * Live pre-send warning in the footer while the typed `/goal` objective
+   * exceeds the length limit, so the user can trim it (or move it into a
+   * file) before submitting instead of losing the input to a rejection.
+   * `undefined` input means the text cannot be a `/goal` command and is not
+   * measured at all. The footer keeps this warning in its own slot, so
+   * transient hints (exit confirm, detach, image paste) only displace it
+   * temporarily.
+   */
+  updateGoalLengthWarning(text: string | undefined): void {
+    const warning = text === undefined ? undefined : goalObjectiveLengthWarning(text);
+    this.state.footer.setWarningHint(warning ?? null);
+    this.state.ui.requestRender();
+  }
+
   async applyTheme(themeName: ThemeName, resolved?: ResolvedTheme): Promise<void> {
     const palette = await getColorPalette(themeName === 'auto' ? (resolved ?? 'dark') : themeName);
     currentTheme.setPalette(palette);
@@ -3054,6 +3402,7 @@ export class KimiTUI {
   // =========================================================================
 
   mountEditorReplacement(panel: Component & Focusable): void {
+    this.state.editorReplacementMounted = true;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
     this.state.ui.setFocus(panel);
@@ -3061,6 +3410,7 @@ export class KimiTUI {
   }
 
   restoreEditor(): void {
+    this.state.editorReplacementMounted = false;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
@@ -3075,6 +3425,26 @@ export class KimiTUI {
     this.state.editor.setText(text);
     this.updateEditorBorderHighlight(text);
     this.state.ui.requestRender();
+  }
+
+  /** Latest in-process LLM round-trip; feeds the idle cache-hint scenario. */
+  recordSessionActivity(): void {
+    this.cacheHint.recordActivity();
+  }
+
+  /** Per-step usage for the client-side cache-break detector. */
+  noteStepUsage(usage: TokenUsage | undefined): void {
+    this.cacheHint.noteStepUsage(usage);
+  }
+
+  /** Compaction shrinks the cached prefix — reset the cache-break baseline. */
+  noteCompactionFinished(): void {
+    this.cacheHint.resetCacheBreakBaseline();
+  }
+
+  /** /undo cut the context — the next step's cache drop is expected. */
+  noteContextCut(): void {
+    this.cacheHint.resetCacheBreakBaseline();
   }
 
   private async runMigrationScreen(plan: MigrationPlan): Promise<MigrationScreenResult> {
@@ -3184,6 +3554,8 @@ export class KimiTUI {
     forwardEditorExit: false,
   };
   private sessionPickerScopeRequestToken = 0;
+  private sessionPickerComponent: SessionPickerComponent | undefined;
+  private sessionsPageFetchInFlight: Promise<boolean> | undefined;
 
   async showSessionPicker(): Promise<void> {
     await this.openSessionPicker({
@@ -3255,6 +3627,7 @@ export class KimiTUI {
 
   hideSessionPicker(): void {
     this.sessionPickerScopeRequestToken += 1;
+    this.sessionPickerComponent = undefined;
     this.editorKeyboard.clearPendingExit();
     this.state.activeDialog = null;
     this.restoreEditor();
@@ -3275,29 +3648,37 @@ export class KimiTUI {
     readonly applyStartupModes?: boolean;
   }): void {
     this.state.activeDialog = 'session-picker';
-    this.mountEditorReplacement(
-      new SessionPickerComponent({
-        sessions: this.state.sessions,
-        loading: this.state.loadingSessions,
-        currentSessionId: this.state.appState.sessionId,
-        scope: this.state.sessionsScope,
-        initialSelectedSessionId: options.initialSelectedSessionId,
-        pageSize: 50,
-        onSelect: (session: SessionRow) => {
-          void this.handleSessionPickerSelect(session, options.applyStartupModes === true).catch(
-            (error) => {
-              this.showError(`Failed to apply startup flags: ${formatErrorMessage(error)}`);
-            },
-          );
-        },
-        onCancel: options.onCancel,
-        onCtrlC: options.onCtrlC,
-        onCtrlD: options.onCtrlD,
-        onToggleScope: (selectedSessionId: string) => {
-          void this.toggleSessionPickerScope(selectedSessionId);
-        },
-      }),
-    );
+    const picker = new SessionPickerComponent({
+      sessions: this.state.sessions,
+      loading: this.state.loadingSessions,
+      currentSessionId: this.state.appState.sessionId,
+      scope: this.state.sessionsScope,
+      initialSelectedSessionId: options.initialSelectedSessionId,
+      pageSize: SESSION_LIST_PAGE_SIZE,
+      hasMore: this.state.sessionsNextCursor !== undefined,
+      loadingMore: this.state.sessionsLoadingMore,
+      onLoadMore: () => {
+        void this.fetchMoreSessions();
+      },
+      onSearchDrain: () => {
+        void this.drainSessionsForSearch();
+      },
+      onSelect: (session: SessionRow) => {
+        void this.handleSessionPickerSelect(session, options.applyStartupModes === true).catch(
+          (error) => {
+            this.showError(`Failed to apply startup flags: ${formatErrorMessage(error)}`);
+          },
+        );
+      },
+      onCancel: options.onCancel,
+      onCtrlC: options.onCtrlC,
+      onCtrlD: options.onCtrlD,
+      onToggleScope: (selectedSessionId: string) => {
+        void this.toggleSessionPickerScope(selectedSessionId);
+      },
+    });
+    this.sessionPickerComponent = picker;
+    this.mountEditorReplacement(picker);
   }
 
   private async handleSessionPickerSelect(
@@ -3352,12 +3733,12 @@ export class KimiTUI {
 
   // Mounts the full-screen approval preview viewer on top of the current
   // approval panel. Uses the same nested-takeover pattern as
-  // openTaskOutputViewer: we snapshot the root container's children, swap
-  // in the viewer, and restore on close. The approval panel instance is
+  // openTaskOutputViewer: beginScreenTakeover swaps the viewer in (root
+  // children in regular mode, layout root in fullscreen) and closing restores
+  // it. The approval panel instance is
   // kept around in `activeApprovalPanel` so its selection state survives.
   private openApprovalPreview(panel: ApprovalPanelComponent, block: ApprovalPreviewBlock): void {
     if (this.approvalPreview !== undefined) return;
-    const savedChildren = [...this.state.ui.children];
     const viewer = new ApprovalPreviewViewer(
       {
         block,
@@ -3367,21 +3748,17 @@ export class KimiTUI {
       },
       this.state.terminal,
     );
-    this.state.ui.clear();
-    this.state.ui.addChild(viewer);
+    const takeover = beginScreenTakeover(this.state.ui, viewer);
     this.state.ui.setFocus(viewer);
     this.state.ui.requestRender(true);
-    this.approvalPreview = { component: viewer, savedChildren, panel };
+    this.approvalPreview = { component: viewer, takeover, panel };
   }
 
   private closeApprovalPreview(): void {
     const preview = this.approvalPreview;
     if (preview === undefined) return;
     this.approvalPreview = undefined;
-    this.state.ui.clear();
-    for (const child of preview.savedChildren) {
-      this.state.ui.addChild(child);
-    }
+    endScreenTakeover(this.state.ui, preview.takeover);
     this.state.ui.setFocus(preview.panel);
     this.state.ui.requestRender(true);
   }

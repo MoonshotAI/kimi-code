@@ -19,7 +19,6 @@ import ignore, { type Ignore } from 'ignore';
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
@@ -290,10 +289,3 @@ function isUnderAny(rel: string, parents: ReadonlySet<string>): boolean {
   return false;
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceFsWatchService,
-  WorkspaceFsWatchService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceFs',
-);

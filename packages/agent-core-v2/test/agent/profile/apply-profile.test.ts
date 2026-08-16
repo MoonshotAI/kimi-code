@@ -1,12 +1,14 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'pathe';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { Runtime, RuntimeCapability, RuntimeStatus } from '#/runtime/runtime';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
@@ -23,6 +25,7 @@ import { DEFAULT_PRODUCT_NAME } from '#/app/agentProfileCatalog/profile-shared';
 import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
 
 import {
+  agentService,
   appService,
   createTestAgent,
   execEnvServices,
@@ -51,6 +54,14 @@ const skillsProfile: ResolvedAgentProfile = normalizeAgentProfile({
   name: 'skills-profile',
   systemPrompt: (context) => `skills:${context.skills ?? ''}`,
   tools: ['Skill'],
+});
+
+const agentsAndPluginsProfile: ResolvedAgentProfile = normalizeAgentProfile({
+  name: 'agents-and-plugins-profile',
+  systemPrompt: (context) =>
+    `agents:${typeof context['agentsMd'] === 'string' ? context['agentsMd'] : ''}\n` +
+    `plugins:${context['pluginSections'] ?? ''}`,
+  tools: [],
 });
 
 const exactProfile: ResolvedAgentProfile = normalizeAgentProfile({
@@ -145,6 +156,56 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toBe(exactSystemPrompt(workDir, 'project instructions'));
   });
 
+  it('maps prompt context roots through the bound runtime workspace view', async () => {
+    const mappedDir = await mkdtemp(join(tmpdir(), 'kimi-apply-mapped-'));
+    const localExtra = await mkdtemp(join(tmpdir(), 'kimi-apply-extra-local-'));
+    const mappedExtra = await mkdtemp(join(tmpdir(), 'kimi-apply-extra-mapped-'));
+    try {
+      await writeFile(join(workDir, 'local-only.txt'), 'x', 'utf-8');
+      await writeFile(join(mappedDir, 'mapped-only.txt'), 'x', 'utf-8');
+      await writeFile(join(localExtra, 'extra-local.txt'), 'x', 'utf-8');
+      await writeFile(join(mappedExtra, 'extra-mapped.txt'), 'x', 'utf-8');
+      const mapping = new Map([
+        [workDir, mappedDir],
+        [localExtra, mappedExtra],
+      ]);
+      const fs = new HostFileSystem();
+      const { profile: svc } = buildContext(
+        agentService(
+          IAgentRuntimeService,
+          mappedRuntimeService(fs, homeDir, (path) => mapping.get(path) ?? path),
+        ),
+      );
+
+      await svc.applyProfile(exactProfile, { additionalDirs: [localExtra] });
+
+      const prompt = svc.data().systemPrompt;
+      expect(prompt).toContain(`cwd:${mappedDir}`);
+      expect(prompt).toContain('mapped-only.txt');
+      expect(prompt).not.toContain('local-only.txt');
+      expect(prompt).toContain(`### ${mappedExtra}`);
+      expect(prompt).toContain('extra-mapped.txt');
+      expect(prompt).not.toContain('extra-local.txt');
+    } finally {
+      await rm(mappedDir, { recursive: true, force: true });
+      await rm(localExtra, { recursive: true, force: true });
+      await rm(mappedExtra, { recursive: true, force: true });
+    }
+  });
+
+  it('skips the directory listing when the bound runtime has no fs capability', async () => {
+    const fs = new HostFileSystem();
+    const { profile: svc } = buildContext(
+      agentService(IAgentRuntimeService, mappedRuntimeService(fs, homeDir, (path) => path, [])),
+    );
+
+    await svc.applyProfile(exactProfile);
+
+    const prompt = svc.data().systemPrompt;
+    expect(prompt).toContain(`cwd:${workDir}`);
+    expect(prompt).toContain('ls:\nextra:');
+  });
+
   it('refreshes the active profile system prompt exactly without resetting active tools', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'old instructions', 'utf-8');
     const { profile: svc } = buildContext();
@@ -203,7 +264,7 @@ describe('AgentProfileService.applyProfile', () => {
     );
   });
 
-  it('refreshes the system prompt when the plugin skill source reloads', async () => {
+  it('keeps the rendered prompt frozen when the plugin skill source reloads', async () => {
     const sections = {
       value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
     };
@@ -213,22 +274,101 @@ describe('AgentProfileService.applyProfile', () => {
       skillCatalogWithChange(change),
     );
     await svc.applyProfile(pluginProfile);
-    expect(svc.data().systemPrompt).toContain('V1');
+    const before = svc.data().systemPrompt;
+    expect(before).toContain('V1');
 
     sections.value = [{ pluginId: 'demo', content: 'V2' }];
     change.fire(PLUGIN_SKILL_SOURCE_ID);
+    await svc.refreshSystemPrompt();
 
-    await vi.waitFor(() => {
-      expect(svc.data().systemPrompt).toContain('V2');
-    });
+    expect(svc.data().systemPrompt).toBe(before);
     change.dispose();
   });
 
-  // The builtin source changes only when its config switch is toggled, so it
-  // shares the plugin source's refresh. Subscribing to the catalog rather than
-  // the config section is what makes the rebuilt prompt see the new listing:
-  // the catalog fires after the contribution is replaced.
-  it('refreshes the system prompt when the builtin skill source reloads', async () => {
+  it('does not change a live agent prompt when the contributing plugin is uninstalled', async () => {
+    const sections = {
+      value: [
+        { pluginId: 'demo', content: 'Always cite sources.' },
+      ] as readonly EnabledPluginSystemPrompt[],
+    };
+    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections)));
+    await svc.applyProfile(pluginProfile);
+    const before = svc.data().systemPrompt;
+
+    sections.value = []; // plugin uninstalled
+    await svc.refreshSystemPrompt();
+
+    expect(svc.data().systemPrompt).toBe(before);
+  });
+
+  it('does not change a live agent prompt when a plugin is installed', async () => {
+    const sections = { value: [] as readonly EnabledPluginSystemPrompt[] };
+    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections)));
+    await svc.applyProfile(pluginProfile);
+    const before = svc.data().systemPrompt;
+
+    sections.value = [{ pluginId: 'demo', content: 'Always cite sources.' }];
+    await svc.refreshSystemPrompt();
+
+    expect(svc.data().systemPrompt).toBe(before);
+  });
+
+  // While the initial plugin load has failed, `enabledSystemPrompts()`
+  // resolves to its consumption fallback instead of rejecting — that empty
+  // read must not freeze, or a later successful reload would never reach
+  // the live agent.
+  it('freezes plugin sections only once the plugin snapshot has loaded', async () => {
+    const sections = { value: [] as readonly EnabledPluginSystemPrompt[] };
+    const loaded = { value: false };
+    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections, loaded)));
+    await svc.applyProfile(pluginProfile);
+    expect(svc.data().systemPrompt).toBe('');
+
+    loaded.value = true;
+    sections.value = [{ pluginId: 'demo', content: 'V1' }];
+    await svc.refreshSystemPrompt();
+
+    expect(svc.data().systemPrompt).toContain('<!-- From: plugin demo -->');
+  });
+
+  it('lets a freshly built agent snapshot the current plugin sections', async () => {
+    const sections = {
+      value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
+    };
+    const first = buildContext(appService(IPluginService, pluginStub(sections)));
+    await first.profile.applyProfile(pluginProfile);
+    expect(first.profile.data().systemPrompt).toContain('V1');
+
+    sections.value = [{ pluginId: 'demo', content: 'V2' }];
+    const second = buildContext(appService(IPluginService, pluginStub(sections)));
+    await second.profile.applyProfile(pluginProfile);
+
+    expect(second.profile.data().systemPrompt).toContain('V2');
+    await first.ctx.dispose();
+  });
+
+  it('keeps plugin sections frozen while other prompt inputs still refresh', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), 'old instructions', 'utf-8');
+    const sections = {
+      value: [{ pluginId: 'demo', content: 'cite' }] as readonly EnabledPluginSystemPrompt[],
+    };
+    const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections)));
+    await svc.applyProfile(agentsAndPluginsProfile);
+    expect(svc.data().systemPrompt).toContain('old instructions');
+    expect(svc.data().systemPrompt).toContain('cite');
+
+    sections.value = [];
+    await writeFile(join(workDir, 'AGENTS.md'), 'new instructions', 'utf-8');
+    await svc.refreshSystemPrompt();
+
+    expect(svc.data().systemPrompt).toContain('new instructions');
+    expect(svc.data().systemPrompt).toContain('cite');
+  });
+
+  // The skill listing is frozen together with the plugin sections: even the
+  // builtin source's reload rebuilds from the frozen listing, so a live
+  // agent's prompt stays byte-identical. New agents snapshot the new listing.
+  it('keeps the skill listing frozen when the builtin skill source reloads', async () => {
     const change = new Emitter<string>();
     const listing = { value: 'before' };
     const catalog = {
@@ -240,9 +380,50 @@ describe('AgentProfileService.applyProfile', () => {
 
     listing.value = 'after';
     change.fire(BUILTIN_SKILL_SOURCE_ID);
+    await svc.refreshSystemPrompt();
+
+    expect(svc.data().systemPrompt).toBe('skills:before');
+    change.dispose();
+  });
+
+  it('does not rebuild the system prompt when the plugin skill source changes', async () => {
+    let renders = 0;
+    const countingProfile: ResolvedAgentProfile = normalizeAgentProfile({
+      name: 'counting-profile',
+      systemPrompt: () => `render:${++renders}`,
+      tools: [],
+    });
+    const change = new Emitter<string>();
+    const { profile: svc } = buildContext(skillCatalogWithChange(change));
+    await svc.applyProfile(countingProfile);
+    expect(svc.data().systemPrompt).toBe('render:1');
+
+    change.fire(PLUGIN_SKILL_SOURCE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Plugin-derived inputs are frozen for the agent's lifetime, so a plugin
+    // source change must not trigger a rebuild at all — a rebuild would only
+    // churn `${now}` and invalidate the provider's prompt cache.
+    expect(svc.data().systemPrompt).toBe('render:1');
+    change.dispose();
+  });
+
+  it('rebuilds the system prompt when the builtin skill source changes', async () => {
+    let renders = 0;
+    const countingProfile: ResolvedAgentProfile = normalizeAgentProfile({
+      name: 'counting-profile',
+      systemPrompt: () => `render:${++renders}`,
+      tools: [],
+    });
+    const change = new Emitter<string>();
+    const { profile: svc } = buildContext(skillCatalogWithChange(change));
+    await svc.applyProfile(countingProfile);
+    expect(svc.data().systemPrompt).toBe('render:1');
+
+    change.fire(BUILTIN_SKILL_SOURCE_ID);
 
     await vi.waitFor(() => {
-      expect(svc.data().systemPrompt).toBe('skills:after');
+      expect(svc.data().systemPrompt).toBe('render:2');
     });
     change.dispose();
   });
@@ -265,14 +446,15 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
     expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
 
-    // A reload-driven re-render applies the budget again but does not warn twice.
+    // A reload-driven re-render reuses the frozen sections: the prompt does
+    // not change and the budget warning is not re-emitted.
     sections.value = [...sections.value, { pluginId: 'third', content: 'small' }];
     change.fire(PLUGIN_SKILL_SOURCE_ID);
-    await vi.waitFor(() => {
-      expect(svc.data().systemPrompt).toContain('<!-- From: plugin third -->');
-    });
+    await svc.refreshSystemPrompt();
 
+    expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
     expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
+    expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin third -->');
     const events = context.newEvents() as readonly {
       event: string;
       args?: { code?: string };
@@ -300,11 +482,13 @@ function skillCatalogWithChange(
   });
 }
 
-function pluginStub(sections: {
-  value: readonly EnabledPluginSystemPrompt[];
-}): IPluginService {
+function pluginStub(
+  sections: { value: readonly EnabledPluginSystemPrompt[] },
+  loaded: { value: boolean } = { value: true },
+): IPluginService {
   return {
     onDidReload: Event.None as IPluginService['onDidReload'],
+    hasLoadedSnapshot: () => loaded.value,
     pluginSkillRoots: async () => [],
     enabledSessionStarts: async () => [],
     enabledSystemPrompts: async () => sections.value,
@@ -323,4 +507,57 @@ function exactSystemPrompt(workDir: string, agentsMd: string): string {
     'ls:\u2514\u2500\u2500 AGENTS.md',
     'extra:',
   ].join('\n');
+}
+
+function mappedRuntimeService(
+  fs: HostFileSystem,
+  homeDir: string,
+  map: (path: string) => string,
+  capabilities: readonly RuntimeCapability[] = ['fs'],
+): IAgentRuntimeService {
+  const runtime: Runtime = {
+    identity: { workspaceId: 'workspace-1', runtimeId: 'mapped', generation: 'g1' },
+    capabilities: new Set(capabilities),
+    environment: {
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: 'test',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir,
+    },
+    path: {
+      separator: '/',
+      delimiter: ':',
+      isAbsolute: (path) => isAbsolute(path),
+      join: (...paths) => join(...paths),
+      relative: (from, to) => relative(from, to),
+      resolve: (...paths) => resolve(...paths),
+      basename: (path) => basename(path),
+      dirname: (path) => dirname(path),
+    },
+    workspace: {
+      mapRoots: (roots) => ({
+        workDir: map(roots.workDir),
+        additionalDirs: roots.additionalDirs?.map(map),
+      }),
+    },
+    fs,
+    status: 'ready',
+    onDidChangeStatus: Event.None as Event<RuntimeStatus>,
+    dispose: () => {},
+  };
+  return {
+    _serviceBrand: undefined,
+    onDidChange: Event.None as Event<void>,
+    isAvailable: (required = []) =>
+      required.every((capability) => runtime.capabilities.has(capability)),
+    inspect: () => runtime,
+    acquire: () => ({
+      runtime,
+      track: <T,>(resource: T): T => resource,
+      dispose: () => {},
+    }),
+  };
 }

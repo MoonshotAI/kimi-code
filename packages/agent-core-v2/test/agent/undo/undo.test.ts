@@ -19,8 +19,8 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { TurnModel } from '#/agent/loop/turnOps';
-import { IAgentPlanService } from '#/agent/plan/plan';
-import { PlanModel } from '#/agent/plan/planOps';
+import { IAgentPlanService } from '#/features/plan/plan';
+import { PlanModel } from '#/features/plan/planOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IEventBus } from '#/app/event/eventBus';
@@ -31,7 +31,8 @@ import { TodoModel, todoSet } from '#/session/todo/todoOps';
 import { defineModel } from '#/wire/model';
 import { IWireService } from '#/wire/wire';
 
-import { createTestAgent, telemetryServices, type TestAgentContext } from '../../harness';
+import { createTestAgent, execEnvServices, telemetryServices, type TestAgentContext } from '../../harness';
+import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 describe('AgentConversationUndoService', () => {
@@ -48,7 +49,10 @@ describe('AgentConversationUndoService', () => {
 
   function setup() {
     records = [];
-    ctx = createTestAgent(telemetryServices(recordingTelemetry(records)));
+    ctx = createTestAgent(
+      telemetryServices(recordingTelemetry(records)),
+      execEnvServices({ hostFs: createFakeHostFs({ mkdir: async () => {} }) }),
+    );
     ctx.get(IAgentContextMemoryService);
     return ctx;
   }
@@ -214,8 +218,6 @@ describe('AgentConversationUndoService', () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
     ctx.appendTurnExchange('u1', 'a1');
-    // A checkpointed model that never tracks anchors (no reducers) drags the
-    // depth to 0 without any compaction in history.
     const defective = defineModel<Checkpointed<unknown>>('testDefective', () => ({
       current: null,
       checkpoints: [],

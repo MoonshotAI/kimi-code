@@ -5,8 +5,9 @@
  * filesystem boundary. Pure path probes; no scoped state.
  */
 
-import { dirname, join, resolve } from 'pathe';
+import { join } from 'pathe';
 
+import { findUpwardRoot } from '#/_base/utils/paths';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 
@@ -86,20 +87,15 @@ async function findProjectRoot(
   workDir: string,
   warn?: AgentRootWarn,
 ): Promise<string> {
-  const start = resolve(workDir);
-  let current = start;
-  while (true) {
-    const marker = join(current, '.git');
+  return findUpwardRoot(workDir, '.git', async (marker) => {
     try {
-      if (await pathExists(fs, marker)) return current;
+      return await pathExists(fs, marker);
     } catch (error) {
       if (isUnavailable(error)) throw error;
       warn?.(`Skipping unreadable project marker ${marker}: ${errorMessage(error)}`, error);
+      return false;
     }
-    const parent = dirname(current);
-    if (parent === current) return start;
-    current = parent;
-  }
+  });
 }
 
 async function pushFirstExisting(

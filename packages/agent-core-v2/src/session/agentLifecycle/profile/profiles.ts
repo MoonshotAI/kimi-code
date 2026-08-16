@@ -45,12 +45,13 @@ const AGENT_TOOLS = [
   'GetGoal',
   'SetGoalBudget',
   'UpdateGoal',
+  // TowerInit stays in the default allowlist so the main agent can enter
+  // tower mode; the rest of the Tower* set is activated by TowerInit.
+  'TowerInit',
   'mcp__*',
 ] as const;
 
 const CODER_TOOLS = [
-  'Agent',
-  'AgentSwarm',
   'Bash',
   'CronCreate',
   'CronDelete',
@@ -125,9 +126,9 @@ registerAgentProfile({
   tools: EXPLORE_TOOLS,
   renderSystemPrompt: (context) =>
     renderSystemPromptResult(EXPLORE_ROLE, context, { skillActive: skillActiveFor(EXPLORE_TOOLS) }),
-  promptPrefix: async ({ cwd, runner, log }) => {
+  promptPrefix: async ({ cwd, process, log }) => {
     try {
-      return await collectGitContext(runner, cwd, log);
+      return await collectGitContext(process, cwd, log);
     } catch {
       return '';
     }

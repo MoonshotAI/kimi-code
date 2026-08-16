@@ -175,7 +175,11 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       server = undefined;
     }
     if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
+      // maxRetries: the engine's file log writers flush synchronously on scope
+      // dispose but their trailing async close can still be creating a file
+      // under home after server.close() resolves (ENOTEMPTY on a loaded CI
+      // runner) — same retry pattern as questions.test.ts / fs.test.ts.
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
     }
   });
@@ -638,6 +642,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const questions = session!.accessor.get(ISessionQuestionService);
     const pending = questions.request(
       {
+        id: 'call_q',
         turnId: 0,
         toolCallId: 'call_q',
         questions: [{ question: 'Pick?', options: [{ label: 'A' }] }],
@@ -808,6 +813,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const questions = session!.accessor.get(ISessionQuestionService);
     const pending = questions.request(
       {
+        id: 'call_q',
         turnId: 0,
         toolCallId: 'call_q',
         questions: [{ question: 'Pick one?', options: [{ label: 'A' }, { label: 'B' }] }],

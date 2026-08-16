@@ -31,7 +31,7 @@ describe('/api/v1/meta experimental_flags', () => {
     // only forces ON), but the per-flag env must be fully ABSENT — an
     // explicit '0' is an env override that outranks the config section.
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL', undefined);
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', undefined);
   });
 
   afterEach(async () => {
@@ -75,7 +75,7 @@ describe('/api/v1/meta experimental_flags', () => {
   it('reports registered flags as off by default', async () => {
     const base = await boot();
     const flags = await getMetaFlags(base);
-    expect(flags['secondary-model']).toBe(false);
+    expect(flags['tool-select']).toBe(false);
   });
 
   it('reports a config-enabled flag from the very first response', async () => {
@@ -83,44 +83,44 @@ describe('/api/v1/meta experimental_flags', () => {
     // section from a config that loads asynchronously, so the handler awaits
     // IConfigService.ready before snapshotting — a persisted flag must be
     // visible even to the earliest request.
-    const base = await boot('[experimental]\nsecondary-model = true\n');
+    const base = await boot('[experimental]\ntool-select = true\n');
     const flags = await getMetaFlags(base);
-    expect(flags['secondary-model']).toBe(true);
+    expect(flags['tool-select']).toBe(true);
   });
 
   it('reflects a flag enabled via its KIMI_CODE_EXPERIMENTAL_* env var', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL', '1');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', '1');
     const base = await boot();
     const flags = await getMetaFlags(base);
-    expect(flags['secondary-model']).toBe(true);
+    expect(flags['tool-select']).toBe(true);
   });
 
   it('flips live when the [experimental] config section is written via POST /config', async () => {
     const base = await boot();
-    expect((await getMetaFlags(base))['secondary-model']).toBe(false);
+    expect((await getMetaFlags(base))['tool-select']).toBe(false);
 
     const res = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental: { 'secondary-model': true } }),
+      body: JSON.stringify({ experimental: { 'tool-select': true } }),
     });
     expect(res.status).toBe(200);
 
-    expect((await getMetaFlags(base))['secondary-model']).toBe(true);
+    expect((await getMetaFlags(base))['tool-select']).toBe(true);
   });
 
   it('keeps an env-forced flag on when the config section disables it', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL', '1');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', '1');
     const base = await boot();
 
     const res = await authedFetch(server as RunningServer, base, '/api/v1/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental: { 'secondary-model': false } }),
+      body: JSON.stringify({ experimental: { 'tool-select': false } }),
     });
     expect(res.status).toBe(200);
 
     // Env outranks the config section in FlagService resolution.
-    expect((await getMetaFlags(base))['secondary-model']).toBe(true);
+    expect((await getMetaFlags(base))['tool-select']).toBe(true);
   });
 });

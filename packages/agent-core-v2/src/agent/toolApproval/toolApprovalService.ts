@@ -6,12 +6,17 @@
  * session approval broker (absent broker = auto-approve), records
  * session-scope approval rules through `permissionRules`, reports
  * `permission_approval_result` through `telemetry`, and folds ask
- * continuations back into authorize results. Bound at Agent scope.
+ * continuations back into authorize results. The interaction id is minted
+ * here (`approval_<uuid>`) so the broker, the events, and the activity view
+ * all key the same request. Bound at Agent scope.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable, isUserCancellation } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type {
@@ -58,7 +63,7 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-export class AgentToolApprovalService extends Disposable implements IAgentToolApprovalService {
+export class AgentToolApprovalService extends Service implements IAgentToolApprovalService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
@@ -113,6 +118,7 @@ export class AgentToolApprovalService extends Disposable implements IAgentToolAp
         detail: context.args,
       } as ToolInputDisplay);
     const approvalRequest = {
+      id: `approval_${randomUUID()}`,
       sessionId: this.session.sessionId,
       agentId: this.scopeContext.agentId,
       turnId: context.turnId,

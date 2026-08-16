@@ -1,6 +1,10 @@
 /**
  * `/api/v1/debug` channel registry — the set of Services exposed over the
- * wire, which is simply the ENTIRE scoped DI registry (no whitelist).
+ * wire: the ENTIRE scoped DI registry (no whitelist), plus Services
+ * runtime-contributed through the Feature `contributeService` seam (the
+ * contributed-service table in `features/featureRegistry`), which bypasses
+ * the static registry. Kernel tokens that were never registered either way
+ * stay unreachable.
  *
  * In VS Code's `registerChannel` model a Service is registered once, keyed by
  * its decorator id (the public channel name), and from then on all of its
@@ -12,10 +16,11 @@
 import {
   Disposable,
   getScopedServiceDescriptors,
+  IFeatureManager,
   LifecycleScope,
 } from '@moonshot-ai/agent-core-v2';
 
-import type { ScopedEntry, ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
+import type { Scope, ScopedEntry, ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
 
 export interface ChannelMethodDescriptor {
   readonly name: string;
@@ -39,16 +44,15 @@ export interface ChannelDescriptor {
    * Registration scope — the minimal scope at which the channel resolves.
    * Derived from the scoped DI registry.
    */
-  readonly scope: 'app' | 'workspace' | 'session' | 'agent';
+  readonly scope: 'app' | 'session' | 'agent';
   /** Domain tag recorded at `registerScopedService`. */
   readonly domain: string;
   /** Public prototype members, sorted — events are instance properties and never appear. */
   readonly methods: readonly ChannelMethodDescriptor[];
 }
 
-const SCOPE_NAME: Record<LifecycleScope, ChannelDescriptor['scope']> = {
+const SCOPE_NAME: Record<string, ChannelDescriptor['scope']> = {
   [LifecycleScope.App]: 'app',
-  [LifecycleScope.Workspace]: 'workspace',
   [LifecycleScope.Session]: 'session',
   [LifecycleScope.Agent]: 'agent',
 };
@@ -67,7 +71,6 @@ function scopedServiceNameIndex(): Map<string, ServiceIdentifier<unknown>> {
     const map = new Map<string, ServiceIdentifier<unknown>>();
     for (const scope of [
       LifecycleScope.App,
-      LifecycleScope.Workspace,
       LifecycleScope.Session,
       LifecycleScope.Agent,
     ]) {
@@ -82,8 +85,17 @@ function scopedServiceNameIndex(): Map<string, ServiceIdentifier<unknown>> {
 }
 
 /** Resolve a wire name to its `ServiceIdentifier` anywhere in the DI registry. */
-export function resolveAnyScopedServiceId(name: string): ServiceIdentifier<unknown> | undefined {
-  return scopedServiceNameIndex().get(name);
+export function resolveAnyScopedServiceId(
+  core: Scope,
+  name: string,
+): ServiceIdentifier<unknown> | undefined {
+  return (
+    scopedServiceNameIndex().get(name) ??
+    core.accessor
+      .get(IFeatureManager)
+      .contributedServices()
+      .find((entry) => entry.id.toString() === name)?.id
+  );
 }
 
 /**
@@ -144,12 +156,7 @@ function describeMethods(
  */
 export function describeAllChannels(): readonly ChannelDescriptor[] {
   const byName = new Map<string, ScopedEntry>();
-  for (const scope of [
-    LifecycleScope.App,
-    LifecycleScope.Workspace,
-    LifecycleScope.Session,
-    LifecycleScope.Agent,
-  ]) {
+  for (const scope of [LifecycleScope.App, LifecycleScope.Session, LifecycleScope.Agent]) {
     for (const entry of getScopedServiceDescriptors(scope)) {
       const name = entry.id.toString();
       if (!byName.has(name)) byName.set(name, entry);
@@ -158,7 +165,7 @@ export function describeAllChannels(): readonly ChannelDescriptor[] {
   return [...byName.entries()]
     .map(([name, entry]) => ({
       name,
-      scope: SCOPE_NAME[entry.scope],
+      scope: SCOPE_NAME[entry.scope] ?? 'app',
       domain: entry.domain,
       methods: describeMethods(entry.descriptor.ctor),
     }))

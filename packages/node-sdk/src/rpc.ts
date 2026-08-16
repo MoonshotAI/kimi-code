@@ -26,6 +26,8 @@ import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
+  AgentCommandInfo,
+  AgentRuntimeBinding,
   BackgroundTaskInfo,
   ConfigDiagnostics,
   CreateSessionOptions,
@@ -33,7 +35,9 @@ import type {
   ExportSessionResult,
   CreateGoalInput,
   ForkSessionInput,
+  GenerateSessionTitleInput,
   GetConfigOptions,
+  GlobalMcpServerAuthStatus,
   McpServerConfig,
   GoalSnapshot,
   GoalToolResult,
@@ -53,10 +57,12 @@ import type {
   SessionStatus,
   SessionUsage,
   PromptInput,
+  PromptSkillActivation,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
   SessionSummary,
+  SessionSummaryPage,
   SkillSummary,
   PluginCommandDef,
   Unsubscribe,
@@ -68,12 +74,10 @@ const MAIN_AGENT_ID = 'main';
 export interface SessionPromptRpcInput {
   readonly sessionId: string;
   readonly input: PromptInput;
-  /**
-   * Client-managed session tool denylist (full-replace semantics), forwarded
-   * to engines with profile tool gating. Omit to keep the persisted value;
-   * `[]` clears the client portion.
-   */
-  readonly disabledTools?: readonly string[];
+}
+
+export interface SessionPromptWithSkillsRpcInput extends SessionPromptRpcInput {
+  readonly skills: readonly PromptSkillActivation[];
 }
 
 export interface SessionIdRpcInput {
@@ -127,6 +131,15 @@ export interface ActivatePluginCommandRpcInput extends SessionIdRpcInput {
   readonly pluginId: string;
   readonly commandName: string;
   readonly args?: string | undefined;
+}
+
+export interface RunCommandRpcInput extends SessionIdRpcInput {
+  readonly name: string;
+  readonly args?: string | undefined;
+}
+
+export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
+  readonly runtimeId: string;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
@@ -217,6 +230,17 @@ export abstract class SDKRpcClientBase {
     return rpc.listSessions(input);
   }
 
+  /**
+   * One keyset page of the session listing (`limit` / `before` in
+   * `ListSessionsOptions`). The base implementation serves the whole filtered
+   * set as a single terminal page — the v1 engine has no paged listing;
+   * `SDKRpcClientV2` overrides this with real index paging.
+   */
+  async listSessionsPage(input: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
+    const items = await this.listSessions(input);
+    return { items, nextCursor: undefined };
+  }
+
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listWorkspaceSkills({ workDir });
@@ -242,6 +266,18 @@ export abstract class SDKRpcClientBase {
       sessionId: input.id,
       title: input.title,
     });
+  }
+
+  /**
+   * v2-only capability (`ISessionTitleService`); the v1 engine has no title
+   * generation, so the base fails loudly and `SDKRpcClientV2` overrides it.
+   */
+  async generateSessionTitle(input: GenerateSessionTitleInput): Promise<string | undefined> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'generateSessionTitle is only available on the agent-core-v2 engine.',
+    );
   }
 
   async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {
@@ -309,6 +345,11 @@ export abstract class SDKRpcClientBase {
     return rpc.listGlobalMcpServers({});
   }
 
+  async listGlobalMcpServerAuthStatuses(): Promise<readonly GlobalMcpServerAuthStatus[]> {
+    const rpc = await this.getRpc();
+    return rpc.listGlobalMcpServerAuthStatuses({});
+  }
+
   async addGlobalMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
     const rpc = await this.getRpc();
     return rpc.addGlobalMcpServer({ server });
@@ -362,8 +403,20 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
       input: input.input,
-      disabledTools: input.disabledTools,
     });
+  }
+
+  /**
+   * Grouped skill activation + prompt submission. Only the v2 engine
+   * (`SDKRpcClientV2`) implements it; the v1 route has no combined-submission
+   * RPC, so the base fails loudly instead of degrading into N+1 turns.
+   */
+  async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'promptWithSkills requires the agent-core-v2 engine.',
+    );
   }
 
   async runShellCommand(input: {
@@ -468,11 +521,6 @@ export abstract class SDKRpcClientBase {
       agentId: this.interactiveAgentId,
       effort: input.effort,
     });
-  }
-
-  async applyPersistedSecondaryModel(input: SessionIdRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.applyPersistedSecondaryModel({ sessionId: input.sessionId });
   }
 
   async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {
@@ -848,6 +896,36 @@ export abstract class SDKRpcClientBase {
       commandName: input.commandName,
       args: input.args,
     });
+  }
+
+  /**
+   * Contributed commands of the session's interactive agent. The
+   * contributed-command seam exists only in the agent-core-v2 engine, so the
+   * base implementation reports the empty set and rejects runs with a coded
+   * error (same shape as `replaceConfigSections`); only the v2 client
+   * overrides these.
+   */
+  async listCommands(input: SessionIdRpcInput): Promise<readonly AgentCommandInfo[]> {
+    void input;
+    return [];
+  }
+
+  async runCommand(input: RunCommandRpcInput): Promise<void> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support contributed commands.',
+    );
+  }
+
+  async getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {
+    void input;
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'This SDK client does not support runtimes.');
+  }
+
+  async switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding> {
+    void input;
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'This SDK client does not support runtimes.');
   }
 
   onEvent(listener: (event: Event) => void): Unsubscribe {

@@ -11,8 +11,10 @@ import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
-  CapabilityStatus,
+  AgentCommandInfo,
+  AgentRuntimeBinding,
   BackgroundTaskInfo,
+  CapabilityStatus,
   CompactOptions,
   CreateGoalInput,
   GetCronTasksResult,
@@ -25,6 +27,7 @@ import type {
   PluginInfo,
   PluginSummary,
   PromptInput,
+  PromptSkillActivation,
   ReloadSessionOptions,
   ReloadSummary,
   ResumedSessionState,
@@ -62,7 +65,7 @@ interface CapabilityRpcSurface {
   installCapability(id: string): Promise<CapabilityStatus>;
 }
 
-function capabilityRpc(rpc: SDKRpcClientBase): CapabilityRpcSurface {
+export function capabilityRpc(rpc: SDKRpcClientBase): CapabilityRpcSurface {
   const candidate = rpc as Partial<CapabilityRpcSurface>;
   if (
     typeof candidate.listCapabilities !== 'function' ||
@@ -91,6 +94,11 @@ export class Session {
     this.resumeState = options.resumeState ?? resumeStateFromSummary(options.summary);
     this.rpc = options.rpc;
     this.onClose = options.onClose;
+  }
+
+  /** True once {@link close} began — the session may still be closing in the engine. */
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   getResumeState(): ResumedSessionState | undefined {
@@ -133,6 +141,25 @@ export class Session {
     await this.rpc.prompt({
       sessionId: this.id,
       input: normalizePromptInput(input),
+    });
+  }
+
+  /**
+   * Submit one prompt with one or more skill activations bundled into the
+   * same user message: the skills are validated up front (an unknown name
+   * rejects the whole submission), rendered ahead of the prompt in the same
+   * turn, and the bundle undoes as a single anchor. Requires the
+   * agent-core-v2 engine.
+   */
+  async promptWithSkills(
+    input: string | PromptInput,
+    skills: readonly PromptSkillActivation[],
+  ): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.promptWithSkills({
+      sessionId: this.id,
+      input: normalizePromptInput(input),
+      skills,
     });
   }
 
@@ -222,6 +249,21 @@ export class Session {
     await this.rpc.setModel({ sessionId: this.id, model: normalized });
   }
 
+  async getRuntime(): Promise<AgentRuntimeBinding> {
+    this.ensureOpen();
+    return this.rpc.getRuntime({ sessionId: this.id });
+  }
+
+  async switchRuntime(runtimeId: string): Promise<AgentRuntimeBinding> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      runtimeId,
+      'Session runtime cannot be empty',
+      ErrorCodes.REQUEST_INVALID,
+    );
+    return this.rpc.switchRuntime({ sessionId: this.id, runtimeId: normalized });
+  }
+
   async setThinking(effort: ThinkingEffort): Promise<void> {
     this.ensureOpen();
     const normalized = normalizeRequiredString(
@@ -230,18 +272,6 @@ export class Session {
       ErrorCodes.SESSION_THINKING_EMPTY,
     );
     await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
-  }
-
-  /**
-   * Live-apply the persisted `[secondary_model]` recipe to this session
-   * (subagent model binding). Persist the recipe via `KimiHarness.setConfig`
-   * first; this reloads the complete recipe and its synthesized derived entry
-   * before updating the session snapshot — mirroring the `/secondary_model`
-   * flow.
-   */
-  async applyPersistedSecondaryModel(): Promise<void> {
-    this.ensureOpen();
-    await this.rpc.applyPersistedSecondaryModel({ sessionId: this.id });
   }
 
   async setPermission(mode: PermissionMode): Promise<void> {
@@ -369,6 +399,15 @@ export class Session {
   async listPluginCommands(): Promise<readonly PluginCommandDef[]> {
     this.ensureOpen();
     return this.rpc.listPluginCommands({ sessionId: this.id });
+  }
+
+  /**
+   * Contributed commands registered with this session's interactive agent
+   * (agent-core-v2 only — a v1-backed session reports the empty set).
+   */
+  async listCommands(): Promise<readonly AgentCommandInfo[]> {
+    this.ensureOpen();
+    return this.rpc.listCommands({ sessionId: this.id });
   }
 
   /**
@@ -632,6 +671,24 @@ export class Session {
     });
   }
 
+  /**
+   * Run a contributed command engine-side (agent-core-v2 only — a v1-backed
+   * client rejects with `not_implemented`). Unknown names reject with the
+   * engine's `request.invalid` error.
+   */
+  async runCommand(name: string, args?: string): Promise<void> {
+    this.ensureOpen();
+    const commandName = name.trim();
+    if (commandName.length === 0) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Command name cannot be empty');
+    }
+    await this.rpc.runCommand({
+      sessionId: this.id,
+      name: commandName,
+      args: normalizeOptionalString(args),
+    });
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -644,7 +701,7 @@ export class Session {
   }
 
   /** @internal */
-  emitMetaUpdated(patch: { readonly title?: string | undefined }): void {
+  emitMetaUpdated(patch: { readonly title?: string; readonly isCustomTitle?: boolean }): void {
     this.emit({
       type: 'session.meta.updated',
       sessionId: this.id,

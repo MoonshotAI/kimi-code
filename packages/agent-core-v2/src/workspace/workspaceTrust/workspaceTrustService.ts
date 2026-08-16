@@ -17,7 +17,6 @@
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 import { defineState } from '#/_base/state/stateRegistry';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
@@ -39,6 +38,7 @@ export const workspaceTrustTrustedKey = defineState<boolean>(
   () => false,
 );
 
+// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust {
   declare readonly _serviceBrand: undefined;
 
@@ -103,10 +103,3 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceTrust,
-  WorkspaceTrustService,
-  ScopeActivation.OnDemand,
-  'workspaceTrust',
-);

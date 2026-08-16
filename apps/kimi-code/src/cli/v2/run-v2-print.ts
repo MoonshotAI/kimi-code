@@ -13,7 +13,7 @@
  *   - applies the print-mode background policy (config-driven, v1-aligned:
  *     `exit` / `drain` / `steer`) before exiting.
  *
- * Selected by `runPrompt` when `KIMI_CODE_EXPERIMENTAL_FLAG` is set.
+ * Selected by `runPrompt` unless `KIMI_CODE_LEGACY_FLAG` is truthy.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -32,8 +32,7 @@ import {
   IOAuthToolkit,
   ISessionCronService,
   ISessionIndex,
-  ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
   ITelemetryService,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
@@ -49,6 +48,7 @@ import {
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
+  setClampedTimeout,
   type DomainEvent,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
@@ -261,7 +261,7 @@ async function resolveNativeSession(
   defaultModel: string | undefined,
   stderr: PromptOutput,
 ): Promise<ResolvedNativeSession> {
-  const workspaceLifecycle = app.accessor.get(IWorkspaceLifecycleService);
+  const sessions = app.accessor.get(ISessionManager);
   const index = app.accessor.get(ISessionIndex);
 
   // `--agent` selects a catalog profile by name; otherwise `--agent-file`
@@ -378,8 +378,7 @@ async function resolveNativeSession(
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
-  const handler = await workspaceLifecycle.handlerFor({ root: workDir });
-  const session = await handler.accessor.get(ISessionLifecycleService).create({
+  const session = await sessions.create({
     workDir,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     mainAgentBinding: {
@@ -621,8 +620,13 @@ export function createPrintTurnEndings(): PrintTurnEndings & {
             // oxlint-disable-next-line promise/no-multiple-resolved -- `settled` guards the single resolve; the rule cannot see it
             resolve(value);
           };
+          // A delay beyond the host timer ceiling (an explicit
+          // `print_wait_ceiling_s` or a far-future cron fire can still reach
+          // it) is clamped by `setClampedTimeout`, so the timer can expire
+          // early: the loop below treats that as a chunk boundary and
+          // re-arms against the real deadline.
           const timer = Number.isFinite(ms)
-            ? setTimeout(() => {
+            ? setClampedTimeout(() => {
                 settle(null);
               }, ms)
             : undefined;
@@ -636,7 +640,8 @@ export function createPrintTurnEndings(): PrintTurnEndings & {
         const ms = deadlineAt - Date.now();
         if (ms <= 0) return null;
         const ending = await waitOnce(ms);
-        if (ending === null) return null;
+        // Timer-chunk boundary, not the real deadline: keep waiting.
+        if (ending === null) continue;
         if (ending.turnId !== skipTurnId) return ending;
         // The skipped turn's own ending: keep waiting within the same budget.
       }

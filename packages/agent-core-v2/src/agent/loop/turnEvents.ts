@@ -9,7 +9,9 @@
  * prompt rides the event only for displayable user origins
  * ({@link isDisplayablePromptOrigin}) — a system-triggered turn (goal
  * continuation, subagent run, cron…) has internal steering text as its input,
- * which must never surface in transcripts.
+ * which must never surface in transcripts. When the turn's prompt bundles
+ * skill activations, their rendered blocks (prepended to the content, one
+ * text part per skill) are excluded from the extracted text.
  */
 
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
@@ -35,9 +37,14 @@ export interface TurnStartedEvent {
   readonly prompt?: string;
 }
 
-export function turnPromptText(input: readonly ContentPart[]): string | undefined {
+export function turnPromptText(
+  input: readonly ContentPart[],
+  origin?: PromptOrigin,
+): string | undefined {
+  const bundledBlocks = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
   const text = input
     .filter((part): part is TextPart => part.type === 'text')
+    .slice(bundledBlocks)
     .map((part) => part.text)
     .join('');
   return text.length > 0 ? text : undefined;
