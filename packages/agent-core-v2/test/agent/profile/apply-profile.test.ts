@@ -1,6 +1,6 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'pathe';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -534,6 +534,8 @@ function mappedRuntimeService(
       join: (...paths) => join(...paths),
       relative: (from, to) => relative(from, to),
       resolve: (...paths) => resolve(...paths),
+      basename: (path) => basename(path),
+      dirname: (path) => dirname(path),
     },
     workspace: {
       mapRoots: (roots) => ({

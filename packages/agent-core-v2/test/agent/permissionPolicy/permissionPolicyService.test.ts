@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import type { ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -88,6 +88,8 @@ describe('AgentPermissionPolicyService chain', () => {
                 join: (...paths: readonly string[]) => join(...paths),
                 relative: (from: string, to: string) => to.replace(`${from}/`, ''),
                 resolve: (...paths: readonly string[]) => join(...paths),
+                basename: (path: string) => basename(path),
+                dirname: (path: string) => dirname(path),
               },
               workspace: { mapRoots: (roots) => roots },
             },
@@ -253,6 +255,8 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
                 join: (...paths: readonly string[]) => join(...paths),
                 relative: (from: string, to: string) => to.replace(`${from}/`, ''),
                 resolve: (...paths: readonly string[]) => join(...paths),
+                basename: (path: string) => basename(path),
+                dirname: (path: string) => dirname(path),
               },
               workspace: { mapRoots: (roots) => roots },
             },

@@ -185,14 +185,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
-    name: 'runtime',
-    aliases: [],
-    description: 'Show or switch execution runtime',
-    priority: 100,
-    argumentHint: '[runtime-id]',
-    availability: 'idle-only',
-  },
-  {
     name: 'secondary-model',
     aliases: ['subagent-model'],
     description: 'Configure the secondary model for subagents',

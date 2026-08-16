@@ -7,7 +7,7 @@
 
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, normalize } from 'pathe';
+import { join, normalize, basename, dirname } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -187,6 +187,8 @@ function createHarness(
               join,
               relative: (from: string, to: string) => normalize(to).replace(`${normalize(from)}/`, ''),
               resolve: (...paths: readonly string[]) => normalize(join(...paths)),
+              basename: (path: string) => basename(path),
+              dirname: (path: string) => dirname(path),
             },
             workspace: { mapRoots: (roots) => roots },
             fs: hostFs,

@@ -337,6 +337,7 @@ export class AcpServer {
       this.sessions.delete(params.sessionId);
     }
     await this.klient.session(params.sessionId).close();
+    await this.unbindSessionRuntime?.(params.sessionId);
   }
 
   /**

@@ -51,7 +51,6 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
-  extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
   type PathClass,
   isSensitiveFile,
@@ -109,22 +108,21 @@ export class GrepTool implements IGrepTool {
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
-  private workspace(view: RuntimeWorkspaceView, env: IHostEnvironment): WorkspaceConfig {
-    return extendWorkspaceWithSkillRoots(
-      {
-        workspaceDir: view.workDir,
-        additionalDirs: view.additionalDirs,
-      },
-      this.skillCatalog?.catalog.getSkillRoots() ?? [],
-      env.pathClass,
-    );
+  private workspace(view: RuntimeWorkspaceView): WorkspaceConfig {
+    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
   resolveExecution(args: GrepInput): ToolExecution {
     const inspected = inspectAgentRuntime(this.runtime);
-    const view = new RuntimeWorkspaceView(inspected, this.workspaceCtx);
+    const view = new RuntimeWorkspaceView(inspected, {
+      workDir: this.workspaceCtx.workDir,
+      additionalDirs: [
+        ...this.workspaceCtx.additionalDirs,
+        ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+      ],
+    });
     const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
-    const workspace = this.workspace(view, env);
+    const workspace = this.workspace(view);
     let path: string | undefined;
     if (args.path !== undefined) {
       path = resolvePathAccessPath(args.path, {

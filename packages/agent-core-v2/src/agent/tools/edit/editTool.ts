@@ -20,14 +20,12 @@
  */
 
 import {
-  extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { IFileEditService } from '#/app/edit/fileEdit';
-import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { Runtime } from '#/runtime/runtime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
@@ -57,7 +55,7 @@ export class EditTool implements IEditTool {
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
-  private workspaceConfig(runtime: Runtime, env: HostEnvironmentInfo): WorkspaceConfig {
+  private workspaceConfig(runtime: Runtime): WorkspaceConfig {
     const view = new RuntimeWorkspaceView(runtime, {
       workDir: this.workspaceCtx.workDir,
       additionalDirs: [
@@ -65,20 +63,13 @@ export class EditTool implements IEditTool {
         ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
       ],
     });
-    return extendWorkspaceWithSkillRoots(
-      {
-        workspaceDir: view.workDir,
-        additionalDirs: view.additionalDirs,
-      },
-      [],
-      env.pathClass,
-    );
+    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
   resolveExecution(args: EditInput): ToolExecution {
     const inspected = inspectAgentRuntime(this.runtime);
     const env = inspected.environment;
-    const workspace = this.workspaceConfig(inspected, env);
+    const workspace = this.workspaceConfig(inspected);
     const path = resolvePathAccessPath(args.path, {
       env,
       workspace,

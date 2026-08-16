@@ -54,6 +54,8 @@ export class LocalRuntime implements Runtime {
       join: (...paths) => path.join(...paths),
       relative: (from, to) => path.relative(from, to),
       resolve: (...paths) => path.resolve(...paths),
+      basename: (p) => path.basename(p),
+      dirname: (p) => path.dirname(p),
     };
     this.workspace = {
       mapRoots: (roots) => ({

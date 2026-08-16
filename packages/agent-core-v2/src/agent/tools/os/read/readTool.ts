@@ -22,7 +22,6 @@
  * load.
  */
 
-import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
@@ -36,7 +35,6 @@ import {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
-  extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
   type WorkspaceConfig,
 } from '#/tool/path-access';
@@ -239,22 +237,18 @@ export class ReadTool implements IReadTool {
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
   ) {}
 
-  private workspaceConfig(view: RuntimeWorkspaceView, env: IHostEnvironment): WorkspaceConfig {
-    return extendWorkspaceWithSkillRoots(
-      {
-        workspaceDir: view.workDir,
-        additionalDirs: view.additionalDirs,
-      },
-      this.skillCatalog.catalog.getSkillRoots(),
-      env.pathClass,
-    );
+  private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
+    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
   resolveExecution(args: ReadInput): ToolExecution {
     const inspected = inspectAgentRuntime(this.runtime);
-    const view = new RuntimeWorkspaceView(inspected, this.workspaceCtx);
+    const view = new RuntimeWorkspaceView(inspected, {
+      workDir: this.workspaceCtx.workDir,
+      additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
+    });
     const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
-    const workspace = this.workspaceConfig(view, env);
+    const workspace = this.workspaceConfig(view);
     const path = resolvePathAccessPath(args.path, {
       env,
       workspace,

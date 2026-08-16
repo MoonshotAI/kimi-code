@@ -24,6 +24,8 @@ export interface RuntimePath {
   join(...paths: readonly string[]): string;
   relative(from: string, to: string): string;
   resolve(...paths: readonly string[]): string;
+  basename(path: string): string;
+  dirname(path: string): string;
 }
 
 export interface RuntimeWorkspaceRoots {

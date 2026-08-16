@@ -84,7 +84,6 @@ import {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
-  extendWorkspaceWithSkillRoots,
   isWithinDirectory,
   resolvePathAccessPath,
   type PathClass,
@@ -136,22 +135,21 @@ export class GlobTool implements IGlobTool {
       : globDescription;
   }
 
-  private workspaceConfig(view: RuntimeWorkspaceView, env: IHostEnvironment): WorkspaceConfig {
-    return extendWorkspaceWithSkillRoots(
-      {
-        workspaceDir: view.workDir,
-        additionalDirs: view.additionalDirs,
-      },
-      this.skillCatalog?.catalog.getSkillRoots() ?? [],
-      env.pathClass,
-    );
+  private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
+    return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
   resolveExecution(args: GlobInput): ToolExecution {
     const inspected = inspectAgentRuntime(this.runtime);
-    const view = new RuntimeWorkspaceView(inspected, this.workspaceCtx);
+    const view = new RuntimeWorkspaceView(inspected, {
+      workDir: this.workspaceCtx.workDir,
+      additionalDirs: [
+        ...this.workspaceCtx.additionalDirs,
+        ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+      ],
+    });
     const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
-    const workspace = this.workspaceConfig(view, env);
+    const workspace = this.workspaceConfig(view);
     let path: string | undefined;
     if (args.path !== undefined) {
       path = resolvePathAccessPath(args.path, {

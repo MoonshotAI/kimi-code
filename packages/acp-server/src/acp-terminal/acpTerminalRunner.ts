@@ -201,6 +201,8 @@ class AcpSessionRuntime implements Runtime {
       join: (...paths: readonly string[]) => path.join(...paths),
       relative: (from: string, to: string) => path.relative(from, to),
       resolve: (...paths: readonly string[]) => path.resolve(...paths),
+      basename: (p: string) => path.basename(p),
+      dirname: (p: string) => path.dirname(p),
     };
     this.fs = new AcpHostFileSystem({ sessionId } as unknown as ISessionContext, connection);
     this.process = new AcpProcessService(sessionId, cwd, connection);
