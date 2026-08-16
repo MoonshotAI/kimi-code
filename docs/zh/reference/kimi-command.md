@@ -105,7 +105,7 @@ kimi --agent reviewer
 kimi -p --agent reviewer "审查这个分支上的改动"
 ```
 
-`--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；该 flag 不可重复传入，`--agent` 与 `--agent-file` 互斥。两个 flag 都仅在新建会话时有效——都不能与 `--session`/`--continue` 组合，因为 Agent 在会话创建时绑定，恢复会话时会自动还原已绑定的 Agent。选择在会话首次绑定后即固定，之后不可切换；在 TUI 中，这些 flag 只绑定启动时的会话，之后在同一进程内新建的会话（例如通过 `/new`）使用默认 Agent。Agent 文件格式与发现目录详见 [Agent 与 subagent](../customization/agents.md#自定义-agent)。
+`--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；该 flag 不可重复传入，`--agent` 与 `--agent-file` 互斥。两个 flag 都仅在新建会话时有效——都不能与 `--session`/`--continue` 组合，因为 Agent 在会话创建时绑定，恢复会话时会自动还原已绑定的 Agent。选择在会话首次绑定后即固定，之后不可切换；在 TUI 中，这些 flag 只绑定启动时的会话，之后在同一进程内新建的会话（例如通过 `/new`）使用默认 Agent。在默认的 `agent-core-v2` 引擎下，`--agent-file` 指向的文件在本次启动的剩余时间内一直留在 Agent 清单中：之后新建的会话虽然以默认 Agent 启动，该文件定义的 Agent 仍可作为 subagent 派发，但要受当前 Agent 的 subagent 允许列表限制；如果该文件与某个内置 Agent 同名，它对这些会话也会继续替换那个内置 Agent。设置 `KIMI_CODE_LEGACY_FLAG=1` 选择旧版引擎时，该文件只为启动时的会话注册。Agent 文件格式与发现目录详见 [Agent 与 subagent](../customization/agents.md#自定义-agent)。
 
 ## 非交互执行
 
