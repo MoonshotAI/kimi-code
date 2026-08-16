@@ -6,13 +6,15 @@
  * failure. Seeds each agent's identity through `agent` scopeContext, wires
  * per-agent wire records and the wire state machine, the blob store, and MCP,
  * and registers the agent in the session registry. Binds the agent id into the
- * Agent-scoped telemetry view. New logs receive a metadata
- * envelope while non-empty unversioned logs are rejected. Removal awaits the
- * agent task manager's graceful exit policy before draining turns and full
- * compaction, then disposing the child scope. Fans session-level
- * permission-mode switches out to every live agent — except
- * `tower-worker`-profile agents, which TowerSpawn pins to `auto` (they run
- * detached and unattended); the broadcast leaves them on `auto`. Bound at
+ * Agent-scoped telemetry view. Once the wire log is restored, applies the
+ * permission configuration read from `config` — the default permission mode
+ * and the configured rules, the latter installed through `permissionRules`.
+ * New logs receive a metadata envelope while non-empty unversioned logs are
+ * rejected. Removal awaits the agent task manager's graceful exit policy
+ * before draining turns and full compaction, then disposing the child scope.
+ * Fans session-level permission-mode switches out to every live agent —
+ * except `tower-worker`-profile agents, which TowerSpawn pins to `auto` (they
+ * run detached and unattended); the broadcast leaves them on `auto`. Bound at
  * Session scope.
  *
  * No agent id is special here: the main agent is simply the agent created
