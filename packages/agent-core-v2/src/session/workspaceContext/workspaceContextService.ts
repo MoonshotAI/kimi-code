@@ -1,15 +1,3 @@
-/**
- * `workspaceContext` domain — `ISessionWorkspaceContext` implementation.
- *
- * Holds the session work directory and additional dirs, resolves relative
- * paths, and checks whether a path falls within the workspace. `workDir` is
- * frozen at construction (`cwd`); the
- * additional dirs are a live read view over the handler-shared set, refreshed
- * through the seed's change event. The plain-data state (`workDir`,
- * `additionalDirs`) is registered into the session-state container and read
- * through it. Bound at Session scope.
- */
-
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import { Service } from '#/_base/di/service';

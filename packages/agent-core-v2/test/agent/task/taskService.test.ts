@@ -1,12 +1,3 @@
-/**
- * Scenario: Agent task lifecycle, persistence, output retention, and teardown.
- *
- * Resolves the real `AgentTaskService` by interface, uses real `ProcessTask`
- * adapters where process signals are observable, and stubs only persistence,
- * wire, loop, and telemetry boundaries. Run with
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/task/taskService.test.ts`.
- */
-
 import { Readable, type Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -185,8 +176,6 @@ describe('AgentTaskService', () => {
   it('wait with a timeout beyond the timer ceiling does not resolve immediately', async () => {
     const svc = ix.get(IAgentTaskService);
     const taskId = svc.registerTask(fakeProcessTask());
-    // 10 years in ms overflows Node's setTimeout ceiling (2^31-1 ms) into a
-    // 1ms fire; wait must clamp instead of returning at once.
     const waited = svc.wait(taskId, 10 * 365 * 24 * 3600 * 1000);
     const early = await Promise.race([
       waited.then(() => 'returned' as const),
@@ -714,7 +703,6 @@ describe('AgentTaskService', () => {
 
     await svc.stop(taskId);
   });
-
 
   const MiB = 1024 * 1024;
   const LIMIT_BYTES = 16 * MiB;

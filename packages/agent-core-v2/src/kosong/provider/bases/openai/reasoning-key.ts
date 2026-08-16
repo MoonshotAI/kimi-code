@@ -1,21 +1,3 @@
-/**
- * The OpenAI-compatible Chat Completions ecosystem never standardized a wire
- * field for reasoning/thinking content. Three names circulate in the wild:
- *
- * - `reasoning_content` — DeepSeek's original convention, used by the Moonshot
- *   Kimi API, pre-rename vLLM, and most OpenAI-compatible gateways.
- * - `reasoning_details` — OpenRouter.
- * - `reasoning` — OpenAI's GPT-OSS guidance; current vLLM renamed to this
- *   (vllm-project/vllm#27752) and its request side accepts ONLY this name
- *   (vllm-project/vllm#38488).
- *
- * Inbound we accept any of them via a priority scan; outbound we echo back the
- * dialect the peer actually spoke, learned per endpoint by ReasoningKeyDialect.
- */
-
-// Inbound scan order; the first entry doubles as the default outbound dialect
-// before any observation. Both arms can be pinned by an explicit key (see
-// ReasoningKeyDialect).
 export const KNOWN_REASONING_KEYS = [
   'reasoning_content',
   'reasoning_details',

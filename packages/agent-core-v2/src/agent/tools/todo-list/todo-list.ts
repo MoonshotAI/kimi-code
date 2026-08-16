@@ -1,17 +1,3 @@
-/**
- * `tools` domain — `ITodoListTool` contract (the `TodoList` tool).
- *
- * Public contract of the structured TODO list tool. A single input schema
- * serves both reads and writes:
- *
- *   - `{ todos: [...] }` — replace the full list
- *   - `{ todos: [] }`    — clear the list
- *   - `{}`               — query the current list
- *
- * Exports the model-facing `TodoListInputSchema` / `TodoListInput` and the
- * `ITodoListTool` DI decorator. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

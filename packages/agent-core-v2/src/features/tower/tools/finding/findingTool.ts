@@ -1,13 +1,3 @@
-/**
- * `tools` domain — `TowerFindingTool` implementation (the `TowerFinding`
- * tool).
- *
- * Files the finding through the protocol `TowerStore` rooted at the session
- * cwd (`sessionContext`), resolving the caller's roster identity from the
- * agent scope (`scopeContext`). Registered for every agent — visibility is
- * controlled by profile tool lists. Bound at Agent scope.
- */
-
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';

@@ -1,32 +1,3 @@
-/**
- * `mcp` domain — `IAgentMcpService` implementation.
- *
- * Mirrors the workspace-level shared MCP connection manager's server set
- * into the agent's tool registry (the manager arrives through the seeded
- * `ISessionMcpHandle` — one manager per workspace handler, shared by every
- * session and agent): registers qualified tools for connected servers,
- * keeps them registered across reconnects, keeps them registered (with
- * calls short-circuited to a removal notice) when the server is tombstoned
- * as `removed`, swaps in the OAuth tool for
- * `needs-auth` servers, journals tool discoveries on the wire (queued until
- * restore finishes), and publishes `mcp.server.status` / `tool.list.updated`
- * / collision `error` observables through `state` (`IEventDispatcher`). Only the session's baseline servers take part
- * (`ISessionMcpHandle.isBaselineServer`, checked on every replayed and
- * live status change): a server that appears mid-session — a plugin
- * install or a config edit — is ignored here, so its tools, status events,
- * and discoveries never reach a live agent; it joins on the next session
- * materialization (`/new`, `/reload`, resume), while a tombstoned baseline
- * server reconnecting under the same name (a re-enabled plugin) registers
- * again. Sessions and agents construct without awaiting the manager's
- * initial connect; each LLM step instead waits for it through a `loop`
- * onWillBeginStep hook (a no-op once settled), with the per-execution
- * `toolExecutor` onWillExecuteTool wait as the backstop. The plain-data state (`mcpToolsByServer`, `discoveryWritesReady`)
- * is registered into `agentState` (`IAgentStateService`) and read/written
- * through it; `mcpTools` stays a plain instance field (its values hold
- * disposable resource handles, not plain data), as does `pendingDiscoveries`
- * (a closure queue of deferred discovery writes). Bound at Agent scope.
- */
-
 import { createHash } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

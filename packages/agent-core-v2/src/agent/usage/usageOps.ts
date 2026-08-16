@@ -1,20 +1,4 @@
-/**
- * `usage` domain — the `usageKey` state and the durable `usage.record`
- * event (`UsageRecord`) for the agent's accumulated token usage.
- *
- * The state holds the `byModel` totals; the persisted record carries exactly
- * v1's field set (`{ model, usage, usageScope }`). The per-turn accumulator is
- * NOT in the state — it is live-only service state, reset on resume like v1
- * (v1 restore folds every `usage.record` as `session` scope and never rebuilds
- * `currentTurn`). The fold ignores any extra fields found on replayed legacy
- * records (early v2 logs carried `turnId` / `context`) — the replay schema
- * parse strips them. The usage slice of `agent.status.updated`
- * (`AgentStatusUpdated`, see `usageEvents`) is dispatched live by the service
- * after each record (never on replay). Scope-agnostic.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { z } from 'zod';
 
 import { Event2 } from '#/app/event/event2';

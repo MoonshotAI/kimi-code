@@ -1,7 +1,3 @@
-/**
- * Scenario: session-canonical media persists through the byte-storage boundary.
- */
-
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -184,9 +180,6 @@ describe('SessionMediaStoreService', () => {
   });
 
   it('skips in-progress atomic temp siblings when resolving by id', async () => {
-    // The fs backend's atomic write stages bytes at `<key>.tmp.<pid>.<hex>`
-    // next to the target key; a lookup racing the write must not mistake the
-    // partial copy for the canonical one.
     await mkdir(join(sessionDir, 'media'), { recursive: true });
     await writeFile(join(sessionDir, 'media', 'f_1.mp4.tmp.1234.deadbeef'), 'partial');
     await expect(store.resolveDisplayPath('f_1')).resolves.toBeUndefined();
@@ -199,16 +192,12 @@ describe('SessionMediaStoreService', () => {
   });
 
   it('never turns a non-upload id into a storage key (path traversal guard)', async () => {
-    // A crafted daemon reference (`kimi-file://../../…`) reaches the
-    // store through the request-time resolver's canonical-read fallback; the
-    // id must be rejected before it can become a filesystem key.
     const evil = '../../../../etc/passwd';
     expect(store.pathFor(evil, '')).toBeUndefined();
     expect(store.pathFor(evil, '.png')).toBeUndefined();
     await expect(store.read(evil)).resolves.toBeUndefined();
     await expect(store.materialize(input({ fileId: evil }))).resolves.toBeUndefined();
     await expect(store.resolveDisplayPath(evil)).resolves.toBeUndefined();
-    // Legit ids still work after the guard.
     expect(store.pathFor('f_1', '.mp4')).toBe(join(sessionDir, 'media', 'f_1.mp4'));
   });
 });

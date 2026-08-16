@@ -1,22 +1,3 @@
-/**
- * ReadTool tests for the v2 fileTools domain.
- *
- * Ported from v1 (`packages/agent-core/test/tools/read.test.ts`) and adapted
- * to the v2 constructor `(fs, env, workspace)`. Self-contained: builds a
- * minimal fake `IHostFileSystem` inline so the tool can be exercised without
- * the composition root.
- *
- * The v1 fast-path tests (`scanTextFile` / `readLineRange` / `readTailLines` /
- * `readTextPreview`) are intentionally dropped: `IHostFileSystem` streams
- * through `readLines` only, so `readForward` / `readTail` always take the
- * line-iteration path.
- *
- * The status block rides the result's `note` side channel (rendered to the
- * model at projection time, never to UIs); the tool keeps its own `<system>`
- * wrapping as a wording choice, and `output` is the rendered file content
- * and nothing else.
- */
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';

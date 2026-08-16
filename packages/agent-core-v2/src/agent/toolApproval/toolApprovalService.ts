@@ -1,17 +1,4 @@
-/**
- * `toolApproval` domain — `IAgentToolApprovalService` implementation.
- *
- * Owns the approval round-trip: publishes
- * `permission.approval.requested/resolved` through `state`
- * (`IEventDispatcher`), awaits the session approval broker (absent broker =
- * auto-approve), records session-scope approval rules through
- * `permissionRules`, reports `permission_approval_result` through
- * `telemetry`, and folds ask continuations back into authorize results.
- * Bound at Agent scope.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import { randomUUID } from 'node:crypto';
 
 import { IInstantiationService } from '#/_base/di/instantiation';

@@ -1,18 +1,3 @@
-/**
- * `llmRequester` domain — per-agent tool call id normalizer.
- *
- * Self-hosted OpenAI-compatible endpoints may renumber tool call ids on every
- * response (`Bash_0`, `Bash_1`, ...), so unrelated calls reach the engine
- * sharing one id while every downstream keying — context rebuild, transcript
- * frames, activity views, outbound call/result pairing — assumes an id
- * identifies exactly one call. The normalizer enforces that at the ingestion
- * boundary: the first occurrence of an id passes through unchanged, later
- * occurrences are rewritten to a readable `<id>__<n>` suffix. Claimed ids are
- * remembered for the agent's lifetime (seeded from the restored context), and
- * a failed request attempt rolls its claims back so a projection retry
- * re-streams the same logical calls under the same ids.
- */
-
 import type { Message, ToolCall } from '#/kosong/contract/message';
 
 export class ToolCallIdNormalizer {

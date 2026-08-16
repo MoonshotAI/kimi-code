@@ -1,14 +1,3 @@
-/**
- * AgentTaskService task timeout for SubagentTask registrations.
- *
- * Semantics:
- *   - manager-owned deadline fires → status=`timed_out`
- *   - no `timeoutMs` → the task runs to completion without a manager deadline
- *   - internal `TimeoutError` rejection (e.g. aiohttp sock_read) is a
- *     generic `failed` with no stop reason — the timeout reason must
- *     only be set for the caller-driven deadline
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentTaskService } from '#/agent/task/task';

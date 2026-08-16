@@ -1,9 +1,3 @@
-/**
- * `tower` domain — the `ITowerRateLimitService` contract: the process-wide
- * provider-concurrency governor for tower spawns (spawn budget, inflight
- * tracking, post-429 spawn pause). Bound at App scope.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 
 export interface TowerRateLimitSnapshot {

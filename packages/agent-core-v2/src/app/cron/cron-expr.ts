@@ -1,22 +1,3 @@
-/**
- * 5-field cron expression parsing and "next fire time" computation, in
- * local time. Self-contained — no external cron library is used because
- * upstream `claude-code` mirrors the same semantics and we need exact
- * lock-step behaviour with their implementation.
- *
- * Two flavours of correctness we care about:
- *
- *   1. **Semantics.** Standard 5 fields (minute hour day-of-month month
- *      day-of-week). Day-of-month and day-of-week combine with cron's
- *      OR rule when both are restricted (POSIX/Vixie tradition). dow
- *      accepts 0..7 with 7 folded to 0 (Sunday).
- *
- *   2. **Termination.** Computing `next` for a legal-but-never-fires
- *      expression like `0 0 31 2 *` must not spin. We bound the search
- *      at a fixed window (5 years by default) and return `null` past
- *      that.
- */
-
 import { Error2, ErrorCodes } from '#/errors';
 
 export interface ParsedCronExpression {

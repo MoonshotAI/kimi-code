@@ -1,20 +1,3 @@
-/**
- * `profile` domain — `IAgentProfileService` contract.
- *
- * Owns the active agent's identity: bound profile, model alias, thinking
- * level, system prompt, and active-tool set. `bind()` takes an optional
- * `model`, falling back to the configured `defaultModel` so edges don't each
- * re-implement the fallback (a missing model everywhere throws
- * `model.not_configured`), and an optional `thinking`; `strictThinking` marks
- * `thinking` as an explicit user request (edge input) rather than inherited
- * state, so the effort is validated against the model's supported efforts and
- * the bind rejects up front when unsupported — internal spawns pass inherited
- * thinking without the flag, and a persisted effort that drifted out of the
- * model's support list clamps instead of breaking the spawn. The profile
- * contract also owns live status re-publication for consumers that attach to
- * an agent after its initial model binding.
- */
-
 import type {
   AgentProfile,
   AgentProfileContext,

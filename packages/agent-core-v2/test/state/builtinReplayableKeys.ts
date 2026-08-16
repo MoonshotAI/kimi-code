@@ -30,7 +30,6 @@ import { cronKey } from '#/session/cron/cronOps';
 import { interactionKey } from '#/session/interaction/interactionOps';
 import { todoKey } from '#/session/todo/todoOps';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] = [
   contextMemoryKey,
   fullCompactionKey,

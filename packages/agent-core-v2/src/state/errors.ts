@@ -1,12 +1,3 @@
-/**
- * `state` domain — error codes, the `StateError` base class, and the domain
- * registration.
- *
- * Aggregates the state domain's coded errors: duplicate fold and
- * durability-mismatch registrations fail fast at import time; a dispatch
- * cascade past `MAX_DRAIN` surfaces from the dispatcher. Scope-agnostic.
- */
-
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
 

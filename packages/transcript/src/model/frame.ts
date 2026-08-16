@@ -1,19 +1,3 @@
-/**
- * TranscriptFrame — the leaf render unit inside a step.
- *
- * The union is closed ("structure closed"): every kind is listed here. Tool
- * payloads (`input` / `output` / `display`) are open content — the server
- * copies engine data through opaquely and only the view layer interprets it.
- *
- * Frames never nest. Cross-references are by id: a tool frame may point at a
- * task entity (`taskId`), an interaction (`approvalId`), or a sibling agent
- * (`agentRefs`) whose own AgentTranscript can be subscribed separately.
- *
- * Interactions are global entities beside tasks (`model/interaction.ts`),
- * never step frames: they resolve asynchronously, possibly long after the
- * originating step flushed, so they do not live inside the paginated timeline.
- */
-
 import type { AgentId, AttachmentId, FrameId, InteractionId, TaskId, TodoId } from './ids';
 
 export type { InteractionKind, InteractionState } from './interaction';

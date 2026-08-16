@@ -1,9 +1,3 @@
-/**
- * Scenario: `/api/v1/debug` transport error translation.
- * Responsibilities: verify stable domain-to-wire mappings and the internal-error fallback.
- * Wiring: real error mapper with in-process coded errors; no external boundaries.
- * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/transport-errors.test.ts`.
- */
 import { Error2, ErrorCodes } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { describe, expect, it } from 'vitest';

@@ -33,8 +33,6 @@ interface FsEntryWire {
 describe('server-v2 /api/v1 fs routes', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
-  /** Session work dir — kept separate from the server homeDir so the server's
-   *  own state (session storage under homeDir) does not pollute `fs:list`. */
   let work: string | undefined;
   let base: string;
 
@@ -82,8 +80,6 @@ describe('server-v2 /api/v1 fs routes', () => {
       server = undefined;
     }
     if (home !== undefined) {
-      // maxRetries: the async query-store shard writer can still be flushing
-      // after close (ENOTEMPTY on macOS) — same retry pattern as sessions.test.ts.
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
     }
@@ -203,7 +199,6 @@ describe('server-v2 /api/v1 fs routes', () => {
   });
 
   it('fs:read maps a permission-denied host error to FS_PERMISSION_DENIED', async () => {
-    // Root bypasses permission checks, so EACCES never triggers there.
     if (process.getuid?.() === 0) return;
     const file = join(work!, 'locked.txt');
     await writeFile(file, 'secret');
@@ -266,8 +261,6 @@ describe('server-v2 /api/v1 fs routes', () => {
 
   it('fs:search resolves a registered workspace id when no session exists', async () => {
     await writeFile(join(work!, 'gamma.ts'), '');
-    // Register the workspace without creating any session (the kimi-web
-    // new-session draft addresses the workspace directly).
     const res = await fetch(`${base}/api/v1/workspaces`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
@@ -428,10 +421,6 @@ describe('server-v2 /api/v1 fs routes', () => {
       await vi.waitFor(() => expect(resources.size).toBe(baseline));
     }
   });
-
-  // -------------------------------------------------------------------------
-  // POST /api/v1/workspace/fs:search — session-less workspace file search.
-  // -------------------------------------------------------------------------
 
   async function postWorkspaceSearch<T>(body: unknown): Promise<Envelope<T>> {
     const res = await fetch(`${base}/api/v1/workspace/fs:search`, {

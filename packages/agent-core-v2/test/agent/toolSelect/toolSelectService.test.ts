@@ -1,14 +1,3 @@
-/**
- * Scenario: progressive tool disclosure shapes the provider-visible tool view,
- * dynamic history, selection results, executor interception, and announcements.
- *
- * Responsibilities: assert the gate contract, profile-active filtering,
- * loadable/loaded MCP settlement, and the select_tools built-in behavior.
- * Wiring: real toolSelect, registry, announcement sidecar, system reminder,
- * and hook slots with fake loop/context memory/profile/flag/event services;
- * executor tests use the real executor with telemetry and truncation stubs.
- * Run: ../../node_modules/.bin/vitest run test/toolSelect/toolSelectService.test.ts
- */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore, toDisposable, type IDisposable } from '#/_base/di/lifecycle';

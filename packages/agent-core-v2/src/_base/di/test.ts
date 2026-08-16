@@ -1,7 +1,3 @@
-/**
- * `di` domain — scoped test host and service-stub helpers for DI domain tests.
- */
-
 export {
   createServices,
   TestInstantiationService,

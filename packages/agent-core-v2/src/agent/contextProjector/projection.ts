@@ -1,23 +1,3 @@
-/**
- * `contextProjector` domain — rebuilds stored context history into
- * provider-valid wire messages and reports every repair through an anomaly
- * sink.
- *
- * The default projection pairs tool calls with their results (a displaced
- * result returns to its call, an orphan is dropped, a call left open is
- * closed with a synthetic interrupted result), renders stored tool-result
- * facts for the model, drops blank text and wholly-vacuous messages, skips
- * partial messages, and merges consecutive user prompts. The strict
- * projection adds the repairs strict providers need: duplicate tool calls
- * dropped, consecutive assistants merged, leading non-user messages dropped.
- *
- * A history slice without any assistant message is a sizing slice (used to
- * size tool results): tool messages project like any other message instead
- * of pairing into exchanges. A synthesized close counts as `trailing` — an
- * expected in-flight close rather than a defect — exactly when no non-tool,
- * non-partial message follows the owning message in the slice.
- */
-
 import { ErrorCodes, Error2 } from '#/errors';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';

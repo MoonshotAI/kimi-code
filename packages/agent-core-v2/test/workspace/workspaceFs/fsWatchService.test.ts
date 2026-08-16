@@ -1,11 +1,3 @@
-/**
- * `workspaceFs` fs-watch — verifies the shared os watcher fan-out:
- * confinement to each subscription's declared subtree, workspace-relative
- * path mapping, per-subscription debounce coalescing and window truncation,
- * `.gitignore` filtering, and the handle lifecycle (one os watch per handler
- * no matter how many subscriptions), using a fake os watcher.
- */
-
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

@@ -1,40 +1,3 @@
-/**
- * `llmRequester` domain — `IAgentLLMRequesterService` implementation.
- *
- * Assembles per-turn `ModelRequestInput` from `profile` (system prompt),
- * `contextMemory` + `contextProjector` (history), `toolRegistry` (tools), and
- * `toolSelect` (progressive-disclosure shaping of the tool and history views),
- * folds the completion-token budget into the profile's dialect-free intent
- * params, then drives a bounded request chain through the `ModelRequester`
- * resolved from `IModelCatalog`: one primary `requester.request(input, signal,
- * params)` attempt plus accumulating projection rebuilds — each repeated
- * provider rejection (request structure, body size, image format) adds its own
- * repair on top of the ones already applied. Before each request the projected
- * messages pass through `media`'s
- * media resolver, which rewrites every `kimi-file://` prompt-media reference
- * to a provider-acceptable part (an uploaded `ms://` video, an inline base64
- * `data:` part, or a degradation tag/drop) so the internal reference never
- * reaches the wire. When a
- * model is configured, `prepareTurnConfig` snapshots the
- * model, effective thinking effort, and system prompt at the turn boundary
- * so loop telemetry and every request in that turn share one configuration.
- * Forwards streamed `part` events to the caller's `onPart`
- * handler — rewriting duplicate provider tool call ids into per-agent unique
- * ones through `ToolCallIdNormalizer`, since self-hosted endpoints may
- * renumber ids per response and every downstream keying assumes uniqueness —
- * records `usage` through `IAgentUsageService`, resolves to an
- * `AgentLLMRequestFinish` on the `finish` event, logs the request lifecycle
- * (config deduplicated by content, request/response/failure lines, plus
- * per-request fields) through `log`, publishes advisory model-capability
- * warnings through the `WarningIssued` event, records durable request-trace
- * events through the event dispatcher, reports each request's `x-trace-id` to its caller, and
- * reports provider failures through `telemetry`. The mutable request state
- * (`lastConfigLogSignature`, `turnConfigs`, `mediaDegradedTurns`,
- * `mediaStrippedTurns`, `emittedThinkingEffortWarnings`) is registered into
- * `agentState` (`IAgentStateService`) and read/written through it. Bound at
- * Agent scope.
- */
-
 import { createHash } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -447,9 +410,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       }
 
       this.usage.record(request.modelAlias, usage ?? emptyUsage(), request.source);
-      // Only a stream that actually reported usage may write a measured
-      // anchor — recording emptyUsage() zeros would zero the context size and
-      // silence compaction for providers without usage reporting.
       if (usage !== undefined) {
         this.tokenCounting.measured(request.messages, [message], usage);
       }

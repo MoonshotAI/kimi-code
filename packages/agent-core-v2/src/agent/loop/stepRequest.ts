@@ -1,18 +1,3 @@
-/**
- * `loop` domain — `StepRequest` contracts for the loop's step queue.
- *
- * A `StepRequest` is one queued unit of step work. Senders create plain
- * request objects and hand them to `IAgentLoopService.enqueue`; requests
- * carry no DI identity of their own, so
- * constructing them with `new` is expected. Each request describes the context
- * message(s) it contributes — computed lazily at pop time through
- * `resolveContextMessages` — plus its queue semantics (`mergeable`,
- * `turnScoped`). Because the message only materializes when the loop pops the
- * request, an aborted request is discarded without ever touching the context:
- * removal needs no compensating undo. Runtime types only; not registered with
- * the container.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import type { ContentPart } from '#/kosong/contract/message';

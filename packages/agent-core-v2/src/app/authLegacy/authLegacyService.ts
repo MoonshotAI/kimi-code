@@ -1,14 +1,3 @@
-/**
- * `authLegacy` domain — `IAuthLegacyService` implementation.
- *
- * Stateless App-scope projector: reads the configured providers through
- * `provider`, the global default-model selection through `model` (the
- * kosong registry is the runtime source of truth; config is only its
- * persistence), and the managed OAuth provider's cached-token state through
- * `auth`, then assembles the v1 `AuthSummary` so the `/api/v1/auth` envelope
- * is byte-compatible.
- */
-
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import type { AuthSummary } from './authLegacy';
 import { LifecycleScope } from '#/app/scopes';

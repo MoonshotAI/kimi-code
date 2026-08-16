@@ -1,7 +1,3 @@
-/**
- * `SessionEventBroadcaster` — seq stamping, volatile vs durable, fan-out, replay.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,24 +44,12 @@ import {
 import type { EventEnvelope } from '../src/transport/ws/v1/sessionEventJournal';
 import { TranscriptService } from '../src/services/transcript/transcriptService';
 
-// ---------------------------------------------------------------------------
-// Fakes
-// ---------------------------------------------------------------------------
-
 class TestSessionStateService extends StateRegistry implements ISessionStateService {
   declare readonly _serviceBrand: undefined;
 }
 
-/** The fake bus carries wire agent events and v2-internal ones alike. */
 type FakeBusEvent = { type: string };
 
-/**
- * Mirrors the production `EventBusService` dispatch contract: full-stream
- * subscribers fire first, per-type subscribers after — the ordering the
- * work_changed deferral relies on (the broadcaster's agent handler is a
- * full-stream subscriber; the activity view chain subscribes per-type, so
- * the view's change is reported AFTER the edge's own turn-frame handling).
- */
 class FakeAgentBus {
   private allHandlers: Array<(e: FakeBusEvent) => void> = [];
   private perType = new Map<string, Array<(e: FakeBusEvent) => void>>();
@@ -132,16 +116,7 @@ class FakeAgentHandle {
 
 class FakeLifecycle {
   readonly handles: FakeAgentHandle[] = [];
-  /** Real interaction kernel — served at the session accessor. */
   readonly interactions = new SessionInteractionService(new TestSessionStateService());
-  /**
-   * Mirrors the activity view's publication: every turn boundary re-emits an
-   * `agent.activity.updated` on the same bus, nested inside the boundary
-   * dispatch. Like the production `IAgentActivityView`, the subscriptions are
-   * per-type — under the bus's two-phase dispatch they fire AFTER the
-   * broadcaster's full-stream handler, exactly the production ordering the
-   * work_changed deferral has to cope with.
-   */
   private readonly turnCounters = new Map<string, { dispose(): void }>();
   private createHandlers: Array<(h: IScopeHandle) => void> = [];
   private disposeHandlers: Array<(id: string) => void> = [];
@@ -211,17 +186,9 @@ class FakeLifecycle {
     this.turnCounters.delete(id);
     for (const cb of this.disposeHandlers) cb(id);
   }
-  /** Mirrors the core `ISessionActivityView` fold over the fake buses + kernel. */
   readonly workView = new FakeSessionActivityView(this);
 }
 
-/**
- * Test double for the core `ISessionActivityView`: mirrors the production
- * fold (per-agent activity + pending interactions → session aggregate with
- * cause-classified, deduped change events) over the harness's fake buses and
- * the real interaction kernel, so the broadcaster tests exercise the same
- * scheduling contract the real view provides.
- */
 class FakeSessionActivityView {
   private readonly listeners = new Set<(change: SessionActivityChangedEvent) => void>();
   private readonly folds = new Map<
@@ -360,7 +327,6 @@ function makeCore(
         if (t === IAgentLifecycleService) return lifecycle;
         if (t === ISessionInteractionService) return lifecycle.interactions;
         if (t === ISessionActivityView) return lifecycle.workView;
-        // Minimal metadata read for the transcript binding's descriptor pass.
         if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
         return undefined;
       },
@@ -368,7 +334,6 @@ function makeCore(
     return { id: sid, kind: LifecycleScope.Session, accessor: sessionAccessor, dispose: () => {} };
   };
   const sessionLifecycle = {
-    // Inert lifecycle events (TranscriptService subscribes on construction).
     onDidCloseSession: () => ({ dispose: () => {} }),
     onDidArchiveSession: () => ({ dispose: () => {} }),
     get: sessionFor,
@@ -425,17 +390,6 @@ function collectingTarget(): {
   };
 }
 
-// A real turn yields the event loop between `turn.started` and `turn.ended`,
-// and the broadcaster aggregates the fold when each queued work_changed task
-// runs. Back-to-back synchronous `bus.emit` calls never let the queue drain,
-// so every aggregate read would observe the final state. Tests therefore
-// `await bc.getCursor(...)` between turn boundaries to reproduce the
-// production interleaving (book → publish → drain → release → publish).
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('SessionEventBroadcaster', () => {
   let dir: string;
   let sessions: Map<string, FakeLifecycle>;
@@ -490,16 +444,10 @@ describe('SessionEventBroadcaster', () => {
     expect(await bc.subscribe('s1', target)).toBe(true);
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
-    await bc.getCursor('s1'); // drain between the turn boundaries (see note above)
+    await bc.getCursor('s1');
     main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
-    await bc.getCursor('s1'); // drain
+    await bc.getCursor('s1');
 
-    // `turn.started` is trailed by a durable
-    // `event.session.work_changed(busy:true)` and `turn.ended` by a durable
-    // `work_changed(busy:false)` carrying the main turn outcome, hence four
-    // durable events: turn.started, work_changed, turn.ended, work_changed.
-    // (The volatile `agent.status.updated` phase frames projected from the
-    // activity fold ride alongside and are excluded here.)
     const durable = envelopes.filter((e) => e.volatile !== true);
     expect(durable.map((e) => e.seq)).toEqual([1, 2, 3, 4]);
     expect(durable[1]).toMatchObject({
@@ -531,19 +479,16 @@ describe('SessionEventBroadcaster', () => {
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
 
-    main.bus.emit(agentEvent('turn.started', { turnId: 1 })); // durable seq 1
-    main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'Hi' })); // volatile
-    main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: ' there' })); // volatile
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'Hi' }));
+    main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: ' there' }));
     await bc.getCursor('s1');
 
     const vol = envelopes.filter((e) => e.volatile === true && e.type === 'assistant.delta');
     expect(vol).toHaveLength(2);
-    // `turn.started` takes seq 1 and the trailing durable work_changed takes
-    // seq 2, so the volatile deltas ride the watermark at 2. (The volatile
-    // agent.status.updated phase frame from the activity fold rides 1.)
-    expect(vol.every((e) => e.seq === 2)).toBe(true); // rides the durable watermark
+    expect(vol.every((e) => e.seq === 2)).toBe(true);
     expect(vol.map((e) => e.offset)).toEqual([0, 2]);
-    expect((await bc.getCursor('s1')).seq).toBe(2); // seq did not advance
+    expect((await bc.getCursor('s1')).seq).toBe(2);
   });
 
   it('projects main-agent status and context changes into complete v1 status events', async () => {
@@ -608,9 +553,6 @@ describe('SessionEventBroadcaster', () => {
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
 
-    // The v2 model slice rides only the subagent's bind-time emission, which
-    // reaches clients before `subagent.spawned` and is dropped there; a later
-    // usage-only slice must still carry the model at the v1 edge.
     sub.bus.emit(agentEvent('agent.status.updated', { usage }));
     await bc.getCursor('s1');
 
@@ -658,9 +600,6 @@ describe('SessionEventBroadcaster', () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     main.set(IAgentTokenCountingService, { statusSize: () => 10 });
-    // A bound alias whose model entry no longer resolves surfaces as the
-    // UNKNOWN_CAPABILITY marker (max_context_tokens: 0) — 0 means "unknown",
-    // not a real limit, so the wire event must drop the field entirely.
     main.set(IAgentProfileService, {
       getModel: () => 'ghost-model',
       getModelCapabilities: () => ({ max_context_tokens: 0 }),
@@ -684,8 +623,6 @@ describe('SessionEventBroadcaster', () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     main.set(IAgentTokenCountingService, { statusSize: () => 10 });
-    // Draft-session shape: no model bound, so the capabilities are unknown;
-    // the push mirrors the REST status rollup and reads the default model.
     main.set(IAgentProfileService, {
       getModel: () => '',
       getModelCapabilities: () => ({ max_context_tokens: 0 }),
@@ -782,15 +719,12 @@ describe('SessionEventBroadcaster', () => {
     await bc.subscribe('s1', target);
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
-    await bc.getCursor('s1'); // drain between the turn boundaries
+    await bc.getCursor('s1');
     main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
     await bc.getCursor('s1');
 
     const result = await bc.getBufferedSince('s1', { seq: 1 });
     expect(result.resyncRequired).toBe(false);
-    // seq 1 is turn.started; events after it are the durable work_changed
-    // (busy) (2), turn.ended (3) and the durable work_changed(busy:false +
-    // outcome) (4) emitted on turn end.
     expect(result.events.map((e) => e.seq)).toEqual([2, 3, 4]);
     expect(result.currentSeq).toBe(4);
   });
@@ -803,18 +737,13 @@ describe('SessionEventBroadcaster', () => {
     await bc.subscribe('s1', target);
 
     for (let i = 0; i < 5; i++) main.bus.emit(agentEvent('turn.started', { turnId: i }));
-    await bc.getCursor('s1'); // seq = 6 (one deduplicated busy work_changed + five turns), maxBufferSize = 3
+    await bc.getCursor('s1');
 
     const result = await bc.getBufferedSince('s1', { seq: 0 });
     expect(result.resyncRequired).toBe('buffer_overflow');
     expect(result.currentSeq).toBe(6);
   });
 
-  // The v1 wire contract for `turn.started` is exactly
-  // {type, turnId, origin, prompt?, promptId?, agentId, sessionId} — the
-  // engine-internal `promptAttachments` projection input must never reach the
-  // payload, and a video prompt's frame stays field-identical to the
-  // pre-attachment shape. Events without a `promptId` keep the six-key set.
   const TURN_STARTED_WIRE_KEYS = ['agentId', 'origin', 'prompt', 'sessionId', 'turnId', 'type'];
 
   it('forwards the promptId echo on a prompt-opened turn.started (live)', async () => {
@@ -832,7 +761,7 @@ describe('SessionEventBroadcaster', () => {
         promptId: 'submission-1',
       }),
     );
-    await bc.getCursor('s1'); // drain
+    await bc.getCursor('s1');
 
     const live = envelopes.find((e) => e.type === 'turn.started');
     expect(live).toBeDefined();
@@ -857,7 +786,7 @@ describe('SessionEventBroadcaster', () => {
         promptAttachments: [{ kind: 'video', fileId: 'file_vid_1' }],
       }),
     );
-    await bc.getCursor('s1'); // drain between the turn boundaries (see note above)
+    await bc.getCursor('s1');
 
     const live = envelopes.find(
       (e) => e.type === 'turn.started' && (e.payload as { turnId?: number }).turnId === 1,
@@ -868,11 +797,7 @@ describe('SessionEventBroadcaster', () => {
       TURN_STARTED_WIRE_KEYS,
     );
 
-    // The journal persists the same stripped envelope: reopen the session
-    // against the same eventsDir (a fresh instance has an empty in-memory
-    // tail, so the cursor replay is served by the on-disk journal) and the
-    // video turn.started still carries exactly the pre-attachment field set.
-    await bc.close(); // flushes the journal write-behind buffer
+    await bc.close();
     bc = new SessionEventBroadcaster({
       eventsDir: dir,
       core: makeCore(sessions, eventBus),
@@ -917,7 +842,7 @@ describe('SessionEventBroadcaster', () => {
           ],
         }),
       );
-      await bc.getCursor('s1'); // drain
+      await bc.getCursor('s1');
 
       const expected = [
         { type: 'text', text: 'look at this' },
@@ -929,7 +854,6 @@ describe('SessionEventBroadcaster', () => {
       expect(JSON.stringify(live!.payload)).not.toContain('kimi-file://');
       expect(JSON.stringify(live!.payload)).not.toContain('/abs/session');
 
-      // Cursor replay within the in-memory tail serves the same projected envelope.
       const replay = await bc.getBufferedSince('s1', { seq: 0 });
       const replayed = replay.events.find((e) => e.envelope.type === type);
       expect(replayed).toBeDefined();
@@ -954,18 +878,11 @@ describe('SessionEventBroadcaster', () => {
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
 
-    const late = lc.addAgent('main'); // created after subscribe
-    // Let the lifecycle dispatch drain before driving the turn — a
-    // synchronous emit would fold its activity ahead of the queued
-    // work_changed task and reorder it in front of agent.created (see the
-    // note above about the production interleaving).
+    const late = lc.addAgent('main');
     await bc.getCursor('s1');
     late.bus.emit(agentEvent('turn.started', { turnId: 7 }));
     await bc.getCursor('s1');
 
-    // agent.created (seq 1) leads; turn.started (seq 2) is trailed by
-    // work_changed(busy) (seq 3); the volatile agent.status.updated phase
-    // frame rides alongside.
     expect(envelopes.filter((e) => e.volatile !== true).map((e) => e.seq)).toEqual([1, 2, 3]);
     expect(envelopes[0]).toMatchObject({ type: 'agent.created' });
     expect((envelopes[0]!.payload as { agentId: string }).agentId).toBe('main');
@@ -980,15 +897,13 @@ describe('SessionEventBroadcaster', () => {
     await bc.subscribe('s1', target);
 
     lc.removeAgent('agent-0');
-    // The creation-failure path fires onDidDispose for an agent that was
-    // never created (and never attached) — clients must not hear about it.
     lc.removeAgent('ghost');
     await bc.getCursor('s1');
 
     const disposed = envelopes.filter((e) => e.type === 'agent.disposed');
     expect(disposed).toHaveLength(1);
     expect((disposed[0]!.payload as { agentId: string }).agentId).toBe('agent-0');
-    expect(disposed[0]!.volatile).toBeUndefined(); // durable
+    expect(disposed[0]!.volatile).toBeUndefined();
   });
 
   it('delivers lifecycle events past the agent allowlist (session-grained)', async () => {
@@ -998,7 +913,7 @@ describe('SessionEventBroadcaster', () => {
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target, new Set(['main']));
 
-    lc.addAgent('agent-0'); // outside the allowlist
+    lc.addAgent('agent-0');
     lc.removeAgent('agent-0');
     await bc.getCursor('s1');
 
@@ -1036,7 +951,7 @@ describe('SessionEventBroadcaster', () => {
     main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'Hello' }));
     const snap = await bc.getSnapshotState('s1');
 
-    expect(snap.seq).toBe(2); // durable work_changed + turn.started advanced seq; the delta is volatile
+    expect(snap.seq).toBe(2);
     expect(snap.inFlightTurn).toMatchObject({ turn_id: 1, assistant_text: 'Hello' });
   });
 
@@ -1077,18 +992,14 @@ describe('SessionEventBroadcaster', () => {
       }),
     ]);
 
-    // A subagent's own turn.ended must not wipe the roster mid-swarm.
     sub.bus.emit(agentEvent('turn.ended', { turnId: 2 }));
     const still = await bc.getSnapshotState('s1');
     expect(still.subagents).toHaveLength(1);
 
-    // The main turn.ended keeps the roster too: the swarm result may not be
-    // durable in the wire transcript yet (async append).
     main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
     const ended = await bc.getSnapshotState('s1');
     expect(ended.subagents).toHaveLength(1);
 
-    // The next main turn.started settles the transcript — the roster is dropped.
     main.bus.emit(agentEvent('turn.started', { turnId: 2 }));
     const next = await bc.getSnapshotState('s1');
     expect(next.subagents).toEqual([]);
@@ -1100,17 +1011,8 @@ describe('SessionEventBroadcaster', () => {
   });
 
   it('broadcasts session.meta.updated under the real session id and fans out to every connection', async () => {
-    // Regression: a new session's first prompt auto-generates a title and the
-    // daemon announces it via `session.meta.updated`. The event must be
-    // addressed to the real session so clients can match it to a sidebar row;
-    // stamping `session_id = '__global__'` left the row title stuck empty.
-    // (No agents attached — `session.meta.updated` is a core event, not an
-    // agent event, so the agent subscription path is irrelevant here.)
     sessions.set('s1', new FakeLifecycle());
 
-    // A second, unrelated session with its own subscriber proves the meta
-    // update still fans out globally (clients not subscribed to s1 learn the
-    // new title too), even though the envelope is addressed to s1.
     sessions.set('s2', new FakeLifecycle());
 
     const s1View = collectingTarget();
@@ -1143,17 +1045,11 @@ describe('SessionEventBroadcaster', () => {
       },
     });
     expect(s1View.envelopes[0]!.session_id).not.toBe('__global__');
-    // Fanned out to the non-subscriber under the same real session id.
     expect(s2View.envelopes[0]!.session_id).toBe('s1');
     expect(s1View.envelopes[0]!.volatile).toBeUndefined();
   });
 
   it('broadcasts event.session.created under the real session id and fans out to every connection', async () => {
-    // Regression: v2 publishes `event.session.created` on the core bus but the
-    // broadcaster did not forward it, so clients that didn't issue the create
-    // never learned the session exists. Without it, a later sessionStatusChanged
-    // reducer is a no-op for the unknown session and kimi-web's Stop button
-    // (gated on session.status === 'running') never renders.
     sessions.set('s1', new FakeLifecycle());
     sessions.set('s2', new FakeLifecycle());
 
@@ -1182,17 +1078,11 @@ describe('SessionEventBroadcaster', () => {
       },
     });
     expect(s1View.envelopes[0]!.session_id).not.toBe('__global__');
-    // Fanned out to the non-subscriber under the same real session id.
     expect(s2View.envelopes[0]!.session_id).toBe('s1');
     expect(s1View.envelopes[0]!.volatile).toBeUndefined();
   });
 
   it('gates event.di.unit_changed to connections opted into the DI debug feed', async () => {
-    // The engine's DI debug feed (agent-core-v2's IDebugCascadeService) has no
-    // owning session: it routes through the global state ('__global__'
-    // watermark). Only kimi-inspect consumes it, so delivery is opt-in via
-    // `addDiEventTarget` — every other connection skips the frames; being
-    // volatile they are never journaled.
     const plainView = collectingTarget();
     bc.addGlobalTarget(plainView.target);
     const diView = collectingTarget();
@@ -1219,10 +1109,8 @@ describe('SessionEventBroadcaster', () => {
       },
     });
     expect(diView.deliveries).toEqual(['immediate']);
-    // The non-opted-in connection never sees the debug feed.
     expect(plainView.envelopes).toHaveLength(0);
 
-    // A malformed payload is dropped, never forwarded.
     eventBus.emit({
       type: 'event.di.unit_changed',
       payload: { scope: 'app', token: 'x', state: 'Exploded' },
@@ -1230,7 +1118,6 @@ describe('SessionEventBroadcaster', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(diView.envelopes).toHaveLength(1);
 
-    // `removeGlobalTarget` also drops the DI opt-in (the connection-close path).
     bc.removeGlobalTarget(diView.target);
     eventBus.emit({
       type: 'event.di.unit_changed',
@@ -1270,15 +1157,13 @@ describe('SessionEventBroadcaster', () => {
       const globalView = collectingTarget();
       bc.addGlobalTarget(globalView.target);
 
-      // Someone else activates the session; the global-only target has no
-      // subscription of its own yet still tracks the busy facts.
       const { target } = collectingTarget();
       await bc.subscribe('s1', target);
 
       main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
-      await bc.getCursor('s1'); // drain between the turn boundaries
+      await bc.getCursor('s1');
       main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
-      await bc.getCursor('s1'); // drain
+      await bc.getCursor('s1');
 
       const workChanged = globalView.envelopes.filter(
         (e) => e.type === 'event.session.work_changed',
@@ -1289,7 +1174,6 @@ describe('SessionEventBroadcaster', () => {
         session_id: 's1',
         payload: { busy: false, last_turn_reason: 'completed' },
       });
-      // Fine-grained agent events stay subscribe-gated.
       expect(
         globalView.envelopes.filter((e) => e.type === 'turn.started'),
       ).toHaveLength(0);
@@ -1306,7 +1190,7 @@ describe('SessionEventBroadcaster', () => {
         type: 'event.session.created',
         payload: { agentId: 'main', sessionId: 's1', session: { id: 's1' } },
       });
-      await bc.getCursor('s1'); // drain
+      await bc.getCursor('s1');
 
       expect(globalView.envelopes).toHaveLength(0);
     });
@@ -1324,7 +1208,7 @@ describe('SessionEventBroadcaster', () => {
       });
 
       await vi.waitFor(() => expect(both.envelopes).toHaveLength(1));
-      await bc.getCursor('s1'); // drain any would-be duplicate
+      await bc.getCursor('s1');
       expect(both.envelopes).toHaveLength(1);
     });
 
@@ -1377,8 +1261,6 @@ describe('SessionEventBroadcaster', () => {
           install: { running: true, step: 'download', percent: 42 },
         },
       });
-      // Progress ticks are live-only (volatile, not journaled); the plugin
-      // change signal stays durable so a reconnecting client can replay it.
       expect(globalView.envelopes[0]!.volatile).toBeUndefined();
       expect(globalView.envelopes[1]!.volatile).toBe(true);
     });
@@ -1394,7 +1276,7 @@ describe('SessionEventBroadcaster', () => {
       });
       eventBus.emit({
         type: 'event.capability.changed',
-        payload: { capability_id: 'kimi-cu' }, // no install object
+        payload: { capability_id: 'kimi-cu' },
       });
 
       eventBus.emit({
@@ -1417,8 +1299,6 @@ describe('SessionEventBroadcaster', () => {
       eventBus.emit({ type: 'event.config.warning', payload: { warnings: 'nope' } });
       eventBus.emit({ type: 'event.config.warning', payload: null });
 
-      // A valid frame right after proves the malformed ones were dropped, not
-      // merely slow.
       const warnings = [{ message: 'something deprecated' }];
       eventBus.emit({ type: 'event.config.warning', payload: { warnings } });
 
@@ -1431,13 +1311,6 @@ describe('SessionEventBroadcaster', () => {
   });
 
   it('emits a durable event.session.work_changed(busy) trailing turn.started', async () => {
-    // Regression: the session's busy fact exists only as the agents' activity
-    // state (nothing is published session-wide), so the WS stream never
-    // carried the busy transition and kimi-web's Stop button never rendered.
-    // The broadcaster re-emits the aggregate off the activity fold — under
-    // the bus's two-phase dispatch the fold reports after the edge's own
-    // turn.started handling, so the work_changed trails the turn frame on
-    // the same queue.
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     sessions.set('s1', lc);
@@ -1466,12 +1339,6 @@ describe('SessionEventBroadcaster', () => {
   });
 
   it('emits a durable event.session.work_changed after turn.ended with the main turn outcome', async () => {
-    // Regression: kimi-web's turn.ended projector deliberately does NOT
-    // synthesize a busy flip — the daemon's `event.session.work_changed` is
-    // its only turn-end signal (it drives onSessionIdle queue flush and
-    // clears the Stop/loading state). Without it the session stayed busy
-    // forever once a turn ended. Emitted after turn.ended (same queue) so
-    // the web finishes the assistant message before flipping busy off.
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     sessions.set('s1', lc);
@@ -1479,7 +1346,7 @@ describe('SessionEventBroadcaster', () => {
     await bc.subscribe('s1', target);
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
-    await bc.getCursor('s1'); // drain between the turn boundaries
+    await bc.getCursor('s1');
     main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
     await bc.getCursor('s1');
 
@@ -1514,29 +1381,25 @@ describe('SessionEventBroadcaster', () => {
       [3, 'blocked'],
     ] as const) {
       main.bus.emit(agentEvent('turn.started', { turnId }));
-      await bc.getCursor('s1'); // drain between the turn boundaries
+      await bc.getCursor('s1');
       main.bus.emit(agentEvent('turn.ended', { turnId, reason }));
       await bc.getCursor('s1');
     }
 
     const durable = envelopes.filter((e) => e.volatile !== true);
-    expect(durable).toHaveLength(12); // 3 × (work_changed + turn.started + turn.ended + work_changed)
+    expect(durable).toHaveLength(12);
     const workChanged = durable.filter((e) => e.type === 'event.session.work_changed');
     expect(workChanged.map((e) => e.payload)).toMatchObject([
-      { busy: true, last_turn_reason: undefined }, // a main turn.started clears the outcome
+      { busy: true, last_turn_reason: undefined },
       { busy: false, last_turn_reason: 'cancelled' },
       { busy: true, last_turn_reason: undefined },
       { busy: false, last_turn_reason: 'failed' },
       { busy: true, last_turn_reason: undefined },
-      { busy: false, last_turn_reason: 'failed' }, // 'blocked' folds into 'failed'
+      { busy: false, last_turn_reason: 'failed' },
     ]);
   });
 
   it('flips busy from background tasks alone (no turn involved)', async () => {
-    // The second busy layer: an agent with a live background task (e.g. a
-    // detached Bash process) is busy even with no active turn. No turn
-    // boundaries fire here — the fold emits work_changed straight off the
-    // activity update.
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     sessions.set('s1', lc);
@@ -1558,8 +1421,6 @@ describe('SessionEventBroadcaster', () => {
       { busy: true, last_turn_reason: undefined },
       { busy: false, last_turn_reason: undefined },
     ]);
-    // No turn, so the phase projection is `idle` — orthogonal to the busy
-    // fact (idle phase + busy session is exactly "background work only").
     expect(envelopes.filter((e) => e.type === 'agent.status.updated').map((e) => e.payload))
       .toMatchObject([{ phase: { kind: 'idle' } }, { phase: { kind: 'idle' } }]);
   });
@@ -1614,14 +1475,6 @@ describe('SessionEventBroadcaster', () => {
   });
 
   it('flips busy but never touches last_turn_reason from sub-agent turn boundaries', async () => {
-    // A sub-agent's turn.started/turn.ended stream over the same session
-    // channel with their own agentId. They DO drive `busy` (the drain registry
-    // counts every agent), but only the MAIN agent feeds `last_turn_reason`:
-    // a sub-agent's cancelled turn must not mark the session aborted, and its
-    // work does not clear a pending outcome. While the main turn is in flight
-    // the sub-agent's boundaries dedup to no-ops (busy stays true), so kimi-web
-    // never reads them as "the turn finished" (browser notification,
-    // completion sound, unread dot, queued message drain).
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     const sub = lc.addAgent('agent-0');
@@ -1630,23 +1483,18 @@ describe('SessionEventBroadcaster', () => {
     await bc.subscribe('s1', target);
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
-    await bc.getCursor('s1'); // drain between the turn boundaries
-    // A foreground sub-agent runs and completes while the main turn is in flight.
+    await bc.getCursor('s1');
     sub.bus.emit(agentEvent('turn.started', { turnId: 10 }));
     await bc.getCursor('s1');
     sub.bus.emit(agentEvent('turn.ended', { turnId: 10, reason: 'completed' }));
     await bc.getCursor('s1');
     main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
     await bc.getCursor('s1');
-    // A sub-agent-only turn after the main one: busy flips emit work_changed,
-    // but the sub's cancelled outcome never lands in last_turn_reason.
     sub.bus.emit(agentEvent('turn.started', { turnId: 11 }));
     await bc.getCursor('s1');
     sub.bus.emit(agentEvent('turn.ended', { turnId: 11, reason: 'cancelled' }));
     await bc.getCursor('s1');
 
-    // The sub-agent's turn events are still fanned out (clients render them in
-    // the task view).
     expect(
       envelopes
         .filter((e) => e.type === 'turn.started' || e.type === 'turn.ended')
@@ -1659,8 +1507,6 @@ describe('SessionEventBroadcaster', () => {
       { busy: true, last_turn_reason: 'completed' },
       { busy: false, last_turn_reason: 'completed' },
     ]);
-    // The sub-agent's 'cancelled' never surfaces as the session outcome, and
-    // the final busy flip fires exactly once, after the sub-agent's turn end.
     expect(
       workChanged.every(
         (e) => (e.payload as { last_turn_reason?: string }).last_turn_reason !== 'cancelled',
@@ -1741,12 +1587,9 @@ describe('SessionEventBroadcaster', () => {
       kind: 'question',
       payload: { questions: [{ question: 'Pick', options: [{ label: 'A' }] }] },
     });
-    lc.interactions.respond('q1', null); // = ISessionQuestionService.dismiss
+    lc.interactions.respond('q1', null);
     await bc.getCursor('s1');
 
-    // The core work view announces each pending-slice change as it happens,
-    // so a synchronous request+resolve still journals both transitions
-    // (pending → none) instead of coalescing them away.
     expect(envelopes.map((e) => e.type)).toEqual([
       'event.session.work_changed',
       'event.question.requested',
@@ -1783,8 +1626,6 @@ describe('SessionEventBroadcaster', () => {
 
     lc.interactions.respond('q-sub', { answers: { q_0: 'opt_0_0' } });
     await bc.getCursor('s1');
-    // The resolved event must keep the same agent — an agent-filtered
-    // subscriber otherwise sees the question open but never close.
     expect(
       envelopes.find((e) => e.type === 'event.question.answered')?.payload,
     ).toMatchObject({ agentId: 'sub-1', question_id: 'q-sub' });
@@ -1855,10 +1696,6 @@ describe('SessionEventBroadcaster', () => {
   });
 
   it('fans event.session.work_changed out to every connection, bypassing agent filters', async () => {
-    // `event.session.*` is a global event class: a work_changed journaled on
-    // s1 reaches subscribers of other sessions, and subscribers whose agent
-    // allowlist excludes 'main' (the work_changed payload is main-stamped but
-    // is not an agent event) — same bypass as the retired status_changed.
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     sessions.set('s1', lc);
@@ -1870,7 +1707,7 @@ describe('SessionEventBroadcaster', () => {
     await bc.subscribe('s2', s2View.target);
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
-    await bc.getCursor('s1'); // drain between the turn boundaries
+    await bc.getCursor('s1');
     main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
     await bc.getCursor('s1');
 
@@ -1885,7 +1722,6 @@ describe('SessionEventBroadcaster', () => {
         { busy: false, last_turn_reason: 'completed' },
       ]);
     }
-    // The filter still crops main's own turn events from the filtered view.
     expect(s1View.envelopes.some((e) => e.type === 'turn.started')).toBe(false);
   });
 
@@ -1893,7 +1729,6 @@ describe('SessionEventBroadcaster', () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
     sessions.set('s1', lc);
-    // Pending before the session is activated — the snapshot covers it.
     lc.interactions.enqueue({
       id: 'q0',
       kind: 'question',
@@ -1916,11 +1751,6 @@ describe('SessionEventBroadcaster', () => {
   });
 
   it('fans out the legacy background.task.* alias alongside native task.* for v1 clients', async () => {
-    // v2 emits `task.started`/`task.terminated`; unchanged v1 consumers
-    // (kimi-code TUI / `kimi -p`, node-sdk) only understand
-    // `background.task.*`. The broadcaster must emit both spellings so web
-    // (handles `task.*`, ignores the alias) and TUI (handles the alias, ignores
-    // `task.*`) both work without consumer changes.
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     sessions.set('s1', lc);
@@ -1938,7 +1768,6 @@ describe('SessionEventBroadcaster', () => {
       'task.terminated',
       'background.task.terminated',
     ]);
-    // Alias carries the same payload, stamped with agentId/sessionId.
     expect(envelopes[1]!.payload).toMatchObject({
       type: 'background.task.started',
       info,
@@ -1950,15 +1779,9 @@ describe('SessionEventBroadcaster', () => {
       agentId: 'main',
       sessionId: 's1',
     });
-    // Native durability is preserved and the alias mirrors it (both journaled,
-    // monotonic seq), so reconnecting v1 clients rebuild task state from replay.
     expect(envelopes.every((e) => e.volatile === undefined)).toBe(true);
     expect(envelopes.map((e) => e.seq)).toEqual([1, 2, 3, 4]);
   });
-
-  // -------------------------------------------------------------------------
-  // Per-agent subscription filter
-  // -------------------------------------------------------------------------
 
   it('delivers only the allowlisted agent events on live fan-out', async () => {
     const lc = new FakeLifecycle();
@@ -1970,22 +1793,17 @@ describe('SessionEventBroadcaster', () => {
     await bc.subscribe('s1', target, new Set(['main']));
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
-    await bc.getCursor('s1'); // drain between the turn boundaries
+    await bc.getCursor('s1');
     main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
     await bc.getCursor('s1');
     sub.bus.emit(agentEvent('turn.ended', { turnId: 1 }));
     await bc.getCursor('s1');
 
-    // Agent events are filtered: only main's turn events are delivered.
     const agentEnvs = envelopes.filter((e) => e.type === 'turn.started' || e.type === 'turn.ended');
     expect(agentEnvs).toHaveLength(2);
     expect(
       agentEnvs.every((e) => (e.payload as { agentId: string }).agentId === 'main'),
     ).toBe(true);
-    // `event.session.work_changed` is global (`event.session.*`) and bypasses
-    // the agent filter. The sub-agent's turn.ended flips no busy bit (main's
-    // turn already ended, dedup keeps the pair) and never sets the outcome, so
-    // only the main agent's two transitions are delivered.
     const workChanged = envelopes.filter((e) => e.type === 'event.session.work_changed');
     expect(workChanged).toHaveLength(2);
   });
@@ -1997,15 +1815,12 @@ describe('SessionEventBroadcaster', () => {
     sessions.set('s1', lc);
 
     const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target); // no filter — legacy behavior
+    await bc.subscribe('s1', target);
 
     main.bus.emit(agentEvent('turn.ended', { turnId: 1 }));
     sub.bus.emit(agentEvent('turn.ended', { turnId: 1 }));
     await bc.getCursor('s1');
 
-    // Main's turn.ended also journals a work_changed carrying its outcome
-    // (busy was already false, but the reason pair changed); the sub-agent's
-    // turn.ended touches neither.
     const agentIds = envelopes
       .filter((e) => e.type === 'turn.ended')
       .map((e) => (e.payload as { agentId: string }).agentId);
@@ -2018,7 +1833,6 @@ describe('SessionEventBroadcaster', () => {
     sessions.set('s1', lc);
 
     const { target, envelopes } = collectingTarget();
-    // Filter does not include 'main', yet global events must still be delivered.
     await bc.subscribe('s1', target, new Set(['agent-0']));
 
     eventBus.emit({
@@ -2041,8 +1855,6 @@ describe('SessionEventBroadcaster', () => {
     const sub = lc.addAgent('agent-0');
     sessions.set('s1', lc);
 
-    // Dedicated broadcaster with a cap large enough to hold the full mixed
-    // turn/work_changed sequence before the filter crop is exercised.
     const dir2 = await mkdtemp(join(tmpdir(), 'kimi-broadcaster-test-'));
     const bc2 = new SessionEventBroadcaster({
       eventsDir: dir2,
@@ -2050,11 +1862,10 @@ describe('SessionEventBroadcaster', () => {
       maxBufferSize: 20,
     });
     try {
-      // Activate the session and journal a mixed sequence before replaying.
       const warm = collectingTarget();
       await bc2.subscribe('s1', warm.target);
       main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
-      await bc2.getCursor('s1'); // drain between the turn boundaries
+      await bc2.getCursor('s1');
       main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
       await bc2.getCursor('s1');
       sub.bus.emit(agentEvent('turn.started', { turnId: 1 }));
@@ -2068,9 +1879,6 @@ describe('SessionEventBroadcaster', () => {
 
       const result = await bc2.getBufferedSince('s1', { seq: 0 }, new Set(['main']));
       expect(result.resyncRequired).toBe(false);
-      // The sub-agent's turn events are cropped (seq 5/7); its busy flips
-      // still journal work_changed (global, main-stamped — seq 6/8), which
-      // survives the crop alongside the main agent's turns and transitions.
       expect(result.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 6, 8, 9, 10, 11, 12]);
       expect(
         result.events.every((e) => (e.envelope.payload as { agentId: string }).agentId === 'main'),
@@ -2094,9 +1902,6 @@ describe('SessionEventBroadcaster', () => {
       bc.getCursor('s1'),
       bc.getSnapshotState('s1'),
     ]);
-    // Make the target observable from whichever state won the activation race.
-    // Before the single-flight fix, every losing state's leaked bus listener
-    // still routed through that winning state and advanced its tracker again.
     await bc.subscribe('s1', target);
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
@@ -2112,10 +1917,6 @@ describe('SessionEventBroadcaster', () => {
         })),
     ).toEqual([{ offset: 0, delta: 'abc' }]);
   });
-
-  // -------------------------------------------------------------------------
-  // Transcript streaming (volatile add-on; the durable event path is untouched)
-  // -------------------------------------------------------------------------
 
   describe('transcript streaming', () => {
     function makeBroadcasterWithTranscript(
@@ -2154,10 +1955,8 @@ describe('SessionEventBroadcaster', () => {
       await bc.subscribe('s1', deltaView.target, undefined, { '*': 'delta' });
       await bc.subscribe('s1', blockView.target, undefined, { '*': 'block' });
       await bc.subscribe('s1', turnView.target, undefined, { '*': 'turn' });
-      await bc.subscribe('s1', plainView.target); // no transcript spec — legacy client
+      await bc.subscribe('s1', plainView.target);
 
-      // Every graded connection got exactly one initial reset for 'main'; the
-      // legacy connection got none. Resets are volatile and ride the watermark.
       for (const view of [deltaView, blockView, turnView]) {
         const resets = transcriptEnvelopes(view.envelopes);
         expect(resets).toHaveLength(1);
@@ -2171,10 +1970,6 @@ describe('SessionEventBroadcaster', () => {
       }
       expect(transcriptEnvelopes(plainView.envelopes)).toHaveLength(0);
 
-      // turn.started → turn.upsert flows at every grade ≥ 'turn', trailed by
-      // the status slice the activity fold projects as meta.merge (under the
-      // two-phase dispatch the fold reports after the edge's own turn-frame
-      // handling, so the meta batch lands last).
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       for (const view of [deltaView, blockView, turnView]) {
         const batches = transcriptEnvelopes(view.envelopes).slice(-2);
@@ -2189,8 +1984,6 @@ describe('SessionEventBroadcaster', () => {
       }
       expect(transcriptEnvelopes(plainView.envelopes)).toHaveLength(0);
 
-      // assistant.delta → frame.upsert + append flow at 'delta', the
-      // frame.upsert alone flows at 'block', nothing flows at 'turn'.
       const turnBatchesBefore = transcriptEnvelopes(turnView.envelopes).length;
       main.bus.emit(agentEvent('turn.step.started', { turnId: 1, step: 1 }));
       main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'Hi' }));
@@ -2200,8 +1993,6 @@ describe('SessionEventBroadcaster', () => {
       expect(blockOps.ops.map((o) => o.op)).toEqual(['frame.upsert']);
       expect(transcriptEnvelopes(turnView.envelopes)).toHaveLength(turnBatchesBefore);
 
-      // step completion flushes the full-text frame — 'block' reconverges
-      // without ever seeing an append.
       main.bus.emit(agentEvent('turn.step.completed', { turnId: 1, step: 1 }));
       const flushed = transcriptEnvelopes(blockView.envelopes).at(-1)!.payload as OpsPayload;
       expect(flushed.ops).toEqual([
@@ -2211,7 +2002,6 @@ describe('SessionEventBroadcaster', () => {
         }),
         expect.objectContaining({ op: 'step.upsert' }),
       ]);
-      // And the seq of every transcript frame is the current durable watermark.
       expect(transcriptEnvelopes(deltaView.envelopes).every((e) => e.volatile === true)).toBe(true);
     });
 
@@ -2225,15 +2015,12 @@ describe('SessionEventBroadcaster', () => {
       await bc.subscribe('s1', view.target, undefined, { '*': 'turn' });
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
 
-      // Same grade — no new reset.
       await bc.subscribe('s1', view.target, undefined, { '*': 'turn' });
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
 
-      // Downgrade — no reset, and ops stop flowing above the new grade.
       await bc.subscribe('s1', view.target, undefined, { '*': 'off' });
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
 
-      // Upgrade — a fresh snapshot reset.
       await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
       expect(transcriptEnvelopes(view.envelopes).at(-1)!.type).toBe('transcript.reset');
@@ -2249,10 +2036,8 @@ describe('SessionEventBroadcaster', () => {
       const offView = collectingTarget();
       await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
       await bc.subscribe('s1', offView.target, undefined, { '*': 'off' });
-      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1); // main reset
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
 
-      // A sub-agent appears: the binding creates its transcript, the roster
-      // listener fans a reset out to grade-matching connections only.
       const late = lc.addAgent('agent-0');
       const resets = transcriptEnvelopes(view.envelopes);
       expect(resets).toHaveLength(2);
@@ -2262,7 +2047,6 @@ describe('SessionEventBroadcaster', () => {
       });
       expect(transcriptEnvelopes(offView.envelopes)).toHaveLength(0);
 
-      // The late agent's own events now stream too.
       late.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       const ops = transcriptEnvelopes(view.envelopes).at(-1)!;
       expect(ops.type).toBe('transcript.ops');
@@ -2274,8 +2058,6 @@ describe('SessionEventBroadcaster', () => {
       sessions.set('s1', lc);
       bc = makeBroadcasterWithTranscript();
 
-      // The roster is empty at subscribe time: no baseline is owed, but the
-      // target must still count as seeded for what comes later.
       const view = collectingTarget();
       await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
 
@@ -2298,8 +2080,6 @@ describe('SessionEventBroadcaster', () => {
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       const before = transcriptEnvelopes(view.envelopes).length;
 
-      // Same grades, no upgrade: the stream must not black out while the
-      // resubscribe's seed work is in flight.
       const resub = bc.subscribe('s1', view.target, undefined, { main: 'delta' });
       main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'x' }));
       await resub;
@@ -2317,16 +2097,12 @@ describe('SessionEventBroadcaster', () => {
 
       const view = collectingTarget();
       await bc.subscribe('s1', view.target, undefined, { main: 'delta' });
-      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1); // baseline
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
 
-      // Cursor-based resubscribe at the same grade defers the baseline until
-      // the caller's replay completes; ops fanned out meanwhile are dropped.
       await bc.subscribe('s1', view.target, undefined, { main: 'delta' }, { deferTranscriptReset: true });
       main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'x' }));
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
 
-      // The flush owes a full baseline even without a grade/filter change —
-      // only a reset closes the gap left by the dropped ops.
       await bc.flushTranscriptSeed('s1', view.target);
       const resets = transcriptEnvelopes(view.envelopes).filter((e) => e.type === 'transcript.reset');
       expect(resets).toHaveLength(2);
@@ -2336,9 +2112,6 @@ describe('SessionEventBroadcaster', () => {
       const lc = new FakeLifecycle();
       lc.addAgent('main');
       sessions.set('s1', lc);
-      // sub-1 exists only in the persisted session metadata: its descriptor
-      // is seeded into the roster, but its transcript is not materialized
-      // until something backfills it.
       bc = makeBroadcasterWithTranscript({ 'sub-1': { type: 'sub' } });
 
       const view = collectingTarget();
@@ -2360,8 +2133,6 @@ describe('SessionEventBroadcaster', () => {
       await bc.subscribe('s1', view.target, undefined, { '*': 'off' });
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(0);
 
-      // The upgrade's seed work awaits history backfill; the downgrade lands
-      // first, so the stale call must not answer with a delta reset.
       const pending = bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
       await bc.subscribe('s1', view.target, undefined, { '*': 'off' });
       await pending;
@@ -2394,8 +2165,6 @@ describe('SessionEventBroadcaster', () => {
 
       const view = collectingTarget();
       const pending = bc.subscribe('s1', view.target, undefined, { 'sub-1': 'delta' });
-      // The target registers before the backfill starts — park the seed on the
-      // gate, then drop the subscription while history is still loading.
       await vi.waitFor(() => {
         expect(backfillSpy).toHaveBeenCalledWith('s1', 'sub-1');
       });
@@ -2426,10 +2195,6 @@ describe('SessionEventBroadcaster', () => {
       ).length;
       expect(opsBefore).toBeGreaterThan(0);
 
-      // The engine session closes: the service drops the store and its ops
-      // listener set, but the broadcaster's session state survives (same
-      // daemon). A later subscribe rebuilds the store — and must re-register
-      // the fan-out, not just reseed.
       service.dropSession('s1');
       await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
       main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'x' }));
@@ -2446,19 +2211,14 @@ describe('SessionEventBroadcaster', () => {
       sessions.set('s1', lc);
       bc = makeBroadcasterWithTranscript();
 
-      // Activate the stream with a first subscriber.
       const first = collectingTarget();
       await bc.subscribe('s1', first.target, undefined, { '*': 'delta' });
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
 
-      // A second subscriber joins while ops are flowing: its first transcript
-      // frame must be the baseline reset, never mid-stream ops against an
-      // empty baseline.
       const second = collectingTarget();
       const pending = bc.subscribe('s1', second.target, undefined, { '*': 'delta' });
       main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'x' }));
       await pending;
-      // After the seed, ops flow normally again.
       main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'y' }));
 
       const types = transcriptEnvelopes(second.envelopes).map((e) => e.type);
@@ -2473,8 +2233,6 @@ describe('SessionEventBroadcaster', () => {
       sessions.set('s1', lc);
       bc = makeBroadcasterWithTranscript();
 
-      // Filtered to main, with a wildcard delta grade: the transcript channel
-      // is governed by the grades alone — sub-1 is seeded too.
       const view = collectingTarget();
       await bc.subscribe('s1', view.target, new Set(['main']), { '*': 'delta' });
       const resets = transcriptEnvelopes(view.envelopes).filter((e) => e.type === 'transcript.reset');
@@ -2483,8 +2241,6 @@ describe('SessionEventBroadcaster', () => {
         'sub-1',
       ]);
 
-      // Widening the filter afterwards owes no transcript baseline: sub-1's
-      // ops were never suppressed, and delta → delta is no grade upgrade.
       await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
       expect(
         transcriptEnvelopes(view.envelopes).filter((e) => e.type === 'transcript.reset'),
@@ -2497,25 +2253,17 @@ describe('SessionEventBroadcaster', () => {
       sessions.set('s1', lc);
       bc = makeBroadcasterWithTranscript();
 
-      // Filtered to main, with a wildcard delta grade: the allowlist still
-      // gates session_event delivery (covered by the filter tests above) but
-      // must NOT gate transcript frames.
       const view = collectingTarget();
       await bc.subscribe('s1', view.target, new Set(['main']), { '*': 'delta' });
-      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1); // main reset
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
 
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
-      // The turn start also folds `agent.activity.updated` (the fake bus
-      // re-emits it), which the projector now maps to a meta.merge — hence
-      // reset + meta.merge + turn.upsert.
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(3);
 
-      // The subagent matches the wildcard grade but not the allowlist: its
-      // roster reset and ops are delivered all the same.
       const sub = lc.addAgent('sub-1');
       sub.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       const frames = transcriptEnvelopes(view.envelopes);
-      expect(frames).toHaveLength(6); // + sub-1 reset, meta.merge, turn.upsert
+      expect(frames).toHaveLength(6);
       const subFrames = frames.filter(
         (e) => (e.payload as { agent_id?: string }).agent_id === 'sub-1',
       );
@@ -2532,7 +2280,6 @@ describe('SessionEventBroadcaster', () => {
       sessions.set('s1', lc);
       bc = makeBroadcasterWithTranscript();
 
-      // Build store content first (a full turn tree with step/frame detail).
       const full = collectingTarget();
       await bc.subscribe('s1', full.target, undefined, { main: 'delta' });
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
@@ -2541,9 +2288,6 @@ describe('SessionEventBroadcaster', () => {
       main.bus.emit(agentEvent('turn.step.completed', { turnId: 1, step: 1 }));
       main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
 
-      // A late subscriber's baseline embeds no turns — history pages in over
-      // REST — but still reports that older history exists, carries the
-      // global state, and is stamped with the watermark seq.
       const late = collectingTarget();
       await bc.subscribe('s1', late.target, undefined, { main: 'turn' });
       const resets = transcriptEnvelopes(late.envelopes).filter((e) => e.type === 'transcript.reset');
@@ -2563,8 +2307,6 @@ describe('SessionEventBroadcaster', () => {
       expect(payload.snapshot.items).toEqual([]);
       expect(payload.has_more_older).toBe(true);
       expect(payload.seq).toBeTypeOf('number');
-      // The global state still rides the baseline (empty here — no tasks or
-      // interactions were emitted — but the fields are present).
       expect(payload.snapshot).toMatchObject({
         tasks: [],
         interactions: [],
@@ -2583,14 +2325,10 @@ describe('SessionEventBroadcaster', () => {
       const view = collectingTarget();
       await bc.subscribe('s1', view.target, undefined, { '*': 'off', main: 'delta' });
 
-      // Only main matches — and it does.
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       expect(transcriptEnvelopes(view.envelopes).at(-1)!.type).toBe('transcript.ops');
 
-      // A new agent matches only the wildcard ('off') → no reset, no ops.
-      // (The count is 3 by now: the turn start also folds an
-      // `agent.activity.updated`, which the projector maps to a meta.merge.)
       const late = lc.addAgent('agent-0');
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(3);
       late.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
@@ -2616,13 +2354,8 @@ describe('SessionEventBroadcaster', () => {
       const ops = transcriptEnvelopes(view.envelopes).filter((e) => e.type === 'transcript.ops');
       expect(ops.length).toBeGreaterThan(0);
       const seqs = ops.map((e) => (e.payload as { seq?: number }).seq);
-      // Every batch seq is past the baseline watermark and strictly
-      // increasing (a connection sees a grade-filtered subsequence of the
-      // consecutive per-agent numbering).
       expect(seqs.every((seq) => seq !== undefined && seq > watermark!)).toBe(true);
       expect([...seqs].toSorted((a, b) => a! - b!)).toEqual(seqs);
-      // The envelope-level seq stays the durable watermark — transcript
-      // frames never advance it.
       expect(ops.every((e) => e.volatile === true && e.seq === reset.seq)).toBe(true);
     });
 
@@ -2632,7 +2365,6 @@ describe('SessionEventBroadcaster', () => {
       sessions.set('s1', lc);
       bc = makeBroadcasterWithTranscript();
 
-      // A first connection establishes state and observes the batch seqs.
       const first = collectingTarget();
       await bc.subscribe('s1', first.target, undefined, { '*': 'delta' });
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
@@ -2640,12 +2372,9 @@ describe('SessionEventBroadcaster', () => {
         transcriptEnvelopes(first.envelopes).at(-1)!.payload as { seq: number }
       ).seq;
 
-      // More ops land while the client is away.
       main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'hi' }));
       main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
 
-      // Reconnect with the covered cursor: exactly the missed batches replay
-      // (grade-filtered, in seq order) and NO baseline reset is sent.
       const second = collectingTarget();
       await bc.subscribe('s1', second.target, undefined, { '*': 'delta' }, {
         transcriptSince: { main: cursor },
@@ -2658,7 +2387,6 @@ describe('SessionEventBroadcaster', () => {
       expect(seqs.every((seq) => seq > cursor)).toBe(true);
       expect([...seqs].toSorted((a, b) => a - b)).toEqual(seqs);
 
-      // The connection is seeded: live ops keep flowing after the replay.
       main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'again' }));
       expect(transcriptEnvelopes(second.envelopes).at(-1)!.type).toBe('transcript.ops');
     });
@@ -2693,8 +2421,6 @@ describe('SessionEventBroadcaster', () => {
       await bc.subscribe('s1', first.target, undefined, { '*': 'delta' });
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
 
-      // A cursor ahead of the watermark cannot be vouched for — the ordinary
-      // baseline reset rides instead, stamped with the current watermark.
       const second = collectingTarget();
       await bc.subscribe('s1', second.target, undefined, { '*': 'delta' }, {
         transcriptSince: { main: 9999 },
@@ -2722,7 +2448,7 @@ describe('SessionEventBroadcaster', () => {
       const graded = collectingTarget();
       const legacy = collectingTarget();
       await bc.subscribe('s1', graded.target, undefined, { '*': 'delta' });
-      await bc.subscribe('s1', legacy.target); // no transcript spec — legacy client
+      await bc.subscribe('s1', legacy.target);
 
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       main.bus.emit(agentEvent('turn.step.started', { turnId: 1, step: 1 }));
@@ -2730,11 +2456,7 @@ describe('SessionEventBroadcaster', () => {
       main.bus.emit(agentEvent('tool.result', { turnId: 1, toolCallId: 'tc-1', output: 'ok' }));
       await bc.getCursor('s1');
 
-      // The graded connection receives the transcript stream (reset + ops)…
       expect(transcriptEnvelopes(graded.envelopes).length).toBeGreaterThan(0);
-      // …but none of the projected session_events — including the volatile
-      // agent.status.updated phase frames folded from the activity view,
-      // which the transcript carries as meta.merge.
       const gradedTypes = graded.envelopes.map((e) => e.type);
       expect(gradedTypes).not.toContain('turn.started');
       expect(gradedTypes).not.toContain('turn.step.started');
@@ -2742,8 +2464,6 @@ describe('SessionEventBroadcaster', () => {
       expect(gradedTypes).not.toContain('tool.result');
       expect(gradedTypes).not.toContain('agent.status.updated');
 
-      // The legacy connection is untouched: every session_event still flows
-      // and no transcript frames leak to it.
       const legacyTypes = legacy.envelopes.map((e) => e.type);
       expect(legacyTypes).toContain('turn.started');
       expect(legacyTypes).toContain('turn.step.started');
@@ -2761,18 +2481,14 @@ describe('SessionEventBroadcaster', () => {
       const view = collectingTarget();
       await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
 
-      // agent.created is durable, session-grained, and has no transcript
-      // counterpart — it must survive suppression.
       const late = lc.addAgent('agent-0');
-      await bc.getCursor('s1'); // drain the lifecycle dispatch
+      await bc.getCursor('s1');
       late.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       await bc.getCursor('s1');
 
       const types = view.envelopes.map((e) => e.type);
       expect(types).toContain('agent.created');
-      // The global durable work_changed(busy) rides alongside the turn…
       expect(types).toContain('event.session.work_changed');
-      // …while the projected turn.started itself is suppressed.
       expect(types).not.toContain('turn.started');
     });
 
@@ -2783,7 +2499,6 @@ describe('SessionEventBroadcaster', () => {
       sessions.set('s1', lc);
       bc = makeBroadcasterWithTranscript();
 
-      // The spec covers main only; agent-0's effective grade is 'off'.
       const view = collectingTarget();
       await bc.subscribe('s1', view.target, undefined, { main: 'delta' });
 
@@ -2803,12 +2518,10 @@ describe('SessionEventBroadcaster', () => {
 
       await bc.subscribe('s1', collectingTarget().target);
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
-      await bc.getCursor('s1'); // drain between the turn boundaries
+      await bc.getCursor('s1');
       main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
       await bc.getCursor('s1');
 
-      // The durable backlog is: turn.started seq 1, work_changed(busy) seq 2,
-      // turn.ended seq 3, work_changed(busy:false + outcome) seq 4.
       const unfiltered = await bc.getBufferedSince('s1', { seq: 1 });
       expect(unfiltered.events.map((e) => e.envelope.type)).toEqual([
         'event.session.work_changed',
@@ -2816,16 +2529,12 @@ describe('SessionEventBroadcaster', () => {
         'event.session.work_changed',
       ]);
 
-      // With a graded spec the projected events drop out and the retained
-      // global events survive; the unfiltered read above proves the journal
-      // itself keeps everything.
       const filtered = await bc.getBufferedSince('s1', { seq: 1 }, undefined, { '*': 'delta' });
       expect(filtered.events.map((e) => e.envelope.type)).toEqual([
         'event.session.work_changed',
         'event.session.work_changed',
       ]);
 
-      // An all-'off' spec suppresses nothing.
       const offSpec = await bc.getBufferedSince('s1', { seq: 1 }, undefined, { '*': 'off' });
       expect(offSpec.events.map((e) => e.envelope.type)).toEqual(
         unfiltered.events.map((e) => e.envelope.type),
@@ -2845,7 +2554,6 @@ describe('SessionEventBroadcaster', () => {
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       sub.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       await bc.getCursor('s1');
-      // Both agents stream via transcript; their projected session_events are suppressed.
       expect(view.envelopes.map((e) => e.type)).not.toContain('turn.started');
       const opsBefore = transcriptEnvelopes(view.envelopes).filter((e) => e.type === 'transcript.ops');
       expect(new Set(opsBefore.map((e) => (e.payload as OpsPayload).agent_id))).toEqual(
@@ -2858,10 +2566,8 @@ describe('SessionEventBroadcaster', () => {
       sub.bus.emit(agentEvent('turn.started', { turnId: 2, origin: { kind: 'user' } }));
       await bc.getCursor('s1');
 
-      // The detached agent's legacy events flow again; the other agent's stay suppressed.
       const turns = view.envelopes.filter((e) => e.type === 'turn.started');
       expect(turns.map((e) => (e.payload as { agentId: string }).agentId)).toEqual(['main']);
-      // And the ops stream keeps serving only the still-graded agent.
       const opsAfter = transcriptEnvelopes(view.envelopes)
         .filter((e) => e.type === 'transcript.ops')
         .slice(opsBefore.length);
@@ -2879,17 +2585,15 @@ describe('SessionEventBroadcaster', () => {
 
       const view = collectingTarget();
       await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
-      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1); // baseline
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
 
       bc.unsubscribeTranscript('s1', view.target);
 
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       await bc.getCursor('s1');
-      // No new transcript frames, and the legacy events are back in full.
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
       expect(view.envelopes.map((e) => e.type)).toContain('turn.started');
 
-      // Re-subscribing is an upgrade over 'off' again: a fresh baseline lands.
       await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
       expect(transcriptEnvelopes(view.envelopes).at(-1)!.type).toBe('transcript.reset');
@@ -2902,7 +2606,6 @@ describe('SessionEventBroadcaster', () => {
       bc = makeBroadcasterWithTranscript();
 
       const view = collectingTarget();
-      // Unknown session, unknown target, grade-less target — all no-ops.
       expect(() => bc.unsubscribeTranscript('nope', view.target)).not.toThrow();
       expect(() => bc.unsubscribeTranscript('s1', view.target)).not.toThrow();
       await bc.subscribe('s1', view.target);

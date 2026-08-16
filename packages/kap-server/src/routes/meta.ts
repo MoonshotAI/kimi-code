@@ -1,22 +1,3 @@
-/**
- * `GET /meta` route handler.
- *
- * Returns `server_version`, the declared `capabilities` map, a per-process
- * `server_id` (ULID minted at boot), and `started_at`.
- *
- * **Capabilities**: the wire schema (`metaCapabilitiesSchema`) only permits the
- * literal `true` for each capability, so this mirrors the v1 response exactly to
- * keep the interface unchanged. server-v2 v0.1 does not yet back every
- * capability (no WebSocket / file upload / fs query / mcp / terminal); clients
- * must treat unbacked capabilities as not-yet-available until the corresponding
- * routes are wired.
- *
- * **No DI for the static fields**: pure server-self info; that part of the
- * payload is frozen at registration time. `experimental_flags` is the
- * exception — flag state flips live when the `[experimental]` config section
- * changes, so it is resolved per request through the injected getter.
- */
-
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { metaResponseSchema } from '../protocol/rest-meta';

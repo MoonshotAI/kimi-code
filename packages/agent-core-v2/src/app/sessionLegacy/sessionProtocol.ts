@@ -1,12 +1,3 @@
-/**
- * `sessionLegacy` domain — the v1 session wire DTO schemas.
- *
- * These zod schemas define the request/response shapes of the v1 session
- * endpoints this adapter backs (`POST /sessions/{id}/profile`,
- * `GET /sessions/{id}/status`, session warnings). Field-level changes here
- * are wire breaks.
- */
-
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '#/_base/utils/isoDateTime';

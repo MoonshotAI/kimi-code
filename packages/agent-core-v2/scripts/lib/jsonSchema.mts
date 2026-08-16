@@ -1,11 +1,3 @@
-/**
- * Shared JSON-schema helpers for the manifest generators
- * (`gen-config-manifest.mts`, `gen-wire-manifest.mts`).
- *
- * Both generators drain runtime registries that carry zod schemas and render
- * field/type sketches from their JSON Schema projection.
- */
-
 import { z } from 'zod';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -76,9 +68,6 @@ export function describeType(
   }
   if (s.type === 'array') return `${describeType(s.items, quoteString)}[]`;
   if (s.type === 'object') {
-    // Named sub-tables (zod objects emit `additionalProperties: false`) are
-    // rendered by the caller; only a schema-valued additionalProperties marks
-    // a true record.
     if (isRecord(s.properties)) return 'object';
     if (isRecord(s.additionalProperties)) {
       return `record<string, ${describeType(s.additionalProperties, quoteString)}>`;

@@ -1,22 +1,3 @@
-/**
- * `tower` domain — the `tower-worker` agent profile: the profile TowerSpawn
- * binds on every worker/reviewer agent. Self-contained like the builtin
- * profiles — its structured `renderSystemPrompt` merges the shared base
- * template with the worker role text at call time.
- *
- * The worker drops `AgentSwarm` from the coder tool set on purpose: the tower
- * is the sole orchestrator, and a worker-side swarm fan-out would run
- * unbudgeted (the tower rate limit only gates TowerSpawn) and outside the
- * worktree/roster discipline — swarm children inherit the session cwd, the
- * main checkout, bypassing the review-gated merge protocol. The same argument
- * caps the remaining `Agent` delegation at read-only profiles
- * (`subagents: ['explore', 'plan']`): a write-capable child would run on the
- * main checkout outside the roster and the write guard.
- *
- * Contributed into the catalog by `towerFeature.ts` (the Feature seam), not
- * by the builtin profile module.
- */
-
 import {
   normalizeAgentProfile,
   type AgentProfile,
@@ -26,9 +7,6 @@ import {
   skillActiveFor,
   TASK_AGENT_ROLE_PREFIX,
 } from '#/app/agentProfileCatalog/profile-shared';
-// Read-only borrow of the shared summary-continuation prompt owned by the
-// builtin profile module — keeps one source for the text. Relative path:
-// the `#/` imports map cannot resolve `.md?raw` specifiers.
 import SUMMARY_CONTINUATION_PROMPT from '../../session/agentLifecycle/profile/summary-continuation.md?raw';
 
 import { TOWER_WORKER_PROFILE } from './tower';
@@ -64,8 +42,6 @@ const TOWER_WORKER_TOOLS = [
   'mcp__*',
 ] as const;
 
-// Mirrors the coder role in `session/agentLifecycle/profile/profiles.ts` —
-// the tower-worker role is that handoff contract plus the tower overlay.
 const CODER_ROLE =
   `${TASK_AGENT_ROLE_PREFIX}\n\n` +
   'Your final message is the entire handoff — the parent sees nothing else from your run. ' +

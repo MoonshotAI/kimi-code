@@ -1,26 +1,3 @@
-/**
- * `_base` text helpers — UTF text encoding detection and decoding.
- *
- * Detection algorithm derived from VS Code
- * `src/vs/workbench/services/textfile/common/encoding.ts`
- * (MIT License, Copyright (c) Microsoft Corporation): BOM sniffing plus a
- * zero-byte parity heuristic that recognizes BOM-less UTF-16 LE/BE, so text
- * files saved as UTF-16 (e.g. Windows Notepad `.txt`) can be transcoded to
- * UTF-8 instead of being refused as binary.
- *
- * The parity heuristic deliberately deviates from VS Code in one way: VS
- * Code requires *every* byte pair to conform (a single CJK character, whose
- * UTF-16 unit carries no zero byte, falsifies the pattern and the file is
- * deemed binary). Here, zero bytes must instead appear at least twice and at
- * exactly one parity — odd indices mean UTF-16 LE (`0xAA 0x00`), even
- * indices mean UTF-16 BE (`0x00 0xAA`) — which tolerates mixed Latin/CJK
- * content while still rejecting real binaries (zeros at both parities, or
- * an isolated zero byte). Legacy 8-bit encodings (GBK, Big5, Shift-JIS, …)
- * are never guessed — a wrong silent guess is worse than a clear refusal.
- *
- * Pure functions over bytes; no io happens here.
- */
-
 export type UtfTextEncoding = 'utf-8' | 'utf-16le' | 'utf-16be';
 
 export interface TextClassification {
@@ -46,12 +23,6 @@ export interface TextEncodingDetection {
 /** Number of leading bytes inspected for the zero-byte heuristic. */
 export const ENCODING_DETECTION_SAMPLE_BYTES = 512;
 
-/**
- * Minimum zero bytes (at a single parity) before the BOM-less UTF-16
- * heuristic commits. One isolated zero byte is too ambiguous — a short
- * binary blob like `"plain prefix" + 00 01` would otherwise masquerade as
- * UTF-16 BE.
- */
 const MIN_ZERO_BYTES_FOR_UTF16 = 2;
 
 const UTF16BE_BOM = [0xfe, 0xff] as const;
@@ -59,7 +30,6 @@ const UTF16LE_BOM = [0xff, 0xfe] as const;
 const UTF8_BOM = [0xef, 0xbb, 0xbf] as const;
 
 function sniffTextEncoding(sample: Uint8Array): TextEncodingDetection {
-  // Always trust a BOM first.
   if (sample.length >= 2) {
     const b0 = sample[0]!;
     const b1 = sample[1]!;
@@ -74,10 +44,6 @@ function sniffTextEncoding(sample: Uint8Array): TextEncodingDetection {
     }
   }
 
-  // BOM-less UTF-16: zero bytes cluster at one parity — odd indices for LE
-  // (`0xAA 0x00`), even for BE (`0x00 0xAA`). CJK units carry no zero byte,
-  // so only the *placement* of zeros is checked, not their density. Zeros
-  // at both parities, or fewer than the ambiguity threshold, mean binary.
   let zerosAtOdd = 0;
   let zerosAtEven = 0;
   const limit = Math.min(sample.length, ENCODING_DETECTION_SAMPLE_BYTES);

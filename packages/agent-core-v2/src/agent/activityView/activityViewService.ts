@@ -1,23 +1,3 @@
-/**
- * `activityView` domain — `IAgentActivityView` implementation.
- *
- * A pure fold of the agent's own event bus: turn boundaries drive the turn
- * slice (active → detail updates → ended → `lastTurn`), step/delta/tool/retry
- * events drive the live phase/stream/retry detail, permission approval events
- * drive the pending-approval list, while task and full-compaction events drive
- * the background-work slice. The view seeds once from `IAgentLoopService`,
- * `IAgentTaskService`, and `IAgentFullCompactionService`, and recovers the
- * last turn's outcome from the durable `turnKey` state through `state`
- * (`IEventDispatcher`), so a cold-resumed agent still reports how its
- * previous turn ended (reads, never writes). Otherwise the view holds only
- * derived state, so it can be discarded and rebuilt at any time. The mutable
- * view state (`lifecycle`, `turn`, `lastTurn`, `background`, `current`) is
- * registered into `agentState` (`IAgentStateService`) and read/written
- * through it; the event-bus subscription handles stay mechanism held by the
- * `Disposable` base, and `MutableTurn`'s in-place-mutated Maps stay instance
- * fields of that per-turn class. Bound at Agent scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -91,7 +71,6 @@ export const activityViewCurrentKey = defineState<AgentActivityState>('activityV
   background: [],
 }));
 
-// NOTE: stays Disposable — its own 'state' collides with the Fiber
 export class AgentActivityView extends Disposable implements IAgentActivityView {
   declare readonly _serviceBrand: undefined;
 

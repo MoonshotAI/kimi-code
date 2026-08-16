@@ -1,14 +1,3 @@
-/**
- * `agent/media` mediaRef — media classification, daemon file references,
- * and media path tags.
- *
- *   - suffix / MIME / content-part classification (`mediaKindFor*` /
- *     `mediaKindOfPart`)
- *   - `kimi-file://` daemon file URL build/parse round-trips
- *   - `<image|video|audio|file path="…">` tag emission and matching,
- *     including the legacy no-closing-tag and extra-attribute shapes
- */
-
 import { describe, expect, it } from 'vitest';
 
 import type { ContentPart } from '#/kosong/contract/message';

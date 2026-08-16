@@ -1,12 +1,3 @@
-/**
- * Scenario: pure helpers fold loadable-tool announcements, strip dynamic
- * schema context, and classify dynamic tool protocol messages.
- *
- * Responsibilities: assert the rendered announcement grammar, origin-based
- * predicates, loaded-tool ledger scan, and outgoing history stripping.
- * Wiring: pure functions only; no DI container or external boundary.
- * Run: ../../node_modules/.bin/vitest run test/toolSelect/dynamicTools.test.ts
- */
 import { describe, expect, it } from 'vitest';
 
 import {

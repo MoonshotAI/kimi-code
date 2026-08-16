@@ -1,12 +1,3 @@
-/**
- * Scenario: main-agent plugin session-start reminder wiring.
- *
- * Exercises initial injection and source-specific refresh behavior through the
- * real `AgentPluginService`, with plugin and session catalog boundaries stubbed.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/agent/plugin/agentPlugin.test.ts`.
- */
-
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -433,9 +424,6 @@ describe('AgentPluginService plugin-change reminder', () => {
     await runInjectionBoundary(ctx);
     expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);
 
-    // Production ordering: onDidMutate fires synchronously inside the
-    // mutation's onDidReload; the catalog change arrives after the async
-    // re-scan.
     fireMutation(mutateEmitter, 'demo');
     sessionStarts = [];
     sinkChange.fire('plugin');
@@ -444,9 +432,6 @@ describe('AgentPluginService plugin-change reminder', () => {
     expect(findPluginChangeMessages(ctx)).toHaveLength(1);
     expect(findPluginSessionStartEventMessages(ctx)).toHaveLength(1);
 
-    // An explicit reload (no mutation) still refreshes the guidance: the
-    // catalog change sets the refresh signal and the next injection boundary
-    // re-renders with the supersedes suffix.
     sinkChange.fire('plugin');
     await runInjectionBoundary(ctx);
     expect(findPluginSessionStartEventMessages(ctx).length).toBeGreaterThanOrEqual(2);

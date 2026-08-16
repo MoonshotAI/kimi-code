@@ -1,17 +1,3 @@
-/**
- * `sessionActivity` domain — `ISessionActivityView` implementation.
- *
- * Folds every agent's activity projection — borrowed through the agent
- * handles from `agentLifecycle` (`IAgentActivityView.state()` seeded once at
- * attach, `agent.activity.updated` over each agent's `event` bus afterwards)
- * — together with the pending-interaction set from `interaction` into the
- * session-level aggregate, and fires `onDidChange` with the domain cause
- * only when the aggregate tuple actually changes. The plain-data state
- * (`folds`, `current`) is registered into `sessionState`
- * (`ISessionStateService`) and read/written through it. Bound at Session
- * scope.
- */
-
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -58,7 +44,6 @@ export const sessionActivityCurrentKey = defineState<SessionActivityState>('sess
   lastTurnReason: undefined,
 }));
 
-// NOTE: stays Disposable — its own 'state' collides with the Fiber
 export class SessionActivityView extends Disposable implements ISessionActivityView {
   declare readonly _serviceBrand: undefined;
 

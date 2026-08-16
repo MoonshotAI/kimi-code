@@ -1,10 +1,3 @@
-/**
- * `plugin` domain — manages installed plugin state and consumption metadata.
- *
- * Installs, reloads, persists, and summarizes plugins, counting loadable
- * plugin skills through skill discovery.
- */
-
 import { cp, mkdir, mkdtemp, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';

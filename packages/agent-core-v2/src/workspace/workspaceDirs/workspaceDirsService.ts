@@ -1,22 +1,3 @@
-/**
- * `workspaceDirs` domain — `IWorkspaceDirs` implementation.
- *
- * Holds the handler-shared additional-directory set as
- * `fileDirs ∪ ephemeralDirs`: `fileDirs` is the project-local
- * `.kimi-code/local.toml` set (loaded once per handler through
- * `projectLocalConfig`, reloaded debounced when the fs watch sees the file
- * change — including writes from OTHER processes), `ephemeralDirs` is the
- * in-memory union of non-persisted `addDir` calls and caller-provided dirs
- * from session create/resume options (it dies with the handler). Every
- * mutation serializes on one tail queue; the change event fires only when
- * the combined list actually changed. The set reaches every session of the
- * handler through the `ISessionWorkspaceInfo` seed (`sessionInfo()`), a
- * live read view over this service. The plain-data state (`fileDirs`,
- * `ephemeralDirs`) is registered into `workspaceState`
- * (`IWorkspaceStateService`) and read/written through it. Bound at
- * Workspace scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';

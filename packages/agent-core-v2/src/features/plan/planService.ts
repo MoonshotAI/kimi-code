@@ -1,27 +1,3 @@
-/**
- * `plan` domain — `IAgentPlanService` implementation.
- *
- * Manages plan-mode state through `wire`, injects plan-mode context through
- * `contextInjector`, writes optional plan files through `hostFileSystem`,
- * and tags mode telemetry through `telemetry`. Also snapshots submitted plan
- * revisions: `recordRevision` reads the current plan file, writes it
- * atomically through `IBlobStore` under the agent's own persistence scope
- * (`agentCtx.scope()`, i.e. the homeDir-relative
- * `sessions/<ws>/<sid>/agents/<agentId>` root) with the key
- * `plan/<id>/v<N>.md`, and dispatches a reference-only `plan.revision` op
- * carrying the homeDir-relative path, sha256 and byte length. N comes from
- * the Model's replayed per-id `revisionCount`, starting at 1. Also carries
- * the plan-mode Harness constraints as an `onBeforeExecuteTool` veto
- * listener: while a plan is active, Write/Edit calls targeting only the
- * current plan file are allowed outright (`allow()`, ending all other
- * adjudication), any other Write/Edit and every TaskStop/CronCreate/
- * CronDelete call is vetoed with a `toolApproval.formatDenyMessage`-
- * formatted reason, and an `ExitPlanMode` call outside `auto` mode defers
- * to a cold `waitUntil` factory running the `exitPlanModeReview` user
- * review. Bound at Agent scope — contributed into every Agent scope by
- * `PlanFeature` (`features/plan/planFeature`).
- */
-
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join } from 'pathe';
 

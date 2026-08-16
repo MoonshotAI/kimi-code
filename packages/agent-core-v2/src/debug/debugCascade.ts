@@ -1,32 +1,4 @@
-/**
- * `debug` domain — `IDebugCascadeService`: cascade history, waiting area, and
- * triggers (L5 debug surface, plan §5.11).
- *
- * Public contract. `history()` folds every engine's history ring of the scope
- * tree (each entry tagged with its orchestrating scope's path); `pending()`
- * reports the waiting area and the sticky-failed units per scope. The
- * triggers address a unit by `(scopePath, token)` and drive the kernel's
- * public cascade entries:
- *
- *   - `unprovide` — registration removal through the container's
- *     registry-level `unprovide` (the same entry business code calls);
- *   - `update` — restart: `cascade.update` without a config, or a config
- *     patch + reload through the fiber host when `config` is given;
- *   - `dispose` — the plan §5.11 `dispose(handle)` spelling: an awaited
- *     cascade `unprovide` submission. The kernel exposes no retire-only entry,
- *     so `dispose` and `unprovide` reach the same end state (registration
- *     removed, dependents cascaded to the waiting area); they differ only in
- *     the entry exercised. Both settle the cascade before returning.
- *
- * The service is also the producer of the `event.di.unit_changed` global
- * event: while active it watches every engine of the tree (including
- * late-joined scopes) and republishes unit state transitions on
- * `IEventService`. Bound at App scope. All payloads are JSON-serializable
- * wire data.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import type { CascadeAction, UnitState } from '#/_base/di/cascadeEngine';
 import { createDecorator } from '#/_base/di/instantiation';
 import { Event2 } from '#/app/event/event2';

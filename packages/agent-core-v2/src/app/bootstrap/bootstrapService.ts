@@ -1,14 +1,3 @@
-/**
- * `bootstrap` domain — `IBootstrapService` implementation.
- *
- * Holds the resolved startup snapshot from the seeded `IBootstrapOptions` and
- * exposes the host facts, app path layout, and top-level scope mapping. All
- * `scope(name)` values and `configKey` are computed once at construction so
- * business code can read them synchronously.
- *
- * Bound at App scope.
- */
-
 import { basename, join, relative } from 'pathe';
 
 import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';

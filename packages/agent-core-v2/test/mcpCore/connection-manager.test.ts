@@ -1,14 +1,3 @@
-/**
- * Scenario: MCP connection lifecycle and timeout defaults.
- *
- * Exercises the real connection manager; stdio MCP processes are the
- * external boundary, and timeout forwarding tests stub only the MCP SDK
- * client boundary. The workspace-level initialization scenarios live in
- * `test/workspace/workspaceMcp/`. Run with
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/agent/mcp/connection-manager.test.ts`.
- */
-
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, realpathSync } from 'node:fs';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
@@ -146,8 +135,6 @@ describe('McpConnectionManager', () => {
   }, 20000);
 
   it('connect with the identical config is a no-op for a live entry', async () => {
-    // Config reconcilers and explicit SDK callers can both upsert the same
-    // server; the second writer must not tear down the first's handshake.
     const cm = createManager();
     const statuses: string[] = [];
     cm.onStatusChange((entry) => statuses.push(`${entry.name}:${entry.status}`));
@@ -160,7 +147,6 @@ describe('McpConnectionManager', () => {
       expect(cm.get('alpha')?.status).toBe('connected');
       expect(statuses).toEqual([]);
 
-      // A changed config still reconnects.
       await cm.connect('alpha', { ...stdioConfig(), startupTimeoutMs: 5_000 });
       expect(cm.get('alpha')?.status).toBe('connected');
       expect(statuses).toEqual(['alpha:pending', 'alpha:connected']);

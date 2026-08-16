@@ -1,15 +1,3 @@
-/**
- * `tools` domain — `IGrepTool` contract.
- *
- * Public contract of Grep, the model's ripgrep-backed content search. Supports
- * glob/type filtering, context lines, output modes, pagination, multiline,
- * and case-insensitive search. Hidden files are searched, but VCS metadata
- * and sensitive files (such as `.env`) are always filtered out.
- *
- * Owns the `GrepInput` / `GrepOutput` zod schemas and the Agent-scope service
- * identifier. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

@@ -1,17 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — `IWorkspaceAgentProfileLoader` implementation.
- *
- * Discovers the workspace's agent files (`.kimi-code/agents`, `.agents/agents`
- * under the project root, resolved through `workspaceContext` and `hostFs`)
- * and contributes them via the shared loader skeleton. `${base_prompt}` is
- * backed by the user loader's effective default profile. Watches the project
- * agent-root candidates through `hostFsWatch` (watched whether or not they
- * exist yet) and reloads debounced, so a project agent-file change
- * re-contributes this record only. Bound at Workspace scope: the scan is
- * per handler and the record dies with it.
- */
-
-
 import { ILogService } from '#/_base/log/log';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';

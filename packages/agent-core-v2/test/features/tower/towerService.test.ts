@@ -90,15 +90,11 @@ describe('AgentTowerService', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
-    // A stand-in listener registered after the tower listener proves whether
-    // the tower veto ended adjudication or abstained.
     executorEvents = stubToolExecutorEvents();
     permissionGateRan = false;
     ix.stub(IAgentToolExecutorService, executorEvents.executor);
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
-    // Write-guard dependencies — inert defaults; the guard tests re-stub them
-    // with a worker profile / roster-backed repo before resolving the service.
     ix.stub(IAgentProfileService, {
       data: () => ({ profileName: undefined }),
     } as unknown as IAgentProfileService);

@@ -1,35 +1,3 @@
-/**
- * `/workspaces` route handlers — server-v2 port.
- *
- * Implements the v1 `/api/v1/workspaces` wire contract on top of
- * `agent-core-v2` services. Backed by `IWorkspaceService` (App scope) for the
- * catalog, `IHostFileSystem` to validate roots, and
- * `IWorkspaceSessions` to derive `session_count`.
- *
- *   GET    /workspaces                    list
- *   POST   /workspaces                    register (idempotent on root)
- *   PATCH  /workspaces/{workspace_id}     rename (display name only)
- *   DELETE /workspaces/{workspace_id}     unregister
- *   GET    /workspaces/{workspace_id}/trust    read the trust state
- *   POST   /workspaces/{workspace_id}/trust    mark the workspace trusted
- *   POST   /workspaces/{workspace_id}/untrust  revoke trust
- *
- * The trust routes resolve the workspace's live handler
- * (`IWorkspaceLifecycleService.handlerFor`, materializing it on demand) and
- * read/flip the Workspace-scope `IWorkspaceTrust`; while untrusted, the
- * handler's project-level MCP config files are not loaded.
- *
- * **Wire fidelity**: the v1 `workspaceSchema` carries more fields than v2's
- * `Workspace` (`{ id, root, name, createdAt, lastOpenedAt }`). The handler
- * projects the v2 record onto the v1 shape, deriving the extra fields:
- *   - `created_at` / `last_opened_at` — from the registry's in-memory
- *     timestamps (reset on restart; the registry is still a skeleton).
- *   - `session_count` — count of persisted sessions for the workspace, summed
- *     across every id spelling of the same root (`IWorkspaceSessions.count`
- *     folds the alias set) so legacy split buckets count once for the
- *     workspace, not per bucket.
- */
-
 import {
   IHostFileSystem,
   IWorkspaceInstanceManager,
@@ -323,10 +291,6 @@ async function resolveTrust(
     .getOrCreate({ workspaceId, root: ws.root });
   return workspace.program.trust;
 }
-
-// ---------------------------------------------------------------------------
-// Projection — v2 `Workspace` onto the v1 wire `workspaceSchema`.
-// ---------------------------------------------------------------------------
 
 async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
   const sessionCount = await core.accessor.get(IWorkspaceSessions).count(ws.id);

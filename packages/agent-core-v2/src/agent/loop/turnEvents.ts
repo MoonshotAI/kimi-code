@@ -1,23 +1,4 @@
-/**
- * `loop` domain — the transient observable `turn.*` / delta `Event2` classes
- * published through the event dispatcher as a turn runs. These are the loop's
- * share of the agent event stream; consumers subscribe by class (or by `type`
- * string). The durable `turn.ended` fact (`TurnEnded`) lives with the
- * `turnKey` state in `turnOps`.
- * `turn.started` additionally carries the text extracted from the turn's
- * input parts (absent when the turn opened with no text part): consumers
- * that render the user's prompt must take it from there, because the context
- * append carrying the same text is not a bus event and lands later. The
- * prompt rides the event only for displayable user origins
- * ({@link isDisplayablePromptOrigin}) — a system-triggered turn (goal
- * continuation, subagent run, cron…) has internal steering text as its input,
- * which must never surface in transcripts. When the turn's prompt bundles
- * skill activations, their rendered blocks (prepended to the content, one
- * text part per skill) are excluded from the extracted text.
- */
-
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { Event2 } from '#/app/event/event2';
 import type { FinishReason } from '#/kosong/contract/provider';

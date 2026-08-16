@@ -1,8 +1,3 @@
-/**
- * agent-core-v2 public surface — re-exports every domain barrel (grouped by
- * layer) so importing the package loads all scoped-registry registrations.
- */
-
 export * from '#/_base/di/descriptors';
 export * from '#/_base/di/errors';
 export * from '#/_base/di/graph';
@@ -642,9 +637,6 @@ export * from '#/mcpCore/config-schema';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';
 export * from '#/agent/media/registerMediaTools';
-// mediaRef keeps a named export list: the module's remaining helpers (suffix
-// tables, tag escaping, session fs layout) are domain-internal, and external
-// consumers only need the reference/tag grammar below.
 export {
   buildDaemonFileUrl,
   buildMediaPathTag,
@@ -660,7 +652,6 @@ export * from '#/agent/media/kimiFileUrl';
 export * from '#/agent/media/videoUpload';
 export * from '#/agent/media/mediaResolver';
 export * from '#/agent/media/mediaResolverService';
-// Deprecated aliases kept so existing consumers compile unchanged.
 export * from '#/agent/media/videoResolver';
 export * from '#/agent/media/videoResolverService';
 import '#/agent/media/configSection';
@@ -685,9 +676,6 @@ export * from '#/agent/prompt/promptOps';
 export * from '#/agent/prompt/promptService';
 export * from '#/agent/prompt/promptMetadataText';
 export * from '#/agent/replayBuilder/types';
-// `replayBuilder/types` inlines its own `SessionSummary`; keep the barrel's
-// `SessionSummary` pinned to the session-index one (explicit re-export wins
-// over the ambiguous `export *` pair).
 export { type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 export * from '#/agent/undo/undo';
 export * from '#/agent/undo/undoService';

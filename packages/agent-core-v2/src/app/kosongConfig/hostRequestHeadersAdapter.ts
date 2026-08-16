@@ -1,19 +1,3 @@
-/**
- * `kosongConfig` domain — `IHostRequestHeaders` implementation.
- *
- * Bridges kosong's host-headers port to the host invocation args: `headers`
- * is what the host stated in `BootstrapInput.args.requestHeaders` (usually
- * built through `createKimiDefaultHeaders`), verbatim; `thirdPartyHeaders` is
- * the `User-Agent`-only layer with the product token taken from the frozen
- * identity snapshot. kosong's model catalog only sees the port. Bound at App
- * scope.
- *
- * The third-party layer reads `agentIdentity.current()`, which throws until
- * config has first loaded — so a model materialized too early fails loudly
- * instead of caching headers that misstate the configured identity. Vendors
- * on the full-headers path never touch it.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';

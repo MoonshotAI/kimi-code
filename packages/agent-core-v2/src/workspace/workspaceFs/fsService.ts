@@ -1,24 +1,3 @@
-/**
- * `workspaceFs` domain — `IWorkspaceFsService` implementation.
- *
- * Implements the fs operations (search / grep / git status / git diff) by
- * orchestrating the os `IHostFileSystem` (file IO, resolved against the
- * workspace root), the handler-shared `ISessionProcessRunner` (`rg`), and
- * `IWorkspaceGitService` (git status/diff bound to the handler root; this
- * service only confines paths and computes repo-relative paths before
- * calling it).
- *
- * Path confinement applies a lexical within-workspace check first (the
- * handler root plus the `workspaceDirs` additional-dir set), then
- * re-verifies the candidate through `IHostFileSystem.realpath` (resolving
- * the longest existing prefix, so not-yet-created paths still work): a
- * symlink inside the workspace must not steer fs actions to files outside
- * it. The small
- * caches (`rgResolution`, `realRootsCache`) are plain per-handler fields.
- * Bound at Workspace scope — one instance per handler, shared by every
- * session of the workspace.
- */
-
 import {
   type FsDiffRequest,
   type FsDiffResponse,
@@ -273,8 +252,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       });
     }
 
-    // When transcoding, the offset/length window applies to the decoded
-    // UTF-8 bytes — the representation the client actually paginates over.
     let totalLength = st.size;
     let decodedBytes: Uint8Array | undefined;
     if (transcodeEncoding !== undefined) {
@@ -945,7 +922,6 @@ class RgJsonAccumulator {
     this.fileBuf.delete(p);
   }
 }
-
 
 function isHidden(name: string): boolean {
   return HIDDEN_NAME_RE.test(name) || MACOS_NOISE.has(name);

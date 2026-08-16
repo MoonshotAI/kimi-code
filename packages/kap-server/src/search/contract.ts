@@ -1,47 +1,3 @@
-/**
- * `search` module — global message search contract (temporary feature, lives
- * in kap-server until it graduates into agent-core-v2).
- *
- * The API shape borrows from Lark/Feishu's IM message endpoints:
- *   - a `container` concept (`container_id_type` + `container_id`) — here a
- *     message hangs under a session (and optionally one agent inside it);
- *     omitting `container` searches globally;
- *   - opaque cursor pagination (`pageSize` + `pageToken` + `hasMore`) where
- *     the query conditions may NOT change mid-pagination — the token encodes
- *     a fingerprint of the conditions and a mismatch is a parameter error;
- *   - POST + JSON body for search (a query operation, not a resource fetch);
- *   - an explicit sort enum (`sort_type`) and a time-range filter.
- *
- * This file is the single source of truth for the request/response shapes,
- * shared by the Service interface (`searchService.ts`) and the REST zod
- * schemas (`protocol/rest-search.ts`).
- *
- * Pagination & generation semantics (v2 page tokens):
- *   - Tokens are keyset cursors: they carry the sort boundary of the last
- *     returned hit — (time, key) for time sorts and literal mode, (score,
- *     time, key) for score sort — never an offset, so a deep page costs
- *     proportionally to pageSize, not to the full match set.
- *   - Index-route tokens also pin the index generation they were issued by.
- *     The generation changes when the published base is swapped (initial
- *     open, a read-only full reopen, a reindex) or when a sync pass REPLACED
- *     already-indexed documents (a shrunk/rebuilt wire file rescan, a title
- *     overwrite). A token from an older generation fails with
- *     `invalid_page_token` — the client's signal to restart the search.
- *   - Weak consistency within one generation: additive indexing (new
- *     sessions, appended wire bytes) and deletions do NOT change the
- *     generation, and keyset pagination stays exact under them for time
- *     sorts (a hit added after the cursor sorts behind it and is simply not
- *     surfaced — snapshot-at-first-page semantics). Score sorts may drift
- *     because IDF depends on corpus size; restart the search for a fresh
- *     ranking.
- *   - Legacy v1 offset tokens (pre-versioning, `{f, s}`) are still accepted
- *     for a transition window and answered with offset semantics; the
- *     response always issues a v2 keyset token back, so clients upgrade on
- *     the next page.
- */
-
-// ---- request ---------------------------------------------------------------
-
 export interface GlobalSearchQuery {
   /** Keyword(s), required. */
   readonly query: string;
@@ -72,8 +28,6 @@ export interface GlobalSearchQuery {
   readonly pageToken?: string;
 }
 
-// ---- errors ----------------------------------------------------------------
-
 export type GlobalSearchErrorReason =
   | 'invalid_query'
   | 'invalid_page_token'
@@ -94,8 +48,6 @@ export class GlobalSearchError extends Error {
     this.name = 'GlobalSearchError';
   }
 }
-
-// ---- response --------------------------------------------------------------
 
 export interface GlobalSearchHit {
   readonly sessionId: string;

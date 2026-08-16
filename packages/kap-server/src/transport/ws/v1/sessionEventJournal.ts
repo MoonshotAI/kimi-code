@@ -1,28 +1,3 @@
-/**
- * `SessionEventJournal` — per-session durable event log backing the `/api/v1/ws`
- * watermark (`{seq, epoch}`) and replay.
- *
- * Ported from v1 (`packages/server/src/services/gateway/sessionEventJournal.ts`).
- * One JSONL file per session under `<eventsDir>/<sessionId>.jsonl`:
- *
- *   line 1   {"kind":"journal_header","version":1,"epoch":"ep_<ulid>","created_at":...}
- *   line 2+  {"kind":"event","seq":N,"envelope":{...wire envelope...}}
- *
- * Invariants:
- *   - `seq` is assigned at append time, starts at 1, and is monotonic across
- *     server restarts (recovered by scanning the file on open).
- *   - `epoch` identifies this journal incarnation. It changes only when the
- *     file is unreadable/corrupt at open (we start a fresh journal) — clients
- *     holding cursors from the old epoch get `resync_required(epoch_changed)`.
- *   - Only durable events are written (volatile frames never touch the journal;
- *     see `VOLATILE_EVENT_TYPES` in `./events`).
- *
- * Durability model: `append()` is synchronous (callers need the seq immediately
- * for fan-out); bytes are flushed on a microtask-scheduled async batch.
- * `readSince()` flushes first so replay never misses queued lines. A torn
- * trailing line from a crash is tolerated and ignored on open.
- */
-
 import { createReadStream } from 'node:fs';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -108,7 +83,7 @@ export class SessionEventJournal {
       for await (const raw of readLines(filePath)) {
         sawAnyLine = true;
         const parsed = parseJournalLine(raw);
-        if (parsed === undefined) continue; // torn/corrupt line — skip
+        if (parsed === undefined) continue;
         if (parsed.kind === 'journal_header') {
           if (epoch === undefined) epoch = parsed.epoch;
           continue;
@@ -127,8 +102,6 @@ export class SessionEventJournal {
 
     if (epoch === undefined) {
       if (sawAnyLine) {
-        // File exists but has no parseable header — treat as corrupt and
-        // start a fresh incarnation. Old cursors will epoch-mismatch.
         logger.warn({ filePath }, 'event journal missing header; rotating to a fresh epoch');
       }
       return new SessionEventJournal(filePath, logger, `ep_${ulid()}`, 0, true);
@@ -187,16 +160,11 @@ export class SessionEventJournal {
     if (this.flushPromise !== undefined) return;
     this.flushPromise = this.flushOnce().finally(() => {
       this.flushPromise = undefined;
-      // Appends that arrived while this flush was in flight are still pending:
-      // chain the next round instead of parking them until a later append (or
-      // `close()`) happens to trigger one.
       if (this.pendingLines.length > 0) this.scheduleFlush();
     });
   }
 
   private async flushOnce(): Promise<void> {
-    // Snapshot the queue first so appends during the await are picked up by
-    // the next flush round, never lost.
     const lines: string[] = [];
     if (this.headerPending) {
       const header: JournalHeaderLine = {

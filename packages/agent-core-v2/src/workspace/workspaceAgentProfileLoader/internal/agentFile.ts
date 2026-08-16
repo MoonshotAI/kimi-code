@@ -1,16 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — agent-file parsing primitives.
- *
- * Parses a single agent Markdown file (frontmatter + body) into an
- * `AgentFileDefinition`. Pure functions with no IO: callers read bytes however
- * they like and pass the decoded text in. Unknown frontmatter fields are
- * ignored so later format extensions stay forward-compatible. Compatibility conventions match other agent CLIs: a
- * missing `name` falls back to the file name (OpenCode), a lone `*` in
- * `tools` / `subagents` means unrestricted like an omitted field, and list
- * fields accept either a bare comma-separated string or the YAML list form
- * (Claude Code).
- */
-
 import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
 import { FrontmatterError, parseFrontmatter } from '#/_base/text/frontmatter';
