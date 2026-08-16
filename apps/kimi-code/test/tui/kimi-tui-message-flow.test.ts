@@ -4330,6 +4330,48 @@ command = "vim"
     expect(session.prompt).not.toHaveBeenCalled();
   });
 
+  it('keeps /btw as the leading command when its prompt mentions multiple skills (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/btw check /skill:review /skill:security');
+
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledWith();
+    });
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('check /skill:review /skill:security', [
+        { name: 'review' },
+        { name: 'security' },
+      ]);
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
   it('cancels an unused /btw side agent when closing an empty panel', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
