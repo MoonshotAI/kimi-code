@@ -30,6 +30,14 @@ import {
 } from '#/agent/permissionMode/permissionModeOps';
 import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
+import '#/agent/permissionPolicy/permissionPolicyService';
+import {
+  IAgentPermissionRulesService,
+  type PermissionRule,
+} from '#/agent/permissionRules/permissionRules';
+import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
+import { AgentPermissionRulesService } from '#/agent/permissionRules/permissionRulesService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -78,6 +86,11 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import type { ToolCall } from '#/kosong/contract/message';
+import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
+import { ToolAccesses } from '#/tool/toolContract';
+import { IGitService } from '#/app/git/git';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -181,6 +194,30 @@ function stubBlobPassThrough(ix: TestInstantiationService): void {
     loadParts: async (parts) => parts,
     isBlobRef: () => false,
   } satisfies IAgentBlobService);
+}
+
+function bashToolCallContext(command: string): ResolvedToolExecutionHookContext {
+  const toolCall: ToolCall = {
+    type: 'function',
+    id: 'call_bash',
+    name: 'Bash',
+    arguments: JSON.stringify({ command }),
+  };
+  return {
+    turnId: 0,
+    signal: new AbortController().signal,
+    toolCall,
+    toolCalls: [toolCall],
+    args: { command },
+    execution: {
+      description: 'run command',
+      display: { kind: 'command', command },
+      accesses: ToolAccesses.none(),
+      approvalRule: literalRulePattern('Bash', command),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, command),
+      execute: async () => ({ output: '' }),
+    },
+  };
 }
 
 describe('AgentLifecycleService', () => {
@@ -378,6 +415,9 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       register: () => ({ dispose: () => {} }),
     } as unknown as IAgentContextInjectorService);
+    ix.stub(IGitService, {
+      findWorkTree: async () => null,
+    } as unknown as IGitService);
     ix.stub(ISessionAgentProfileCatalog, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -758,6 +798,108 @@ describe('AgentLifecycleService', () => {
       kind: 'question',
       request: { q: 1 },
       resolved: false,
+    });
+  });
+
+  it('loads the configured permission rules into the agent on create', async () => {
+    const addRules = vi.spyOn(AgentPermissionRulesService.prototype, 'addRules');
+    const rules: PermissionRule[] = [
+      { decision: 'allow', scope: 'user', pattern: 'Bash(ls*)' },
+      { decision: 'deny', scope: 'project', pattern: 'Bash(rm*)', reason: 'destructive' },
+    ];
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: ((section: string) =>
+        section === PERMISSION_SECTION ? { rules } : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    const main = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    expect(addRules).toHaveBeenCalledOnce();
+    expect(addRules).toHaveBeenCalledWith(rules);
+    expect(main.accessor.get(IAgentPermissionRulesService).rules).toEqual(rules);
+  });
+
+  it('does not add permission rules when the permission section is not configured', async () => {
+    const addRules = vi.spyOn(AgentPermissionRulesService.prototype, 'addRules');
+
+    const main = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    expect(addRules).not.toHaveBeenCalled();
+    expect(main.accessor.get(IAgentPermissionRulesService).rules).toEqual([]);
+  });
+
+  it('does not add permission rules when the configured rules list is empty', async () => {
+    const addRules = vi.spyOn(AgentPermissionRulesService.prototype, 'addRules');
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: ((section: string) =>
+        section === PERMISSION_SECTION ? { rules: [] } : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    const main = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    expect(addRules).not.toHaveBeenCalled();
+    expect(main.accessor.get(IAgentPermissionRulesService).rules).toEqual([]);
+  });
+
+  it('re-injects the configured rules on resume without touching the restored session approvals', async () => {
+    const log = recordingAppendLog([
+      createWireMetadataRecord(1),
+      {
+        type: 'permission.record_approval_result',
+        turnId: 1,
+        toolCallId: 'call_1',
+        toolName: 'Bash',
+        action: 'run command',
+        sessionApprovalRule: 'Bash(pnpm test)',
+        result: { decision: 'approved', scope: 'session' },
+        time: 2,
+      },
+    ]);
+    ix.stub(IAppendLogStore, log.store);
+    const addRules = vi.spyOn(AgentPermissionRulesService.prototype, 'addRules');
+    const rules: PermissionRule[] = [{ decision: 'allow', scope: 'user', pattern: 'Bash(ls*)' }];
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: ((section: string) =>
+        section === PERMISSION_SECTION ? { rules } : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    const main = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const rulesService = main.accessor.get(IAgentPermissionRulesService);
+
+    expect(addRules).toHaveBeenCalledOnce();
+    expect(rulesService.rules).toEqual(rules);
+    expect(rulesService.sessionApprovalRulePatterns).toEqual(['Bash(pnpm test)']);
+    expect(log.appended.some((record) => record.type === 'permission.rules.add')).toBe(false);
+  });
+
+  it('denies a tool call that matches a configured deny rule', async () => {
+    const rules: PermissionRule[] = [
+      { decision: 'deny', scope: 'user', pattern: 'Bash(rm*)', reason: 'destructive' },
+    ];
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: ((section: string) =>
+        section === PERMISSION_SECTION ? { rules } : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+    const main = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    const evaluation = await main.accessor
+      .get(IAgentPermissionPolicyService)
+      .evaluate(bashToolCallContext('rm -rf kimi-target'));
+
+    expect(evaluation).toMatchObject({
+      policyName: 'user-configured-deny',
+      result: {
+        kind: 'deny',
+        message: 'Tool "Bash" was denied by permission rule. Reason: destructive',
+      },
     });
   });
 

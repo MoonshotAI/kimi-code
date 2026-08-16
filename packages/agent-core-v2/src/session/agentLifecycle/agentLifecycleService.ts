@@ -39,6 +39,7 @@ import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import { permissionModeConfiguredKey } from '#/agent/permissionMode/permissionModeOps';
+import { PERMISSION_SECTION, type PermissionConfig } from '#/agent/permissionRules/configSection';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { profileKey } from '#/agent/profile/profileOps';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
@@ -51,6 +52,7 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import '#/agent/runtimeBinding/runtimeBindingService';
@@ -217,6 +219,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       .get(permissionModeConfiguredKey);
     if (permissionMode !== undefined && !hasRestoredPermissionMode) {
       handle.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
+    }
+    const permissionRules = this.config.get<PermissionConfig>(PERMISSION_SECTION)?.rules;
+    if (permissionRules !== undefined && permissionRules.length > 0) {
+      handle.accessor.get(IAgentPermissionRulesService).addRules(permissionRules);
     }
   }
 
