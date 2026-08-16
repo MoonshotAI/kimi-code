@@ -80,6 +80,9 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'interruptionReminder.recorded',
   'plugin.session_start',
   'turn.ended',
+  'token_counting.measured',
+  'token_counting.truncated',
+  'token_counting.rebased',
 ]);
 
 describe('v1 wire vocabulary', () => {

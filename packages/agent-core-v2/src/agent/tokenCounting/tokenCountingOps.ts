@@ -38,7 +38,7 @@ export const TokenCountingModel = defineModel<TokenCountingState>('tokenCounting
 }));
 
 declare module '#/wire/types' {
-  interface TransientOpMap {
+  interface PersistedOpMap {
     'token_counting.measured': typeof tokenCountingMeasured;
     'token_counting.truncated': typeof tokenCountingTruncated;
     'token_counting.rebased': typeof tokenCountingRebased;
@@ -58,7 +58,6 @@ function anchorsEqual(a: readonly TokenAnchor[], b: readonly TokenAnchor[]): boo
 /** Exchange anchor: a true LLM-reported count for the whole live context. */
 export const tokenCountingMeasured = TokenCountingModel.defineOp('token_counting.measured', {
   schema: sizeSchema,
-  persist: false,
   apply: (s, p) => {
     const length = normalizeAnchorLength(p.length);
     const tokens = Math.max(0, p.tokens);
@@ -76,7 +75,6 @@ export const tokenCountingMeasured = TokenCountingModel.defineOp('token_counting
  *  precomputed post-cut size, carried for status display only. */
 export const tokenCountingTruncated = TokenCountingModel.defineOp('token_counting.truncated', {
   schema: sizeSchema,
-  persist: false,
   apply: (s, p) => {
     const length = normalizeAnchorLength(p.length);
     const tokens = Math.max(0, p.tokens);
@@ -94,7 +92,6 @@ export const tokenCountingTruncated = TokenCountingModel.defineOp('token_countin
  *  exchange anchors. */
 export const tokenCountingRebased = TokenCountingModel.defineOp('token_counting.rebased', {
   schema: sizeSchema.extend({ measured: z.boolean() }),
-  persist: false,
   apply: (s, p) => {
     const length = normalizeAnchorLength(p.length);
     const tokens = Math.max(0, p.tokens);

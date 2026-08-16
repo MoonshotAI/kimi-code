@@ -58,9 +58,9 @@
 //   swarm_mode.exit                    swarm                       persisted  src/features/swarm/swarmOps.ts
 //   task.started                       task                        persisted  src/agent/task/taskOps.ts
 //   task.terminated                    task                        persisted  src/agent/task/taskOps.ts
-//   token_counting.measured            tokenCounting               transient  src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.rebased             tokenCounting               transient  src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.truncated           tokenCounting               transient  src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.measured            tokenCounting               persisted  src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.rebased             tokenCounting               persisted  src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.truncated           tokenCounting               persisted  src/agent/tokenCounting/tokenCountingOps.ts
 //   tools.register_user_tool           userTool                    persisted  src/agent/userTool/userToolOps.ts
 //   tools.reset_active_tools           profile.activeTools         persisted  src/agent/profile/profileOps.ts
 //   tools.set_active_tools             profile.activeTools         persisted  src/agent/profile/profileOps.ts
@@ -542,7 +542,7 @@ interface TaskTerminatedPayload {
 }
 
 /**
- * model: tokenCounting · toEvent
+ * model: tokenCounting · persisted · toEvent
  * owner: src/agent/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingMeasuredPayload {
@@ -552,7 +552,7 @@ interface TokenCountingMeasuredPayload {
 }
 
 /**
- * model: tokenCounting · toEvent
+ * model: tokenCounting · persisted · toEvent
  * owner: src/agent/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingRebasedPayload {
@@ -563,7 +563,7 @@ interface TokenCountingRebasedPayload {
 }
 
 /**
- * model: tokenCounting · toEvent
+ * model: tokenCounting · persisted · toEvent
  * owner: src/agent/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingTruncatedPayload {
