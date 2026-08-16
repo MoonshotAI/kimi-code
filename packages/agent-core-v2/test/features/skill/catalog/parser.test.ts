@@ -85,4 +85,29 @@ describe('parseSkillText', () => {
     expect(skill.mermaid).toBe('graph TD');
     expect(skill.d2).toBe('x -> y');
   });
+
+  it('parses category, issuer, collection, groups, and tags frontmatter fields', () => {
+    const skill = parseSkillText({
+      skillMdPath: '/skills/cv_ssh-ops/SKILL.md',
+      skillDirName: 'cv_ssh-ops',
+      source: 'user',
+      text: [
+        '---',
+        'name: cv_ssh-ops',
+        'description: SSH ops',
+        'category: ops',
+        'issuer: creatiVision',
+        'collection: cv-infrastructure',
+        'groups: [cv, cv/ops]',
+        'tags: [cv, ssh]',
+        '---',
+        'body',
+      ].join('\n'),
+    });
+    expect(skill.metadata.category).toBe('ops');
+    expect(skill.metadata.issuer).toBe('creatiVision');
+    expect(skill.metadata.collection).toBe('cv-infrastructure');
+    expect(skill.metadata.groups).toEqual(['cv', 'cv/ops']);
+    expect(skill.metadata.tags).toEqual(['cv', 'ssh']);
+  });
 });

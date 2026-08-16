@@ -49,4 +49,33 @@ describe('skill/types', () => {
       isSubSkill: false,
     });
   });
+
+  it('summarizeSkill projects optional category, issuer, collection, groups, tags', () => {
+    const skill: SkillDefinition = {
+      name: 'cv_ssh-ops',
+      description: 'SSH ops',
+      path: '/skills/cv_ssh-ops',
+      source: 'user',
+      metadata: {
+        type: 'prompt',
+        category: 'ops',
+        issuer: 'creatiVision',
+        collection: 'cv-infrastructure',
+        groups: ['cv', 'cv/ops'],
+        tags: ['cv', 'ssh'],
+      },
+    } as SkillDefinition;
+    expect(summarizeSkill(skill)).toEqual({
+      name: 'cv_ssh-ops',
+      description: 'SSH ops',
+      path: '/skills/cv_ssh-ops',
+      source: 'user',
+      type: 'prompt',
+      category: 'ops',
+      issuer: 'creatiVision',
+      collection: 'cv-infrastructure',
+      groups: ['cv', 'cv/ops'],
+      tags: ['cv', 'ssh'],
+    });
+  });
 });

@@ -54,9 +54,11 @@ import {
   type BuiltinSlashCommandName,
 } from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
-import type { SkillListSession } from './skills';
+import { isUserActivatableSkill, type SkillListSession } from './skills';
+import { runSkillSelector } from './prompts';
 import {
   canRestoreSubmittedInput,
+  resolveSkillCommand,
   resolveSlashCommandInput,
   slashBusyMessage,
   slashCommandBusyReason,
@@ -428,6 +430,7 @@ const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set
   'goal',
   'init',
   'plan',
+  'skill',
   'swarm',
   'undo',
   'web',
@@ -613,8 +616,58 @@ async function handleBuiltInSlashCommand(
     case 'web':
       await handleWebCommand(host);
       return;
+    case 'skill':
+      await handleSkillCommand(host, args);
+      return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);
       return;
+  }
+}
+
+async function handleSkillCommand(
+  host: SlashCommandHost,
+  args: string,
+): Promise<void> {
+  let session = host.session;
+  if (session === undefined) {
+    session = await ensureSessionForCommand(host);
+    if (session === undefined) return;
+  }
+
+  let skills: readonly SkillSummary[] = [];
+  try {
+    skills = await session.listSkills();
+  } catch (error) {
+    host.showError(formatErrorMessage(error));
+    return;
+  }
+
+  const activatableSkills = skills.filter(isUserActivatableSkill);
+  const trimmedArgs = args.trim();
+
+  if (trimmedArgs.length > 0) {
+    const spaceIdx = trimmedArgs.search(/\s/);
+    const firstWord = spaceIdx >= 0 ? trimmedArgs.slice(0, spaceIdx) : trimmedArgs;
+    const remainingArgs = spaceIdx >= 0 ? trimmedArgs.slice(spaceIdx + 1).trim() : '';
+
+    const resolvedName =
+      resolveSkillCommand(host.skillCommandMap, firstWord) ??
+      resolveSkillCommand(host.skillCommandMap, trimmedArgs) ??
+      firstWord;
+    const targetSkill = activatableSkills.find(
+      (s) => s.name === resolvedName || s.name === firstWord || s.name === trimmedArgs,
+    );
+    if (targetSkill !== undefined) {
+      const skillArgs =
+        targetSkill.name === resolvedName || targetSkill.name === firstWord ? remainingArgs : '';
+      host.sendSkillActivation(session, targetSkill.name, skillArgs);
+      return;
+    }
+  }
+
+  const selectedSkill = await runSkillSelector(host, activatableSkills);
+  if (selectedSkill !== undefined) {
+    host.sendSkillActivation(session, selectedSkill.name, '');
   }
 }
