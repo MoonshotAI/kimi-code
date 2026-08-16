@@ -3644,13 +3644,13 @@ command = "vim"
     const editorTopBorder = stripSgr(driver.state.editor.render(80)[0] ?? '');
     expect(panel).toContain('BTW ─ Esc close');
     expect(panel).not.toContain('ctrl+o expand');
-    expect(editorTopBorder.startsWith('├')).toBe(true);
-    expect(editorTopBorder.endsWith('┤')).toBe(true);
+    // Panel and editor are borderless: both are delimited by full-width rules.
+    expect(panel).not.toContain('│');
+    expect(editorTopBorder).toBe('─'.repeat(80));
 
     driver.state.editor.handleInput('/');
     const highlightedEditorTopBorder = stripSgr(driver.state.editor.render(80)[0] ?? '');
-    expect(highlightedEditorTopBorder.startsWith('╭')).toBe(true);
-    expect(highlightedEditorTopBorder.endsWith('╮')).toBe(true);
+    expect(highlightedEditorTopBorder).toBe('─'.repeat(80));
     expect(panel).not.toContain('BTW done');
     expect(panel).not.toContain('BTW running');
     expect(panel).not.toContain('BTW failed');
@@ -3807,7 +3807,8 @@ command = "vim"
     const finalLines = mountedPanel.render(80).map(stripSgr);
     expect(finalLines).toHaveLength(thinkingLines.length);
     expect(finalLines.join('\n')).toContain('final answer');
-    expect(finalLines.at(-1)).toMatch(/^│\s+│$/);
+    // Height is held by blank padding rows — no border glyphs, no trailing spaces.
+    expect(finalLines.at(-1)).toBe('');
   });
 
   it('caps /btw height to one-third of the terminal and supports scrolling', async () => {
@@ -3891,8 +3892,7 @@ command = "vim"
     expect(driver.state.btwPanelContainer.children).toHaveLength(0);
     expect(requestRender.mock.calls.at(-1)).toEqual([true]);
     const editorTopBorder = stripSgr(driver.state.editor.render(80)[0] ?? '');
-    expect(editorTopBorder.startsWith('╭')).toBe(true);
-    expect(editorTopBorder.endsWith('╮')).toBe(true);
+    expect(editorTopBorder).toBe('─'.repeat(80));
     expect(driver.state.editor.focused).toBe(true);
   });
 

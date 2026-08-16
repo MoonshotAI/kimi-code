@@ -17,9 +17,11 @@
 | 开关项状态：开 | 名称后 `  enabled`（`success`） | `chalk.hex(colors.success)` |
 | 开关项状态：关 | 名称后 `  disabled`（`textDim`） | `chalk.hex(colors.textDim)` |
 | 列表 / 选择器边框 | 平直 `─`（`primary`），仅顶/底各一条 | — |
-| 输入框边框 | 圆角 `╭ ╮ ╰ ╯`（`primary`） | — |
+| dialog 内输入框边框 | 圆角 `╭ ╮ ╰ ╯`（`primary`） | — |
+| 主输入框（composer）边框 | 平直 `─` 整宽，仅顶/底各一条，**无**侧边 `│`；提示符 `> ` 顶格，行尾不留填充空格 | `components/editor/custom-editor.ts` → `paintHorizontalRules` |
 
 - **不要**自造选中指针（`>` / `▶` / `→` 等）；统一用 `SELECT_POINTER`。
+- 常驻在主输入框上方 / 下方的面板（如 `/btw`）跟随 composer：整宽 `─`、无侧边 `│`，正文缩进 2 格对齐输入框的正文列（`> ` 之后）。终端框选复制这块区域时不应带出边框字符或行尾填充空格。
 - **不要**用 `● ` / `(current)` 表示当前项；统一用 `CURRENT_MARK`（行尾、`success`、前置一个空格）。
 - 当前项与选中项**互相独立**：当前项是「现在生效的值」（行尾 marker），选中项是「光标所在行」（指针 + 高亮）；两者可同时落在同一行。
 

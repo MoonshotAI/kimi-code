@@ -644,13 +644,13 @@ describe('CustomEditor bash mode border label', () => {
   // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
   const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
 
-  it('shows "! shell mode" on the top border in bash mode', () => {
+  it('shows "! shell mode" on the top rule in bash mode', () => {
     const editor = makeEditor();
     editor.inputMode = 'bash';
     const top = stripAnsi(editor.render(90)[0] ?? '');
-    expect(top.startsWith('╭')).toBe(true);
+    expect(top.startsWith('─')).toBe(true);
     expect(top).toContain('! shell mode');
-    expect(top.endsWith('╮')).toBe(true);
+    expect(top.endsWith('─')).toBe(true);
   });
 
   it('does not show the shell mode label in prompt mode', () => {
@@ -786,5 +786,63 @@ describe('CustomEditor bash mode file completion', () => {
     // request force:true path completion.
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((call) => call.force === true)).toBe(true);
+  });
+});
+
+describe('CustomEditor borders', () => {
+  // pi-tui renders the end-of-input caret as an inverse-video space; once the
+  // SGR is stripped it shows up as a single trailing space.
+  const CARET = ' ';
+  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
+  const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
+  const width = 60;
+
+  it('draws no vertical bars, so a drag-select copies the text alone', () => {
+    const editor = makeEditor();
+    editor.setText('hello world');
+    const rendered = editor.render(width).map(stripAnsi);
+
+    expect(rendered.join('\n')).not.toContain('│');
+    // Flush left, no trailing padding — the only cell past the text is
+    // pi-tui's inverse-video caret.
+    expect(rendered[1]).toBe(`> hello world${CARET}`);
+  });
+
+  it('leaves no trailing padding on any rendered row', () => {
+    const editor = makeEditor();
+    editor.setText('hello');
+    // Checked on the raw rows: rules and the caret end in an SGR reset, so
+    // anything trimmable here would be real padding.
+    for (const line of editor.render(width)) {
+      expect(line).toBe(line.trimEnd());
+    }
+  });
+
+  it('puts the bash prompt symbol in column 0 too', () => {
+    const editor = makeEditor();
+    editor.inputMode = 'bash';
+    editor.setText('ls -la');
+    const rendered = editor.render(width).map(stripAnsi);
+
+    expect(rendered[1]).toBe(`! ls -la${CARET}`);
+  });
+
+  it('draws top and bottom rules that span the full width', () => {
+    const editor = makeEditor();
+    editor.setText('hello');
+    const rendered = editor.render(width).map(stripAnsi);
+
+    expect(rendered[0]).toBe('─'.repeat(width));
+    expect(rendered.at(-1)).toBe('─'.repeat(width));
+  });
+
+  it('uses no corner glyphs', () => {
+    const editor = makeEditor();
+    editor.setText('/model');
+    const rendered = editor.render(width).map(stripAnsi).join('\n');
+
+    for (const glyph of ['╭', '╮', '╰', '╯', '├', '┤']) {
+      expect(rendered).not.toContain(glyph);
+    }
   });
 });

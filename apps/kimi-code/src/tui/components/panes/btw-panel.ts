@@ -15,6 +15,9 @@ type BtwPanelPhase = 'running' | 'done' | 'failed';
 
 const MIN_COLLAPSED_PANEL_LINES = 3;
 
+/** Body indent, aligned with the text column of the editor below (past `> `). */
+const BODY_INDENT = '  ';
+
 interface BtwTurn {
   readonly prompt: string;
   answer: string;
@@ -109,7 +112,7 @@ export class BtwPanelComponent implements Component {
 
   render(width: number): string[] {
     const safeWidth = Math.max(4, width);
-    const contentWidth = Math.max(1, safeWidth - 4);
+    const contentWidth = Math.max(1, safeWidth - BODY_INDENT.length);
     const body = this.renderBody(contentWidth);
     const lines = [this.renderTopBorder(safeWidth, body.truncated)];
     for (const line of body.lines) {
@@ -127,11 +130,14 @@ export class BtwPanelComponent implements Component {
       chalk.hex(currentTheme.palette.accent).bold(' BTW ') +
       paint('─ ') +
       chalk.hex(currentTheme.palette.textMuted)(hint);
-    const innerWidth = Math.max(1, width - 2);
+    const innerWidth = Math.max(1, width - 1);
     const clippedTitle =
       visibleWidth(title) > innerWidth ? truncateToWidth(title, innerWidth, '') : title;
     const dashCount = Math.max(0, innerWidth - visibleWidth(clippedTitle));
-    return paint('╭') + clippedTitle + paint('─'.repeat(dashCount)) + paint('╮');
+    // Edge-to-edge rule: the panel has no side borders, so the columns that
+    // used to hold the `╭`/`╮` corners are rule too — same shape as the
+    // editor below (see paintHorizontalRules).
+    return paint('─') + clippedTitle + paint('─'.repeat(dashCount));
   }
 
   private renderBody(width: number): BtwBodyRender {
@@ -219,12 +225,14 @@ export class BtwPanelComponent implements Component {
   }
 
   private renderBodyLine(line: string, width: number): string {
-    const paint = (s: string): string => chalk.hex(currentTheme.palette.border)(s);
-    const contentWidth = Math.max(1, width - 4);
+    const contentWidth = Math.max(1, width - BODY_INDENT.length);
     const clipped =
       visibleWidth(line) > contentWidth ? truncateToWidth(line, contentWidth, '…') : line;
-    const padding = Math.max(0, contentWidth - visibleWidth(clipped));
-    return paint('│') + ' ' + clipped + ' '.repeat(padding) + ' ' + paint('│');
+    // Not padded out to the width: with no right border to align, trailing
+    // spaces are just copy noise and diff churn. Height-holding blank rows
+    // collapse to ''. Styled runs end in an SGR reset, so trimming only ever
+    // eats unstyled padding.
+    return (BODY_INDENT + clipped).trimEnd();
   }
 
   private currentTurn(): BtwTurn | undefined {
