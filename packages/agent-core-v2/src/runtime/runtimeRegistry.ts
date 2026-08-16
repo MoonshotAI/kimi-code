@@ -19,7 +19,7 @@ export interface RuntimeResource {
 
 interface Generation {
   readonly runtime: Runtime;
-  readonly resources: RuntimeResource[];
+  readonly resources: Set<RuntimeResource>;
   readonly statusSubscription: { dispose(): void };
   leases: number;
   draining: boolean;
@@ -192,7 +192,15 @@ export class RuntimeRegistry {
       runtime: generation.runtime,
       track: <T extends RuntimeResource>(resource: T): T => {
         if (!active || generation.draining) throw new RuntimeError('runtime.unavailable', `runtime ${binding.runtimeId} is draining`);
-        generation.resources.push(resource);
+        const originalDispose = resource.dispose;
+        let disposed = false;
+        resource.dispose = function (this: unknown) {
+          if (disposed) return;
+          disposed = true;
+          generation.resources.delete(resource);
+          return originalDispose.call(this);
+        } as T['dispose'];
+        generation.resources.add(resource);
         return resource;
       },
       dispose: release,
@@ -258,7 +266,7 @@ export class RuntimeRegistry {
   private createGeneration(runtime: Runtime): Generation {
     const generation = {
       runtime,
-      resources: [],
+      resources: new Set<RuntimeResource>(),
       leases: 0,
       draining: false,
       disposed: false,
@@ -298,7 +306,8 @@ export class RuntimeRegistry {
         current: generation.runtime,
         status: 'draining',
       });
-      const resources = generation.resources.splice(0).reverse();
+      const resources = [...generation.resources].reverse();
+      generation.resources.clear();
       for (const resource of resources) {
         try {
           await resource.dispose();

@@ -19,6 +19,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
+import type { HostFsChange, IHostFsWatchService } from '@moonshot-ai/agent-core-v2/os/interface/hostFsWatch';
+import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
+import type { RuntimeProviderRuntimeHandle } from '@moonshot-ai/agent-core-v2/runtime/runtimeUnitHost';
 import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
@@ -437,5 +441,109 @@ describe('WS fs watch (kap-server)', () => {
     expect(ack.code).toBe(41304);
 
     conn.ws.close();
+  });
+
+  it('keeps delivering events after the runtime generation is replaced, without a client re-add', async () => {
+    const r = await boot();
+    const sid = await createSession(r);
+
+    interface FakeHandle {
+      disposed: number;
+      fire(change: HostFsChange): void;
+    }
+    const fakeWatch = (): { readonly service: IHostFsWatchService; readonly handles: FakeHandle[] } => {
+      const handles: FakeHandle[] = [];
+      const service = {
+        watch: () => {
+          const listeners = new Set<(change: HostFsChange) => void>();
+          const handle: FakeHandle & {
+            readonly ready: Promise<void>;
+            onDidChange(listener: (change: HostFsChange) => void): { dispose(): void };
+            dispose(): void;
+          } = {
+            ready: Promise.resolve(),
+            disposed: 0,
+            onDidChange: (listener) => {
+              listeners.add(listener);
+              return { dispose: () => { listeners.delete(listener); } };
+            },
+            dispose: () => { handle.disposed += 1; },
+            fire: (change) => { for (const listener of [...listeners]) listener(change); },
+          };
+          handles.push(handle);
+          return handle;
+        },
+      } as unknown as IHostFsWatchService;
+      return { service, handles };
+    };
+    const watchOne = fakeWatch();
+    const watchTwo = fakeWatch();
+    let workspaceId = '';
+    let handle: RuntimeProviderRuntimeHandle | undefined;
+    const makeRuntime = (generation: string, service: IHostFsWatchService): FakeRuntime =>
+      Object.assign(
+        new FakeRuntime(
+          { workspaceId, runtimeId: 'watch-test', generation },
+          { capabilities: ['watch'] },
+        ),
+        { watch: service },
+      );
+    const provider = await r.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+      id: 'watch-test-provider',
+      imports: { root: [], imports: [], local: [] },
+      attach: async (context, host) => {
+        workspaceId = context.id;
+        handle = host.registerRuntime(makeRuntime('watch-generation-1', watchOne.service));
+        return { dispose: () => handle!.remove() };
+      },
+    });
+
+    const conn = await openConn(wsUrl(r));
+    try {
+      await helloAndSubscribe(conn, 'A', sid);
+      conn.ws.send(
+        JSON.stringify({
+          type: 'watch_fs_add',
+          id: 'w1',
+          payload: { session_id: sid, runtime_id: 'watch-test', paths: ['src'] },
+        }),
+      );
+      const ack = await receiveType(conn, 'ack', 1000);
+      expect(ack.code).toBe(0);
+      expect(ack.payload).toMatchObject({ watched_paths: ['src'] });
+      expect(watchOne.handles).toHaveLength(1);
+
+      watchOne.handles[0]!.fire({ path: join(workspace, 'src', 'one.ts'), action: 'created', kind: 'file' });
+      const evOne = await receiveType(conn, 'event.fs.changed', 2000);
+      expect((evOne.payload as { changes: Array<{ path: string }> }).changes.some((c) => c.path === 'src/one.ts')).toBe(true);
+
+      await handle!.update(() => makeRuntime('watch-generation-2', watchTwo.service));
+
+      const deadline = Date.now() + 2000;
+      while (watchTwo.handles.length === 0 && Date.now() < deadline) await sleep(25);
+      expect(watchTwo.handles).toHaveLength(1);
+      expect(watchOne.handles[0]!.disposed).toBe(1);
+      await sleep(WATCH_SETTLE_MS);
+
+      watchTwo.handles[0]!.fire({ path: join(workspace, 'src', 'two.ts'), action: 'created', kind: 'file' });
+      const evTwo = await receiveType(conn, 'event.fs.changed', 2000);
+      expect(evTwo.session_id).toBe(sid);
+      expect((evTwo.payload as { changes: Array<{ path: string }> }).changes.some((c) => c.path === 'src/two.ts')).toBe(true);
+      expect(evTwo.seq).toBe((evOne.seq ?? 0) + 1);
+
+      conn.ws.send(
+        JSON.stringify({
+          type: 'watch_fs_add',
+          id: 'w2',
+          payload: { session_id: sid, runtime_id: 'watch-test', paths: ['docs'] },
+        }),
+      );
+      const ackTwo = await receiveType(conn, 'ack', 1000);
+      expect(ackTwo.code).toBe(0);
+      expect(ackTwo.payload).toMatchObject({ watched_paths: ['docs', 'src'] });
+    } finally {
+      conn.ws.close();
+      await provider.dispose();
+    }
   });
 });

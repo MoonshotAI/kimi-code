@@ -200,4 +200,41 @@ describe('RuntimeRegistry', () => {
     registry.register(runtime('one'));
     expect(() => registry.acquire({ workspaceId: 'workspace', runtimeId: 'ssh1' })).toThrow('ssh1');
   });
+
+  it('untracks caller-disposed resources so drain disposes each resource exactly once, survivors in reverse order', async () => {
+    const registry = new RuntimeRegistry('workspace');
+    const registration = registry.register(runtime('one'));
+    const lease = registry.acquire({ workspaceId: 'workspace', runtimeId: 'local' });
+    const order: string[] = [];
+    const counts = new Map<string, number>();
+    const resource = (name: string) => ({
+      dispose: () => {
+        counts.set(name, (counts.get(name) ?? 0) + 1);
+        order.push(name);
+      },
+    });
+    const a = lease.track(resource('a'));
+    const b = lease.track(resource('b'));
+    const c = lease.track(resource('c'));
+    b.dispose();
+    b.dispose();
+    const replacement = registration.replace(runtime('two'));
+    lease.dispose();
+    await replacement;
+    expect(order).toEqual(['b', 'c', 'a']);
+    expect(counts.get('a')).toBe(1);
+    expect(counts.get('b')).toBe(1);
+    expect(counts.get('c')).toBe(1);
+  });
+
+  it('rejects track once the generation is draining', async () => {
+    const registry = new RuntimeRegistry('workspace');
+    const registration = registry.register(runtime('one'));
+    const lease = registry.acquire({ workspaceId: 'workspace', runtimeId: 'local' });
+    const replacement = registration.replace(runtime('two'));
+    await Promise.resolve();
+    expect(() => lease.track({ dispose: () => {} })).toThrow('draining');
+    lease.dispose();
+    await replacement;
+  });
 });

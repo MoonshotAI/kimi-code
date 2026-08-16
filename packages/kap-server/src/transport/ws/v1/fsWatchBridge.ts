@@ -32,6 +32,7 @@ import {
   ISessionWorkspaceContext,
   ISessionContext,
   IRuntimeResolver,
+  IWorkspaceInstanceManager,
   getLiveSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -93,6 +94,8 @@ interface ConnEntry {
 interface SessionWatch {
   readonly id: string;
   readonly runtimeId: string;
+  readonly workspaceId: string;
+  readonly generation: string;
   readonly session: ISessionScopeHandle;
   readonly runtime: Runtime;
   readonly view: RuntimeWorkspaceView;
@@ -116,6 +119,8 @@ export class FsWatchBridge {
   private readonly logger: JournalLogger | undefined;
   private readonly bySession = new Map<string, SessionWatch>();
   private readonly connPathCount = new Map<string, number>();
+  private readonly rebuilding = new Map<string, Promise<SessionWatch | undefined>>();
+  private readonly registrySubscriptions = new Map<string, IDisposable>();
 
   constructor(opts: { core: Scope; logger?: JournalLogger }) {
     this.core = opts.core;
@@ -203,10 +208,30 @@ export class FsWatchBridge {
     this.connPathCount.delete(conn.id);
   }
 
+  dispose(): void {
+    for (const subscription of this.registrySubscriptions.values()) subscription.dispose();
+    this.registrySubscriptions.clear();
+    for (const sw of [...this.bySession.values()]) this.teardownSession(sw);
+  }
+
   private async resolveSession(sessionId: string, runtimeId: string): Promise<SessionWatch | undefined> {
     const key = sessionRuntimeKey(sessionId, runtimeId);
+    const pending = this.rebuilding.get(key);
+    if (pending !== undefined) return pending;
     const existing = this.bySession.get(key);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      if (this.isCurrentGeneration(existing)) return existing;
+      return this.rebuild(existing);
+    }
+    return this.createSessionWatch(sessionId, runtimeId, undefined);
+  }
+
+  private async createSessionWatch(
+    sessionId: string,
+    runtimeId: string,
+    carried: { readonly conns: Map<string, ConnEntry>; readonly seq: number } | undefined,
+  ): Promise<SessionWatch | undefined> {
+    const key = sessionRuntimeKey(sessionId, runtimeId);
     const session = getLiveSessionById(this.core.accessor, sessionId);
     if (session === undefined) return undefined;
     const context = session.accessor.get(ISessionWorkspaceContext);
@@ -222,6 +247,8 @@ export class FsWatchBridge {
       const sw: SessionWatch = {
         id: sessionId,
         runtimeId,
+        workspaceId: sessionContext.workspaceId,
+        generation: lease.runtime.identity.generation,
         session,
         // One subscription per session, held on the handler-shared Workspace
         // watch service (resolved through the session's parent scope).
@@ -230,9 +257,9 @@ export class FsWatchBridge {
         handle,
         lease,
         workspace: context,
-        conns: new Map(),
+        conns: carried?.conns ?? new Map(),
         union: new Set(),
-        seq: 0,
+        seq: carried?.seq ?? 0,
         sub: undefined,
         pending: [],
         rawCount: 0,
@@ -242,12 +269,66 @@ export class FsWatchBridge {
         maxChangesPerWindow: readPositiveIntEnv('KIMI_CODE_FS_WATCH_MAX_CHANGES_PER_WINDOW', DEFAULT_MAX_CHANGES_PER_WINDOW),
       };
       sw.sub = handle.onDidChange((event) => this.onRuntimeEvent(key, event));
+      this.recomputeAndApply(sw);
       this.bySession.set(key, sw);
+      this.subscribeRegistry(sessionContext.workspaceId);
       return sw;
     } catch (error) {
       lease.dispose();
       throw error;
     }
+  }
+
+  private async rebuild(sw: SessionWatch): Promise<SessionWatch | undefined> {
+    const key = sessionRuntimeKey(sw.id, sw.runtimeId);
+    const pending = this.rebuilding.get(key);
+    if (pending !== undefined) return pending;
+    const task = (async () => {
+      const { conns, seq } = sw;
+      this.teardownSession(sw);
+      return this.createSessionWatch(sw.id, sw.runtimeId, { conns, seq });
+    })();
+    this.rebuilding.set(key, task);
+    try {
+      return await task;
+    } finally {
+      this.rebuilding.delete(key);
+    }
+  }
+
+  private async refreshIfStale(sw: SessionWatch): Promise<void> {
+    const key = sessionRuntimeKey(sw.id, sw.runtimeId);
+    const pending = this.rebuilding.get(key);
+    if (pending !== undefined) await pending.catch(() => undefined);
+    const current = this.bySession.get(key);
+    if (current === undefined || this.isCurrentGeneration(current)) return;
+    try {
+      await this.rebuild(current);
+    } catch (error) {
+      this.logger?.warn({ sessionId: sw.id, err: String(error) }, 'fs-watch rebuild after runtime generation change failed');
+    }
+  }
+
+  private isCurrentGeneration(sw: SessionWatch): boolean {
+    try {
+      const runtime = this.core.accessor.get(IRuntimeResolver).inspect({ workspaceId: sw.workspaceId, runtimeId: sw.runtimeId });
+      return runtime.identity.generation === sw.generation;
+    } catch {
+      return false;
+    }
+  }
+
+  private subscribeRegistry(workspaceId: string): void {
+    if (this.registrySubscriptions.has(workspaceId)) return;
+    const workspace = this.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+    if (workspace === undefined) return;
+    const subscription = workspace.runtimes.onDidChange((change) => {
+      for (const sw of [...this.bySession.values()]) {
+        if (sw.workspaceId !== workspaceId || sw.runtimeId !== change.runtimeId) continue;
+        void this.refreshIfStale(sw);
+      }
+    });
+    this.registrySubscriptions.set(workspaceId, subscription);
   }
 
   private recomputeAndApply(sw: SessionWatch): void {

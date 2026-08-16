@@ -24,6 +24,7 @@ interface SessionControllerEntry {
   readonly generation: string;
   readonly controller: SessionLifecycleService;
   readonly subscriptions: DisposableStore;
+  sessionCount: number;
 }
 
 export class SessionManager implements ISessionManager {
@@ -138,28 +139,42 @@ export class SessionManager implements ISessionManager {
     if (existing?.generation === generation) return existing.controller;
     const controller = workspace.program.createSessionController();
     const subscriptions = new DisposableStore();
+    const entry: SessionControllerEntry = { generation, controller, subscriptions, sessionCount: 0 };
     subscriptions.add(controller.onWillCreateSession((event) => this.willCreateEmitter.fire(event)));
     subscriptions.add(controller.onDidCreateSession((event) => {
+      entry.sessionCount += 1;
       this.sessions.set(event.sessionId, event.handle);
       this.owners.set(event.sessionId, controller);
       this.didCreateEmitter.fire(event);
     }));
     subscriptions.add(controller.onWillCloseSession((event) => this.willCloseEmitter.fire(event)));
     subscriptions.add(controller.onDidCloseSession((event) => {
+      entry.sessionCount -= 1;
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
       this.didCloseEmitter.fire(event);
+      this.retireEntryIfIdle(workspaceId, entry);
     }));
     subscriptions.add(controller.onDidArchiveSession((event) => {
+      entry.sessionCount -= 1;
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
       this.didArchiveEmitter.fire(event);
+      this.retireEntryIfIdle(workspaceId, entry);
     }));
     subscriptions.add(controller.onDidForkSession((event) => this.didForkEmitter.fire(event)));
-    const entry = { generation, controller, subscriptions };
     this.controllerEntries.add(entry);
     this.controllers.set(workspaceId, entry);
+    if (existing !== undefined) this.retireEntryIfIdle(workspaceId, existing);
     return controller;
+  }
+
+  private retireEntryIfIdle(workspaceId: string, entry: SessionControllerEntry): void {
+    if (entry.sessionCount !== 0 || !this.controllerEntries.has(entry)) return;
+    this.controllerEntries.delete(entry);
+    if (this.controllers.get(workspaceId) === entry) this.controllers.delete(workspaceId);
+    entry.subscriptions.dispose();
+    entry.controller.dispose();
   }
 
   private async controllerForSession(sessionId: string): Promise<SessionLifecycleService | undefined> {
