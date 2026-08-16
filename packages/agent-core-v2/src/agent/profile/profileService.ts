@@ -115,6 +115,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
@@ -938,19 +939,26 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     options?: ApplyProfileOptions,
   ): Promise<SystemPromptContext> {
     const preloadedAgentsMd = await this.workspaceInstructionsSnapshot();
-    const lease = this.runtime.acquire(['fs']);
+    const fsAvailable = this.runtime.isAvailable(['fs']);
+    const lease = this.runtime.acquire(fsAvailable ? ['fs'] : []);
     const env = lease.runtime.environment;
+    const view = new RuntimeWorkspaceView(lease.runtime, {
+      workDir: this.sessionContext.cwd,
+      additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
+    });
     let base: SystemPromptContext;
     try {
-      base = await prepareSystemPromptContext(
-        { fs: lease.runtime.fs!, homeDir: env.homeDir },
-        this.sessionContext.cwd,
-        this.bootstrap.homeDir,
-        {
-          additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
-          preloadedAgentsMd,
-        },
-      );
+      base = !fsAvailable
+        ? {}
+        : await prepareSystemPromptContext(
+            { fs: lease.runtime.fs!, homeDir: env.homeDir },
+            view.workDir,
+            this.bootstrap.homeDir,
+            {
+              additionalDirs: view.additionalDirs,
+              preloadedAgentsMd,
+            },
+          );
     } finally {
       lease.dispose();
     }
@@ -960,7 +968,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const timeZone = this.clock.timeZone();
     return {
       ...base,
-      cwd: this.sessionContext.cwd,
+      cwd: view.workDir,
       osKind: env.osKind,
       shellName: env.shellName,
       shellPath: env.shellPath,

@@ -64,4 +64,5 @@ export const sessionManagerContract = {
   },
   delete: { input: z.tuple([z.string()]), output: noResult },
   fork: { input: z.tuple([forkSessionOptionsSchema]), output: handleWireSchema },
+  createChild: { input: z.tuple([createChildSessionOptionsSchema]), output: handleWireSchema },
 } satisfies ServiceContract;

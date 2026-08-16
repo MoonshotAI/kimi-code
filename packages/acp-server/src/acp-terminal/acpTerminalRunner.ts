@@ -1,18 +1,24 @@
 import * as posixPath from 'node:path/posix';
+import * as win32Path from 'node:path/win32';
 import { PassThrough, Writable, type Readable } from 'node:stream';
 
 import type {
+  HostEnvironmentInfo,
   HostProcessOptions,
+  IHostEnvironment,
+  IHostFileSystem,
   IHostProcess,
   IHostProcessService,
+  ISessionContext,
   Runtime,
+  RuntimePath,
   RuntimeProviderAttachment,
   RuntimeProviderContext,
   RuntimeProviderFactory,
   RuntimeProviderHost,
 } from '@moonshot-ai/agent-core-v2';
 
-import { IAcpConnection, type IAcpTerminalHandle } from '../acp-fs';
+import { AcpHostFileSystem, IAcpConnection, type IAcpTerminalHandle } from '../acp-fs';
 
 const OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 const OUTPUT_POLL_MS = 250;
@@ -155,26 +161,11 @@ class AcpTerminalProcess implements IHostProcess {
 
 class AcpSessionRuntime implements Runtime {
   readonly identity;
-  readonly capabilities = new Set(['process'] as const);
-  readonly environment = {
-    osKind: 'Linux' as const,
-    osArch: 'acp',
-    osVersion: 'acp',
-    shellName: 'bash' as const,
-    shellPath: '/bin/bash',
-    pathClass: 'posix' as const,
-    homeDir: '/',
-  };
-  readonly path = {
-    separator: '/' as const,
-    delimiter: ':' as const,
-    isAbsolute: (p: string) => posixPath.isAbsolute(p),
-    join: (...paths: readonly string[]) => posixPath.join(...paths),
-    relative: (from: string, to: string) => posixPath.relative(from, to),
-    resolve: (...paths: readonly string[]) => posixPath.resolve(...paths),
-  };
+  readonly capabilities = new Set(['process', 'fs'] as const);
+  readonly environment: HostEnvironmentInfo;
+  readonly path: RuntimePath;
   readonly workspace = { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots };
-  readonly fs = undefined;
+  readonly fs: IHostFileSystem;
   readonly process;
   readonly watch = undefined;
   readonly terminal = undefined;
@@ -186,12 +177,32 @@ class AcpSessionRuntime implements Runtime {
     sessionId: string,
     cwd: string,
     connection: IAcpConnection,
+    environment: IHostEnvironment,
   ) {
     this.identity = {
       workspaceId,
       runtimeId: AcpRuntimeProviderFactory.runtimeId(sessionId),
       generation: `acp-${String(nextGeneration++)}`,
     };
+    this.environment = {
+      osKind: environment.osKind,
+      osArch: environment.osArch,
+      osVersion: environment.osVersion,
+      shellName: environment.shellName,
+      shellPath: environment.shellPath,
+      pathClass: environment.pathClass,
+      homeDir: environment.homeDir,
+    };
+    const path = environment.pathClass === 'win32' ? win32Path : posixPath;
+    this.path = {
+      separator: path.sep as '/' | '\\',
+      delimiter: path.delimiter as ':' | ';',
+      isAbsolute: (p: string) => path.isAbsolute(p),
+      join: (...paths: readonly string[]) => path.join(...paths),
+      relative: (from: string, to: string) => path.relative(from, to),
+      resolve: (...paths: readonly string[]) => path.resolve(...paths),
+    };
+    this.fs = new AcpHostFileSystem({ sessionId } as unknown as ISessionContext, connection);
     this.process = new AcpProcessService(sessionId, cwd, connection);
   }
 
@@ -205,13 +216,14 @@ class AcpWorkspaceRuntimeAttachment implements RuntimeProviderAttachment {
     private readonly workspace: RuntimeProviderContext,
     private readonly host: RuntimeProviderHost,
     private readonly connection: IAcpConnection,
+    private readonly environment: IHostEnvironment,
   ) {}
 
   bindSession(sessionId: string, cwd: string): string {
     const runtimeId = AcpRuntimeProviderFactory.runtimeId(sessionId);
     if (this.sessions.has(sessionId)) return runtimeId;
     const registration = this.host.registerRuntime(
-      new AcpSessionRuntime(this.workspace.id, sessionId, cwd, this.connection),
+      new AcpSessionRuntime(this.workspace.id, sessionId, cwd, this.connection, this.environment),
     );
     this.sessions.set(sessionId, registration);
     return runtimeId;
@@ -236,14 +248,17 @@ export class AcpRuntimeProviderFactory implements RuntimeProviderFactory {
   readonly imports = { root: [], imports: [], local: [] };
   private readonly attachments = new Map<string, AcpWorkspaceRuntimeAttachment>();
 
-  constructor(private readonly connection: IAcpConnection) {}
+  constructor(
+    private readonly connection: IAcpConnection,
+    private readonly environment: IHostEnvironment,
+  ) {}
 
   static runtimeId(sessionId: string): string {
     return `acp:${sessionId}`;
   }
 
   async attach(workspace: RuntimeProviderContext, host: RuntimeProviderHost): Promise<RuntimeProviderAttachment> {
-    const attachment = new AcpWorkspaceRuntimeAttachment(workspace, host, this.connection);
+    const attachment = new AcpWorkspaceRuntimeAttachment(workspace, host, this.connection, this.environment);
     this.attachments.set(workspace.id, attachment);
     return {
       dispose: async () => {

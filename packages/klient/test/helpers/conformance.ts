@@ -109,6 +109,32 @@ export function defineKlientConformance(
       }
     });
 
+    it('session createChild tags child markers while fork stays untagged', async () => {
+      const parent = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance parent',
+      });
+      try {
+        const child = await target.klient.session(parent.id).createChild();
+        try {
+          expect(child.custom?.['parent_session_id']).toBe(parent.id);
+          expect(child.custom?.['child_session_kind']).toBe('child');
+          expect(child.title).toBe('Child: conformance parent');
+        } finally {
+          await target.klient.session(child.id).close();
+        }
+        const forked = await target.klient.session(parent.id).fork();
+        try {
+          expect(forked.custom?.['parent_session_id']).toBeUndefined();
+          expect(forked.custom?.['child_session_kind']).toBeUndefined();
+        } finally {
+          await target.klient.session(forked.id).close();
+        }
+      } finally {
+        await target.klient.session(parent.id).close();
+      }
+    });
+
     it('session skills.list returns the workspace skills as summaries', async () => {
       const workDir = await mkdtemp(join(tmpdir(), 'klient-conf-skills-'));
       try {

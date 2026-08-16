@@ -122,7 +122,7 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
   const read = (): Promise<SessionMeta> =>
     call(scope, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
   const spawn = async (
-    method: 'fork',
+    method: 'fork' | 'createChild',
     input: { title?: string; metadata?: Record<string, unknown> } = {},
   ): Promise<SessionMeta> => {
     const handle = (await call({}, 'sessionManager', method, [
@@ -174,7 +174,7 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
     },
     delete: () => call({}, 'sessionManager', 'delete', [sessionId]) as Promise<void>,
     fork: (input) => spawn('fork', input),
-    createChild: (input) => spawn('fork', input),
+    createChild: (input) => spawn('createChild', input),
 
     approvals: {
       list: () =>
