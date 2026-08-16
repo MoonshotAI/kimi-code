@@ -18,6 +18,10 @@ function text(component: SkillSelectorComponent, width = 120): string {
   return component.render(width).join('\n');
 }
 
+const ENTER = '\r';
+const ESC = '\x1b';
+const TAB = '\t';
+
 describe('SkillSelectorComponent', () => {
   const sshOps = makeSkill('cv_ssh-ops', {
     groups: ['cv', 'cv/ops'],
@@ -58,7 +62,7 @@ describe('SkillSelectorComponent', () => {
     });
 
     // Enter on 'cv'
-    selector.handleInput(Key.enter);
+    selector.handleInput(ENTER);
     let rendered = text(selector);
     expect(rendered).toContain('Skills › cv');
     expect(rendered).toContain('ops');
@@ -66,24 +70,24 @@ describe('SkillSelectorComponent', () => {
     expect(rendered).toContain('cv_semaphore-ops');
 
     // Enter on 'ops'
-    selector.handleInput(Key.enter);
+    selector.handleInput(ENTER);
     rendered = text(selector);
     expect(rendered).toContain('Skills › cv › ops');
     expect(rendered).toContain('semaphore');
     expect(rendered).toContain('cv_ssh-ops');
 
     // Escape back to 'cv'
-    selector.handleInput(Key.escape);
+    selector.handleInput(ESC);
     rendered = text(selector);
     expect(rendered).toContain('Skills › cv');
 
     // Escape back to root
-    selector.handleInput(Key.escape);
+    selector.handleInput(ESC);
     rendered = text(selector);
     expect(rendered).toContain('Select skill group');
 
     // Escape at root cancels
-    selector.handleInput(Key.escape);
+    selector.handleInput(ESC);
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
@@ -97,9 +101,9 @@ describe('SkillSelectorComponent', () => {
     });
 
     // Drill down: Root -> cv -> ops -> semaphore
-    selector.handleInput(Key.enter); // cv
-    selector.handleInput(Key.enter); // ops
-    selector.handleInput(Key.enter); // semaphore
+    selector.handleInput(ENTER); // cv
+    selector.handleInput(ENTER); // ops
+    selector.handleInput(ENTER); // semaphore
 
     const rendered = text(selector);
     expect(rendered).toContain('Skills › cv › ops › semaphore');
@@ -107,7 +111,7 @@ describe('SkillSelectorComponent', () => {
     expect(rendered).toContain('Semaphore operations');
 
     // Press Enter on cv_semaphore-ops
-    selector.handleInput(Key.enter);
+    selector.handleInput(ENTER);
     expect(onSelect).toHaveBeenCalledWith(semaphoreOps);
   });
 
@@ -131,5 +135,29 @@ describe('SkillSelectorComponent', () => {
     const rendered = text(selector);
     expect(rendered).toContain('Uncategorized');
     expect(rendered).not.toContain('  cv\n');
+  });
+
+  it('cycles through group items with Tab key', () => {
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const selector = new SkillSelectorComponent({
+      skills,
+      onSelect,
+      onCancel,
+    });
+
+    // Root items: cv/ and Uncategorized/
+    let rendered = text(selector);
+    expect(rendered).toContain('❯ cv/');
+
+    // Press Tab to cycle to next group (Uncategorized/)
+    selector.handleInput(TAB);
+    rendered = text(selector);
+    expect(rendered).toContain('❯ Uncategorized/');
+
+    // Press Tab again to wrap back to cv/
+    selector.handleInput(TAB);
+    rendered = text(selector);
+    expect(rendered).toContain('❯ cv/');
   });
 });

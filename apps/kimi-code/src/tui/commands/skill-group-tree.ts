@@ -118,40 +118,93 @@ export function findGroupNode(
   return undefined;
 }
 
+function cleanGroupPath(rawPath: string): string | undefined {
+  const segments = rawPath
+    .split('/')
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+  return segments.length > 0 ? segments.join('/') : undefined;
+}
+
 function resolveGroupPathsForSkill(
   skill: SkillSummary,
   skillRoots: readonly string[] = [],
 ): readonly string[] {
-  // Rule 1: groups metadata
+  const resultGroups: string[] = [];
+
+  // Rule 1: Explicit frontmatter `groups`
   if (Array.isArray(skill.groups) && skill.groups.length > 0) {
-    const validGroups: string[] = [];
     for (const rawGroup of skill.groups) {
       if (typeof rawGroup !== 'string') continue;
-      const segments = rawGroup.split('/').map((s) => s.trim()).filter((s) => s !== '');
-      if (segments.length > 0) {
-        const cleanPath = segments.join('/');
-        if (!validGroups.includes(cleanPath)) {
-          validGroups.push(cleanPath);
-        }
+      const cleanPath = cleanGroupPath(rawGroup);
+      if (cleanPath !== undefined && !resultGroups.includes(cleanPath)) {
+        resultGroups.push(cleanPath);
       }
     }
-    if (validGroups.length > 0) return validGroups;
   }
 
-  // Rule 2: category metadata
+  // Rule 2: Explicit `category` or `categories`
+  const categoryCandidates: string[] = [];
   if (typeof skill.category === 'string' && skill.category.trim() !== '') {
-    const cat = skill.category.trim();
-    return [cat];
+    categoryCandidates.push(skill.category.trim());
+  }
+  if (Array.isArray(skill.categories)) {
+    for (const cat of skill.categories) {
+      if (typeof cat === 'string' && cat.trim() !== '') {
+        categoryCandidates.push(cat.trim());
+      }
+    }
+  }
+  for (const cat of categoryCandidates) {
+    const clean = cleanGroupPath(cat);
+    if (clean !== undefined && !resultGroups.includes(clean)) {
+      resultGroups.push(clean);
+    }
   }
 
-  // Rule 3: relative parent folder
+  // Rule 3: `tags` frontmatter field
+  if (Array.isArray(skill.tags) && skill.tags.length > 0) {
+    for (const tag of skill.tags) {
+      if (typeof tag !== 'string') continue;
+      const clean = cleanGroupPath(tag);
+      if (clean !== undefined && !resultGroups.includes(clean)) {
+        resultGroups.push(clean);
+      }
+    }
+  }
+
+  // Rule 4: Relative parent folder derivation
   const folderFallback = deriveFolderGroup(skill.path, skillRoots, skill.name);
   if (folderFallback !== undefined) {
-    return [folderFallback];
+    const clean = cleanGroupPath(folderFallback);
+    if (clean !== undefined && !resultGroups.includes(clean)) {
+      resultGroups.push(clean);
+    }
   }
 
-  // Rule 4: Uncategorized
-  return ['Uncategorized'];
+  // Rule 5: Hyphenated or underscore skill name namespace prefix fallback
+  if (resultGroups.length === 0 && skill.name) {
+    const namespaceGroup = deriveNamespaceGroup(skill.name);
+    if (namespaceGroup !== undefined) {
+      resultGroups.push(namespaceGroup);
+    }
+  }
+
+  // Rule 6: Final fallback to Uncategorized
+  if (resultGroups.length === 0) {
+    return ['Uncategorized'];
+  }
+
+  return resultGroups;
+}
+
+function deriveNamespaceGroup(skillName: string): string | undefined {
+  if (!skillName) return undefined;
+  const parts = skillName.split('_').map((p) => p.trim()).filter((p) => p !== '');
+  if (parts.length >= 2 && parts[0] !== undefined && parts[0].length > 0) {
+    return parts[0];
+  }
+  return undefined;
 }
 
 function deriveFolderGroup(

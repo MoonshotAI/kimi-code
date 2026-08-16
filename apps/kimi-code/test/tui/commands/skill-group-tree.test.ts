@@ -92,6 +92,21 @@ describe('skill-group-tree', () => {
     expect(uncatNode?.skills.map((s) => s.name)).toEqual(['flat-skill']);
   });
 
+  it('derives groups from tags and underscore skill name namespace fallback', () => {
+    const taggedSkill = makeSkill('custom-tool', { tags: ['security', 'audit'] });
+    const winPrivEsc = makeSkill('windows_privilege_escalation', { path: '/SKILL.md' });
+
+    const root = buildSkillGroupTree([taggedSkill, winPrivEsc]);
+
+    const secNode = findGroupNode(root, 'security');
+    expect(secNode).toBeDefined();
+    expect(secNode?.skills.map((s) => s.name)).toEqual(['custom-tool']);
+
+    const winNode = findGroupNode(root, 'windows');
+    expect(winNode).toBeDefined();
+    expect(winNode?.skills.map((s) => s.name)).toEqual(['windows_privilege_escalation']);
+  });
+
   it('preserves deterministic alphabetical ordering of groups and skills', () => {
     const bSkill = makeSkill('b_skill', { category: 'ops' });
     const aSkill = makeSkill('a_skill', { category: 'ops' });

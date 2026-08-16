@@ -310,6 +310,7 @@ export interface SkillSummary {
   readonly disableModelInvocation?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;
   readonly category?: string | undefined;
+  readonly categories?: readonly string[] | undefined;
   readonly issuer?: string | undefined;
   readonly collection?: string | undefined;
   readonly groups?: readonly string[] | undefined;
