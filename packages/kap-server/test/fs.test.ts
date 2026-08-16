@@ -6,7 +6,7 @@ import { IModelCatalog, IWorkspaceInstanceManager } from '@moonshot-ai/agent-cor
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
 import { ErrorCode } from '../src/protocol/error-codes';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -406,6 +406,27 @@ describe('server-v2 /api/v1 fs routes', () => {
     } as never);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('compat-download');
+  });
+
+  it('GET fs/{path}:download untracks the stream from the runtime generation after completion', async () => {
+    await writeFile(join(work!, 'c.txt'), 'tracked-download');
+    const id = await createSession();
+    const instance = server!.core.accessor.get(IWorkspaceInstanceManager).findByRoot(work!);
+    expect(instance).toBeDefined();
+    const generations = (instance!.runtimes as unknown as {
+      currentGenerations: Map<string, { resources: Set<unknown> }>;
+    }).currentGenerations;
+    const resources = generations.get('local')!.resources;
+    const baseline = resources.size;
+
+    for (let i = 0; i < 2; i += 1) {
+      const res = await fetch(`${base}/api/v1/sessions/${id}/fs/c.txt:download?runtime_id=local`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('tracked-download');
+      await vi.waitFor(() => expect(resources.size).toBe(baseline));
+    }
   });
 
   // -------------------------------------------------------------------------

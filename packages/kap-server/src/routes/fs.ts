@@ -592,11 +592,12 @@ function createRuntimeReadStream(
     }
   }
   const stream = Readable.from(chunks());
-  runtimeFs.lease.track({ dispose: () => { stream.destroy(); } });
+  const tracked = runtimeFs.lease.track({ dispose: () => { stream.destroy(); } });
   let released = false;
   const release = (): void => {
     if (released) return;
     released = true;
+    void tracked.dispose();
     runtimeFs.lease.dispose();
   };
   stream.once('end', release);
