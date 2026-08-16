@@ -716,6 +716,26 @@ describe('FileMentionProvider', () => {
       expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
     });
 
+    it('offers inline skills on an indented later line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['first line', '  /skill:rev'], 1, 12, {
+        signal: ctrl(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/skill:rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('offers inline skills for an indented token on the first line', async () => {
+      const provider = skillProvider();
+      const result = await provider.getSuggestions(['  /skill:rev'], 0, 12, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      expect(result!.prefix).toBe('/skill:rev');
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
     it('does not leak built-in commands onto later lines', async () => {
       const provider = skillProvider();
       const result = await provider.getSuggestions(['first line', '/hel'], 1, 4, {

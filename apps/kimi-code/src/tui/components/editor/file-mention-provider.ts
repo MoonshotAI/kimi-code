@@ -103,15 +103,20 @@ export class FileMentionProvider implements AutocompleteProvider {
       }
     }
 
-    if (shouldSuppressLeadingWhitespaceSlashPath(textBeforeCursor, options.force)) {
-      return null;
-    }
-
     // An inline skill token the cursor is still on stays eligible for skill
     // selection even when the input begins with a slash command and has text
     // after the cursor — the argument suppression below guards the command's
-    // own arguments, not an inline skill the user inserts mid-text.
+    // own arguments, not an inline skill the user inserts mid-text. Computed
+    // before the leading-whitespace suppression: an indented inline token
+    // (`  /skill:rev`) is a skill reference, not a path to suppress.
     const inlineSkillPrefix = extractInlineSkillPrefix(textBeforeCursor, cursorLine);
+
+    if (
+      inlineSkillPrefix === null &&
+      shouldSuppressLeadingWhitespaceSlashPath(textBeforeCursor, options.force)
+    ) {
+      return null;
+    }
 
     // A `/` at the start of a later line is an inline skill reference, not a
     // start-of-message slash command: offer the skill-only picker there.

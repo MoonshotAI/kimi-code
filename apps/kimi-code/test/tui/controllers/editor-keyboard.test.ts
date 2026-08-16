@@ -584,6 +584,54 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     expect(updateQueueDisplay).toHaveBeenCalled();
   });
 
+  it('stops steering at the first bundle so later messages keep FIFO order', () => {
+    const { host, steerMessage, onCtrlS } = createCtrlSHarness({
+      editorText: '',
+      queued: [
+        { text: 'earlier note', agentId: 'main' },
+        {
+          text: 'check /skill:review',
+          agentId: 'main',
+          inlineSkillActivations: [{ skillName: 'review' }],
+        },
+        { text: 'later note', agentId: 'main' },
+      ],
+    });
+
+    onCtrlS();
+
+    expect(steerMessage).toHaveBeenCalledWith(host.session, [
+      { text: 'earlier note', parts: undefined, imageAttachmentIds: undefined },
+    ]);
+    expect(host.state.queuedMessages).toEqual([
+      {
+        text: 'check /skill:review',
+        agentId: 'main',
+        inlineSkillActivations: [{ skillName: 'review' }],
+      },
+      { text: 'later note', agentId: 'main' },
+    ]);
+  });
+
+  it('steers nothing when a bundle leads the queue', () => {
+    const { host, steerMessage, onCtrlS } = createCtrlSHarness({
+      editorText: '',
+      queued: [
+        {
+          text: 'check /skill:review',
+          agentId: 'main',
+          inlineSkillActivations: [{ skillName: 'review' }],
+        },
+        { text: 'later note', agentId: 'main' },
+      ],
+    });
+
+    onCtrlS();
+
+    expect(steerMessage).not.toHaveBeenCalled();
+    expect(host.state.queuedMessages).toHaveLength(2);
+  });
+
   it('leaves an editor draft with inline skill tokens in the editor for the grouped path', () => {
     const { host, setText, steerMessage, onCtrlS } = createCtrlSHarness({
       editorText: 'check /skill:review',

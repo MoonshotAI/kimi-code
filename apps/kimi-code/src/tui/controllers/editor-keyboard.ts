@@ -297,13 +297,16 @@ export class EditorKeyboardController {
       // after the current task. Grouped inline-skill submissions are not
       // steerable either — steer carries no skill activations, so they stay
       // queued and submit intact when the session drains; the same applies to
-      // an editor draft carrying inline skill tokens. Everything else steers
-      // in queue order — plain text as a steered message, slash-skill items
-      // as activations fired into the running turn (never as literal text).
+      // an editor draft carrying inline skill tokens. Steering stops at the
+      // first such bundle: items behind it stay queued too, or a later
+      // message would jump ahead of its bundle and reverse the conversational
+      // order. Everything else steers in queue order — plain text as a
+      // steered message, slash-skill items as activations fired into the
+      // running turn (never as literal text).
       const queued = host.state.queuedMessages;
-      const steerable = queued.filter(
-        (m) => m.mode !== 'bash' && m.inlineSkillActivations === undefined,
-      );
+      const firstBundle = queued.findIndex((m) => m.inlineSkillActivations !== undefined);
+      const windowBeforeFirstBundle = firstBundle === -1 ? queued : queued.slice(0, firstBundle);
+      const steerable = windowBeforeFirstBundle.filter((m) => m.mode !== 'bash');
       const editorHasInlineSkills =
         !editorIsBash &&
         text.length > 0 &&
@@ -335,7 +338,7 @@ export class EditorKeyboardController {
         }
       }
       let editorExtraction: ReturnType<typeof extractMediaAttachments> | undefined;
-      if (!editorIsBash && text.length > 0 && !editorHasInlineSkills) {
+      if (!editorIsBash && text.length > 0 && !editorHasInlineSkills && firstBundle === -1) {
         try {
           editorExtraction = extractMediaAttachments(text, this.imageStore);
         } catch (error) {
@@ -366,9 +369,9 @@ export class EditorKeyboardController {
           return;
         }
         host.state.queuedMessages = queued.filter(
-          (m) => m.mode === 'bash' || m.inlineSkillActivations !== undefined,
+          (m, index) => m.mode === 'bash' || (firstBundle !== -1 && index >= firstBundle),
         );
-        if (!editorIsBash && !editorHasInlineSkills) editor.setText('');
+        if (!editorIsBash && !editorHasInlineSkills && firstBundle === -1) editor.setText('');
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
           host.showError(LLM_NOT_SET_MESSAGE);
