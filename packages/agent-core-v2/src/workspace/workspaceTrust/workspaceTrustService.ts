@@ -4,8 +4,9 @@
  * Persists the trust marker through the `persistence` domain's
  * `IAtomicDocumentStore` under the `workspace-trust` scope, one document per
  * workspace keyed by `encodeWorkDirKey(root)`, with the raw root kept in the
- * value for inspection. The document's presence IS the trusted state: `trust()`
- * writes it, `untrust()` deletes it. The record lives under the kimi home,
+ * value for inspection. A document for this root or an ancestor grants trust:
+ * `trust()` writes this root's document, `untrust()` deletes it. The record
+ * lives under the kimi home,
  * never inside the workspace, so a checked-out tree cannot pre-trust
  * itself. The flag is read once through `ready` and every later mutation
  * goes through this service, so the view is in-process: another process
@@ -15,6 +16,8 @@
  * `workspaceState` (`IWorkspaceStateService`) and read/written through it.
  * Bound at Workspace scope.
  */
+
+import { dirname, normalize } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
@@ -96,7 +99,22 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
 
   private async initialize(): Promise<void> {
     try {
-      this.trusted = (await this.docs.get<TrustRecord>(TRUST_SCOPE, this.storeKey)) !== undefined;
+      if ((await this.docs.get<TrustRecord>(TRUST_SCOPE, this.storeKey)) !== undefined) {
+        this.trusted = true;
+        return;
+      }
+
+      let current = dirname(normalize(this.root));
+      while (true) {
+        if ((await this.docs.get<TrustRecord>(TRUST_SCOPE, encodeWorkDirKey(current))) !== undefined) {
+          this.trusted = true;
+          return;
+        }
+        const parent = dirname(current);
+        if (parent === current) break;
+        current = parent;
+      }
+      this.trusted = false;
     } catch {
       this.trusted = false;
     }
