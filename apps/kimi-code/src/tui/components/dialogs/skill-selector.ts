@@ -94,7 +94,44 @@ export class SkillSelectorComponent extends Container implements Focusable {
     });
   }
 
+  private cycleGroupSelection(isShift: boolean): void {
+    const view = this.list.view();
+    const items = view.items;
+    if (items.length === 0) return;
+
+    const groupIndices: number[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i]?.kind === 'group') {
+        groupIndices.push(i);
+      }
+    }
+
+    if (groupIndices.length === 0) return;
+
+    const currentIndex = view.selectedIndex;
+    let targetIndex: number;
+
+    const k = groupIndices.indexOf(currentIndex);
+    if (k >= 0) {
+      if (isShift) {
+        targetIndex = groupIndices[(k - 1 + groupIndices.length) % groupIndices.length] ?? 0;
+      } else {
+        targetIndex = groupIndices[(k + 1) % groupIndices.length] ?? 0;
+      }
+    } else {
+      targetIndex = isShift ? (groupIndices[groupIndices.length - 1] ?? 0) : (groupIndices[0] ?? 0);
+    }
+
+    this.list.setSelectedIndex(targetIndex);
+  }
+
   handleInput(data: string): void {
+    if (matchesKey(data, Key.tab) || matchesKey(data, Key.shift('tab'))) {
+      const isShift = matchesKey(data, Key.shift('tab'));
+      this.cycleGroupSelection(isShift);
+      return;
+    }
+
     if (matchesKey(data, Key.escape)) {
       if (this.list.clearQuery()) return;
       if (this.currentGroupPath !== '') {
@@ -141,7 +178,7 @@ export class SkillSelectorComponent extends Container implements Focusable {
         ? currentTheme.fg('textMuted', '  (type to search)')
         : '';
 
-    const hintParts = ['↑↓ navigate'];
+    const hintParts = ['↑↓ navigate', 'Tab jump groups'];
     if (view.page.pageCount > 1) hintParts.push('←→ page');
     hintParts.push('Enter select', 'Esc back/cancel');
 

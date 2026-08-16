@@ -100,6 +100,15 @@ export class SearchableList<T> {
     this.cursor = Math.min(Math.max(0, this.filtered().length - 1), this.cursor + this.pageSize);
   }
 
+  setSelectedIndex(index: number): void {
+    const len = this.filtered().length;
+    if (len === 0) {
+      this.cursor = 0;
+      return;
+    }
+    this.cursor = Math.max(0, Math.min(index, len - 1));
+  }
+
   /** Clears the active query and resets the cursor. Returns whether a query was cleared. */
   clearQuery(): boolean {
     if (this.query.length === 0) return false;
