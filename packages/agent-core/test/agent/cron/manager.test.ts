@@ -96,6 +96,7 @@ describe('CronManager', () => {
       expect(r).toMatchObject({
         id: recurring.id,
         cron: '*/5 * * * *',
+        prompt: 'recurring job',
         recurring: true,
         createdAt: recurring.createdAt,
       });

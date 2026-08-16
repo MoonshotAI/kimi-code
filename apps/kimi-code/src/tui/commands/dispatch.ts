@@ -22,6 +22,7 @@ import { formatErrorMessage } from '../utils/event-payload';
 import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
 import { handleCopyCommand } from './copy';
+import { handleCronCommand } from './cron';
 import {
   handleAutoCommand,
   handleCompactCommand,
@@ -418,6 +419,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'tasks':
       void host.tasksBrowserController.show();
+      return;
+    case 'cron':
+      await handleCronCommand(host);
       return;
     case 'mcp':
       void showMcpServers(host);

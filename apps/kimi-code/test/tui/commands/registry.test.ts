@@ -152,6 +152,7 @@ describe('built-in slash command registry', () => {
         'add-dir',
         'compact',
         'btw',
+        'cron',
         'editor',
         'exit',
         'export-debug-zip',
