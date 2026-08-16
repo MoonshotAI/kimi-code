@@ -16,6 +16,7 @@ import type { CronTaskSnapshot } from '@moonshot-ai/kimi-code-sdk';
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
+import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 const PROMPT_PREVIEW_LENGTH = 60;
@@ -34,7 +35,7 @@ function formatNextFire(nextFireAt: number | null): string {
 }
 
 function promptPreview(prompt: string): string {
-  const flat = prompt.replaceAll(/\s+/g, ' ').trim();
+  const flat = sanitizeShellOutput(prompt).replaceAll(/\s+/g, ' ').trim();
   return flat.length > PROMPT_PREVIEW_LENGTH ? `${flat.slice(0, PROMPT_PREVIEW_LENGTH)}…` : flat;
 }
 

@@ -103,4 +103,19 @@ describe('CronSelectorComponent', () => {
 
     expect(lines.some((l) => l.includes('No scheduled cron tasks'))).toBe(true);
   });
+
+  it('strips terminal control sequences from the prompt preview', () => {
+    const malicious = 'check reviews \u001B[2J\u001B[?25l also \u001B]8;;https://evil.example\u0007click\u001B]8;;\u0007 and bell\u0007';
+    const { component } = makeSelector([task({ prompt: malicious })]);
+    const raw = component.render(100).join('\n');
+
+    // Only the component's own theme styling may carry ESC bytes; the prompt
+    // text must contribute none of its control content.
+    const lines = component.render(100).map(strip);
+    expect(lines.some((l) => l.includes('check reviews'))).toBe(true);
+    expect(raw).not.toContain('[2J');
+    expect(raw).not.toContain('[?25l');
+    expect(raw).not.toContain(']8;');
+    expect(lines.some((l) => l.includes('evil.example'))).toBe(false);
+  });
 });
