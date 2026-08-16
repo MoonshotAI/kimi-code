@@ -32,6 +32,7 @@ import type {
 import { z } from 'zod';
 
 import { KimiError } from '../../src/errors';
+import { StdioMcpClient } from '../../src/mcp/client-stdio';
 import { ProviderManager } from '../../src/session/provider-manager';
 import {
   MCP_STARTUP_TIMEOUT_ENV,
@@ -203,6 +204,54 @@ describe('McpConnectionManager', () => {
       expect(statuses).toEqual(['pending', 'connected']);
     } finally {
       await cm.shutdown();
+    }
+  }, 15000);
+
+  it('reconnect reports pending while the previous client is still closing', async () => {
+    const cm = new McpConnectionManager();
+    let releaseClose!: () => void;
+    let reportCloseStarted!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    const closeStarted = new Promise<void>((resolve) => {
+      reportCloseStarted = resolve;
+    });
+    const originalClose = StdioMcpClient.prototype.close;
+    const closeSpy = vi
+      .spyOn(StdioMcpClient.prototype, 'close')
+      .mockImplementation(async function (this: StdioMcpClient) {
+        reportCloseStarted();
+        await closeGate;
+        await originalClose.call(this);
+      });
+    const seen: Array<[McpServerEntry['status'], number, string | undefined]> = [];
+    let reconnect: Promise<void> | undefined;
+
+    try {
+      await cm.connectAll({ alpha: stdioConfig() });
+      cm.onStatusChange((entry) => {
+        seen.push([entry.status, entry.toolCount, entry.error]);
+      });
+
+      reconnect = cm.reconnect('alpha');
+      await closeStarted;
+
+      expect(cm.get('alpha')).toMatchObject({
+        status: 'pending',
+        toolCount: 0,
+        error: undefined,
+      });
+      expect(cm.resolved('alpha')).toBeUndefined();
+      expect(seen).toEqual([['pending', 0, undefined]]);
+    } finally {
+      releaseClose();
+      await reconnect?.catch(() => undefined);
+      try {
+        await cm.shutdown();
+      } finally {
+        closeSpy.mockRestore();
+      }
     }
   }, 15000);
 
