@@ -192,13 +192,13 @@ export class RuntimeRegistry {
       runtime: generation.runtime,
       track: <T extends RuntimeResource>(resource: T): T => {
         if (!active || generation.draining) throw new RuntimeError('runtime.unavailable', `runtime ${binding.runtimeId} is draining`);
-        const originalDispose = resource.dispose;
+        const originalDispose = resource.dispose.bind(resource);
         let disposed = false;
-        resource.dispose = function (this: unknown) {
+        resource.dispose = function () {
           if (disposed) return;
           disposed = true;
           generation.resources.delete(resource);
-          return originalDispose.call(this);
+          return originalDispose();
         } as T['dispose'];
         generation.resources.add(resource);
         return resource;

@@ -211,7 +211,7 @@ export class FsWatchBridge {
   dispose(): void {
     for (const subscription of this.registrySubscriptions.values()) subscription.dispose();
     this.registrySubscriptions.clear();
-    for (const sw of [...this.bySession.values()]) this.teardownSession(sw);
+    for (const sw of this.bySession.values()) this.teardownSession(sw);
   }
 
   private async resolveSession(sessionId: string, runtimeId: string): Promise<SessionWatch | undefined> {
@@ -323,7 +323,7 @@ export class FsWatchBridge {
     const workspace = this.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
     if (workspace === undefined) return;
     const subscription = workspace.runtimes.onDidChange((change) => {
-      for (const sw of [...this.bySession.values()]) {
+      for (const sw of this.bySession.values()) {
         if (sw.workspaceId !== workspaceId || sw.runtimeId !== change.runtimeId) continue;
         void this.refreshIfStale(sw);
       }
