@@ -316,14 +316,18 @@ describe('WorkspaceMcpService', () => {
   }, 20000);
 
   describe('session overlay activation (onWillCreateSession)', () => {
-    function willCreateEvent(servers: Record<string, McpServerConfig>, sessionCwd: string) {
+    function willCreateEvent(
+      servers: Record<string, McpServerConfig>,
+      sessionCwd: string,
+      workspaceId = 'test-workspace',
+    ) {
       const seeds = new Map<unknown, unknown>([
         [ISessionEphemeralMcpServers, servers],
         [
           ISessionContext,
           makeSessionContext({
             sessionId: 's1',
-            workspaceId: 'ws',
+            workspaceId,
             sessionDir: join(cwd, 's1'),
             sessionScope: 'ws/s1',
             cwd: sessionCwd,
@@ -380,6 +384,24 @@ describe('WorkspaceMcpService', () => {
 
       const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
       const { event, contributed, disposers } = willCreateEvent({}, cwd);
+      assemblyEvents.fire(event);
+
+      expect(sessionOverlay).not.toHaveBeenCalled();
+      expect(contributed.size).toBe(0);
+      expect(disposers).toHaveLength(0);
+    });
+
+    it('ignores a will-create event of a session belonging to another workspace', async () => {
+      const service = createService();
+      manager = service.connectionManager();
+      await service.ready;
+
+      const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
+      const { event, contributed, disposers } = willCreateEvent(
+        { eph: stdioServer() },
+        cwd,
+        'other-workspace',
+      );
       assemblyEvents.fire(event);
 
       expect(sessionOverlay).not.toHaveBeenCalled();

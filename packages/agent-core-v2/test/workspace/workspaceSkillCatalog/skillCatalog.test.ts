@@ -989,6 +989,70 @@ describe('WorkspaceSkillCatalogService', () => {
     }
   });
 
+  it('reloadSources re-pulls named sources and fires only their ids', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setUserSkills([stubSkill('user-skill', { description: 'v1' })]);
+    store.setExtraSkills([stubSkill('extra-skill', { description: 'v1', source: 'extra' })]);
+    store.setPluginSkills([
+      stubSkill('demo-skill', { source: 'extra', plugin: { id: 'demo' } }),
+    ]);
+    store.setProjectSkills([stubSkill('project-skill')]);
+    const pluginRoot: SkillRoot = {
+      path: '/plugins/demo/skills',
+      source: 'extra',
+      plugin: { id: 'demo' },
+    };
+    const ws = workspaceContextStub('/work');
+    const { host, workspace, config } = makeHost(store, ws, [pluginRoot], ['/explicit']);
+    config.setExtraSkillDirs(['/']);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.getSkill('user-skill')?.description).toBe('v1');
+      expect(catalog.catalog.getSkill('extra-skill')?.description).toBe('v1');
+      expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeDefined();
+      expect(catalog.catalog.getSkill('project-skill')).toBeDefined();
+
+      store.setUserSkills([stubSkill('user-skill', { description: 'v2' })]);
+      store.setExtraSkills([stubSkill('extra-skill', { description: 'v2', source: 'extra' })]);
+      store.setPluginSkills([]);
+
+      const fired: string[] = [];
+      const sub = catalog.onDidChange((id) => fired.push(id));
+      await catalog.reloadSources(['user', 'explicit', 'extra', 'plugin']);
+      sub.dispose();
+
+      expect([...fired].sort()).toEqual(['explicit', 'extra', 'plugin', 'user']);
+      expect(catalog.catalog.getSkill('user-skill')?.description).toBe('v2');
+      expect(catalog.catalog.getSkill('extra-skill')?.description).toBe('v2');
+      expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeUndefined();
+      expect(catalog.catalog.getSkill('project-skill')).toBeDefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('reloadSources ignores unknown source ids', async () => {
+    const store = new InMemorySkillDiscovery();
+    const ws = workspaceContextStub('/work');
+    const { host, workspace } = makeHost(store, ws);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+
+      const fired: string[] = [];
+      const sub = catalog.onDidChange((id) => fired.push(id));
+      await catalog.reloadSources(['nope']);
+      sub.dispose();
+
+      expect(fired).toEqual([]);
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('rescans when a skill under a dot directory appears on disk', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-dot-'));
     const host = createScopedTestHost([

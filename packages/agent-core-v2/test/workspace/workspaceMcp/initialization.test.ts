@@ -40,10 +40,6 @@ import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext
 import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
-import {
-  ISessionLifecycleService,
-  type SessionWillCreateEvent,
-} from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
@@ -116,9 +112,6 @@ describe('Workspace MCP initialization', () => {
           onDidChange: Event.None as IWorkspaceTrust['onDidChange'],
         });
         reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);
-        reg.definePartialInstance(ISessionLifecycleService, {
-          onWillCreateSession: Event.None as Event<SessionWillCreateEvent>,
-        });
         registerAgentIdentityStub(reg);
         reg.define(IWorkspaceMcpService, WorkspaceMcpService);
       },

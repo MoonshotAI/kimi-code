@@ -137,6 +137,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     this.sessionLifecycleAttached = true;
     this._register(
       lifecycle.onWillCreateSession((event) => {
+        if (event.readSeed(ISessionContext).workspaceId !== this.workspaceId) return;
         const servers = event.readSeed(ISessionEphemeralMcpServers);
         if (Object.keys(servers).length === 0) return;
         const overlay = this.sessionOverlay(servers, {

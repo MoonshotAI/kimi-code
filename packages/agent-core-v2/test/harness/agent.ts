@@ -179,11 +179,11 @@ import {
   type ServiceIdentifier,
 } from '#/index';
 import {
-  ISessionLifecycleService,
   type SessionCreatedEvent,
   type SessionWillCloseEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IEventBus } from '#/app/event/eventBus';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
 import { promptTurn } from '#/agent/loop/turnOps';
@@ -1214,7 +1214,7 @@ export class AgentTestContext {
               scope: (subKey?: string): string =>
                 subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
             });
-            reg.definePartialInstance(ISessionLifecycleService, {
+            reg.definePartialInstance(ISessionManager, {
               onDidCreateSession: Event.None as Event<SessionCreatedEvent & IWaitUntil>,
               onWillCloseSession: Event.None as Event<SessionWillCloseEvent & IWaitUntil>,
             });
