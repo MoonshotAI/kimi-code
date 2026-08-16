@@ -4,14 +4,13 @@
  * Persists the trust marker through the `persistence` domain's
  * `IAtomicDocumentStore` under the `workspace-trust` scope, one document per
  * workspace keyed by `encodeWorkDirKey(root)`, with the raw root kept in the
- * value for inspection. A document for this root or an ancestor grants trust:
- * `trust()` writes this root's document, `untrust()` deletes it. The record
- * lives under the kimi home,
+ * value for inspection. The nearest document for this root or an ancestor
+ * decides trust; legacy documents without `trusted` remain trusted. `trust()`
+ * writes an allow record and `untrust()` writes a deny record for this root.
+ * The record lives under the kimi home,
  * never inside the workspace, so a checked-out tree cannot pre-trust
- * itself. The flag is read once through `ready` and every later mutation
- * goes through this service, so the view is in-process: another process
- * flipping the same record is picked up only on restart (a `docs.watch`
- * sync can join when a second writer exists). A read failure resolves to
+ * itself. The flag is read through `ready`, watches every ancestor record, and
+ * every later mutation goes through this service. A read failure resolves to
  * untrusted. The plain-data state (`trusted`) is registered into
  * `workspaceState` (`IWorkspaceStateService`) and read/written through it.
  * Bound at Workspace scope.
@@ -33,7 +32,9 @@ const TRUST_SCOPE = 'workspace-trust';
 
 interface TrustRecord {
   readonly root: string;
-  readonly trustedAt: number;
+  readonly trusted?: boolean;
+  readonly trustedAt?: number;
+  readonly untrustedAt?: number;
 }
 
 export const workspaceTrustTrustedKey = defineState<boolean>(
@@ -60,6 +61,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     this.states.register(workspaceTrustTrustedKey);
     this.root = workspace.cwd;
     this.storeKey = encodeWorkDirKey(workspace.cwd);
+    this.watchTrustRecords();
     this.ready = this.initialize();
   }
 
@@ -84,40 +86,71 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     if (this.trusted) return;
     await this.docs.set(TRUST_SCOPE, this.storeKey, {
       root: this.root,
+      trusted: true,
       trustedAt: Date.now(),
     });
-    this.trusted = true;
-    this.changeEmitter.fire({ trusted: true });
+    this.updateTrusted(true);
   }
 
   async untrust(): Promise<void> {
     if (!this.trusted) return;
-    await this.docs.delete(TRUST_SCOPE, this.storeKey);
-    this.trusted = false;
-    this.changeEmitter.fire({ trusted: false });
+    await this.docs.set(TRUST_SCOPE, this.storeKey, {
+      root: this.root,
+      trusted: false,
+      untrustedAt: Date.now(),
+    });
+    this.updateTrusted(false);
   }
 
   private async initialize(): Promise<void> {
     try {
-      if ((await this.docs.get<TrustRecord>(TRUST_SCOPE, this.storeKey)) !== undefined) {
-        this.trusted = true;
-        return;
-      }
-
-      let current = dirname(normalize(this.root));
-      while (true) {
-        if ((await this.docs.get<TrustRecord>(TRUST_SCOPE, encodeWorkDirKey(current))) !== undefined) {
-          this.trusted = true;
-          return;
-        }
-        const parent = dirname(current);
-        if (parent === current) break;
-        current = parent;
-      }
-      this.trusted = false;
+      this.trusted = await this.readTrusted();
     } catch {
       this.trusted = false;
     }
+  }
+
+  private async refresh(): Promise<void> {
+    try {
+      this.updateTrusted(await this.readTrusted());
+    } catch {
+      this.updateTrusted(false);
+    }
+  }
+
+  private async readTrusted(): Promise<boolean> {
+    for (const key of this.trustRecordKeys()) {
+      const record = await this.docs.get<TrustRecord>(TRUST_SCOPE, key);
+      if (record !== undefined) return record.trusted !== false;
+    }
+    return false;
+  }
+
+  private watchTrustRecords(): void {
+    for (const key of this.trustRecordKeys()) {
+      this._register(
+        this.docs.watch(TRUST_SCOPE, key)(() => {
+          void this.refresh();
+        }),
+      );
+    }
+  }
+
+  private trustRecordKeys(): readonly string[] {
+    const keys = [this.storeKey];
+    let current = dirname(normalize(this.root));
+    while (true) {
+      keys.push(encodeWorkDirKey(current));
+      const parent = dirname(current);
+      if (parent === current) return keys;
+      current = parent;
+    }
+  }
+
+  private updateTrusted(value: boolean): void {
+    if (this.trusted === value) return;
+    this.trusted = value;
+    this.changeEmitter.fire({ trusted: value });
   }
 }
 
