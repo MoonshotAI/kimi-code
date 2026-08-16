@@ -26,6 +26,19 @@ export interface StdioMcpClientOptions {
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
+const NODE_LAUNCHERS = new Set([
+  'corepack',
+  'node',
+  'nodejs',
+  'npm',
+  'npx',
+  'pnpm',
+  'pnpx',
+  'ts-node',
+  'tsx',
+  'yarn',
+  'yarnpkg',
+]);
 
 /**
  * Wraps the `@modelcontextprotocol/sdk` stdio client and exposes the small
@@ -65,7 +78,7 @@ export class StdioMcpClient implements MCPClient {
     this.transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: mergeStdioEnv(config.env),
+      env: mergeStdioEnv(config.command, config.env),
       cwd: resolveStdioCwd(config.cwd, options.defaultCwd),
       stderr: 'pipe',
     });
@@ -251,9 +264,13 @@ function isWindowsAbsolutePath(value: string): boolean {
 // loopback-protected `NO_PROXY`) to make it honor the proxy natively (on a Node
 // version that supports the flag — ≥22.21 or ≥24.5). It is computed from the
 // MERGED env so a proxy declared only in `config.env` is honored too.
-// `reconcileChildNoProxy` then mirrors a single-casing `NO_PROXY` override onto
-// both casings so it isn't shadowed by the injected value.
+// Known Node launchers keep the bracketed IPv6 loopback that Node requires;
+// other launchers get the portable bare form so Python httpx does not reject
+// the environment. `reconcileChildNoProxy` then mirrors a single-casing
+// `NO_PROXY` override onto both casings so it isn't shadowed by the injected
+// value and preserves an explicit `[::1]` for unknown wrapper commands.
 export function mergeStdioEnv(
+  command: string,
   configEnv?: Record<string, string>,
   parentEnv: Readonly<Record<string, string | undefined>> = process.env,
 ): Record<string, string> {
@@ -262,7 +279,20 @@ export function mergeStdioEnv(
     if (value !== undefined) merged[key] = value;
   }
   if (configEnv !== undefined) Object.assign(merged, configEnv);
-  Object.assign(merged, proxyEnvForChild(merged));
-  reconcileChildNoProxy(merged, configEnv);
+  const includeBracketedIpv6Loopback = isNodeLauncher(command);
+  Object.assign(merged, proxyEnvForChild(merged, includeBracketedIpv6Loopback));
+  reconcileChildNoProxy(merged, configEnv, includeBracketedIpv6Loopback);
   return merged;
+}
+
+function isNodeLauncher(command: string): boolean {
+  const executable = command
+    .split(/[\\/]/)
+    .at(-1)
+    ?.toLowerCase()
+    .replace(/\.(?:bat|cmd|exe|ps1)$/, '');
+  return (
+    executable !== undefined &&
+    NODE_LAUNCHERS.has(executable)
+  );
 }

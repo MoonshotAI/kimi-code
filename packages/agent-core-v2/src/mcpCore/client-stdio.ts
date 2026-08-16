@@ -30,6 +30,19 @@ export interface StdioMcpClientOptions {
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
+const NODE_LAUNCHERS = new Set([
+  'corepack',
+  'node',
+  'nodejs',
+  'npm',
+  'npx',
+  'pnpm',
+  'pnpx',
+  'ts-node',
+  'tsx',
+  'yarn',
+  'yarnpkg',
+]);
 
 export class StdioMcpClient implements MCPClient {
   private readonly client: Client;
@@ -54,7 +67,7 @@ export class StdioMcpClient implements MCPClient {
     this.transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: mergeStdioEnv(config.env),
+      env: mergeStdioEnv(config.command, config.env),
       cwd: resolveStdioCwd(config.cwd, options.defaultCwd),
       stderr: 'pipe',
     });
@@ -186,6 +199,7 @@ function resolveStdioCwd(configCwd: string | undefined, defaultCwd: string | und
 }
 
 export function mergeStdioEnv(
+  command: string,
   configEnv?: Record<string, string>,
   parentEnv: Readonly<Record<string, string | undefined>> = process.env,
 ): Record<string, string> {
@@ -194,7 +208,20 @@ export function mergeStdioEnv(
     if (value !== undefined) merged[key] = value;
   }
   if (configEnv !== undefined) Object.assign(merged, configEnv);
-  Object.assign(merged, proxyEnvForChild(merged));
-  reconcileChildNoProxy(merged, configEnv);
+  const includeBracketedIpv6Loopback = isNodeLauncher(command);
+  Object.assign(merged, proxyEnvForChild(merged, includeBracketedIpv6Loopback));
+  reconcileChildNoProxy(merged, configEnv, includeBracketedIpv6Loopback);
   return merged;
+}
+
+function isNodeLauncher(command: string): boolean {
+  const executable = command
+    .split(/[\\/]/)
+    .at(-1)
+    ?.toLowerCase()
+    .replace(/\.(?:bat|cmd|exe|ps1)$/, '');
+  return (
+    executable !== undefined &&
+    NODE_LAUNCHERS.has(executable)
+  );
 }

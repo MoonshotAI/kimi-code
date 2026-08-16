@@ -130,18 +130,29 @@ describe('proxy utilities', () => {
     expect(proxyEnvForChild({ ALL_PROXY: 'socks5://127.0.0.1:1080' })).toEqual({});
     expect(proxyEnvForChild({ HTTP_PROXY: 'http://p:3128', NO_PROXY: 'corp' })).toEqual({
       NODE_USE_ENV_PROXY: '1',
-      NO_PROXY: 'corp,localhost,127.0.0.1,::1,[::1]',
-      no_proxy: 'corp,localhost,127.0.0.1,::1,[::1]',
+      NO_PROXY: 'corp,localhost,127.0.0.1,::1',
+      no_proxy: 'corp,localhost,127.0.0.1,::1',
       HTTP_PROXY: 'http://p:3128',
       http_proxy: 'http://p:3128',
     });
+    expect(proxyEnvForChild({ HTTP_PROXY: 'http://p:3128' }, true)['NO_PROXY']).toBe(
+      'localhost,127.0.0.1,::1,[::1]',
+    );
+    expect(
+      proxyEnvForChild({ HTTP_PROXY: 'http://p:3128', NO_PROXY: 'corp,[::1]' })['NO_PROXY'],
+    ).toBe('corp,localhost,127.0.0.1,::1');
 
     const childEnv: Record<string, string> = {
       NO_PROXY: 'aug',
       no_proxy: 'aug',
     };
     reconcileChildNoProxy(childEnv, { no_proxy: '', NO_PROXY: 'internal.example.test' });
-    expect(childEnv['NO_PROXY']).toBe('internal.example.test,localhost,127.0.0.1,::1,[::1]');
-    expect(childEnv['no_proxy']).toBe('internal.example.test,localhost,127.0.0.1,::1,[::1]');
+    expect(childEnv['NO_PROXY']).toBe('internal.example.test,localhost,127.0.0.1,::1');
+    expect(childEnv['no_proxy']).toBe('internal.example.test,localhost,127.0.0.1,::1');
+
+    reconcileChildNoProxy(childEnv, { NO_PROXY: 'internal.example.test,[::1]' });
+    expect(childEnv['NO_PROXY']).toBe(
+      'internal.example.test,[::1],localhost,127.0.0.1,::1',
+    );
   });
 });
