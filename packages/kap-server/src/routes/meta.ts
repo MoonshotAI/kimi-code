@@ -73,7 +73,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
     open_in_apps: [],
     dangerous_bypass_auth: opts.dangerousBypassAuth,
     backend: 'v2' as const,
-    ...(opts.webTitle !== undefined ? { web_title: opts.webTitle } : {}),
+    web_title: opts.webTitle,
   });
 
   const route = defineRoute(
