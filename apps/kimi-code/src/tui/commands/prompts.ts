@@ -14,9 +14,10 @@ import type {
 
 import { ApiKeyInputDialogComponent, type ApiKeyInputResult } from '../components/dialogs/api-key-input-dialog';
 import { ChoicePickerComponent, type ChoiceOption } from '../components/dialogs/choice-picker';
-import { FeedbackInputDialogComponent, type FeedbackInputDialogResult } from '../components/dialogs/feedback-input-dialog';
 import { ModelSelectorComponent } from '../components/dialogs/model-selector';
 import { PlatformSelectorComponent } from '../components/dialogs/platform-selector';
+import { SkillSelectorComponent } from '../components/dialogs/skill-selector';
+import type { SkillSummary } from '@moonshot-ai/kimi-code-sdk';
 import type { SlashCommandHost } from './dispatch';
 
 export function promptPlatformSelection(host: SlashCommandHost): Promise<string | undefined> {
@@ -240,6 +241,29 @@ export function runModelSelector(
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
         resolve({ alias, thinking });
+      },
+      onCancel: () => {
+        host.restoreEditor();
+        resolve(undefined);
+      },
+    });
+    host.mountEditorReplacement(selector);
+  });
+}
+
+export function runSkillSelector(
+  host: SlashCommandHost,
+  skills: readonly SkillSummary[],
+  skillRoots?: readonly string[],
+): Promise<SkillSummary | undefined> {
+  return new Promise((resolve) => {
+    const selector = new SkillSelectorComponent({
+      skills,
+      skillRoots,
+      searchable: true,
+      onSelect: (skill) => {
+        host.restoreEditor();
+        resolve(skill);
       },
       onCancel: () => {
         host.restoreEditor();

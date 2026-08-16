@@ -9,6 +9,11 @@ export interface SkillMetadata {
   readonly isSubSkill?: boolean | undefined;
   readonly safe?: boolean | undefined;
   readonly arguments?: readonly unknown[] | string | undefined;
+  readonly category?: string | undefined;
+  readonly issuer?: string | undefined;
+  readonly collection?: string | undefined;
+  readonly groups?: readonly string[] | undefined;
+  readonly tags?: readonly string[] | undefined;
   readonly [key: string]: unknown;
 }
 
@@ -35,6 +40,11 @@ export interface SkillSummary {
   readonly type?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;
+  readonly category?: string | undefined;
+  readonly issuer?: string | undefined;
+  readonly collection?: string | undefined;
+  readonly groups?: readonly string[] | undefined;
+  readonly tags?: readonly string[] | undefined;
 }
 
 export interface SkillRoot {
@@ -95,5 +105,10 @@ export function summarizeSkill(skill: SkillDefinition): SkillSummary {
     type: skill.metadata.type,
     disableModelInvocation: skill.metadata.disableModelInvocation,
     isSubSkill: skill.metadata.isSubSkill,
+    category: typeof skill.metadata.category === 'string' && skill.metadata.category.trim() !== '' ? skill.metadata.category.trim() : undefined,
+    issuer: typeof skill.metadata.issuer === 'string' && skill.metadata.issuer.trim() !== '' ? skill.metadata.issuer.trim() : undefined,
+    collection: typeof skill.metadata.collection === 'string' && skill.metadata.collection.trim() !== '' ? skill.metadata.collection.trim() : undefined,
+    groups: Array.isArray(skill.metadata.groups) ? skill.metadata.groups.filter((g): g is string => typeof g === 'string' && g.trim() !== '') : undefined,
+    tags: Array.isArray(skill.metadata.tags) ? skill.metadata.tags.filter((t): t is string => typeof t === 'string' && t.trim() !== '') : undefined,
   };
 }
