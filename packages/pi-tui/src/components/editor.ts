@@ -1274,7 +1274,7 @@ export class Editor implements Component, Focusable {
 				}
 			}
 			// Also auto-trigger when typing letters in a slash command or symbol completion context
-			else if (/[a-zA-Z0-9.\-_]/.test(char)) {
+			else if (/[a-zA-Z0-9.:\-_]/.test(char)) {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
 				// Check if we're in a slash command (with or without space for arguments)
@@ -2267,8 +2267,8 @@ export class Editor implements Component, Focusable {
 	private isInInlineSlashContext(textBeforeCursor: string): boolean {
 		if (!this.inlineSlashTrigger) return false;
 		if (this.isInSlashCommandContext(textBeforeCursor)) return false;
-		if (/[ \t]\/[a-zA-Z0-9.\-_]*$/.test(textBeforeCursor)) return true;
-		return this.state.cursorLine > 0 && /^\/[a-zA-Z0-9.\-_]*$/.test(textBeforeCursor);
+		if (/[ \t]\/[a-zA-Z0-9.:\-_]*$/.test(textBeforeCursor)) return true;
+		return this.state.cursorLine > 0 && /^\/[a-zA-Z0-9.:\-_]*$/.test(textBeforeCursor);
 	}
 
 	private isInSlashCommandContext(textBeforeCursor: string): boolean {

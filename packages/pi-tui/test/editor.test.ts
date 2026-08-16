@@ -3207,6 +3207,34 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.isShowingAutocomplete(), true);
 		});
 
+		it("retriggers inline completion when a colon follows the token name", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let calls = 0;
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					calls += 1;
+					const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+					const match = /\/skill:\w*$/.exec(beforeCursor);
+					if (match === null) return null;
+					return {
+						items: [{ value: "skill:review", label: "skill:review" }],
+						prefix: match[0],
+					};
+				},
+				applyCompletion,
+			});
+
+			for (const ch of "hello /skill") editor.handleInput(ch);
+			await flushAutocomplete();
+			const beforeColon = calls;
+			editor.handleInput(":");
+			await flushAutocomplete();
+			assert.ok(calls > beforeColon, "expected the colon to retrigger completion");
+			editor.handleInput("r");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
 		it("triggers for `/` at the start of a later line when inlineSlashTrigger is on", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
 			editor.setAutocompleteProvider(inlineProvider);
