@@ -2141,6 +2141,110 @@ describe('SessionEventBroadcaster', () => {
       ops: Array<{ op: string }>;
     }
 
+    it('delivers nested subagent lifecycle events past the main-only agent filter while keeping child content filtered', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      const requester = lc.addAgent('parent-agent');
+      lc.addAgent('nested-child');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const filtered = collectingTarget();
+      const graded = collectingTarget();
+      const legacy = collectingTarget();
+      await bc.subscribe('s1', filtered.target, new Set(['main']));
+      await bc.subscribe('s1', graded.target, new Set(['main']), { '*': 'delta' });
+      await bc.subscribe('s1', legacy.target);
+
+      requester.bus.emit(agentEvent('subagent.completed', { subagentId: 'nested-child' }));
+      requester.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'child content' }));
+      requester.bus.emit(
+        agentEvent('tool.result', { turnId: 1, toolCallId: 'tc-child', output: 'child result' }),
+      );
+      await bc.getCursor('s1');
+
+      const filteredTypes = filtered.envelopes.map((e) => e.type);
+      expect(filteredTypes).toContain('subagent.completed');
+      expect(filteredTypes).not.toContain('assistant.delta');
+      expect(filteredTypes).not.toContain('tool.result');
+      const filteredTerminal = filtered.envelopes.find((e) => e.type === 'subagent.completed');
+      expect(filteredTerminal?.payload).toMatchObject({
+        agentId: 'parent-agent',
+        subagentId: 'nested-child',
+      });
+
+      const gradedSessionTypes = graded.envelopes
+        .filter((e) => e.type !== 'transcript.reset' && e.type !== 'transcript.ops')
+        .map((e) => e.type);
+      expect(gradedSessionTypes).toContain('subagent.completed');
+      expect(gradedSessionTypes).not.toContain('assistant.delta');
+      expect(gradedSessionTypes).not.toContain('tool.result');
+      const gradedTerminal = graded.envelopes.find((e) => e.type === 'subagent.completed');
+      expect(gradedTerminal?.payload).toMatchObject({
+        agentId: 'parent-agent',
+        subagentId: 'nested-child',
+      });
+      expect(transcriptEnvelopes(graded.envelopes).length).toBeGreaterThan(0);
+
+      const legacyTypes = legacy.envelopes.map((e) => e.type);
+      expect(legacyTypes).toContain('subagent.completed');
+      expect(legacyTypes).toContain('assistant.delta');
+      expect(legacyTypes).toContain('tool.result');
+      const legacyTerminal = legacy.envelopes.find((e) => e.type === 'subagent.completed');
+      expect(legacyTerminal?.payload).toMatchObject({
+        agentId: 'parent-agent',
+        subagentId: 'nested-child',
+      });
+    });
+
+    it('replays nested subagent lifecycle events past the main-only agent filter while keeping child content filtered', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      const requester = lc.addAgent('parent-agent');
+      lc.addAgent('nested-child');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      await bc.subscribe('s1', collectingTarget().target);
+      requester.bus.emit(agentEvent('subagent.completed', { subagentId: 'nested-child' }));
+      requester.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'child content' }));
+      requester.bus.emit(
+        agentEvent('tool.result', { turnId: 1, toolCallId: 'tc-child', output: 'child result' }),
+      );
+      await bc.getCursor('s1');
+
+      const filtered = await bc.getBufferedSince('s1', { seq: 0 }, new Set(['main']), {
+        '*': 'delta',
+      });
+      expect(filtered.resyncRequired).toBe(false);
+      const filteredTypes = filtered.events.map((e) => e.envelope.type);
+      expect(filteredTypes).toContain('subagent.completed');
+      expect(filteredTypes).not.toContain('assistant.delta');
+      expect(filteredTypes).not.toContain('tool.result');
+      const filteredTerminal = filtered.events.find((e) => e.envelope.type === 'subagent.completed');
+      expect(filteredTerminal?.envelope.payload).toMatchObject({
+        agentId: 'parent-agent',
+        subagentId: 'nested-child',
+      });
+
+      const legacy = await bc.getBufferedSince('s1', { seq: 0 });
+      expect(legacy.resyncRequired).toBe(false);
+      const legacyTypes = legacy.events.map((e) => e.envelope.type);
+      expect(legacyTypes).toContain('subagent.completed');
+      expect(legacyTypes).toContain('tool.result');
+      const legacyTerminal = legacy.events.find((e) => e.envelope.type === 'subagent.completed');
+      expect(legacyTerminal?.envelope.payload).toMatchObject({
+        agentId: 'parent-agent',
+        subagentId: 'nested-child',
+      });
+      const legacyToolResult = legacy.events.find((e) => e.envelope.type === 'tool.result');
+      expect(legacyToolResult?.envelope.payload).toMatchObject({
+        agentId: 'parent-agent',
+        toolCallId: 'tc-child',
+        output: 'child result',
+      });
+    });
+
     it('sends transcript.reset on first subscription, then fans ops out filtered per grade', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
