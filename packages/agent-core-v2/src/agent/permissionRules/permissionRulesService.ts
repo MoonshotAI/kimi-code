@@ -1,49 +1,56 @@
 /**
  * `permissionRules` domain — `IAgentPermissionRulesService` implementation.
  *
- * Holds the agent's permission rules and deduped session-approval patterns in the
- * `wire` `PermissionRulesModel`, mutating it only through the `permission.rules.add`
- * / `permission.record_approval_result` Ops (`wire.dispatch(...)`) and reading it
- * through `wire.getModel`. `wire.replay` rebuilds the model silently and
- * consumers read the getters instead. Bound at Agent scope.
+ * Holds the agent's permission rules and deduped session-approval patterns in
+ * the `permissionRulesKey` state, mutating it only through the
+ * `PermissionRulesAdd` / `PermissionRecordApprovalResult` events
+ * (`dispatcher.dispatch(...)`) and reading it through `dispatcher.getState`.
+ * Restore rebuilds the state silently and consumers read the getters instead.
+ * Bound at Agent scope.
  */
 
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   IAgentPermissionRulesService,
   type PermissionApprovalResultRecord,
   type PermissionRule,
 } from './permissionRules';
 import {
-  addPermissionRules,
-  PermissionRulesModel,
-  recordApprovalResult as recordApprovalResultOp,
+  PermissionRecordApprovalResult,
+  PermissionRulesAdd,
+  permissionRulesKey,
 } from './permissionRulesOps';
 
 export class AgentPermissionRulesService implements IAgentPermissionRulesService {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IWireService private readonly wire: IWireService) {}
+  constructor(
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentStateService private readonly agentState: IAgentStateService,
+  ) {
+    this.agentState.contributeState(permissionRulesKey);
+  }
 
   get rules(): readonly PermissionRule[] {
-    return [...this.wire.getModel(PermissionRulesModel).rules];
+    return [...this.agentState.get(permissionRulesKey).rules];
   }
 
   get sessionApprovalRulePatterns(): readonly string[] {
-    return [...this.wire.getModel(PermissionRulesModel).sessionApprovalRulePatterns];
+    return [...this.agentState.get(permissionRulesKey).sessionApprovalRulePatterns];
   }
 
   addRules(rules: readonly PermissionRule[]): void {
     if (rules.length === 0) return;
-    this.wire.dispatch(addPermissionRules({ rules: [...rules] }));
+    void this.dispatcher.dispatch(new PermissionRulesAdd({ rules: [...rules] }));
   }
 
   recordApprovalResult(record: PermissionApprovalResultRecord): void {
-    this.wire.dispatch(recordApprovalResultOp(record));
+    void this.dispatcher.dispatch(new PermissionRecordApprovalResult(record));
   }
 }
 

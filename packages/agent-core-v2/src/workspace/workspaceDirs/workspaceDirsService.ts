@@ -20,7 +20,7 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
@@ -65,8 +65,8 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
-    this.states.register(workspaceDirsFileDirsKey);
-    this.states.register(workspaceDirsEphemeralDirsKey);
+    this.states.contributeState(workspaceDirsFileDirsKey);
+    this.states.contributeState(workspaceDirsEphemeralDirsKey);
     this.projectRoot = workspace.cwd;
     this.configPath = '';
     this.ready = this.enqueue(() => this.reloadFromDisk());

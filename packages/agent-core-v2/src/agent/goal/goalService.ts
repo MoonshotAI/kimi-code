@@ -1,17 +1,18 @@
 /**
  * `goal` domain — `IAgentGoalService` implementation.
  *
- * Owns the main-agent goal lifecycle; persists the goal in the `wire`
- * `GoalModel` (`GoalState | null`) through the `goal.create` / `goal.update` /
- * `goal.clear` Ops (`wire.dispatch`), reads it through `wire.getModel`,
- * publishes `goal.updated` live to `IEventBus`, and forces a replayed `active`
- * goal back to `paused` via `wire.hooks.onDidRestore`. The accumulated
- * `wallClockMs` lives in the Model (set from each Op payload, never by
- * `Date.now()` inside `apply`); the active interval's epoch-ms
+ * Owns the main-agent goal lifecycle; persists the goal in the `goalKey`
+ * state (`GoalState | null`) through the durable `GoalCreate` / `GoalUpdate` /
+ * `GoalClear` events (`dispatcher.dispatch`), reads it through
+ * `dispatcher.getState`, dispatches the live-only `GoalUpdated` observable
+ * through the same dispatcher, and forces a replayed `active`
+ * goal back to `paused` via `dispatcher.hooks.onDidRestore`. The accumulated
+ * `wallClockMs` lives in the state (set from each event payload, never by
+ * `Date.now()` inside a fold); the active interval's epoch-ms
  * `wallClockResumedAt` anchor is
  * persisted at create/resume boundaries so recovery can settle crash-spanning
- * elapsed time without periodic writes. A `forked` wire Op clears the Model
- * at a fork boundary. Injects reminders through
+ * elapsed time without periodic writes. A `forked` journal record (written at
+ * a fork boundary) clears the state. Injects reminders through
  * `contextInjector`, drives continuation turns by enqueueing `newTurn`
  * `StepRequest`s onto `loop` (the continuation message materializes when the
  * loop pops it), accounts live
@@ -40,14 +41,18 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { TurnEndedEvent, TurnStartedEvent } from '#/agent/loop/turnEvents';
+import { z } from 'zod';
+
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { Disposable, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+
 import { abortError } from '#/_base/utils/abort';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { GoalInjection } from '#/agent/goal/injection/goalInjection';
 import {
@@ -78,13 +83,21 @@ import {
   toKimiErrorPayload,
   type KimiErrorPayload,
 } from '#/errors';
-import { IWireService } from '#/wire/wire';
-import { defineModel } from '#/wire/model';
 import { IEventBus } from '#/app/event/eventBus';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { defineState } from '#/state/state';
 
 import { IAgentGoalService, type GoalReasonInput, type ResumeGoalInput } from './goal';
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
-import { clearGoal, createGoal, GoalModel, updateGoal, type GoalState } from './goalOps';
+import {
+  GoalClear,
+  GoalCreate,
+  GoalForked,
+  goalKey,
+  GoalUpdate,
+  GoalUpdated,
+  type GoalState,
+} from './goalOps';
 import type {
   CreateGoalInput,
   GoalActor,
@@ -198,24 +211,25 @@ interface ResumeContinuation {
   readonly goalId: string;
 }
 
-const GoalForkNoticeModel = defineModel<GoalForkNoticeState>(
+export const goalForkNoticeKey = defineState(
   'goalForkNotice',
-  () => ({ goalPresent: false, reminderPending: false }),
-  {
-    reducers: {
-      'goal.create': (state) => ({ ...state, goalPresent: true }),
-      'goal.clear': (state) => ({ ...state, goalPresent: false }),
-      forked: (state) => ({
-        goalPresent: false,
-        reminderPending: state.goalPresent || state.reminderPending,
-      }),
-      'context.append_message': (state, payload: { message?: ContextMessage }) =>
-        state.reminderPending && isGoalForkClearedReminder(payload.message)
-          ? { ...state, reminderPending: false }
-          : state,
-    },
-  },
-);
+  (): GoalForkNoticeState => ({ goalPresent: false, reminderPending: false }),
+).replayable({ schema: z.custom<GoalForkNoticeState>() })
+  .on(GoalCreate, (s) => {
+    s.goalPresent = true;
+  })
+  .on(GoalClear, (s) => {
+    s.goalPresent = false;
+  })
+  .on(GoalForked, (s) => {
+    s.reminderPending = s.goalPresent || s.reminderPending;
+    s.goalPresent = false;
+  })
+  .on(ContextAppendMessage, (s, e) => {
+    if (s.reminderPending && isGoalForkClearedReminder(e.message)) {
+      s.reminderPending = false;
+    }
+  });
 
 function isGoalForkClearedReminder(message: ContextMessage | undefined): boolean {
   const origin = message?.origin;
@@ -223,7 +237,7 @@ function isGoalForkClearedReminder(message: ContextMessage | undefined): boolean
   return origin?.kind === 'system_trigger' && origin.name === GOAL_FORK_CLEARED_REMINDER_NAME;
 }
 
-function isGoalContinuationOrigin(origin: TurnStartedEvent['origin']): boolean {
+function isGoalContinuationOrigin(origin: TurnStarted['origin']): boolean {
   return origin.kind === 'system_trigger' && origin.name === 'goal_continuation';
 }
 
@@ -284,7 +298,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private pendingContinuation?: PendingContinuation;
 
   constructor(
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -300,18 +314,20 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(goalLiveTurnIdKey);
-    this.states.register(goalGoalDrivenTurnsKey);
-    this.states.register(goalCountedGoalTurnsKey);
-    this.states.register(goalGoalStarterTurnsKey);
-    this.states.register(goalGoalOutcomeToolResultTurnsKey);
-    this.states.register(goalGoalOutcomeContinuationTurnsKey);
-    this.states.register(goalBudgetGraceTurnsKey);
-    this.states.register(goalPendingContinuationGoalsKey);
-    this.states.register(goalGoalTurnTargetsKey);
-    this.states.register(goalExhaustedTurnBudgetGoalsKey);
-    this.states.register(goalLiveWallClockStartedAtKey);
-    this.states.register(goalResumeContinuationKey);
+    this.states.contributeState(goalKey);
+    this.states.contributeState(goalForkNoticeKey);
+    this.states.contributeState(goalLiveTurnIdKey);
+    this.states.contributeState(goalGoalDrivenTurnsKey);
+    this.states.contributeState(goalCountedGoalTurnsKey);
+    this.states.contributeState(goalGoalStarterTurnsKey);
+    this.states.contributeState(goalGoalOutcomeToolResultTurnsKey);
+    this.states.contributeState(goalGoalOutcomeContinuationTurnsKey);
+    this.states.contributeState(goalBudgetGraceTurnsKey);
+    this.states.contributeState(goalPendingContinuationGoalsKey);
+    this.states.contributeState(goalGoalTurnTargetsKey);
+    this.states.contributeState(goalExhaustedTurnBudgetGoalsKey);
+    this.states.contributeState(goalLiveWallClockStartedAtKey);
+    this.states.contributeState(goalResumeContinuationKey);
     if (!this.isSupportedAgent) return;
     this._register(
       new GoalInjection(
@@ -322,13 +338,13 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       ),
     );
     this._register(
-      this.wire.hooks.onDidRestore.register('goal', async (_ctx, next) => {
+      this.dispatcher.hooks.onDidRestore.register('goal', async (_ctx, next) => {
         this.normalizeAfterReplay();
         await next();
       }),
     );
     this._register(
-      this.eventBus.subscribe('turn.started', (e) => {
+      this.eventBus.subscribe(TurnStarted, (e) => {
         this.handleTurnLaunched(e.turnId, e.origin);
       }),
     );
@@ -399,7 +415,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       }),
     );
     this._register(
-      this.eventBus.subscribe('turn.ended', (e) => {
+      this.eventBus.subscribe(TurnEnded, (e) => {
         const goalId = this.goalTurnTarget(e.turnId);
         void this.handleTurnEnded(e.turnId, { reason: e.reason, error: e.error }).catch((error) =>
           this.settleGoalAfterContinuationFailure(error, goalId),
@@ -482,7 +498,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private get goalState(): GoalState | null {
-    return this.wire.getModel(GoalModel) as GoalState | null;
+    return this.states.get(goalKey);
   }
 
   getGoal(): GoalToolResult {
@@ -501,8 +517,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const objective = this.validateObjective(input.objective);
     this.prepareForGoalCreation(input.replace === true);
     const wallClockResumedAt = Date.now();
-    this.wire.dispatch(
-      createGoal({
+    void this.dispatcher.dispatch(
+      new GoalCreate({
         goalId: randomUUID(),
         objective,
         completionCriterion: normalizeCompletionCriterion(input.completionCriterion),
@@ -605,7 +621,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.assertSupportedAgent();
     const state = this.requireState();
     const budgetLimits = { ...state.budgetLimits, ...input.budgetLimits };
-    this.wire.dispatch(updateGoal({ budgetLimits }));
+    void this.dispatcher.dispatch(new GoalUpdate({ budgetLimits }));
     const next = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(next));
     this.telemetry.track2('goal_budget_set', {
@@ -666,7 +682,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private dispatchCompletion(state: GoalState, reason: string | undefined, actor: GoalActor): void {
     const wallClockMs = this.settleWallClock(state);
-    this.wire.dispatch(updateGoal({ status: 'complete', reason, wallClockMs, actor }));
+    void this.dispatcher.dispatch(new GoalUpdate({ status: 'complete', reason, wallClockMs, actor }));
   }
 
   private emitCompletion(
@@ -698,7 +714,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const state = this.goalState;
     if (state === null || state.status !== 'active' || !matchesGoal(state, goalId)) return null;
     const tokensUsed = state.tokensUsed + Math.max(0, tokenDelta);
-    this.wire.dispatch(updateGoal({ tokensUsed }));
+    void this.dispatcher.dispatch(new GoalUpdate({ tokensUsed }));
     const next = this.requireState();
     return this.blockIfBudgetReached(next) ?? this.toSnapshot(next);
   }
@@ -712,14 +728,14 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const state = this.goalState;
     if (state === null || state.status !== 'active' || !matchesGoal(state, goalId)) return null;
     const turnsUsed = state.turnsUsed + 1;
-    this.wire.dispatch(updateGoal({ turnsUsed }));
+    void this.dispatcher.dispatch(new GoalUpdate({ turnsUsed }));
     const next = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(next));
     this.telemetry.track2('goal_continued', { turns_used: next.turnsUsed });
     return this.toSnapshot(next);
   }
 
-  private handleTurnLaunched(turnId: number, origin: TurnStartedEvent['origin']): void {
+  private handleTurnLaunched(turnId: number, origin: TurnStarted['origin']): void {
     this.liveTurnId = turnId;
     this.goalTurnTargets.delete(turnId);
     this.exhaustedTurnBudgetGoals.delete(turnId);
@@ -831,7 +847,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private async handleTurnEnded(
     turnId: number,
-    result: Pick<TurnEndedEvent, 'reason' | 'error'>,
+    result: Pick<TurnEnded, 'reason' | 'error'>,
   ): Promise<void> {
     const { goalId, lifecycleGoalId, starterTurn } = this.clearTurnTracking(turnId);
     const resumeContinuation = this.resumeContinuation;
@@ -888,7 +904,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private async settleAbnormalTurn(
-    result: Pick<TurnEndedEvent, 'reason' | 'error'>,
+    result: Pick<TurnEnded, 'reason' | 'error'>,
     goalId: string,
   ): Promise<boolean> {
     if (!this.isActiveGoal(goalId)) return false;
@@ -1006,8 +1022,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (state.status !== 'active') return;
 
     const reason = 'Paused after agent resume';
-    this.wire.dispatch(
-      updateGoal({
+    void this.dispatcher.dispatch(
+      new GoalUpdate({
         status: 'paused',
         reason,
         wallClockMs: this.settleWallClock(state),
@@ -1018,7 +1034,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private appendForkClearedReminder(): void {
-    if (!this.wire.getModel(GoalForkNoticeModel).reminderPending) return;
+    if (!this.states.get(goalForkNoticeKey).reminderPending) return;
     this.reminders.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
       kind: 'injection',
       variant: GOAL_FORK_CLEARED_REMINDER_NAME,
@@ -1034,7 +1050,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.cancelPendingContinuation(opts.preserveLiveContinuation === true);
     this.wallClockDeadline.clear();
     this.liveWallClockStartedAt = undefined;
-    this.wire.dispatch(clearGoal({}));
+    void this.dispatcher.dispatch(new GoalClear({}));
     if (opts.emit !== false) this.emitGoalUpdated(null);
     if (opts.track !== false) this.telemetry.track2('goal_cleared', { actor });
   }
@@ -1062,8 +1078,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       this.wallClockDeadline.clear();
       this.liveWallClockStartedAt = undefined;
     }
-    this.wire.dispatch(
-      updateGoal({ status, reason, wallClockMs, wallClockResumedAt, actor }),
+    void this.dispatcher.dispatch(
+      new GoalUpdate({ status, reason, wallClockMs, wallClockResumedAt, actor }),
     );
     const next = this.requireState();
     if (status === 'active') this.adoptStarterTurn(actor);
@@ -1093,7 +1109,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private emitGoalUpdated(snapshot: GoalSnapshot | null, change?: GoalChange): void {
-    this.eventBus.publish({ type: 'goal.updated', snapshot, change });
+    void this.dispatcher.dispatch(new GoalUpdated({ snapshot, change }));
   }
 
   private settleWallClock(state: GoalState): number {
@@ -1278,7 +1294,7 @@ function isTerminalUpdateGoalResult(
   return status === 'complete' || status === 'blocked';
 }
 
-function isMaxStepsTurnFailure(result: Pick<TurnEndedEvent, 'reason' | 'error'>): boolean {
+function isMaxStepsTurnFailure(result: Pick<TurnEnded, 'reason' | 'error'>): boolean {
   return (
     result.reason === 'failed' &&
     normalizeGoalErrorPayload(result.error).code === LoopErrors.codes.LOOP_MAX_STEPS_EXCEEDED

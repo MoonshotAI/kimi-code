@@ -125,7 +125,7 @@ describe('SessionEventWiring status snapshot fold', () => {
       // later usage-only slice must still carry the model at this edge.
       sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
       // Non-status events pass through untouched.
-      sub.bus.emit({ type: 'assistant.delta', delta: 'Hi' });
+      sub.bus.emit({ type: 'assistant.delta', delta: 'Hi', time: 1_700_000_000_123 });
     } finally {
       wiring.dispose();
     }
@@ -140,7 +140,11 @@ describe('SessionEventWiring status snapshot fold', () => {
       maxContextTokens: 128_000,
       model: 'sub-model',
     });
-    expect(events[1]).toMatchObject({ type: 'assistant.delta', delta: 'Hi' });
+    expect(events[1]).toMatchObject({
+      type: 'assistant.delta',
+      delta: 'Hi',
+      time: 1_700_000_000_123,
+    });
     expect(events[1]).not.toHaveProperty('model');
   });
 

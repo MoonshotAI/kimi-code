@@ -25,8 +25,11 @@
  * wire data.
  */
 
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+
 import type { CascadeAction, UnitState } from '#/_base/di/cascadeEngine';
 import { createDecorator } from '#/_base/di/instantiation';
+import { Event2 } from '#/app/event/event2';
 
 export interface DebugCascadeEntry {
   readonly scopePath: string;
@@ -58,14 +61,21 @@ export interface DebugPendingGroup {
   readonly failed: DebugFailedUnit[];
 }
 
-export const DI_UNIT_CHANGED_EVENT = 'event.di.unit_changed';
-
 export interface DiUnitChangedPayload {
   readonly scope: string;
   readonly token: string;
   readonly state: UnitState;
   readonly error?: string;
 }
+
+export class DiUnitChanged extends Event2<{ readonly payload: DiUnitChangedPayload }> {
+  static override readonly type = 'event.di.unit_changed';
+}
+export interface DiUnitChanged {
+  readonly payload: DiUnitChangedPayload;
+}
+
+export const DI_UNIT_CHANGED_EVENT = DiUnitChanged.type;
 
 export interface IDebugCascadeService {
   readonly _serviceBrand: undefined;

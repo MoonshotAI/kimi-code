@@ -12,9 +12,12 @@
  * Agent scope — one instance per agent, dying with it.
  */
 
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
+import { Event2 } from '#/app/event/event2';
 
 export type TurnPhase = 'running' | 'streaming' | 'tool_call' | 'retrying';
 
@@ -84,8 +87,8 @@ export interface IAgentActivityView {
 export const IAgentActivityView: ServiceIdentifier<IAgentActivityView> =
   createDecorator<IAgentActivityView>('agentActivityView');
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'agent.activity.updated': AgentActivityState & { readonly type: 'agent.activity.updated' };
-  }
+export class AgentActivityUpdated extends Event2<AgentActivityState> {
+  static override readonly type = 'agent.activity.updated';
+  static override readonly observable = true;
 }
+export interface AgentActivityUpdated extends AgentActivityState {}

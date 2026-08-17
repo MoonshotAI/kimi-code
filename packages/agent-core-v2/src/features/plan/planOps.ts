@@ -1,43 +1,42 @@
 /**
- * `plan` domain — wire Model (`PlanModel`) and the `plan_mode.enter`
- * (`planModeEnter`) / `plan_mode.cancel` (`planModeCancel`) / `plan_mode.exit`
- * (`planModeExit`) Ops that mirror the plan-mode lifecycle into a persisted,
- * replayable `{ active, id }` state, plus the `plan.revision`
- * (`planRevision`) Op that records a submitted plan revision as a
- * reference-only fact.
+ * `plan` domain — the plan-mode state (`planKey`) and the durable
+ * `plan_mode.enter` / `plan_mode.cancel` / `plan_mode.exit` / `plan.revision`
+ * events that mirror the plan-mode lifecycle into a persisted, replayable
+ * `{ active, id }` state.
  *
- * The Model holds the persistent, replayable fields — whether plan mode is
+ * The state holds the persistent, replayable fields — whether plan mode is
  * active, the plan id, and the last recorded revision version per plan id —
- * wrapped in `contextMemory`'s checkpoint protocol so plan mode stays aligned
- * with conversation undo. The lifecycle records keep exactly v1's field set
+ * participating in conversation undo through the undoable state protocol
+ * so plan mode stays aligned with it. The lifecycle records keep exactly v1's field set
  * (`{ id }`); the plan file path is NOT persisted — it is derived from the id
- * at read time, matching v1's `restoreEnter`.
- * Plan content is recorded separately: every ExitPlanMode submit snapshots
- * the plan file into blob storage and persists a `plan.revision` record
- * carrying only the reference (`{ id, version, path, sha256, bytes }`, `path`
- * homeDir-relative) — never the content. `revisionCount` tracks the latest
- * version per plan id so `recordRevision` can mint the next version
- * replay-consistently; it is kept across enter/exit so a re-entered plan id
- * continues its counter instead of overwriting earlier blobs. Each `apply`
- * returns the same reference on a no-op (re-entering the same plan, or
- * cancelling/exiting while already inactive) so the wire's
- * reference-equality gate stays quiet. The side effects — `telemetryContext`
- * mode, plan-directory/file fs I/O, the blob write, and the
- * `agent.status.updated` planMode slice — are NOT part of `apply`: they run
- * after `wire.dispatch` on the live path, and `wire.replay` rebuilds the
- * Model silently from the persisted `plan_mode.*` / `plan.revision` records.
- * The legacy `toReplay: plan_updated` projection is dropped (inert — nothing
- * reads it). `plan.revision` carries a `toEvent` so the live transcript
- * projector can map it onto a marker plus the plan badge; replay never emits
- * it.
+ * at read time, matching v1's `restoreEnter`. Plan content is recorded
+ * separately: every ExitPlanMode submit snapshots the plan file into blob
+ * storage and persists a `plan.revision` record carrying only the reference
+ * (`{ id, version, path, sha256, bytes }`, `path` homeDir-relative) — never
+ * the content. `revisionCount` tracks the latest version per plan id so
+ * `recordRevision` can mint the next version replay-consistently; it is kept
+ * across enter/exit so a re-entered plan id continues its counter instead of
+ * overwriting earlier blobs. Each fold keeps the same reference on a no-op
+ * (re-entering the same plan, or cancelling/exiting while already inactive)
+ * so the state's reference-equality stays quiet. The side effects —
+ * `telemetryContext` mode, plan-directory/file fs I/O, and the blob write —
+ * are NOT part of the folds: they run after dispatch on the live path, and
+ * restore rebuilds the state silently from the persisted `plan_mode.*` /
+ * `plan.revision` records. The lifecycle folds emit the
+ * `agent.status.updated` planMode slice live (never on replay), and
+ * `PlanRevision` is itself observable so the live transcript projector can
+ * map it onto a marker plus the plan badge.
  */
+
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 
 import { z } from 'zod';
 
-import {
-  defineCheckpointedModel,
-  type Checkpointed,
-} from '#/agent/contextMemory/conversationTime';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { Event2 } from '#/app/event/event2';
+import { defineState } from '#/state/state';
+
+import '#/agent/contextMemory/conversationTime';
 
 export interface PlanState {
   readonly active: boolean;
@@ -45,45 +44,32 @@ export interface PlanState {
   readonly revisionCount?: Readonly<Record<string, number>>;
 }
 
-export type PlanModelState = Checkpointed<PlanState>;
+const planModeEnterSchema = z.object({ id: z.string() });
 
-export const PlanModel = defineCheckpointedModel('plan', (): PlanState => ({ active: false }));
-
-export const planModeEnter = PlanModel.defineOp('plan_mode.enter', {
-  schema: z.object({ id: z.string() }),
-  apply: (s, p) =>
-    s.current.active && s.current.id === p.id
-      ? s
-      : { ...s, current: { active: true, id: p.id, revisionCount: s.current.revisionCount } },
-  toEvent: () => ({ type: 'agent.status.updated' as const, planMode: true }),
-});
-
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'plan_mode.enter': typeof planModeEnter;
-    'plan_mode.cancel': typeof planModeCancel;
-    'plan_mode.exit': typeof planModeExit;
-    'plan.revision': typeof planRevision;
-  }
+export class PlanModeEnter extends Event2<z.infer<typeof planModeEnterSchema>> {
+  static override readonly type = 'plan_mode.enter';
+  static override readonly durable = true;
+  static override readonly schema = planModeEnterSchema;
 }
+export interface PlanModeEnter extends z.infer<typeof planModeEnterSchema> {}
 
-export const planModeCancel = PlanModel.defineOp('plan_mode.cancel', {
-  schema: z.object({ id: z.string().optional() }),
-  apply: (s) =>
-    s.current.active
-      ? { ...s, current: { active: false, revisionCount: s.current.revisionCount } }
-      : s,
-  toEvent: () => ({ type: 'agent.status.updated' as const, planMode: false }),
-});
+const planModeCancelSchema = z.object({ id: z.string().optional() });
 
-export const planModeExit = PlanModel.defineOp('plan_mode.exit', {
-  schema: z.object({ id: z.string().optional() }),
-  apply: (s) =>
-    s.current.active
-      ? { ...s, current: { active: false, revisionCount: s.current.revisionCount } }
-      : s,
-  toEvent: () => ({ type: 'agent.status.updated' as const, planMode: false }),
-});
+export class PlanModeCancel extends Event2<z.infer<typeof planModeCancelSchema>> {
+  static override readonly type = 'plan_mode.cancel';
+  static override readonly durable = true;
+  static override readonly schema = planModeCancelSchema;
+}
+export interface PlanModeCancel extends z.infer<typeof planModeCancelSchema> {}
+
+const planModeExitSchema = z.object({ id: z.string().optional() });
+
+export class PlanModeExit extends Event2<z.infer<typeof planModeExitSchema>> {
+  static override readonly type = 'plan_mode.exit';
+  static override readonly durable = true;
+  static override readonly schema = planModeExitSchema;
+}
+export interface PlanModeExit extends z.infer<typeof planModeExitSchema> {}
 
 export interface PlanRevisionRecordedEvent {
   readonly id: string;
@@ -93,33 +79,46 @@ export interface PlanRevisionRecordedEvent {
   readonly bytes: number;
 }
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'plan.revision': PlanRevisionRecordedEvent;
-  }
-}
-
-export const planRevision = PlanModel.defineOp('plan.revision', {
-  schema: z.object({
-    id: z.string(),
-    version: z.number(),
-    path: z.string(),
-    sha256: z.string(),
-    bytes: z.number(),
-  }),
-  apply: (s, p) => ({
-    ...s,
-    current: {
-      ...s.current,
-      revisionCount: { ...s.current.revisionCount, [p.id]: p.version },
-    },
-  }),
-  toEvent: (p) => ({
-    type: 'plan.revision' as const,
-    id: p.id,
-    version: p.version,
-    path: p.path,
-    sha256: p.sha256,
-    bytes: p.bytes,
-  }),
+const planRevisionSchema = z.object({
+  id: z.string(),
+  version: z.number(),
+  path: z.string(),
+  sha256: z.string(),
+  bytes: z.number(),
 });
+
+export class PlanRevision extends Event2<PlanRevisionRecordedEvent> {
+  static override readonly type = 'plan.revision';
+  static override readonly durable = true;
+  static override readonly observable = true;
+  static override readonly schema = planRevisionSchema;
+}
+export interface PlanRevision extends PlanRevisionRecordedEvent {}
+
+export const planKey = defineState('plan', (): PlanState => ({ active: false }))
+  .replayable({ schema: z.custom<PlanState>() })
+  .undoable()
+  .on(PlanModeEnter, (s, e, ctx) => {
+    if (!(s.active && s.id === e.id)) {
+      s.active = true;
+      s.id = e.id;
+    }
+    ctx.emit(new AgentStatusUpdated({ planMode: true }));
+  })
+  .on(PlanModeCancel, (s, e, ctx) => {
+    if (s.active) {
+      s.active = false;
+      delete s.id;
+    }
+    ctx.emit(new AgentStatusUpdated({ planMode: false }));
+  })
+  .on(PlanModeExit, (s, e, ctx) => {
+    if (s.active) {
+      s.active = false;
+      delete s.id;
+    }
+    ctx.emit(new AgentStatusUpdated({ planMode: false }));
+  })
+  .on(PlanRevision, (s, e) => {
+    s.revisionCount = { ...s.revisionCount, [e.id]: e.version };
+  });

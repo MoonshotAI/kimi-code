@@ -1,9 +1,9 @@
 /**
- * Scenario: the checked-in wire-protocol manifest matches the live OP_REGISTRY
- * and parses as a valid TypeScript declaration file.
+ * Scenario: the checked-in wire-protocol manifest matches the live
+ * EVENT2_REGISTRY and parses as a valid TypeScript declaration file.
  *
- * Rebuilds `docs/wire-manifest.d.ts` from the actual `defineOp` registrations
- * and fails when the file is stale. Regenerate with
+ * Rebuilds `docs/wire-manifest.d.ts` from the actual durable Event2
+ * registrations and fails when the file is stale. Regenerate with
  * `pnpm --filter @moonshot-ai/agent-core-v2 gen:wire-manifest`.
  */
 

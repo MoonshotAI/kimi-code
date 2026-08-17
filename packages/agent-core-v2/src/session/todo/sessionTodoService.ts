@@ -4,7 +4,7 @@
  * Provides session-wide todo access through the main agent's `wire`, binds
  * todo capabilities into each agent, and publishes changes through its typed
  * event. The main agent's wire owns the replayable state (including the
- * undo-checkpointed `TodoModel`); this facade keeps no list copy of its own
+ * undoable `todoKey`); this facade keeps no list copy of its own
  * and there is deliberately no second session-level wire aggregate. Bound at
  * Session scope.
  */
@@ -22,12 +22,14 @@ import { Emitter } from '#/_base/event';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { ContextUndone } from '#/agent/undo/undoService';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { ISessionTodoService } from './sessionTodo';
-import { TodoModel, todoSet } from './todoOps';
+import { todoKey, ToolsUpdateStore } from './todoOps';
 import { TODO_LIST_TOOL_NAME, type TodoItem } from './todoItem';
 import { TODO_LIST_REMINDER_VARIANT, todoListStaleReminder } from './todoListReminder';
 
@@ -72,7 +74,7 @@ export class SessionTodoService extends Service implements ISessionTodoService {
   getTodos(): readonly TodoItem[] {
     const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return [];
-    return main.accessor.get(IWireService).getModel(TodoModel).current;
+    return main.accessor.get(IAgentStateService).get(todoKey);
   }
 
   setTodos(todos: readonly TodoItem[]): void {
@@ -90,14 +92,15 @@ export class SessionTodoService extends Service implements ISessionTodoService {
   private dispatchTodoSet(todos: readonly TodoItem[]): void {
     const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return;
-    const wire = main.accessor.get(IWireService);
-    wire.dispatch(todoSet({ key: 'todo', value: todos }));
-    const current = wire.getModel(TodoModel).current;
+    const dispatcher = main.accessor.get(IEventDispatcher);
+    void dispatcher.dispatch(new ToolsUpdateStore({ key: 'todo', value: todos }));
+    const current = main.accessor.get(IAgentStateService).get(todoKey);
     this.lastKnownTodos = current;
     this.onDidChangeEmitter.fire(current);
   }
 
   private bindAgent(handle: IAgentScopeHandle): void {
+    handle.accessor.get(IAgentStateService).contributeState(todoKey);
     const injector = handle.accessor.get(IAgentContextInjectorService);
     this.trackAgentBinding(
       handle.id,
@@ -105,11 +108,11 @@ export class SessionTodoService extends Service implements ISessionTodoService {
     );
     if (handle.id !== MAIN_AGENT_ID) return;
 
-    this.lastKnownTodos = handle.accessor.get(IWireService).getModel(TodoModel).current;
+    this.lastKnownTodos = handle.accessor.get(IAgentStateService).get(todoKey);
     this.trackAgentBinding(
       handle.id,
-      handle.accessor.get(IEventBus).subscribe('context.undone', () => {
-        const current = handle.accessor.get(IWireService).getModel(TodoModel).current;
+      handle.accessor.get(IEventBus).subscribe(ContextUndone, () => {
+        const current = handle.accessor.get(IAgentStateService).get(todoKey);
         if (todoItemsEqual(current, this.lastKnownTodos)) return;
         this.lastKnownTodos = current;
         this.onDidChangeEmitter.fire(current);

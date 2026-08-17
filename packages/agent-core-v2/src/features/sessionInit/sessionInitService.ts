@@ -31,7 +31,7 @@ import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -121,7 +121,7 @@ export class SessionInitService implements ISessionInitService {
           kind: 'injection',
           variant: 'init',
         });
-      await main.accessor.get(IWireService).flush();
+      await main.accessor.get(IEventDispatcher).flush();
     } catch (error) {
       if (isUserCancellation(error) || isAbortError(error)) {
         throw error;

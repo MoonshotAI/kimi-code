@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { Event } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
@@ -13,39 +14,46 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import {
-  InteractionModel,
-  interactionRequest,
-  interactionResolved,
+  interactionKey,
+  InteractionRequestEvent,
+  InteractionResolvedEvent,
 } from '#/session/interaction/interactionOps';
 import { SessionInteractionService } from '#/session/interaction/interactionService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
-import { IWireService } from '#/wire/wire';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 
-interface RecordedOp {
+interface RecordedEvent {
   readonly type: string;
-  readonly payload: unknown;
+  readonly [key: string]: unknown;
 }
 
 interface FakeAgent {
   readonly handle: IAgentScopeHandle;
-  readonly dispatched: RecordedOp[];
+  readonly dispatched: RecordedEvent[];
 }
 
 function makeFakeAgent(agentId: string): FakeAgent {
-  const dispatched: RecordedOp[] = [];
-  const wire = {
+  const dispatched: RecordedEvent[] = [];
+  const dispatcher = {
     _serviceBrand: undefined,
-    dispatch: (...ops: RecordedOp[]) => {
-      dispatched.push(...ops);
+    dispatch: (event: RecordedEvent) => {
+      dispatched.push(event);
+      return Promise.resolve();
     },
-  } as unknown as IWireService;
+  } as unknown as IEventDispatcher;
   const accessor: ServicesAccessor = {
     get: <T>(id: ServiceIdentifier<T>): T => {
-      if (id === IWireService) return wire as unknown as T;
+      if (id === IEventDispatcher) return dispatcher as unknown as T;
       throw new Error(`unexpected service request in fake agent: ${String(id)}`);
     },
   };
@@ -53,6 +61,11 @@ function makeFakeAgent(agentId: string): FakeAgent {
     handle: { id: agentId, kind: LifecycleScope.Agent, accessor, dispose: () => {} },
     dispatched,
   };
+}
+
+function payloadOf(event: RecordedEvent): Record<string, unknown> {
+  const { type: _type, time: _time, ...payload } = event;
+  return payload;
 }
 
 describe('SessionInteractionService', () => {
@@ -66,6 +79,9 @@ describe('SessionInteractionService', () => {
     agents = new Map();
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
+      onDidCreate: Event.None,
+      onDidDispose: Event.None,
+      list: () => [],
       get: (id: string) => agents.get(id)?.handle,
     } as unknown as IAgentLifecycleService);
     ix.set(ISessionStateService, new SessionStateService());
@@ -211,7 +227,7 @@ describe('SessionInteractionService', () => {
       origin: { agentId: 'agent-1', turnId: 2 },
     });
 
-    expect(sub.dispatched.map((op) => ({ type: op.type, payload: op.payload }))).toEqual([
+    expect(sub.dispatched.map((event) => ({ type: event.type, payload: payloadOf(event) }))).toEqual([
       {
         type: 'interaction.request',
         payload: {
@@ -232,7 +248,7 @@ describe('SessionInteractionService', () => {
 
     svc.enqueue({ id: 'i1', kind: 'question', payload: { question: '?' } });
 
-    expect(main.dispatched.map((op) => ({ type: op.type, payload: op.payload }))).toEqual([
+    expect(main.dispatched.map((event) => ({ type: event.type, payload: payloadOf(event) }))).toEqual([
       {
         type: 'interaction.request',
         payload: {
@@ -255,11 +271,11 @@ describe('SessionInteractionService', () => {
     svc.respond('i1', { decision: 'approved' });
     await pending;
 
-    expect(main.dispatched.map((op) => op.type)).toEqual([
+    expect(main.dispatched.map((event) => event.type)).toEqual([
       'interaction.request',
       'interaction.resolved',
     ]);
-    expect(main.dispatched[1]?.payload).toEqual({
+    expect(payloadOf(main.dispatched[1]!)).toEqual({
       id: 'i1',
       response: { decision: 'approved' },
     });
@@ -275,7 +291,7 @@ describe('SessionInteractionService', () => {
 
     const last = main.dispatched.at(-1);
     expect(last?.type).toBe('interaction.resolved');
-    expect(last?.payload).toEqual({ id: 'i1', response: { cancelled: true, reason: 'turn_ended' } });
+    expect(last === undefined ? undefined : payloadOf(last)).toEqual({ id: 'i1', response: { cancelled: true, reason: 'turn_ended' } });
   });
 
   it('kernel semantics are unchanged when the origin agent is absent', async () => {
@@ -292,7 +308,8 @@ describe('interaction ops (wire-backed)', () => {
   const KEY = 'interaction-test';
 
   let disposables: DisposableStore;
-  let wire: IWireService;
+  let dispatcher: IEventDispatcher;
+  let agentState: IAgentStateService;
   let log: IAppendLogStore;
 
   beforeEach(() => {
@@ -301,12 +318,15 @@ describe('interaction ops (wire-backed)', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     log = ix.get(IAppendLogStore);
-    wire = registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
+    registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
+    dispatcher = registerTestEventDispatcher(ix);
+    agentState = ix.get(IAgentStateService);
+    agentState.contributeState(interactionKey);
   });
   afterEach(() => disposables.dispose());
 
   async function readRecords(key = KEY): Promise<WireRecord[]> {
-    await wire.flush();
+    await dispatcher.flush();
     const out: WireRecord[] = [];
     for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
       out.push(record);
@@ -315,8 +335,8 @@ describe('interaction ops (wire-backed)', () => {
   }
 
   it('request/resolved persist to the journal and fold into the model by id', async () => {
-    wire.dispatch(
-      interactionRequest({
+    await dispatcher.dispatch(
+      new InteractionRequestEvent({
         id: 'i1',
         kind: 'approval',
         toolCallId: 'call-1',
@@ -324,9 +344,9 @@ describe('interaction ops (wire-backed)', () => {
         request: { toolCallId: 'call-1' },
       }),
     );
-    wire.dispatch(interactionResolved({ id: 'i1', response: { decision: 'approved' } }));
+    await dispatcher.dispatch(new InteractionResolvedEvent({ id: 'i1', response: { decision: 'approved' } }));
 
-    const entry = wire.getModel(InteractionModel).get('i1');
+    const entry = agentState.get(interactionKey).get('i1');
     expect(entry).toMatchObject({
       id: 'i1',
       kind: 'approval',
@@ -355,10 +375,10 @@ describe('interaction ops (wire-backed)', () => {
     ]);
   });
 
-  it('resolved without a known request leaves the model unchanged', () => {
-    const before = wire.getModel(InteractionModel);
-    wire.dispatch(interactionResolved({ id: 'ghost', response: {} }));
-    expect(wire.getModel(InteractionModel)).toBe(before);
+  it('resolved without a known request leaves the model unchanged', async () => {
+    const before = agentState.get(interactionKey);
+    await dispatcher.dispatch(new InteractionResolvedEvent({ id: 'ghost', response: {} }));
+    expect(agentState.get(interactionKey)).toBe(before);
   });
 
   it('replay rebuilds the interaction map from persisted records', async () => {
@@ -372,12 +392,15 @@ describe('interaction ops (wire-backed)', () => {
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log2 = ix2.get(IAppendLogStore);
-    const wire2 = registerTestAgentWire(ix2, testWireScope(SCOPE, 'interaction-replay'), {
+    registerTestAgentWire(ix2, testWireScope(SCOPE, 'interaction-replay'), {
       log: log2,
     });
-    await restoreTestAgentWire(wire2, log2, testWireScope(SCOPE, 'interaction-replay'), records);
+    const dispatcher2 = registerTestEventDispatcher(ix2);
+    const agentState2 = ix2.get(IAgentStateService);
+    agentState2.contributeState(interactionKey);
+    await restoreTestEventDispatcher(dispatcher2, log2, testWireScope(SCOPE, 'interaction-replay'), records);
 
-    const model = wire2.getModel(InteractionModel);
+    const model = agentState2.get(interactionKey);
     expect(model.size).toBe(2);
     expect(model.get('i1')).toMatchObject({ resolved: true, response: { answer: 'a' } });
     expect(model.get('i2')).toMatchObject({ resolved: false, toolCallId: 'call-2' });

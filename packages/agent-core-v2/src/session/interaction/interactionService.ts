@@ -3,11 +3,12 @@
  *
  * Owns the pending interaction set and resolves requests when a response
  * arrives; announces add/remove through a typed `onDidChangePending`. Every
- * request/resolution is also journaled as a persisted `interaction.request` /
- * `interaction.resolved` Op on the ORIGIN agent's wire (`origin.agentId ??
- * 'main'`), so the journal can rebuild interaction entities on a cold
- * transcript fold. The plain-data state (`pending`, `recentlyResolved`,
- * `nextId`) is registered into `sessionState` (`ISessionStateService`) and
+ * request/resolution is also journaled as a durable `interaction.request` /
+ * `interaction.resolved` event on the ORIGIN agent's dispatcher
+ * (`origin.agentId ?? 'main'`), so the journal can rebuild interaction
+ * entities on a cold transcript fold. The plain-data state (`pending`,
+ * `recentlyResolved`, `nextId`) is registered into `sessionState`
+ * (`ISessionStateService`) and
  * read/written through it. `IAgentLifecycleService` is resolved lazily at dispatch
  * time (via `IInstantiationService.invokeFunction`) — a constructor edge
  * would close a DI cycle. Direct construction without a
@@ -21,11 +22,11 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionStateService } from '#/session/state/sessionState';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
   type Interaction,
@@ -36,7 +37,10 @@ import {
   type InteractionResolution,
   ISessionInteractionService,
 } from './interaction';
-import { interactionRequest, interactionResolved } from './interactionOps';
+import {
+  InteractionRequestEvent,
+  InteractionResolvedEvent,
+} from './interactionOps';
 
 interface Pending {
   readonly interaction: Interaction;
@@ -70,9 +74,9 @@ export class SessionInteractionService extends Service implements ISessionIntera
     @IInstantiationService private readonly instantiation?: IInstantiationService,
   ) {
     super();
-    this.states.register(interactionPendingKey);
-    this.states.register(interactionRecentlyResolvedKey);
-    this.states.register(interactionNextIdKey);
+    this.states.contributeState(interactionPendingKey);
+    this.states.contributeState(interactionRecentlyResolvedKey);
+    this.states.contributeState(interactionNextIdKey);
   }
 
   private get pending(): Map<string, Pending> {
@@ -164,10 +168,10 @@ export class SessionInteractionService extends Service implements ISessionIntera
   }
 
   private recordRequest(interaction: Interaction): void {
-    const wire = this.originWire(interaction.origin);
-    if (wire === undefined) return;
-    wire.dispatch(
-      interactionRequest({
+    const dispatcher = this.originDispatcher(interaction.origin);
+    if (dispatcher === undefined) return;
+    void dispatcher.dispatch(
+      new InteractionRequestEvent({
         id: interaction.id,
         kind: interaction.kind,
         toolCallId: readPayloadToolCallId(interaction.payload),
@@ -178,17 +182,18 @@ export class SessionInteractionService extends Service implements ISessionIntera
   }
 
   private recordResolved(id: string, response: unknown, origin: InteractionOrigin): void {
-    const wire = this.originWire(origin);
-    if (wire === undefined) return;
-    wire.dispatch(interactionResolved({ id, response }));
+    const dispatcher = this.originDispatcher(origin);
+    if (dispatcher === undefined) return;
+    void dispatcher.dispatch(new InteractionResolvedEvent({ id, response }));
   }
 
-  private originWire(origin: InteractionOrigin): IWireService | undefined {
+  private originDispatcher(origin: InteractionOrigin): IEventDispatcher | undefined {
     if (this.instantiation === undefined) return undefined;
     const agentId = origin.agentId ?? MAIN_AGENT_ID;
     try {
       return this.instantiation.invokeFunction(
-        (accessor) => accessor.get(IAgentLifecycleService).get(agentId)?.accessor.get(IWireService),
+        (accessor) =>
+          accessor.get(IAgentLifecycleService).get(agentId)?.accessor.get(IEventDispatcher),
       );
     } catch {
       return undefined;

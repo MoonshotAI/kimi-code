@@ -15,7 +15,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -38,8 +38,8 @@ export class SessionWorkspaceContextService extends Service implements ISessionW
     @ISessionWorkspaceInfo workspaceInfo: ISessionWorkspaceInfo,
   ) {
     super();
-    this.states.register(workspaceContextWorkDirKey);
-    this.states.register(workspaceContextAdditionalDirsKey);
+    this.states.contributeState(workspaceContextWorkDirKey);
+    this.states.contributeState(workspaceContextAdditionalDirsKey);
     this.states.set(workspaceContextWorkDirKey, resolve(ctx.cwd));
     this.states.set(workspaceContextAdditionalDirsKey, [
       ...new Set(workspaceInfo.additionalDirs.map((d) => resolve(d))),

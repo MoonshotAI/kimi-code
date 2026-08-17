@@ -18,7 +18,8 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IOAuthService } from '#/app/auth/auth';
 import { IFlagService } from '#/app/flag/flag';
-import { type DomainEvent, IEventService } from '#/app/event/event';
+import { IEventService } from '#/app/event/event';
+import type { Event2 } from '#/app/event/event2';
 import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
 import {
   IProviderService,
@@ -43,6 +44,7 @@ import {
   type SessionMetaPatch,
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
+import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import { registerLogServices } from '../../_base/log/stubs';
@@ -57,16 +59,16 @@ const MANAGED_PROVIDER: ProviderConfig = {
 
 class FakeEventService implements IEventService {
   declare readonly _serviceBrand: undefined;
-  private readonly emitter = new Emitter<DomainEvent>();
+  private readonly emitter = new Emitter<Event2>();
   readonly onDidPublish = this.emitter.event;
-  readonly published: DomainEvent[] = [];
+  readonly published: Event2[] = [];
 
-  publish(event: DomainEvent): void {
+  publish(event: Event2): void {
     this.published.push(event);
     this.emitter.fire(event);
   }
 
-  subscribe(handler: (event: DomainEvent) => void): IDisposable {
+  subscribe(handler: (event: Event2) => void): IDisposable {
     return this.emitter.event(handler);
   }
 }
@@ -271,9 +273,9 @@ describe('SessionTitleService', () => {
     );
 
     const rebroadcast = events.published.find(
-      (event) =>
+      (event): event is SessionMetaUpdated =>
         event.type === 'session.meta.updated' &&
-        (event.payload as { patch?: { title?: string } }).patch?.title === '生成的标题',
+        (event as SessionMetaUpdated).payload.patch.title === '生成的标题',
     );
     expect(rebroadcast).toBeDefined();
   });

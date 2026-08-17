@@ -64,7 +64,7 @@
 import { createHash } from 'node:crypto';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
 import { LifecycleScope } from '#/app/scopes';
@@ -125,7 +125,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
   ) {
-    this.states.register(mediaResolvedKey);
+    this.states.contributeState(mediaResolvedKey);
   }
 
   private get resolved(): Map<string, ContentPart> {

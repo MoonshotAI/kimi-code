@@ -1,15 +1,16 @@
 /**
- * Generates `docs/wire-manifest.d.ts` — the single place to see every wire
- * record type registered via `defineOp(...)`.
+ * Generates `docs/wire-manifest.d.ts` — the single place to see every durable
+ * wire record type declared as an `Event2` subclass (`static type` +
+ * `static durable = true` + `static schema`).
  *
  * Two passes:
- *   1. Static scan of `src/**` maps each op type to the source file that
- *      defines it — the "owner" — and collects the migration chain from
+ *   1. Static scan of `src/**` maps each durable event type to the source file
+ *      that declares it — the "owner" — and collects the migration chain from
  *      `src/wire/migration/v*.ts`.
- *   2. Runtime pass imports `src/index.ts` plus every op module found in the
- *      static pass ("import = register") and drains `OP_REGISTRY`, capturing
- *      the owning model, the persist policy, `toEvent`, and the payload schema
- *      exactly as the running process sees them.
+ *   2. Runtime pass imports `src/index.ts` plus every event/state module found
+ *      in the static pass ("import = register") and drains `EVENT2_REGISTRY`
+ *      (type → class → schema) and `REPLAYABLE_STATE_KEYS` (folding states, blob
+ *      codecs) exactly as the running process sees them.
  *
  * The output is a `.d.ts` — one payload declaration per record type, with a
  * `WirePayloadMap` from record type to declaration — using real TypeScript
@@ -26,8 +27,7 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from '
 import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { MODEL_CROSS_REDUCERS } from '#/wire/model';
-import { OP_REGISTRY } from '#/wire/op';
+import { EVENT2_REGISTRY } from '#/app/event/event2';
 
 import {
   asJsonSchema,
@@ -44,7 +44,7 @@ const SRC = join(PKG, 'src');
 export const MANIFEST_PATH = join(PKG, 'docs', 'wire-manifest.d.ts');
 
 // ---------------------------------------------------------------------------
-// Static pass — op type → owner file; migration chain
+// Static pass — durable event type → owner file; migration chain
 // ---------------------------------------------------------------------------
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -56,22 +56,52 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** op type → owner file (relative to the package root). */
-function scanOpOwners(): { owners: Map<string, string>; opFiles: string[] } {
+const TYPE_DECL_RE = /static\s+override\s+readonly\s+type\s*=\s*'([^']+)'/g;
+const DURABLE_DECL_RE = /static\s+override\s+readonly\s+durable\s*=\s*true/;
+const CLASS_DECL_RE = /class\s+(\w+)\s+extends\s+Event2/g;
+
+/**
+ * event type → owner file (relative to the package root), the files worth
+ * importing for the runtime pass, the types statically declared durable
+ * (the class window between one `type` declaration and the next carries
+ * `durable = true`), and the event class name → type map (the class window
+ * between one `class … extends Event2` declaration and the next carries one
+ * `static type`).
+ */
+function scanEventDeclarations(): {
+  owners: Map<string, string>;
+  importFiles: string[];
+  durableTypes: Set<string>;
+  classTypes: Map<string, string>;
+} {
   const owners = new Map<string, string>();
-  const opFiles: string[] = [];
+  const importFiles: string[] = [];
+  const durableTypes = new Set<string>();
+  const classTypes = new Map<string, string>();
   for (const file of walk(SRC)) {
     const source = readFileSync(file, 'utf-8');
-    if (!source.includes('defineOp(')) continue;
-    const matches = [...source.matchAll(/defineOp\(\s*'([^']+)'/g)];
-    if (matches.length === 0) continue;
-    opFiles.push(file);
-    for (const match of matches) {
+    const matches = [...source.matchAll(TYPE_DECL_RE)];
+    const hasStates = source.includes('.replayable(');
+    if (matches.length > 0 || hasStates) importFiles.push(file);
+    for (const [i, match] of matches.entries()) {
       const type = match[1];
-      if (type !== undefined) owners.set(type, relative(PKG, file));
+      if (type === undefined) continue;
+      owners.set(type, relative(PKG, file));
+      const windowEnd = i + 1 < matches.length ? matches[i + 1]!.index : source.length;
+      if (DURABLE_DECL_RE.test(source.slice(match.index, windowEnd))) durableTypes.add(type);
+    }
+    const classMatches = [...source.matchAll(CLASS_DECL_RE)];
+    for (const [i, match] of classMatches.entries()) {
+      const className = match[1];
+      if (className === undefined) continue;
+      const windowEnd = i + 1 < classMatches.length ? classMatches[i + 1]!.index : source.length;
+      const typeMatch = /static\s+override\s+readonly\s+type\s*=\s*'([^']+)'/.exec(
+        source.slice(match.index, windowEnd),
+      );
+      if (typeMatch?.[1] !== undefined) classTypes.set(className, typeMatch[1]);
     }
   }
-  return { owners, opFiles };
+  return { owners, importFiles, durableTypes, classTypes };
 }
 
 /** `1.0 -> 1.1 -> ...` chain read from the `src/wire/migration/v*.ts` files. */
@@ -90,6 +120,136 @@ function scanMigrationChain(): string {
   pairs.sort((a, b) => a.source.localeCompare(b.source, undefined, { numeric: true }));
   const chain = pairs.flatMap((p, i) => (i === 0 ? [p.source, p.target] : [p.target]));
   return chain.join(' -> ');
+}
+
+// ---------------------------------------------------------------------------
+// Static pass — replayable state keys and their fold targets
+// ---------------------------------------------------------------------------
+
+interface ReplayableStateScan {
+  readonly keyName: string;
+  readonly constName: string;
+  readonly undoable: boolean;
+  readonly blobs: boolean;
+  readonly foldClasses: string[];
+}
+
+const ON_FOLD_RE = /\.on\(\s*([A-Za-z_$][\w$]*)/g;
+const KEY_ON_RE = /\b([A-Za-z_$][\w$]*)\.on\(\s*([A-Za-z_$][\w$]*)/g;
+const PROTOCOL_EVENT_RE = /(?:appendMessage|applyCompaction|clear|undo):\s*([A-Za-z_$][\w$]*)/g;
+
+/** Balanced-paren read of the argument list starting at the `(` after a chain method. */
+function readCallArguments(text: string, parenIndex: number): string {
+  let depth = 0;
+  for (let i = parenIndex; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      i += 1;
+      while (i < text.length && text[i] !== quote) {
+        if (text[i] === '\\') i += 1;
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) return text.slice(parenIndex + 1, i);
+    }
+  }
+  return text.slice(parenIndex + 1);
+}
+
+/**
+ * `readExpression` variant for `defineState(...)` chains: the fold bodies are
+ * arbitrary code, where `<` / `>` are comparison operators as often as generic
+ * brackets — only `()` `{}` `[]` delimit the statement reliably.
+ */
+function readChain(source: string, start: number): string {
+  let depth = 0;
+  const n = source.length;
+  for (let i = start; i < n; i++) {
+    const ch = source[i];
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      i += 1;
+      while (i < n && source[i] !== quote) {
+        if (source[i] === '\\') i += 1;
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === '{' || ch === '(' || ch === '[') depth += 1;
+    else if (ch === '}' || ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+    else if (ch === ';' && depth === 0) return source.slice(start, i);
+  }
+  return source.slice(start);
+}
+
+function scanReplayableStates(): ReplayableStateScan[] {
+  const states: ReplayableStateScan[] = [];
+  const byConst = new Map<string, ReplayableStateScan>();
+  const constChainRe =
+    /(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*defineState\(\s*'([^']+)'/g;
+  for (const file of walk(SRC)) {
+    const source = readFileSync(file, 'utf-8');
+    if (!source.includes('.replayable(') && !source.includes('.on(')) continue;
+    for (const match of source.matchAll(constChainRe)) {
+      const constName = match[1];
+      const keyName = match[2];
+      if (constName === undefined || keyName === undefined) continue;
+      const chain = readChain(source, source.indexOf('defineState', match.index));
+      const replayableIndex = chain.indexOf('.replayable(');
+      if (replayableIndex === -1) continue;
+      const replayableArgs = readCallArguments(chain, replayableIndex + '.replayable'.length);
+      const scan: ReplayableStateScan = {
+        keyName,
+        constName,
+        undoable: chain.includes('.undoable('),
+        blobs: /\bblobs\s*:/.test(replayableArgs),
+        foldClasses: [...chain.matchAll(ON_FOLD_RE)].map((m) => m[1]!),
+      };
+      states.push(scan);
+      byConst.set(constName, scan);
+    }
+  }
+  // A key's fold vocabulary may grow outside its defining chain
+  // (`otherKey.on(Event, …)` in a feature module).
+  for (const file of walk(SRC)) {
+    const source = readFileSync(file, 'utf-8');
+    if (!source.includes('.on(')) continue;
+    for (const match of source.matchAll(KEY_ON_RE)) {
+      const scan = byConst.get(match[1]!);
+      const cls = match[2];
+      if (scan === undefined || cls === undefined) continue;
+      if (!scan.foldClasses.includes(cls)) scan.foldClasses.push(cls);
+    }
+  }
+  return states;
+}
+
+/** The four undoable-protocol event types, resolved through the class-name map. */
+function scanUndoableProtocolTypes(classTypes: ReadonlyMap<string, string>): string[] {
+  for (const file of walk(SRC)) {
+    const source = readFileSync(file, 'utf-8');
+    const index = source.indexOf('registerUndoableProtocol(');
+    if (index === -1) continue;
+    const window = readChain(source, index);
+    const types: string[] = [];
+    for (const match of window.matchAll(PROTOCOL_EVENT_RE)) {
+      const cls = match[1]!;
+      const type = classTypes.get(cls);
+      if (type === undefined) {
+        throw new Error(
+          `[gen-wire-manifest] undoable protocol event class '${cls}' has no resolved type`,
+        );
+      }
+      types.push(type);
+    }
+    return types;
+  }
+  throw new Error('[gen-wire-manifest] registerUndoableProtocol call not found under src/');
 }
 
 // ---------------------------------------------------------------------------
@@ -260,8 +420,9 @@ function emitTsDict(lines: string[], dict: SketchDict, indent: string): void {
 
 /** One record type's payload declaration (`interface` for objects, `type` otherwise). */
 function renderPayloadDecl(
-  entry: { type: string; model: { name: string }; persist?: boolean; toEvent?: unknown },
+  entry: { type: string },
   owner: string | undefined,
+  states: string[],
   flags: string[],
   sketch: Sketch,
 ): string[] {
@@ -269,7 +430,7 @@ function renderPayloadDecl(
   const nameField = `_name: '${entry.type}';`;
   const header = [
     '/**',
-    ` * model: ${entry.model.name}${flags.length > 0 ? ` · ${flags.join(' · ')}` : ''}`,
+    ` * states: ${states.length > 0 ? states.join(', ') : '(none)'}${flags.length > 0 ? ` · ${flags.join(' · ')}` : ''}`,
     ` * owner: ${owner ?? '(unresolved)'}`,
   ];
   if (typeof sketch === 'string') {
@@ -422,6 +583,10 @@ function readExpression(source: string, start: number): string {
 /** Quote a string literal TS-style (single quotes) so sketches need no JSON escapes. */
 function tsQuote(raw: string): string {
   return raw.includes("'") ? JSON.stringify(raw) : `'${raw}'`;
+}
+
+function escapeRegExp(raw: string): string {
+  return raw.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** Resolve a `schema:` expression to an object-literal body, following local consts. */
@@ -790,7 +955,7 @@ function friendlyZodUnion(body: string, ownerFile: string, depth: number): strin
   const source = readCached(ownerFile);
   const bodies = members.map((m) => resolveSchemaLiteral(m, source));
   if (members.length > 0 && bodies.every((b) => b !== undefined)) {
-    const fieldMaps = bodies.map((b) => splitObjectFields(b!));
+    const fieldMaps = bodies.map((b) => splitObjectFields(b));
     // Hoist spreads shared by every member (`...base & { … } | { … }`).
     const spreadSets = fieldMaps.map((fm) => [...fm.keys()].filter((k) => fm.get(k) === ''));
     const commonSpreads = (spreadSets[0] ?? []).filter((s) =>
@@ -826,18 +991,21 @@ function sketchPayloadFromSource(
 ): string | Map<string, Sketch> | undefined {
   const absFile = join(PKG, ownerFile);
   const source = readCached(absFile);
-  const callRe = new RegExp(`defineOp\\(\\s*'${type.replaceAll('.', '\\.')}'\\s*,\\s*\\{`);
-  const call = callRe.exec(source);
-  if (call === null) return undefined;
-  const optionsBody = objectBody(source, call.index + call[0].length - 1);
-  if (optionsBody === undefined) return undefined;
-  const schemaField = /(?:^|[,\n])\s*schema\s*:/.exec(optionsBody);
-  if (schemaField === null) return undefined;
-  const afterSchema = optionsBody.slice(schemaField.index + schemaField[0].length).trimStart();
-  // The schema expression ends at the next top-level comma.
-  const exprFields = splitObjectFields(`schema: ${afterSchema}`);
-  const schemaExpr = exprFields.get('schema');
-  if (schemaExpr === undefined) return undefined;
+  const typeRe = new RegExp(
+    `static\\s+override\\s+readonly\\s+type\\s*=\\s*'${escapeRegExp(type)}'`,
+  );
+  const typeMatch = typeRe.exec(source);
+  if (typeMatch === null) return undefined;
+  const rest = source.slice(typeMatch.index + typeMatch[0].length);
+  const nextType = /static\s+override\s+readonly\s+type\s*=/.exec(rest);
+  const classWindow = nextType === null ? rest : rest.slice(0, nextType.index);
+  const schemaMatch = /static\s+override\s+readonly\s+schema\s*=\s*/.exec(classWindow);
+  if (schemaMatch === null) return undefined;
+  const schemaExpr = readExpression(
+    classWindow,
+    schemaMatch.index + schemaMatch[0].length,
+  ).trim();
+  if (schemaExpr === '') return undefined;
   const literal = resolveSchemaLiteral(schemaExpr, source);
   if (literal === undefined) {
     const sketch = friendlyZodExpr(schemaExpr, absFile);
@@ -862,19 +1030,59 @@ function sketchPayloadFromSource(
 // ---------------------------------------------------------------------------
 
 export async function buildWireManifest(): Promise<string> {
-  const { owners, opFiles } = scanOpOwners();
-  // "import = register": loading the package root plus every op module found in
-  // the static pass fills OP_REGISTRY, even for modules index.ts does not load.
+  const { owners, importFiles, durableTypes, classTypes } = scanEventDeclarations();
+  // "import = register": loading the package root plus every event/state module
+  // found in the static pass fills EVENT2_REGISTRY, even for
+  // modules index.ts does not load.
   await import('../src/index.ts');
-  for (const file of opFiles) {
+  for (const file of importFiles) {
     await import(relative(join(PKG, 'scripts'), file));
   }
   const { WIRE_PROTOCOL_VERSION } = (await import('#/wire/migration/migration')) as {
     WIRE_PROTOCOL_VERSION: string;
   };
 
-  const entries = [...OP_REGISTRY.values()].toSorted((a, b) => a.type.localeCompare(b.type));
+  const entries = [...EVENT2_REGISTRY.values()].toSorted((a, b) => a.type.localeCompare(b.type));
   const migrationChain = scanMigrationChain();
+
+  // type → folding states / blob codec owners, scanned from the defineState chains.
+  const folding = new Map<string, { states: string[]; blobs: string[] }>();
+  const protocolTypes = scanUndoableProtocolTypes(classTypes);
+  for (const state of scanReplayableStates()) {
+    const eventTypes = new Set<string>();
+    for (const cls of state.foldClasses) {
+      const type = classTypes.get(cls);
+      if (type === undefined) {
+        throw new Error(
+          `[gen-wire-manifest] state '${state.keyName}' folds unresolved event class '${cls}'`,
+        );
+      }
+      eventTypes.add(type);
+    }
+    if (state.undoable) {
+      for (const type of protocolTypes) eventTypes.add(type);
+    }
+    for (const type of eventTypes) {
+      let info = folding.get(type);
+      if (info === undefined) {
+        info = { states: [], blobs: [] };
+        folding.set(type, info);
+      }
+      info.states.push(state.keyName);
+      if (state.blobs) info.blobs.push(state.keyName);
+    }
+  }
+  for (const info of folding.values()) {
+    info.states.sort();
+    info.blobs.sort();
+  }
+
+  const unregistered = [...durableTypes].filter((type) => !EVENT2_REGISTRY.has(type));
+  if (unregistered.length > 0) {
+    console.error(
+      `[gen-wire-manifest] declared durable but never registered (no fold, not in EVENT2_REGISTRY): ${unregistered.toSorted().join(', ')}`,
+    );
+  }
 
   const out: string[] = [
     '// Wire Protocol Manifest',
@@ -884,48 +1092,49 @@ export async function buildWireManifest(): Promise<string> {
     '//',
     `// protocol_version: "${WIRE_PROTOCOL_VERSION}" (migrations: ${migrationChain})`,
     '//',
-    '// One declaration per record type registered via defineOp(...) and drained from',
-    '// the runtime OP_REGISTRY. Every payload declaration carries its record type in',
-    '// a `_name` field. Payload sketches use TypeScript type syntax; when a',
-    '// named type is expanded inline, its name appears as a doc comment',
-    '// (`/** ContextMessage */`). Bare type names (ContentPart, ContextMessage, …)',
-    '// refer to the real types in src/ — they are intentionally not resolved here.',
-    '// `// …` marks a capped field list. On disk (wire.jsonl) the journal opens with',
-    '// a metadata line {"type": "metadata", "protocol_version", "created_at"}; each',
-    '// op record is {"type", ...payload, "time"} — object payloads spread at the',
-    '// top level, scalar payloads nest under a "payload" key.',
+    '// One declaration per durable record type — an Event2 subclass declaring',
+    '// `static type` + `static durable = true` + `static schema` — drained from the',
+    '// runtime EVENT2_REGISTRY ("import = register"). Every payload declaration',
+    '// carries its record type in a `_name` field. Payload sketches use TypeScript',
+    '// type syntax; when a named type is expanded inline, its name appears as a doc',
+    '// comment (`/** ContextMessage */`). Bare type names (ContentPart,',
+    '// ContextMessage, …) refer to the real types in src/ — they are intentionally',
+    '// not resolved here. `// …` marks a capped field list. On disk (wire.jsonl)',
+    '// the journal opens with a metadata line {"type": "metadata",',
+    '// "protocol_version", "created_at"}; each record is {"type", ...payload,',
+    '// "time"} — object payloads spread at the top level.',
     '//',
-    '// Declaration flags: persisted (written to the journal; absent = transient),',
-    '// toEvent (also publishes an IEventBus fact on live dispatch), blobs (the',
-    '// owning model offloads inline media to blob storage), cross-reducers',
-    '// (foreign models that also reduce this record on dispatch and replay).',
+    '// Every listed type is durable by construction — transient Event2 classes',
+    '// never enter EVENT2_REGISTRY, so there is no persisted flag. Declaration',
+    '// header lines: states (every state folding this record type on dispatch and',
+    '// replay; any state beyond the first is what the retired format listed as',
+    '// cross-reducers), blobs (the folding states whose blob codec offloads inline',
+    '// media to blob storage), owner (the source file declaring the class).',
     '',
     `// Index (${entries.length} record types)`,
   ];
   const width = Math.max(...entries.map((e) => e.type.length));
-  const modelWidth = Math.max(...entries.map((e) => e.model.name.length));
+  const statesWidth = Math.max(
+    ...entries.map((e) => (folding.get(e.type)?.states.join(', ') ?? '(none)').length),
+  );
   for (const entry of entries) {
-    const flags = entry.persist === false ? 'transient' : 'persisted';
+    const states = folding.get(entry.type)?.states.join(', ') ?? '(none)';
     out.push(
-      `//   ${entry.type.padEnd(width)}  ${entry.model.name.padEnd(modelWidth)}  ${flags}  ${owners.get(entry.type) ?? '(unresolved)'}`,
+      `//   ${entry.type.padEnd(width)}  ${states.padEnd(statesWidth)}  ${owners.get(entry.type) ?? '(unresolved)'}`,
     );
   }
   out.push('');
   const declNames: [string, string][] = [];
   for (const entry of entries) {
+    const info = folding.get(entry.type);
+    const states = info?.states ?? [];
     const flags: string[] = [];
-    if (entry.persist !== false) flags.push('persisted');
-    if (entry.toEvent !== undefined) flags.push('toEvent');
-    if (entry.model.blobs !== undefined) flags.push('blobs');
-    const crossReducers = (MODEL_CROSS_REDUCERS.get(entry.type) ?? [])
-      .map((r) => (r.model as { name: string }).name)
-      .filter((name) => name !== entry.model.name);
-    if (crossReducers.length > 0) flags.push(`cross-reducers: ${crossReducers.join(', ')}`);
+    if (info !== undefined && info.blobs.length > 0) flags.push(`blobs: ${info.blobs.join(', ')}`);
     const owner = owners.get(entry.type);
     const staticSketch =
       owner === undefined ? undefined : sketchPayloadFromSource(owner, entry.type);
     const sketch = buildPayloadSketch(entry.schema as unknown, staticSketch);
-    out.push(...renderPayloadDecl(entry, owner, flags, sketch));
+    out.push(...renderPayloadDecl(entry, owner, states, flags, sketch));
     declNames.push([entry.type, `${pascalCase(entry.type)}Payload`]);
   }
 

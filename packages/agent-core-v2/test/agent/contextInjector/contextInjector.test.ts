@@ -19,6 +19,7 @@ import {
 } from '#/agent/contextInjector/contextInjector';
 import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -103,12 +104,13 @@ describe('AgentContextInjectorService', () => {
   ): void {
     const backing = (context as StubContextMemory).messages as ContextMessage[];
     backing.splice(start, deleteCount, ...inserted);
-    ix.get(IEventBus).publish({
-      type: 'context.spliced',
-      start,
-      deleteCount,
-      messages: [...inserted],
-    });
+    ix.get(IEventBus).publish(
+      new ContextSpliced({
+        start,
+        deleteCount,
+        messages: [...inserted],
+      }),
+    );
   }
 
   it('registers providers and appends injection messages with the provider variant', async () => {

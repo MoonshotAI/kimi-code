@@ -1,9 +1,10 @@
 /**
  * `state` domain — scope-agnostic keyed state container primitives.
  *
- * Owns the typed `StateKey<T>` / `defineState(name, initial)` descriptor, the
- * `IStateRegistry` base interface shared by the per-scope state services, and
- * the `StateRegistry` implementation backing them: a `Map`-backed store
+ * Owns the typed `StateKey<T>` descriptor (manufactured by `defineState` in
+ * the top-level `state` domain), the `IStateRegistry` base interface shared
+ * by the per-scope state services, and the `StateRegistry` implementation
+ * backing them: a `Map`-backed store
  * where keys are declared
  * up front (`register`), read and replaced (`get` / `set`), and observed
  * (`onDidChange(key)` per key, `onDidChangeAny` globally). Two exports serve
@@ -14,7 +15,10 @@
  * instances with a custom prototype (service references, tools, Promises)
  * collapse to a `'(ClassName)'` marker — plain data is recursed, resource
  * graphs are not, so a value that reaches into the DI object graph cannot
- * fan the copy out until the heap is exhausted. Misuse (duplicate registration, reading or writing an
+ * fan the copy out until the heap is exhausted. A key flagged
+ * `snapshotExcluded` (replayable event-sourced state, whose authoritative
+ * copy is the wire journal) is skipped by `snapshot()` so the debug export
+ * never deep-copies it. Misuse (duplicate registration, reading or writing an
  * unregistered key) is a caller bug and raises `BugIndicatingError`.
  *
  * Cascading inspection: each scope's state service keeps a reference to the
@@ -37,10 +41,7 @@ import { Emitter, type Event } from '../event';
 export interface StateKey<T> {
   readonly name: string;
   readonly initial: () => T;
-}
-
-export function defineState<T>(name: string, initial: () => T): StateKey<T> {
-  return { name, initial };
+  readonly snapshotExcluded?: boolean;
 }
 
 export interface StateChange {
@@ -55,7 +56,7 @@ export interface StateInspection {
 }
 
 export interface IStateRegistry {
-  register<T>(key: StateKey<T>): IDisposable;
+  contributeState<T>(key: StateKey<T>): IDisposable;
   has(key: StateKey<unknown>): boolean;
   get<T>(key: StateKey<T>): T;
   set<T>(key: StateKey<T>, value: T): void;
@@ -70,6 +71,7 @@ export interface IStateRegistry {
 export class StateRegistry extends Disposable implements IStateRegistry {
   private readonly values = new Map<string, unknown>();
   private readonly registrations = new Map<string, object>();
+  private readonly excludedFromSnapshot = new Set<string>();
   private readonly keyEmitters = new Map<string, Emitter<unknown>>();
   private readonly anyEmitter = this._register(new Emitter<StateChange>());
   readonly onDidChangeAny: Event<StateChange> = this.anyEmitter.event;
@@ -77,17 +79,31 @@ export class StateRegistry extends Disposable implements IStateRegistry {
   protected readonly inspectScope: string = 'unknown';
   protected inspectParent?: IStateRegistry;
 
-  register<T>(key: StateKey<T>): IDisposable {
+  contributeState<T>(key: StateKey<T>): IDisposable {
+    const replayable = (key as StateKey<T> & { readonly replayable?: unknown }).replayable;
+    if (typeof replayable === 'object' && replayable !== null) {
+      throw new BugIndicatingError(
+        `replayable state key '${key.name}' must be contributed to the Agent-scope state service`,
+      );
+    }
+    return this.contributeKey(key);
+  }
+
+  protected contributeKey<T>(key: StateKey<T>): IDisposable {
     if (this.values.has(key.name)) {
       throw new BugIndicatingError(`state key '${key.name}' is already registered`);
     }
     const registration = {};
     this.registrations.set(key.name, registration);
     this.values.set(key.name, key.initial());
+    if (key.snapshotExcluded === true) {
+      this.excludedFromSnapshot.add(key.name);
+    }
     return toDisposable(() => {
       if (this.registrations.get(key.name) !== registration) return;
       this.registrations.delete(key.name);
       this.values.delete(key.name);
+      this.excludedFromSnapshot.delete(key.name);
       this.keyEmitters.get(key.name)?.dispose();
       this.keyEmitters.delete(key.name);
     });
@@ -129,6 +145,7 @@ export class StateRegistry extends Disposable implements IStateRegistry {
   snapshot(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [key, value] of this.values) {
+      if (this.excludedFromSnapshot.has(key)) continue;
       out[key] = toJsonSafe(value, new WeakSet());
     }
     return out;

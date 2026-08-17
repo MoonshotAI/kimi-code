@@ -1,13 +1,19 @@
 /**
- * `toolExecutor` domain — the `tool.call.*` / `tool.progress` / `tool.result`
- * event payloads published through `IEventBus` as tool calls execute.
+ * `toolExecutor` domain — the transient observable `tool.call.started` /
+ * `tool.progress` / `tool.result` `Event2` classes published through the
+ * event dispatcher as tool calls execute. Consumers subscribe by class (or by
+ * `type` string). `ToolResultEvent` carries the `Event` suffix because the
+ * bare name collides with `toolContract`'s `ToolResult` at the producing
+ * service.
  */
 
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+
+import { Event2 } from '#/app/event/event2';
 import type { ToolUpdate } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-export interface ToolCallStartedEvent {
-  readonly type: 'tool.call.started';
+export interface ToolCallStartedPayload {
   readonly turnId: number;
   readonly toolCallId: string;
   readonly name: string;
@@ -16,15 +22,25 @@ export interface ToolCallStartedEvent {
   readonly display?: ToolInputDisplay;
 }
 
-export interface ToolProgressEvent {
-  readonly type: 'tool.progress';
+export class ToolCallStarted extends Event2<ToolCallStartedPayload> {
+  static override readonly type = 'tool.call.started';
+  static override readonly observable = true;
+}
+export interface ToolCallStarted extends ToolCallStartedPayload {}
+
+export interface ToolProgressPayload {
   readonly turnId: number;
   readonly toolCallId: string;
   readonly update: ToolUpdate;
 }
 
-export interface ToolResultEvent {
-  readonly type: 'tool.result';
+export class ToolProgress extends Event2<ToolProgressPayload> {
+  static override readonly type = 'tool.progress';
+  static override readonly observable = true;
+}
+export interface ToolProgress extends ToolProgressPayload {}
+
+export interface ToolResultEventPayload {
   readonly turnId: number;
   readonly toolCallId: string;
   readonly output: unknown;
@@ -32,10 +48,8 @@ export interface ToolResultEvent {
   readonly synthetic?: boolean;
 }
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'tool.call.started': ToolCallStartedEvent;
-    'tool.result': ToolResultEvent;
-    'tool.progress': ToolProgressEvent;
-  }
+export class ToolResultEvent extends Event2<ToolResultEventPayload> {
+  static override readonly type = 'tool.result';
+  static override readonly observable = true;
 }
+export interface ToolResultEvent extends ToolResultEventPayload {}

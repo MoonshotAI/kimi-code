@@ -23,7 +23,7 @@ import {
   LifecycleScope,
   SessionInteractionService,
   StateRegistry,
-  type DomainEvent,
+  type Event2,
   type ISessionScopeHandle,
   type ISessionStateService,
   type Scope,
@@ -43,7 +43,10 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
-import { AgentTranscriptProjector } from '../../src/services/transcript/coreEventMap';
+import {
+  AgentTranscriptProjector,
+  type ProjectorBusEvent,
+} from '../../src/services/transcript/coreEventMap';
 import {
   healTurnOps,
   TranscriptService,
@@ -51,8 +54,8 @@ import {
   TRANSCRIPT_OPS_JOURNAL_CAPACITY,
 } from '../../src/services/transcript/transcriptService';
 
-function ev(payload: Record<string, unknown>): DomainEvent {
-  return payload as unknown as DomainEvent;
+function ev(payload: Record<string, unknown>): ProjectorBusEvent {
+  return payload as unknown as ProjectorBusEvent;
 }
 
 class TestSessionStateService extends StateRegistry implements ISessionStateService {
@@ -72,7 +75,7 @@ describe('AgentTranscriptProjector', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const ops: TranscriptOperation[] = [];
-    const feed = (event: DomainEvent): void => {
+    const feed = (event: ProjectorBusEvent): void => {
       const mapped = projector.map(event);
       ops.push(...mapped);
       tx.apply(mapped);
@@ -134,7 +137,7 @@ describe('AgentTranscriptProjector', () => {
   it('projects the live prompt from turn.started and keeps it through turn.ended', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => {
+    const feed = (event: ProjectorBusEvent): void => {
       tx.apply(projector.map(event));
     };
 
@@ -151,7 +154,7 @@ describe('AgentTranscriptProjector', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const ops: TranscriptOperation[] = [];
-    const feed = (event: DomainEvent): void => {
+    const feed = (event: ProjectorBusEvent): void => {
       const mapped = projector.map(event);
       ops.push(...mapped);
       tx.apply(mapped);
@@ -483,7 +486,7 @@ describe('AgentTranscriptProjector', () => {
   it('flushes open frames on turn.ended even without step completion', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -507,7 +510,7 @@ describe('AgentTranscriptProjector', () => {
   it('marks a user-cancelled turn with an interruption marker, but not programmatic aborts', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'hi' }));
     feed(
@@ -531,7 +534,7 @@ describe('AgentTranscriptProjector', () => {
   it('carries usage / finishReason / the full timing breakdown on turn.step.completed', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -593,7 +596,7 @@ describe('AgentTranscriptProjector', () => {
   it('carries endReason / endMessage on turn.step.interrupted', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -616,7 +619,7 @@ describe('AgentTranscriptProjector', () => {
   it('sets retry on turn.step.retrying and clears it at the terminal upsert', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
     const step = (): TranscriptTurn['steps'][number] => turnOps('t1', tx.getItems()).steps[0]!;
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
@@ -657,7 +660,7 @@ describe('AgentTranscriptProjector', () => {
   it('fills durationMs / error / accumulated step usage on turn.ended', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -706,7 +709,7 @@ describe('AgentTranscriptProjector', () => {
   it('accumulates tool.call.delta into inputText, kept across tool.call.started', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
     const toolFrame = (toolCallId: string): TranscriptFrame | undefined =>
       turnOps('t1', tx.getItems())
         .steps.flatMap((step) => step.frames)
@@ -762,7 +765,7 @@ describe('AgentTranscriptProjector', () => {
   it('overwrites tool frame progress and drops progress for unknown calls', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     // Unknown call (no started/delta frame, no seeded frame to adopt): dropped.
     expect(
@@ -809,7 +812,7 @@ describe('AgentTranscriptProjector', () => {
   it('marks tool.result errors and keeps the display payload', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -838,7 +841,7 @@ describe('AgentTranscriptProjector', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const ops: TranscriptOperation[] = [];
-    const feed = (event: DomainEvent): void => {
+    const feed = (event: ProjectorBusEvent): void => {
       const mapped = projector.map(event);
       ops.push(...mapped);
       tx.apply(mapped);
@@ -971,7 +974,7 @@ describe('AgentTranscriptProjector', () => {
   it('links spawned subagents to the spawning tool frame (member for swarm)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -1060,7 +1063,7 @@ describe('AgentTranscriptProjector', () => {
   it('mirrors status slices into meta.agent (shallow-merged across slices)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     // A usage-only slice projects into meta.agent (never into modes).
     const usageOnly = projector.map(ev({ type: 'agent.status.updated', usage: {} }));
@@ -1104,7 +1107,7 @@ describe('AgentTranscriptProjector', () => {
   it('maps agent.activity.updated into meta.agent.phase', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
     const turn = (overrides: Record<string, unknown>): Record<string, unknown> => ({
       turnId: 1,
       origin: { kind: 'user' },
@@ -1235,7 +1238,7 @@ describe('AgentTranscriptProjector', () => {
   it('projects skill / plugin-command / cron / compaction / hook / undo markers', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'skill.activated', activationId: 'a1', skillName: 'gen-docs', trigger: 'user-slash' }));
     feed(
@@ -1315,7 +1318,7 @@ describe('AgentTranscriptProjector', () => {
   it('emits interactions as global entities only (no inline frame), back-links on resolve', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 2, step: 1 }));
@@ -1373,9 +1376,9 @@ describe('AgentTranscriptProjector', () => {
   it('surfaces a mid-turn task notification as a user input frame linked to the task', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
-    const notified = (): DomainEvent =>
+    const notified = (): ProjectorBusEvent =>
       ev({
         type: 'task.notified',
         notificationType: 'task.completed',
@@ -1404,7 +1407,7 @@ describe('AgentTranscriptProjector', () => {
   it('replaces the global todo document on a confirmed TodoList write', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -1478,7 +1481,7 @@ describe('AgentTranscriptProjector', () => {
   it('projects prompt submitted/completed/aborted/steered as global queue entities', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(
       ev({
@@ -1579,7 +1582,7 @@ describe('AgentTranscriptProjector', () => {
   it('projects prompt.steered media content to the wire shape (no daemon ref or path leak)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(
       ev({
@@ -1780,7 +1783,7 @@ describe('AgentTranscriptProjector', () => {
   it('maps cron / task origins onto the turn header', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(
       ev({
@@ -1812,7 +1815,7 @@ describe('AgentTranscriptProjector', () => {
   it('treats subagent.started/failed/suspended within the running→failed vocabulary', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
-    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
     feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
     expect(tx.getTask('agent-1')).toMatchObject({ kind: 'subagent', state: 'running' });
@@ -1855,12 +1858,12 @@ describe('AgentTranscript transcript task vocabulary', () => {
 
 describe('bindSessionTranscript', () => {
   class FakeBus {
-    private readonly handlers = new Set<(event: DomainEvent) => void>();
-    subscribe(cb: (event: DomainEvent) => void): { dispose: () => void } {
+    private readonly handlers = new Set<(event: Event2<any>) => void>();
+    subscribe(cb: (event: Event2<any>) => void): { dispose: () => void } {
       this.handlers.add(cb);
       return { dispose: () => this.handlers.delete(cb) };
     }
-    emit(event: DomainEvent): void {
+    emit(event: Event2<any>): void {
       for (const cb of this.handlers) cb(event);
     }
   }

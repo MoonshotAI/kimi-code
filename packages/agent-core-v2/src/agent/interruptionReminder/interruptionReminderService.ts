@@ -12,11 +12,13 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 
 import { IAgentInterruptionReminderService } from './interruptionReminder';
-import { INTERRUPTION_REMINDER_VARIANT } from './interruptionReminderOps';
+import { INTERRUPTION_REMINDER_VARIANT, interruptionReminderKey } from './interruptionReminderOps';
 
 const INTERRUPTION_REMINDER = [
   'The previous turn was interrupted by the user before completion;',
@@ -34,10 +36,12 @@ export class AgentInterruptionReminderService
     @IEventBus eventBus: IEventBus,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentStateService agentState: IAgentStateService,
   ) {
     super();
+    agentState.contributeState(interruptionReminderKey);
     this._register(
-      eventBus.subscribe('turn.ended', (event) => {
+      eventBus.subscribe(TurnEnded, (event) => {
         if (event.reason !== 'cancelled' || event.interruptReason !== 'user_cancelled') return;
         const origin = lastComparableMessage(this.context.get())?.origin;
         if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;

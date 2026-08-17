@@ -15,6 +15,7 @@ import {
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
 import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/contextOps';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IEventBus } from '#/app/event/eventBus';
@@ -36,7 +37,7 @@ function publishSplice(
     tokens?: number;
   },
 ): void {
-  eventBus?.publish({ type: 'context.spliced', ...input });
+  eventBus?.publish(new ContextSpliced(input));
 }
 
 export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {

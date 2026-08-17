@@ -19,7 +19,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import {
   IAgentPluginCommandService,
-  type PluginCommandActivatedEvent,
+  PluginCommandActivated,
 } from '#/agent/pluginCommand/pluginCommand';
 
 import { appService, createTestAgent, type TestAgentContext } from '../../harness';
@@ -79,10 +79,10 @@ describe('AgentPluginCommandService', () => {
     ctx = agentWithDeployCommand();
     ctx.mockNextResponse({ type: 'text', text: 'deployed' });
 
-    const events: PluginCommandActivatedEvent[] = [];
+    const events: PluginCommandActivated[] = [];
     const sub = ctx
       .get(IEventBus)
-      .subscribe('plugin_command.activated', (event) => events.push(event));
+      .subscribe(PluginCommandActivated, (event) => events.push(event));
 
     await ctx
       .get(IAgentPluginCommandService)

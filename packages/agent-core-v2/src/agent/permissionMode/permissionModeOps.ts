@@ -1,31 +1,38 @@
 /**
- * `permissionMode` domain — wire Model (`PermissionModeModel`) and the
- * `permission.set_mode` Op (`setMode`) for the agent's permission mode.
+ * `permissionMode` domain — the `permissionModeKey` /
+ * `permissionModeConfiguredKey` states and the durable `permission.set_mode`
+ * event (`PermissionSetMode`) for the agent's permission mode.
  *
- * Declares the mode as a scalar `wire` Model (initial `manual`) plus a replay
- * marker that distinguishes an explicit persisted mode from the default. The
- * single Op replaces the mode and sets that marker.
+ * Declares the mode as a scalar state (initial `manual`) plus a replay marker
+ * state that distinguishes an explicit persisted mode from the default. The
+ * single durable event replaces the mode and sets the marker; both states fold
+ * it. Scope-agnostic.
  */
+
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 
 import { z } from 'zod';
 
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import { defineModel } from '#/wire/model';
+import { Event2 } from '#/app/event/event2';
+import { defineState } from '#/state/state';
 
-export const PermissionModeModel = defineModel<PermissionMode>('permissionMode', () => 'manual');
-export const PermissionModeConfiguredModel = defineModel<boolean>(
-  'permissionMode.configured',
-  () => false,
-  { reducers: { 'permission.set_mode': () => true } },
-);
+const permissionSetModeSchema = z.object({ mode: z.custom<PermissionMode>() });
 
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'permission.set_mode': typeof setMode;
-  }
+export class PermissionSetMode extends Event2<z.infer<typeof permissionSetModeSchema>> {
+  static override readonly type = 'permission.set_mode';
+  static override readonly durable = true;
+  static override readonly schema = permissionSetModeSchema;
 }
+export interface PermissionSetMode extends z.infer<typeof permissionSetModeSchema> {}
 
-export const setMode = PermissionModeModel.defineOp('permission.set_mode', {
-  schema: z.object({ mode: z.custom<PermissionMode>() }),
-  apply: (_s, p) => p.mode,
-});
+export const permissionModeKey = defineState('permissionMode', (): PermissionMode => 'manual')
+  .replayable({ schema: z.custom<PermissionMode>() })
+  .on(PermissionSetMode, (_s, e) => e.mode);
+
+export const permissionModeConfiguredKey = defineState(
+  'permissionMode.configured',
+  (): boolean => false,
+)
+  .replayable({ schema: z.custom<boolean>() })
+  .on(PermissionSetMode, () => true);

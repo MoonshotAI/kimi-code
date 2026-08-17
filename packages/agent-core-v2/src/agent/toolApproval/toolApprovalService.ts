@@ -2,14 +2,15 @@
  * `toolApproval` domain — `IAgentToolApprovalService` implementation.
  *
  * Owns the approval round-trip: publishes
- * `permission.approval.requested/resolved` through `eventBus`, awaits the
- * session approval broker (absent broker = auto-approve), records
- * session-scope approval rules through `permissionRules`, reports
- * `permission_approval_result` through `telemetry`, and folds ask
- * continuations back into authorize results. The interaction id is minted
- * here (`approval_<uuid>`) so the broker, the events, and the activity view
- * all key the same request. Bound at Agent scope.
+ * `permission.approval.requested/resolved` through `state`
+ * (`IEventDispatcher`), awaits the session approval broker (absent broker =
+ * auto-approve), records session-scope approval rules through
+ * `permissionRules`, reports `permission_approval_result` through
+ * `telemetry`, and folds ask continuations back into authorize results.
+ * Bound at Agent scope.
  */
+
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 
 import { randomUUID } from 'node:crypto';
 
@@ -20,7 +21,6 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable, isUserCancellation } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type {
-  ApprovalRequest,
   ApprovalResponse,
   PermissionPolicyResolution,
   PermissionPolicyResult,
@@ -32,36 +32,46 @@ import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
-import { IEventBus } from '#/app/event/eventBus';
+import { Event2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionApprovalService } from '#/session/approval/approval';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { IAgentToolApprovalService } from './toolApproval';
 
-export type PermissionApprovalRequestContext = ApprovalRequest & {
+export interface PermissionApprovalRequestedPayload {
+  readonly id?: string;
   readonly sessionId?: string;
   readonly agentId?: string;
   readonly turnId: number;
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly action: string;
+  readonly display: ToolInputDisplay;
   readonly toolInput: unknown;
-};
-
-export type PermissionApprovalResultContext = PermissionApprovalRequestContext &
-  (
-    | ApprovalResponse
-    | {
-        readonly decision: 'error';
-        readonly error: string;
-      }
-  );
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'permission.approval.requested': PermissionApprovalRequestContext;
-    'permission.approval.resolved': PermissionApprovalResultContext;
-  }
 }
+
+export class PermissionApprovalRequested extends Event2<PermissionApprovalRequestedPayload> {
+  static override readonly type = 'permission.approval.requested';
+  static override readonly observable = true;
+}
+export interface PermissionApprovalRequested extends PermissionApprovalRequestedPayload {}
+
+export interface PermissionApprovalResolvedPayload extends PermissionApprovalRequestedPayload {
+  readonly decision: 'approved' | 'rejected' | 'cancelled' | 'error';
+  readonly scope?: 'session';
+  readonly feedback?: string;
+  readonly selectedLabel?: string;
+  readonly error?: string;
+}
+
+export class PermissionApprovalResolved extends Event2<PermissionApprovalResolvedPayload> {
+  static override readonly type = 'permission.approval.resolved';
+  static override readonly observable = true;
+}
+export interface PermissionApprovalResolved extends PermissionApprovalResolvedPayload {}
 
 export class AgentToolApprovalService extends Service implements IAgentToolApprovalService {
   declare readonly _serviceBrand: undefined;
@@ -73,7 +83,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     @ISessionContext private readonly session: ISessionContext,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IEventBus private readonly eventBus: IEventBus,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
   ) {
     super();
   }
@@ -130,7 +140,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     const approvalContext = {
       ...approvalRequest,
       toolInput: context.args,
-    } satisfies PermissionApprovalRequestContext;
+    } satisfies PermissionApprovalRequestedPayload;
     const startedAt = Date.now();
 
     let response: ApprovalResponse;
@@ -138,7 +148,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     if (approvalService === undefined) {
       response = { decision: 'approved' };
     } else {
-      this.eventBus.publish({ type: 'permission.approval.requested', ...approvalContext });
+      void this.dispatcher.dispatch(new PermissionApprovalRequested(approvalContext));
       try {
         response = await abortable(
           approvalService.request(approvalRequest),
@@ -160,12 +170,13 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
           has_feedback: false,
           trace_id: context.trace?.traceId,
         });
-        this.eventBus.publish({
-          type: 'permission.approval.resolved',
-          ...approvalContext,
-          decision: 'error',
-          error: error instanceof Error ? error.message : String(error),
-        });
+        void this.dispatcher.dispatch(
+          new PermissionApprovalResolved({
+            ...approvalContext,
+            decision: 'error',
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
         const resolved = result.resolveError?.(error);
         if (resolved !== undefined) {
           return this.resolvePermissionResolution(resolved, context, origin);
@@ -179,11 +190,12 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
         ? context.execution.approvalRule
         : undefined;
     if (approvalService !== undefined) {
-      this.eventBus.publish({
-        type: 'permission.approval.resolved',
-        ...approvalContext,
-        ...response,
-      });
+      void this.dispatcher.dispatch(
+        new PermissionApprovalResolved({
+          ...approvalContext,
+          ...response,
+        }),
+      );
     }
     this.rulesService.recordApprovalResult({
       turnId: context.turnId,

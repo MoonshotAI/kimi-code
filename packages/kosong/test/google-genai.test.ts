@@ -337,6 +337,40 @@ describe('GoogleGenAIChatProvider', () => {
       const last = contents.at(-1)!;
       expect(last.parts.some((p) => p.functionResponse !== undefined)).toBe(true);
       expect(last.parts.some((p) => p.text === 'Now multiply')).toBe(true);
+      // Gemini rejects a trailing Content whose parts start with
+      // functionResponse followed by text ("Requests ending with a model turn
+      // are not supported"); the merged Content must keep the user text first.
+      expect(last.parts[0]).toEqual({ text: 'Now multiply' });
+    });
+
+    it('keeps trailing user text before a multimodal tool-result Content when merging', () => {
+      // A tool result carrying media yields [functionResponse, inlineData];
+      // the reorder must still put a following user text part first.
+      const toolCall: ToolCall = {
+        type: 'function',
+        id: 'call_img',
+        name: 'inspect',
+        arguments: '{}',
+      };
+      const contents = messagesToGoogleGenAIContents([
+        { role: 'user', content: [{ type: 'text', text: 'Inspect it' }], toolCalls: [] },
+        { role: 'assistant', content: [], toolCalls: [toolCall] },
+        {
+          role: 'tool',
+          content: [
+            { type: 'text', text: 'here is the image' },
+            { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+          ],
+          toolCallId: 'call_img',
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'Now explain it' }], toolCalls: [] },
+      ]);
+
+      expect(contents.map((c) => c.role)).toEqual(['user', 'model', 'user']);
+      const last = contents.at(-1)!;
+      expect(last.parts[0]).toEqual({ text: 'Now explain it' });
+      expect(last.parts.some((p) => p.functionResponse !== undefined)).toBe(true);
     });
 
     it('multi-turn conversation with system prompt sets systemInstruction', async () => {

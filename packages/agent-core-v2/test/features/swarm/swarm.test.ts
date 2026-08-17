@@ -28,6 +28,7 @@ import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { tokenCountingKey } from '#/agent/tokenCounting/tokenCountingOps';
 import {
   IAgentSystemReminderService,
   wrapSystemReminder,
@@ -36,7 +37,7 @@ import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminde
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { AgentSwarmService } from '#/features/swarm/agent/swarmService';
 import SWARM_MODE_ENTER_REMINDER from '../../../src/features/swarm/agent/enter-reminder.md?raw';
-import { SwarmModel } from '#/features/swarm/swarmOps';
+import { swarmKey } from '#/features/swarm/swarmOps';
 import { AgentSwarmToolInputSchema } from '#/features/swarm/tools/agent-swarm/agent-swarm';
 import { AgentSwarmTool } from '#/features/swarm/tools/agent-swarm/agentSwarmTool';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -59,12 +60,18 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
-import { IWireService } from '#/wire/wire';
-import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
+import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { executeTool } from '../../tools/fixtures/execute-tool';
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 import { stubLoopWithHooks } from '../../agent/loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { createTestAgent } from '../../harness';
@@ -230,6 +237,8 @@ describe('AgentSwarmService', () => {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
     });
+    registerTestEventDispatcher(ix);
+    ix.get(IAgentStateService).contributeState(tokenCountingKey);
     ix.set(IAgentSystemReminderService, new SyncDescriptor(AgentSystemReminderService));
     ix.set(IAgentSwarmService, new SyncDescriptor(AgentSwarmService));
   });
@@ -248,8 +257,14 @@ describe('AgentSwarmService', () => {
 
   it('enter / exit toggle isActive and emit agent.status.updated via wire', () => {
     const swarm = ix.get(IAgentSwarmService);
-    const events: DomainEvent[] = [];
-    disposables.add(ix.get(IEventBus).subscribe((e) => events.push(e)));
+    const events: { readonly type: string; readonly swarmMode?: boolean }[] = [];
+    disposables.add(
+      ix.get(IEventBus).subscribe((e) => {
+        if (e.type === 'agent.status.updated') {
+          events.push({ type: e.type, swarmMode: (e as AgentStatusUpdated).swarmMode });
+        }
+      }),
+    );
 
     expect(swarm.isActive).toBe(false);
     swarm.enter('manual');
@@ -340,8 +355,8 @@ describe('AgentSwarmService', () => {
   it('does not duplicate the enter guidance on resume while it is still live in history', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    await restoreTestAgentWire(
-      ix.get(IWireService),
+    await restoreTestEventDispatcher(
+      ix.get(IEventDispatcher),
       ix.get(IAppendLogStore),
       testWireScope('wire', 'swarm-test'),
       [
@@ -359,8 +374,8 @@ describe('AgentSwarmService', () => {
   it('replays exit by removing a trailing enter reminder', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    await restoreTestAgentWire(
-      ix.get(IWireService),
+    await restoreTestEventDispatcher(
+      ix.get(IEventDispatcher),
       ix.get(IAppendLogStore),
       testWireScope('wire', 'swarm-test'),
       [
@@ -379,8 +394,8 @@ describe('AgentSwarmService', () => {
   it('derives the rendered state from the disclosure, not the reminder text', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
-    await restoreTestAgentWire(
-      ix.get(IWireService),
+    await restoreTestEventDispatcher(
+      ix.get(IEventDispatcher),
       ix.get(IAppendLogStore),
       testWireScope('wire', 'swarm-test'),
       [
@@ -420,16 +435,19 @@ describe('AgentSwarmService', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const fresh = registerTestAgentWire(ix2, testWireScope('wire', 'swarm-replay'), {
+    registerTestAgentWire(ix2, testWireScope('wire', 'swarm-replay'), {
       log: ix2.get(IAppendLogStore),
     });
-    await restoreTestAgentWire(
+    const fresh = registerTestEventDispatcher(ix2);
+    const freshState = ix2.get(IAgentStateService);
+    freshState.contributeState(swarmKey);
+    await restoreTestEventDispatcher(
       fresh,
       ix2.get(IAppendLogStore),
       testWireScope('wire', 'swarm-replay'),
       records,
     );
-    expect(fresh.getModel(SwarmModel)).toBe('manual');
+    expect(freshState.get(swarmKey)).toBe('manual');
   });
 
   it('blocks a batch with multiple AgentSwarm calls before any other adjudication', async () => {
