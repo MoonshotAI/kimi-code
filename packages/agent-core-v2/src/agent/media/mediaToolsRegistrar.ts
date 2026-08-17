@@ -17,6 +17,14 @@
  * converts `video_url` takes the inline fallback when no upload hook
  * exists.
  *
+ * The alias re-resolved on every refresh comes from persisted profile
+ * state that resume replays without catalog validation, so it may no
+ * longer resolve (e.g. its config.toml entry was removed on logout).
+ * A failed resolution degrades to "no model" — registration proceeds
+ * from the profile-reported capabilities without a model-bound video
+ * uploader — instead of throwing out of the event listener, where the
+ * escape would surface as an `[unexpected]` error.
+ *
  * The plain-data state (`registeredKey`) is registered into `agentState`
  * (`IAgentStateService`) and read/written through it; `registration` stays an
  * instance field (the live `IDisposable` tool-registration handle, not plain
@@ -124,12 +132,6 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     let requester: ModelRequester | undefined;
     let model: Model | undefined;
     if (modelAlias !== '') {
-      // The alias comes from persisted profile state, which is replayed on
-      // resume without catalog validation — it may no longer resolve (e.g.
-      // the model was removed from config.toml when the user logged out).
-      // A listener throw escapes into the event bus and is reported as an
-      // `[unexpected]` error, so degrade to "no model" instead: media tools
-      // stay registered, just without a model-bound video uploader.
       try {
         requester = this.modelCatalog.getRequester(modelAlias);
         model = requester.model;

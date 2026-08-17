@@ -9,7 +9,7 @@
 
 import * as posixPath from 'node:path/posix';
 
-import type { ModelCapability } from '#/kosong/contract/capability';
+import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
 import type { ContentPart } from '#/kosong/contract/message';
 import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
 import { Jimp } from 'jimp';
@@ -925,7 +925,10 @@ describe('AgentMediaToolsRegistrar', () => {
     const breakAlias = (alias: string): void => {
       brokenAliases.add(alias);
     };
-    return { registry, registrar, bindModel, setRuntimeAvailable, breakAlias };
+    const healAlias = (alias: string): void => {
+      brokenAliases.delete(alias);
+    };
+    return { registry, registrar, bindModel, setRuntimeAvailable, breakAlias, healAlias };
   }
 
   it('registers nothing until a media-capable model binds, then registers ReadMediaFile', () => {
@@ -979,18 +982,20 @@ describe('AgentMediaToolsRegistrar', () => {
     expect(registry.resolve('ReadMediaFile')).toBe(first);
   });
 
-  it('degrades to no requester when the bound alias is not configured', () => {
+  it('survives an unconfigured bound alias and recovers when it resolves again', () => {
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((err) => unexpected.push(err));
     try {
-      const { registry, bindModel, breakAlias } = createRegistrarHarness();
+      const { registry, bindModel, breakAlias, healAlias } = createRegistrarHarness();
       breakAlias('stale-model');
-      // A stale alias restored from a pre-logout session no longer resolves in
-      // the catalog; the listener must not surface an [unexpected] error, and
-      // media tools stay registered off the profile-reported capabilities.
-      bindModel('stale-model', capabilities({ image_in: true, video_in: true }));
+      bindModel('stale-model', UNKNOWN_CAPABILITY);
       expect(unexpected).toHaveLength(0);
+      expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+
+      healAlias('stale-model');
+      bindModel('stale-model', capabilities({ image_in: true, video_in: true }));
       expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+      expect(unexpected).toHaveLength(0);
     } finally {
       resetUnexpectedErrorHandler();
     }
