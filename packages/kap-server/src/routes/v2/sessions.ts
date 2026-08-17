@@ -60,11 +60,9 @@ import { createHash } from 'node:crypto';
 import {
   ISessionIndex,
   ISessionIndexMirror,
-  ISessionLifecycleService,
   IWorkspaceAliases,
   IWorkspaceService,
-  getLiveSessionById,
-  setColdSessionArchived,
+  setSessionArchivedBatch,
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
@@ -234,9 +232,6 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
 
 /** Cap on unique ids per batch, keeping one request's edge work bounded. */
 const BATCH_IDS_MAX = 5000;
-
-/** Hot-path lifecycle calls run with this many in flight at most. */
-const BATCH_CONCURRENCY = 8;
 
 const v2SessionsBatchBodySchema = z
   .object({ ids: z.array(z.string().min(1)).min(1) })
@@ -443,10 +438,10 @@ class GitDomainResolver {
 // ---------------------------------------------------------------------------
 
 /**
- * Run one `:archive` / `:restore` batch: live sessions through the full
- * `ISessionLifecycleService` chain, cold sessions through the direct cold
- * patch (no materialization); per-item failures fold into the result list
- * in input order. Ends with a single shared mirror drain.
+ * Run one `:archive` / `:restore` batch: the domain package owns the
+ * live/cold split (live through the full lifecycle chain, cold through the
+ * direct patch); this adapter maps its per-item outcomes onto wire error
+ * codes and ends with a single shared mirror drain.
  */
 async function runBatchArchive(
   core: Scope,
@@ -457,61 +452,26 @@ async function runBatchArchive(
 ): Promise<void> {
   const archived = action === 'archive';
   const ids = [...new Set(rawIds)];
-  const results: (V2BatchItemResult | undefined)[] = ids.map(() => undefined);
-
-  // Per-item work never throws: a failure folds into its own result and
-  // the rest of the batch still runs.
-  const applyOne = async (id: string): Promise<V2BatchItemResult> => {
-    try {
-      // The hot path needs the session's LIVE scope without materializing a
-      // cold one — getLiveSessionById answers exactly that (never resumes).
-      const liveHandle = getLiveSessionById(core.accessor, id);
-      if (liveHandle !== undefined) {
-        const lifecycle = liveHandle.accessor.get(ISessionLifecycleService);
-        if (archived) await lifecycle.archive(id);
-        else await lifecycle.restore(id);
-        return { id, ok: true };
-      }
-      const outcome = await setColdSessionArchived(core.accessor, id, archived);
-      return outcome === 'updated'
-        ? { id, ok: true }
-        : {
-            id,
-            ok: false,
-            error: {
-              code: ErrorCode.SESSION_NOT_FOUND,
-              message: `session ${id} does not exist`,
-            },
-          };
-    } catch (error) {
-      return {
-        id,
-        ok: false,
-        error: {
-          code: ErrorCode.INTERNAL_ERROR,
-          message: error instanceof Error ? error.message : String(error),
+  const outcomes = await setSessionArchivedBatch(core.accessor, ids, archived);
+  const results: V2BatchItemResult[] = outcomes.map((outcome) =>
+    outcome.ok
+      ? { id: outcome.id, ok: true }
+      : {
+          id: outcome.id,
+          ok: false,
+          error:
+            outcome.reason === 'not_found'
+              ? { code: ErrorCode.SESSION_NOT_FOUND, message: outcome.message }
+              : { code: ErrorCode.INTERNAL_ERROR, message: outcome.message },
         },
-      };
-    }
-  };
-
-  let next = 0;
-  const workers = Array.from({ length: Math.min(BATCH_CONCURRENCY, ids.length) }, async () => {
-    while (next < ids.length) {
-      const index = next++;
-      results[index] = await applyOne(ids[index] as string);
-    }
-  });
-  await Promise.all(workers);
+  );
   // One drain for the whole batch — cold records queue in the mirror, and
   // the hot path already drained itself per call.
   await core.accessor.get(ISessionIndexMirror).drain();
 
-  // Every slot was assigned by the workers — no undefined entries remain.
-  const settled = results as V2BatchItemResult[];
-  const succeeded = settled.filter((result) => result.ok).length;
+  const succeeded = results.filter((result) => result.ok).length;
   reply.send(
-    okEnvelope({ results: settled, succeeded, failed: settled.length - succeeded }, requestId),
+    okEnvelope({ results, succeeded, failed: results.length - succeeded }, requestId),
   );
 }
 

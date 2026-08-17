@@ -18,7 +18,6 @@ import {
   Error2,
   ErrorCodes,
   ISessionIndex,
-  ISessionLifecycleService,
   IEventService,
   closeSessionById,
   getLiveSessionById,
@@ -652,21 +651,16 @@ describe('server /api/v2/sessions batch archive/restore', () => {
 
   it('archives a live session through the full lifecycle chain', async () => {
     const created = await createSession();
-    const liveHandle = getLiveSessionById(core(), created.id);
-    expect(liveHandle).toBeDefined();
-    const lifecycle = liveHandle?.accessor.get(ISessionLifecycleService);
-    const archiveSpy = vi.spyOn(lifecycle as ISessionLifecycleService, 'archive');
-    const resumeSpy = vi.spyOn(lifecycle as ISessionLifecycleService, 'resume');
+    expect(getLiveSessionById(core(), created.id)).toBeDefined();
     const { events, dispose } = collectEvents();
 
     const body = await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
     expect(body.code).toBe(0);
     expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
 
-    // The full chain ran: archive() (no resume needed for a live session)
-    // closed and disposed the session and published the event itself.
-    expect(archiveSpy).toHaveBeenCalledWith(created.id);
-    expect(resumeSpy).not.toHaveBeenCalled();
+    // The full chain ran: archive() closed and disposed the session (the
+    // cold path would have left the live handle untouched) and published
+    // the event itself.
     expect(getLiveSessionById(core(), created.id)).toBeUndefined();
     expect(
       events.some(
@@ -736,16 +730,11 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     await postBatch('/api/v2/sessions:archive', { ids: [created.id] });
     // Back to live-but-archived: resume materializes regardless of the flag.
     expect(await resumeSessionById(core(), created.id)).toBeDefined();
-    const lifecycle = getLiveSessionById(core(), created.id)?.accessor.get(
-      ISessionLifecycleService,
-    );
-    const restoreSpy = vi.spyOn(lifecycle as ISessionLifecycleService, 'restore');
 
     const body = await postBatch('/api/v2/sessions:restore', { ids: [created.id] });
     expect(body.code).toBe(0);
     expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
 
-    expect(restoreSpy).toHaveBeenCalledWith(created.id);
     expect(getLiveSessionById(core(), created.id)).toBeDefined();
     expect(await indexArchived(created.id)).toBe(false);
   });
