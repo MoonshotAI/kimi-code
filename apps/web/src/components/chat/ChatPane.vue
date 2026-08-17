@@ -31,6 +31,7 @@ import {
   turnActivitySeedMs,
   turnBlocks,
   turnFileChangesCached,
+  turnHasOutput,
   turnToMarkdown,
   turnVisibleFinalText,
 } from '../chatTurnRendering';
@@ -542,6 +543,14 @@ function assistantRunFinalText(index: number): string {
     .join('\n\n');
 }
 
+/** The run's footer renders at its LAST assistant turn, so the zero-output
+    guard must scan the whole run: a cancelled tail turn is a zero-output
+    shell, but the footer (time + copy) still belongs to the earlier turns'
+    output. A run whose every turn is a shell still renders no footer. */
+function assistantRunHasOutput(index: number): boolean {
+  return assistantRunEndingAt(index).some(turnHasOutput);
+}
+
 function finalSummaryText(): string {
   for (let i = props.turns.length - 1; i >= 0; i -= 1) {
     if (props.turns[i]?.role === 'assistant') return assistantRunFinalText(i);
@@ -1032,7 +1041,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           @open-diff="onOpenTurnDiff"
           @open-file="onOpenFile"
         />
-        <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turnTimeLabel(turn))" class="a-msg-ft">
+        <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && assistantRunHasOutput(ti) && (assistantRunFinalText(ti).trim().length > 0 || turnTimeLabel(turn))" class="a-msg-ft">
           <span v-if="turnTimeLabel(turn)" class="a-time">{{ turnTimeLabel(turn) }}</span>
           <Tooltip :text="t('filePreview.copy')">
           <button

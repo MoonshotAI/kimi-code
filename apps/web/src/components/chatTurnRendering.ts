@@ -23,6 +23,22 @@ export function turnBlocks(turn: ChatTurn): TurnBlock[] {
   return blocks;
 }
 
+/** True when the turn produced any visible output (non-empty text or
+    thinking, a tool call, or a notification card — NotificationCard is the
+    turn's visible output for a notification-only turn). A turn cancelled
+    before its first streamed part leaves a zero-output shell; callers use
+    this to keep such shells unmarked (no "Stopped" divider, no assistant
+    footer). */
+export function turnHasOutput(turn: ChatTurn): boolean {
+  return turnBlocks(turn).some(
+    (b) =>
+      (b.kind === 'thinking' && b.thinking.trim().length > 0) ||
+      (b.kind === 'text' && b.text.trim().length > 0) ||
+      b.kind === 'tool' ||
+      b.kind === 'notification',
+  );
+}
+
 export type ToolStackItem = {
   tool: Extract<TurnBlock, { kind: 'tool' }>['tool'];
   sourceIndex: number;

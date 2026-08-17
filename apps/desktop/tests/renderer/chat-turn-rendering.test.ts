@@ -11,6 +11,7 @@ import {
   turnBlocks,
   turnFileChanges,
   turnFinalText,
+  turnHasOutput,
   turnToMarkdown,
   turnVisibleFinalText,
   turnWorkMs,
@@ -703,5 +704,23 @@ describe('turnFileChanges', () => {
     ]);
     const change = turnFileChanges(turn)[0]!;
     expect(change.diff!.some((l) => l.type === 'hunk')).toBe(true);
+  });
+});
+
+describe('turnHasOutput', () => {
+  it('is false for a zero-output shell (a turn cancelled before its first part)', () => {
+    expect(turnHasOutput(assistantTurn([]))).toBe(false);
+    expect(turnHasOutput(assistantTurn([{ kind: 'text', text: '  ' }]))).toBe(false);
+    expect(turnHasOutput(assistantTurn([{ kind: 'thinking', thinking: '' }]))).toBe(false);
+  });
+
+  it('is true for text, thinking, or tool output', () => {
+    expect(turnHasOutput(assistantTurn([{ kind: 'text', text: 'hi' }]))).toBe(true);
+    expect(turnHasOutput(assistantTurn([{ kind: 'thinking', thinking: 'hmm' }]))).toBe(true);
+    expect(turnHasOutput(assistantTurn([toolBlock('t1')]))).toBe(true);
+  });
+
+  it('is true for a notification-only turn — the card is the turn output', () => {
+    expect(turnHasOutput(assistantTurn([ntfBlock('n')]))).toBe(true);
   });
 });

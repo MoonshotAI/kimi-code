@@ -23,7 +23,7 @@ import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf 
 import { isFindKeyEvent } from '@moonshot-ai/app-core/lib';
 import { track } from '../../lib/track';
 import { useComposerAutoFocus } from '@moonshot-ai/app-client/composables';
-import { turnBlocks } from '../chatTurnRendering';
+import { turnHasOutput } from '../chatTurnRendering';
 import type { TurnFileChange } from '../chatTurnRendering';
 
 const { t } = useI18n();
@@ -1802,15 +1802,6 @@ function lastUserTurn(): ChatTurn | null {
     if (turn.role === 'user') return turn;
   }
   return null;
-}
-
-function turnHasOutput(turn: ChatTurn): boolean {
-  return turnBlocks(turn).some(
-    (b) =>
-      (b.kind === 'thinking' && b.thinking.trim().length > 0) ||
-      (b.kind === 'text' && b.text.trim().length > 0) ||
-      b.kind === 'tool',
-  );
 }
 
 function armEscUndo(): void {
