@@ -8,22 +8,23 @@
  * wire encoding is each dialect's own hook), persists the profile binding
  * (`cwd` / `modelAlias` / `profileName` / resolved base `thinkingLevel` /
  * `systemPrompt` / injected AGENTS.md paths / `activeToolNames` / profile
- * `disallowedTools` / profile `subagents`) in the `wire` `ProfileModel` through
- * the `profile.bind` Op
- * (later slice updates ride the `config.update` Op) and the persisted
- * active-tool set in the `wire` `ActiveToolsModel` through the
- * `tools.set_active_tools` / `tools.reset_active_tools` Ops (`wire.dispatch`),
- * and reads both through
- * `wire.getModel`. The effective active-tool set read by consumers is the
- * persisted base (`ActiveToolsModel`, rebuilt by `wire.replay`) overlaid with
+ * `disallowedTools` / profile `subagents`) in the `profileKey` state through
+ * the `ProfileBind` event
+ * (later slice updates ride the `ConfigUpdate` event) and the persisted
+ * active-tool set in the `profileActiveToolsKey` state through the
+ * `ToolsSetActiveTools` / `ToolsResetActiveTools` events
+ * (`dispatcher.dispatch`), and reads both through
+ * `dispatcher.getState`. The effective active-tool set read by consumers is the
+ * persisted base (`profileActiveToolsKey`, rebuilt by restore) overlaid with
  * the ephemeral per-tool deltas from `addActiveTool` / `removeActiveTool`
  * (intentionally not persisted, re-derived on resume); the
  * live overlay is held in `agentState` and falls back to the Model when unset,
  * so no restore-ordering coupling arises. Profile and client
  * policy are persisted independently. The `agent.status.updated`
- * / `warning` events ride `IEventBus`. `emitStatusUpdated` runs live-only
+ * / `warning` events are dispatched through `IEventDispatcher`.
+ * `emitStatusUpdated` runs live-only
  * after the dispatch, so
- * `wire.replay` rebuilds the Models silently; the same live-only path mirrors
+ * restore rebuilds the states silently; the same live-only path mirrors
  * the resolved
  * model protocol into the ambient telemetry context (`provider_type` /
  * `protocol`) whenever the model alias changes.
@@ -89,7 +90,7 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -133,9 +134,7 @@ import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMd
 
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import { IWireService } from '#/wire/wire';
-import type { PayloadOf } from '#/wire/types';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   extractAgentsMdPathsFromSystemPrompt,
   prepareSystemPromptContext,
@@ -157,26 +156,24 @@ import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type 
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import {
-  ActiveToolsModel,
-  configUpdate,
-  profileBind,
-  ProfileModel,
-  setActiveTools,
-  resetActiveTools,
+  profileActiveToolsKey,
+  ConfigUpdate,
+  ProfileBind,
+  profileKey,
+  ToolsResetActiveTools,
+  ToolsSetActiveTools,
+  WarningIssued,
   type ActiveToolsState,
+  type ConfigUpdatePayload,
   type ProfileModelState,
 } from './profileOps';
+
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 
 export interface WarningEvent {
   readonly type: 'warning';
   readonly message: string;
   readonly code?: string;
-}
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    warning: WarningEvent;
-  }
 }
 
 function describeInactiveToolPattern(
@@ -226,7 +223,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private get activeToolNames(): ActiveToolsState {
     return (
       this.activeToolNamesOverlay ??
-      (this.wire.getModel(ActiveToolsModel) as ActiveToolsState)
+      (this.states.get(profileActiveToolsKey) as ActiveToolsState)
     );
   }
 
@@ -241,8 +238,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private frozenPluginSections: string | undefined;
 
   constructor(
-    @IWireService private readonly wire: IWireService,
-    @IEventBus private readonly eventBus: IEventBus,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IConfigService private readonly config: IConfigService,
@@ -266,11 +262,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
   ) {
     super();
-    this.states.register(profileActiveToolNamesOverlayKey);
-    this.states.register(profileAgentsMdWarningKey);
-    this.states.register(profileEmittedThinkingEffortWarningsKey);
-    this.states.register(profileEmittedToolPatternWarningsKey);
-    this.states.register(profileEmittedPluginBudgetWarningsKey);
+    this.states.contributeState(profileKey);
+    this.states.contributeState(profileActiveToolsKey);
+    this.states.contributeState(profileActiveToolNamesOverlayKey);
+    this.states.contributeState(profileAgentsMdWarningKey);
+    this.states.contributeState(profileEmittedThinkingEffortWarningsKey);
+    this.states.contributeState(profileEmittedToolPatternWarningsKey);
+    this.states.contributeState(profileEmittedPluginBudgetWarningsKey);
     this.configure({});
     this._register(
       this.sessionToolPolicy.onDidChange((event) => {
@@ -346,7 +344,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       this.activeProfile = undefined;
     }
     if (Object.keys(configChanged).length > 0) {
-      this.wire.dispatch(configUpdate(this.resolveConfigPayload(configChanged)));
+      void this.dispatcher.dispatch(new ConfigUpdate(this.resolveConfigPayload(configChanged)));
       this.afterConfigDispatch(configChanged);
     }
     if (activeToolNames !== undefined) {
@@ -359,8 +357,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.activeToolNamesOverlay = undefined;
     const agentsMdPaths =
       snapshot.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(snapshot.systemPrompt);
-    this.wire.dispatch(
-      profileBind({
+    void this.dispatcher.dispatch(
+      new ProfileBind({
         modelAlias: snapshot.modelAlias,
         profileName: snapshot.profileName,
         thinkingEffort: snapshot.thinkingLevel,
@@ -428,7 +426,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
 
     this.activeToolNamesOverlay = undefined;
-    this.wire.dispatch(profileBind({
+    await this.dispatcher.dispatch(new ProfileBind({
       modelAlias: alias,
       profileName: profile.name,
       thinkingEffort: thinkingLevel,
@@ -531,11 +529,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     try {
       context = await this.buildSystemPromptContext(profile);
     } catch (error) {
-      this.eventBus.publish({
-        type: 'warning',
-        message: `System prompt refresh skipped: ${error instanceof Error ? error.message : String(error)}`,
-        code: 'system-prompt-refresh-failed',
-      });
+      void this.dispatcher.dispatch(
+        new WarningIssued({
+          message: `System prompt refresh skipped: ${error instanceof Error ? error.message : String(error)}`,
+          code: 'system-prompt-refresh-failed',
+        }),
+      );
       return;
     }
     this.activeProfile = profile;
@@ -663,10 +662,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private resolveConfigPayload(
     changed: Omit<ProfileUpdateData, 'activeToolNames'>,
-  ): PayloadOf<typeof configUpdate> {
-    const payload: {
-      -readonly [K in keyof PayloadOf<typeof configUpdate>]: PayloadOf<typeof configUpdate>[K];
-    } = {};
+  ): ConfigUpdatePayload {
+    const payload: ConfigUpdatePayload = {};
     if (changed.modelAlias !== undefined) payload.modelAlias = changed.modelAlias;
     if (changed.profileName !== undefined) payload.profileName = changed.profileName;
     if (changed.thinkingLevel !== undefined || changed.modelAlias !== undefined) {
@@ -725,7 +722,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       const key = [code, model.id, model.name, effort, knownEfforts].join('\u0000');
       if (this.emittedThinkingEffortWarnings.has(key)) return;
       this.emittedThinkingEffortWarnings.add(key);
-      this.eventBus.publish({ type: 'warning', code, message });
+      void this.dispatcher.dispatch(new WarningIssued({ code, message }));
     } catch {
     }
   }
@@ -733,10 +730,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private setActiveTools(names: readonly string[] | undefined): void {
     this.activeToolNamesOverlay = undefined;
     if (names === undefined) {
-      this.wire.dispatch(resetActiveTools({}));
+      void this.dispatcher.dispatch(new ToolsResetActiveTools({}));
       return;
     }
-    this.wire.dispatch(setActiveTools({ names: [...names] }));
+    void this.dispatcher.dispatch(new ToolsSetActiveTools({ names: [...names] }));
   }
 
   private emitStatusUpdated(includeThinkingEffort = false): void {
@@ -752,15 +749,16 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     // "unknown" marker, not a real limit. Omit the field instead of pushing 0.
     const capabilities = this.tryResolveRawModel()?.capabilities;
     const maxContextTokens = capabilities?.max_input_tokens ?? capabilities?.max_context_tokens;
-    this.eventBus.publish({
-      type: 'agent.status.updated',
-      model: modelAlias,
-      thinkingEffort: includeThinkingEffort
-        ? this.getEffectiveThinkingLevel()
-        : undefined,
-      maxContextTokens:
-        maxContextTokens !== undefined && maxContextTokens > 0 ? maxContextTokens : undefined,
-    });
+    void this.dispatcher.dispatch(
+      new AgentStatusUpdated({
+        model: modelAlias,
+        thinkingEffort: includeThinkingEffort
+          ? this.getEffectiveThinkingLevel()
+          : undefined,
+        maxContextTokens:
+          maxContextTokens !== undefined && maxContextTokens > 0 ? maxContextTokens : undefined,
+      }),
+    );
   }
 
   republishStatus(): void {
@@ -768,7 +766,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private get profileState(): ProfileModelState {
-    return this.wire.getModel(ProfileModel);
+    return this.states.get(profileKey);
   }
 
   private get model(): string {
@@ -880,11 +878,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private publishAgentsMdWarning(): void {
     const warning = this.agentsMdWarning;
     if (warning === undefined) return;
-    this.eventBus.publish({
-      type: 'warning',
-      message: warning,
-      code: 'agents-md-oversized',
-    });
+    void this.dispatcher.dispatch(
+      new WarningIssued({
+        message: warning,
+        code: 'agents-md-oversized',
+      }),
+    );
   }
 
   private publishToolPatternWarnings(profile?: ResolvedAgentProfile): void {
@@ -925,11 +924,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         const key = `${context}|${field}|${issue.pattern}`;
         if (this.emittedToolPatternWarnings.has(key)) continue;
         this.emittedToolPatternWarnings.add(key);
-        this.eventBus.publish({
-          type: 'warning',
-          code: 'tool-pattern-no-match',
-          message: describeInactiveToolPattern(context, field, issue),
-        });
+        void this.dispatcher.dispatch(
+          new WarningIssued({
+            code: 'tool-pattern-no-match',
+            message: describeInactiveToolPattern(context, field, issue),
+          }),
+        );
       }
     }
   }
@@ -1042,13 +1042,14 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       const newlySkipped = skipped.filter((id) => !this.emittedPluginBudgetWarnings.has(id));
       if (newlySkipped.length > 0) {
         for (const id of newlySkipped) this.emittedPluginBudgetWarnings.add(id);
-        this.eventBus.publish({
-          type: 'warning',
-          message:
-            `Plugin system-prompt contributions from ${newlySkipped.map((id) => `"${id}"`).join(', ')} ` +
-            `were skipped: the aggregate ${PLUGIN_SECTIONS_MAX_BYTES / 1024} KB budget is exhausted.`,
-          code: 'plugin-sections-oversized',
-        });
+        void this.dispatcher.dispatch(
+          new WarningIssued({
+            message:
+              `Plugin system-prompt contributions from ${newlySkipped.map((id) => `"${id}"`).join(', ')} ` +
+              `were skipped: the aggregate ${PLUGIN_SECTIONS_MAX_BYTES / 1024} KB budget is exhausted.`,
+            code: 'plugin-sections-oversized',
+          }),
+        );
       }
     }
     const resolved = parts.join('\n\n');

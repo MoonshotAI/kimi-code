@@ -10,9 +10,12 @@
  * WRITE path (external world → kosong → config).
  */
 
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { Event2 } from '#/app/event/event2';
 
 export const providerRefreshChangeSchema = z.object({
   provider_id: z.string().min(1),
@@ -38,6 +41,15 @@ export type RefreshProviderModelsResponse = z.infer<
 >;
 
 export type RefreshProviderModelsScope = 'all' | 'oauth';
+
+export class ModelCatalogChanged extends Event2<{
+  readonly payload: RefreshProviderModelsResponse;
+}> {
+  static override readonly type = 'event.model_catalog.changed';
+}
+export interface ModelCatalogChanged {
+  readonly payload: RefreshProviderModelsResponse;
+}
 
 export interface RefreshProviderModelsOptions {
   readonly scope?: RefreshProviderModelsScope;

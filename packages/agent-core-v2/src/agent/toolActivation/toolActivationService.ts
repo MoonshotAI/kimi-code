@@ -38,6 +38,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
@@ -62,7 +63,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
   ) {
     super();
     this._register(
-      eventBus.subscribe('agent.status.updated', () => {
+      eventBus.subscribe(AgentStatusUpdated, () => {
         void this.activate();
       }),
     );

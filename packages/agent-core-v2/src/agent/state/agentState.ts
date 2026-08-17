@@ -11,10 +11,22 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { IStateRegistry } from '#/_base/state/stateRegistry';
+import type { ReplayableStateKey } from '#/state/state';
 
 export interface IAgentStateService extends IStateRegistry {
   readonly _serviceBrand: undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  replayableKeys(): readonly ReplayableStateKey<any>[];
+  onDidContributeReplayable(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    listener: (key: ReplayableStateKey<any>) => void,
+  ): IDisposable;
+  onDidWithdrawReplayable(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    listener: (key: ReplayableStateKey<any>) => void,
+  ): IDisposable;
 }
 
 export const IAgentStateService: ServiceIdentifier<IAgentStateService> =

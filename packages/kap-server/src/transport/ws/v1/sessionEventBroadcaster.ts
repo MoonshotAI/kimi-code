@@ -55,8 +55,7 @@
 import type {
   AgentActivityState,
   ApprovalResponse,
-  DomainEvent,
-  GlobalEvent,
+  Event2,
   IAgentScopeHandle,
   IDisposable,
   Interaction,
@@ -860,9 +859,10 @@ export class SessionEventBroadcaster {
     return state;
   }
 
-  private onCoreEvent(event: GlobalEvent): void {
+  private onCoreEvent(event: Event2<any>): void {
+    const corePayload = (event as { readonly payload?: unknown }).payload;
     if (event.type === 'event.session.created') {
-      const payload = sessionCreatedPayload(event.payload);
+      const payload = sessionCreatedPayload(corePayload);
       if (payload === undefined) return;
       // Forward creation to every connection (`isGlobalEvent` already matches
       // `event.session.*`), routed through the real session so the envelope
@@ -883,7 +883,7 @@ export class SessionEventBroadcaster {
       return;
     }
     if (event.type === 'session.meta.updated') {
-      const payload = sessionMetaUpdatedPayload(event.payload);
+      const payload = sessionMetaUpdatedPayload(corePayload);
       if (payload === undefined) return;
       // The originating session id travels on the core payload (the v1 protocol
       // event itself carries only title/patch). Recover it so the WS envelope is
@@ -893,7 +893,7 @@ export class SessionEventBroadcaster {
       // from another client) would never appear. `isGlobalEvent` still fans the
       // dispatch out to every connection, so non-subscribed clients stay in sync
       // exactly like v1.
-      const sessionId = sessionMetaUpdatedSessionId(event.payload);
+      const sessionId = sessionMetaUpdatedSessionId(corePayload);
       if (sessionId === undefined) return;
       void this.dispatchSessionEvent(sessionId, {
         type: 'session.meta.updated',
@@ -919,7 +919,7 @@ export class SessionEventBroadcaster {
       return;
     }
     if (event.type === 'event.capability.changed') {
-      const payload = capabilityChangedPayload(event.payload);
+      const payload = capabilityChangedPayload(corePayload);
       if (payload === undefined) return;
       void this.dispatchGlobal({
         type: 'event.capability.changed',
@@ -932,7 +932,7 @@ export class SessionEventBroadcaster {
       return;
     }
     if (event.type === 'event.config.warning') {
-      const payload = configWarningPayload(event.payload);
+      const payload = configWarningPayload(corePayload);
       if (payload === undefined) return;
       // Global fan-out: every established connection learns the current config
       // warning set (deprecated keys/env vars in use, invalid sections) without
@@ -949,7 +949,7 @@ export class SessionEventBroadcaster {
       return;
     }
     if (event.type === 'event.di.unit_changed') {
-      const payload = diUnitChangedPayload(event.payload);
+      const payload = diUnitChangedPayload(corePayload);
       if (payload === undefined) return;
       // Engine DI unit state transitions (the debug-surface feed) have no
       // owning session: route through the global state so the envelope carries
@@ -1088,11 +1088,11 @@ export class SessionEventBroadcaster {
       this.onAgentEvent(sessionId, MAIN_AGENT_ID, {
         type: 'agent.status.updated',
         ...snapshot,
-      });
+      } as unknown as Event2<any>);
     };
     const disposables: IDisposable[] = [
       eventBus.subscribe((event) => {
-        let projected = event;
+        let projected: Event2<any> = event;
         if (event.type === 'agent.status.updated') {
           // v2 emits status in slices, and the model slice rides only the
           // bind-time emission — for a subagent that lands before the client
@@ -1103,7 +1103,7 @@ export class SessionEventBroadcaster {
           const snapshot = readLegacyStatus(handle);
           if (snapshot !== undefined) {
             lastLegacyStatus = JSON.stringify(snapshot);
-            projected = { ...event, ...snapshot };
+            projected = Object.assign({}, event, snapshot) as unknown as Event2<any>;
           }
         }
         if (handle.id === MAIN_AGENT_ID && event.type === 'context.spliced') {
@@ -1116,7 +1116,7 @@ export class SessionEventBroadcaster {
     return { dispose: () => disposables.forEach((disposable) => disposable.dispose()) };
   }
 
-  private onAgentEvent(sessionId: string, agentId: string, event: DomainEvent): void {
+  private onAgentEvent(sessionId: string, agentId: string, event: Event2<any>): void {
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
 
@@ -1153,36 +1153,23 @@ export class SessionEventBroadcaster {
 
     // The migrated agent events are AgentEvent-shaped by construction (they were
     // ported from the former `record.signal(agentEvent)` call sites); the declared
-    // `DomainEventMap` payload types are deliberately wider than the protocol
+    // `Event2` payload types are deliberately wider than the protocol
     // contract, hence the assertion via `unknown`.
     let wireEvent: Event;
     if (event.type === 'turn.started') {
-      // `promptAttachments` is an internal transcript-projection input, not part
-      // of the v1 wire contract (`turnStartedEventSchema` stops at
-      // {type, turnId, origin, prompt?, promptId?}). Strip it at the edge so the
-      // payload — video-prompt turns included — keeps exactly the
-      // pre-attachment field set (plus the optional `promptId` echo). The
-      // journal records this same stripped envelope, so the one strip covers
-      // live fan-out and every replay path (memory tail + cursor read).
-      const { promptAttachments: _internal, ...wireFields } = event;
-      wireEvent = { ...wireFields, agentId, sessionId } as unknown as Event;
+      const { promptAttachments: _internal, ...wireFields } = event as typeof event & {
+        promptAttachments?: unknown;
+      };
+      wireEvent = Object.assign({}, wireFields, { agentId, sessionId }) as unknown as Event;
     } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued') {
-      // `content` arrives as raw engine content parts carrying internal
-      // `kimi-file://<id>` daemon references. Each self-contained ref
-      // projects to one `{kind:'session_media'}` part, so neither the
-      // transient upload nor the internal URL leaves the process (for
-      // steered, the declared `promptSteeredEventSchema` content is
-      // `messageContentSchema`).
-      // Projecting before the journal write covers live fan-out and every
-      // replay path with one mapping.
-      wireEvent = {
-        ...event,
-        content: projectPromptContentParts(event.content),
+      const content = (event as unknown as { content: Parameters<typeof projectPromptContentParts>[0] }).content;
+      wireEvent = Object.assign({}, event, {
+        content: projectPromptContentParts(content),
         agentId,
         sessionId,
-      } as unknown as Event;
+      }) as unknown as Event;
     } else {
-      wireEvent = { ...event, agentId, sessionId } as unknown as Event;
+      wireEvent = Object.assign({}, event, { agentId, sessionId }) as unknown as Event;
     }
     const volatile = isVolatileSignal(event.type);
     state.queue = state.queue
@@ -1370,7 +1357,10 @@ export class SessionEventBroadcaster {
       type: event.type,
       seq,
       session_id: sessionId,
-      timestamp: new Date().toISOString(),
+      timestamp:
+        event.time !== undefined
+          ? new Date(event.time).toISOString()
+          : new Date().toISOString(),
       payload: event,
       ...extras,
     };
@@ -1421,11 +1411,11 @@ function isVolatileSignal(type: string): boolean {
  * the alias (registered as known, no handler). Remove once every consumer has
  * migrated to `task.*`.
  */
-function legacyTaskEvent(event: DomainEvent, agentId: string, sessionId: string): Event | undefined {
+function legacyTaskEvent(event: Event2<any>, agentId: string, sessionId: string): Event | undefined {
   if (event.type !== 'task.started' && event.type !== 'task.terminated') return undefined;
   const legacyType =
     event.type === 'task.started' ? 'background.task.started' : 'background.task.terminated';
-  return { ...event, type: legacyType, agentId, sessionId } as unknown as Event;
+  return Object.assign({}, event, { type: legacyType, agentId, sessionId }) as unknown as Event;
 }
 
 /** Session/workspace/config/di events are broadcast to every connection. */

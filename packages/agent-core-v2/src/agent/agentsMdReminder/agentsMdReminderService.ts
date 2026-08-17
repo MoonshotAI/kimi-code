@@ -4,7 +4,8 @@
  *
  * Discovers AGENTS.md files reached through `toolExecutor` and the tool path
  * policy, parsing Bash targets through `bashParser` and probing through the os
- * services. Restores prompt provenance through `wire` and `profile`, resolves
+ * services. Restores prompt provenance through the `profile` state on the
+ * event dispatcher, resolves
  * roots through `sessionContext` and `bootstrap`, stores discovery state in
  * `agentState`, appends through `systemReminder`, and reports through
  * `telemetry`. Bound at Agent scope.
@@ -15,7 +16,7 @@ import { basename, dirname, isAbsolute, join, normalize } from 'pathe';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
@@ -33,12 +34,12 @@ import {
   extractAgentsMdPathsFromSystemPrompt,
   loadAgentsMdDetailed,
 } from '#/agent/profile/context';
-import { ProfileModel } from '#/agent/profile/profileOps';
+import { profileKey } from '#/agent/profile/profileOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentAgentsMdReminderService } from './agentsMdReminder';
 import { extractBashTargetDirs } from './bashTargets';
@@ -75,15 +76,16 @@ export class AgentAgentsMdReminderService
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IBashParserService private readonly bashParser: IBashParserService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+      @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();
-    this.states.register(agentsMdReminderKnownKey);
-    this.states.register(agentsMdReminderCwdKey);
-    this.states.register(agentsMdReminderSeededKey);
+    this.states.contributeState(agentsMdReminderKnownKey);
+    this.states.contributeState(agentsMdReminderCwdKey);
+    this.states.contributeState(agentsMdReminderSeededKey);
     this._register(
-      this.wire.hooks.onDidRestore.register('agentsMdReminder', async (_ctx, next) => {
-        const profile = this.wire.getModel(ProfileModel);
+      this.dispatcher.hooks.onDidRestore.register('agentsMdReminder', async (_ctx, next) => {
+        const profile = this.agentState.get(profileKey);
         const paths =
           profile.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(profile.systemPrompt);
         this.seedInjected(paths, this.sessionContext.cwd);

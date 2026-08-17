@@ -24,7 +24,7 @@ import {
   resumeSessionById,
   IModelCatalog,
   type ContextMessage,
-  type DomainEvent,
+  type Event2,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -115,8 +115,8 @@ interface PlanContract {
   plans: PlanEntryContract[];
 }
 
-function serverEvent(payload: Record<string, unknown>): DomainEvent {
-  return payload as unknown as DomainEvent;
+function serverEvent(payload: Record<string, unknown>): Event2<any> {
+  return payload as unknown as Event2<any>;
 }
 
 describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {

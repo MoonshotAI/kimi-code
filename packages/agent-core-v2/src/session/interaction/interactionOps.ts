@@ -1,26 +1,31 @@
 /**
- * `interaction` domain — wire Model (`InteractionModel`) and the
- * persisted `interaction.request` (`interactionRequest`) /
- * `interaction.resolved` (`interactionResolved`) Ops that journal the
- * session's human-in-the-loop lifecycle onto the owning agent's wire.
+ * `interaction` domain — the `interactionKey` state and the durable
+ * `interaction.request` (`InteractionRequestEvent`) / `interaction.resolved`
+ * (`InteractionResolvedEvent`) events that journal the session's
+ * human-in-the-loop lifecycle onto the owning agent's wire.
  *
- * The Model is the replayable map of `interactionId -> InteractionRecord`
+ * The state is the replayable map of `interactionId -> InteractionRecord`
  * (initial empty): `interaction.request` opens an entry, `interaction.resolved`
  * folds the terminal response into it (a resolution without a known request is
- * a no-op so the wire's reference-equality gate stays quiet). The records exist
- * so a cold transcript fold can rebuild interaction entities (kind, the
+ * a no-op so the state's reference-equality stays quiet). The records exist so
+ * a cold transcript fold can rebuild interaction entities (kind, the
  * `toolCallId` timeline anchor lifted from the request payload, the raw
  * request, and the terminal response) straight from the journal; the kernel
  * itself does NOT restore pending promises from them — a request left without
  * a resolution means the process died with it pending and folds as cancelled
- * downstream. These Ops are dispatched to the ORIGIN agent's wire
- * (`origin.agentId ?? 'main'`), so each record lives in the journal of the
- * agent the interaction belongs to.
+ * downstream. The durable classes are the wire-protocol record vocabulary:
+ * their `serialize()` output is the on-disk record (flat payload, epoch-ms
+ * `time`), byte-compatible with the retired op encoding. These events are
+ * dispatched to the ORIGIN agent's dispatcher (`origin.agentId ?? 'main'`), so
+ * each record lives in the journal of the agent the interaction belongs to.
  */
+
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 
 import { z } from 'zod';
 
-import { defineModel } from '#/wire/model';
+import { Event2 } from '#/app/event/event2';
+import { defineState } from '#/state/state';
 
 import type { InteractionKind } from './interaction';
 
@@ -36,50 +41,49 @@ export interface InteractionRecord {
 
 export type InteractionModelState = Map<string, InteractionRecord>;
 
-export const InteractionModel = defineModel<InteractionModelState>(
-  'interaction',
-  () => new Map(),
-);
+const interactionRequestSchema = z.object({
+  id: z.string(),
+  kind: z.enum(['approval', 'question', 'user_tool']),
+  toolCallId: z.string().optional(),
+  agentId: z.string().optional(),
+  request: z.unknown(),
+});
 
-declare module '#/wire/types' {
-  interface PersistedOpMap {
-    'interaction.request': typeof interactionRequest;
-    'interaction.resolved': typeof interactionResolved;
-  }
+export class InteractionRequestEvent extends Event2<z.infer<typeof interactionRequestSchema>> {
+  static override readonly type = 'interaction.request';
+  static override readonly durable = true;
+  static override readonly schema = interactionRequestSchema;
 }
+export interface InteractionRequestEvent extends z.infer<typeof interactionRequestSchema> {}
 
-export const interactionRequest = InteractionModel.defineOp('interaction.request', {
-  schema: z.object({
-    id: z.string(),
-    kind: z.enum(['approval', 'question', 'user_tool']),
-    toolCallId: z.string().optional(),
-    agentId: z.string().optional(),
-    request: z.unknown(),
-  }),
-  apply: (s, p) => {
-    const next = new Map(s);
-    next.set(p.id, {
-      id: p.id,
-      kind: p.kind,
-      toolCallId: p.toolCallId,
-      agentId: p.agentId,
-      request: p.request,
+const interactionResolvedSchema = z.object({
+  id: z.string(),
+  response: z.unknown(),
+});
+
+export class InteractionResolvedEvent extends Event2<z.infer<typeof interactionResolvedSchema>> {
+  static override readonly type = 'interaction.resolved';
+  static override readonly durable = true;
+  static override readonly schema = interactionResolvedSchema;
+}
+export interface InteractionResolvedEvent extends z.infer<typeof interactionResolvedSchema> {}
+
+export const interactionKey = defineState(
+  'interaction',
+  (): InteractionModelState => new Map(),
+).replayable({ schema: z.custom<InteractionModelState>() })
+  .on(InteractionRequestEvent, (s, e) => {
+    s.set(e.id, {
+      id: e.id,
+      kind: e.kind,
+      toolCallId: e.toolCallId,
+      agentId: e.agentId,
+      request: e.request,
       resolved: false,
     });
-    return next;
-  },
-});
-
-export const interactionResolved = InteractionModel.defineOp('interaction.resolved', {
-  schema: z.object({
-    id: z.string(),
-    response: z.unknown(),
-  }),
-  apply: (s, p) => {
-    const existing = s.get(p.id);
-    if (existing === undefined) return s;
-    const next = new Map(s);
-    next.set(p.id, { ...existing, resolved: true, response: p.response });
-    return next;
-  },
-});
+  })
+  .on(InteractionResolvedEvent, (s, e) => {
+    const existing = s.get(e.id);
+    if (existing === undefined) return;
+    s.set(e.id, { ...existing, resolved: true, response: e.response });
+  });

@@ -8,7 +8,7 @@
  * byte-compatible with v1. This fold turns them into assistant / tool
  * messages — at live dispatch time and again when `WireService.restore`
  * restores an Agent. Without it, restore would skip those records (no Op is
- * registered for the type) and the restored `ContextModel` — and every
+ * registered for the type) and the restored `contextMemoryKey` — and every
  * consumer built on it — would show only the user prompts.
  *
  * Semantics mirror the v1 fold exactly:
@@ -33,10 +33,13 @@
  * assistant↔tool adjacency is preserved.
  *
  * The fold is stateful across records within one replay. State is carried in a
- * `WeakMap` keyed by each evolving state array, so the public
- * `wire.getModel(ContextModel)` view stays a plain `ContextMessage[]` and
- * concurrent replays of different agent scopes never share fold state.
+ * `WeakMap` keyed by each committed state array (immer drafts resolve to
+ * their `original`), so the public `getState(ContextModel)` view stays a
+ * plain `ContextMessage[]` and concurrent replays of different agent scopes
+ * never share fold state.
  */
+
+import { isDraft, original } from 'immer';
 
 import type { FinishReason } from '#/kosong/contract/provider';
 import { createToolMessage, type ContentPart, type ToolCall } from '#/kosong/contract/message';
@@ -111,10 +114,12 @@ interface FoldCtx {
 const foldCtxMap = new WeakMap<object, FoldCtx>();
 
 function ctxOf(state: readonly ContextMessage[]): FoldCtx {
-  let ctx = foldCtxMap.get(state);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const key = (isDraft(state) ? original(state as any) : state) as object;
+  let ctx = foldCtxMap.get(key);
   if (ctx === undefined) {
     ctx = { openStepUuid: undefined, pending: new Set(), deferred: [] };
-    foldCtxMap.set(state, ctx);
+    foldCtxMap.set(key, ctx);
   }
   return ctx;
 }

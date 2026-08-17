@@ -33,7 +33,11 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
 
-import { AgentTranscriptProjector, type ProjectorInteraction } from './coreEventMap';
+import {
+  AgentTranscriptProjector,
+  type ProjectorBusEvent,
+  type ProjectorInteraction,
+} from './coreEventMap';
 
 /** Minimal warn sink (matches `JournalLogger`). */
 export interface TranscriptBindingLogger {
@@ -171,7 +175,9 @@ export function bindSessionTranscript(
     // tracked per agent and disposed with it — the listener captures the
     // projector, so a dead agent must not keep projecting into the store.
     const bus = handle.accessor.get(IEventBus);
-    const busD = bus.subscribe((event) => applyOps(handle.id, projector.map(event)));
+    const busD = bus.subscribe((event) =>
+      applyOps(handle.id, projector.map(event as ProjectorBusEvent)),
+    );
     const list = agentDisposables.get(handle.id) ?? [];
     list.push(busD);
     agentDisposables.set(handle.id, list);

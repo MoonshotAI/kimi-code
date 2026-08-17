@@ -81,6 +81,7 @@ import {
 } from '#/session/subagent/configSection';
 import {
   IProviderDiscoveryService,
+  ModelCatalogChanged,
   type RefreshProviderModelsOptions,
   type RefreshProviderModelsResponse,
 } from './discovery';
@@ -143,7 +144,7 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     });
     const response = mapRefreshResult(result);
     if (response.changed.length > 0) {
-      this.events.publish({ type: 'event.model_catalog.changed', payload: response });
+      this.events.publish(new ModelCatalogChanged({ payload: response }));
     }
     return response;
   }

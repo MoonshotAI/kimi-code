@@ -12,6 +12,8 @@ import {
   drainQueryStoreDisposals,
   drainSessionMetadataWrites,
   drainSessionIndexMirror,
+  ConfigWarning,
+  CapabilityChanged,
   IConfigService,
   IEventService,
   IProviderDiscoveryService,
@@ -21,6 +23,7 @@ import {
   IPluginService,
   IWorkspaceService,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+  PluginChanged,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
@@ -449,10 +452,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           ? { message: diagnostic.message }
           : { domain: diagnostic.domain, message: diagnostic.message },
       );
-    core.accessor.get(IEventService).publish({
-      type: 'event.config.warning',
-      payload: { warnings },
-    });
+    core.accessor.get(IEventService).publish(new ConfigWarning({ payload: { warnings } }));
   };
   const configWarningSubscription = configService.onDidChangeDiagnostics(publishConfigWarnings);
 
@@ -462,14 +462,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   // transition through onDidChangeInstall.
   const pluginService = core.accessor.get(IPluginService);
   const pluginChangeSubscription = pluginService.onDidReload(() => {
-    core.accessor.get(IEventService).publish({ type: 'event.plugin.changed', payload: {} });
+    core.accessor.get(IEventService).publish(new PluginChanged({ payload: {} }));
   });
   const capabilityService = core.accessor.get(ICapabilityService);
   const capabilityInstallSubscription = capabilityService.onDidChangeInstall((change) => {
-    core.accessor.get(IEventService).publish({
-      type: 'event.capability.changed',
-      payload: { capability_id: change.id, install: change.install },
-    });
+    core.accessor.get(IEventService).publish(
+      new CapabilityChanged({
+        payload: { capability_id: change.id, install: change.install },
+      }),
+    );
   });
   void configService.ready
     .then(() => {

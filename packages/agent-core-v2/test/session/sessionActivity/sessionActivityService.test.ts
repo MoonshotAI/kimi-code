@@ -11,9 +11,16 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
-import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
-import { IAgentActivityView, type AgentActivityState } from '#/agent/activityView/activityView';
+import { IEventBus } from '#/app/event/eventBus';
+import type { Event2, Event2Class } from '#/app/event/event2';
+import {
+  AgentActivityUpdated,
+  IAgentActivityView,
+  type AgentActivityState,
+} from '#/agent/activityView/activityView';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { SessionInteractionService } from '#/session/interaction/interactionService';
 import {
@@ -28,9 +35,9 @@ import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
 class FakeBus implements IEventBus {
   declare readonly _serviceBrand: undefined;
-  private readonly handlers = new Set<{ type?: string; fn: (event: DomainEvent) => void }>();
+  private readonly handlers = new Set<{ type?: string; fn: (event: Event2) => void }>();
 
-  publish(event: DomainEvent): void {
+  publish(event: Event2): void {
     for (const h of [...this.handlers]) {
       if (h.type === undefined || h.type === event.type) h.fn(event);
     }
@@ -39,8 +46,10 @@ class FakeBus implements IEventBus {
   subscribe(arg1: unknown, arg2?: unknown): IDisposable {
     const entry =
       typeof arg1 === 'string'
-        ? { type: arg1, fn: arg2 as (event: DomainEvent) => void }
-        : { fn: arg1 as (event: DomainEvent) => void };
+        ? { type: arg1, fn: arg2 as (event: Event2) => void }
+        : typeof arg1 === 'function' && 'type' in arg1
+          ? { type: (arg1 as Event2Class).type, fn: arg2 as (event: Event2) => void }
+          : { fn: arg1 as (event: Event2) => void };
     this.handlers.add(entry);
     return { dispose: () => this.handlers.delete(entry) };
   }
@@ -49,6 +58,7 @@ class FakeBus implements IEventBus {
 class FakeAgentHandle {
   readonly kind = LifecycleScope.Agent;
   readonly bus = new FakeBus();
+  readonly state = new AgentStateService();
   activity: AgentActivityState = { lifecycle: 'ready', background: [] };
   private readonly view = { state: () => this.activity };
   readonly accessor;
@@ -58,13 +68,14 @@ class FakeAgentHandle {
       get: (token: unknown) => {
         if (token === IEventBus) return this.bus;
         if (token === IAgentActivityView) return this.view;
+        if (token === IAgentStateService) return this.state;
         return undefined;
       },
     };
   }
 
   emitActivity(): void {
-    this.bus.publish({ type: 'agent.activity.updated', ...this.activity } as DomainEvent);
+    this.bus.publish(new AgentActivityUpdated(this.activity));
   }
 
   dispose(): void {}

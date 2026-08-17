@@ -29,6 +29,7 @@ import {
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
+import { TurnStarted } from '#/agent/loop/turnEvents';
 
 import {
   agentService,
@@ -70,7 +71,7 @@ describe('goal tools', () => {
 
   it('CreateGoal does not apply a delayed execution to a replacement goal', async () => {
     await goals.createGoal({ objective: 'old task' });
-    eventBus.publish({ type: 'turn.started', turnId: 6, origin: USER_PROMPT_ORIGIN });
+    eventBus.publish(new TurnStarted({ turnId: 6, origin: USER_PROMPT_ORIGIN }));
     const tool = ctx.get(IAgentToolRegistryService).resolve('CreateGoal');
     if (tool === undefined) throw new Error('CreateGoal should be registered');
     const execution = await tool.resolveExecution({ objective: 'stale task', replace: true });
@@ -91,7 +92,7 @@ describe('goal tools', () => {
   });
 
   it('CreateGoal does not apply a no-goal execution to an externally created goal', async () => {
-    eventBus.publish({ type: 'turn.started', turnId: 7, origin: USER_PROMPT_ORIGIN });
+    eventBus.publish(new TurnStarted({ turnId: 7, origin: USER_PROMPT_ORIGIN }));
     const tool = ctx.get(IAgentToolRegistryService).resolve('CreateGoal');
     if (tool === undefined) throw new Error('CreateGoal should be registered');
     const execution = await tool.resolveExecution({ objective: 'stale task', replace: true });
@@ -189,7 +190,7 @@ describe('goal tools', () => {
 
   it('SetGoalBudget ignores a stale call from a replaced goal turn', async () => {
     await goals.createGoal({ objective: 'old task' });
-    eventBus.publish({ type: 'turn.started', turnId: 1, origin: USER_PROMPT_ORIGIN });
+    eventBus.publish(new TurnStarted({ turnId: 1, origin: USER_PROMPT_ORIGIN }));
     const replacement = await goals.createGoal({ objective: 'new task', replace: true });
 
     const results = await executeGoalCalls(
@@ -207,7 +208,7 @@ describe('goal tools', () => {
   });
 
   it('SetGoalBudget applies a delayed execution to a goal created earlier in the same batch', async () => {
-    eventBus.publish({ type: 'turn.started', turnId: 2, origin: USER_PROMPT_ORIGIN });
+    eventBus.publish(new TurnStarted({ turnId: 2, origin: USER_PROMPT_ORIGIN }));
 
     const results = await executeGoalCalls(
       [
@@ -228,7 +229,7 @@ describe('goal tools', () => {
 
   it('SetGoalBudget applies a same-batch budget to the replacement goal', async () => {
     await goals.createGoal({ objective: 'old task' });
-    eventBus.publish({ type: 'turn.started', turnId: 3, origin: USER_PROMPT_ORIGIN });
+    eventBus.publish(new TurnStarted({ turnId: 3, origin: USER_PROMPT_ORIGIN }));
 
     const results = await executeGoalCalls(
       [
@@ -339,7 +340,7 @@ describe('goal tools', () => {
     'UpdateGoal applies %s to a goal replaced earlier in the same batch',
     async (updateStatus, expectedCurrentStatus, expectedOutput) => {
       await goals.createGoal({ objective: 'old task' });
-      eventBus.publish({ type: 'turn.started', turnId: 4, origin: USER_PROMPT_ORIGIN });
+      eventBus.publish(new TurnStarted({ turnId: 4, origin: USER_PROMPT_ORIGIN }));
 
       const results = await executeGoalCalls(
         [
@@ -362,7 +363,7 @@ describe('goal tools', () => {
   ] as const)(
     'UpdateGoal applies %s when the goal was created earlier in the same batch',
     async (updateStatus, expectedCurrentStatus, expectedOutput) => {
-      eventBus.publish({ type: 'turn.started', turnId: 5, origin: USER_PROMPT_ORIGIN });
+      eventBus.publish(new TurnStarted({ turnId: 5, origin: USER_PROMPT_ORIGIN }));
 
       const results = await executeGoalCalls(
         [
@@ -398,7 +399,7 @@ describe('goal tools', () => {
 
   async function countGoalTurn(turnId: number): Promise<void> {
     const abortController = new AbortController();
-    eventBus.publish({ type: 'turn.started', turnId, origin: USER_PROMPT_ORIGIN });
+    eventBus.publish(new TurnStarted({ turnId, origin: USER_PROMPT_ORIGIN }));
     await loopService.hooks.onWillBeginStep.run({
       turnId,
       step: 1,

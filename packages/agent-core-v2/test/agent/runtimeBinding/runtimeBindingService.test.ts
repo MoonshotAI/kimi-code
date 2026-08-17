@@ -8,11 +8,11 @@ import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
+import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type {
   IRuntimeResolver,
   IWorkspaceInstanceManager,
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import type { IWireService } from '#/wire/wire';
 
 function runtime(
   runtimeId: string,
@@ -52,17 +52,17 @@ function setup() {
     sessionScope: 'sessions/session',
     cwd: '/workspace',
   });
-  const wire = {
+  const dispatcher = {
     _serviceBrand: undefined,
-    getModel: () => undefined,
-    dispatch: () => {},
-  } as unknown as IWireService;
+    dispatch: () => Promise.resolve(),
+    hooks: { onDidRestore: { register: () => ({ dispose: () => {} }) } },
+  } as unknown as IEventDispatcher;
   const binding = new AgentRuntimeBindingService(
     state,
     { _serviceBrand: undefined, binding: { workspaceId: 'workspace', runtimeId: 'local' } },
     session,
     resolver,
-    wire,
+    dispatcher,
   );
   const workspaceChanges = new Emitter<{ workspaceId: string }>();
   const workspaces = {

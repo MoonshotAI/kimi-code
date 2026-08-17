@@ -15,21 +15,20 @@
  * repair-dedup signature (`lastRepairSignature`) is registered into
  * `agentState` (`IAgentStateService`) and read/written through it.
  *
- * `projectMediaDegraded` / `projectMediaStripped` are the fallback
- * projections for the two deterministic provider rejections: media-degraded
- * (all but the most recent media replaced by text markers) resends after an
- * HTTP 413 body-size rejection; media-stripped captures every media identity
- * present when degraded media is still too large or an image format is
- * rejected, then replaces only that snapshot on later steps so a newly
- * generated recovery image remains visible. Both are read-side only — the
- * history keeps its media.
+ * `policy.media` selects the fallback projections for the two deterministic
+ * provider rejections: `'degraded'` (all but the most recent media replaced
+ * by text markers) resends after an HTTP 413 body-size rejection;
+ * `{ strip }` replaces only the snapshotted media identities present when
+ * degraded media is still too large or an image format is rejected, so a
+ * newly generated recovery image remains visible on later steps. Both are
+ * read-side only — the history keeps its media.
  */
 
 import { createHash } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
@@ -40,6 +39,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentContextProjectorService,
   type MediaStripSnapshot,
+  type ProjectionPolicy,
 } from './contextProjector';
 
 export const contextProjectorLastRepairSignatureKey = defineState<string | null>(
@@ -55,7 +55,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
-    this.states.register(contextProjectorLastRepairSignatureKey);
+    this.states.contributeState(contextProjectorLastRepairSignatureKey);
   }
 
   private get lastRepairSignature(): string | null {
@@ -66,34 +66,22 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     this.states.set(contextProjectorLastRepairSignatureKey, value);
   }
 
-  project(messages: readonly ContextMessage[]): readonly Message[] {
-    return this.projectWithTrace(messages, project);
-  }
-
-  projectStrict(messages: readonly ContextMessage[]): readonly Message[] {
-    return this.projectWithTrace(messages, projectStrict);
-  }
-
-  projectMediaDegraded(messages: readonly ContextMessage[]): readonly Message[] {
-    return degradeOlderMediaParts(
-      this.projectWithTrace(messages, project),
-      MEDIA_DEGRADE_KEEP_RECENT,
+  project(
+    messages: readonly ContextMessage[],
+    policy: ProjectionPolicy = {},
+  ): readonly Message[] {
+    const projected = this.projectWithTrace(
+      messages,
+      policy.structure === 'strict' ? projectStrict : project,
     );
+    const media = policy.media;
+    if (media === undefined) return projected;
+    if (media === 'degraded') return degradeOlderMediaParts(projected, MEDIA_DEGRADE_KEEP_RECENT);
+    return stripMediaPartsBySnapshot(projected, media.strip);
   }
 
   captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot {
     return captureMediaStripSnapshot(this.projectWithTrace(messages, project));
-  }
-
-  projectMediaStripped(
-    messages: readonly ContextMessage[],
-    snapshot?: MediaStripSnapshot,
-  ): readonly Message[] {
-    const projected = this.projectWithTrace(messages, project);
-    return stripMediaPartsBySnapshot(
-      projected,
-      snapshot ?? captureMediaStripSnapshot(projected),
-    );
   }
 
   private projectWithTrace(
@@ -121,26 +109,17 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     if (signature === this.lastRepairSignature) return;
     this.lastRepairSignature = signature;
 
-    let reordered = 0;
-    let synthesized = 0;
-    let droppedOrphan = 0;
-    let duplicateCallsDropped = 0;
-    let duplicateResultsDropped = 0;
-    let leadingDropped = 0;
-    let assistantsMerged = 0;
-    let whitespaceDropped = 0;
-    let vacuousDropped = 0;
-    for (const anomaly of notable) {
-      if (anomaly.kind === 'tool_result_reordered') reordered += 1;
-      else if (anomaly.kind === 'tool_result_synthesized') synthesized += 1;
-      else if (anomaly.kind === 'orphan_tool_result_dropped') droppedOrphan += 1;
-      else if (anomaly.kind === 'duplicate_tool_call_dropped') duplicateCallsDropped += 1;
-      else if (anomaly.kind === 'duplicate_tool_result_dropped') duplicateResultsDropped += 1;
-      else if (anomaly.kind === 'leading_non_user_dropped') leadingDropped += 1;
-      else if (anomaly.kind === 'consecutive_assistants_merged') assistantsMerged += 1;
-      else if (anomaly.kind === 'vacuous_message_dropped') vacuousDropped += 1;
-      else whitespaceDropped += 1;
-    }
+    const {
+      reordered,
+      synthesized,
+      droppedOrphan,
+      duplicateCallsDropped,
+      duplicateResultsDropped,
+      leadingDropped,
+      assistantsMerged,
+      whitespaceDropped,
+      vacuousDropped,
+    } = summarizeProjectionRepairs(notable);
     const toolCallIds = [
       ...new Set(
         notable.flatMap((anomaly) => ('toolCallId' in anomaly ? [anomaly.toolCallId] : [])),
@@ -182,6 +161,46 @@ type ProjectionAnomaly =
   | { readonly kind: 'consecutive_assistants_merged' }
   | { readonly kind: 'whitespace_text_dropped'; readonly role: string }
   | { readonly kind: 'vacuous_message_dropped'; readonly role: string };
+
+interface ProjectionRepairSummary {
+  readonly reordered: number;
+  readonly synthesized: number;
+  readonly droppedOrphan: number;
+  readonly duplicateCallsDropped: number;
+  readonly duplicateResultsDropped: number;
+  readonly leadingDropped: number;
+  readonly assistantsMerged: number;
+  readonly whitespaceDropped: number;
+  readonly vacuousDropped: number;
+}
+
+function summarizeProjectionRepairs(
+  anomalies: readonly ProjectionAnomaly[],
+): ProjectionRepairSummary {
+  const summary = {
+    reordered: 0,
+    synthesized: 0,
+    droppedOrphan: 0,
+    duplicateCallsDropped: 0,
+    duplicateResultsDropped: 0,
+    leadingDropped: 0,
+    assistantsMerged: 0,
+    whitespaceDropped: 0,
+    vacuousDropped: 0,
+  };
+  for (const anomaly of anomalies) {
+    if (anomaly.kind === 'tool_result_reordered') summary.reordered += 1;
+    else if (anomaly.kind === 'tool_result_synthesized') summary.synthesized += 1;
+    else if (anomaly.kind === 'orphan_tool_result_dropped') summary.droppedOrphan += 1;
+    else if (anomaly.kind === 'duplicate_tool_call_dropped') summary.duplicateCallsDropped += 1;
+    else if (anomaly.kind === 'duplicate_tool_result_dropped') summary.duplicateResultsDropped += 1;
+    else if (anomaly.kind === 'leading_non_user_dropped') summary.leadingDropped += 1;
+    else if (anomaly.kind === 'consecutive_assistants_merged') summary.assistantsMerged += 1;
+    else if (anomaly.kind === 'vacuous_message_dropped') summary.vacuousDropped += 1;
+    else summary.whitespaceDropped += 1;
+  }
+  return summary;
+}
 
 type OnAnomaly = (anomaly: ProjectionAnomaly) => void;
 

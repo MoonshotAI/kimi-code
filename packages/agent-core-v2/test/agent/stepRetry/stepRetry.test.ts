@@ -10,6 +10,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { retryBackoffDelays } from '#/_base/utils/retry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
 
 import { createTestAgent, llmGenerateServices, type TestAgentContext } from '../../harness';
 
@@ -32,7 +34,7 @@ describe('stepRetry plugin', () => {
   }
 
   async function runTurn(turnId: number, signal?: AbortSignal) {
-    ctx.get(IEventBus).publish({ type: 'turn.started', turnId, origin: { kind: 'user' } });
+    void ctx.dispatcher.dispatch(new TurnStarted({ turnId, origin: { kind: 'user' } }));
     const loop = ctx.get(IAgentLoopService);
     loop.enqueue(new ContinuationStepRequest());
     const resultPromise = loop.run({ turnId, signal });
@@ -148,7 +150,7 @@ describe('stepRetry plugin', () => {
       }),
     );
 
-    ctx.get(IEventBus).publish({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+    void ctx.dispatcher.dispatch(new TurnStarted({ turnId: 1, origin: { kind: 'user' } }));
     const loop = ctx.get(IAgentLoopService);
     loop.enqueue(new ContinuationStepRequest());
     const result = await loop.run({ turnId: 1 });
@@ -186,7 +188,7 @@ describe('stepRetry plugin', () => {
         throw new APIConnectionError('terminated');
       }),
     );
-    ctx.get(IEventBus).subscribe('turn.step.retrying', () => {
+    ctx.get(IEventBus).subscribe(TurnStepRetrying, () => {
       controller.abort(new Error('stop'));
     });
 

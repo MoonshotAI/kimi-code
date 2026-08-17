@@ -1,16 +1,16 @@
 /**
  * `usage` domain — `IAgentUsageService` implementation.
  *
- * Accumulates the agent's token usage in the `wire` `UsageModel`, mutating it
- * only through the `usage.record` Op (`wire.dispatch(recordUsage(...))`) and
- * deriving `status()` snapshots from `wire.getModel`. The per-turn accumulator
+ * Accumulates the agent's token usage in the `usageKey` state, mutating it
+ * only through the durable `UsageRecord` event
+ * (`dispatcher.dispatch(new UsageRecord(...))`) and deriving `status()`
+ * snapshots from `dispatcher.getState`. The per-turn accumulator
  * (`currentTurnId` / `currentTurn`) is live-only service state — it is not
  * persisted and resets on resume, matching v1 — and is registered into
  * `agentState` (`IAgentStateService`) and read/written through it. The usage
- * slice of `agent.status.updated` is
- * published here after each live record (replay stays silent, like v1's
- * restore), and the `onDidRecord` event notifies agent-scoped consumers of the
- * live record. Bound at Agent scope.
+ * slice of `agent.status.updated` is dispatched here after each live record
+ * (replay stays silent, like v1's restore), and the `onDidRecord` event
+ * notifies agent-scoped consumers of the live record. Bound at Agent scope.
  */
 
 import { addUsage, type TokenUsage } from '#/kosong/contract/usage';
@@ -18,18 +18,19 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IEventBus } from '#/app/event/eventBus';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+
 import type { UsageRecordedContext, UsageStatus } from './usage';
 import { IAgentUsageService } from './usage';
+import { AgentStatusUpdated } from './usageEvents';
 import {
   copyUsage,
-  recordUsage,
-  UsageModel,
+  usageKey,
+  UsageRecord,
   usageStatusFromState,
   type UsageRecordScope,
 } from './usageOps';
@@ -50,13 +51,13 @@ export class AgentUsageService extends Service implements IAgentUsageService {
   readonly onDidRecord: Event<UsageRecordedContext> = this._onDidRecord.event;
 
   constructor(
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IEventBus private readonly eventBus?: IEventBus,
   ) {
     super();
-    this.states.register(usageCurrentTurnIdKey);
-    this.states.register(usageCurrentTurnKey);
+    this.states.contributeState(usageKey);
+    this.states.contributeState(usageCurrentTurnIdKey);
+    this.states.contributeState(usageCurrentTurnKey);
   }
 
   private get currentTurnId(): number | undefined {
@@ -77,7 +78,7 @@ export class AgentUsageService extends Service implements IAgentUsageService {
 
   record(model: string, usage: TokenUsage, source?: AgentLLMRequestSource): void {
     const usageScope: UsageRecordScope = source?.type === 'turn' ? 'turn' : 'session';
-    this.wire.dispatch(recordUsage({ model, usage, usageScope }));
+    void this.dispatcher.dispatch(new UsageRecord({ model, usage, usageScope }));
 
     const turnId = source?.type === 'turn' ? source.turnId : undefined;
     if (turnId !== undefined) {
@@ -90,12 +91,12 @@ export class AgentUsageService extends Service implements IAgentUsageService {
       }
     }
 
-    this.eventBus?.publish({ type: 'agent.status.updated', usage: this.status() });
+    void this.dispatcher.dispatch(new AgentStatusUpdated({ usage: this.status() }));
     this._onDidRecord.fire({ model, usage: copyUsage(usage), source });
   }
 
   status(): UsageStatus {
-    return usageStatusFromState(this.wire.getModel(UsageModel), this.currentTurn);
+    return usageStatusFromState(this.states.get(usageKey), this.currentTurn);
   }
 }
 
