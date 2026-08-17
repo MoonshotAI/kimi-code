@@ -1,5 +1,5 @@
 /**
- * `contextProjector` domain helper — rebuilds stored context history into
+ * `contextProjector` domain — rebuilds stored context history into
  * provider-valid wire messages and reports every repair through an anomaly
  * sink.
  *

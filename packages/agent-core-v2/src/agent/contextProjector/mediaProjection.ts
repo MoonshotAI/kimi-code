@@ -1,14 +1,13 @@
 /**
- * `contextProjector` domain helper — read-side media fallbacks for the two
+ * `contextProjector` domain — read-side media fallbacks for the two
  * deterministic provider rejections.
  *
- * `degradeOlderMediaParts` replaces all but the most recent media parts with
- * text markers after an HTTP 413 body-size rejection; a strip snapshot
- * (`captureMediaStripSnapshot` + `stripMediaPartsBySnapshot`) replaces
- * exactly the snapshotted media identities after a rejected-format or
- * still-too-large resend, so a newly generated recovery image stays visible
- * on later steps. Both rewrite only the projected wire messages — the stored
- * history keeps its media.
+ * The degraded projection replaces all but the most recent media parts with
+ * text markers after an HTTP 413 body-size rejection; the strip projection
+ * replaces exactly the snapshotted media identities after a rejected-format
+ * or still-too-large resend, so a newly generated recovery image stays
+ * visible on later steps. Both rewrite only the projected wire messages —
+ * the stored history keeps its media.
  */
 
 import { createHash } from 'node:crypto';

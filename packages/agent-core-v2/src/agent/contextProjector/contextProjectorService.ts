@@ -1,10 +1,9 @@
 /**
  * `contextProjector` domain — `IAgentContextProjectorService` implementation.
  *
- * Delegates the stored-history → wire-message transform to the pure
- * `projection.ts` pipeline (`project` / `projectStrict`) and the read-side
- * media fallbacks selected by `policy.media` to `mediaProjection.ts`, and
- * surfaces every repair the transform reports: the collected anomalies are
+ * Projects stored context history into the wire messages sent to the model,
+ * applies the read-side media fallbacks selected by `policy.media`, and
+ * surfaces every repair the projection had to apply: the repairs are
  * summarized once per distinct signature into a single deduped warning
  * (through `log`) plus a `context_projection_repaired` telemetry event
  * (through `telemetry`), so a silently-mangled history always leaves a
