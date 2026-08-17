@@ -16,6 +16,10 @@ import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter } from '#/_base/event';
+import {
+  resetUnexpectedErrorHandler,
+  setUnexpectedErrorHandler,
+} from '#/_base/errors/unexpectedError';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -872,10 +876,14 @@ describe('AgentMediaToolsRegistrar', () => {
       getModelCapabilities: () => state.capabilities,
       getModel: () => state.alias,
     } as unknown as IAgentProfileService;
+    const brokenAliases = new Set<string>();
     const modelCatalog = {
-      getRequester: (id: string) => ({
-        model: { id, name: id, providerName: 'test', protocol: 'openai' },
-      }),
+      getRequester: (id: string) => {
+        if (brokenAliases.has(id)) {
+          throw new Error(`Model "${id}" is not configured in config.toml.`);
+        }
+        return { model: { id, name: id, providerName: 'test', protocol: 'openai' } };
+      },
     } as unknown as IModelCatalog;
     const workspaceCtx = {
       workDir: '/workspace',
@@ -914,7 +922,10 @@ describe('AgentMediaToolsRegistrar', () => {
       runtimeAvailable = available;
       runtimeChanges.fire();
     };
-    return { registry, registrar, bindModel, setRuntimeAvailable };
+    const breakAlias = (alias: string): void => {
+      brokenAliases.add(alias);
+    };
+    return { registry, registrar, bindModel, setRuntimeAvailable, breakAlias };
   }
 
   it('registers nothing until a media-capable model binds, then registers ReadMediaFile', () => {
@@ -966,6 +977,23 @@ describe('AgentMediaToolsRegistrar', () => {
 
     bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
     expect(registry.resolve('ReadMediaFile')).toBe(first);
+  });
+
+  it('degrades to no requester when the bound alias is not configured', () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((err) => unexpected.push(err));
+    try {
+      const { registry, bindModel, breakAlias } = createRegistrarHarness();
+      breakAlias('stale-model');
+      // A stale alias restored from a pre-logout session no longer resolves in
+      // the catalog; the listener must not surface an [unexpected] error, and
+      // media tools stay registered off the profile-reported capabilities.
+      bindModel('stale-model', capabilities({ image_in: true, video_in: true }));
+      expect(unexpected).toHaveLength(0);
+      expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
   });
 
   it('unregisters on dispose', () => {
