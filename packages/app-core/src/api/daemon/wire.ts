@@ -230,7 +230,10 @@ export type WireMessageContent =
 export type WireImageSource =
   | { kind: 'url'; url: string }
   | { kind: 'base64'; media_type: string; data: string }
-  | { kind: 'file'; file_id: string };
+  | { kind: 'file'; file_id: string }
+  // Projection-only: the session-owned canonical media copy (fetch via
+  // /sessions/{id}/media/{file_id}, not /files). Never a submission form.
+  | { kind: 'session_media'; file_id: string };
 
 export interface WireMessage {
   id: string;

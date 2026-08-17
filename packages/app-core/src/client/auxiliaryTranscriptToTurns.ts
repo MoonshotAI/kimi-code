@@ -4,7 +4,7 @@ import type {
   TranscriptTask,
   TranscriptTurn,
 } from '../transcript';
-import type { AppMessage, AppMessageContent } from '../api';
+import type { AppMessage, AppMessageContent, ImageSource } from '../api';
 
 import { messagesToTurns, normalizeToolOutput } from './messagesToTurns';
 import { TASK_NOTIFICATION_METADATA_KEY } from './notificationXml';
@@ -14,6 +14,13 @@ export function auxiliaryTranscriptToTurns(
   snapshot: AgentTranscriptSnapshot,
   getFileUrl?: (fileId: string) => string,
   agent?: { createdAt?: string; disposedAt?: string },
+  options?: {
+    /** The session the transcript belongs to — synthesized messages otherwise
+     *  carry no session id, and session-media attachments need it to fetch
+     *  bytes from the session-scoped media route. */
+    sessionId?: string;
+    getSessionMediaUrl?: (sessionId: string, fileId: string) => string;
+  },
 ): ChatTurn[] {
   const transcriptTurns = snapshot.items.filter((item) => item.kind === 'turn');
   const firstTurnId = transcriptTurns[0]?.turnId;
@@ -27,11 +34,12 @@ export function auxiliaryTranscriptToTurns(
           taskById,
           item.turnId === firstTurnId ? agent?.createdAt : undefined,
           item.turnId === onlyTurnId ? agent?.disposedAt : undefined,
+          options?.sessionId,
         )
       : [],
   );
   const running = snapshot.meta.activity === 'turn';
-  return messagesToTurns(messages, [], getFileUrl, running).map(clearMissingTimestamps);
+  return messagesToTurns(messages, [], getFileUrl, running, {}, {}, { getSessionMediaUrl: options?.getSessionMediaUrl }).map(clearMissingTimestamps);
 }
 
 function turnToMessages(
@@ -40,6 +48,7 @@ function turnToMessages(
   taskById: ReadonlyMap<string, TranscriptTask>,
   fallbackStartedAt?: string,
   fallbackEndedAt?: string,
+  sessionId = '',
 ): AppMessage[] {
   const messages: AppMessage[] = [];
   const attachmentById = new Map(attachments.map((item) => [item.attachmentId, item]));
@@ -59,7 +68,7 @@ function turnToMessages(
     }
     messages.push({
       id: `${turn.turnId}:input`,
-      sessionId: '',
+      sessionId,
       role: 'user',
       content,
       createdAt,
@@ -213,23 +222,20 @@ function attachmentToContent(
   attachment: TranscriptAttachment | undefined,
 ): AppMessageContent | undefined {
   if (attachment?.source === undefined) return undefined;
+  // A daemon media reference addresses the session's own media store, not the
+  // global upload store — keep the source kinds distinct so the byte fetch
+  // goes through the session-scoped media route.
+  const source: ImageSource =
+    attachment.source.kind === 'url'
+      ? { kind: 'url', url: attachment.source.url }
+      : attachment.source.kind === 'session_media'
+        ? { kind: 'sessionMedia', fileId: attachment.source.fileId }
+        : { kind: 'file', fileId: attachment.source.fileId };
   if (attachment.mediaType.startsWith('image/')) {
-    return {
-      type: 'image',
-      source:
-        attachment.source.kind === 'url'
-          ? { kind: 'url', url: attachment.source.url }
-          : { kind: 'file', fileId: attachment.source.fileId },
-    };
+    return { type: 'image', source };
   }
   if (attachment.mediaType.startsWith('video/')) {
-    return {
-      type: 'video',
-      source:
-        attachment.source.kind === 'url'
-          ? { kind: 'url', url: attachment.source.url }
-          : { kind: 'file', fileId: attachment.source.fileId },
-    };
+    return { type: 'video', source };
   }
   if (attachment.source.kind !== 'file') return undefined;
   return {

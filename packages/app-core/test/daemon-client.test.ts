@@ -547,3 +547,35 @@ describe('DaemonKimiWebApi.connectEvents', () => {
     });
   });
 });
+
+describe('DaemonKimiWebApi session media', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('builds the session-scoped media URL', () => {
+    expect(createApi().getSessionMediaUrl('sess/1', 'f_abc')).toBe(
+      'http://daemon.test/api/v1/sessions/sess%2F1/media/f_abc',
+    );
+  });
+
+  it('fetches session media bytes from the session-scoped route with auth', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      }),
+    );
+
+    const blob = await createApi().getSessionMediaBlob('sess/1', 'f_abc');
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
+      'http://daemon.test/api/v1/sessions/sess%2F1/media/f_abc',
+    );
+    expect(blob.size).toBe(3);
+  });
+});

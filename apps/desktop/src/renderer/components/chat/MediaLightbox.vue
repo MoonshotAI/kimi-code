@@ -150,6 +150,7 @@ onBeforeUnmount(() => {
             :url="media.url"
             :kind="media.kind === 'video' ? 'video' : 'image'"
             :file-id="media.fileId"
+            :session-id="media.sessionId"
             media-class="media-lightbox-media"
             :controls="media.kind === 'video'"
           />

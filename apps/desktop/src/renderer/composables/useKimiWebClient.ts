@@ -2614,6 +2614,8 @@ const activeTurnRetry = computed<AppTurnRetry | undefined>(() => {
 // its own previous output), so a plain computed preserves the old synchronous
 // pull semantics while reuse happens inside each re-evaluation.
 const getFileUrlById = (fileId: string): string => getKimiWebApi().getFileUrl(fileId);
+const getSessionMediaUrl = (sessionId: string, fileId: string): string =>
+  getKimiWebApi().getSessionMediaUrl(sessionId, fileId);
 // Hoisted empty fallback: a fresh `[]` literal per projection would break the
 // projector's approvals-identity reuse gate (see turnsProjector.ts).
 const NO_PENDING_APPROVALS: AppApprovalRequest[] = [];
@@ -2626,6 +2628,7 @@ const turns = computed<ChatTurn[]>(() => {
     messages: (rawState.messagesBySession[sid] ?? []).filter((m) => !hiddenIds.has(m.id)),
     approvals: rawState.approvalsBySession[sid] ?? NO_PENDING_APPROVALS,
     getFileUrl: getFileUrlById,
+    getSessionMediaUrl,
     sessionActive: turnActive.value,
     planReviewByToolCallId: rawState.planReviewByToolCallId,
     plansByToolCallId: plansBySession[sid],
@@ -3860,6 +3863,7 @@ export function useKimiWebClient() {
     findBashCommandForTask,
     auxiliaryTranscripts,
     getFileUrl: getFileUrlById,
+    getSessionMediaUrl,
     todos,
     goal,
     sessionPlans,

@@ -32,6 +32,7 @@ export interface DetailPanelClient {
   sideChatVisible: Ref<boolean>;
   auxiliaryTranscripts: DetailPanelAuxiliaryTranscripts;
   getFileUrl: (fileId: string) => string;
+  getSessionMediaUrl: (sessionId: string, fileId: string) => string;
   /** Recover a background Bash task's verbatim command from the tool
    *  messages when the task itself doesn't carry it. */
   findBashCommandForTask(task: AppTask): string | undefined;
@@ -231,6 +232,7 @@ export function useDetailPanel({
       entry.channel.snapshot,
       client.getFileUrl,
       descriptor,
+      { sessionId: target?.sessionId, getSessionMediaUrl: client.getSessionMediaUrl },
     );
   });
   const agentPanelLoading = computed(

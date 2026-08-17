@@ -23,7 +23,7 @@ import type { ToolMedia } from '@moonshot-ai/app-core/client';
 
 export interface ImagePreviewOptions {
   /** Authenticated file-store access (the app's composed api singleton). */
-  api: Pick<KimiWebApi, 'getFileBlob'>;
+  api: Pick<KimiWebApi, 'getFileBlob' | 'getSessionMediaBlob'>;
   media: ToolMedia;
   /** The clicked thumbnail <img>; null (e.g. unresolved src) means no zoom
    *  origin — the preview fades in from the blob-fetch/url fallback. */
@@ -52,7 +52,7 @@ function loadDims(src: string): Promise<{ w: number; h: number } | null> {
   });
 }
 
-async function resolveImage(api: Pick<KimiWebApi, 'getFileBlob'>, media: ToolMedia, thumbImg: HTMLImageElement | null): Promise<ResolvedImage | null> {
+async function resolveImage(api: Pick<KimiWebApi, 'getFileBlob' | 'getSessionMediaBlob'>, media: ToolMedia, thumbImg: HTMLImageElement | null): Promise<ResolvedImage | null> {
   if (thumbImg?.currentSrc && thumbImg.naturalWidth > 0) {
     return { src: thumbImg.currentSrc, w: thumbImg.naturalWidth, h: thumbImg.naturalHeight, objectUrl: null };
   }
@@ -60,7 +60,9 @@ async function resolveImage(api: Pick<KimiWebApi, 'getFileBlob'>, media: ToolMed
   let objectUrl: string | null = null;
   if (media.fileId) {
     try {
-      const blob = await api.getFileBlob(media.fileId);
+      const blob = media.sessionId
+        ? await api.getSessionMediaBlob(media.sessionId, media.fileId)
+        : await api.getFileBlob(media.fileId);
       objectUrl = URL.createObjectURL(blob);
       src = objectUrl;
     } catch {
