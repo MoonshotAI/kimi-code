@@ -13,7 +13,7 @@
  * `storage` access-pattern store, mirrors the flipped summary into the
  * `sessionIndex` mirror queue (drained by the caller, never per item), and
  * publishes the same `event.session.archived` bus event the live
- * `ISessionLifecycleService.archive` emits through `event` — restore
+ * `ISessionManager.archive` emits through `event` — restore
  * publishes nothing, matching the live `restore` (which only flips the
  * flag through `ISessionMetadata`). `updatedAt` is preserved verbatim,
  * mirroring `setArchived`'s `touchUpdatedAt: false` semantics, and every
@@ -30,16 +30,13 @@
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventService } from '#/app/event/event';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
+import { getLiveSessionById } from '#/app/sessionManager/sessionLookup';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 
 import { sessionScopeOf, workspacePersistenceScope } from './internal/addressing';
-// Relative on purpose: the `#/app/workspaceLifecycle/*` specifier fails to
-// resolve from this directory on CI's tsgo/rolldown (Linux) while resolving
-// everywhere else; relative paths bypass the package-imports mapping.
-import { liveHandlerForSession } from '../../app/workspaceLifecycle/sessionLookup';
 
 export type ColdSessionArchiveOutcome = 'updated' | 'not_found';
 
@@ -82,13 +79,12 @@ export type SessionArchiveBatchItemOutcome =
 
 /**
  * Batch archive/restore with the live/cold split: a session with a live
- * handle goes through the full `ISessionLifecycleService` chain (workspace
- * handler accessor — the canonical owner, same path as the v1 action
- * route), everything else through the direct cold patch above (never
- * materialized). Per-item failures fold into the outcome list in input
- * order — the batch itself never throws for item work. Live items run with
- * bounded concurrency; mirror records queue and are drained by the CALLER
- * (one drain for the whole batch).
+ * handle goes through the full `ISessionManager` chain (the same App-level
+ * entry as the v1 action route — never a resume), everything else through
+ * the direct cold patch above (never materialized). Per-item failures fold
+ * into the outcome list in input order — the batch itself never throws for
+ * item work. Live items run with bounded concurrency; mirror records queue
+ * and are drained by the CALLER (one drain for the whole batch).
  */
 export async function setSessionArchivedBatch(
   accessor: ServicesAccessor,
@@ -98,11 +94,12 @@ export async function setSessionArchivedBatch(
   const outcomes: (SessionArchiveBatchItemOutcome | undefined)[] = ids.map(() => undefined);
   const applyOne = async (id: string): Promise<SessionArchiveBatchItemOutcome> => {
     try {
-      const liveHandler = liveHandlerForSession(accessor, id);
-      if (liveHandler !== undefined) {
-        const lifecycle = liveHandler.accessor.get(ISessionLifecycleService);
-        if (archived) await lifecycle.archive(id);
-        else await lifecycle.restore(id);
+      // Hot path: a live session goes through ISessionManager — the same
+      // App-level entry the v1 action route uses (never a resume).
+      if (getLiveSessionById(accessor, id) !== undefined) {
+        const manager = accessor.get(ISessionManager);
+        if (archived) await manager.archive(id);
+        else await manager.restore(id);
         return { id, ok: true };
       }
       const outcome = await setColdSessionArchived(accessor, id, archived);
