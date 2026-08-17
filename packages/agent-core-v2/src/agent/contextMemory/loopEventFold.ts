@@ -37,10 +37,10 @@
  * `step.end` only settles the step it names.
  *
  * The fold is stateful across records within one replay; the cursor
- * (`openStepUuid` / `pending` / `deferred`) is part of the state's `fold`
- * field, so live dispatch and replay share one pure transition, and every
- * wholesale state replacement (undo / clear / compaction) resets the cursor
- * structurally by returning `EMPTY_FOLD`.
+ * (`openStepUuid` / `pendingToolCallIds` / `deferredEntries`) is part of the
+ * state's `fold` field, so live dispatch and replay share one pure
+ * transition, and every wholesale state replacement (undo / clear /
+ * compaction) resets the cursor structurally by returning `EMPTY_FOLD`.
  *
  * The kernel is generic over the entry type: it reduces one `ContextState<E>`
  * — the entries folded so far plus the fold cursor — into the next, and a
@@ -155,8 +155,8 @@ export function settleModelOpenStep(state: ContextState): ContextState {
 
 export function appendMessageTo<E>(state: ContextState<E>, entry: E): ContextState<E> {
   const { fold } = state;
-  if (fold.pending.length > 0) {
-    return { ...state, fold: { ...fold, deferred: [...fold.deferred, entry] } };
+  if (fold.pendingToolCallIds.length > 0) {
+    return { ...state, fold: { ...fold, deferredEntries: [...fold.deferredEntries, entry] } };
   }
   return { ...state, messages: [...state.messages, entry] };
 }
@@ -170,7 +170,7 @@ export function applyLoopEventTo<E>(
   const { fold } = state;
   switch (event.type) {
     case 'step.begin': {
-      const settled = settleOpenStep(state, adapter, makeEntry);
+      const stateAfterPreviousStep = settleOpenStep(state, adapter, makeEntry);
       const assistant: ContextMessage = {
         role: 'assistant',
         content: [],
@@ -178,18 +178,18 @@ export function applyLoopEventTo<E>(
         partial: true,
       };
       return {
-        messages: [...settled.messages, makeEntry(assistant)],
-        fold: { ...settled.fold, openStepUuid: event.uuid },
+        messages: [...stateAfterPreviousStep.messages, makeEntry(assistant)],
+        fold: { ...stateAfterPreviousStep.fold, openStepUuid: event.uuid },
       };
     }
     case 'step.end': {
       if (fold.openStepUuid !== event.uuid) return flushDeferred(state);
-      const settled = settleOpenStep(
+      const stateAfterStepEnd = settleOpenStep(
         { ...state, fold: { ...fold, openStepUuid: undefined } },
         adapter,
         makeEntry,
       );
-      return flushDeferred(settled);
+      return flushDeferred(stateAfterStepEnd);
     }
     case 'content.part': {
       if (fold.openStepUuid !== event.stepUuid) return state;
@@ -207,28 +207,28 @@ export function applyLoopEventTo<E>(
         arguments: event.args === undefined ? null : JSON.stringify(event.args),
         ...(event.extras !== undefined ? { extras: event.extras } : {}),
       };
-      const withPending: ContextState<E> = {
+      const stateWithPendingToolCall: ContextState<E> = {
         ...state,
-        fold: { ...fold, pending: [...fold.pending, event.toolCallId] },
+        fold: { ...fold, pendingToolCallIds: [...fold.pendingToolCallIds, event.toolCallId] },
       };
-      return updateOpenAssistant(withPending, adapter, (message) => ({
+      return updateOpenAssistant(stateWithPendingToolCall, adapter, (message) => ({
         ...message,
         toolCalls: [...message.toolCalls, call],
       }));
     }
     case 'tool.result': {
-      if (!fold.pending.includes(event.toolCallId)) return state;
+      if (!fold.pendingToolCallIds.includes(event.toolCallId)) return state;
       const output = event.result.output;
       const toolMessage: ContextMessage = {
         ...createToolMessage(event.toolCallId, typeof output === 'string' ? output : [...output]),
         isError: event.result.isError,
         note: event.result.note,
       };
-      const next: ContextState<E> = {
+      const stateWithToolResult: ContextState<E> = {
         messages: [...state.messages, makeEntry(toolMessage)],
-        fold: { ...fold, pending: fold.pending.filter((id) => id !== event.toolCallId) },
+        fold: { ...fold, pendingToolCallIds: fold.pendingToolCallIds.filter((id) => id !== event.toolCallId) },
       };
-      return flushDeferred(next);
+      return flushDeferred(stateWithToolResult);
     }
     default:
       return state;
@@ -279,20 +279,20 @@ function closePending<E>(
   makeEntry: (message: ContextMessage) => E,
 ): ContextState<E> {
   const { fold } = state;
-  if (fold.pending.length === 0) return state;
+  if (fold.pendingToolCallIds.length === 0) return state;
   const messages = state.messages.slice();
-  for (const toolCallId of fold.pending) {
+  for (const toolCallId of fold.pendingToolCallIds) {
     messages.push(makeEntry(interruptedToolMessage(toolCallId)));
   }
-  return flushDeferred({ ...state, messages, fold: { ...fold, pending: [] } });
+  return flushDeferred({ ...state, messages, fold: { ...fold, pendingToolCallIds: [] } });
 }
 
 function flushDeferred<E>(state: ContextState<E>): ContextState<E> {
   const { fold } = state;
-  if (fold.pending.length > 0 || fold.deferred.length === 0) return state;
+  if (fold.pendingToolCallIds.length > 0 || fold.deferredEntries.length === 0) return state;
   return {
-    messages: [...state.messages, ...fold.deferred],
-    fold: { ...fold, deferred: [] },
+    messages: [...state.messages, ...fold.deferredEntries],
+    fold: { ...fold, deferredEntries: [] },
   };
 }
 

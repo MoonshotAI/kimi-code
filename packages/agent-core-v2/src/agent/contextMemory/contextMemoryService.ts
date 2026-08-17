@@ -4,7 +4,7 @@
  * Owns per-agent conversation history through `wire`, maintains measurements
  * with `tokenCounting`, and broadcasts live mutations through `event`. The
  * wire state is an append-only folded log; `get()` serves the model-visible
- * window derived by `visibleWindow.deriveVisibleMessages`, while `getLog()`
+ * window derived by `visibleWindow.deriveVisibleMessages`, while `getMessageLog()`
  * exposes the raw log for integrity checks. Every splice-shaped mutation
  * (`clear` / `applyCompaction` / `undo`, plus verified cross-model trailing
  * removal) publishes `context.spliced` from the live path only — replay
@@ -81,10 +81,10 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   }
 
   get(): readonly ContextMessage[] {
-    return deriveVisibleMessages(this.getLog());
+    return deriveVisibleMessages(this.getMessageLog());
   }
 
-  getLog(): readonly ContextMessage[] {
+  getMessageLog(): readonly ContextMessage[] {
     return this.wire.getModel(ContextModel).messages as readonly ContextMessage[];
   }
 

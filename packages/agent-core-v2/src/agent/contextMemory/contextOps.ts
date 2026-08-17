@@ -1,65 +1,13 @@
 /**
- * `contextMemory` domain — wire Model (`ContextModel`) and the wire-protocol
- * 1.4 Ops `context.append_message` (`contextAppendMessage`) / `context.clear`
- * (`contextClear`) / `context.apply_compaction` (`contextApplyCompaction`) /
- * `context.undo` (`contextUndo`) / `context.append_loop_event`
- * (`contextAppendLoopEvent`) for the per-agent conversation history.
+ * `contextMemory` domain — exposes the context wire Model, Ops, and blob codec.
  *
- * Declares the history as `ContextState` — `{ messages, fold }`, initial
- * `{ messages: [], fold: EMPTY_FOLD }`; every Op's `apply`
- * is a pure transform that returns a NEW reference on change and the SAME
- * reference on a no-op (so the wire's reference-equality gate stays quiet), and
- * carries no non-determinism. The loop-event fold cursor (`state.fold`) is part
- * of the state, so wholesale replacements (undo / clear / compaction / the
- * `swarm_mode.exit` pop) reset it by returning `EMPTY_FOLD` — there is no
- * out-of-band reset to forget.
+ * The Ops append messages and loop events, clear history, apply compaction, and
+ * undo conversation turns. The blob codec transforms persisted message parts.
+ * The message log is append-only; its fold cursor travels with model state and
+ * resets with every wholesale replacement.
  *
- * `messages` is an APPEND-ONLY folded log: `context.apply_compaction` first
- * settles any frame left open by a failed attempt (an overflow compaction
- * lands mid-fold — `settleModelOpenStep` closes pending exchanges with
- * interrupted tool messages and drops or seals the partial assistant), then
- * appends a summary marker message carrying the record's fields as
- * `CompactionMeta`, leaving the pre-compaction history in place. A marker
- * therefore only ever lands on a settled frame — no `partial` frame survives
- * a marker, so nothing ever mutates the log behind one. What the model sees
- * is the read-time derivation `visibleWindow.deriveVisibleMessages` over this
- * log (the same `[head, elision?, tail, summary]` layout the pre-append-only
- * rewrite used to store). Only undo / clear / the swarm-mode pop still cut
- * the log — undo maps its visible-window cut back to a log position through
- * `mapVisibleIndexToLog`.
- *
- * The live write path emits the v1 Ops: non-loop appends (user prompts,
- * injections, hook/task notices) go on the wire as `append_message` (the
- * message persists whole, local ids included — undo pairs prompt-owned
- * injections with their prompt by `id`, including after a resume; v1
- * readers ignore fields beyond their own field set), while the
- * agent loop streams each turn as `context.append_loop_event` records — the
- * same on-disk shape the v1 loop writes — and `contextAppendLoopEvent` folds
- * them into assistant / tool messages both at live dispatch time and on
- * replay, so v1- and v2-written sessions reduce
- * identically. The swarm-mode exit reminder removal is a cross-model fold:
- * `ContextModel` registers a reducer on `swarm_mode.exit` (see
- * `popSwarmModeReminder`) so the pop replays from the `swarm_mode.exit` record
- * itself; the pop decision mirrors the service's visible-tail check, locating
- * the reminder through the derived window when a legacy compaction marker
- * sits behind it in the log.
- *
- * `context.undo` applies the single undo-cut decision owned by
- * `conversationTime` (`computeUndoCut` over `isUndoAnchor`) — the same walk
- * the display transcript applies and the same predicate the checkpoint
- * protocol pushes with, so the model, the display, and checkpoint pushing
- * can never drift apart.
- *
- * Blob handling is declared as a `ModelBlobCodec` on `ContextModel.blobs`:
- * - `dehydrate(record, transform)`: at dispatch time, traverses message content
- *   in `context.append_message` and `context.append_loop_event` records,
- *   passing each `ContentPart[]` through `transform` to offload oversized data
- *   URIs.
- * - `rehydrate(state, transform)`: after replay, traverses the surviving final
- *   state (including still-deferred messages in the fold cursor) and loads
- *   `blobref:` URLs back to inline data — with the append-only log, "surviving"
- *   means messages the window derivation can still surface (see
- *   `rehydrateSurvivingMessages`), so compacted-away media costs no I/O.
+ * Collaborators: `loopEventFold` folds loop records, `conversationTime` owns undo
+ * cuts, `compactionHandoff` builds markers, and `visibleWindow` derives visibility.
  */
 
 import { z } from 'zod';
@@ -151,15 +99,6 @@ async function dehydrateRecord(
   return record;
 }
 
-/** Replay-time blob loading transforms exactly the log entries that surface
- *  in the derived visible window (by identity), plus the markers themselves.
- *  Everything else — compacted-away assistant / tool media above all — stays
- *  as `blobref:` strings, so resume I/O stays proportional to the surviving
- *  window. Identity membership covers every derivation branch at once: the
- *  kept head/tail user messages, the legacy `[summary, …tail]` survivors,
- *  and the post-last-marker tail. The derivation itself is blob-invariant
- *  (media parts estimate flat), so the mixed log derives exactly the window
- *  a fully rehydrated log would. */
 async function rehydrateSurvivingMessages(
   messages: readonly ContextMessage[],
   transform: PartsTransformer,
@@ -191,11 +130,11 @@ export const ContextModel = defineModel<ContextState>(
       dehydrate: dehydrateRecord,
       rehydrate: async (state, transform) => {
         const messages = await rehydrateSurvivingMessages(state.messages, transform);
-        const deferred = await dehydrateMessages(state.fold.deferred, transform);
+        const deferred = await dehydrateMessages(state.fold.deferredEntries, transform);
         if (!messages.changed && !deferred.changed) return state;
         return freezeContextState({
           messages: messages.result,
-          fold: deferred.changed ? { ...state.fold, deferred: deferred.result } : state.fold,
+          fold: deferred.changed ? { ...state.fold, deferredEntries: deferred.result } : state.fold,
         });
       },
     },
@@ -206,9 +145,6 @@ export const ContextModel = defineModel<ContextState>(
 );
 
 function popSwarmModeReminder(state: ContextState, _payload: unknown): ContextState {
-  // Mirror the service's visible-tail decision (`SwarmService.exit` reads the
-  // derived window): the reminder to pop is the VISIBLE tail, which is the
-  // log tail except when a legacy compaction marker sits behind it.
   const visible = deriveVisibleMessages(state.messages);
   const last = visible.at(-1);
   if (last === undefined) return state;
@@ -217,8 +153,6 @@ function popSwarmModeReminder(state: ContextState, _payload: unknown): ContextSt
   if (visible === state.messages) {
     return freezeContextState({ messages: state.messages.slice(0, -1), fold: EMPTY_FOLD });
   }
-  // Visible-tail survivors keep their log identities, so the entry itself
-  // can be located and removed; the window then re-derives without it.
   const index = state.messages.lastIndexOf(last);
   if (index === -1) return state;
   return freezeContextState({
@@ -256,8 +190,8 @@ export const contextClear = ContextModel.defineOp('context.clear', {
     const { fold } = state;
     const pristine =
       fold.openStepUuid === undefined &&
-      fold.pending.length === 0 &&
-      fold.deferred.length === 0;
+      fold.pendingToolCallIds.length === 0 &&
+      fold.deferredEntries.length === 0;
     if (state.messages.length === 0 && pristine) return state;
     return freezeContextState({ messages: [], fold: EMPTY_FOLD });
   },
@@ -457,10 +391,6 @@ export const contextUndo = ContextModel.defineOp('context.undo', {
     if (!isFullyUndoable(cut, p.count)) return state;
     const logCutIndex = mapVisibleIndexToLog(state.messages, visible, cut.cutIndex);
     if (logCutIndex === undefined) {
-      // The cut landed inside a derived compaction prefix — only reachable
-      // when a verbatim legacy summary message without the compaction origin
-      // let the undo walk pass its marker. Such a cut is not a log suffix;
-      // reproduce the pre-append-only destructive cut verbatim.
       return freezeContextState({
         messages: visible.slice(0, cut.cutIndex),
         fold: EMPTY_FOLD,

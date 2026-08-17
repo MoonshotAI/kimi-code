@@ -624,7 +624,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   ): Promise<CompactionResult> {
     const startedAt = Date.now();
     const originalHistory = [...this.context.get()];
-    const originalLog = this.context.getLog();
+    const originalLog = this.context.getMessageLog();
     const tokensBefore = this.requestTokens(originalHistory);
     let retryCount = 0;
     let thinkingEffort = this.profile.data().thinkingLevel;
@@ -734,7 +734,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         );
       }
 
-      if (!historySafeToCompact(this.context.getLog(), originalLog)) {
+      if (!historySafeToCompact(this.context.getMessageLog(), originalLog)) {
         const active = this._compacting;
         if (active !== null) {
           this.cancelActive(active);

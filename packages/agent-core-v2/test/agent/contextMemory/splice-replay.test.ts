@@ -177,15 +177,16 @@ async function readRecords(log: IAppendLogStore, key = KEY): Promise<WireRecord[
   return out;
 }
 
-beforeEach(() => {
-  disposables = new DisposableStore();
-  blob = new StubBlobService();
-});
-
-afterEach(() => disposables.dispose());
-
 describe('AgentContextMemoryService (wire-backed)', () => {
-  it('splice/append/undo/apply_compaction/clear/append_loop_event each update getModel with a NEW reference and persist flat records', async () => {
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    blob = new StubBlobService();
+  });
+
+  afterEach(() => disposables.dispose());
+
+  describe('wire model and replay', () => {
+    it('splice/append/undo/apply_compaction/clear/append_loop_event each update getModel with a NEW reference and persist flat records', async () => {
     const host = buildHost(KEY);
     const model = () => host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
 
@@ -451,7 +452,9 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     expect(visible[0]).toEqual(legacySummary);
     expect(textOf(visible[1]!)).toBe('tail');
   });
+  });
 
+  describe('blob rehydration', () => {
   it('offloads an oversized content part on dispatch and rehydrates it byte-for-byte on replay', async () => {
     const host = buildHost(KEY);
     const big = 'A'.repeat(200);
@@ -585,7 +588,9 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     expect(mediaUrl(log[0]!)).toBe(`${BLOBREF}image/png;shaGone`);
     expect(blob.loadCalls).toBe(1);
   });
+  });
 
+  describe('live splice events and replayed prompt ownership', () => {
   it('publishes context.spliced on live dispatch and is silent on replay', async () => {
     const host = buildHost(KEY);
     const live: { start: number; deleteCount: number }[] = [];
@@ -653,7 +658,9 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     );
     expect(replay.wire.getModel(ContextModel).messages).toHaveLength(0);
   });
+  });
 
+  describe('compaction and window derivation', () => {
   it('derives the visible window through multiple compaction markers', () => {
     const host = buildHost(KEY);
 
@@ -732,7 +739,9 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     expect(after).toHaveLength(log.length + 1);
     expect(log.every((message, index) => after[index] === message)).toBe(true);
   });
+  });
 
+  describe('undo and splice behavior', () => {
   it('maps an undo cut in the visible tail back to the append-only log', () => {
     const host = buildHost(KEY);
 
@@ -801,7 +810,9 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     const log = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
     expect(host.svc.get()).toBe(log);
   });
+  });
 
+  describe('swarm reminder handling', () => {
   it('pops a visible-tail swarm reminder sitting behind a legacy compaction marker', async () => {
     const host = buildHost(KEY);
     const reminder: ContextMessage = {
@@ -877,7 +888,9 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     expect(host.svc.publishTrailingRemoval(before)).toBe(true);
     expect(splices.at(-1)).toEqual({ start: before.length - 1, deleteCount: 1 });
   });
+  });
 
+  describe('live vs replay parity', () => {
   it('derives identical log and window live and on replay', async () => {
     const host = buildHost(KEY);
 
@@ -909,5 +922,5 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     );
     expect(replay.svc.get()).toEqual(host.svc.get());
   });
-
+  });
 });

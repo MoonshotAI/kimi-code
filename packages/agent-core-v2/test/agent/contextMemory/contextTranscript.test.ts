@@ -1,23 +1,6 @@
 /**
- * Tests for `reduceContextTranscript` — the wire-transcript reducer used by the
- * snapshot and messages endpoints. Mirrors v1 `reduceWireRecords` expectations:
- * compaction keeps the prefix and appends a summary marker; undo splices the
- * tail along the shared `conversationTime` cut decision — a blocked undo
- * (compaction summary / clear floor / too few anchors) leaves the transcript
- * unchanged, exactly as the model Op no-ops; clear keeps the transcript but
- * resets the folded view.
- *
- * The `transcript/model fold parity` block replays one record stream through
- * both the transcript reducer and the model fold (`foldAppendMessage` /
- * `foldLoopEvent` / `contextOps`) and asserts after EVERY record prefix that
- * the transcript's current conversation (the tail of `foldedLength` entries)
- * matches the model's messages. Two divergences are by design: the
- * model-facing compaction summary text (`contextSummary`) differs from the
- * display-facing one (`summary`), so comparisons mask summary content; and
- * compaction pauses the check until the next clear, because the display's
- * `foldedLength` is a UI collapse metric (kept users + summary marker, and
- * legacy records put the summary first in the model but last in the display) —
- * clear realigns the two views.
+ * `contextMemory` domain — Compares transcript reducer and model fold visibility
+ * across key record streams.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -376,7 +359,7 @@ describe('reduceContextTranscript', () => {
   });
 });
 
-describe('transcript/model fold parity', () => {
+describe('transcript replay matches ContextModel state', () => {
   function applyRecordToModel(state: ContextState, record: WireRecord): ContextState {
     switch (record.type) {
       case 'context.append_message':
@@ -397,29 +380,50 @@ describe('transcript/model fold parity', () => {
     }
   }
 
-  function currentOf(result: ContextTranscript): readonly ContextMessage[] {
+  function currentConversationEntries(result: ContextTranscript): readonly ContextMessage[] {
     return result.entries.slice(result.entries.length - result.foldedLength);
   }
 
-  function comparable(messages: readonly ContextMessage[]): unknown {
-    return messages.map((m) => ({
-      ...m,
-      content: m.origin?.kind === 'compaction_summary' ? '<summary>' : m.content,
+  type ParityComparisonMessage = Omit<ContextMessage, 'content'> & {
+    content: ContextMessage['content'] | '<summary>';
+  };
+
+  function normalizeForParityComparison(
+    messages: readonly ContextMessage[],
+  ): ParityComparisonMessage[] {
+    return messages.map((message) => ({
+      ...message,
+      content:
+        message.origin?.kind === 'compaction_summary' ? '<summary>' : message.content,
     }));
+  }
+
+  class ParityComparisonWindow {
+    private enabled = true;
+
+    observe(record: WireRecord): void {
+      if (record.type === 'context.apply_compaction') this.enabled = false;
+      if (record.type === 'context.clear') this.enabled = true;
+    }
+
+    shouldCompare(): boolean {
+      return this.enabled;
+    }
   }
 
   function expectParity(records: WireRecord[]): void {
     let state: ContextState = { messages: [], fold: EMPTY_FOLD };
     const reducer = createContextTranscriptReducer();
-    let aligned = true;
+    const comparisonWindow = new ParityComparisonWindow();
     for (const record of records) {
       state = applyRecordToModel(state, record);
       reducer.add(record);
-      if (record.type === 'context.apply_compaction') aligned = false;
-      if (record.type === 'context.clear') aligned = true;
-      if (!aligned) continue;
+      comparisonWindow.observe(record);
+      if (!comparisonWindow.shouldCompare()) continue;
       const result = reducer.result();
-      expect(comparable(currentOf(result))).toEqual(comparable(state.messages));
+      expect(normalizeForParityComparison(currentConversationEntries(result))).toEqual(
+        normalizeForParityComparison(state.messages),
+      );
     }
   }
 
@@ -485,10 +489,8 @@ describe('transcript/model fold parity', () => {
     const records: WireRecord[] = [
       appendMessage(userMessage('u1', { kind: 'user' })),
       ...assistantStep('s1', 'a1'),
-      // The overflow-failed attempt: opened, never ended.
       loopEvent({ type: 'step.begin', uuid: 's2' }),
       compaction('SUM', 3, 1),
-      // The retried step.
       ...assistantStep('s3', 'a3'),
     ];
     let state: ContextState = { messages: [], fold: EMPTY_FOLD };
@@ -499,10 +501,6 @@ describe('transcript/model fold parity', () => {
     }
     const result = reducer.result();
 
-    // The stale frame is closed at the marker — if the retried step's
-    // step.begin settled it instead, the drop would cancel the new frame's
-    // length increase and foldedLength would fall one short of the
-    // model-visible window.
     expect(result.foldedLength).toBe(deriveVisibleMessages(state.messages).length);
     expect(result.entries.every((m) => m.partial !== true)).toBe(true);
   });

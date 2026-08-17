@@ -3,8 +3,9 @@
  * collaborator (`IWireService`).
  *
  * Lives under `test/` (not `src/`) so test-support code stays out of the
- * production tree. Import from a relative path (`./stubs` or
- * `../contextMemory/stubs`).
+ * production tree. Its visible-window and log views have matching content but
+ * do not guarantee reference identity. Import from a relative path (`./stubs`
+ * or `../contextMemory/stubs`).
  */
 
 import type { ServiceRegistration } from '#/_base/di/test';
@@ -47,10 +48,7 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       return messages;
     },
     get: () => [...messages],
-    // The stub keeps no append-only log — its array IS the visible window —
-    // so the log view is the same array. Integrity checks built on log
-    // identity still work: appends only ever push to the tail.
-    getLog: () => [...messages],
+    getMessageLog: () => [...messages],
     append: (...inserted) => {
       const start = messages.length;
       messages.push(...inserted);
@@ -102,8 +100,8 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   get(): readonly ContextMessage[] {
     return this.impl.get();
   }
-  getLog(): readonly ContextMessage[] {
-    return this.impl.getLog();
+  getMessageLog(): readonly ContextMessage[] {
+    return this.impl.getMessageLog();
   }
   append(...messages: readonly ContextMessage[]): void {
     this.impl.append(...messages);

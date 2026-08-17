@@ -107,7 +107,7 @@ function stubContextMemory(): IAgentContextMemoryService & {
   return {
     _serviceBrand: undefined,
     get: () => [...messages],
-    getLog: () => [...messages],
+    getMessageLog: () => [...messages],
     append: (...inserted) => {
       messages.push(...inserted);
     },

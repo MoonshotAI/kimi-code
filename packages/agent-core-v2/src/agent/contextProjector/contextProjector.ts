@@ -6,7 +6,7 @@
  * that content while preserving newly generated recovery media.
  *
  * Projection variability is expressed as data: a `ProjectionPolicy` —
- * `wire: 'strict'` adds the structural repairs strict providers need
+ * `structure: 'strict'` adds the structural repairs strict providers need
  * (duplicate tool calls dropped, consecutive assistants merged, leading
  * non-user messages dropped); `media` selects the provider-rejection
  * fallback (`'degraded'` replaces all but the most recent media with text
@@ -26,7 +26,7 @@ export interface MediaStripSnapshot {
 }
 
 export interface ProjectionPolicy {
-  readonly wire?: 'strict';
+  readonly structure?: 'strict';
   readonly media?: 'degraded' | { readonly strip: MediaStripSnapshot };
 }
 

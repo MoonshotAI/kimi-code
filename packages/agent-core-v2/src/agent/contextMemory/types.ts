@@ -4,11 +4,11 @@
  *
  * `ContextState` is the `ContextModel` state: the folded messages plus the
  * fold cursor (`ContextFoldState` — the reduction position of the loop-event
- * fold across records: `pending` holds toolCallIds with no result yet,
- * `deferred` holds entries appended while a tool exchange is still open,
- * flushed once it closes to preserve assistant↔tool adjacency). The cursor
- * lives in the state (not beside it) so every wholesale replacement — undo,
- * clear, compaction — resets it structurally by returning `EMPTY_FOLD`.
+ * fold across records: `pendingToolCallIds` holds toolCallIds with no result
+ * yet, `deferredEntries` holds entries appended while a tool exchange is still
+ * open, flushed once it closes to preserve assistant↔tool adjacency). The
+ * cursor lives in the state (not beside it) so every wholesale replacement —
+ * undo, clear, compaction — resets it structurally by returning `EMPTY_FOLD`.
  * Plain data: arrays instead of Sets keep the state freeze- and JSON-safe.
  * Generic over the entry type: the wire model folds `ContextMessage`s, while
  * the display transcript folds time-stamped entries through the same kernel.
@@ -137,15 +137,6 @@ export type PromptOrigin =
   | HookResultOrigin
   | RetryOrigin;
 
-/**
- * Marker metadata the `context.apply_compaction` fold attaches to the summary
- * message it appends — the persisted record fields mirrored onto the message
- * so the append-only log stays self-describing. `visibleWindow` finds markers
- * by this field; the derivation itself needs only `legacyTail` +
- * `compactedCount`, the rest is informational (telemetry / debugging). Never
- * persisted inside an `append_message` record — the fold strips it from
- * appended messages (see `foldAppendMessage`).
- */
 export interface CompactionMeta {
   readonly compactedCount: number;
   readonly tokensBefore: number;
@@ -183,13 +174,13 @@ export interface AgentContextData {
 
 export interface ContextFoldState<E = ContextMessage> {
   readonly openStepUuid?: string;
-  readonly pending: readonly string[];
-  readonly deferred: readonly E[];
+  readonly pendingToolCallIds: readonly string[];
+  readonly deferredEntries: readonly E[];
 }
 
 export const EMPTY_FOLD: ContextFoldState<never> = Object.freeze({
-  pending: Object.freeze([]),
-  deferred: Object.freeze([]),
+  pendingToolCallIds: Object.freeze([]),
+  deferredEntries: Object.freeze([]),
 });
 
 export interface ContextState<E = ContextMessage> {
@@ -197,10 +188,10 @@ export interface ContextState<E = ContextMessage> {
   readonly fold: ContextFoldState<E>;
 }
 
-export function freezeContextState(state: ContextState): ContextState {
+export function freezeContextState<E>(state: ContextState<E>): ContextState<E> {
   const { fold } = state;
-  Object.freeze(fold.pending);
-  Object.freeze(fold.deferred);
+  Object.freeze(fold.pendingToolCallIds);
+  Object.freeze(fold.deferredEntries);
   Object.freeze(fold);
   Object.freeze(state.messages);
   return Object.freeze(state);

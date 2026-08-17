@@ -137,7 +137,7 @@ describe('projector tool-exchange normalization', () => {
   }
 
   function projectStrict(history: readonly ContextMessage[]): readonly Message[] {
-    return projector.project(history, { wire: 'strict' });
+    return projector.project(history, { structure: 'strict' });
   }
 
   it('leaves a fully resolved exchange untouched', () => {
@@ -656,7 +656,7 @@ describe('projector tool-exchange normalization', () => {
     });
   });
 
-  describe('projectMediaDegraded', () => {
+  describe('project with media: degraded policy', () => {
     function imageMessage(url: string): ContextMessage {
       return {
         role: 'user',
@@ -702,7 +702,7 @@ describe('projector tool-exchange normalization', () => {
     });
   });
 
-  describe('projectMediaStripped', () => {
+  describe('project with media: stripped policy', () => {
     function imageMessage(url: string, id?: string): ContextMessage {
       return {
         role: 'user',

@@ -1,15 +1,6 @@
 /**
- * Scenario: LLM requester uses bounded recovery projections after a
- * deterministic provider rejection — strict projection for tool-use
- * adjacency, degraded media followed by full stripping for body-size 413s,
- * and media stripping for image-format rejections — with each axis's repair
- * accumulating on top of the repairs already applied.
- *
- * Responsibilities: assert retry eligibility, projection order and bounds,
- * per-turn recovery stickiness, request recording, and usage accounting.
- * Wiring: real AgentLLMRequesterService with stubbed context memory,
- * projector, context sizing, profile, model, telemetry, and wire/log services. Run:
- * pnpm test -- test/agent/llmRequester/llmRequesterService.test.ts
+ * `llmRequester` domain — Verifies model request behavior across recovery,
+ * telemetry, and output normalization scenarios.
  */
 
 import { createControlledPromise } from '@antfu/utils';
@@ -81,6 +72,31 @@ const capabilities: ModelCapability = {
 const history: Message[] = [
   { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
 ];
+
+type ProjectionKind = 'normal' | 'strict' | 'degraded' | 'stripped';
+
+function classifyProjectionPolicy(policy: ProjectionPolicy | undefined): ProjectionKind {
+  if (typeof policy?.media === 'object') return 'stripped';
+  if (policy?.media === 'degraded') return 'degraded';
+  if (policy?.structure === 'strict') return 'strict';
+  return 'normal';
+}
+
+function recordProjectionCalls(): {
+  projector: Pick<IAgentContextProjectorService, 'project'>;
+  calls: ProjectionKind[];
+} {
+  const calls: ProjectionKind[] = [];
+  return {
+    projector: {
+      project: (messages: readonly ContextMessage[], policy) => {
+        calls.push(classifyProjectionPolicy(policy));
+        return messages;
+      },
+    },
+    calls,
+  };
+}
 
 function createRequester(
   calls: { value: number },
@@ -177,7 +193,7 @@ function createService(
   const usage = { record: () => undefined, status: () => ({}) };
   const context = {
     get: () => options.contextMessages ?? history,
-    getLog: () => options.contextMessages ?? history,
+    getMessageLog: () => options.contextMessages ?? history,
   };
   const tools = { list: () => [] };
   const config: Partial<IConfigService> = {
@@ -301,23 +317,15 @@ describe('AgentLLMRequesterService Anthropic effort diagnostics', () => {
 describe('AgentLLMRequesterService strict resend', () => {
   it('resends once with strict projection after a recoverable structural 400', async () => {
     const calls = { value: 0 };
-    let projectCalls = 0;
-    let strictCalls = 0;
-    const { service } = createService(createRequester(calls), {
-      project: (messages: readonly ContextMessage[], policy) => {
-        if (policy?.wire === 'strict') strictCalls += 1;
-        else projectCalls += 1;
-        return messages;
-      },
-    });
+    const projection = recordProjectionCalls();
+    const { service } = createService(createRequester(calls), projection.projector);
 
     const result = await service.request();
 
     expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
     expect(result.usage).toEqual(emptyUsage());
     expect(calls.value).toBe(2);
-    expect(projectCalls).toBe(1);
-    expect(strictCalls).toBe(1);
+    expect(projection.calls).toEqual(['normal', 'strict']);
   });
 
   it('does not resend for non-recoverable errors', async () => {
@@ -329,18 +337,13 @@ describe('AgentLLMRequesterService strict resend', () => {
         throw new APIStatusError(401, 'unauthorized');
       },
     });
-    let strictCalls = 0;
-    const { service } = createService(requester, {
-      project: (messages: readonly ContextMessage[], policy) => {
-        if (policy?.wire === 'strict') strictCalls += 1;
-        return messages;
-      },
-    });
+    const projection = recordProjectionCalls();
+    const { service } = createService(requester, projection.projector);
 
     await expect(service.request()).rejects.toMatchObject({
       statusCode: 401,
     });
-    expect(strictCalls).toBe(0);
+    expect(projection.calls).toEqual(['normal']);
   });
 });
 
@@ -352,65 +355,41 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
 
   it('resends once with the media-stripped projection after an image-format 400', async () => {
     const calls = { value: 0 };
-    let projectCalls = 0;
-    let strictCalls = 0;
-    let strippedCalls = 0;
-    const { service } = createService(createRequester(calls, IMAGE_FORMAT_400), {
-      project: (messages: readonly ContextMessage[], policy) => {
-        if (typeof policy?.media === 'object') strippedCalls += 1;
-        else projectCalls += 1;
-        return messages;
-      },
-    });
+    const projection = recordProjectionCalls();
+    const { service } = createService(createRequester(calls, IMAGE_FORMAT_400), projection.projector);
 
     const result = await service.request();
 
     expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
     expect(calls.value).toBe(2);
-    expect(projectCalls).toBe(1);
-    expect(strictCalls).toBe(0);
-    expect(strippedCalls).toBe(1);
+    expect(projection.calls).toEqual(['normal', 'stripped']);
   });
 
   it('keeps later steps of the same turn on the stripped projection', async () => {
     const calls = { value: 0 };
-    let projectCalls = 0;
-    let strippedCalls = 0;
-    const { service } = createService(createRequester(calls, IMAGE_FORMAT_400), {
-      project: (messages: readonly ContextMessage[], policy) => {
-        if (typeof policy?.media === 'object') strippedCalls += 1;
-        else projectCalls += 1;
-        return messages;
-      },
-    });
+    const projection = recordProjectionCalls();
+    const { service } = createService(createRequester(calls, IMAGE_FORMAT_400), projection.projector);
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
     expect(calls.value).toBe(2);
-    expect(projectCalls).toBe(1);
-    expect(strippedCalls).toBe(1);
+    expect(projection.calls).toEqual(['normal', 'stripped']);
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
     expect(calls.value).toBe(3);
-    expect(projectCalls).toBe(1);
-    expect(strippedCalls).toBe(2);
+    expect(projection.calls).toEqual(['normal', 'stripped', 'stripped']);
   });
 
   it('does not resend for an unrelated 400', async () => {
     const calls = { value: 0 };
-    let strippedCalls = 0;
+    const projection = recordProjectionCalls();
     const { service } = createService(
       createRequester(calls, new APIStatusError(400, 'some other validation problem')),
-      {
-        project: (messages: readonly ContextMessage[], policy) => {
-          if (typeof policy?.media === 'object') strippedCalls += 1;
-          return messages;
-        },
-      },
+      projection.projector,
     );
 
     await expect(service.request()).rejects.toMatchObject({ statusCode: 400 });
     expect(calls.value).toBe(1);
-    expect(strippedCalls).toBe(0);
+    expect(projection.calls).toEqual(['normal']);
   });
 });
 
@@ -419,9 +398,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
 
   it('resends once with the media-degraded projection after an HTTP 413', async () => {
     const calls = { value: 0 };
-    let projectCalls = 0;
-    let degradedCalls = 0;
-    let strippedCalls = 0;
+    const projection = recordProjectionCalls();
     const { service } = createService(
       createRequester(
         calls,
@@ -429,49 +406,29 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
           cause: BODY_TOO_LARGE_413,
         }),
       ),
-      {
-        project: (messages: readonly ContextMessage[], policy) => {
-          if (policy?.media === 'degraded') degradedCalls += 1;
-          else if (typeof policy?.media === 'object') strippedCalls += 1;
-          else projectCalls += 1;
-          return messages;
-        },
-      },
+      projection.projector,
     );
 
     const result = await service.request();
 
     expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
     expect(calls.value).toBe(2);
-    expect(projectCalls).toBe(1);
-    expect(degradedCalls).toBe(1);
-    expect(strippedCalls).toBe(0);
+    expect(projection.calls).toEqual(['normal', 'degraded']);
   });
 
   it('falls back to media-stripped when the media-degraded request still receives 413', async () => {
     const calls = { value: 0 };
-    let projectCalls = 0;
-    let degradedCalls = 0;
-    let strippedCalls = 0;
+    const projection = recordProjectionCalls();
     const { service } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
-      {
-        project: (messages: readonly ContextMessage[], policy) => {
-          if (policy?.media === 'degraded') degradedCalls += 1;
-          else if (typeof policy?.media === 'object') strippedCalls += 1;
-          else projectCalls += 1;
-          return messages;
-        },
-      },
+      projection.projector,
     );
 
     const result = await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
 
     expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
     expect(calls.value).toBe(3);
-    expect(projectCalls).toBe(1);
-    expect(degradedCalls).toBe(1);
-    expect(strippedCalls).toBe(1);
+    expect(projection.calls).toEqual(['normal', 'degraded', 'stripped']);
   });
 
   it('records repeated-413 recovery projections on the sticky later request', async () => {
@@ -536,51 +493,31 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
 
   it('stops after the media-stripped request also receives 413', async () => {
     const calls = { value: 0 };
-    let projectCalls = 0;
-    let degradedCalls = 0;
-    let strippedCalls = 0;
+    const projection = recordProjectionCalls();
     const { service } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413, BODY_TOO_LARGE_413]),
-      {
-        project: (messages: readonly ContextMessage[], policy) => {
-          if (policy?.media === 'degraded') degradedCalls += 1;
-          else if (typeof policy?.media === 'object') strippedCalls += 1;
-          else projectCalls += 1;
-          return messages;
-        },
-      },
+      projection.projector,
     );
 
     await expect(
       service.request({ source: { type: 'turn', turnId: 1, step: 1 } }),
     ).rejects.toBe(BODY_TOO_LARGE_413);
     expect(calls.value).toBe(3);
-    expect(projectCalls).toBe(1);
-    expect(degradedCalls).toBe(1);
-    expect(strippedCalls).toBe(1);
+    expect(projection.calls).toEqual(['normal', 'degraded', 'stripped']);
   });
 
   it('keeps later steps of the same turn on the degraded projection', async () => {
     const calls = { value: 0 };
-    let projectCalls = 0;
-    let degradedCalls = 0;
-    const { service } = createService(createRequester(calls, BODY_TOO_LARGE_413), {
-      project: (messages: readonly ContextMessage[], policy) => {
-        if (policy?.media === 'degraded') degradedCalls += 1;
-        else projectCalls += 1;
-        return messages;
-      },
-    });
+    const projection = recordProjectionCalls();
+    const { service } = createService(createRequester(calls, BODY_TOO_LARGE_413), projection.projector);
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
     expect(calls.value).toBe(2);
-    expect(projectCalls).toBe(1);
-    expect(degradedCalls).toBe(1);
+    expect(projection.calls).toEqual(['normal', 'degraded']);
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
     expect(calls.value).toBe(3);
-    expect(projectCalls).toBe(1);
-    expect(degradedCalls).toBe(2);
+    expect(projection.calls).toEqual(['normal', 'degraded', 'degraded']);
   });
 
   it('does not resend for a plain 400 or a non-413 status', async () => {
@@ -589,17 +526,12 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
       new APIStatusError(422, 'unprocessable'),
     ]) {
       const calls = { value: 0 };
-      let degradedCalls = 0;
-      const { service } = createService(createRequester(calls, error), {
-        project: (messages: readonly ContextMessage[], policy) => {
-          if (policy?.media === 'degraded') degradedCalls += 1;
-          return messages;
-        },
-      });
+      const projection = recordProjectionCalls();
+      const { service } = createService(createRequester(calls, error), projection.projector);
 
       await expect(service.request()).rejects.toBe(error);
       expect(calls.value).toBe(1);
-      expect(degradedCalls).toBe(0);
+      expect(projection.calls).toEqual(['normal']);
     }
   });
 });
@@ -612,12 +544,12 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
   );
   const STRUCTURAL_400 = new APIStatusError(400, 'messages: `tool_use` ids must be unique');
 
-  function policyRecorder(sink: {
+  function createPolicyRecordingProjector(policies: {
     policies: (ProjectionPolicy | undefined)[];
   }): Pick<IAgentContextProjectorService, 'project'> {
     return {
       project: (messages: readonly ContextMessage[], policy) => {
-        sink.policies.push(policy);
+        policies.policies.push(policy);
         return messages;
       },
     };
@@ -628,7 +560,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     const policies: (ProjectionPolicy | undefined)[] = [];
     const { service, wire, records } = createService(
       createRequester(calls, STRUCTURAL_400, [BODY_TOO_LARGE_413, BODY_TOO_LARGE_413]),
-      policyRecorder({ policies }),
+      createPolicyRecordingProjector({ policies }),
     );
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
@@ -636,9 +568,9 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(calls.value).toBe(4);
     expect(policies).toEqual([
       undefined,
-      { wire: 'strict' },
-      { wire: 'strict', media: 'degraded' },
-      { wire: 'strict', media: { strip: expect.anything() } },
+      { structure: 'strict' },
+      { structure: 'strict', media: 'degraded' },
+      { structure: 'strict', media: { strip: expect.anything() } },
     ]);
     await wire.flush();
     expect(
@@ -651,13 +583,13 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     const policies: (ProjectionPolicy | undefined)[] = [];
     const { service } = createService(
       createRequester(calls, STRUCTURAL_400, [IMAGE_FORMAT_400]),
-      policyRecorder({ policies }),
+      createPolicyRecordingProjector({ policies }),
     );
 
     await service.request();
 
     expect(calls.value).toBe(3);
-    expect(policies.map((policy) => policy?.wire)).toEqual([undefined, 'strict', 'strict']);
+    expect(policies.map((policy) => policy?.structure)).toEqual([undefined, 'strict', 'strict']);
     expect(typeof policies[2]?.media).toBe('object');
   });
 
@@ -666,7 +598,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     const policies: (ProjectionPolicy | undefined)[] = [];
     const { service } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [STRUCTURAL_400]),
-      policyRecorder({ policies }),
+      createPolicyRecordingProjector({ policies }),
     );
 
     await service.request();
@@ -675,7 +607,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(policies).toEqual([
       undefined,
       { media: 'degraded' },
-      { wire: 'strict', media: 'degraded' },
+      { structure: 'strict', media: 'degraded' },
     ]);
   });
 });

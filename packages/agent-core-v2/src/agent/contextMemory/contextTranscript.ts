@@ -26,7 +26,7 @@ import type { WireRecord } from '#/wire/record';
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   collectCompactableUserMessages,
-  compactionResultMessageCount,
+  compactedWindowMessageCount,
   selectRecentUserMessages,
 } from './compactionHandoff';
 import { computeUndoCutFrom, isFullyUndoable, isUndoAnchor } from './conversationTime';
@@ -71,7 +71,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   let foldedLength = 0;
   let clearFloor = 0;
 
-  const applyKernel = (next: ContextState<TranscriptEntry>): void => {
+  const applyReducedState = (next: ContextState<TranscriptEntry>): void => {
     foldedLength += next.messages.length - state.messages.length;
     state = next;
   };
@@ -81,33 +81,15 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     const cut = computeUndoCutFrom(state.messages, count, entryAdapter.messageOf, clearFloor);
     if (!isFullyUndoable(cut, count)) return;
     const entries = state.messages;
-    const removedPromptIds = new Set<string>();
-    for (let i = cut.cutIndex; i < entries.length; i++) {
-      const message = entries[i]!.message;
-      if (message.id !== undefined && isUndoAnchor(message)) removedPromptIds.add(message.id);
-    }
-    let removed = 0;
-    const kept: TranscriptEntry[] = [];
-    for (let i = cut.cutIndex; i < entries.length; i++) {
-      const entry = entries[i]!;
-      const origin = entry.message.origin;
-      if (
-        origin?.kind === 'injection' &&
-        (origin.ownerPromptId === undefined || !removedPromptIds.has(origin.ownerPromptId))
-      ) {
-        kept.push(entry);
-      } else {
-        removed++;
-      }
-    }
-    foldedLength = Math.max(0, foldedLength - removed);
-    state = { messages: [...entries.slice(0, cut.cutIndex), ...kept], fold: EMPTY_FOLD };
+    const { keptTail, removedEntryCount } = removeUndoOwnedEntries(entries, cut.cutIndex);
+    foldedLength = Math.max(0, foldedLength - removedEntryCount);
+    state = { messages: [...entries.slice(0, cut.cutIndex), ...keptTail], fold: EMPTY_FOLD };
   };
 
   const add = (record: WireRecord): void => {
     switch (record.type) {
       case 'context.append_message': {
-        applyKernel(
+        applyReducedState(
           appendMessageTo(state, {
             message: record['message'] as ContextMessage,
             time: record.time,
@@ -117,7 +99,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       }
       case 'context.append_loop_event': {
         const time = record.time;
-        applyKernel(
+        applyReducedState(
           applyLoopEventTo(
             state,
             record['event'] as LoopRecordedEvent,
@@ -174,13 +156,39 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   };
 }
 
+function removeUndoOwnedEntries(
+  entries: readonly TranscriptEntry[],
+  cutIndex: number,
+): { readonly keptTail: TranscriptEntry[]; readonly removedEntryCount: number } {
+  const removedPromptIds = new Set<string>();
+  for (let i = cutIndex; i < entries.length; i++) {
+    const message = entries[i]!.message;
+    if (message.id !== undefined && isUndoAnchor(message)) removedPromptIds.add(message.id);
+  }
+  let removedEntryCount = 0;
+  const keptTail: TranscriptEntry[] = [];
+  for (let i = cutIndex; i < entries.length; i++) {
+    const entry = entries[i]!;
+    const origin = entry.message.origin;
+    if (
+      origin?.kind === 'injection' &&
+      (origin.ownerPromptId === undefined || !removedPromptIds.has(origin.ownerPromptId))
+    ) {
+      keptTail.push(entry);
+    } else {
+      removedEntryCount++;
+    }
+  }
+  return { keptTail, removedEntryCount };
+}
+
 function recoverFoldedLength(
   record: WireRecord,
   transcript: readonly TranscriptEntry[],
   clearFloor: number,
   foldedLength: number,
 ): number {
-  const resultCount = compactionResultMessageCount(
+  const resultCount = compactedWindowMessageCount(
     readNumber(record, 'keptUserMessageCount'),
     readNumber(record, 'keptHeadUserMessageCount'),
   );

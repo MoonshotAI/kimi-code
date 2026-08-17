@@ -72,7 +72,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
   ): readonly Message[] {
     const projected = this.projectWithTrace(
       messages,
-      policy.wire === 'strict' ? projectStrict : project,
+      policy.structure === 'strict' ? projectStrict : project,
     );
     const media = policy.media;
     if (media === undefined) return projected;
@@ -109,26 +109,17 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     if (signature === this.lastRepairSignature) return;
     this.lastRepairSignature = signature;
 
-    let reordered = 0;
-    let synthesized = 0;
-    let droppedOrphan = 0;
-    let duplicateCallsDropped = 0;
-    let duplicateResultsDropped = 0;
-    let leadingDropped = 0;
-    let assistantsMerged = 0;
-    let whitespaceDropped = 0;
-    let vacuousDropped = 0;
-    for (const anomaly of notable) {
-      if (anomaly.kind === 'tool_result_reordered') reordered += 1;
-      else if (anomaly.kind === 'tool_result_synthesized') synthesized += 1;
-      else if (anomaly.kind === 'orphan_tool_result_dropped') droppedOrphan += 1;
-      else if (anomaly.kind === 'duplicate_tool_call_dropped') duplicateCallsDropped += 1;
-      else if (anomaly.kind === 'duplicate_tool_result_dropped') duplicateResultsDropped += 1;
-      else if (anomaly.kind === 'leading_non_user_dropped') leadingDropped += 1;
-      else if (anomaly.kind === 'consecutive_assistants_merged') assistantsMerged += 1;
-      else if (anomaly.kind === 'vacuous_message_dropped') vacuousDropped += 1;
-      else whitespaceDropped += 1;
-    }
+    const {
+      reordered,
+      synthesized,
+      droppedOrphan,
+      duplicateCallsDropped,
+      duplicateResultsDropped,
+      leadingDropped,
+      assistantsMerged,
+      whitespaceDropped,
+      vacuousDropped,
+    } = summarizeProjectionRepairs(notable);
     const toolCallIds = [
       ...new Set(
         notable.flatMap((anomaly) => ('toolCallId' in anomaly ? [anomaly.toolCallId] : [])),
@@ -170,6 +161,46 @@ type ProjectionAnomaly =
   | { readonly kind: 'consecutive_assistants_merged' }
   | { readonly kind: 'whitespace_text_dropped'; readonly role: string }
   | { readonly kind: 'vacuous_message_dropped'; readonly role: string };
+
+interface ProjectionRepairSummary {
+  readonly reordered: number;
+  readonly synthesized: number;
+  readonly droppedOrphan: number;
+  readonly duplicateCallsDropped: number;
+  readonly duplicateResultsDropped: number;
+  readonly leadingDropped: number;
+  readonly assistantsMerged: number;
+  readonly whitespaceDropped: number;
+  readonly vacuousDropped: number;
+}
+
+function summarizeProjectionRepairs(
+  anomalies: readonly ProjectionAnomaly[],
+): ProjectionRepairSummary {
+  const summary = {
+    reordered: 0,
+    synthesized: 0,
+    droppedOrphan: 0,
+    duplicateCallsDropped: 0,
+    duplicateResultsDropped: 0,
+    leadingDropped: 0,
+    assistantsMerged: 0,
+    whitespaceDropped: 0,
+    vacuousDropped: 0,
+  };
+  for (const anomaly of anomalies) {
+    if (anomaly.kind === 'tool_result_reordered') summary.reordered += 1;
+    else if (anomaly.kind === 'tool_result_synthesized') summary.synthesized += 1;
+    else if (anomaly.kind === 'orphan_tool_result_dropped') summary.droppedOrphan += 1;
+    else if (anomaly.kind === 'duplicate_tool_call_dropped') summary.duplicateCallsDropped += 1;
+    else if (anomaly.kind === 'duplicate_tool_result_dropped') summary.duplicateResultsDropped += 1;
+    else if (anomaly.kind === 'leading_non_user_dropped') summary.leadingDropped += 1;
+    else if (anomaly.kind === 'consecutive_assistants_merged') summary.assistantsMerged += 1;
+    else if (anomaly.kind === 'vacuous_message_dropped') summary.vacuousDropped += 1;
+    else summary.whitespaceDropped += 1;
+  }
+  return summary;
+}
 
 type OnAnomaly = (anomaly: ProjectionAnomaly) => void;
 

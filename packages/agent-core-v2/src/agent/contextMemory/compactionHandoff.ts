@@ -1,27 +1,9 @@
 /**
- * `contextMemory` domain helper — owns the v1-compatible full-compaction
- * shape vocabulary: the marker message the fold appends, the read-time
- * window derivation, and the live metadata computation.
+ * `contextMemory` domain — derives compaction shapes, markers, and visible
+ * windows.
  *
- * Token budgeting runs through an injectable {@link TokenEstimate}: the live
- * path (`AgentContextMemoryService.applyCompaction`) passes the estimator
- * from `IAgentTokenCountingService` (the raw heuristics — the
- * `[token_counting]` strategy never gates internal estimates); the pure
- * wire-replay / reducer paths keep the same heuristics — their estimate
- * fallback only fires when a record lacks `tokensAfter`, so the measured
- * chain is unaffected.
- *
- * The result layout is `[kept user messages…, elision?, summary]` (legacy
- * records: `[summary, …tail]`). `buildContextCompactionShape` computes the
- * new-style layout eagerly for the live metadata path (its callers never
- * produce a legacy shape — `ContextCompactionInput` carries no `legacyTail`);
- * `createCompactionMarkerMessage` + `deriveCompactionWindow` are its
- * append-only counterparts — the fold appends the marker verbatim and
- * `visibleWindow` re-derives the same layout at read time, including the
- * legacy tail layout when replaying legacy records, so a layout change still
- * lands in this one file.
- * `compactionResultMessageCount` is the read-side mirror for projections that
- * need only the length (the display transcript's `foldedLength`).
+ * Exposes shared token estimation and user-message selection for live
+ * compaction and replay. Legacy records are handled during window derivation.
  */
 
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/kosong/contract/tokens';
@@ -134,7 +116,7 @@ export function buildContextCompactionShape(
   };
 }
 
-export function compactionResultMessageCount(
+export function compactedWindowMessageCount(
   keptUserMessageCount: number | undefined,
   keptHeadUserMessageCount: number | undefined,
 ): number | undefined {
@@ -177,7 +159,7 @@ export function createCompactionMarkerMessage(input: ContextCompactionShapeInput
  * heuristics make it dehydrate/rehydrate-invariant, and the persisted
  * kept-user counts stay informational.
  */
-export function deriveCompactionWindow(
+export function deriveVisibleWindowAfterCompaction(
   window: readonly ContextMessage[],
   marker: ContextMessage,
 ): readonly ContextMessage[] {

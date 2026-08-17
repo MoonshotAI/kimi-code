@@ -48,7 +48,7 @@ export interface IAgentContextMemoryService {
    *  markers included. Log entries keep stable identities across appends —
    *  use it for integrity checks (e.g. the compaction safety check), never
    *  for model-facing content. */
-  getLog(): readonly ContextMessage[];
+  getMessageLog(): readonly ContextMessage[];
 
   append(...messages: readonly ContextMessage[]): void;
 
