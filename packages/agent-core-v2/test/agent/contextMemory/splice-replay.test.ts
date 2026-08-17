@@ -690,6 +690,49 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     expect(visible.every((message) => message.compaction === undefined)).toBe(true);
   });
 
+  it('settles an open frame before appending a compaction marker', () => {
+    const host = buildHost(KEY);
+
+    host.svc.append(userMessage('u1'));
+    // An overflow-failed attempt: the step is opened with a pending tool
+    // call and never ends before the compaction lands mid-fold.
+    host.svc.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
+    host.svc.appendLoopEvent({
+      type: 'tool.call',
+      stepUuid: 's1',
+      toolCallId: 'c1',
+      name: 'Bash',
+      args: {},
+    });
+    host.wire.dispatch(
+      contextApplyCompaction({
+        summary: 's',
+        contextSummary: 'S',
+        compactedCount: 2,
+        tokensBefore: 10,
+        tokensAfter: 5,
+        keptUserMessageCount: 1,
+      }),
+    );
+
+    const state = host.wire.getModel(ContextModel);
+    const log = state.messages as readonly ContextMessage[];
+    // The marker landed on a settled frame: the pending exchange is closed
+    // with an interrupted tool message ahead of the marker, and no partial
+    // assistant survives behind it.
+    expect(log.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+    expect(log.every((message) => message.partial !== true)).toBe(true);
+    expect(log[3]!.compaction).toBeDefined();
+    expect(state.fold).toEqual(EMPTY_FOLD);
+
+    // The retried step appends only — nothing mutates the log behind the
+    // marker (the append-only invariant `historySafeToCompact` relies on).
+    host.svc.appendLoopEvent({ type: 'step.begin', uuid: 's2' });
+    const after = host.wire.getModel(ContextModel).messages as readonly ContextMessage[];
+    expect(after).toHaveLength(log.length + 1);
+    expect(log.every((message, index) => after[index] === message)).toBe(true);
+  });
+
   it('maps an undo cut in the visible tail back to the append-only log', () => {
     const host = buildHost(KEY);
 

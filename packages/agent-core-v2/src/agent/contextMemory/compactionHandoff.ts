@@ -12,11 +12,14 @@
  * chain is unaffected.
  *
  * The result layout is `[kept user messages…, elision?, summary]` (legacy
- * records: `[summary, …tail]`). `buildContextCompactionShape` computes that
- * layout eagerly for the live metadata path; `createCompactionMarkerMessage`
- * + `deriveCompactionWindow` are its append-only counterparts — the fold
- * appends the marker verbatim and `visibleWindow` re-derives the same layout
- * at read time, so a layout change still lands in this one file.
+ * records: `[summary, …tail]`). `buildContextCompactionShape` computes the
+ * new-style layout eagerly for the live metadata path (its callers never
+ * produce a legacy shape — `ContextCompactionInput` carries no `legacyTail`);
+ * `createCompactionMarkerMessage` + `deriveCompactionWindow` are its
+ * append-only counterparts — the fold appends the marker verbatim and
+ * `visibleWindow` re-derives the same layout at read time, including the
+ * legacy tail layout when replaying legacy records, so a layout change still
+ * lands in this one file.
  * `compactionResultMessageCount` is the read-side mirror for projections that
  * need only the length (the display transcript's `foldedLength`).
  */
@@ -93,24 +96,6 @@ export function buildContextCompactionShape(
   input: ContextCompactionShapeInput,
   estimate: TokenEstimate = defaultTokenEstimate,
 ): ContextCompactionShape {
-  if (usesLegacyTailShape(input)) {
-    const contextSummary = input.contextSummary ?? input.summary;
-    const messages = [
-      input.legacySummaryMessage ?? createCompactionSummaryMessage(contextSummary),
-      ...history.slice(input.compactedCount),
-    ];
-    return {
-      summary: input.summary,
-      contextSummary,
-      compactedCount: input.compactedCount,
-      tokensBefore: input.tokensBefore,
-      tokensAfter: input.tokensAfter ?? estimate.messages(messages),
-      keptUserMessageCount: 0,
-      droppedCount: input.droppedCount,
-      messages,
-    };
-  }
-
   const compactableUserMessages = collectCompactableUserMessages(history);
   const selection = selectCompactionUserMessages(
     compactableUserMessages,

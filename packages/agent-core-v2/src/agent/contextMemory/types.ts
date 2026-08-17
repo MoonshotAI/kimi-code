@@ -13,11 +13,13 @@
  * Generic over the entry type: the wire model folds `ContextMessage`s, while
  * the display transcript folds time-stamped entries through the same kernel.
  *
- * `messages` is an APPEND-ONLY log: `context.apply_compaction` appends a
- * summary marker message carrying a `CompactionMeta` instead of replacing the
- * history, so pre-compaction messages stay in the state. The model-visible
- * window is a read-time derivation (`visibleWindow.deriveVisibleMessages`)
- * over this log — only undo / clear / the swarm-mode pop still cut it.
+ * `messages` is an APPEND-ONLY log: `context.apply_compaction` settles any
+ * open frame in place and then appends a summary marker message carrying a
+ * `CompactionMeta` instead of replacing the history, so pre-compaction
+ * messages stay in the state and no `partial` frame ever survives a marker.
+ * The model-visible window is a read-time derivation
+ * (`visibleWindow.deriveVisibleMessages`) over this log — only undo / clear /
+ * the swarm-mode pop still cut it.
  *
  * `freezeContextState` deeply freezes a `ContextState` (the wire service only
  * shallow-freezes the top-level object, which covered the consumer view back

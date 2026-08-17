@@ -880,11 +880,14 @@ describe('Agent context', () => {
         legacyTail: true,
       };
 
-      const shape = buildContextCompactionShape(history, input);
       const derived = deriveCompactionWindow(history, createCompactionMarkerMessage(input));
 
-      expect(derived).toEqual(shape.messages);
+      // The legacy `[summary, …tail]` layout: replay-side only, derived from
+      // the marker — `buildContextCompactionShape` has no legacy branch (the
+      // live path never produces one).
       expect(derived.map(textOf)).toEqual(['legacy summary', 'tail']);
+      expect(derived[0]?.origin?.kind).toBe('compaction_summary');
+      expect(derived.every((message) => message.compaction === undefined)).toBe(true);
     });
 
     it('deriveCompactionWindow re-derives the elided head/tail selection', () => {

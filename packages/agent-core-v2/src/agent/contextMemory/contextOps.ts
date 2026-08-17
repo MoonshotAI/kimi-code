@@ -14,11 +14,16 @@
  * `swarm_mode.exit` pop) reset it by returning `EMPTY_FOLD` — there is no
  * out-of-band reset to forget.
  *
- * `messages` is an APPEND-ONLY folded log: `context.apply_compaction` appends
- * a summary marker message carrying the record's fields as `CompactionMeta`
- * and leaves the pre-compaction history in place; what the model sees is the
- * read-time derivation `visibleWindow.deriveVisibleMessages` over this log
- * (the same `[head, elision?, tail, summary]` layout the pre-append-only
+ * `messages` is an APPEND-ONLY folded log: `context.apply_compaction` first
+ * settles any frame left open by a failed attempt (an overflow compaction
+ * lands mid-fold — `settleModelOpenStep` closes pending exchanges with
+ * interrupted tool messages and drops or seals the partial assistant), then
+ * appends a summary marker message carrying the record's fields as
+ * `CompactionMeta`, leaving the pre-compaction history in place. A marker
+ * therefore only ever lands on a settled frame — no `partial` frame survives
+ * a marker, so nothing ever mutates the log behind one. What the model sees
+ * is the read-time derivation `visibleWindow.deriveVisibleMessages` over this
+ * log (the same `[head, elision?, tail, summary]` layout the pre-append-only
  * rewrite used to store). Only undo / clear / the swarm-mode pop still cut
  * the log — undo maps its visible-window cut back to a log position through
  * `mapVisibleIndexToLog`.
@@ -73,7 +78,12 @@ import {
   isFullyUndoable,
   isValidUndoCount,
 } from './conversationTime';
-import { foldAppendMessage, foldLoopEvent, type LoopRecordedEvent } from './loopEventFold';
+import {
+  foldAppendMessage,
+  foldLoopEvent,
+  settleModelOpenStep,
+  type LoopRecordedEvent,
+} from './loopEventFold';
 import {
   EMPTY_FOLD,
   freezeContextState,
@@ -289,8 +299,9 @@ type ContextCompactionPayload = z.infer<typeof contextApplyCompactionSchema>;
 export const contextApplyCompaction = ContextModel.defineOp('context.apply_compaction', {
   schema: contextApplyCompactionSchema,
   apply: (state, p) => {
+    const settled = settleModelOpenStep(state);
     const marker = createCompactionMarkerMessage(readContextCompactionShapeInput(p));
-    return freezeContextState({ messages: [...state.messages, marker], fold: EMPTY_FOLD });
+    return freezeContextState({ messages: [...settled.messages, marker], fold: EMPTY_FOLD });
   },
 });
 

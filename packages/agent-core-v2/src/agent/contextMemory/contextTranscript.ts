@@ -128,12 +128,11 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         return;
       }
       case 'context.apply_compaction': {
-        // Close any frame left open by a failed attempt (overflow compaction
-        // lands mid-fold): the model fold settles that stale partial lazily
-        // at the retried step's `step.begin`, which would make the transcript
-        // length dip by one there and leave `foldedLength` short. Settling at
-        // the marker keeps the count exact; `recoverFoldedLength` recomputes
-        // the absolute value right after either way.
+        // Mirror the model fold, which settles any frame left open by a
+        // failed attempt before appending the marker (an overflow compaction
+        // lands mid-fold; see `contextOps`). Settling at the same record keeps
+        // the length bookkeeping aligned; `recoverFoldedLength` recomputes the
+        // absolute value right after either way.
         const settled = settleOpenStep(
           state,
           entryAdapter,

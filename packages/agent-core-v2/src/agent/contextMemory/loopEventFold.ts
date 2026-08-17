@@ -46,12 +46,14 @@
  * — the entries folded so far plus the fold cursor — into the next, and a
  * `FoldEntryAdapter<E>` is how the kernel reads and rewrites the message an
  * entry carries. The wire model folds bare `ContextMessage`s
- * (`foldAppendMessage` / `foldLoopEvent` specializations below), while the
- * display transcript (`contextTranscript.ts`) folds time-stamped entries —
- * one reduction semantics, two read models. `settleOpenStep` stands alone for
- * read models that must close an open frame outside the event stream (the
- * transcript applies it when a compaction lands mid-fold, so the retried
- * step cannot settle a stale frame and skew its length bookkeeping).
+ * (`foldAppendMessage` / `foldLoopEvent` / `settleModelOpenStep`
+ * specializations below), while the display transcript (`contextTranscript.ts`)
+ * folds time-stamped entries — one reduction semantics, two read models.
+ * `settleOpenStep` stands alone for closing an open frame outside the event
+ * stream: the model applies it (via `settleModelOpenStep`) when a compaction
+ * lands mid-fold — the marker only ever lands on a settled frame, so the log
+ * stays append-only across markers — and the transcript applies it at the
+ * same record to mirror that.
  */
 
 import type { FinishReason } from '#/kosong/contract/provider';
@@ -145,6 +147,10 @@ function stripCompactionMarker(message: ContextMessage): ContextMessage {
 
 export function foldLoopEvent(state: ContextState, event: LoopRecordedEvent): ContextState {
   return applyLoopEventTo(state, event, messageAdapter, (message) => message);
+}
+
+export function settleModelOpenStep(state: ContextState): ContextState {
+  return settleOpenStep(state, messageAdapter, (message) => message);
 }
 
 export function appendMessageTo<E>(state: ContextState<E>, entry: E): ContextState<E> {

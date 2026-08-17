@@ -14,7 +14,10 @@
  *
  * Results are memoized on the log array reference (the state is immutable, so
  * reference equality is cache validity); a marker-free log returns itself —
- * sessions that never compact pay nothing.
+ * sessions that never compact pay nothing. A derived window is frozen before
+ * caching: every consumer of the same log shares one immutable array, so an
+ * in-place mutation attempt throws instead of silently polluting the cache —
+ * the same contract the wire's frozen state array gave the bare-array state.
  *
  * Also owns `mapVisibleIndexToLog`, the inverse positional mapping undo needs
  * to turn a cut inside the visible window back into a log cut: the post-last-
@@ -75,5 +78,5 @@ function computeVisibleMessages(
     cursor = i + 1;
   }
   if (!sawMarker) return log;
-  return [...window, ...log.slice(cursor)];
+  return Object.freeze([...window, ...log.slice(cursor)]);
 }
