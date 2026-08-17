@@ -205,6 +205,9 @@ interface WireMeta {
   experimental_flags?: Record<string, boolean>;
   /** Engine generation serving the API; older (v1) servers omit the field. */
   backend?: 'v1' | 'v2';
+  /** Custom browser tab title for this instance (the CLI's `--web-title`);
+      absent when the server was started without it. */
+  web_title?: string;
 }
 
 interface WireAbortResult {
@@ -404,6 +407,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
     experimentalFlags: Record<string, boolean>;
     /** Engine generation: 'v2' = kap-server / agent-core-v2; absent ⇒ 'v1'. */
     backend: 'v1' | 'v2';
+    /** Custom browser tab title from the server's `--web-title`; '' when the
+        server reports none. */
+    webTitle: string;
   }> {
     const data = await this.http.get<WireMeta>('/meta');
     return {
@@ -415,6 +421,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       dangerousBypassAuth: data.dangerous_bypass_auth === true,
       experimentalFlags: data.experimental_flags ?? {},
       backend: data.backend === 'v2' ? 'v2' : 'v1',
+      webTitle: data.web_title ?? '',
     };
   }
 

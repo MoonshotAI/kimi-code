@@ -75,6 +75,11 @@ export interface ExtendedState extends KimiClientState {
    * old to report it. Drives flag-gated UI (e.g. the secondary-model settings
    * section). */
   experimentalFlags: Record<string, boolean>;
+  /** Custom browser tab title for this instance, reported by the server via
+   * GET /meta (`web_title`; the CLI's `--web-title`). `''` until the first
+   * meta fetch and when the server was started without the flag — the tab
+   * title then falls back to `<workspace dir> | Kimi Code`. */
+  webTitle: string;
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;

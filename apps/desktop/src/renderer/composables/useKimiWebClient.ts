@@ -322,6 +322,7 @@ const rawState: ExtendedState = reactive({
   ...createInitialState(),
   connected: false,
   serverVersion: '',
+  webTitle: '',
   dangerousBypassAuth: false,
   backend: 'v1',
   experimentalFlags: {},

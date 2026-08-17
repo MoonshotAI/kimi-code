@@ -95,4 +95,23 @@ describe('DaemonKimiWebApi.getMeta experimental_flags', () => {
 
     expect(meta.experimentalFlags).toEqual({});
   });
+
+  it('maps web_title when the server reports it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(envelope({ ...wireMeta, web_title: 'My Dev Box' })),
+    );
+
+    const meta = await makeApi().getMeta();
+
+    expect(meta.webTitle).toBe('My Dev Box');
+  });
+
+  it("defaults webTitle to '' when the server omits the field", async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope(wireMeta)));
+
+    const meta = await makeApi().getMeta();
+
+    expect(meta.webTitle).toBe('');
+  });
 });

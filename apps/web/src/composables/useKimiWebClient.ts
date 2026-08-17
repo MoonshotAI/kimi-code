@@ -77,6 +77,7 @@ import {
   settleLocalTurn,
   useWorkspaceState,
 } from './client/useWorkspaceState';
+import { useDocumentTitle } from './useDocumentTitle';
 
 const appearance = useAppearance();
 const notification = useNotification({ t: (k, p) => (p === undefined ? i18n.global.t(k) : i18n.global.t(k, p)) });
@@ -318,6 +319,7 @@ const rawState: ExtendedState = reactive({
   ...createInitialState(),
   connected: false,
   serverVersion: '',
+  webTitle: '',
   dangerousBypassAuth: false,
   backend: 'v1',
   experimentalFlags: {},
@@ -2690,6 +2692,7 @@ const loadMoreMessagesError = computed<boolean>(() => {
   return sid ? rawState.messagesLoadMoreErrorBySession[sid] ?? false : false;
 });
 const serverVersion = computed<string>(() => rawState.serverVersion);
+const webTitle = computed<string>(() => rawState.webTitle);
 const experimentalFlags = computed<Record<string, boolean>>(() => rawState.experimentalFlags);
 const backend = computed<'v1' | 'v2'>(() => rawState.backend);
 const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
@@ -3225,6 +3228,16 @@ const visibleWorkspace = computed<WorkspaceView | null>(() => {
   const id = activeWorkspaceId.value;
   if (!id) return null;
   return workspacesView.value.find((w) => w.id === id) ?? null;
+});
+
+// Browser tab base title: a `--web-title` override (reported via /meta) wins
+// and stays fixed for the instance's lifetime; otherwise the title follows the
+// active workspace's directory name (`<dir> | Kimi Code`). App.vue feeds this
+// to usePageTitle — the single document.title writer — which prefixes the
+// running spinner on top.
+const documentBaseTitle = useDocumentTitle({
+  webTitle,
+  activeWorkspaceRoot: () => visibleWorkspace.value?.root ?? null,
 });
 
 /**
@@ -3844,6 +3857,8 @@ export function useKimiWebClient() {
     hasMoreMessages,
     loadMoreMessagesError,
     serverVersion,
+    webTitle,
+    documentBaseTitle,
     backend,
     dangerousBypassAuth,
     experimentalFlags,

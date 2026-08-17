@@ -8,19 +8,23 @@
 // running state is already surfaced by the in-app activity indicator and tray
 // attention.
 
-import { computed, onUnmounted, ref, watch, watchEffect, type Ref } from 'vue';
+import { computed, onUnmounted, ref, toValue, watch, watchEffect, type MaybeRefOrGetter, type Ref } from 'vue';
 import { isDesktop } from '@moonshot-ai/app-core/lib';
 
 export interface UsePageTitleOptions {
   running: Ref<boolean>;
-  /** Base title (default 'Kimi Code'; the web app passes 'Kimi Code Web'). */
-  title?: string;
+  /**
+   * Base title (default 'Kimi Code'). Reactive sources are followed live —
+   * the web app passes a computed that tracks the instance's `--web-title`
+   * override or the active workspace directory.
+   */
+  title?: MaybeRefOrGetter<string>;
 }
 
 export function usePageTitle({ running, title = 'Kimi Code' }: UsePageTitleOptions): void {
   if (isDesktop) {
     watchEffect(() => {
-      if (typeof document !== 'undefined') document.title = title;
+      if (typeof document !== 'undefined') document.title = toValue(title);
     });
     return;
   }
@@ -52,7 +56,7 @@ export function usePageTitle({ running, title = 'Kimi Code' }: UsePageTitleOptio
 
   const pageTitle = computed<string>(() => {
     const prefix = running.value ? `${SPINNER_FRAMES[spinnerFrame.value]} ` : '';
-    return `${prefix}${title}`;
+    return `${prefix}${toValue(title)}`;
   });
   watchEffect(() => {
     if (typeof document !== 'undefined') document.title = pageTitle.value;

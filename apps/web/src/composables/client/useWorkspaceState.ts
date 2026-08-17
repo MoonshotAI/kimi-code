@@ -1304,6 +1304,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     rawState.dangerousBypassAuth = m.dangerousBypassAuth;
     rawState.experimentalFlags = m.experimentalFlags;
     rawState.backend = m.backend;
+    rawState.webTitle = m.webTitle;
   }
 
   async function load(): Promise<void> {

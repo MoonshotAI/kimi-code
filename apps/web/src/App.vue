@@ -120,10 +120,12 @@ const activeWorkspaceSessionCount = computed<number>(
 // running: true when activity is not idle
 const running = computed(() => client.activity.value !== 'idle');
 
-// Static page title (app name only). The session title and workspace name are
-// intentionally excluded so the tab title stays stable. Prefixes an animated
-// spinner while the agent is running so activity is visible at a glance.
-usePageTitle({ running, title: 'Kimi Code Web' });
+// Page title: the base title identifies the instance (the `--web-title`
+// override when set, otherwise the active workspace directory name) so
+// multiple Kimi Code Web tabs stay distinguishable; usePageTitle is the
+// single document.title writer and prefixes an animated spinner while the
+// agent is running.
+usePageTitle({ running, title: client.documentBaseTitle });
 
 // The /thinking slash command has no popover anchor, so it steps to the next
 // segment for the active model (effort models cycle through their declared
